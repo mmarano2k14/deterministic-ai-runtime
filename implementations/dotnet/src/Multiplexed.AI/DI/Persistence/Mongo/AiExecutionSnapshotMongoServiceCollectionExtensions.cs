@@ -53,7 +53,7 @@ namespace Multiplexed.AI.DI.Persistence.Mongo
             }
 
             services.TryAddSingleton<IAiExecutionSnapshotFactory<TContextSnapshot>, DefaultAiExecutionSnapshotFactory<TContextSnapshot>>();
-            services.TryAddSingleton<IAiExecutionSnapshotService<TContextSnapshot>, DefaultAiExecutionSnapshotService<TContextSnapshot>>();
+            services.AddScoped<IAiExecutionSnapshotService<TContextSnapshot>, DefaultAiExecutionSnapshotService<TContextSnapshot>>();
 
             services.TryAddSingleton<IMongoClient>(_ => new MongoClient(options.ConnectionString));
 

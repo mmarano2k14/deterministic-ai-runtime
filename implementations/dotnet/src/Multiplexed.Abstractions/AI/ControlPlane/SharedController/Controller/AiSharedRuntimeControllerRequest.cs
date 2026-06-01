@@ -17,13 +17,13 @@ namespace Multiplexed.Abstractions.AI.ControlPlane.SharedController.Controller
         /// <summary>
         /// Requested shared runtime controller operation.
         /// </summary>
-        public required AiSharedRuntimeControllerOperation Operation { get; init; }
+        public required AiSharedRuntimeControllerOperation Operation { get; set; }
 
         /// <summary>
         /// Shared controller run identifier.
         /// Required for get and cancel operations.
         /// </summary>
-        public string? SharedRunId { get; init; }
+        public string? SharedRunId { get; set; }
 
         /// <summary>
         /// Pipeline run request to submit through the shared runtime controller.
@@ -35,7 +35,7 @@ namespace Multiplexed.Abstractions.AI.ControlPlane.SharedController.Controller
         /// Optional externally supplied run id.
         /// If omitted, the shared controller generates one.
         /// </summary>
-        public string? RequestedSharedRunId { get; init; }
+        public string? RequestedSharedRunId { get; set; }
 
         /// <summary>
         /// Optional tenant id used for future tenant-aware admission and routing policies.

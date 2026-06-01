@@ -291,8 +291,8 @@ namespace Multiplexed.AI.DI
             // - It does not mutate AiExecutionState.
             // ------------------------------------------------------------
 
-            services.TryAddSingleton<IAiStepPayloadStore, DefaultAiStepPayloadStore>();
-
+            //services.TryAddSingleton<IAiStepPayloadStore, DefaultAiStepPayloadStore>();
+            services.TryAddScoped<IAiStepPayloadStore, DefaultAiStepPayloadStore>();
             // ------------------------------------------------------------
             // Payload resolver
             //
@@ -374,8 +374,9 @@ namespace Multiplexed.AI.DI
             services.AddSingleton<MemoryAiExecutionStore>();
             services.AddSingleton<RedisAiExecutionStore>();
 
-            services.AddSingleton<IRedisDagStoreServices, RedisDagStoreServices>();
-            services.AddSingleton<IAiDagExecutionStore, RedisAiDagExecutionStore>();
+            //services.AddSingleton<IRedisDagStoreServices, RedisDagStoreServices>();
+            services.AddScoped<IRedisDagStoreServices, RedisDagStoreServices>();
+            services.AddScoped<IAiDagExecutionStore, RedisAiDagExecutionStore>();
 
             services.AddSingleton<IAiExecutionStore, AiExecutionStore>();
             services.AddSingleton<IAiExecutionKeyBuilder, AiExecutionKeyBuilder>();
@@ -615,7 +616,7 @@ namespace Multiplexed.AI.DI
             services.AddAiPoliciesFromAssemblies(
                 typeof(AiRuntimeAssemblyMarker).Assembly);
 
-            services.TryAddSingleton<IAiPolicyEngineFactory, DefaultAiPolicyEngineFactory>();
+            services.AddScoped<IAiPolicyEngineFactory, DefaultAiPolicyEngineFactory>();
 
 
             // ------------------------------------------------------------
@@ -623,8 +624,8 @@ namespace Multiplexed.AI.DI
             // ------------------------------------------------------------
 
             services.AddScoped<IAiDagStepExecutionOrchestrator,DefaultAiDagStepExecutionOrchestrator>();
-            services.AddSingleton<IAiConcurrencyGate, RedisAiConcurrencyGate>();
-            services.TryAddSingleton<IAiConcurrencyEngine, DefaultAiConcurrencyEngine>();
+            services.AddScoped<IAiConcurrencyGate, RedisAiConcurrencyGate>();
+            services.AddScoped<IAiConcurrencyEngine, DefaultAiConcurrencyEngine>();
 
             // ------------------------------------------------------------
             // instance identity / runtime instance worker / background controller
@@ -656,8 +657,8 @@ namespace Multiplexed.AI.DI
 
             services.TryAddSingleton<RedisExecutionControlKeyBuilder>();
             services.TryAddSingleton<IAiExecutionControlStore, RedisAiExecutionControlStore>();
-            services.TryAddSingleton<IAiExecutionControlService, AiExecutionControlService>();
-            services.TryAddSingleton<IAiExecutionControlGate, AiExecutionControlGate>();
+            services.AddScoped<IAiExecutionControlService, AiExecutionControlService>();
+            services.AddScoped<IAiExecutionControlGate, AiExecutionControlGate>();
 
             // ------------------------------------------------------------
             // global execution engine runtime services
