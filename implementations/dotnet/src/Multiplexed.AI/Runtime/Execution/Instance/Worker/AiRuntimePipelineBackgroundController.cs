@@ -689,8 +689,7 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
 
                 queuedRun.CompletionSource.TrySetException(ex);
 
-                _logger.Engine.LogError(
-                    $"[AI PIPELINE CONTROLLER] Run failed. RunId='{handle.RunId}', Pipeline='{request.PipelineName}', Error='{ex.Message}'.");
+                _logger.Engine.LogError($"[AI PIPELINE CONTROLLER] Run failed. RunId='{handle.RunId}', Pipeline='{request.PipelineName}', Error='{ex}'.");
 
                 await RecordRunLedgerAsync(
                         handle.RunId,
@@ -837,13 +836,22 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
                 request,
                 cancellationToken).ConfigureAwait(false);
 
+            _logger.Engine.LogInformation(
+                $"[AI PIPELINE CONTROLLER] Definition resolved. RunId='{handle.RunId}', Pipeline='{request.PipelineName}'.");
+
             await _definitionPublisher.PublishAsync(
                 definition,
                 cancellationToken).ConfigureAwait(false);
 
+            _logger.Engine.LogInformation(
+                $"[AI PIPELINE CONTROLLER] Definition published. RunId='{handle.RunId}', Pipeline='{request.PipelineName}'.");
+
             var created = await CreateExecutionAsync(
                 request,
                 cancellationToken).ConfigureAwait(false);
+
+            _logger.Engine.LogInformation(
+                $"[AI PIPELINE CONTROLLER] Execution created. RunId='{handle.RunId}', ExecutionId='{created.ExecutionId}'.");
 
             queuedRun.Correlation.ExecutionId = created.ExecutionId;
             queuedRun.Correlation.PipelineKey = created.PipelineName;

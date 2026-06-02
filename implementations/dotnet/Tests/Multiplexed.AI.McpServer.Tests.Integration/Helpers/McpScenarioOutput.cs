@@ -1,7 +1,15 @@
-﻿using Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue;
+﻿using Multiplexed.Abstractions.AI.ControlPlane.Execution;
+using Multiplexed.Abstractions.AI.ControlPlane.Replay;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Controller;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Store;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Pump;
+using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Queue;
+using Multiplexed.Abstractions.AI.Observability.Ledger;
+using Multiplexed.Abstractions.AI.Observability.Tracing;
+using Multiplexed.AI.McpServer.Models.Responses;
+using Multiplexed.AI.McpServer.Tools;
 using System.Text;
 using Xunit.Abstractions;
 
@@ -278,6 +286,522 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Helpers
                 }
 
                 builder.AppendLine();
+            }
+        }
+
+        public static void WriteObservabilitySummary(
+            ITestOutputHelper output,
+            string scenarioName,
+            string executionId,
+            IReadOnlyList<AiDecisionLedgerEntry> ledgerEntries,
+            IReadOnlyList<AiTraceEvent> traceEvents,
+            string metricsStatus)
+        {
+            ArgumentNullException.ThrowIfNull(output);
+            ArgumentException.ThrowIfNullOrWhiteSpace(scenarioName);
+            ArgumentException.ThrowIfNullOrWhiteSpace(executionId);
+            ArgumentNullException.ThrowIfNull(ledgerEntries);
+            ArgumentNullException.ThrowIfNull(traceEvents);
+
+            output.WriteLine("===========================================================");
+            output.WriteLine("MCP OBSERVABILITY SUMMARY");
+            output.WriteLine("===========================================================");
+            output.WriteLine($"Scenario              : {scenarioName}");
+            output.WriteLine($"ExecutionId           : {executionId}");
+            output.WriteLine("===========================================================");
+
+            WriteLedgerSummary(
+                output,
+                ledgerEntries);
+
+            WriteTraceSummary(
+                output,
+                traceEvents);
+
+            WriteMetricsSummary(
+                output,
+                metricsStatus);
+
+            output.WriteLine("===========================================================");
+            output.WriteLine("OBSERVABILITY COUNTS");
+            output.WriteLine("===========================================================");
+            output.WriteLine($"Ledger Entries        : {ledgerEntries.Count}");
+            output.WriteLine($"Trace Events          : {traceEvents.Count}");
+            output.WriteLine($"Metrics Available     : {!string.IsNullOrWhiteSpace(metricsStatus)}");
+            output.WriteLine("===========================================================");
+        }
+
+        public static void WriteLedgerSummary(
+            ITestOutputHelper output,
+            IReadOnlyList<AiDecisionLedgerEntry> ledgerEntries,
+            int maxEntries = 50)
+        {
+            ArgumentNullException.ThrowIfNull(output);
+            ArgumentNullException.ThrowIfNull(ledgerEntries);
+
+            output.WriteLine("");
+            output.WriteLine("LEDGER SUMMARY");
+            output.WriteLine("-----------------------------------------------------------");
+            output.WriteLine($"EntryCount            : {ledgerEntries.Count}");
+
+            var byCategory = ledgerEntries
+                .GroupBy(entry => entry.Category)
+                .OrderBy(group => group.Key.ToString(), StringComparer.Ordinal)
+                .ToArray();
+
+            foreach (var group in byCategory)
+            {
+                output.WriteLine($"Category              : {group.Key} = {group.Count()}");
+            }
+
+            output.WriteLine("");
+            output.WriteLine("LEDGER EVENTS");
+            output.WriteLine("-----------------------------------------------------------");
+
+            foreach (var entry in ledgerEntries
+                .OrderBy(entry => entry.TimestampUtc)
+                .Take(maxEntries))
+            {
+                output.WriteLine(
+                    $"{entry.TimestampUtc:O} | {entry.Category} | {entry.EventType} | {entry.Outcome}");
+            }
+
+            if (ledgerEntries.Count > maxEntries)
+            {
+                output.WriteLine($"... showing first {maxEntries} of {ledgerEntries.Count}");
+            }
+        }
+
+        public static void WriteTraceSummary(
+             ITestOutputHelper output,
+             IReadOnlyList<AiTraceEvent> traceEvents,
+             int maxEvents = 50)
+        {
+            ArgumentNullException.ThrowIfNull(output);
+            ArgumentNullException.ThrowIfNull(traceEvents);
+
+            output.WriteLine("");
+            output.WriteLine("TRACE SUMMARY");
+            output.WriteLine("-----------------------------------------------------------");
+            output.WriteLine($"EventCount            : {traceEvents.Count}");
+
+            var byCategory = traceEvents
+                .GroupBy(traceEvent => traceEvent.Category ?? "unknown")
+                .OrderBy(group => group.Key, StringComparer.Ordinal)
+                .ToArray();
+
+            foreach (var group in byCategory)
+            {
+                output.WriteLine($"Category              : {group.Key} = {group.Count()}");
+            }
+
+            output.WriteLine("");
+            output.WriteLine("TRACE EVENTS");
+            output.WriteLine("-----------------------------------------------------------");
+
+            foreach (var traceEvent in traceEvents
+                .OrderBy(traceEvent => traceEvent.TimestampUtc)
+                .Take(maxEvents))
+            {
+                output.WriteLine(
+                    $"{traceEvent.TimestampUtc:O} | {traceEvent.Category} | {traceEvent.Name} | StepId={traceEvent.StepId ?? "-"}");
+            }
+
+            if (traceEvents.Count > maxEvents)
+            {
+                output.WriteLine($"... showing first {maxEvents} of {traceEvents.Count}");
+            }
+        }
+
+        public static void WriteMetricsSummary(
+            ITestOutputHelper output,
+            string metricsStatus)
+        {
+            ArgumentNullException.ThrowIfNull(output);
+
+            output.WriteLine("");
+            output.WriteLine("METRICS SUMMARY");
+            output.WriteLine("-----------------------------------------------------------");
+            output.WriteLine(string.IsNullOrWhiteSpace(metricsStatus)
+                ? "Metrics status unavailable."
+                : metricsStatus);
+        }
+
+        public static void WriteReplaySummary(
+            ITestOutputHelper output,
+            string scenarioName,
+            string executionId,
+            AiReplayControlResult replayResult,
+            AiReplayControlResult replayReport,
+            AiReplayControlResult replayLedger,
+            AiReplayControlResult replayTrace)
+        {
+            ArgumentNullException.ThrowIfNull(output);
+            ArgumentException.ThrowIfNullOrWhiteSpace(scenarioName);
+            ArgumentException.ThrowIfNullOrWhiteSpace(executionId);
+            ArgumentNullException.ThrowIfNull(replayResult);
+            ArgumentNullException.ThrowIfNull(replayReport);
+            ArgumentNullException.ThrowIfNull(replayLedger);
+            ArgumentNullException.ThrowIfNull(replayTrace);
+
+            output.WriteLine("===========================================================");
+            output.WriteLine("MCP REPLAY SUMMARY");
+            output.WriteLine("===========================================================");
+            output.WriteLine($"Scenario              : {scenarioName}");
+            output.WriteLine($"ExecutionId           : {executionId}");
+            output.WriteLine("===========================================================");
+
+            WriteReplayControlResultHeader(
+                output,
+                "REPLAY EXECUTION",
+                replayResult);
+
+            WriteReplayControlResultHeader(
+                output,
+                "REPLAY REPORT",
+                replayReport);
+
+            if (replayReport.Report is not null)
+            {
+                WriteReplayReportSummary(
+                    output,
+                    replayReport);
+            }
+
+            WriteReplayControlResultHeader(
+                output,
+                "REPLAY LEDGER",
+                replayLedger);
+
+            WriteLedgerSummary(
+                output,
+                replayLedger.Ledger);
+
+            WriteReplayControlResultHeader(
+                output,
+                "REPLAY TRACE",
+                replayTrace);
+
+            WriteTraceSummary(
+                output,
+                replayTrace.Timeline);
+
+            output.WriteLine("===========================================================");
+            output.WriteLine("REPLAY COUNTS");
+            output.WriteLine("===========================================================");
+            output.WriteLine($"Replay Success        : {replayResult.Success}");
+            output.WriteLine($"Report Success        : {replayReport.Success}");
+            output.WriteLine($"Ledger Entries        : {replayLedger.Ledger.Count}");
+            output.WriteLine($"Trace Events          : {replayTrace.Timeline.Count}");
+            output.WriteLine("===========================================================");
+        }
+
+        private static void WriteReplayControlResultHeader(
+            ITestOutputHelper output,
+            string title,
+            AiReplayControlResult result)
+        {
+            output.WriteLine("");
+            output.WriteLine(title);
+            output.WriteLine("-----------------------------------------------------------");
+            output.WriteLine($"Operation             : {result.Operation}");
+            output.WriteLine($"Success               : {result.Success}");
+            output.WriteLine($"Message               : {result.Message}");
+            output.WriteLine($"ExecutionId           : {result.ExecutionId}");
+            output.WriteLine($"CorrelationId         : {result.CorrelationId}");
+            output.WriteLine($"RequestedBy           : {result.RequestedBy}");
+            output.WriteLine($"StartedAtUtc          : {result.StartedAtUtc:O}");
+            output.WriteLine($"CompletedAtUtc        : {result.CompletedAtUtc:O}");
+            output.WriteLine($"DurationMs            : {result.DurationMs}");
+            output.WriteLine($"FailureReason         : {result.FailureReason}");
+
+            if (result.Diagnostics.Count > 0)
+            {
+                output.WriteLine("Diagnostics:");
+
+                foreach (var diagnostic in result.Diagnostics)
+                {
+                    output.WriteLine($"  - {diagnostic}");
+                }
+            }
+        }
+
+        private static void WriteReplayReportSummary(
+            ITestOutputHelper output,
+            AiReplayControlResult result)
+        {
+            var report = result.Report;
+
+            if (report is null)
+            {
+                return;
+            }
+
+            output.WriteLine("");
+            output.WriteLine("REPLAY REPORT DETAILS");
+            output.WriteLine("-----------------------------------------------------------");
+            output.WriteLine($"ReplayValid           : {report.ReplayValid}");
+            output.WriteLine($"ExecutionFound        : {report.ExecutionFound}");
+            output.WriteLine($"SnapshotFound         : {report.SnapshotFound}");
+            output.WriteLine($"FingerprintFound      : {report.FingerprintFound}");
+            output.WriteLine($"FingerprintMatches    : {report.FingerprintMatches}");
+            output.WriteLine($"DependencyGraphValid  : {report.DependencyGraphValid}");
+            output.WriteLine($"StepStateValid        : {report.StepStateValid}");
+            output.WriteLine($"PayloadReferencesValid: {report.PayloadReferencesValid}");
+            output.WriteLine($"IssueCount            : {report.Issues.Count}");
+
+            if (report.Issues.Count > 0)
+            {
+                output.WriteLine("");
+                output.WriteLine("REPLAY ISSUES");
+                output.WriteLine("-----------------------------------------------------------");
+
+                foreach (var issue in report.Issues.Take(30))
+                {
+                    output.WriteLine($"- {issue}");
+                }
+
+                if (report.Issues.Count > 30)
+                {
+                    output.WriteLine($"... showing first 30 of {report.Issues.Count}");
+                }
+            }
+        }
+
+        public static void WriteExecutionControlSummary(
+    ITestOutputHelper output,
+    string scenarioName,
+    string executionId,
+    AiExecutionControlPlaneResult pauseResult,
+    AiExecutionControlPlaneResult pausedStatus,
+    AiExecutionControlPlaneResult? resumeResult,
+    AiExecutionControlPlaneResult? resumedStatus)
+        {
+            ArgumentNullException.ThrowIfNull(output);
+
+            output.WriteLine("===========================================================");
+            output.WriteLine("MCP EXECUTION CONTROL SUMMARY");
+            output.WriteLine("===========================================================");
+            output.WriteLine($"Scenario              : {scenarioName}");
+            output.WriteLine($"ExecutionId           : {executionId}");
+            output.WriteLine("===========================================================");
+
+            WriteExecutionControlResult(
+                output,
+                "PAUSE RESULT",
+                pauseResult);
+
+            WriteExecutionControlResult(
+                output,
+                "STATUS AFTER PAUSE",
+                pausedStatus);
+
+            if (resumeResult is not null)
+            {
+                WriteExecutionControlResult(
+                    output,
+                    "RESUME RESULT",
+                    resumeResult);
+            }
+
+            if (resumedStatus is not null)
+            {
+                WriteExecutionControlResult(
+                    output,
+                    "STATUS AFTER RESUME",
+                    resumedStatus);
+            }
+
+            output.WriteLine("===========================================================");
+        }
+
+        private static void WriteExecutionControlResult(
+            ITestOutputHelper output,
+            string title,
+            AiExecutionControlPlaneResult result)
+        {
+            output.WriteLine("");
+            output.WriteLine(title);
+            output.WriteLine("-----------------------------------------------------------");
+            output.WriteLine($"Operation             : {result.Operation}");
+            output.WriteLine($"Success               : {result.Success}");
+            output.WriteLine($"Message               : {result.Message}");
+            output.WriteLine($"ExecutionId           : {result.ExecutionId}");
+            output.WriteLine($"ControlStatus         : {result.State?.Status}");
+            output.WriteLine($"RequestedBy           : {result.RequestedBy}");
+            output.WriteLine($"CorrelationId         : {result.CorrelationId}");
+            output.WriteLine($"StartedAtUtc          : {result.StartedAtUtc:O}");
+            output.WriteLine($"CompletedAtUtc        : {result.CompletedAtUtc:O}");
+            output.WriteLine($"DurationMs            : {result.DurationMs}");
+            output.WriteLine($"FailureReason         : {result.FailureReason}");
+
+            if (result.Diagnostics.Count > 0)
+            {
+                output.WriteLine("Diagnostics:");
+
+                foreach (var diagnostic in result.Diagnostics)
+                {
+                    output.WriteLine($"  - {diagnostic}");
+                }
+            }
+        }
+
+        public static void WriteSharedQueueSummary(
+            ITestOutputHelper output,
+            string scenarioName,
+            string pipelineName,
+            IReadOnlyList<AiSharedQueueItem> queueItems,
+            SharedQueueStatusResult status)
+        {
+            ArgumentNullException.ThrowIfNull(output);
+            ArgumentException.ThrowIfNullOrWhiteSpace(scenarioName);
+            ArgumentException.ThrowIfNullOrWhiteSpace(pipelineName);
+            ArgumentNullException.ThrowIfNull(queueItems);
+            ArgumentNullException.ThrowIfNull(status);
+
+            output.WriteLine("===========================================================");
+            output.WriteLine("MCP SHARED QUEUE SUMMARY");
+            output.WriteLine("===========================================================");
+            output.WriteLine($"Scenario              : {scenarioName}");
+            output.WriteLine($"PipelineName          : {pipelineName}");
+            output.WriteLine("===========================================================");
+
+            output.WriteLine("");
+            output.WriteLine("QUEUE STATUS");
+            output.WriteLine("-----------------------------------------------------------");
+            output.WriteLine($"TotalCount            : {status.TotalCount}");
+            output.WriteLine($"PendingCount          : {status.PendingCount}");
+            output.WriteLine($"ClaimedCount          : {status.ClaimedCount}");
+            output.WriteLine($"DispatchedCount       : {status.DispatchedCount}");
+            output.WriteLine($"CompletedCount        : {status.CompletedCount}");
+            output.WriteLine($"FailedCount           : {status.FailedCount}");
+            output.WriteLine($"CancelledCount        : {status.CancelledCount}");
+            output.WriteLine($"OldestPendingAtUtc    : {status.OldestPendingAtUtc:O}");
+            output.WriteLine($"NewestPendingAtUtc    : {status.NewestPendingAtUtc:O}");
+            output.WriteLine($"IncludeTerminal       : {status.IncludeTerminal}");
+
+            var scenarioItems = queueItems
+                .Where(item => string.Equals(item.PipelineKey, pipelineName, StringComparison.Ordinal))
+                .OrderBy(item => item.EnqueuedAtUtc)
+                .ToArray();
+
+            output.WriteLine("");
+            output.WriteLine("SCENARIO QUEUE ITEMS");
+            output.WriteLine("-----------------------------------------------------------");
+            output.WriteLine($"ScenarioItemCount     : {scenarioItems.Length}");
+
+            foreach (var item in scenarioItems)
+            {
+                output.WriteLine($"SharedRunId           : {item.SharedRunId}");
+                output.WriteLine($"Status                : {item.Status}");
+                output.WriteLine($"PipelineKey           : {item.PipelineKey}");
+                output.WriteLine($"TenantId              : {item.TenantId}");
+                output.WriteLine($"Priority              : {item.Priority}");
+                output.WriteLine($"ClaimedByInstanceId   : {item.ClaimedByRuntimeInstanceId}");
+                output.WriteLine($"ClaimedByWorkerId     : {item.ClaimedByWorkerId}");
+                output.WriteLine($"ClaimToken            : {item.ClaimToken}");
+                output.WriteLine($"EnqueuedAtUtc         : {item.EnqueuedAtUtc:O}");
+                output.WriteLine($"UpdatedAtUtc          : {item.UpdatedAtUtc:O}");
+                output.WriteLine($"ClaimedAtUtc          : {item.ClaimedAtUtc:O}");
+                output.WriteLine($"ClaimExpiresAtUtc     : {item.ClaimExpiresAtUtc:O}");
+                output.WriteLine("-----------------------------------------------------------");
+            }
+
+            output.WriteLine("===========================================================");
+        }
+
+        public static void WriteRuntimeInstanceSummary(
+            ITestOutputHelper output,
+            string scenarioName,
+            IReadOnlyList<AiRuntimeInstanceSnapshot> allInstances,
+            IReadOnlyList<AiRuntimeInstanceSnapshot> activeInstances,
+            AiRuntimeInstanceSnapshot? selectedStatus)
+        {
+            ArgumentNullException.ThrowIfNull(output);
+            ArgumentException.ThrowIfNullOrWhiteSpace(scenarioName);
+            ArgumentNullException.ThrowIfNull(allInstances);
+            ArgumentNullException.ThrowIfNull(activeInstances);
+
+            output.WriteLine("===========================================================");
+            output.WriteLine("MCP RUNTIME INSTANCE SUMMARY");
+            output.WriteLine("===========================================================");
+            output.WriteLine($"Scenario              : {scenarioName}");
+            output.WriteLine($"TotalInstances         : {allInstances.Count}");
+            output.WriteLine($"ActiveInstances        : {activeInstances.Count}");
+            output.WriteLine("===========================================================");
+
+            if (selectedStatus is not null)
+            {
+                output.WriteLine("");
+                output.WriteLine("SELECTED INSTANCE STATUS");
+                output.WriteLine("-----------------------------------------------------------");
+
+                WriteRuntimeInstance(
+                    output,
+                    selectedStatus);
+            }
+            else
+            {
+                output.WriteLine("");
+                output.WriteLine("SELECTED INSTANCE STATUS");
+                output.WriteLine("-----------------------------------------------------------");
+                output.WriteLine("No runtime instance is currently registered.");
+            }
+
+            output.WriteLine("");
+            output.WriteLine("ACTIVE INSTANCES");
+            output.WriteLine("-----------------------------------------------------------");
+
+            if (activeInstances.Count == 0)
+            {
+                output.WriteLine("No active runtime instance is currently registered.");
+            }
+
+            foreach (var instance in activeInstances)
+            {
+                WriteRuntimeInstance(
+                    output,
+                    instance);
+
+                output.WriteLine("-----------------------------------------------------------");
+            }
+
+            output.WriteLine("===========================================================");
+        }
+
+        private static void WriteRuntimeInstance(
+            ITestOutputHelper output,
+            AiRuntimeInstanceSnapshot instance)
+        {
+            output.WriteLine($"RuntimeInstanceId     : {instance.RuntimeInstanceId}");
+            output.WriteLine($"Status                : {instance.Status}");
+            output.WriteLine($"HostName              : {instance.HostName}");
+            output.WriteLine($"ProcessId             : {instance.ProcessId}");
+            output.WriteLine($"KubernetesNamespace   : {instance.KubernetesNamespace}");
+            output.WriteLine($"KubernetesPodName     : {instance.KubernetesPodName}");
+            output.WriteLine($"KubernetesNodeName    : {instance.KubernetesNodeName}");
+            output.WriteLine($"WorkerCount           : {instance.WorkerCount}");
+            output.WriteLine($"QueuedRunCount        : {instance.QueuedRunCount}");
+            output.WriteLine($"RunningRunCount       : {instance.RunningRunCount}");
+            output.WriteLine($"ActiveRunCount        : {instance.ActiveRunCount}");
+            output.WriteLine($"QueueCapacity         : {instance.QueueCapacity}");
+            output.WriteLine($"MaxConcurrentRuns     : {instance.MaxConcurrentRuns}");
+            output.WriteLine($"AvailableRunSlots     : {instance.AvailableRunSlots}");
+            output.WriteLine($"IsQueuePaused         : {instance.IsQueuePaused}");
+            output.WriteLine($"CanAcceptRun          : {instance.CanAcceptRun}");
+            output.WriteLine($"RegisteredAtUtc       : {instance.RegisteredAtUtc:O}");
+            output.WriteLine($"LastHeartbeatAtUtc    : {instance.LastHeartbeatAtUtc:O}");
+            output.WriteLine($"SnapshotAtUtc         : {instance.SnapshotAtUtc:O}");
+            output.WriteLine($"RuntimeVersion        : {instance.RuntimeVersion}");
+
+            if (instance.Metadata.Count > 0)
+            {
+                output.WriteLine("Metadata:");
+
+                foreach (var item in instance.Metadata)
+                {
+                    output.WriteLine($"  {item.Key}: {item.Value}");
+                }
             }
         }
     }

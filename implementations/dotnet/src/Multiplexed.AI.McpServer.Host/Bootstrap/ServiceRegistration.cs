@@ -1,8 +1,13 @@
-﻿using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Background;
+﻿using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
+using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Background;
 using Multiplexed.AI.Configuration;
+using Multiplexed.AI.DI.Engine;
 using Multiplexed.AI.McpServer.DependencyInjection;
 using Multiplexed.AI.McpServer.Host.Configuration;
+using Multiplexed.AI.Runtime;
 using Multiplexed.AI.Runtime.ControlPlane.DI;
+using Multiplexed.AI.Runtime.Execution.Instance.Worker;
+using Multiplexed.Sample.External.Plugins.Steps.Steps;
 
 namespace Multiplexed.AI.McpServer.Host.Bootstrap
 {
@@ -22,6 +27,9 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
 
             services.Configure<AiMcpHostOptions>(
                 configuration.GetSection("AiMcpHost"));
+
+            services.Configure<AiRuntimeInstanceRegistrationOptions>(
+                configuration.GetSection("AiRuntimeInstanceRegistration"));
 
             var hostOptions = configuration
                 .GetSection("AiMcpHost")
@@ -118,8 +126,15 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
                 options.WorkerId = "mcp-background-pump";
             });
 
-            // Future:
-            // Register local in-process runtime instances here.
+            services.AddAiStepsFromAssemblies(
+                typeof(AiRuntimeAssemblyMarker).Assembly,
+                typeof(DistributedChaosFlakyProviderStep).Assembly);
+
+            
+            services.AddHostedService<
+                AiRuntimePipelineBackgroundControllerHostedService>();   
+            
+            //services.AddAiRuntimeInstanceRegistrationHostedService();
         }
 
         private static void ConfigureRuntimeInstanceOnly(
@@ -141,8 +156,14 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
                 options.WorkerId = "runtime-instance-worker";
             });
 
-            // Future:
-            // Register runtime instance workers here.
+            services.AddAiStepsFromAssemblies(
+                typeof(AiRuntimeAssemblyMarker).Assembly,
+                typeof(DistributedChaosFlakyProviderStep).Assembly);
+
+            services.AddHostedService<
+                AiRuntimePipelineBackgroundControllerHostedService>();
+
+            services.AddAiRuntimeInstanceRegistrationHostedService();
         }
 
         private static void ConfigureSharedQueueBackgroundService(

@@ -39,6 +39,12 @@
             string failureReason,
             CancellationToken cancellationToken = default);
 
+        Task MarkCancelledAsync(
+            string runId,
+            string? executionId,
+            string? reason,
+            CancellationToken cancellationToken = default);
+
         Task<AiRuntimeRunExecutionIndexEntry?> GetAsync(
             string runId,
             CancellationToken cancellationToken = default);

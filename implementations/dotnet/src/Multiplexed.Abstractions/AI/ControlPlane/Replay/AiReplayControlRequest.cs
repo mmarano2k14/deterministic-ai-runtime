@@ -17,7 +17,7 @@
         /// <summary>
         /// Requested replay control-plane operation.
         /// </summary>
-        public required AiReplayOperation Operation { get; init; }
+        public required AiReplayOperation Operation { get; set; }
 
         /// <summary>
         /// Optional id used to correlate logs, metrics, traces, ledger entries,

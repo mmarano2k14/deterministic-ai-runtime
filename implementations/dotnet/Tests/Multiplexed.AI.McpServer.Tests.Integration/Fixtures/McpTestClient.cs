@@ -1,14 +1,17 @@
-﻿using System.Net.Http.Json;
-using System.Text.Json;
-using System.Text.Json.Serialization;
-using Multiplexed.Abstractions.AI.ControlPlane.Execution;
+﻿using Multiplexed.Abstractions.AI.ControlPlane.Execution;
 using Multiplexed.Abstractions.AI.ControlPlane.Replay;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Controller;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Pump;
+using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Queue;
 using Multiplexed.Abstractions.AI.Observability.Ledger;
 using Multiplexed.Abstractions.AI.Observability.Tracing;
+using Multiplexed.AI.McpServer.Models.Responses;
+using Multiplexed.AI.McpServer.Tools;
+using System.Net.Http.Json;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures
 {
@@ -96,6 +99,32 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures
             return CallToolAsync<AiSharedQueuePumpResult>(
                 "queue.drain",
                 request,
+                cancellationToken);
+        }
+
+        public Task<IReadOnlyList<AiSharedQueueItem>> ListSharedQueueAsync(
+            bool includeTerminal = true,
+            CancellationToken cancellationToken = default)
+        {
+            return CallToolAsync<IReadOnlyList<AiSharedQueueItem>>(
+                "shared_queue.list",
+                new
+                {
+                    includeTerminal
+                },
+                cancellationToken);
+        }
+
+        public Task<SharedQueueStatusResult> GetSharedQueueStatusAsync(
+            bool includeTerminal = true,
+            CancellationToken cancellationToken = default)
+        {
+            return CallToolAsync<SharedQueueStatusResult>(
+                "shared_queue.status",
+                new
+                {
+                    includeTerminal
+                },
                 cancellationToken);
         }
 
@@ -328,6 +357,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures
                 new { },
                 cancellationToken);
         }
+
+
 
         private async Task<T> CallToolAsync<T>(
             string toolName,

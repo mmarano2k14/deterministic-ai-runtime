@@ -13,6 +13,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\..\Samples\Multiplexed.Sample.External.Plugins.Steps\Multiplexed.Sample.External.Plugins.Steps.csproj" />
     <ProjectReference Include="..\Multiplexed.Abstractions\Multiplexed.Abstractions.csproj" />
     <ProjectReference Include="..\Multiplexed.AI.McpServer\Multiplexed.AI.McpServer.csproj" />
     <ProjectReference Include="..\Multiplexed.AI\Multiplexed.AI.csproj" />

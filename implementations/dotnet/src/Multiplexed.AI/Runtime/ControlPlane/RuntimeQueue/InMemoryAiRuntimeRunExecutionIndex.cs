@@ -6,16 +6,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue
     /// <summary>
     /// In-memory runtime run execution index.
     /// </summary>
-    /// <remarks>
-    /// PURPOSE:
-    /// - Tracks LocalRunId -> ExecutionId for one runtime process.
-    /// - Allows GetRunStatus / tests / observability to resolve a run even after
-    ///   the local queue item has been consumed by the background controller.
-    ///
-    /// IMPORTANT:
-    /// - This implementation is intended for tests, local mode, and in-process demos.
-    /// - A Redis-backed implementation can be added later for distributed/Kubernetes mode.
-    /// </remarks>
     public sealed class InMemoryAiRuntimeRunExecutionIndex : IAiRuntimeRunExecutionIndex
     {
         private readonly ConcurrentDictionary<string, AiRuntimeRunExecutionIndexEntry> _entries =
@@ -37,13 +27,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue
                 RunId = entry.RunId,
                 ExecutionId = entry.ExecutionId,
                 RuntimeInstanceId = entry.RuntimeInstanceId,
-                Status = string.IsNullOrWhiteSpace(entry.Status)
-                    ? "queued"
-                    : entry.Status,
+                Status = string.IsNullOrWhiteSpace(entry.Status) ? "queued" : entry.Status,
                 FailureReason = entry.FailureReason,
-                CreatedAtUtc = entry.CreatedAtUtc == default
-                    ? now
-                    : entry.CreatedAtUtc,
+                CreatedAtUtc = entry.CreatedAtUtc == default ? now : entry.CreatedAtUtc,
                 StartedAtUtc = entry.StartedAtUtc,
                 CompletedAtUtc = entry.CompletedAtUtc,
                 Metadata = entry.Metadata
@@ -160,6 +146,45 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue
                     RuntimeInstanceId = existing.RuntimeInstanceId,
                     Status = "failed",
                     FailureReason = failureReason,
+                    CreatedAtUtc = existing.CreatedAtUtc,
+                    StartedAtUtc = existing.StartedAtUtc,
+                    CompletedAtUtc = now,
+                    Metadata = existing.Metadata
+                });
+
+            return Task.CompletedTask;
+        }
+
+        public Task MarkCancelledAsync(
+            string runId,
+            string? executionId,
+            string? reason,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(runId);
+
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var now = DateTimeOffset.UtcNow;
+
+            _entries.AddOrUpdate(
+                runId,
+                _ => new AiRuntimeRunExecutionIndexEntry
+                {
+                    RunId = runId,
+                    ExecutionId = executionId,
+                    Status = "cancelled",
+                    FailureReason = reason,
+                    CreatedAtUtc = now,
+                    CompletedAtUtc = now
+                },
+                (_, existing) => new AiRuntimeRunExecutionIndexEntry
+                {
+                    RunId = existing.RunId,
+                    ExecutionId = executionId ?? existing.ExecutionId,
+                    RuntimeInstanceId = existing.RuntimeInstanceId,
+                    Status = "cancelled",
+                    FailureReason = reason,
                     CreatedAtUtc = existing.CreatedAtUtc,
                     StartedAtUtc = existing.StartedAtUtc,
                     CompletedAtUtc = now,

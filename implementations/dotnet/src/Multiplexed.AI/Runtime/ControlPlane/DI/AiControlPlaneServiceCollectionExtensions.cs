@@ -7,6 +7,7 @@ using Multiplexed.Abstractions.AI.ControlPlane.ExecutionAssistance;
 using Multiplexed.Abstractions.AI.ControlPlane.Observability;
 using Multiplexed.Abstractions.AI.ControlPlane.Replay;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Control;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Environment;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Controller;
@@ -23,6 +24,8 @@ using Multiplexed.AI.Runtime.ControlPlane.ExecutionAssistance;
 using Multiplexed.AI.Runtime.ControlPlane.Observability;
 using Multiplexed.AI.Runtime.ControlPlane.Replay;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Environment;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue;
 using Multiplexed.AI.Runtime.ControlPlane.SharedController;
 using Multiplexed.AI.Runtime.ControlPlane.SharedController.Store;
@@ -157,6 +160,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
 
             services.TryAddSingleton<IAiRuntimeInstanceRegistry, InMemoryAiRuntimeInstanceRegistry>();
             services.TryAddSingleton<IAiRuntimeInstanceControlPlane, AiRuntimeInstanceControlPlane>();
+            services.TryAddSingleton<IAiRuntimeEnvironmentProvider, LocalAiRuntimeEnvironmentProvider>();
 
             services.TryAddSingleton<IAiRunAdmissionController, AiRunAdmissionController>();
 
@@ -201,6 +205,37 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
 
             services.TryAddEnumerable(
                 ServiceDescriptor.Singleton<IHostedService, AiSharedQueueBackgroundService>());
+
+            return services;
+        }
+
+        /// <summary>
+        /// Registers the runtime instance registration hosted service.
+        ///
+        /// This service publishes runtime instance registration and heartbeats
+        /// used by MCP tools, dashboards, autoscaling, diagnostics, and future
+        /// Kubernetes controllers.
+        /// </summary>
+        /// <param name="services">The service collection.</param>
+        /// <param name="configure">Optional runtime instance registration options configuration.</param>
+        /// <returns>The same service collection for chaining.</returns>
+        public static IServiceCollection AddAiRuntimeInstanceRegistrationHostedService(
+            this IServiceCollection services,
+            Action<AiRuntimeInstanceRegistrationOptions>? configure = null)
+        {
+            ArgumentNullException.ThrowIfNull(services);
+
+            if (configure is null)
+            {
+                services.AddOptions<AiRuntimeInstanceRegistrationOptions>();
+            }
+            else
+            {
+                services.Configure(configure);
+            }
+
+            services.TryAddEnumerable(
+                ServiceDescriptor.Singleton<IHostedService, AiRuntimeInstanceRegistrationHostedService>());
 
             return services;
         }
