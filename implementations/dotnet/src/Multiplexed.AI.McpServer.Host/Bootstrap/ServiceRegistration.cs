@@ -134,7 +134,7 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
             services.AddHostedService<
                 AiRuntimePipelineBackgroundControllerHostedService>();   
             
-            //services.AddAiRuntimeInstanceRegistrationHostedService();
+            services.AddAiRuntimeInstanceRegistrationHostedService();
         }
 
         private static void ConfigureRuntimeInstanceOnly(

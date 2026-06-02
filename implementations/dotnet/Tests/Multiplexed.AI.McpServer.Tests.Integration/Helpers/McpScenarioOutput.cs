@@ -4,6 +4,7 @@ using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Controller;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Store;
+using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Activity;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Pump;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Queue;
 using Multiplexed.Abstractions.AI.Observability.Ledger;
@@ -803,6 +804,91 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Helpers
                     output.WriteLine($"  {item.Key}: {item.Value}");
                 }
             }
+        }
+
+        public static void WriteSharedQueueActivitySummary(
+    ITestOutputHelper output,
+    string scenarioName,
+    string pipelineName,
+    AiSharedQueueActivityResult activity)
+        {
+            output.WriteLine(
+                "===========================================================");
+
+            output.WriteLine(
+                "MCP SHARED QUEUE ACTIVITY SUMMARY");
+
+            output.WriteLine(
+                "===========================================================");
+
+            output.WriteLine(
+                $"Scenario              : {scenarioName}");
+
+            output.WriteLine(
+                $"PipelineName          : {pipelineName}");
+
+            output.WriteLine(
+                $"ActivityCount         : {activity.Count}");
+
+            output.WriteLine(
+                $"SnapshotAtUtc         : {activity.SnapshotAtUtc:O}");
+
+            output.WriteLine("");
+
+            output.WriteLine(
+                "RECENT SHARED RUN ACTIVITY");
+
+            output.WriteLine(
+                "-----------------------------------------------------------");
+
+            if (activity.Runs.Count == 0)
+            {
+                output.WriteLine(
+                    "No shared run activity found.");
+            }
+            else
+            {
+                foreach (var run in activity.Runs)
+                {
+                    output.WriteLine(
+                        $"SharedRunId           : {run.SharedRunId}");
+
+                    output.WriteLine(
+                        $"Status                : {run.Status}");
+
+                    output.WriteLine(
+                        $"PipelineKey           : {run.PipelineKey}");
+
+                    output.WriteLine(
+                        $"TenantId              : {run.TenantId}");
+
+                    output.WriteLine(
+                        $"AssignedInstanceId    : {run.AssignedRuntimeInstanceId}");
+
+                    output.WriteLine(
+                        $"LocalRunId            : {run.LocalRunId}");
+
+                    output.WriteLine(
+                        $"ExecutionId           : {run.ExecutionId}");
+
+                    output.WriteLine(
+                        $"CorrelationId         : {run.CorrelationId}");
+
+                    output.WriteLine(
+                        $"SubmittedAtUtc        : {run.SubmittedAtUtc:O}");
+
+                    output.WriteLine(
+                        $"UpdatedAtUtc          : {run.UpdatedAtUtc:O}");
+
+                    output.WriteLine(
+                        "-----------------------------------------------------------");
+                }
+            }
+
+            output.WriteLine(
+                "===========================================================");
+
+            output.WriteLine("");
         }
     }
 }

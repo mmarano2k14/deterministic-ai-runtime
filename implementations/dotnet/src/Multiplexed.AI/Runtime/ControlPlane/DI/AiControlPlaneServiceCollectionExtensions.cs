@@ -9,6 +9,7 @@ using Multiplexed.Abstractions.AI.ControlPlane.Replay;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Control;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Environment;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.SharedInstance;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Controller;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Dispatch;
@@ -26,6 +27,7 @@ using Multiplexed.AI.Runtime.ControlPlane.Replay;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Environment;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.SharedInstance;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue;
 using Multiplexed.AI.Runtime.ControlPlane.SharedController;
 using Multiplexed.AI.Runtime.ControlPlane.SharedController.Store;
@@ -161,6 +163,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
             services.TryAddSingleton<IAiRuntimeInstanceRegistry, InMemoryAiRuntimeInstanceRegistry>();
             services.TryAddSingleton<IAiRuntimeInstanceControlPlane, AiRuntimeInstanceControlPlane>();
             services.TryAddSingleton<IAiRuntimeEnvironmentProvider, LocalAiRuntimeEnvironmentProvider>();
+            services.TryAddSingleton<IAiSharedRuntimeInstanceRegistry,InMemoryAiSharedRuntimeInstanceRegistry>();
 
             services.TryAddSingleton<IAiRunAdmissionController, AiRunAdmissionController>();
 

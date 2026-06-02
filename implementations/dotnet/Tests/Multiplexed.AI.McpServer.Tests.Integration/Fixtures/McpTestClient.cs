@@ -3,6 +3,7 @@ using Multiplexed.Abstractions.AI.ControlPlane.Replay;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Controller;
+using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Activity;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Pump;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Queue;
 using Multiplexed.Abstractions.AI.Observability.Ledger;
@@ -293,6 +294,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures
                 cancellationToken);
         }
 
+
         public Task<AiReplayControlResult> GetReplayLedgerAsync(
             AiReplayControlRequest request,
             CancellationToken cancellationToken = default)
@@ -358,6 +360,16 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures
                 cancellationToken);
         }
 
+        public Task<AiSharedQueueActivityResult> GetSharedQueueActivityAsync(
+            AiSharedQueueActivityRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            return CallToolAsync<AiSharedQueueActivityResult>(
+                "shared_queue.activity",
+                request,
+                cancellationToken);
+        }
+
 
 
         private async Task<T> CallToolAsync<T>(
@@ -394,6 +406,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures
                 AiExecutionControlPlaneRequest request => new { request },
                 AiReplayControlRequest request => new { request },
                 AiDecisionLedgerQuery query => new { query },
+                AiSharedQueueActivityRequest request => new { request },
                 _ => arguments
             };
         }

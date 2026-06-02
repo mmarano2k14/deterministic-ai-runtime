@@ -1,6 +1,9 @@
 ﻿using Microsoft.Extensions.Hosting;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.SharedInstance;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue;
 using Multiplexed.Abstractions.AI.Execution.Instance.Worker;
 using Multiplexed.Abstractions.AI.Observability;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.SharedInstance;
 using Multiplexed.AI.Runtime.Observability.Logging;
 
 namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
@@ -13,8 +16,12 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
         : IHostedService
     {
         private readonly IAiRuntimePipelineBackgroundController controller;
+        private readonly IAiSharedRuntimeInstanceRegistry sharedRuntimeInstanceRegistry;
+        private readonly IAiRuntimeQueueControlPlane runtimeQueueControlPlane;
         private readonly IAiRuntimeLogger logger;
         private readonly IAiRuntimeObservability observability;
+
+        private string? registeredRuntimeInstanceId;
 
         /// <summary>
         /// Initializes a new instance of the
@@ -22,11 +29,19 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
         /// </summary>
         public AiRuntimePipelineBackgroundControllerHostedService(
             IAiRuntimePipelineBackgroundController controller,
+            IAiSharedRuntimeInstanceRegistry sharedRuntimeInstanceRegistry,
+            IAiRuntimeQueueControlPlane runtimeQueueControlPlane,
             IAiRuntimeLogger logger,
             IAiRuntimeObservability observability)
         {
             this.controller = controller
                 ?? throw new ArgumentNullException(nameof(controller));
+
+            this.sharedRuntimeInstanceRegistry = sharedRuntimeInstanceRegistry
+                ?? throw new ArgumentNullException(nameof(sharedRuntimeInstanceRegistry));
+
+            this.runtimeQueueControlPlane = runtimeQueueControlPlane
+                ?? throw new ArgumentNullException(nameof(runtimeQueueControlPlane));
 
             this.logger = logger
                 ?? throw new ArgumentNullException(nameof(logger));
@@ -46,8 +61,22 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
                 .StartAsync(cancellationToken)
                 .ConfigureAwait(false);
 
+            var queueState = await controller
+                .GetQueueStateAsync(cancellationToken)
+                .ConfigureAwait(false);
+
+            registeredRuntimeInstanceId = queueState.RuntimeInstanceId;
+
+            await sharedRuntimeInstanceRegistry
+                .RegisterAsync(
+                    new LocalAiSharedRuntimeInstance(
+                        registeredRuntimeInstanceId,
+                        runtimeQueueControlPlane),
+                    cancellationToken)
+                .ConfigureAwait(false);
+
             logger.Engine.LogInformation(
-                "[AI PIPELINE CONTROLLER HOSTED SERVICE] Background controller started.");
+                $"[AI PIPELINE CONTROLLER HOSTED SERVICE] Background controller started and shared runtime instance registered. RuntimeInstanceId='{registeredRuntimeInstanceId}'.");
 
             /*
             observability.Metrics.Execution.RecordExecutionEvent(
@@ -62,14 +91,23 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
             logger.Engine.LogInformation(
                 "[AI PIPELINE CONTROLLER HOSTED SERVICE] Stopping background controller.");
 
+            if (!string.IsNullOrWhiteSpace(registeredRuntimeInstanceId))
+            {
+                await sharedRuntimeInstanceRegistry
+                    .UnregisterAsync(
+                        registeredRuntimeInstanceId,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+            }
+
             await controller
                 .StopAsync(cancellationToken)
                 .ConfigureAwait(false);
 
             logger.Engine.LogInformation(
-                "[AI PIPELINE CONTROLLER HOSTED SERVICE] Background controller stopped.");
-            
-            /*  
+                $"[AI PIPELINE CONTROLLER HOSTED SERVICE] Background controller stopped and shared runtime instance unregistered. RuntimeInstanceId='{registeredRuntimeInstanceId}'.");
+
+            /*
             observability.Metrics.Execution.RecordExecutionEvent(
                 "pipeline-controller-stopped");
             */
