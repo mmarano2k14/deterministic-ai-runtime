@@ -11,11 +11,6 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
     /// </summary>
     public static class ServiceRegistration
     {
-        /// <summary>
-        /// Registers services.
-        /// </summary>
-        /// <param name="services">The service collection.</param>
-        /// <param name="configuration">The configuration.</param>
         public static void Configure(
             IServiceCollection services,
             IConfiguration configuration)
@@ -74,7 +69,13 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
             IServiceCollection services,
             AiMcpHostOptions hostOptions)
         {
-            services.AddAiControlPlane();
+            services.AddAiControlPlane(
+                configureAdmission: options =>
+                {
+                    options.EnableScaleOutRequest = false;
+                    options.EnableGlobalQueueFallback = true;
+                    options.RejectWhenNoCapacity = false;
+                });
 
             services.AddAiMcpServer();
 
@@ -95,7 +96,13 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
             IServiceCollection services,
             AiMcpHostOptions hostOptions)
         {
-            services.AddAiControlPlane();
+            services.AddAiControlPlane(
+                configureAdmission: options =>
+                {
+                    options.EnableScaleOutRequest = false;
+                    options.EnableGlobalQueueFallback = true;
+                    options.RejectWhenNoCapacity = false;
+                });
 
             services.AddAiMcpServer();
 

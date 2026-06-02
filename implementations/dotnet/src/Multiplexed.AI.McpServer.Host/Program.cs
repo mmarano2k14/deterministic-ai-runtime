@@ -5,7 +5,7 @@ namespace Multiplexed.AI.McpServer.Host
     /// <summary>
     /// Application entry point.
     /// </summary>
-    public static class Program
+    public partial class Program 
     {
         /// <summary>
         /// Application entry point.
