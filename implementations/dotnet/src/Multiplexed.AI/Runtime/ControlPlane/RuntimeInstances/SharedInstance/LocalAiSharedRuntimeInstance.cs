@@ -1,5 +1,6 @@
 ﻿using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.SharedInstance;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.SharedInstance
 {
@@ -28,6 +29,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.SharedInstance
     public sealed class LocalAiSharedRuntimeInstance : IAiSharedRuntimeInstance
     {
         private readonly IAiRuntimeQueueControlPlane _runtimeQueue;
+        public IAiRuntimeQueueControlPlane QueueControlPlane { get; }
 
         public LocalAiSharedRuntimeInstance(
             string runtimeInstanceId,
@@ -38,6 +40,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.SharedInstance
 
             RuntimeInstanceId = runtimeInstanceId;
             _runtimeQueue = runtimeQueue;
+            QueueControlPlane = runtimeQueue;
         }
 
         /// <inheritdoc />

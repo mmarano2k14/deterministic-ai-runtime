@@ -1,4 +1,6 @@
-﻿namespace Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.SharedInstance
+﻿using Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue;
+
+namespace Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.SharedInstance
 {
     /// <summary>
     /// Represents a runtime instance that can be addressed by the shared control-plane.
@@ -24,6 +26,11 @@
         /// Gets the runtime instance identifier.
         /// </summary>
         string RuntimeInstanceId { get; }
+
+        /// <summary>
+        /// Gets the runtime queue control-plane associated with this runtime instance.
+        /// </summary>
+        IAiRuntimeQueueControlPlane QueueControlPlane { get; }
 
         /// <summary>
         /// Dispatches a shared run to this runtime instance.

@@ -1,6 +1,8 @@
-﻿using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
+﻿using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Pool;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Background;
 using Multiplexed.AI.Configuration;
+using Multiplexed.AI.ControlPlane.RuntimeInstances.Pool;
 using Multiplexed.AI.DI.Engine;
 using Multiplexed.AI.McpServer.DependencyInjection;
 using Multiplexed.AI.McpServer.Host.Configuration;
@@ -30,6 +32,9 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
 
             services.Configure<AiRuntimeInstanceRegistrationOptions>(
                 configuration.GetSection("AiRuntimeInstanceRegistration"));
+
+            services.Configure<AiLocalRuntimeInstancePoolOptions>(
+                configuration.GetSection("AiLocalRuntimeInstancePool"));
 
             var hostOptions = configuration
                 .GetSection("AiMcpHost")
@@ -130,10 +135,13 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
                 typeof(AiRuntimeAssemblyMarker).Assembly,
                 typeof(DistributedChaosFlakyProviderStep).Assembly);
 
-            
+            /*
             services.AddHostedService<
-                AiRuntimePipelineBackgroundControllerHostedService>();   
-            
+                AiRuntimePipelineBackgroundControllerHostedService>();
+            */
+
+            services.AddAiLocalRuntimeInstancePool();
+
             services.AddAiRuntimeInstanceRegistrationHostedService();
         }
 

@@ -1,6 +1,7 @@
 ﻿using System.ComponentModel;
 using Microsoft.Extensions.Logging;
 using ModelContextProtocol.Server;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.SharedInstance;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue;
 
 namespace Multiplexed.AI.McpServer.Tools
@@ -9,26 +10,34 @@ namespace Multiplexed.AI.McpServer.Tools
     /// Exposes MCP tools related to local runtime queue control-plane operations.
     /// </summary>
     /// <remarks>
-    /// This tool class controls the local runtime queue through the existing control-plane abstraction.
-    /// It does not execute DAG steps, claim work, or access queue internals directly.
+    /// This tool class controls runtime queues through the existing control-plane abstraction.
+    /// When a runtime instance id is provided, operations are routed to the matching
+    /// shared runtime instance endpoint. Otherwise, the root runtime queue control-plane
+    /// is used as a fallback.
     /// </remarks>
     [McpServerToolType]
     public sealed class RuntimeQueueMcpTools
     {
         private readonly IAiRuntimeQueueControlPlane runtimeQueueControlPlane;
+        private readonly IAiSharedRuntimeInstanceRegistry sharedRuntimeInstanceRegistry;
         private readonly ILogger<RuntimeQueueMcpTools> logger;
 
         /// <summary>
         /// Initializes a new instance of the <see cref="RuntimeQueueMcpTools"/> class.
         /// </summary>
-        /// <param name="runtimeQueueControlPlane">The local runtime queue control-plane.</param>
+        /// <param name="runtimeQueueControlPlane">The root runtime queue control-plane.</param>
+        /// <param name="sharedRuntimeInstanceRegistry">The shared runtime instance registry.</param>
         /// <param name="logger">The logger.</param>
         public RuntimeQueueMcpTools(
             IAiRuntimeQueueControlPlane runtimeQueueControlPlane,
+            IAiSharedRuntimeInstanceRegistry sharedRuntimeInstanceRegistry,
             ILogger<RuntimeQueueMcpTools> logger)
         {
             this.runtimeQueueControlPlane = runtimeQueueControlPlane
                 ?? throw new ArgumentNullException(nameof(runtimeQueueControlPlane));
+
+            this.sharedRuntimeInstanceRegistry = sharedRuntimeInstanceRegistry
+                ?? throw new ArgumentNullException(nameof(sharedRuntimeInstanceRegistry));
 
             this.logger = logger
                 ?? throw new ArgumentNullException(nameof(logger));
@@ -54,7 +63,13 @@ namespace Multiplexed.AI.McpServer.Tools
                 request.CorrelationId,
                 request.RequestedBy);
 
-            return await runtimeQueueControlPlane
+            var controlPlane =
+                await ResolveRuntimeQueueControlPlaneAsync(
+                        request.RuntimeInstanceId,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+            return await controlPlane
                 .GetQueueStatusAsync(request, cancellationToken)
                 .ConfigureAwait(false);
         }
@@ -80,7 +95,13 @@ namespace Multiplexed.AI.McpServer.Tools
                 request.CorrelationId,
                 request.RequestedBy);
 
-            return await runtimeQueueControlPlane
+            var controlPlane =
+                await ResolveRuntimeQueueControlPlaneAsync(
+                        request.RuntimeInstanceId,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+            return await controlPlane
                 .GetRunStatusAsync(request, cancellationToken)
                 .ConfigureAwait(false);
         }
@@ -105,7 +126,13 @@ namespace Multiplexed.AI.McpServer.Tools
                 request.Reason,
                 request.RequestedBy);
 
-            return await runtimeQueueControlPlane
+            var controlPlane =
+                await ResolveRuntimeQueueControlPlaneAsync(
+                        request.RuntimeInstanceId,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+            return await controlPlane
                 .PauseQueueAsync(request, cancellationToken)
                 .ConfigureAwait(false);
         }
@@ -130,7 +157,13 @@ namespace Multiplexed.AI.McpServer.Tools
                 request.Reason,
                 request.RequestedBy);
 
-            return await runtimeQueueControlPlane
+            var controlPlane =
+                await ResolveRuntimeQueueControlPlaneAsync(
+                        request.RuntimeInstanceId,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+            return await controlPlane
                 .ResumeQueueAsync(request, cancellationToken)
                 .ConfigureAwait(false);
         }
@@ -156,7 +189,13 @@ namespace Multiplexed.AI.McpServer.Tools
                 request.Reason,
                 request.RequestedBy);
 
-            return await runtimeQueueControlPlane
+            var controlPlane =
+                await ResolveRuntimeQueueControlPlaneAsync(
+                        request.RuntimeInstanceId,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+            return await controlPlane
                 .CancelRunAsync(request, cancellationToken)
                 .ConfigureAwait(false);
         }
@@ -182,9 +221,47 @@ namespace Multiplexed.AI.McpServer.Tools
                 request.Reason,
                 request.RequestedBy);
 
-            return await runtimeQueueControlPlane
+            var controlPlane =
+                await ResolveRuntimeQueueControlPlaneAsync(
+                        request.RuntimeInstanceId,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+            return await controlPlane
                 .CancelQueuedRunAsync(request, cancellationToken)
                 .ConfigureAwait(false);
+        }
+
+        /// <summary>
+        /// Resolves the runtime queue control-plane for a runtime instance.
+        /// </summary>
+        /// <param name="runtimeInstanceId">The runtime instance identifier.</param>
+        /// <param name="cancellationToken">A token used to cancel the operation.</param>
+        /// <returns>The resolved runtime queue control-plane.</returns>
+        private async Task<IAiRuntimeQueueControlPlane> ResolveRuntimeQueueControlPlaneAsync(
+            string? runtimeInstanceId,
+            CancellationToken cancellationToken)
+        {
+            if (string.IsNullOrWhiteSpace(runtimeInstanceId))
+            {
+                return runtimeQueueControlPlane;
+            }
+
+            var sharedRuntimeInstance =
+                await sharedRuntimeInstanceRegistry
+                    .GetAsync(runtimeInstanceId, cancellationToken)
+                    .ConfigureAwait(false);
+
+            if (sharedRuntimeInstance is null)
+            {
+                logger.LogWarning(
+                    "Runtime instance not found in shared registry. Falling back to root runtime queue control-plane. RuntimeInstanceId={RuntimeInstanceId}",
+                    runtimeInstanceId);
+
+                return runtimeQueueControlPlane;
+            }
+
+            return sharedRuntimeInstance.QueueControlPlane;
         }
     }
 }
