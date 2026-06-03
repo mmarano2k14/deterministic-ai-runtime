@@ -23,7 +23,7 @@
         /// <summary>
         /// Gets or sets the MCP control-plane runtime instance identifier.
         /// </summary>
-        public string RuntimeInstanceId { get; set; } = "mcp-control-plane";
+        public string RuntimeInstanceId { get; set; } = "";
 
         /// <summary>
         /// Gets or sets the MCP control-plane worker identifier.

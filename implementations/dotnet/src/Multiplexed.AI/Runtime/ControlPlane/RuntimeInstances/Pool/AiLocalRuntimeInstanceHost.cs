@@ -1,4 +1,6 @@
-﻿using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Pool;
+﻿using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Pool;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.SharedInstance;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue;
 using Multiplexed.Abstractions.AI.Execution.Instance.Worker;
@@ -8,26 +10,11 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
     /// <summary>
     /// Represents a locally hosted runtime instance.
     /// </summary>
-    /// <remarks>
-    /// PURPOSE:
-    /// - Encapsulates a logical runtime instance.
-    /// - Owns a runtime controller.
-    /// - Owns a local runtime queue.
-    /// - Owns a set of workers.
-    /// - Can be registered into a shared runtime registry.
-    ///
-    /// IMPORTANT:
-    /// - Multiple local runtime instances may coexist inside a single process.
-    /// - Each runtime instance should have a unique RuntimeInstanceId.
-    /// - Future implementations may create isolated service providers per instance.
-    /// </remarks>
     public sealed class AiLocalRuntimeInstanceHost :
         IAiLocalRuntimeInstanceHost
     {
-        /// <summary>
-        /// Initializes a new instance of the
-        /// <see cref="AiLocalRuntimeInstanceHost"/> class.
-        /// </summary>
+        private readonly List<IHostedService> hostedServices = new();
+
         public AiLocalRuntimeInstanceHost(
             string runtimeInstanceId,
             int workerCount,
@@ -59,49 +46,65 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
                 ?? throw new ArgumentNullException(nameof(sharedRuntimeInstance));
         }
 
-        /// <summary>
-        /// Gets the runtime instance identifier.
-        /// </summary>
         public string RuntimeInstanceId { get; }
 
-        /// <summary>
-        /// Gets the worker count assigned to the runtime instance.
-        /// </summary>
         public int WorkerCount { get; }
 
-        /// <summary>
-        /// Gets the service provider associated with the runtime instance.
-        /// </summary>
         public IServiceProvider ServiceProvider { get; }
 
-        /// <inheritdoc />
         public IAiRuntimePipelineBackgroundController Controller { get; }
 
-        /// <inheritdoc />
         public IAiRuntimeQueueControlPlane QueueControlPlane { get; }
 
-        /// <inheritdoc />
         public IAiSharedRuntimeInstance SharedRuntimeInstance { get; }
 
-        /// <inheritdoc />
         public async Task StartAsync(
             CancellationToken cancellationToken = default)
         {
-            await Controller
-                .StartAsync(cancellationToken)
-                .ConfigureAwait(false);
+            hostedServices.Clear();
+
+            hostedServices.AddRange(
+                ServiceProvider.GetServices<IHostedService>());
+
+            if (hostedServices.Count == 0)
+            {
+                await Controller
+                    .StartAsync(cancellationToken)
+                    .ConfigureAwait(false);
+
+                return;
+            }
+
+            foreach (var hostedService in hostedServices)
+            {
+                await hostedService
+                    .StartAsync(cancellationToken)
+                    .ConfigureAwait(false);
+            }
         }
 
-        /// <inheritdoc />
         public async Task StopAsync(
             CancellationToken cancellationToken = default)
         {
+            if (hostedServices.Count > 0)
+            {
+                foreach (var hostedService in hostedServices.AsEnumerable().Reverse())
+                {
+                    await hostedService
+                        .StopAsync(cancellationToken)
+                        .ConfigureAwait(false);
+                }
+
+                hostedServices.Clear();
+
+                return;
+            }
+
             await Controller
                 .StopAsync(cancellationToken)
                 .ConfigureAwait(false);
         }
 
-        /// <inheritdoc />
         public async ValueTask DisposeAsync()
         {
             await StopAsync()

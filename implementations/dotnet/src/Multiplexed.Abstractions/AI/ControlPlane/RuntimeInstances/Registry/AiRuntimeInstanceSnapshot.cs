@@ -115,5 +115,7 @@
         /// </summary>
         public IReadOnlyDictionary<string, string> Metadata { get; init; } =
             new Dictionary<string, string>();
+
+        public AiRuntimeInstanceRole Role { get; set; } = AiRuntimeInstanceRole.Runtime;
     }
 }

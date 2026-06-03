@@ -288,6 +288,9 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
                 await _queue.Writer.WriteAsync(
                     queuedRun,
                     cancellationToken).ConfigureAwait(false);
+
+                Console.WriteLine(
+                     $"[AI PIPELINE CONTROLLER] ENQUEUED RuntimeInstanceId='{_runtimeInstanceIdentity.RuntimeInstanceId}' RunId='{runId}'");
             }
             catch
             {
@@ -509,10 +512,16 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
             _logger.Engine.LogInformation(
                 "[AI PIPELINE CONTROLLER] Background loop started.");
 
+            Console.WriteLine(
+                $"[AI PIPELINE CONTROLLER] LOOP START RuntimeInstanceId='{_runtimeInstanceIdentity.RuntimeInstanceId}'");
+
             try
             {
                 await foreach (var queuedRun in _queue.Reader.ReadAllAsync(cancellationToken).ConfigureAwait(false))
                 {
+                    Console.WriteLine(
+                        $"[AI PIPELINE CONTROLLER] DEQUEUED RuntimeInstanceId='{_runtimeInstanceIdentity.RuntimeInstanceId}' RunId='{queuedRun.Handle.RunId}'");
+
                     if (queuedRun.Handle.Status == AiRuntimeWorkerRunStatus.Cancelled)
                     {
                         _queuedRuns.TryRemove(
@@ -762,7 +771,7 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
 
             return Task.FromResult(new AiRuntimePipelineQueueState
             {
-                RuntimeInstanceId = _observability.Correlation?.Current?.RuntimeInstanceId,
+                RuntimeInstanceId = _runtimeInstanceIdentity.RuntimeInstanceId,
                 IsPaused = _queuePaused,
                 QueuedRunCount = queuedRunCount,
                 RunningRunCount = runningRunCount,

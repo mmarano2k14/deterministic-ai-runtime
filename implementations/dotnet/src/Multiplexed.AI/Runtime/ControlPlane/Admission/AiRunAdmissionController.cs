@@ -19,14 +19,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission
         private readonly IAiRuntimeInstanceRegistry _registry;
         private readonly AiRunAdmissionOptions _options;
 
-        /// <summary>
-        /// Initializes a new instance of the <see cref="AiRunAdmissionController"/> class.
-        /// </summary>
-        /// <param name="registry">The runtime instance registry used to inspect visible instances.</param>
-        /// <param name="options">The run admission policy options.</param>
-        /// <exception cref="ArgumentNullException">
-        /// Thrown when <paramref name="registry"/> or <paramref name="options"/> is null.
-        /// </exception>
         public AiRunAdmissionController(
             IAiRuntimeInstanceRegistry registry,
             IOptions<AiRunAdmissionOptions> options)
@@ -35,7 +27,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission
             _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
         }
 
-        /// <inheritdoc />
         public async Task<AiRunAdmissionDecision> AdmitAsync(
             AiRunAdmissionRequest request,
             CancellationToken cancellationToken = default)
@@ -63,6 +54,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission
                 .ToArray();
 
             var available = candidates
+                .Where(instance => instance.Role == AiRuntimeInstanceRole.Runtime)
                 .Where(instance => instance.CanAcceptRun)
                 .OrderBy(instance => instance.RunningRunCount)
                 .ThenBy(instance => instance.QueuedRunCount)
@@ -127,13 +119,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission
                 availableInstances: available);
         }
 
-        /// <summary>
-        /// Determines whether a runtime instance is eligible for admission.
-        /// </summary>
-        /// <param name="instance">The runtime instance snapshot.</param>
-        /// <returns>
-        /// <c>true</c> when the instance may be considered for run admission; otherwise, <c>false</c>.
-        /// </returns>
         private bool IsEligibleForAdmission(
             AiRuntimeInstanceSnapshot instance)
         {
@@ -165,12 +150,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission
                 AiRuntimeInstanceStatus.Unknown;
         }
 
-        /// <summary>
-        /// Attempts to select the requested preferred runtime instance.
-        /// </summary>
-        /// <param name="request">The admission request.</param>
-        /// <param name="availableInstances">The available runtime instances.</param>
-        /// <returns>The preferred instance when available; otherwise, <c>null</c>.</returns>
         private AiRuntimeInstanceSnapshot? TrySelectPreferredInstance(
             AiRunAdmissionRequest request,
             IReadOnlyCollection<AiRuntimeInstanceSnapshot> availableInstances)
@@ -188,13 +167,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission
                     StringComparison.Ordinal));
         }
 
-        /// <summary>
-        /// Determines whether admission should request runtime instance scale-out.
-        /// </summary>
-        /// <param name="currentInstanceCount">The current visible runtime instance count.</param>
-        /// <returns>
-        /// <c>true</c> when scale-out should be requested; otherwise, <c>false</c>.
-        /// </returns>
         private bool ShouldRequestScaleOut(
             int currentInstanceCount)
         {
@@ -211,14 +183,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission
             return currentInstanceCount < _options.MaxInstanceCount.Value;
         }
 
-        /// <summary>
-        /// Creates an assignment admission decision.
-        /// </summary>
-        /// <param name="instance">The selected runtime instance.</param>
-        /// <param name="visibleInstances">The visible runtime instances.</param>
-        /// <param name="availableInstances">The available runtime instances.</param>
-        /// <param name="reason">The decision reason.</param>
-        /// <returns>The admission decision.</returns>
         private AiRunAdmissionDecision CreateAssignmentDecision(
             AiRuntimeInstanceSnapshot instance,
             IReadOnlyCollection<AiRuntimeInstanceSnapshot> visibleInstances,
@@ -245,14 +209,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission
             };
         }
 
-        /// <summary>
-        /// Creates a non-assignment admission decision.
-        /// </summary>
-        /// <param name="decisionType">The decision type.</param>
-        /// <param name="reason">The decision reason.</param>
-        /// <param name="visibleInstances">The visible runtime instances.</param>
-        /// <param name="availableInstances">The available runtime instances.</param>
-        /// <returns>The admission decision.</returns>
         private AiRunAdmissionDecision CreateDecision(
             AiRunAdmissionDecisionType decisionType,
             string reason,

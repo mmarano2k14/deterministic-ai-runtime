@@ -58,13 +58,22 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances
 
             var now = DateTimeOffset.UtcNow;
 
+            var effectiveCanAcceptRun =
+                existing.Role == AiRuntimeInstanceRole.Runtime &&
+                canAcceptRun;
+
+            var effectiveAvailableRunSlots =
+                existing.Role == AiRuntimeInstanceRole.Runtime
+                    ? availableRunSlots
+                    : 0;
+
             var updated = existing.UpdateHeartbeat(
                 queuedRunCount,
                 runningRunCount,
                 activeRunCount,
-                availableRunSlots,
+                effectiveAvailableRunSlots,
                 isQueuePaused,
-                canAcceptRun,
+                effectiveCanAcceptRun,
                 status,
                 now);
 
@@ -155,13 +164,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances
                 updated.ToSnapshot(now));
         }
 
-        /// <summary>
-        /// Mutable-free internal registry entry.
-        /// </summary>
         private sealed class RuntimeInstanceEntry
         {
             private RuntimeInstanceEntry(
                 string runtimeInstanceId,
+                AiRuntimeInstanceRole role,
                 AiRuntimeInstanceStatus status,
                 string? hostName,
                 int? processId,
@@ -183,6 +190,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances
                 IReadOnlyDictionary<string, string> metadata)
             {
                 RuntimeInstanceId = runtimeInstanceId;
+                Role = role;
                 Status = status;
                 HostName = hostName;
                 ProcessId = processId;
@@ -205,6 +213,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances
             }
 
             public string RuntimeInstanceId { get; }
+
+            public AiRuntimeInstanceRole Role { get; }
 
             public AiRuntimeInstanceStatus Status { get; }
 
@@ -248,8 +258,12 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances
                 AiRuntimeInstanceRegistration registration,
                 DateTimeOffset now)
             {
+                var canAcceptRun =
+                    registration.Role == AiRuntimeInstanceRole.Runtime;
+
                 return new RuntimeInstanceEntry(
                     registration.RuntimeInstanceId,
+                    registration.Role,
                     AiRuntimeInstanceStatus.Ready,
                     registration.HostName,
                     registration.ProcessId,
@@ -262,9 +276,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances
                     activeRunCount: 0,
                     registration.QueueCapacity,
                     registration.MaxConcurrentRuns,
-                    availableRunSlots: registration.MaxConcurrentRuns,
+                    availableRunSlots: canAcceptRun
+                        ? registration.MaxConcurrentRuns
+                        : 0,
                     isQueuePaused: false,
-                    canAcceptRun: true,
+                    canAcceptRun: canAcceptRun,
                     now,
                     now,
                     registration.RuntimeVersion,
@@ -275,8 +291,13 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances
                 AiRuntimeInstanceRegistration registration,
                 DateTimeOffset now)
             {
+                var canAcceptRun =
+                    registration.Role == AiRuntimeInstanceRole.Runtime &&
+                    CanAcceptRun;
+
                 return new RuntimeInstanceEntry(
                     registration.RuntimeInstanceId,
+                    registration.Role,
                     Status == AiRuntimeInstanceStatus.Stopped
                         ? AiRuntimeInstanceStatus.Ready
                         : Status,
@@ -291,9 +312,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances
                     ActiveRunCount,
                     registration.QueueCapacity,
                     registration.MaxConcurrentRuns,
-                    AvailableRunSlots,
+                    registration.Role == AiRuntimeInstanceRole.Runtime
+                        ? AvailableRunSlots
+                        : 0,
                     IsQueuePaused,
-                    CanAcceptRun,
+                    canAcceptRun,
                     RegisteredAtUtc,
                     now,
                     registration.RuntimeVersion,
@@ -312,6 +335,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances
             {
                 return new RuntimeInstanceEntry(
                     RuntimeInstanceId,
+                    Role,
                     status,
                     HostName,
                     ProcessId,
@@ -339,6 +363,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances
             {
                 return new RuntimeInstanceEntry(
                     RuntimeInstanceId,
+                    Role,
                     status,
                     HostName,
                     ProcessId,
@@ -366,6 +391,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances
                 return new AiRuntimeInstanceSnapshot
                 {
                     RuntimeInstanceId = RuntimeInstanceId,
+                    Role = Role,
                     Status = Status,
                     HostName = HostName,
                     ProcessId = ProcessId,

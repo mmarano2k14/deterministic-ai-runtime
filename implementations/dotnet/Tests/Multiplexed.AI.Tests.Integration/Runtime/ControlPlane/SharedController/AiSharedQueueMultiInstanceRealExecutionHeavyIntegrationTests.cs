@@ -1,4 +1,5 @@
 ﻿using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.ControlPlane.Admission;
 using Multiplexed.Abstractions.AI.ControlPlane.ExecutionAssistance;
@@ -319,7 +320,8 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedController
 
                 var remoteSharedRunDispatcher =
                     new RemoteAiSharedRunDispatcher(
-                        sharedRuntimeInstanceRegistry);
+                        sharedRuntimeInstanceRegistry,
+                        NullLogger<RemoteAiSharedRunDispatcher>.Instance);
 
                 var sharedRunId =
                     $"shared-run-{scenario.ScenarioId}-00000";
@@ -552,7 +554,8 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedController
 
                 var remoteSharedRunDispatcher =
                     new RemoteAiSharedRunDispatcher(
-                        sharedRuntimeInstanceRegistry);
+                        sharedRuntimeInstanceRegistry,
+                        NullLogger<RemoteAiSharedRunDispatcher>.Instance);
 
                 var sharedRunId =
                     $"shared-run-{scenario.ScenarioId}-00000";
@@ -812,7 +815,8 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedController
 
                 var remoteSharedRunDispatcher =
                     new RemoteAiSharedRunDispatcher(
-                        sharedRuntimeInstanceRegistry);
+                        sharedRuntimeInstanceRegistry,
+                        NullLogger<RemoteAiSharedRunDispatcher>.Instance);
 
                 var sharedRunIdPrefix =
                     $"shared-run-{scenario.ScenarioId}-";

@@ -1,5 +1,7 @@
-﻿using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Pool;
+﻿using Microsoft.Extensions.DependencyInjection.Extensions;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Pool;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
+using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Dispatch;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Background;
 using Multiplexed.AI.Configuration;
 using Multiplexed.AI.ControlPlane.RuntimeInstances.Pool;
@@ -8,6 +10,7 @@ using Multiplexed.AI.McpServer.DependencyInjection;
 using Multiplexed.AI.McpServer.Host.Configuration;
 using Multiplexed.AI.Runtime;
 using Multiplexed.AI.Runtime.ControlPlane.DI;
+using Multiplexed.AI.Runtime.ControlPlane.SharedController.Dispatch;
 using Multiplexed.AI.Runtime.Execution.Instance.Worker;
 using Multiplexed.Sample.External.Plugins.Steps.Steps;
 
@@ -88,6 +91,7 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
                     options.EnableScaleOutRequest = false;
                     options.EnableGlobalQueueFallback = true;
                     options.RejectWhenNoCapacity = false;
+
                 });
 
             services.AddAiMcpServer();
@@ -100,14 +104,21 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
             {
                 options.Enabled = true;
                 options.EnableSharedQueuePump = hostOptions.EnableSharedQueuePump;
-                options.RuntimeInstanceId = "mcp-control-plane";
                 options.WorkerId = "mcp-background-pump";
+
+            });
+
+            services.AddAiRuntimeInstanceRegistrationHostedService(options =>
+            {
+                options.Enabled = true;
+                options.RuntimeInstanceId = "mcp-control-plane";
+                options.Role = AiRuntimeInstanceRole.ControlPlane;
             });
         }
 
         private static void ConfigureControlPlaneWithLocalRuntimeInstances(
-            IServiceCollection services,
-            AiMcpHostOptions hostOptions)
+    IServiceCollection services,
+    AiMcpHostOptions hostOptions)
         {
             services.AddAiControlPlane(
                 configureAdmission: options =>
@@ -116,6 +127,9 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
                     options.EnableGlobalQueueFallback = true;
                     options.RejectWhenNoCapacity = false;
                 });
+
+            services.RemoveAll<IAiSharedRunDispatcher>();
+            services.AddSingleton<IAiSharedRunDispatcher, RemoteAiSharedRunDispatcher>();
 
             services.AddAiMcpServer();
 
@@ -135,14 +149,14 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
                 typeof(AiRuntimeAssemblyMarker).Assembly,
                 typeof(DistributedChaosFlakyProviderStep).Assembly);
 
-            /*
-            services.AddHostedService<
-                AiRuntimePipelineBackgroundControllerHostedService>();
-            */
-
             services.AddAiLocalRuntimeInstancePool();
 
-            services.AddAiRuntimeInstanceRegistrationHostedService();
+            services.AddAiRuntimeInstanceRegistrationHostedService(options =>
+            {
+                options.Enabled = true;
+                options.RuntimeInstanceId = "mcp-control-plane";
+                options.Role = AiRuntimeInstanceRole.ControlPlane;
+            });
         }
 
         private static void ConfigureRuntimeInstanceOnly(
@@ -168,8 +182,7 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
                 typeof(AiRuntimeAssemblyMarker).Assembly,
                 typeof(DistributedChaosFlakyProviderStep).Assembly);
 
-            services.AddHostedService<
-                AiRuntimePipelineBackgroundControllerHostedService>();
+            services.AddHostedService<AiRuntimePipelineBackgroundControllerHostedService>();
 
             services.AddAiRuntimeInstanceRegistrationHostedService();
         }

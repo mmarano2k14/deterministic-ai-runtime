@@ -56,8 +56,14 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
                 logger.LogInformation(
                     "Runtime instance registration is disabled.");
 
+                Console.WriteLine(
+                    "[RUNTIME REGISTRATION] DISABLED");
+
                 return;
             }
+
+            Console.WriteLine(
+                $"[RUNTIME REGISTRATION] START SERVICE RegistryType='{registry.GetType().FullName}' RegistryHash='{registry.GetHashCode()}'");
 
             await RegisterRuntimeInstanceAsync(
                     cancellationToken)
@@ -94,6 +100,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
                     logger.LogError(
                         ex,
                         "Failed to publish runtime instance heartbeat.");
+
+                    Console.WriteLine(
+                        $"[RUNTIME REGISTRATION] HEARTBEAT EXCEPTION RuntimeInstanceId='{runtimeInstanceId}' Exception='{ex}'");
                 }
 
                 await Task.Delay(
@@ -135,10 +144,30 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
             runtimeInstanceId =
                 ResolveRuntimeInstanceId(environment);
 
+            Console.WriteLine(
+                $"[RUNTIME REGISTRATION] RESOLVED RuntimeInstanceId='{runtimeInstanceId}' " +
+                $"OptionsRuntimeInstanceId='{options.RuntimeInstanceId}' " +
+                $"EnvironmentRuntimeInstanceId='{environment.RuntimeInstanceId}' " +
+                $"HostName='{environment.HostName}' " +
+                $"ProcessId='{environment.ProcessId}' " +
+                $"RegistryType='{registry.GetType().FullName}' " +
+                $"RegistryHash='{registry.GetHashCode()}'");
+
             var queueState =
                 await controller
                     .GetQueueStateAsync(cancellationToken)
                     .ConfigureAwait(false);
+
+            Console.WriteLine(
+                $"[RUNTIME REGISTRATION] QUEUE STATE RuntimeInstanceId='{runtimeInstanceId}' " +
+                $"QueuedRunCount='{queueState.QueuedRunCount}' " +
+                $"RunningRunCount='{queueState.RunningRunCount}' " +
+                $"ActiveRunCount='{queueState.ActiveRunCount}' " +
+                $"AvailableRunSlots='{queueState.AvailableRunSlots}' " +
+                $"QueueCapacity='{queueState.QueueCapacity}' " +
+                $"MaxConcurrentRuns='{queueState.MaxConcurrentRuns}' " +
+                $"IsPaused='{queueState.IsPaused}' " +
+                $"CanAcceptRun='{queueState.CanAcceptRun}'");
 
             var registration =
                 new AiRuntimeInstanceRegistration
@@ -150,6 +179,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
                     QueueCapacity = options.QueueCapacity ?? queueState.QueueCapacity,
                     MaxConcurrentRuns = options.MaxConcurrentRuns ?? queueState.MaxConcurrentRuns,
                     RuntimeVersion = options.RuntimeVersion,
+                    Role = options.Role,
                     Metadata = MergeMetadata(
                         options.Metadata,
                         options.ProviderMetadata,
@@ -160,10 +190,21 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
                         })
                 };
 
+            Console.WriteLine(
+                $"[RUNTIME REGISTRATION] REGISTER START RuntimeInstanceId='{runtimeInstanceId}' " +
+                $"RegistryType='{registry.GetType().FullName}' " +
+                $"RegistryHash='{registry.GetHashCode()}'");
+
             var snapshot =
                 await registry
                     .RegisterAsync(registration, cancellationToken)
                     .ConfigureAwait(false);
+
+            Console.WriteLine(
+                $"[RUNTIME REGISTRATION] REGISTER SUCCESS RuntimeInstanceId='{snapshot.RuntimeInstanceId}' " +
+                $"Status='{snapshot.Status}' " +
+                $"RegistryType='{registry.GetType().FullName}' " +
+                $"RegistryHash='{registry.GetHashCode()}'");
 
             logger.LogInformation(
                 "Runtime instance registered. RuntimeInstanceId={RuntimeInstanceId}, Status={Status}, Provider={Provider}",
@@ -180,6 +221,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
         {
             if (string.IsNullOrWhiteSpace(runtimeInstanceId))
             {
+                Console.WriteLine(
+                    "[RUNTIME REGISTRATION] HEARTBEAT SKIPPED RuntimeInstanceId is empty.");
+
                 return;
             }
 
@@ -187,6 +231,17 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
                 await controller
                     .GetQueueStateAsync(cancellationToken)
                     .ConfigureAwait(false);
+
+            Console.WriteLine(
+                $"[RUNTIME REGISTRATION] HEARTBEAT RuntimeInstanceId='{runtimeInstanceId}' " +
+                $"QueuedRunCount='{queueState.QueuedRunCount}' " +
+                $"RunningRunCount='{queueState.RunningRunCount}' " +
+                $"ActiveRunCount='{queueState.ActiveRunCount}' " +
+                $"AvailableRunSlots='{queueState.AvailableRunSlots}' " +
+                $"IsPaused='{queueState.IsPaused}' " +
+                $"CanAcceptRun='{queueState.CanAcceptRun}' " +
+                $"RegistryType='{registry.GetType().FullName}' " +
+                $"RegistryHash='{registry.GetHashCode()}'");
 
             var snapshot =
                 await registry
@@ -207,6 +262,19 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
                 logger.LogWarning(
                     "Runtime instance heartbeat ignored because instance is not registered. RuntimeInstanceId={RuntimeInstanceId}",
                     runtimeInstanceId);
+
+                Console.WriteLine(
+                    $"[RUNTIME REGISTRATION] HEARTBEAT IGNORED RuntimeInstanceId='{runtimeInstanceId}' " +
+                    $"RegistryType='{registry.GetType().FullName}' " +
+                    $"RegistryHash='{registry.GetHashCode()}'");
+            }
+            else
+            {
+                Console.WriteLine(
+                    $"[RUNTIME REGISTRATION] HEARTBEAT SUCCESS RuntimeInstanceId='{snapshot.RuntimeInstanceId}' " +
+                    $"Status='{snapshot.Status}' " +
+                    $"RegistryType='{registry.GetType().FullName}' " +
+                    $"RegistryHash='{registry.GetHashCode()}'");
             }
         }
 
@@ -218,13 +286,27 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
         {
             if (string.IsNullOrWhiteSpace(runtimeInstanceId))
             {
+                Console.WriteLine(
+                    "[RUNTIME REGISTRATION] UNREGISTER SKIPPED RuntimeInstanceId is empty.");
+
                 return;
             }
+
+            Console.WriteLine(
+                $"[RUNTIME REGISTRATION] UNREGISTER START RuntimeInstanceId='{runtimeInstanceId}' " +
+                $"RegistryType='{registry.GetType().FullName}' " +
+                $"RegistryHash='{registry.GetHashCode()}'");
 
             var snapshot =
                 await registry
                     .UnregisterAsync(runtimeInstanceId, cancellationToken)
                     .ConfigureAwait(false);
+
+            Console.WriteLine(
+                $"[RUNTIME REGISTRATION] UNREGISTER SUCCESS RuntimeInstanceId='{runtimeInstanceId}' " +
+                $"Status='{snapshot?.Status}' " +
+                $"RegistryType='{registry.GetType().FullName}' " +
+                $"RegistryHash='{registry.GetHashCode()}'");
 
             logger.LogInformation(
                 "Runtime instance unregistered. RuntimeInstanceId={RuntimeInstanceId}, Status={Status}",

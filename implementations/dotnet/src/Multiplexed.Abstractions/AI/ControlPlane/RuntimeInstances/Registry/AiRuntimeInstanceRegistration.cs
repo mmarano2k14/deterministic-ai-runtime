@@ -8,6 +8,19 @@
     /// </summary>
     public sealed class AiRuntimeInstanceRegistration
     {
+
+        /// <summary>
+        /// Optional MCP runtime identifier that owns this runtime instance.
+        /// Multiple runtime instances may belong to the same MCP runtime.
+        /// </summary>
+        public string? McpRuntimeId { get; init; }
+
+        /// <summary>
+        /// Defines the logical role of the runtime registration.
+        /// </summary>
+        public AiRuntimeInstanceRole Role { get; set; }
+            = AiRuntimeInstanceRole.Runtime;
+
         /// <summary>
         /// Runtime process / Kubernetes pod / replica identifier.
         /// </summary>

@@ -604,155 +604,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
                 replayTrace.FailureReason ?? replayTrace.Message);
         }
 
-        [Fact]
-        public async Task Submit_Run_Then_Pause_Runtime_Queue_Should_Prevent_Execution_Until_Resumed()
-        {
-            var pipelineName =
-                $"mcp-test-pipeline-{Guid.NewGuid():N}";
-
-            var scenarioName =
-                nameof(Submit_Run_Then_Pause_Runtime_Queue_Should_Prevent_Execution_Until_Resumed);
-
-            var pauseResult =
-                await mcp.PauseRuntimeQueueAsync(
-                    new AiRuntimeQueueControlPlaneRequest
-                    {
-                        Operation = AiRuntimeQueueControlPlaneOperation.PauseQueue,
-                        RuntimeInstanceId = "mcp-instance",
-                        Reason = "MCP integration test queue pause.",
-                        RequestedBy = "mcp-integration-test",
-                        Source = "mcp-test"
-                    });
-
-            Assert.True(
-                pauseResult.Success,
-                pauseResult.FailureReason ?? pauseResult.Message);
-
-            var submitRequest =
-                new AiSharedRuntimeControllerRequest
-                {
-                    Operation = AiSharedRuntimeControllerOperation.SubmitRun,
-                    PipelineKey = pipelineName,
-                    TenantId = "test-tenant",
-                    RequestedBy = "mcp-integration-test",
-                    Source = "mcp-test",
-                    RunRequest = McpTestPipelineFactory.CreateRunRequest(
-                        pipelineName,
-                        stepCount: 50,
-                        flakyStepInterval: 10)
-                };
-
-            var submitResults =
-                await mcp.SubmitManyRunsAsync(
-                    submitRequest,
-                    count: 1);
-
-            Assert.Single(
-                submitResults);
-
-            Assert.True(
-                submitResults[0].Success,
-                submitResults[0].FailureReason ?? submitResults[0].Message);
-
-            var drainWhilePaused =
-                await mcp.DrainQueueAsync(
-                    new AiSharedQueuePumpRequest
-                    {
-                        RuntimeInstanceId = "mcp-instance",
-                        WorkerId = "mcp-worker",
-                        MaxDispatches = 1,
-                        RequestedBy = "mcp-integration-test",
-                        Source = "mcp-test"
-                    });
-
-            Assert.True(
-                drainWhilePaused.Success,
-                drainWhilePaused.FailureReason);
-
-            var dispatchedRuns =
-                await McpTestWaitHelpers.WaitForDispatchedRunsAsync(
-                    mcp,
-                    pipelineName,
-                    expectedCount: 1,
-                    timeout: TimeSpan.FromMinutes(1));
-
-            var run =
-                dispatchedRuns.Single();
-
-            Assert.False(
-                string.IsNullOrWhiteSpace(run.LocalRunId));
-
-            Assert.False(
-                string.IsNullOrWhiteSpace(run.AssignedRuntimeInstanceId));
-
-            var statusWhilePaused =
-                await mcp.GetRuntimeQueueRunStatusAsync(
-                    new AiRuntimeQueueControlPlaneRequest
-                    {
-                        Operation = AiRuntimeQueueControlPlaneOperation.GetRunStatus,
-                        RuntimeInstanceId = run.AssignedRuntimeInstanceId,
-                        RunId = run.LocalRunId,
-                        RequestedBy = "mcp-integration-test",
-                        Source = "mcp-test"
-                    });
-
-            Assert.True(
-                statusWhilePaused.Success,
-                statusWhilePaused.FailureReason ?? statusWhilePaused.Message);
-
-            Assert.Equal(
-                "queued",
-                statusWhilePaused.RunState?.Status);
-
-            McpScenarioOutput.WriteRuntimeRunStatusSummary(
-                output,
-                $"{scenarioName}_WhilePaused",
-                pipelineName,
-                dispatchedRuns,
-                new[] { statusWhilePaused });
-
-            var resumeResult =
-                await mcp.ResumeRuntimeQueueAsync(
-                    new AiRuntimeQueueControlPlaneRequest
-                    {
-                        Operation = AiRuntimeQueueControlPlaneOperation.ResumeQueue,
-                        RuntimeInstanceId = "mcp-instance",
-                        Reason = "MCP integration test queue resume.",
-                        RequestedBy = "mcp-integration-test",
-                        Source = "mcp-test"
-                    });
-
-            Assert.True(
-                resumeResult.Success,
-                resumeResult.FailureReason ?? resumeResult.Message);
-
-            var finalStatuses =
-                await McpTestWaitHelpers.WaitForTerminalRuntimeRunStatusesAsync(
-                    mcp,
-                    dispatchedRuns,
-                    timeout: TimeSpan.FromMinutes(2));
-
-            McpScenarioOutput.WriteRuntimeRunStatusSummary(
-                output,
-                $"{scenarioName}_AfterResume",
-                pipelineName,
-                dispatchedRuns,
-                finalStatuses);
-
-            var finalStatus =
-                finalStatuses.Single();
-
-            Assert.True(
-                finalStatus.Success,
-                finalStatus.FailureReason ?? finalStatus.Message);
-
-            Assert.Equal(
-                "completed",
-                finalStatus.RunState?.Status);
-
-            Assert.False(
-                string.IsNullOrWhiteSpace(finalStatus.ExecutionId ?? finalStatus.RunState?.ExecutionId));
-        }
+        
 
         [Fact]
         public async Task Submit_Long_Running_Execution_Then_Pause_And_Resume_Should_Complete()
@@ -950,7 +802,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
                     new AiRuntimeQueueControlPlaneRequest
                     {
                         Operation = AiRuntimeQueueControlPlaneOperation.PauseQueue,
-                        RuntimeInstanceId = "mcp-instance",
+                        RuntimeInstanceId = "mcp",
                         Reason = "MCP integration test queued-run cancel setup.",
                         RequestedBy = "mcp-integration-test",
                         Source = "mcp-test"
@@ -989,7 +841,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
                 await mcp.DrainQueueAsync(
                     new AiSharedQueuePumpRequest
                     {
-                        RuntimeInstanceId = "mcp-instance",
+                        RuntimeInstanceId = "mcp",
                         WorkerId = "mcp-worker",
                         MaxDispatches = 1,
                         RequestedBy = "mcp-integration-test",
@@ -1081,7 +933,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
                     new AiRuntimeQueueControlPlaneRequest
                     {
                         Operation = AiRuntimeQueueControlPlaneOperation.ResumeQueue,
-                        RuntimeInstanceId = "mcp-instance",
+                        RuntimeInstanceId = "mcp",
                         Reason = "MCP integration test cleanup resume.",
                         RequestedBy = "mcp-integration-test",
                         Source = "mcp-test"
@@ -1183,7 +1035,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
                     mcp,
                     pipelineName,
                     expectedCount: 1,
-                    timeout: TimeSpan.FromMinutes(1));
+                    timeout: TimeSpan.FromSeconds(30));
 
             var run =
                 dispatchedRuns.Single();

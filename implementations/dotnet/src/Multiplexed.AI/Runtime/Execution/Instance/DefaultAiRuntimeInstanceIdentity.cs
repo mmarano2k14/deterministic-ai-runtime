@@ -26,12 +26,24 @@ namespace Multiplexed.AI.Runtime.Execution.Instance
         /// Initializes a new instance of the <see cref="DefaultAiRuntimeInstanceIdentity"/> class.
         /// </summary>
         public DefaultAiRuntimeInstanceIdentity()
+            : this($"{Environment.MachineName}:{Environment.ProcessId}:{Guid.NewGuid():N}")
         {
+        }
+
+        /// <summary>
+        /// Initializes a new instance of the <see cref="DefaultAiRuntimeInstanceIdentity"/> class
+        /// using a fixed runtime instance identifier.
+        /// </summary>
+        /// <param name="runtimeInstanceId">The runtime instance identifier to expose.</param>
+        public DefaultAiRuntimeInstanceIdentity(string runtimeInstanceId)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(runtimeInstanceId);
+
             HostName = Environment.MachineName;
             ProcessId = Environment.ProcessId;
             StartedAtUtc = DateTimeOffset.UtcNow;
 
-            RuntimeInstanceId = $"{HostName}:{ProcessId}:{Guid.NewGuid():N}";
+            RuntimeInstanceId = runtimeInstanceId;
         }
 
         /// <inheritdoc />
