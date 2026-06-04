@@ -6,6 +6,7 @@ using Multiplexed.Abstractions.AI.ControlPlane.Execution;
 using Multiplexed.Abstractions.AI.ControlPlane.ExecutionAssistance;
 using Multiplexed.Abstractions.AI.ControlPlane.Observability;
 using Multiplexed.Abstractions.AI.ControlPlane.Replay;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Capacity;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Control;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Environment;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
@@ -25,6 +26,7 @@ using Multiplexed.AI.Runtime.ControlPlane.ExecutionAssistance;
 using Multiplexed.AI.Runtime.ControlPlane.Observability;
 using Multiplexed.AI.Runtime.ControlPlane.Replay;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Capacity;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Environment;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.SharedInstance;
@@ -160,7 +162,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
             services.TryAddSingleton<IAiRuntimeRunExecutionIndex, InMemoryAiRuntimeRunExecutionIndex>();
             services.TryAddSingleton<IAiRuntimeQueueControlPlane, AiRuntimeQueueControlPlane>();
 
-            services.TryAddSingleton<IAiRuntimeInstanceRegistry, InMemoryAiRuntimeInstanceRegistry>();
+            services.TryAddSingleton<IAiRuntimeInstanceRegistry, RedisAiRuntimeInstanceRegistry>();
             services.TryAddSingleton<IAiRuntimeInstanceControlPlane, AiRuntimeInstanceControlPlane>();
             services.TryAddSingleton<IAiRuntimeEnvironmentProvider, LocalAiRuntimeEnvironmentProvider>();
             services.TryAddSingleton<IAiSharedRuntimeInstanceRegistry,InMemoryAiSharedRuntimeInstanceRegistry>();
@@ -181,6 +183,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
             services.TryAddSingleton<IAiSharedQueuePump, AiSharedQueuePump>();
             services.TryAddSingleton<IAiRuntimeScaleOutRequestPublisher, NoopAiRuntimeScaleOutRequestPublisher>();
             services.TryAddSingleton<IAiSharedRuntimeController, AiSharedRuntimeController>();
+            services.TryAddEnumerable(ServiceDescriptor.Singleton<IAiRuntimeInstanceCapacityStore, RedisAiRuntimeInstanceCapacityStore>());
 
             return services;
         }

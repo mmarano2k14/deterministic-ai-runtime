@@ -2165,7 +2165,7 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.AI.Concurrency
 
             var ledger = new InMemoryAiDecisionLedger();
 
-            IAiRuntimeInstanceIdentity runtimeInstanceIdentity = new DefaultAiRuntimeInstanceIdentity();
+            IAiRuntimeInstanceIdentityDescriptor runtimeInstanceIdentity = new DefaultAiRuntimeInstanceIdentity();
 
             IAiRuntimeCorrelationAccessor correlationAccessor =
                 new AsyncLocalAiRuntimeCorrelationAccessor(runtimeInstanceIdentity);
@@ -2322,7 +2322,7 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.AI.Concurrency
             var ledger = new InMemoryAiDecisionLedger();
 
 
-            IAiRuntimeInstanceIdentity runtimeInstanceIdentity =
+            IAiRuntimeInstanceIdentityDescriptor runtimeInstanceIdentity =
             new DefaultAiRuntimeInstanceIdentity();
 
             IAiRuntimeCorrelationAccessor correlationAccessor =
@@ -2504,7 +2504,7 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.AI.Concurrency
 
             var ledger = new InMemoryAiDecisionLedger();
 
-            IAiRuntimeInstanceIdentity runtimeInstanceIdentity =
+            IAiRuntimeInstanceIdentityDescriptor runtimeInstanceIdentity =
             new DefaultAiRuntimeInstanceIdentity();
 
             IAiRuntimeCorrelationAccessor correlationAccessor =

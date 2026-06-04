@@ -49,14 +49,15 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission
                 .ListAsync(includeStopped: false, cancellationToken)
                 .ConfigureAwait(false);
 
-            var candidates = instances
+            var runtimeCandidates = instances
+                .Where(instance => instance.Role == AiRuntimeInstanceRole.Runtime)
                 .Where(IsEligibleForAdmission)
                 .ToArray();
 
-            var available = candidates
-                .Where(instance => instance.Role == AiRuntimeInstanceRole.Runtime)
+            var available = runtimeCandidates
                 .Where(instance => instance.CanAcceptRun)
-                .OrderBy(instance => instance.RunningRunCount)
+                .OrderByDescending(instance => instance.AvailableRunSlots ?? 0)
+                .ThenBy(instance => instance.RunningRunCount)
                 .ThenBy(instance => instance.QueuedRunCount)
                 .ThenBy(instance => instance.RuntimeInstanceId, StringComparer.Ordinal)
                 .ToArray();
@@ -85,7 +86,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission
                     "Runtime instance selected for run admission.");
             }
 
-            if (ShouldRequestScaleOut(instances.Count))
+            if (ShouldRequestScaleOut(runtimeCandidates.Length))
             {
                 return CreateDecision(
                     AiRunAdmissionDecisionType.RequestScaleOut,
@@ -168,7 +169,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission
         }
 
         private bool ShouldRequestScaleOut(
-            int currentInstanceCount)
+            int currentRuntimeInstanceCount)
         {
             if (!_options.EnableScaleOutRequest)
             {
@@ -180,7 +181,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission
                 return true;
             }
 
-            return currentInstanceCount < _options.MaxInstanceCount.Value;
+            return currentRuntimeInstanceCount < _options.MaxInstanceCount.Value;
         }
 
         private AiRunAdmissionDecision CreateAssignmentDecision(
@@ -204,7 +205,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission
                     ["assigned.runtime.instance.id"] = instance.RuntimeInstanceId,
                     ["assigned.runtime.instance.status"] = instance.Status.ToString(),
                     ["assigned.runtime.instance.queued"] = instance.QueuedRunCount.ToString(),
-                    ["assigned.runtime.instance.running"] = instance.RunningRunCount.ToString()
+                    ["assigned.runtime.instance.running"] = instance.RunningRunCount.ToString(),
+                    ["assigned.runtime.instance.available.run.slots"] =
+                        instance.AvailableRunSlots?.ToString() ?? string.Empty
                 }
             };
         }

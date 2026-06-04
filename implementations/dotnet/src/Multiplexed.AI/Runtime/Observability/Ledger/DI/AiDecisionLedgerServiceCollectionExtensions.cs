@@ -169,7 +169,7 @@ namespace Multiplexed.AI.Runtime.Observability.Ledger.DI
         private static void RegisterRuntimeCorrelationDependencies(
             IServiceCollection services)
         {
-            services.TryAddSingleton<IAiRuntimeInstanceIdentity, DefaultAiRuntimeInstanceIdentity>();
+            //services.TryAddSingleton<IAiRuntimeInstanceIdentity, DefaultAiRuntimeInstanceIdentity>();
             services.TryAddSingleton<IAiRuntimeCorrelationAccessor, AsyncLocalAiRuntimeCorrelationAccessor>();
         }
 

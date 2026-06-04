@@ -376,7 +376,7 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Observability.Ledger
             var logger = Substitute.For<IAiRuntimeLogger>();
             var observability = Substitute.For<IAiRuntimeObservability>();
 
-            IAiRuntimeInstanceIdentity runtimeInstanceIdentity =
+            IAiRuntimeInstanceIdentityDescriptor runtimeInstanceIdentity =
             new DefaultAiRuntimeInstanceIdentity();
 
             IAiRuntimeCorrelationAccessor correlationAccessor =

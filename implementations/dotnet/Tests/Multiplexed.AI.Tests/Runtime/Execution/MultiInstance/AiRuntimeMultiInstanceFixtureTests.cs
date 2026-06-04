@@ -49,7 +49,7 @@ namespace Multiplexed.AI.Tests.Runtime.Execution.MultiInstance
 
             using var hostA = factory.CreateHost("runtime-instance-a");
 
-            var identity = hostA.ServiceProvider.GetRequiredService<IAiRuntimeInstanceIdentity>();
+            var identity = hostA.ServiceProvider.GetRequiredService<IAiRuntimeInstanceIdentityDescriptor>();
 
             Assert.NotNull(identity);
             Assert.Same(hostA.RuntimeInstanceIdentity, identity);
@@ -81,8 +81,8 @@ namespace Multiplexed.AI.Tests.Runtime.Execution.MultiInstance
 
             using var hostA = factory.CreateHost("runtime-instance-a");
 
-            var first = hostA.ServiceProvider.GetRequiredService<IAiRuntimeInstanceIdentity>();
-            var second = hostA.ServiceProvider.GetRequiredService<IAiRuntimeInstanceIdentity>();
+            var first = hostA.ServiceProvider.GetRequiredService<IAiRuntimeInstanceIdentityDescriptor>();
+            var second = hostA.ServiceProvider.GetRequiredService<IAiRuntimeInstanceIdentityDescriptor>();
 
             Assert.Same(first, second);
             Assert.Equal("runtime-instance-a", first.RuntimeInstanceId);

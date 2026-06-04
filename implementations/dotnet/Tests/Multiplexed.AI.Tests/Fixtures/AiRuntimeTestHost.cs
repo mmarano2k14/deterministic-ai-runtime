@@ -27,7 +27,7 @@ namespace Multiplexed.AI.Tests.Runtime.Execution.MultiInstance
             ServiceProvider = serviceProvider ?? throw new ArgumentNullException(nameof(serviceProvider));
 
             RuntimeInstanceIdentity =
-                ServiceProvider.GetRequiredService<IAiRuntimeInstanceIdentity>();
+                ServiceProvider.GetRequiredService<IAiRuntimeInstanceIdentityDescriptor>();
         }
 
         /// <summary>
@@ -43,7 +43,7 @@ namespace Multiplexed.AI.Tests.Runtime.Execution.MultiInstance
         /// <summary>
         /// Gets the runtime instance identity resolved by this host.
         /// </summary>
-        public IAiRuntimeInstanceIdentity RuntimeInstanceIdentity { get; }
+        public IAiRuntimeInstanceIdentityDescriptor RuntimeInstanceIdentity { get; }
 
         /// <summary>
         /// Gets the AI execution engine for this runtime host.

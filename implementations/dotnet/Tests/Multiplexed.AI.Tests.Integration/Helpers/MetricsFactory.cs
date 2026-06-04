@@ -96,7 +96,7 @@ namespace Multiplexed.AI.Tests.Integration.Helpers
                 IAiDecisionLedgerRecorder ledger =
                     new NoOpAiDecisionLedgerRecorder();
 
-                IAiRuntimeInstanceIdentity runtimeInstanceIdentity =
+                IAiRuntimeInstanceIdentityDescriptor runtimeInstanceIdentity =
                     new DefaultAiRuntimeInstanceIdentity();
 
                 IAiRuntimeCorrelationAccessor correlation =

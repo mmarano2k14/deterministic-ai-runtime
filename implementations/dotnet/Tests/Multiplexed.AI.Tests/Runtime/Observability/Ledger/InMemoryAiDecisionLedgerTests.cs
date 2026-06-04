@@ -103,7 +103,7 @@ namespace Multiplexed.AI.Tests.Runtime.Observability.Ledger
         {
             var ledger = new InMemoryAiDecisionLedger();
 
-            IAiRuntimeInstanceIdentity runtimeInstanceIdentity =new DefaultAiRuntimeInstanceIdentity();
+            IAiRuntimeInstanceIdentityDescriptor runtimeInstanceIdentity =new DefaultAiRuntimeInstanceIdentity();
 
             IAiRuntimeCorrelationAccessor correlationAccessor =
                 new AsyncLocalAiRuntimeCorrelationAccessor(runtimeInstanceIdentity);
@@ -195,7 +195,7 @@ namespace Multiplexed.AI.Tests.Runtime.Observability.Ledger
         {
             var ledger = new InMemoryAiDecisionLedger();
 
-            IAiRuntimeInstanceIdentity runtimeInstanceIdentity =
+            IAiRuntimeInstanceIdentityDescriptor runtimeInstanceIdentity =
                 new DefaultAiRuntimeInstanceIdentity();
 
             IAiRuntimeCorrelationAccessor correlationAccessor =

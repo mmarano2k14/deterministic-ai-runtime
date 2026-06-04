@@ -26,7 +26,7 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
         /// <param name="runtimeInstanceIdentity">The owning runtime instance identity.</param>
         /// <param name="workerId">The logical worker identifier.</param>
         public AiRuntimeInstanceWorkerIdentity(
-            IAiRuntimeInstanceIdentity runtimeInstanceIdentity,
+            IAiRuntimeInstanceIdentityDescriptor runtimeInstanceIdentity,
             string workerId)
         {
             RuntimeInstanceIdentity = runtimeInstanceIdentity
@@ -38,7 +38,7 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
         }
 
         /// <inheritdoc />
-        public IAiRuntimeInstanceIdentity RuntimeInstanceIdentity { get; }
+        public IAiRuntimeInstanceIdentityDescriptor RuntimeInstanceIdentity { get; }
 
         /// <inheritdoc />
         public string WorkerId { get; }

@@ -1,6 +1,7 @@
 ﻿using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Pool;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.SharedInstance;
@@ -54,7 +55,6 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
 
             this.observability = observability
                 ?? throw new ArgumentNullException(nameof(observability));
-
         }
 
         /// <inheritdoc />
@@ -114,12 +114,6 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
                 ServiceDescriptor.Singleton<IHostedService,
                     AiRuntimePipelineBackgroundControllerHostedService>());
 
-            /*
-            services.RemoveAll<IAiRuntimeInstanceIdentity>();
-            services.AddSingleton<IAiRuntimeInstanceIdentity>(
-                _ => new DefaultAiRuntimeInstanceIdentity(runtimeInstanceId));
-            */
-
             services.Configure<AiRuntimeInstanceRegistrationOptions>(options =>
             {
                 options.Enabled = true;
@@ -134,21 +128,11 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
                 }
             });
 
-            services.Configure<AiEngineOptions>(options =>
-            {
-                options.PipelineBackgroundController.MaxConcurrentRuns =
-                    maxConcurrentRuns;
+           
 
-                if (localQueueCapacity.HasValue && localQueueCapacity.Value > 0)
-                {
-                    options.PipelineBackgroundController.QueueCapacity = localQueueCapacity.Value;
-                }
-
-                options.PipelineBackgroundController.Distributed.Enabled = true;
-                options.PipelineBackgroundController.Distributed.WorkerCount = workerCount;
-                options.PipelineBackgroundController.RejectEnqueueWhenStopped = false;
-                options.PipelineBackgroundController.StopOnFirstFailure = false;
-            });
+            services.RemoveAll<IAiRuntimeInstanceIdentityDescriptor>();
+            services.AddSingleton<IAiRuntimeInstanceIdentityDescriptor>(
+                _ => new DefaultAiRuntimeInstanceIdentity(runtimeInstanceId));
 
             var serviceProvider =
                 services.BuildServiceProvider();
@@ -166,6 +150,20 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
 
             Console.WriteLine(
                 $"POOL INSTANCE CREATED RuntimeInstanceId={runtimeInstanceId}, QueueStateRuntimeInstanceId={queueState.RuntimeInstanceId}");
+
+
+            Console.WriteLine(
+                "POOL INSTANCE CAPACITY " +
+                $"RuntimeInstanceId={runtimeInstanceId}, " +
+                $"WorkerCountArg={workerCount}, " +
+                $"MaxConcurrentRunsArg={maxConcurrentRuns}, " +
+                $"LocalQueueCapacityArg={localQueueCapacity?.ToString() ?? "null"}, " +
+                $"QueueStateRuntimeInstanceId={queueState.RuntimeInstanceId}, " +
+                $"QueueStateMaxConcurrentRuns={queueState.MaxConcurrentRuns}, " +
+                $"QueueStateAvailableRunSlots={queueState.AvailableRunSlots}, " +
+                $"QueueStateRunningRunCount={queueState.RunningRunCount}, " +
+                $"QueueStateQueuedRunCount={queueState.QueuedRunCount}, " +
+                $"QueueStateQueueCapacity={queueState.QueueCapacity}");
 
             var sharedRuntimeInstance =
                 new LocalAiSharedRuntimeInstance(

@@ -291,7 +291,7 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Observability.Ledger
 
             var observability = Substitute.For<IAiRuntimeObservability>();
             var logger = Substitute.For<IAiRuntimeLogger>();
-            var runtimeInstanceIdentity = Substitute.For<IAiRuntimeInstanceIdentity>();
+            var runtimeInstanceIdentity = Substitute.For<IAiRuntimeInstanceIdentityDescriptor>();
             var concurrencyGate = Substitute.For<IAiConcurrencyGate>();
             var payloadCompactor = Substitute.For<IAiStepResultPayloadCompactor>();
 

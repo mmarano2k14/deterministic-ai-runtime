@@ -3,9 +3,9 @@
 namespace Multiplexed.AI.Tests.Fixtures
 {
     /// <summary>
-    /// Test implementation of <see cref="IAiRuntimeInstanceIdentity"/> with a deterministic runtime instance identifier.
+    /// Test implementation of <see cref="IAiRuntimeInstanceIdentityDescriptor"/> with a deterministic runtime instance identifier.
     /// </summary>
-    public sealed class TestAiRuntimeInstanceIdentity : IAiRuntimeInstanceIdentity
+    public sealed class TestAiRuntimeInstanceIdentity : IAiRuntimeInstanceIdentityDescriptor
     {
         /// <summary>
         /// Initializes a new instance of the <see cref="TestAiRuntimeInstanceIdentity"/> class.

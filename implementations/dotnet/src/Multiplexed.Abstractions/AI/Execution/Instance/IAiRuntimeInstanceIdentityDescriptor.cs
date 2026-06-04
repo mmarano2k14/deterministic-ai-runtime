@@ -19,7 +19,7 @@
     /// process, while a claim token identifies a specific ownership attempt.
     /// </para>
     /// </remarks>
-    public interface IAiRuntimeInstanceIdentity
+    public interface IAiRuntimeInstanceIdentityDescriptor
     {
         /// <summary>
         /// Gets the stable identifier of the current runtime instance.

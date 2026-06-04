@@ -1,6 +1,7 @@
 ﻿using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Capacity;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Environment;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
 using Multiplexed.Abstractions.AI.Execution.Instance.Worker;
@@ -28,23 +29,31 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
         private readonly IAiRuntimeInstanceRegistry registry;
         private readonly IAiRuntimeEnvironmentProvider environmentProvider;
         private readonly IAiRuntimePipelineBackgroundController controller;
+        private readonly IReadOnlyCollection<IAiRuntimeInstanceCapacityStore> capacityStores;
         private readonly AiRuntimeInstanceRegistrationOptions options;
         private readonly ILogger<AiRuntimeInstanceRegistrationHostedService> logger;
 
         private string? runtimeInstanceId;
+        private int stopRequested;
 
         public AiRuntimeInstanceRegistrationHostedService(
             IAiRuntimeInstanceRegistry registry,
             IAiRuntimeEnvironmentProvider environmentProvider,
             IAiRuntimePipelineBackgroundController controller,
+            IEnumerable<IAiRuntimeInstanceCapacityStore> capacityStores,
             IOptions<AiRuntimeInstanceRegistrationOptions> options,
             ILogger<AiRuntimeInstanceRegistrationHostedService> logger)
         {
             this.registry = registry ?? throw new ArgumentNullException(nameof(registry));
             this.environmentProvider = environmentProvider ?? throw new ArgumentNullException(nameof(environmentProvider));
             this.controller = controller ?? throw new ArgumentNullException(nameof(controller));
+            this.capacityStores = capacityStores?.ToArray()
+                ?? throw new ArgumentNullException(nameof(capacityStores));
             this.options = options?.Value ?? throw new ArgumentNullException(nameof(options));
             this.logger = logger ?? throw new ArgumentNullException(nameof(logger));
+
+            Console.WriteLine(
+                $"[RUNTIME CAPACITY] STORES RESOLVED Count='{this.capacityStores.Count}' Stores='{string.Join(",", this.capacityStores.Select(store => store.GetType().FullName))}'");
         }
 
         /// <inheritdoc />
@@ -113,9 +122,18 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
         }
 
         /// <inheritdoc />
+        /// <inheritdoc />
         public override async Task StopAsync(
             CancellationToken cancellationToken)
         {
+            if (Interlocked.Exchange(ref stopRequested, 1) == 1)
+            {
+                Console.WriteLine(
+                    $"[RUNTIME REGISTRATION] STOP SKIPPED RuntimeInstanceId='{runtimeInstanceId}' Reason='AlreadyStoppedOrStopping'");
+
+                return;
+            }
+
             try
             {
                 await UnregisterRuntimeInstanceAsync(
@@ -200,6 +218,14 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
                     .RegisterAsync(registration, cancellationToken)
                     .ConfigureAwait(false);
 
+            await PublishCapacityDescriptorAsync(
+                    runtimeInstanceId,
+                    snapshot.Status,
+                    queueState,
+                    registration.Metadata,
+                    cancellationToken)
+                .ConfigureAwait(false);
+
             Console.WriteLine(
                 $"[RUNTIME REGISTRATION] REGISTER SUCCESS RuntimeInstanceId='{snapshot.RuntimeInstanceId}' " +
                 $"Status='{snapshot.Status}' " +
@@ -257,6 +283,14 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
                         cancellationToken)
                     .ConfigureAwait(false);
 
+            await PublishCapacityDescriptorAsync(
+                    runtimeInstanceId,
+                    snapshot?.Status ?? AiRuntimeInstanceStatus.Ready,
+                    queueState,
+                    options.Metadata,
+                    cancellationToken)
+                .ConfigureAwait(false);
+
             if (snapshot is null)
             {
                 logger.LogWarning(
@@ -302,6 +336,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
                     .UnregisterAsync(runtimeInstanceId, cancellationToken)
                     .ConfigureAwait(false);
 
+            await RemoveCapacityDescriptorAsync(
+                    runtimeInstanceId,
+                    cancellationToken)
+                .ConfigureAwait(false);
+
             Console.WriteLine(
                 $"[RUNTIME REGISTRATION] UNREGISTER SUCCESS RuntimeInstanceId='{runtimeInstanceId}' " +
                 $"Status='{snapshot?.Status}' " +
@@ -312,6 +351,131 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
                 "Runtime instance unregistered. RuntimeInstanceId={RuntimeInstanceId}, Status={Status}",
                 runtimeInstanceId,
                 snapshot?.Status);
+        }
+
+        /// <summary>
+        /// Publishes the current runtime capacity descriptor to all configured capacity stores.
+        /// </summary>
+        private async Task PublishCapacityDescriptorAsync(
+            string runtimeInstanceId,
+            AiRuntimeInstanceStatus status,
+            AiRuntimePipelineQueueState queueState,
+            IReadOnlyDictionary<string, string> metadata,
+            CancellationToken cancellationToken)
+        {
+            if (capacityStores.Count == 0)
+            {
+                return;
+            }
+
+            var role =
+                options.Role;
+
+            var availableRunSlots =
+                role == AiRuntimeInstanceRole.Runtime
+                    ? queueState.AvailableRunSlots
+                    : 0;
+
+            var canAcceptRun =
+                role == AiRuntimeInstanceRole.Runtime &&
+                queueState.CanAcceptRun;
+
+            var workerCount =
+                options.WorkerCount;
+
+            var activeWorkerCount =
+                0;
+
+            var availableWorkerCount =
+                workerCount;
+
+            var descriptor =
+                new AiRuntimeInstanceCapacityDescriptor
+                {
+                    RuntimeInstanceId = runtimeInstanceId,
+                    Role = role,
+                    Status = status,
+                    WorkerCount = workerCount,
+                    ActiveWorkerCount = activeWorkerCount,
+                    AvailableWorkerCount = availableWorkerCount,
+                    MaxWorkersPerRun = null,
+                    MinWorkersRequiredPerRun = 1,
+                    QueuedRunCount = queueState.QueuedRunCount,
+                    RunningRunCount = queueState.RunningRunCount,
+                    ActiveRunCount = queueState.ActiveRunCount,
+                    MaxConcurrentRuns = queueState.MaxConcurrentRuns,
+                    MaxRunSlots = queueState.MaxConcurrentRuns,
+                    AvailableRunSlots = availableRunSlots,
+                    ReservedRunSlots = 0,
+                    EffectiveAvailableRunSlots = availableRunSlots,
+                    IsQueuePaused = queueState.IsPaused,
+                    CanAcceptRun = canAcceptRun,
+                    LastHeartbeatAtUtc = DateTimeOffset.UtcNow,
+                    Metadata = metadata
+                };
+
+            foreach (var capacityStore in capacityStores)
+            {
+                try
+                {
+                    await capacityStore
+                        .PublishAsync(descriptor, cancellationToken)
+                        .ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (Exception exception)
+                {
+                    logger.LogError(
+                        exception,
+                        "Failed to publish runtime instance capacity descriptor. RuntimeInstanceId={RuntimeInstanceId}, StoreType={StoreType}",
+                        runtimeInstanceId,
+                        capacityStore.GetType().FullName);
+
+                    Console.WriteLine(
+                        $"[RUNTIME CAPACITY] PUBLISH FAILED RuntimeInstanceId='{runtimeInstanceId}' StoreType='{capacityStore.GetType().FullName}' Exception='{exception.Message}'");
+                }
+            }
+        }
+
+        /// <summary>
+        /// Removes the runtime capacity descriptor from all configured capacity stores.
+        /// </summary>
+        private async Task RemoveCapacityDescriptorAsync(
+            string runtimeInstanceId,
+            CancellationToken cancellationToken)
+        {
+            if (capacityStores.Count == 0)
+            {
+                return;
+            }
+
+            foreach (var capacityStore in capacityStores)
+            {
+                try
+                {
+                    await capacityStore
+                        .RemoveAsync(runtimeInstanceId, cancellationToken)
+                        .ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (Exception exception)
+                {
+                    logger.LogError(
+                        exception,
+                        "Failed to remove runtime instance capacity descriptor. RuntimeInstanceId={RuntimeInstanceId}, StoreType={StoreType}",
+                        runtimeInstanceId,
+                        capacityStore.GetType().FullName);
+
+                    Console.WriteLine(
+                        $"[RUNTIME CAPACITY] REMOVE FAILED RuntimeInstanceId='{runtimeInstanceId}' StoreType='{capacityStore.GetType().FullName}' Exception='{exception.Message}'");
+                }
+            }
         }
 
         /// <summary>

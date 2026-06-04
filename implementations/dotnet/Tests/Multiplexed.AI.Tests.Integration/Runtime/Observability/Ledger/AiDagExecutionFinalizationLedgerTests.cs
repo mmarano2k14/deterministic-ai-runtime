@@ -305,7 +305,7 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Observability.Ledger
             var dagStore = Substitute.For<IAiDagExecutionStore>();
             var observability = Substitute.For<IAiRuntimeObservability>();
             var logger = Substitute.For<IAiRuntimeLogger>();
-            var runtimeIdentity = Substitute.For<IAiRuntimeInstanceIdentity>();
+            var runtimeIdentity = Substitute.For<IAiRuntimeInstanceIdentityDescriptor>();
             var controlGate = Substitute.For<IAiExecutionControlGate>();
             var policyEngineFactory = Substitute.For<IAiPolicyEngineFactory>();
             var retentionPolicyEngine = Substitute.For<IAiPolicyEngine, IAiRetentionEngine>();
@@ -315,7 +315,7 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Observability.Ledger
             var retentionResult = AiRetentionApplyResult.Empty(
                 AiRetentionDecision.None("No-op retention for finalization ledger test."));
 
-            IAiRuntimeInstanceIdentity runtimeInstanceIdentity =
+            IAiRuntimeInstanceIdentityDescriptor runtimeInstanceIdentity =
             new DefaultAiRuntimeInstanceIdentity();
 
             IAiRuntimeCorrelationAccessor correlationAccessor =

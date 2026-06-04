@@ -105,7 +105,7 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Core
         /// participating in distributed execution.
         /// </para>
         /// </remarks>
-        IAiRuntimeInstanceIdentity RuntimeInstanceIdentity { get; }
+        IAiRuntimeInstanceIdentityDescriptor RuntimeInstanceIdentity { get; }
 
         /// <summary>
         /// Gets the step result payload compactor.

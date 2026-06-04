@@ -23,8 +23,8 @@ namespace Multiplexed.AI.Tests.Runtime.Execution.MultiInstance
 
             var services = new ServiceCollection();
 
-            services.RemoveAll<IAiRuntimeInstanceIdentity>();
-            services.AddSingleton<IAiRuntimeInstanceIdentity>(
+            services.RemoveAll<IAiRuntimeInstanceIdentityDescriptor>();
+            services.AddSingleton<IAiRuntimeInstanceIdentityDescriptor>(
                 new TestAiRuntimeInstanceIdentity(runtimeInstanceId));
 
             var provider = services.BuildServiceProvider(validateScopes: true);

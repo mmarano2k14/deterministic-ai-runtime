@@ -65,7 +65,7 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
         private readonly IAiRuntimeLogger _logger;
         private readonly IAiRuntimeObservability _observability;
         private readonly IAiExecutionControlService _executionControlService;
-        private readonly IAiRuntimeInstanceIdentity _runtimeInstanceIdentity;
+        private readonly IAiRuntimeInstanceIdentityDescriptor _runtimeInstanceIdentity;
         private readonly IAiExecutionAssistanceCandidateStore _assistanceCandidateStore;
         private readonly IAiRuntimeRunExecutionIndex _runExecutionIndex;
 
@@ -113,7 +113,7 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
             IAiRuntimePipelineRunDefinitionPublisher definitionPublisher,
             IAiRuntimePipelineRunLifecycleHook runLifecycleHook,
             IAiExecutionControlService executionControlService,
-            IAiRuntimeInstanceIdentity runtimeInstanceIdentity,
+            IAiRuntimeInstanceIdentityDescriptor runtimeInstanceIdentity,
             IAiRuntimeLogger logger,
             IAiRuntimeObservability observability,
             IAiExecutionAssistanceCandidateStore assistanceCandidateStore,

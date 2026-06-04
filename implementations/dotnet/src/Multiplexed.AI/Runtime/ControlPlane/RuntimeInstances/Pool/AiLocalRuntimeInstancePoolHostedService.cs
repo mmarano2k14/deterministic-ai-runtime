@@ -33,6 +33,7 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
         private readonly ILogger<AiLocalRuntimeInstancePoolHostedService> logger;
 
         private readonly List<IAiLocalRuntimeInstanceHost> hosts = new();
+        private int stopRequested;
 
         /// <summary>
         /// Initializes a new instance of the
@@ -122,6 +123,15 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
         public async Task StopAsync(
             CancellationToken cancellationToken)
         {
+
+            if (Interlocked.Exchange(ref stopRequested, 1) == 1)
+            {
+                logger.LogInformation(
+                    "Local runtime instance pool stop skipped because stop is already requested.");
+
+                return;
+            }
+
             if (hosts.Count == 0)
             {
                 return;

@@ -47,11 +47,11 @@ namespace Multiplexed.AI.Tests.Runtime.Execution.Instance
         {
             var services = new ServiceCollection();
 
-            services.TryAddSingleton<IAiRuntimeInstanceIdentity, DefaultAiRuntimeInstanceIdentity>();
+            services.TryAddSingleton<IAiRuntimeInstanceIdentityDescriptor, DefaultAiRuntimeInstanceIdentity>();
 
             using var provider = services.BuildServiceProvider();
 
-            var identity = provider.GetRequiredService<IAiRuntimeInstanceIdentity>();
+            var identity = provider.GetRequiredService<IAiRuntimeInstanceIdentityDescriptor>();
 
             Assert.NotNull(identity);
             Assert.IsType<DefaultAiRuntimeInstanceIdentity>(identity);
@@ -66,12 +66,12 @@ namespace Multiplexed.AI.Tests.Runtime.Execution.Instance
         {
             var services = new ServiceCollection();
 
-            services.TryAddSingleton<IAiRuntimeInstanceIdentity, DefaultAiRuntimeInstanceIdentity>();
+            services.TryAddSingleton<IAiRuntimeInstanceIdentityDescriptor, DefaultAiRuntimeInstanceIdentity>();
 
             using var provider = services.BuildServiceProvider();
 
-            var first = provider.GetRequiredService<IAiRuntimeInstanceIdentity>();
-            var second = provider.GetRequiredService<IAiRuntimeInstanceIdentity>();
+            var first = provider.GetRequiredService<IAiRuntimeInstanceIdentityDescriptor>();
+            var second = provider.GetRequiredService<IAiRuntimeInstanceIdentityDescriptor>();
 
             Assert.Same(first, second);
             Assert.Equal(first.RuntimeInstanceId, second.RuntimeInstanceId);
@@ -85,15 +85,15 @@ namespace Multiplexed.AI.Tests.Runtime.Execution.Instance
         {
             var services = new ServiceCollection();
 
-            services.TryAddSingleton<IAiRuntimeInstanceIdentity, DefaultAiRuntimeInstanceIdentity>();
+            services.TryAddSingleton<IAiRuntimeInstanceIdentityDescriptor, DefaultAiRuntimeInstanceIdentity>();
 
-            services.RemoveAll<IAiRuntimeInstanceIdentity>();
-            services.AddSingleton<IAiRuntimeInstanceIdentity>(
+            services.RemoveAll<IAiRuntimeInstanceIdentityDescriptor>();
+            services.AddSingleton<IAiRuntimeInstanceIdentityDescriptor>(
                 new TestAiRuntimeInstanceIdentity("runtime-instance-a"));
 
             using var provider = services.BuildServiceProvider();
 
-            var identity = provider.GetRequiredService<IAiRuntimeInstanceIdentity>();
+            var identity = provider.GetRequiredService<IAiRuntimeInstanceIdentityDescriptor>();
 
             Assert.IsType<TestAiRuntimeInstanceIdentity>(identity);
             Assert.Equal("runtime-instance-a", identity.RuntimeInstanceId);

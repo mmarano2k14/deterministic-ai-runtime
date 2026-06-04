@@ -349,8 +349,8 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution.MultiInstance
                 CreateJsonOptions(jsonFileName),
                 configureServices: services =>
                 {
-                    services.RemoveAll<IAiRuntimeInstanceIdentity>();
-                    services.AddSingleton<IAiRuntimeInstanceIdentity>(
+                    services.RemoveAll<IAiRuntimeInstanceIdentityDescriptor>();
+                    services.AddSingleton<IAiRuntimeInstanceIdentityDescriptor>(
                         new TestAiRuntimeInstanceIdentity(runtimeInstanceId));
 
                     services.TryAddSingleton<IAiStep, MultiInstanceFlakyProviderStep>();
@@ -793,7 +793,7 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution.MultiInstance
                 _innerHost = innerHost;
 
                 RuntimeInstanceIdentity =
-                    _innerHost.ServiceProvider.GetRequiredService<IAiRuntimeInstanceIdentity>();
+                    _innerHost.ServiceProvider.GetRequiredService<IAiRuntimeInstanceIdentityDescriptor>();
 
                 Engine = _innerHost.Engine;
             }
@@ -811,7 +811,7 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution.MultiInstance
             /// <summary>
             /// Gets the resolved runtime instance identity.
             /// </summary>
-            public IAiRuntimeInstanceIdentity RuntimeInstanceIdentity { get; }
+            public IAiRuntimeInstanceIdentityDescriptor RuntimeInstanceIdentity { get; }
 
             /// <summary>
             /// Gets the DAG execution engine.

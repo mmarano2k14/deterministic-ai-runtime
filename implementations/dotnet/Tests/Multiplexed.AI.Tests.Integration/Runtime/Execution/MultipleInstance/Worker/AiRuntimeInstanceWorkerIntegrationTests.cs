@@ -886,8 +886,8 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution.MultipleInstance.Wo
                 CreateOptions(jsonFileName),
                 configureServices: services =>
                 {
-                    services.RemoveAll<IAiRuntimeInstanceIdentity>();
-                    services.AddSingleton<IAiRuntimeInstanceIdentity>(
+                    services.RemoveAll<IAiRuntimeInstanceIdentityDescriptor>();
+                    services.AddSingleton<IAiRuntimeInstanceIdentityDescriptor>(
                         new TestAiRuntimeInstanceIdentity(runtimeInstanceId));
                 });
         }

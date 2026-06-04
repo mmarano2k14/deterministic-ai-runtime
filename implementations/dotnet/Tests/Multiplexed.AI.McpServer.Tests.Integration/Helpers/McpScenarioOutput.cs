@@ -178,11 +178,11 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Helpers
         }
 
         public static void WriteRuntimeRunStatusSummary(
-    ITestOutputHelper output,
-    string scenarioName,
-    string pipelineName,
-    IReadOnlyList<AiSharedRunRecord> dispatchedRuns,
-    IReadOnlyList<AiRuntimeQueueControlPlaneResult> runtimeStatuses)
+            ITestOutputHelper output,
+            string scenarioName,
+            string pipelineName,
+            IReadOnlyList<AiSharedRunRecord> dispatchedRuns,
+            IReadOnlyList<AiRuntimeQueueControlPlaneResult> runtimeStatuses)
         {
             ArgumentNullException.ThrowIfNull(output);
             ArgumentNullException.ThrowIfNull(dispatchedRuns);
@@ -335,7 +335,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Helpers
         public static void WriteLedgerSummary(
             ITestOutputHelper output,
             IReadOnlyList<AiDecisionLedgerEntry> ledgerEntries,
-            int maxEntries = 50)
+            int maxEntries = 500)
         {
             ArgumentNullException.ThrowIfNull(output);
             ArgumentNullException.ThrowIfNull(ledgerEntries);
@@ -364,7 +364,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Helpers
                 .Take(maxEntries))
             {
                 output.WriteLine(
-                    $"{entry.TimestampUtc:O} | {entry.Category} | {entry.EventType} | {entry.Outcome}");
+                    $"{entry.TimestampUtc:O} | {entry.Category} | {entry.EventType} | {entry.Outcome} | {entry.CorrelationContext.ExecutionId} | {entry.CorrelationContext.RuntimeInstanceId} | {entry.CorrelationContext.WorkerId}");
             }
 
             if (ledgerEntries.Count > maxEntries)
@@ -376,7 +376,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Helpers
         public static void WriteTraceSummary(
              ITestOutputHelper output,
              IReadOnlyList<AiTraceEvent> traceEvents,
-             int maxEvents = 50)
+             int maxEvents = 500)
         {
             ArgumentNullException.ThrowIfNull(output);
             ArgumentNullException.ThrowIfNull(traceEvents);
@@ -405,7 +405,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Helpers
                 .Take(maxEvents))
             {
                 output.WriteLine(
-                    $"{traceEvent.TimestampUtc:O} | {traceEvent.Category} | {traceEvent.Name} | StepId={traceEvent.StepId ?? "-"}");
+                    $"{traceEvent.TimestampUtc:O} | {traceEvent.Category} | {traceEvent.Name} | StepId={traceEvent.StepId ?? "-"} | ExecutionId={traceEvent.Correlation.Runtime?.ExecutionId ?? "-"} | RuntimeInstanceId={traceEvent.Correlation.Runtime?.RuntimeInstanceId ?? "-"} | WorkerId={traceEvent.Correlation.Runtime?.WorkerId ?? "-"}");
             }
 
             if (traceEvents.Count > maxEvents)

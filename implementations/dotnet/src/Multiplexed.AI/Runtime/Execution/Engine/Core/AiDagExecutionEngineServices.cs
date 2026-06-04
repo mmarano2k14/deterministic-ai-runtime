@@ -48,7 +48,7 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Core
             IAiExecutionStateReader stateReader,
             IAiExecutionStateWriter stateWriter,
             IAiExecutionStepResolver stepResolver,
-            IAiRuntimeInstanceIdentity runtimeInstanceIdentity,
+            IAiRuntimeInstanceIdentityDescriptor runtimeInstanceIdentity,
             IAiPolicyEngineFactory policyEngineFactory,
             IAiConcurrencyGate concurrencyGate,
             IAiDagStepExecutionOrchestrator stepExecutionOrchestrator,
@@ -112,7 +112,7 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Core
         public IOptions<AiEngineOptions> AiOptions { get; }
 
         /// <inheritdoc />
-        public IAiRuntimeInstanceIdentity RuntimeInstanceIdentity { get; }
+        public IAiRuntimeInstanceIdentityDescriptor RuntimeInstanceIdentity { get; }
 
         /// <inheritdoc />
         public IAiStepResultPayloadCompactor PayloadCompactor { get; }

@@ -281,7 +281,7 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution.Engine
                 [typeof(IAiPolicyEngineFactory)] = policyFactory,
                 [typeof(IAiDagStepExecutionOrchestrator)] = stepExecutionOrchestrator,
                 [typeof(IAiConcurrencyGate)] = concurrencyGate,
-                [typeof(IAiRuntimeInstanceIdentity)] = runtimeInstanceIdentity,
+                [typeof(IAiRuntimeInstanceIdentityDescriptor)] = runtimeInstanceIdentity,
                 [typeof(IAiExecutionControlGate)] = executionControlGate,
                 [typeof(IAiExecutionControlService)] = executionControlService,
                 [typeof(IAiExecutionReplayMetadataStore)] = replayMetadataStore,

@@ -31,7 +31,7 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
     public sealed class AiRuntimeInstanceWorkerFactory : IAiRuntimeInstanceWorkerFactory
     {
         private readonly IServiceProvider _serviceProvider;
-        private readonly IAiRuntimeInstanceIdentity _runtimeInstanceIdentity;
+        private readonly IAiRuntimeInstanceIdentityDescriptor _runtimeInstanceIdentity;
 
         /// <summary>
         /// Initializes a new instance of the <see cref="AiRuntimeInstanceWorkerFactory"/> class.
@@ -44,7 +44,7 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
         /// </param>
         public AiRuntimeInstanceWorkerFactory(
             IServiceProvider serviceProvider,
-            IAiRuntimeInstanceIdentity runtimeInstanceIdentity)
+            IAiRuntimeInstanceIdentityDescriptor runtimeInstanceIdentity)
         {
             _serviceProvider =
                 serviceProvider
@@ -53,6 +53,9 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
             _runtimeInstanceIdentity =
                 runtimeInstanceIdentity
                 ?? throw new ArgumentNullException(nameof(runtimeInstanceIdentity));
+
+            ArgumentException.ThrowIfNullOrWhiteSpace(
+                _runtimeInstanceIdentity.RuntimeInstanceId);
         }
 
         /// <summary>
@@ -88,9 +91,9 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
                 var workerIndex = index + 1;
 
                 IAiRuntimeInstanceWorkerIdentity workerIdentity =
-                    new AiRuntimeInstanceWorkerIdentity(
+                    new DefaultAiRuntimeInstanceWorkerIdentity(
                         _runtimeInstanceIdentity,
-                        $"{_runtimeInstanceIdentity.RuntimeInstanceId}:worker:{workerIndex}:{Guid.NewGuid():N}");
+                        $"{_runtimeInstanceIdentity.RuntimeInstanceId}:worker:{workerIndex}");
 
                 workers.Add(
                     ActivatorUtilities.CreateInstance<AiRuntimeInstanceWorker>(

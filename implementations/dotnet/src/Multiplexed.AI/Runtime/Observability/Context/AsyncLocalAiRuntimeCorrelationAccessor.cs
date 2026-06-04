@@ -23,7 +23,7 @@ namespace Multiplexed.AI.Runtime.Observability.Context
     /// <para>
     /// When no ambient correlation context has been pushed, this implementation returns
     /// a fallback runtime-level correlation context built from the current
-    /// <see cref="IAiRuntimeInstanceIdentity"/>.
+    /// <see cref="IAiRuntimeInstanceIdentityDescriptor"/>.
     /// </para>
     ///
     /// <para>
@@ -39,7 +39,7 @@ namespace Multiplexed.AI.Runtime.Observability.Context
 
         private static readonly AsyncLocal<AiRuntimeExecutionCorrelationContext?> CurrentContext = new();
 
-        private readonly IAiRuntimeInstanceIdentity _runtimeInstanceIdentity;
+        private readonly IAiRuntimeInstanceIdentityDescriptor _runtimeInstanceIdentity;
         private readonly Lazy<AiRuntimeExecutionCorrelationContext> _fallbackContext;
 
         /// <summary>
@@ -47,7 +47,7 @@ namespace Multiplexed.AI.Runtime.Observability.Context
         /// </summary>
         /// <param name="runtimeInstanceIdentity">The runtime instance identity used to create fallback correlation context.</param>
         public AsyncLocalAiRuntimeCorrelationAccessor(
-            IAiRuntimeInstanceIdentity runtimeInstanceIdentity)
+            IAiRuntimeInstanceIdentityDescriptor runtimeInstanceIdentity)
         {
             _runtimeInstanceIdentity = runtimeInstanceIdentity
                 ?? throw new ArgumentNullException(nameof(runtimeInstanceIdentity));

@@ -631,7 +631,7 @@ namespace Multiplexed.AI.DI
             // instance identity / runtime instance worker / background controller
             // ------------------------------------------------------------
 
-            services.TryAddSingleton<IAiRuntimeInstanceIdentity, DefaultAiRuntimeInstanceIdentity>();
+            services.TryAddSingleton<IAiRuntimeInstanceIdentityDescriptor, DefaultAiRuntimeInstanceIdentity>();
             services.TryAddSingleton<IAiRuntimeInstanceWorkerFactory,AiRuntimeInstanceWorkerFactory>();
             services.TryAddSingleton<IAiRuntimeInstanceWorkerIdentity, DefaultAiRuntimeInstanceWorkerIdentity>();
 
