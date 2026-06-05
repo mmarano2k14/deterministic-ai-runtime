@@ -164,13 +164,26 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Dispatch
                     $"No dispatch provider was found for runtime instance '{request.RuntimeInstanceId}'.");
             }
 
+            var providerTypeName =
+                provider.GetType().FullName ?? provider.GetType().Name;
+
+            logger.LogInformation(
+                "REMOTE DISPATCH PROVIDER RuntimeInstanceId={RuntimeInstanceId} SharedRunId={SharedRunId} ProviderType={ProviderType}",
+                request.RuntimeInstanceId,
+                request.SharedRun.SharedRunId,
+                providerTypeName);
+
+            Console.WriteLine(
+                $"[REMOTE DISPATCH] PROVIDER RuntimeInstanceId='{request.RuntimeInstanceId}' SharedRunId='{request.SharedRun.SharedRunId}' ProviderType='{providerTypeName}'");
+
             var dispatchMetadata =
                 MergeMetadata(
                     request.Metadata,
                     request.SharedRun.Metadata,
                     request.SharedRun.SharedRunId,
                     request.RuntimeInstanceId,
-                    request.ClaimToken);
+                    request.ClaimToken,
+                    providerTypeName);
 
             AiSharedRuntimeInstanceDispatchResult instanceResult;
 
@@ -323,13 +336,15 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Dispatch
         /// <param name="sharedRunId">The shared run identifier.</param>
         /// <param name="runtimeInstanceId">The runtime instance identifier.</param>
         /// <param name="claimToken">The optional claim token.</param>
+        /// <param name="providerTypeName">The optional provider type name.</param>
         /// <returns>The merged metadata dictionary.</returns>
         private static IReadOnlyDictionary<string, string> MergeMetadata(
             IReadOnlyDictionary<string, string>? dispatchMetadata,
             IReadOnlyDictionary<string, string>? sharedRunMetadata,
             string sharedRunId,
             string runtimeInstanceId,
-            string? claimToken)
+            string? claimToken,
+            string? providerTypeName = null)
         {
             var metadata = new Dictionary<string, string>(
                 StringComparer.Ordinal);
@@ -353,6 +368,12 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Dispatch
             metadata["shared.run.id"] = sharedRunId;
             metadata["runtime.instance.id"] = runtimeInstanceId;
             metadata["remote.dispatch"] = "true";
+            metadata["remote.dispatch.provider.model"] = "true";
+
+            if (!string.IsNullOrWhiteSpace(providerTypeName))
+            {
+                metadata["remote.dispatch.provider.type"] = providerTypeName;
+            }
 
             if (!string.IsNullOrWhiteSpace(claimToken))
             {

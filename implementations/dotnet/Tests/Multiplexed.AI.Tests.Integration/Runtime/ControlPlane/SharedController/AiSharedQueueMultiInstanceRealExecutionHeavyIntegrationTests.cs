@@ -4,6 +4,8 @@ using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.ControlPlane.Admission;
 using Multiplexed.Abstractions.AI.ControlPlane.ExecutionAssistance;
 using Multiplexed.Abstractions.AI.ControlPlane.Observability;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Capacity;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.SharedInstance;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController;
@@ -33,6 +35,7 @@ using Multiplexed.AI.Runtime;
 using Multiplexed.AI.Runtime.ControlPlane.DI;
 using Multiplexed.AI.Runtime.ControlPlane.ExecutionAssistance;
 using Multiplexed.AI.Runtime.ControlPlane.Observability;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.SharedInstance;
 using Multiplexed.AI.Runtime.ControlPlane.SharedController;
 using Multiplexed.AI.Runtime.ControlPlane.SharedController.Dispatch;
@@ -42,6 +45,7 @@ using Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis;
 using Multiplexed.AI.Runtime.Execution.Instance.Worker;
 using Multiplexed.AI.Runtime.Observability.Ledger.DI;
 using Multiplexed.AI.Stores;
+using Multiplexed.AI.Tests.Fixtures;
 using Multiplexed.AI.Tests.Integration.Fixtures;
 using Multiplexed.AI.Tests.Integration.Infrastructure;
 using Multiplexed.AI.Tests.Integration.Runtime.Execution.Fixtures;
@@ -294,6 +298,8 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedController
 
             try
             {
+                var capacityStore = new TestRuntimeInstanceCapacityStore();
+
                 for (var index = 1; index <= scenario.RuntimeInstanceCount; index++)
                 {
                     var runtimeInstanceId = $"runtime-instance-{index}";
@@ -304,6 +310,17 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedController
                         sharedRuntimeInstanceRegistry);
 
                     runtimeInstances.Add(harness);
+
+                    await capacityStore.PublishAsync(
+                       new AiRuntimeInstanceCapacityDescriptor
+                       {
+                           RuntimeInstanceId = runtimeInstanceId,
+                           Metadata = new Dictionary<string, string>
+                           {
+                               [AiRuntimeInstanceProviderMetadataKeys.ProviderName] = "local"
+                           }
+                       });
+
                 }
 
                 PublishPipelineDefinitionToAllRuntimeInstances(
@@ -318,9 +335,21 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedController
                     await runtimeInstance.BackgroundController.StartAsync();
                 }
 
+               
+               
+
+                var providerRouter =
+                    new AiRuntimeInstanceProviderRouter(
+                        new IAiRuntimeInstanceProvider[]
+                        {
+                        new LocalAiRuntimeInstanceProvider(
+                            sharedRuntimeInstanceRegistry)
+                        });
+
                 var remoteSharedRunDispatcher =
                     new RemoteAiSharedRunDispatcher(
-                        sharedRuntimeInstanceRegistry,
+                        capacityStore,
+                        providerRouter,
                         NullLogger<RemoteAiSharedRunDispatcher>.Instance);
 
                 var sharedRunId =
@@ -526,6 +555,8 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedController
 
             try
             {
+                var capacityStore = new TestRuntimeInstanceCapacityStore();
+
                 for (var index = 1; index <= scenario.RuntimeInstanceCount; index++)
                 {
                     var runtimeInstanceId = $"runtime-instance-{index}";
@@ -536,6 +567,17 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedController
                         sharedRuntimeInstanceRegistry);
 
                     runtimeInstances.Add(harness);
+
+                    await capacityStore.PublishAsync(
+                       new AiRuntimeInstanceCapacityDescriptor
+                       {
+                           RuntimeInstanceId = runtimeInstanceId,
+                           Metadata = new Dictionary<string, string>
+                           {
+                               [AiRuntimeInstanceProviderMetadataKeys.ProviderName] = "local"
+                           }
+                       });
+
                 }
 
                 PublishPipelineDefinitionToAllRuntimeInstances(
@@ -552,9 +594,18 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedController
                     await runtimeInstance.BackgroundController.StartAsync();
                 }
 
+                var providerRouter =
+                    new AiRuntimeInstanceProviderRouter(
+                        new IAiRuntimeInstanceProvider[]
+                        {
+                            new LocalAiRuntimeInstanceProvider(
+                                sharedRuntimeInstanceRegistry)
+                        });
+
                 var remoteSharedRunDispatcher =
                     new RemoteAiSharedRunDispatcher(
-                        sharedRuntimeInstanceRegistry,
+                        capacityStore,
+                        providerRouter,
                         NullLogger<RemoteAiSharedRunDispatcher>.Instance);
 
                 var sharedRunId =
@@ -800,6 +851,8 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedController
 
             try
             {
+                var capacityStore = new TestRuntimeInstanceCapacityStore();
+
                 for (var index = 1; index <= scenario.RuntimeInstanceCount; index++)
                 {
                     var runtimeInstanceId = $"runtime-instance-{index}";
@@ -810,12 +863,31 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedController
                         sharedRuntimeInstanceRegistry);
 
                     runtimeInstances.Add(harness);
+
+                    await capacityStore.PublishAsync(
+                    new AiRuntimeInstanceCapacityDescriptor
+                    {
+                        RuntimeInstanceId = runtimeInstanceId,
+                        Metadata = new Dictionary<string, string>
+                        {
+                            [AiRuntimeInstanceProviderMetadataKeys.ProviderName] = "local"
+                        }
+                    });
                 }
 
 
+                var providerRouter =
+                new AiRuntimeInstanceProviderRouter(
+                    new IAiRuntimeInstanceProvider[]
+                    {
+                        new LocalAiRuntimeInstanceProvider(
+                            sharedRuntimeInstanceRegistry)
+                    });
+
                 var remoteSharedRunDispatcher =
                     new RemoteAiSharedRunDispatcher(
-                        sharedRuntimeInstanceRegistry,
+                        capacityStore,
+                        providerRouter,
                         NullLogger<RemoteAiSharedRunDispatcher>.Instance);
 
                 var sharedRunIdPrefix =
