@@ -106,6 +106,15 @@ namespace Multiplexed.AI.Observability.Ledger
                         cancellationToken)
                     .ConfigureAwait(false);
             }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                _logger.LogDebug(
+                    "AI decision ledger recording skipped because the operation was cancelled. ExecutionId='{ExecutionId}', Category='{Category}', EventType='{EventType}', Outcome='{Outcome}'.",
+                    enrichedContext.ExecutionId,
+                    category,
+                    eventType,
+                    outcome);
+            }
             catch (Exception exception) when (_options.WriteMode == AiDecisionLedgerWriteMode.BestEffort)
             {
                 _logger.LogWarning(

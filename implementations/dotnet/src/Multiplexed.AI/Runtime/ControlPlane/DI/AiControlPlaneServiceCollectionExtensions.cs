@@ -28,6 +28,7 @@ using Multiplexed.AI.Runtime.ControlPlane.Replay;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Capacity;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Environment;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.SharedInstance;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue;
@@ -165,7 +166,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
             services.TryAddSingleton<IAiRuntimeInstanceRegistry, RedisAiRuntimeInstanceRegistry>();
             services.TryAddSingleton<IAiRuntimeInstanceControlPlane, AiRuntimeInstanceControlPlane>();
             services.TryAddSingleton<IAiRuntimeEnvironmentProvider, LocalAiRuntimeEnvironmentProvider>();
-            services.TryAddSingleton<IAiSharedRuntimeInstanceRegistry,InMemoryAiSharedRuntimeInstanceRegistry>();
+            services.TryAddSingleton<IAiSharedRuntimeInstanceRegistry, InMemoryAiSharedRuntimeInstanceRegistry>();
 
             services.TryAddSingleton<IAiRunAdmissionController, AiRunAdmissionController>();
 
@@ -183,7 +184,13 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
             services.TryAddSingleton<IAiSharedQueuePump, AiSharedQueuePump>();
             services.TryAddSingleton<IAiRuntimeScaleOutRequestPublisher, NoopAiRuntimeScaleOutRequestPublisher>();
             services.TryAddSingleton<IAiSharedRuntimeController, AiSharedRuntimeController>();
-            services.TryAddEnumerable(ServiceDescriptor.Singleton<IAiRuntimeInstanceCapacityStore, RedisAiRuntimeInstanceCapacityStore>());
+
+            services.TryAddEnumerable(
+                ServiceDescriptor.Singleton<
+                    IAiRuntimeInstanceCapacityStore,
+                    RedisAiRuntimeInstanceCapacityStore>());
+
+            services.AddAiRuntimeInstanceProviders();
 
             return services;
         }
