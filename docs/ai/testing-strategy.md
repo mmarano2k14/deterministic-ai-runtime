@@ -1,6 +1,6 @@
 # Testing Strategy
 
-Status: Documentation split in progress.
+Status: Documentation split in progress / actively validated by a large unit and integration test suite.
 
 This document describes the testing strategy used to validate the Deterministic AI Runtime.
 
@@ -59,6 +59,29 @@ The tests should validate:
 The tests are not only checking that methods return values.
 
 They are checking that runtime guarantees hold.
+
+---
+
+The current repository contains **more than 800 test cases** across unit, integration, distributed, replay, observability, control-plane, Redis, MCP, and runtime orchestration scenarios.
+
+This number is important because the runtime is not validated only through happy-path execution.
+
+The test suite is used as proof that the runtime can survive:
+
+- concurrency races
+- worker identity propagation
+- multi-runtime-instance execution
+- Redis Lua atomic transitions
+- replay and snapshot reconstruction
+- control-plane operations
+- runtime queue operations
+- shared queue dispatch
+- MCP tool execution
+- shutdown and lifecycle races
+
+The goal is not test volume for its own sake.
+
+The goal is broad evidence that the runtime behaves as reliable execution infrastructure.
 
 ---
 
@@ -127,6 +150,7 @@ Main categories include:
 - RAG pipeline tests
 - deterministic convergence tests
 - stress and chaos tests
+- MCP control-plane integration tests
 
 ---
 
@@ -174,6 +198,30 @@ Integration tests should cover:
 Integration tests provide stronger evidence than isolated unit tests.
 
 ---
+## Control-Plane Tests
+
+Control-plane tests validate that external runtime operations are exposed through safe adapter-neutral abstractions.
+
+They should cover:
+
+- replay control-plane operations
+- execution control-plane operations
+- runtime queue control-plane operations
+- runtime instance registry operations
+- runtime instance control-plane operations
+- run admission decisions
+- shared runtime controller behavior
+- shared run persistence
+- shared queue coordination
+- queue pump behavior
+- scale-out request publication
+- provider model preparation
+- control-plane observability
+
+Control-plane tests are especially important because they prove that runtime operations can be controlled without exposing or mutating internal runtime engine state directly.
+
+---
+
 
 ## Redis Lua Transition Tests
 
@@ -257,6 +305,47 @@ They should check:
 This area is important for future Kubernetes and enterprise demo scenarios.
 
 ---
+
+## Runtime Registry and Capacity Descriptor Tests
+
+Runtime registry and capacity descriptor tests validate runtime instance visibility.
+
+They should cover:
+
+- runtime instance registration
+- runtime instance heartbeat
+- runtime instance unregister
+- runtime role separation
+- control-plane role visibility
+- runtime role eligibility
+- Redis-backed runtime instance registry behavior
+- runtime capacity descriptor publication
+- runtime capacity descriptor heartbeat updates
+- runtime capacity descriptor removal on unregister
+- worker count publication
+- max run slot publication
+- available run slot publication
+- queue pressure publication
+- paused queue visibility
+- `CanAcceptRun` correctness
+- stale or stopped runtime visibility
+
+Important assertions:
+
+```text
+A control-plane registration must not be treated as a dispatchable runtime instance.
+
+A runtime instance must publish capacity during registration and heartbeat.
+
+CapacityStore resolution must not register duplicate stores.
+
+Unregister must remove or stop the corresponding capacity descriptor.
+
+Admission should eventually use capacity descriptors as the primary scheduling source of truth.
+```
+
+---
+
 
 ## Retry Tests
 
@@ -411,6 +500,158 @@ Cancelled queued run has no ExecutionId.
 Running run cancellation delegates to ExecutionId control.
 RunId must not be treated as ExecutionId.
 Cancelled queued run must complete its completion task.
+```
+
+---
+
+## MCP Control-Plane Tests
+
+MCP tests validate that the runtime can be operated through an external control-plane adapter.
+
+These tests are important because the MCP server is not only a demo surface.
+
+It proves that runtime operations can be exposed safely outside the engine through tool-based control-plane commands.
+
+MCP tests should validate:
+
+- MCP host startup
+- MCP control-plane service registration
+- MCP host mode configuration
+- `ControlPlaneOnly` behavior
+- `ControlPlaneWithLocalRuntimeInstances` behavior
+- `RuntimeInstanceOnly` preparation
+- runtime role separation
+- control-plane host not selected as executable runtime
+- local runtime instance pool startup
+- runtime instance registration and heartbeat
+- Redis-backed runtime registry visibility
+- Redis-backed runtime capacity descriptor publication
+- shared run submission through MCP tools
+- shared run listing through MCP tools
+- shared queue drain through MCP tools
+- runtime queue run-status polling through MCP tools
+- replay execution through MCP tools
+- replay report retrieval through MCP tools
+- observability ledger retrieval through MCP tools
+- observability trace retrieval through MCP tools
+- execution control operations through MCP tools
+- local runtime queue control through MCP tools
+- idempotent runtime unregister during MCP host shutdown
+- idempotent local runtime pool shutdown during MCP host shutdown
+
+The MCP test suite validates the control-plane path:
+
+```text
+MCP Tool Call
+    ↓
+MCP Server
+    ↓
+Runtime Control Plane
+    ↓
+Shared Runtime Controller
+    ↓
+Admission
+    ↓
+Runtime Instance Dispatch
+    ↓
+Local Runtime Queue
+    ↓
+Workers
+    ↓
+DAG Execution Engine
+```
+
+Important MCP assertions include:
+
+```text
+The MCP control-plane host must not be selected as a dispatch target.
+
+Only runtime-role instances can receive assigned runs.
+
+A submitted shared run must be visible through MCP shared run tools.
+
+A dispatched shared run must expose a LocalRunId.
+
+A running local run must eventually expose an ExecutionId.
+
+Replay tools must be able to load replay data for the ExecutionId.
+
+Observability tools must be able to return ledger and trace data for the ExecutionId.
+
+MCP host shutdown must unregister runtime instances once.
+
+Repeated StopAsync or host disposal must be idempotent.
+```
+
+Example validated local MCP topology:
+
+```text
+mcp-control-plane
+    Role = ControlPlane
+    CanAcceptRun = false
+
+mcp-runtime-1
+    Role = Runtime
+    WorkerCount = 10
+    MaxRunSlots = 5
+
+mcp-runtime-2
+    Role = Runtime
+    WorkerCount = 10
+    MaxRunSlots = 5
+
+mcp-runtime-3
+    Role = Runtime
+    WorkerCount = 10
+    MaxRunSlots = 5
+```
+
+These tests prepare the runtime for future Kubernetes deployments where the MCP server can act as a control-plane pod and runtime instances can run as separate pods.
+
+---
+
+
+## Shared Runtime Controller and Shared Queue Tests
+
+Shared runtime controller tests validate the orchestration layer above local runtime queues.
+
+They should cover:
+
+- shared run creation
+- shared run retrieval
+- shared run listing
+- shared run cancellation
+- admission assignment
+- direct assigned-run dispatch
+- global shared queue enqueue
+- global shared queue claim
+- global shared queue dispatch
+- missing shared run requeue
+- dispatch failure requeue
+- mark shared queue item dispatched
+- mark shared run dispatched
+- queue pump cycles
+- background queue service lifecycle
+- scale-out request publication
+- Redis-backed shared run store behavior
+- Redis-backed shared queue behavior
+- Redis atomic queue claim safety
+- concurrent dispatch safety
+
+Important assertions:
+
+```text
+Only one dispatcher can claim a pending shared queue item.
+
+A shared run record must exist independently from local runtime queue state.
+
+Assigned dispatch must preserve the local queue model.
+
+Global queue fallback must not bypass admission.
+
+Dispatch failures must requeue when policy requires it.
+
+A shared run must not be marked dispatched unless dispatch succeeded.
 ```
 
 ---
@@ -691,6 +932,13 @@ A distributed execution converges to the same terminal fingerprint.
 
 | Test Area | Status |
 |---|---|
+| MCP control-plane tests | Implemented / ongoing |
+| Shared runtime controller tests | Implemented / ongoing |
+| Redis shared run store tests | Implemented / ongoing |
+| Redis shared queue tests | Implemented / ongoing |
+| Runtime registry and capacity descriptor tests | Implemented / ongoing |
+| Runtime shutdown lifecycle tests | Implemented / ongoing |
+| Runtime provider model tests | Planned |
 | DAG execution tests | Implemented / ongoing |
 | Redis Lua claim tests | Implemented / ongoing |
 | Distributed worker tests | Implemented / ongoing |
@@ -730,7 +978,7 @@ The testing strategy validates the runtime as execution infrastructure.
 
 It proves that:
 
-- distributed claims are safe
+- more than 800 test cases validate the runtime across unit, integration, distributed, Redis, replay, observability, control-plane, and MCP scenarios
 - worker crashes can be recovered
 - retries are deterministic and observable
 - retention reduces hot state without losing required data
@@ -755,6 +1003,9 @@ The goal is to prove runtime guarantees.
 - [Distributed Concurrency and Throttling](distributed-concurrency-throttling.md)
 - [Execution Control State](execution-control-state.md)
 - [Runtime Queue Control](runtime-queue-control.md)
+- [Runtime Control Plane](runtime-control-plane.md)
+- [MCP Server as Runtime Control Plane](mcp-server-control-plane.md)
+- [Runtime Instance Provider Model](runtime-instance-provider-model.md)
 - [Replay and Audit](replay-and-audit.md)
 - [Observability](observability.md)
 - [Policy-Driven Execution](policy-driven-execution.md)
