@@ -14,7 +14,7 @@ namespace Multiplexed.AI.Tests.Runtime.Observability.Ledger
     public sealed class AiDecisionLedgerServiceCollectionExtensionsTests
     {
         /// <summary>
-        /// Verifies that the default registration resolves a no-operation ledger and default recorder.
+        /// Verifies that the default registration resolves a no-operation ledger and registers the default recorder.
         /// </summary>
         [Fact]
         public void AddAiDecisionLedger_ShouldRegisterDefaultServices()
@@ -27,14 +27,15 @@ namespace Multiplexed.AI.Tests.Runtime.Observability.Ledger
             using var provider = services.BuildServiceProvider();
 
             var ledger = provider.GetRequiredService<IAiDecisionLedger>();
-            var recorder = provider.GetRequiredService<IAiDecisionLedgerRecorder>();
 
             ledger.Should().BeOfType<NoOpAiDecisionLedger>();
-            recorder.Should().BeOfType<DefaultAiDecisionLedgerRecorder>();
+
+            AssertRegisteredImplementation<IAiDecisionLedgerRecorder, DefaultAiDecisionLedgerRecorder>(
+                services);
         }
 
         /// <summary>
-        /// Verifies that the in-memory registration resolves an in-memory ledger.
+        /// Verifies that the in-memory registration resolves an in-memory ledger and registers the default recorder.
         /// </summary>
         [Fact]
         public void AddInMemoryAiDecisionLedger_ShouldRegisterInMemoryLedger()
@@ -47,10 +48,11 @@ namespace Multiplexed.AI.Tests.Runtime.Observability.Ledger
             using var provider = services.BuildServiceProvider();
 
             var ledger = provider.GetRequiredService<IAiDecisionLedger>();
-            var recorder = provider.GetRequiredService<IAiDecisionLedgerRecorder>();
 
             ledger.Should().BeOfType<InMemoryAiDecisionLedger>();
-            recorder.Should().BeOfType<DefaultAiDecisionLedgerRecorder>();
+
+            AssertRegisteredImplementation<IAiDecisionLedgerRecorder, DefaultAiDecisionLedgerRecorder>(
+                services);
         }
 
         /// <summary>
@@ -89,11 +91,24 @@ namespace Multiplexed.AI.Tests.Runtime.Observability.Ledger
                 options.StorageMode = AiDecisionLedgerStorageMode.Mongo;
             });
 
-            var descriptor = services.SingleOrDefault(descriptor =>
-                descriptor.ServiceType == typeof(IAiDecisionLedger));
+            AssertRegisteredImplementation<IAiDecisionLedger, MongoAiDecisionLedger>(
+                services);
+        }
+
+        /// <summary>
+        /// Asserts that a service type is registered with the expected implementation type.
+        /// </summary>
+        /// <typeparam name="TService">The service type.</typeparam>
+        /// <typeparam name="TImplementation">The expected implementation type.</typeparam>
+        /// <param name="services">The service collection.</param>
+        private static void AssertRegisteredImplementation<TService, TImplementation>(
+            IServiceCollection services)
+        {
+            var descriptor = services.LastOrDefault(descriptor =>
+                descriptor.ServiceType == typeof(TService));
 
             descriptor.Should().NotBeNull();
-            descriptor!.ImplementationType.Should().Be(typeof(MongoAiDecisionLedger));
+            descriptor!.ImplementationType.Should().Be(typeof(TImplementation));
         }
     }
 }

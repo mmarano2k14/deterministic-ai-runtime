@@ -4,7 +4,7 @@ using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.SharedInstance;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Store;
 using Multiplexed.Abstractions.AI.Execution.Instance.Worker;
-using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Local;
 using Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Providers.Testing;
 using Multiplexed.AI.Tests.Unit.Runtime.ControlPlane.RuntimeInstances.Providers.Testing;
 

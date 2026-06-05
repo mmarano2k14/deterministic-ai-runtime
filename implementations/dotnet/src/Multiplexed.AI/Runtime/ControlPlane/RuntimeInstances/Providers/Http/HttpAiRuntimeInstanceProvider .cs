@@ -1,56 +1,66 @@
-﻿using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Capacity;
+﻿using System.Net.Http.Json;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Capacity;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers.Transport;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.SharedInstance;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue;
 
-namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers
+namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http
 {
     /// <summary>
-    /// Remote command based runtime instance provider.
+    /// HTTP based runtime instance provider.
     /// </summary>
     /// <remarks>
     /// <para>
-    /// This provider exposes dispatch, status, and control capabilities by delegating
-    /// runtime instance commands to an <see cref="IAiRuntimeInstanceCommandTransport"/>.
+    /// This provider communicates with a remote runtime instance through HTTP.
     /// </para>
     ///
     /// <para>
-    /// This provider does not know whether the underlying transport is Redis, HTTP,
-    /// gRPC, Kubernetes, or another future command channel.
+    /// It is selected when the runtime instance capacity descriptor contains:
     /// </para>
     ///
+    /// <code>
+    /// provider.name = http
+    /// transport.endpoint = http://runtime-instance-1:8080
+    /// </code>
+    ///
     /// <para>
-    /// This provider does not replace local runtime queues. It sends commands to the
-    /// runtime instance that owns the local queue.
+    /// This provider does not replace local runtime queues. The remote runtime instance
+    /// receiving the HTTP command remains responsible for its own local queue,
+    /// worker pool, and DAG execution engine.
     /// </para>
     /// </remarks>
-    [AiRuntimeInstanceProvider("remote-command")]
-    public sealed class RemoteCommandAiRuntimeInstanceProvider :
+    [AiRuntimeInstanceProvider("http")]
+    public sealed class HttpAiRuntimeInstanceProvider :
         IAiRuntimeInstanceDispatchProvider,
         IAiRuntimeInstanceStatusProvider,
         IAiRuntimeInstanceControlProvider
     {
         /// <summary>
-        /// The provider name used by this remote command provider.
+        /// The provider name used by this HTTP runtime instance provider.
         /// </summary>
-        private const string ProviderName = "remote-command";
+        private const string ProviderName = "http";
 
         /// <summary>
-        /// The runtime instance command transport.
+        /// The default relative endpoint used to send runtime instance commands.
         /// </summary>
-        private readonly IAiRuntimeInstanceCommandTransport transport;
+        private const string DefaultCommandEndpointPath = "/runtime-instance/commands";
 
         /// <summary>
-        /// Initializes a new instance of the <see cref="RemoteCommandAiRuntimeInstanceProvider"/> class.
+        /// The HTTP client used to send runtime instance commands.
         /// </summary>
-        /// <param name="transport">The runtime instance command transport.</param>
-        public RemoteCommandAiRuntimeInstanceProvider(
-            IAiRuntimeInstanceCommandTransport transport)
+        private readonly HttpClient httpClient;
+
+        /// <summary>
+        /// Initializes a new instance of the <see cref="HttpAiRuntimeInstanceProvider"/> class.
+        /// </summary>
+        /// <param name="httpClient">The HTTP client.</param>
+        public HttpAiRuntimeInstanceProvider(
+            HttpClient httpClient)
         {
-            this.transport =
-                transport
-                ?? throw new ArgumentNullException(nameof(transport));
+            this.httpClient =
+                httpClient
+                ?? throw new ArgumentNullException(nameof(httpClient));
         }
 
         /// <inheritdoc />
@@ -97,9 +107,22 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers
                     "Runtime instance id is missing.");
             }
 
+            var endpointResolution =
+                ResolveCommandEndpoint(
+                    descriptor);
+
+            if (!endpointResolution.Success)
+            {
+                return CreateFailedDispatchResult(
+                    request,
+                    runtimeInstanceId,
+                    endpointResolution.FailureReason ?? "http-endpoint-missing",
+                    endpointResolution.Message ?? "HTTP runtime instance endpoint is missing.");
+            }
+
             var commandResult =
-                await transport
-                    .SendAsync(
+                await SendCommandAsync(
+                        endpointResolution.Endpoint!,
                         new AiRuntimeInstanceCommandRequest
                         {
                             Operation = AiRuntimeInstanceCommandOperation.DispatchRun,
@@ -112,7 +135,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers
                             Reason = request.Reason,
                             Metadata = CreateCommandMetadata(
                                 request.Metadata,
-                                runtimeInstanceId)
+                                runtimeInstanceId,
+                                endpointResolution.Endpoint!.ToString())
                         },
                         cancellationToken)
                     .ConfigureAwait(false);
@@ -125,8 +149,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers
             return CreateFailedDispatchResult(
                 request,
                 runtimeInstanceId,
-                commandResult.FailureReason ?? "remote-command-dispatch-result-missing",
-                commandResult.Message ?? "Remote command transport did not return a dispatch result.");
+                commandResult.FailureReason ?? "http-dispatch-result-missing",
+                commandResult.Message ?? "HTTP runtime instance provider did not receive a dispatch result.");
         }
 
         /// <inheritdoc />
@@ -214,12 +238,12 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers
         }
 
         /// <summary>
-        /// Sends a runtime queue command through the command transport.
+        /// Sends a runtime queue command through HTTP.
         /// </summary>
         /// <param name="descriptor">The runtime instance capacity descriptor.</param>
         /// <param name="request">The runtime queue control-plane request.</param>
-        /// <param name="commandOperation">The command transport operation.</param>
-        /// <param name="queueOperation">The runtime queue control-plane operation.</param>
+        /// <param name="commandOperation">The HTTP command operation.</param>
+        /// <param name="queueOperation">The runtime queue operation.</param>
         /// <param name="cancellationToken">The cancellation token.</param>
         /// <returns>The runtime queue control-plane result.</returns>
         private async Task<AiRuntimeQueueControlPlaneResult> SendQueueCommandAsync(
@@ -247,9 +271,23 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers
                     "Runtime instance id is missing.");
             }
 
+            var endpointResolution =
+                ResolveCommandEndpoint(
+                    descriptor);
+
+            if (!endpointResolution.Success)
+            {
+                return CreateFailedQueueResult(
+                    request,
+                    queueOperation,
+                    runtimeInstanceId,
+                    endpointResolution.FailureReason ?? "http-endpoint-missing",
+                    endpointResolution.Message ?? "HTTP runtime instance endpoint is missing.");
+            }
+
             var commandResult =
-                await transport
-                    .SendAsync(
+                await SendCommandAsync(
+                        endpointResolution.Endpoint!,
                         new AiRuntimeInstanceCommandRequest
                         {
                             Operation = commandOperation,
@@ -262,7 +300,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers
                             Reason = request.Reason,
                             Metadata = CreateCommandMetadata(
                                 request.Metadata,
-                                runtimeInstanceId)
+                                runtimeInstanceId,
+                                endpointResolution.Endpoint!.ToString())
                         },
                         cancellationToken)
                     .ConfigureAwait(false);
@@ -276,8 +315,159 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers
                 request,
                 queueOperation,
                 runtimeInstanceId,
-                commandResult.FailureReason ?? "remote-command-queue-result-missing",
-                commandResult.Message ?? "Remote command transport did not return a queue control-plane result.");
+                commandResult.FailureReason ?? "http-queue-result-missing",
+                commandResult.Message ?? "HTTP runtime instance provider did not receive a queue control-plane result.");
+        }
+
+        /// <summary>
+        /// Sends a command request to the remote runtime instance HTTP endpoint.
+        /// </summary>
+        /// <param name="endpoint">The HTTP command endpoint.</param>
+        /// <param name="request">The command request.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <returns>The command result.</returns>
+        private async Task<AiRuntimeInstanceCommandResult> SendCommandAsync(
+            Uri endpoint,
+            AiRuntimeInstanceCommandRequest request,
+            CancellationToken cancellationToken)
+        {
+            ArgumentNullException.ThrowIfNull(endpoint);
+            ArgumentNullException.ThrowIfNull(request);
+
+            var startedAtUtc =
+                DateTimeOffset.UtcNow;
+
+            try
+            {
+                using var response =
+                    await httpClient
+                        .PostAsJsonAsync(
+                            endpoint,
+                            request,
+                            cancellationToken)
+                        .ConfigureAwait(false);
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    var completedAtUtc =
+                        DateTimeOffset.UtcNow;
+
+                    return new AiRuntimeInstanceCommandResult
+                    {
+                        Success = false,
+                        Operation = request.Operation,
+                        RuntimeInstanceId = request.RuntimeInstanceId,
+                        Message = $"HTTP command failed with status code {(int)response.StatusCode}.",
+                        FailureReason = "http-command-failed",
+                        StartedAtUtc = startedAtUtc,
+                        CompletedAtUtc = completedAtUtc,
+                        DurationMs = Math.Max(
+                            0,
+                            (long)(completedAtUtc - startedAtUtc).TotalMilliseconds),
+                        Metadata = CreateHttpFailureMetadata(
+                            response.StatusCode.ToString())
+                    };
+                }
+
+                var result =
+                    await response.Content
+                        .ReadFromJsonAsync<AiRuntimeInstanceCommandResult>(
+                            cancellationToken)
+                        .ConfigureAwait(false);
+
+                if (result is not null)
+                {
+                    return result;
+                }
+
+                var completedAtUtcForMissingBody =
+                    DateTimeOffset.UtcNow;
+
+                return new AiRuntimeInstanceCommandResult
+                {
+                    Success = false,
+                    Operation = request.Operation,
+                    RuntimeInstanceId = request.RuntimeInstanceId,
+                    Message = "HTTP command response body was empty.",
+                    FailureReason = "http-command-empty-response",
+                    StartedAtUtc = startedAtUtc,
+                    CompletedAtUtc = completedAtUtcForMissingBody,
+                    DurationMs = Math.Max(
+                        0,
+                        (long)(completedAtUtcForMissingBody - startedAtUtc).TotalMilliseconds)
+                };
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception exception)
+            {
+                var completedAtUtc =
+                    DateTimeOffset.UtcNow;
+
+                return new AiRuntimeInstanceCommandResult
+                {
+                    Success = false,
+                    Operation = request.Operation,
+                    RuntimeInstanceId = request.RuntimeInstanceId,
+                    Message = exception.Message,
+                    FailureReason = "http-command-exception",
+                    StartedAtUtc = startedAtUtc,
+                    CompletedAtUtc = completedAtUtc,
+                    DurationMs = Math.Max(
+                        0,
+                        (long)(completedAtUtc - startedAtUtc).TotalMilliseconds),
+                    Metadata = new Dictionary<string, string>
+                    {
+                        ["exception.type"] =
+                            exception.GetType().FullName ??
+                            exception.GetType().Name
+                    }
+                };
+            }
+        }
+
+        /// <summary>
+        /// Resolves the HTTP command endpoint from the runtime instance descriptor.
+        /// </summary>
+        /// <param name="descriptor">The runtime instance capacity descriptor.</param>
+        /// <returns>The endpoint resolution.</returns>
+        private static HttpCommandEndpointResolution ResolveCommandEndpoint(
+            AiRuntimeInstanceCapacityDescriptor descriptor)
+        {
+            ArgumentNullException.ThrowIfNull(descriptor);
+
+            if (descriptor.Metadata is null ||
+                !descriptor.Metadata.TryGetValue(
+                    AiRuntimeInstanceCommandTransportMetadataKeys.TransportEndpoint,
+                    out var endpoint) ||
+                string.IsNullOrWhiteSpace(endpoint))
+            {
+                return HttpCommandEndpointResolution.Failed(
+                    "http-endpoint-missing",
+                    $"Runtime instance descriptor '{descriptor.RuntimeInstanceId}' does not define '{AiRuntimeInstanceCommandTransportMetadataKeys.TransportEndpoint}'.");
+            }
+
+            var endpointText =
+                endpoint.Trim();
+
+            if (!Uri.TryCreate(
+                    endpointText,
+                    UriKind.Absolute,
+                    out var baseEndpoint))
+            {
+                return HttpCommandEndpointResolution.Failed(
+                    "http-endpoint-invalid",
+                    $"Runtime instance HTTP endpoint '{endpointText}' is not a valid absolute URI.");
+            }
+
+            var commandEndpoint =
+                new Uri(
+                    baseEndpoint.ToString().TrimEnd('/') + DefaultCommandEndpointPath);
+
+            return HttpCommandEndpointResolution.Succeeded(
+                commandEndpoint);
         }
 
         /// <summary>
@@ -302,17 +492,21 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers
         /// </summary>
         /// <param name="metadata">The source metadata.</param>
         /// <param name="runtimeInstanceId">The runtime instance identifier.</param>
+        /// <param name="endpoint">The HTTP endpoint.</param>
         /// <returns>The command metadata.</returns>
         private static IReadOnlyDictionary<string, string> CreateCommandMetadata(
             IReadOnlyDictionary<string, string>? metadata,
-            string runtimeInstanceId)
+            string runtimeInstanceId,
+            string endpoint)
         {
             var result = new Dictionary<string, string>(
                 StringComparer.OrdinalIgnoreCase)
             {
                 [AiRuntimeInstanceProviderMetadataKeys.ProviderName] = ProviderName,
+                [AiRuntimeInstanceCommandTransportMetadataKeys.TransportName] =
+                    AiRuntimeInstanceCommandTransportMetadataKeys.HttpTransportName,
                 [AiRuntimeInstanceCommandTransportMetadataKeys.RuntimeInstanceId] = runtimeInstanceId,
-                [AiRuntimeInstanceCommandTransportMetadataKeys.RemoteCommand] = "true"
+                [AiRuntimeInstanceCommandTransportMetadataKeys.TransportEndpoint] = endpoint
             };
 
             if (metadata is not null)
@@ -324,6 +518,20 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers
             }
 
             return result;
+        }
+
+        /// <summary>
+        /// Creates HTTP failure metadata.
+        /// </summary>
+        /// <param name="statusCode">The HTTP status code.</param>
+        /// <returns>The HTTP failure metadata.</returns>
+        private static IReadOnlyDictionary<string, string> CreateHttpFailureMetadata(
+            string statusCode)
+        {
+            return new Dictionary<string, string>
+            {
+                ["http.status_code"] = statusCode
+            };
         }
 
         /// <summary>

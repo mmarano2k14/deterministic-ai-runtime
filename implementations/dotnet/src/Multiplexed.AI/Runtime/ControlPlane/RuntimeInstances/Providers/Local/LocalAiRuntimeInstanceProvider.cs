@@ -3,7 +3,7 @@ using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.SharedInstance;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue;
 
-namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers
+namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Local
 {
     /// <summary>
     /// Local in-memory runtime instance provider.
