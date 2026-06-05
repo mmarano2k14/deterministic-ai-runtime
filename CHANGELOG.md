@@ -6,6 +6,693 @@ This project follows a deterministic runtime and observability model designed fo
 
 ---
 
+## [1.0.5.7] - 2026-06-04 Runtime Capacity Descriptors, Worker Identity Propagation, and Shutdown Stabilization
+
+### Added
+
+- Added Redis-backed runtime instance capacity descriptor foundation.
+- Added runtime capacity descriptor support for runtime instance administration.
+- Added `IAiRuntimeInstanceCapacityStore`.
+- Added `RedisAiRuntimeInstanceCapacityStore`.
+- Added runtime capacity descriptor publication during runtime instance registration.
+- Added runtime capacity descriptor publication during runtime heartbeat.
+- Added runtime capacity descriptor removal during runtime unregister.
+- Added runtime capacity fields for admission and future scheduling:
+  - `WorkerCount`
+  - `ActiveWorkerCount`
+  - `AvailableWorkerCount`
+  - `MaxWorkersPerRun`
+  - `MinWorkersRequiredPerRun`
+  - `MaxRunSlots`
+  - `AvailableRunSlots`
+  - `ReservedRunSlots`
+  - `EffectiveAvailableRunSlots`
+  - `QueuedRunCount`
+  - `RunningRunCount`
+  - `ActiveRunCount`
+  - `IsQueuePaused`
+  - `CanAcceptRun`
+  - `LastHeartbeatAtUtc`
+
+- Added Redis runtime instance registry support.
+- Added `RedisAiRuntimeInstanceRegistry`.
+- Added runtime instance registry tests for Redis-backed registration, heartbeat, listing, and unregister behavior.
+- Added `RuntimeInstanceEntry` model for Redis registry persistence.
+- Added runtime instance capacity unit tests.
+- Added runtime instance descriptor/capacity test coverage.
+
+### Added Runtime Identity Descriptor Model
+
+- Added `IAiRuntimeInstanceIdentityDescriptor`.
+- Replaced direct runtime identity usage in several runtime components with descriptor-based identity usage.
+- Added support for fixed runtime instance identifiers such as:
+
+  ~~~text
+  mcp-runtime-1
+  mcp-runtime-2
+  mcp-runtime-3
+  ~~~
+
+- Added normalized runtime execution identity output such as:
+
+  ~~~text
+  MSI:mcp-runtime-1
+  MSI:mcp-runtime-2
+  MSI:mcp-runtime-3
+  ~~~
+
+- Added compatibility between runtime instance identity descriptors and worker identity generation.
+- Added runtime identity descriptor support in test hosts and fixtures.
+
+### Added Worker Identity Propagation
+
+- Added proper distributed worker identity propagation through `AiRuntimeInstanceWorkerFactory`.
+- Added numbered worker identities for distributed runtime workers.
+- Added support for worker identifiers such as:
+
+  ~~~text
+  MSI:mcp-runtime-1:worker:1
+  MSI:mcp-runtime-1:worker:2
+  MSI:mcp-runtime-1:worker:3
+  ~~~
+
+- Preserved fallback default worker identity for direct DI usage:
+
+  ~~~text
+  MSI:mcp-runtime-1:worker:default
+  ~~~
+
+- Added worker identity propagation into runtime execution correlation.
+- Added worker identity propagation into ledger and observability paths.
+- Updated worker-related integration tests to reflect descriptor-based identity and numbered worker behavior.
+
+### Added Pipeline Background Controller Configuration
+
+- Added full `PipelineBackgroundController` configuration support under `AiEngine`.
+- Added support for distributed worker configuration through appsettings:
+
+  ~~~json
+  {
+    "AiEngine": {
+      "PipelineBackgroundController": {
+        "MaxConcurrentRuns": 5,
+        "QueueCapacity": 1000,
+        "RejectEnqueueWhenStopped": false,
+        "StopOnFirstFailure": false,
+        "Distributed": {
+          "Enabled": true,
+          "WorkerCount": 10,
+          "StopOnFirstTerminal": true,
+          "TerminalObservationTimeout": "00:00:30"
+        }
+      }
+    }
+  }
+  ~~~
+
+- Added proper child runtime instance usage of parent JSON configuration.
+- Added distributed worker execution support inside local runtime instance pool hosts.
+
+### Fixed
+
+- Fixed local runtime instance pool child hosts losing `PipelineBackgroundController.Distributed` configuration.
+- Fixed child runtime instances falling back to:
+
+  ~~~text
+  worker:default
+  ~~~
+
+  instead of using numbered distributed worker identities.
+
+- Fixed ledger and replay output showing incorrect default worker identity for distributed execution.
+- Fixed worker identity not being properly reflected in claim, concurrency, step, retry, and retention events.
+- Fixed runtime queue execution using singleton/default worker identity when distributed workers were enabled.
+- Fixed runtime identity format so instance execution identity remains stable and readable.
+- Fixed duplicated Redis runtime capacity store registration.
+- Fixed duplicated capacity store resolution:
+
+  Before:
+
+  ~~~text
+  [RUNTIME CAPACITY] STORES RESOLVED Count='2'
+  ~~~
+
+  After:
+
+  ~~~text
+  [RUNTIME CAPACITY] STORES RESOLVED Count='1'
+  ~~~
+
+- Fixed duplicate runtime capacity descriptor publishing caused by duplicate store registrations.
+- Fixed runtime registration shutdown executing unregister more than once.
+- Fixed local runtime instance pool shutdown executing stop more than once.
+- Fixed duplicate unregister attempts during test host shutdown.
+- Fixed duplicate local pool stop logs during shutdown.
+- Fixed shutdown lifecycle to be idempotent and safe under repeated host stop/dispose calls.
+
+### Changed
+
+- Updated `AiControlPlaneServiceCollectionExtensions` to use `TryAddEnumerable` for runtime capacity stores.
+- Updated runtime instance registration to publish capacity descriptors after registration and heartbeat.
+- Updated runtime instance registration to remove capacity descriptors during unregister.
+- Updated `AiRuntimeInstanceRegistrationHostedService.StopAsync()` to be idempotent.
+- Updated `AiLocalRuntimeInstancePoolHostedService.StopAsync()` to be idempotent.
+- Updated `AiLocalRuntimeInstanceHostFactory` to preserve parent runtime options instead of overwriting distributed settings.
+- Updated local runtime instance pool startup diagnostics to include:
+  - runtime instance id
+  - worker count
+  - max concurrent runs
+  - queue capacity
+  - available run slots
+  - running run count
+  - queued run count
+
+- Updated MCP host appsettings to configure distributed workers and runtime capacity correctly.
+- Updated multiple integration and unit tests to support descriptor-based runtime identity.
+- Updated observability ledger tests to use the new runtime identity descriptor model.
+- Updated concurrency, retry, multi-instance, and worker integration tests for the new identity and capacity model.
+
+### Architecture
+
+- Introduced runtime capacity descriptors as the foundation for future provider-based runtime administration.
+- Established Redis as the shared visibility layer for runtime instance capacity.
+- Separated runtime registration from runtime capacity publication.
+- Prepared admission to rely on real capacity descriptors instead of only registry snapshots.
+- Prepared shared queue admission for worker-aware and slot-aware scheduling.
+- Prepared runtime administration for future provider-based dispatch and control.
+- Preserved local runtime queues as instance-owned execution queues.
+- Preserved local runtime instance behavior while adding control-plane-level capacity visibility.
+- Confirmed that the shared queue remains above local runtime queues:
+
+  ~~~text
+  Shared Queue
+      -> Admission
+      -> Runtime Instance Selection
+      -> Dispatch Provider
+      -> Local Runtime Queue
+      -> Workers
+      -> Execution Engine
+  ~~~
+
+- Confirmed local runtime queues are not replaced or modified by the shared queue.
+- Confirmed each runtime host keeps its own:
+  - local queue
+  - run slots
+  - worker pool
+  - queue state
+  - heartbeat
+  - capacity descriptor
+
+### Runtime Instance Capacity Model
+
+- Runtime instances now expose capacity through Redis descriptors.
+- Runtime descriptors now allow the control plane to reason about:
+
+  ~~~text
+  mcp-runtime-1
+      WorkerCount = 10
+      MaxRunSlots = 5
+      AvailableRunSlots = 5
+      CanAcceptRun = true
+
+  mcp-runtime-2
+      WorkerCount = 10
+      MaxRunSlots = 5
+      AvailableRunSlots = 5
+      CanAcceptRun = true
+
+  mcp-runtime-3
+      WorkerCount = 10
+      MaxRunSlots = 5
+      AvailableRunSlots = 5
+      CanAcceptRun = true
+  ~~~
+
+- Control-plane instances remain visible but should not be considered executable runtime targets.
+
+### MCP Host Configuration
+
+- Updated `appsettings.json` and `appsettings.Development.json` with runtime pipeline background controller options.
+- Configured local runtime instance pool with:
+  - `InstanceCount = 3`
+  - `WorkerCountPerInstance = 10`
+  - `MaxConcurrentRunsPerInstance = 5`
+  - `QueueCapacity = 1000`
+
+- Confirmed runtime pool startup logs show:
+
+  ~~~text
+  Local runtime instance pool started. ActiveInstanceCount=3
+  ~~~
+
+- Confirmed each local runtime instance reports the expected queue state:
+
+  ~~~text
+  QueueStateMaxConcurrentRuns=5
+  QueueStateAvailableRunSlots=5
+  QueueStateQueueCapacity=1000
+  ~~~
+
+### Observability
+
+- Improved runtime identity and worker identity consistency in:
+  - decision ledger
+  - replay output
+  - trace output
+  - concurrency events
+  - claim events
+  - retry events
+  - retention events
+
+- Confirmed execution events now use numbered worker identities when distributed workers are enabled.
+- Confirmed controller-level events may still use control-plane/controller identity where appropriate.
+- Added diagnostic logs for runtime capacity store resolution.
+- Added diagnostic logs for runtime instance registration, heartbeat, unregister, queue state, and pool capacity.
+- Added shutdown skip logs for idempotent lifecycle handling.
+
+### Tests
+
+- Updated MCP integration tests for local runtime pool and shared queue dispatch.
+- Updated runtime identity tests for descriptor-based identity.
+- Updated multi-instance runtime tests.
+- Updated worker integration tests.
+- Updated concurrency gate integration tests.
+- Updated DAG retry integration tests.
+- Updated observability ledger tests.
+- Updated test fixtures to use `IAiRuntimeInstanceIdentityDescriptor`.
+- Added Redis runtime instance registry tests.
+- Added runtime capacity descriptor tests.
+- Confirmed MCP shared run scenario passes with:
+  - 3 local runtime instances
+  - 10 workers per instance
+  - 5 max concurrent runs per instance
+  - Redis registry
+  - Redis capacity descriptor store
+  - replay
+  - ledger
+  - trace
+
+- Confirmed test result:
+
+  ~~~text
+  1 Tests Passed
+  0 Failed
+  0 Skipped
+  ~~~
+
+### Removed
+
+- Removed old `IAiRuntimeInstanceIdentity` abstraction.
+- Replaced it with `IAiRuntimeInstanceIdentityDescriptor`.
+- Removed dependency on default worker identity for distributed worker execution.
+- Removed duplicate capacity store registration behavior.
+- Removed duplicate unregister execution during shutdown.
+- Removed duplicate local runtime pool stop execution during shutdown.
+
+### Follow-up
+
+The next work item is provider-based runtime instance administration and admission.
+
+Planned architecture direction:
+
+- Runtime instances publish descriptors.
+- Admission chooses the best runtime instance based on real capacity.
+- Dispatch becomes provider-based and dynamically loaded.
+- Providers are discovered using class attributes.
+- Local queues remain owned by runtime instances and are not replaced.
+
+Planned provider abstraction:
+
+~~~text
+Runtime Instance Provider
+    - Local provider
+    - Redis command queue provider
+    - HTTP provider
+    - gRPC provider
+    - Kubernetes provider
+~~~
+
+Planned provider capabilities:
+
+- dispatch run
+- get run status
+- cancel run
+- pause queue
+- resume queue
+- drain queue
+- list capacity
+- request scale-out
+- request scale-in
+
+Initial implementation focus:
+
+- Add provider attribute:
+
+  ~~~csharp
+  [AiRuntimeInstanceProvider("local")]
+  ~~~
+
+- Add provider base abstraction.
+- Add provider capability interfaces.
+- Add provider router.
+- Add local runtime instance provider.
+- Adapt shared run dispatcher to call the provider router.
+- Keep local runtime queues unchanged.
+- Keep single-instance and local multi-instance execution behavior unchanged.
+
+Admission follow-up:
+
+- Use Redis capacity descriptors as the primary source of scheduling truth.
+- Filter only runtime instances that:
+  - are runtime role
+  - are ready
+  - are not paused
+  - can accept runs
+  - have effective available run slots
+
+- Improve admission ordering using real capacity:
+
+  ~~~csharp
+  .OrderByDescending(instance => instance.EffectiveAvailableRunSlots)
+  .ThenByDescending(instance => instance.AvailableWorkerCount)
+  .ThenBy(instance => instance.RunningRunCount)
+  .ThenBy(instance => instance.QueuedRunCount)
+  .ThenByDescending(instance => instance.LastHeartbeatAtUtc)
+  .ThenBy(instance => instance.RuntimeInstanceId, StringComparer.Ordinal)
+  ~~~
+
+- Add future Redis/Lua slot reservations for multi-control-plane safety.
+
+### Status
+
+This release stabilizes runtime instance visibility, worker identity propagation, runtime capacity descriptors, and shutdown lifecycle.
+
+The runtime control plane is now ready for provider-based dispatch, runtime administration, and capacity-aware admission.
+
+---
+
+## [1.0.5.6] - 2026-06-03 MCP Control Plane Runtime Role Separation and Local Pool Execution Fixes
+
+### Added
+
+- Added explicit runtime instance role separation through `AiRuntimeInstanceRole`.
+- Added `AiRuntimeInstanceRole.Runtime`.
+- Added `AiRuntimeInstanceRole.ControlPlane`.
+- Added `Role` support to `AiRuntimeInstanceRegistration`.
+- Added `Role` support to `AiRuntimeInstanceRegistrationOptions`.
+- Added `Role` support to `AiRuntimeInstanceSnapshot`.
+- Added runtime role propagation from registration options to runtime instance registration.
+- Added runtime role propagation from registry entries to runtime instance snapshots.
+- Added control-plane-aware runtime registry behavior.
+- Added protection to prevent control-plane registrations from being treated as dispatchable runtime instances.
+
+### Fixed
+
+- Fixed MCP control-plane host being incorrectly registered as an executable runtime instance.
+- Fixed admission selecting `mcp-control-plane` as a dispatch target.
+- Fixed shared queue dispatch failures caused by admission assigning runs to a non-dispatchable control-plane registration.
+- Fixed remote dispatch failures with:
+
+  ~~~text
+  RuntimeInstanceId=mcp-control-plane
+  Found=False
+  Reason=runtime-instance-not-registered
+  ~~~
+
+- Fixed `ControlPlaneWithLocalRuntimeInstances` mode registering the MCP host with default runtime registration options.
+- Fixed missing control-plane role configuration in `ConfigureControlPlaneWithLocalRuntimeInstances`.
+- Fixed runtime admission relying on hardcoded `mcp-control-plane` filtering.
+- Fixed runtime selection so only instances with `Role = Runtime` can be selected for execution.
+- Fixed control-plane registration so it no longer reports itself as an executable runtime candidate.
+- Fixed MCP control-plane runtime identity configuration to avoid empty `RuntimeInstanceId` usage.
+- Fixed background MCP control-plane service startup identity by restoring a stable runtime id:
+
+  ~~~text
+  RuntimeInstanceId = mcp-control-plane
+  ~~~
+
+### Changed
+
+- Updated `AiRunAdmissionController` to select only runtime instances where:
+
+  ~~~csharp
+  instance.Role == AiRuntimeInstanceRole.Runtime
+  ~~~
+
+- Updated admission logic to remove dependency on string-based exclusion such as:
+
+  ~~~csharp
+  "mcp-control-plane"
+  ~~~
+
+- Updated runtime instance eligibility so role-based filtering is now the source of truth.
+- Updated runtime registry behavior so control-plane entries cannot accept runs.
+- Updated `InMemoryAiRuntimeInstanceRegistry` to preserve and expose runtime instance role.
+- Updated registration lifecycle so control-plane and runtime instances are represented distinctly.
+- Updated MCP host service registration for `ControlPlaneWithLocalRuntimeInstances` mode to explicitly register:
+
+  ~~~csharp
+  Role = AiRuntimeInstanceRole.ControlPlane
+  ~~~
+
+### Architecture
+
+- Established a clean separation between MCP control-plane hosts and executable runtime instances.
+
+  ~~~text
+  mcp-control-plane
+      Role = ControlPlane
+      CanAcceptRun = false
+
+  mcp-runtime-1
+      Role = Runtime
+      CanAcceptRun = true
+
+  mcp-runtime-2
+      Role = Runtime
+      CanAcceptRun = true
+
+  mcp-runtime-3
+      Role = Runtime
+      CanAcceptRun = true
+  ~~~
+
+- Replaced runtime-instance identity hacks with explicit role-based runtime classification.
+- Prepared the admission layer for future Kubernetes scheduling.
+- Prepared runtime registry semantics for multi-pod / multi-replica environments.
+- Improved the shared controller model by distinguishing:
+  - control-plane host
+  - runtime instance
+  - shared queue
+  - local runtime queue
+  - worker pool
+
+### MCP Host Configuration
+
+- Updated `ConfigureControlPlaneWithLocalRuntimeInstances` to register the MCP control-plane as a control-plane role:
+
+  ~~~csharp
+  services.AddAiRuntimeInstanceRegistrationHostedService(options =>
+  {
+      options.Enabled = true;
+      options.RuntimeInstanceId = "mcp-control-plane";
+      options.Role = AiRuntimeInstanceRole.ControlPlane;
+  });
+  ~~~
+
+- Ensured local runtime instances created by the pool remain registered as runtime instances.
+- Preserved MCP background pump identity while preventing it from being selected for run execution.
+
+### Tests
+
+- Fixed MCP shared run dispatch tests where runs were incorrectly assigned to `mcp-control-plane`.
+- Fixed long-running execution cancellation scenario blocked by incorrect runtime selection.
+- Fixed shared queue drain scenarios depending on runtime-instance routing.
+- Confirmed local runtime instance pool dispatch now targets real runtime instances such as:
+
+  ~~~text
+  mcp-runtime-1
+  mcp-runtime-2
+  mcp-runtime-3
+  ~~~
+
+- Confirmed `ControlPlaneWithLocalRuntimeInstances` mode no longer requires hardcoded admission exclusions.
+- Confirmed runtime instance role separation resolves the MCP dispatch registry mismatch.
+
+### Removed
+
+- Removed the need for hardcoded admission filtering against:
+
+  ~~~csharp
+  "mcp-control-plane"
+  ~~~
+
+- Removed the need to use empty runtime instance identifiers for MCP control-plane registration.
+- Removed role ambiguity between control-plane hosts and executable runtime instances.
+
+### Follow-up
+
+The next work item is local admission capacity correctness.
+
+Current area to investigate:
+
+- `MaxConcurrentRunsPerInstance`
+- `WorkerCountPerInstance`
+- `MaxWorkersPerRun`
+- `AvailableRunSlots`
+- `AvailableWorkerCount`
+- `CanAcceptRun`
+
+Observed issue:
+
+~~~text
+AiLocalRuntimeInstancePoolOptions.MaxConcurrentRunsPerInstance = 3
+~~~
+
+but runtime registration / heartbeat can still report:
+
+~~~text
+MaxConcurrentRuns = 4
+AvailableRunSlots = 4
+~~~
+
+Next implementation focus:
+
+- Trace capacity propagation from `AiLocalRuntimeInstancePoolOptions` to child runtime instances.
+- Ensure `AiLocalRuntimeInstanceHostFactory` applies the correct runtime capacity.
+- Ensure `AiRuntimePipelineBackgroundController.GetQueueStateAsync()` reports the correct capacity.
+- Ensure `AiRuntimeInstanceRegistrationHostedService` publishes the correct heartbeat values.
+- Add support for:
+  - `MaxWorkersPerRun`
+  - `MinWorkersRequiredPerRun`
+  - `ActiveWorkerCount`
+  - `AvailableWorkerCount`
+- Improve admission ordering using real capacity:
+
+  ~~~csharp
+  .OrderByDescending(instance => instance.AvailableRunSlots ?? 0)
+  .ThenByDescending(instance => instance.AvailableWorkerCount)
+  .ThenBy(instance => instance.RunningRunCount)
+  .ThenBy(instance => instance.QueuedRunCount)
+  .ThenBy(instance => instance.RuntimeInstanceId, StringComparer.Ordinal)
+  ~~~
+
+### Status
+
+This release resolves the runtime/control-plane identity issue and makes local multi-instance admission structurally correct.
+
+The next release should focus on runtime capacity accuracy and worker-aware admission.
+
+---
+
+## [1.0.5.5] - 2026-06-02 Local Runtime Instance Pool Foundation
+
+### Added
+
+- Added local runtime instance pool foundation for MCP control-plane multi-instance hosting.
+- Added `AiLocalRuntimeInstancePoolOptions`.
+- Added `IAiLocalRuntimeInstanceHost`.
+- Added `AiLocalRuntimeInstanceHost`.
+- Added `IAiLocalRuntimeInstanceHostFactory`.
+- Added `AiLocalRuntimeInstanceHostFactory`.
+- Added `AiLocalRuntimeInstancePoolHostedService`.
+- Added `IAiLocalRuntimeInstanceServiceCollectionProvider`.
+- Added `AiLocalRuntimeInstanceServiceCollectionProvider`.
+- Added `AiLocalRuntimeInstancePoolServiceCollectionExtensions`.
+- Added support for configuring local runtime instance pools through `appsettings.json`.
+- Added runtime instance pool startup validation and lifecycle management.
+- Added support for creating multiple runtime instances within a single MCP host process.
+- Added runtime instance pool registration into the shared runtime instance registry.
+- Added local runtime instance startup and shutdown orchestration.
+
+### Added MCP Tools and Diagnostics
+
+- Added MCP shared queue activity diagnostics.
+- Added `shared_queue.activity` MCP tool.
+- Added runtime-instance-aware runtime queue MCP routing.
+- Updated `RuntimeQueueMcpTools` to route queue operations by `RuntimeInstanceId`.
+- Added runtime queue resolution through `IAiSharedRuntimeInstanceRegistry`.
+- Added support for querying runtime queues belonging to specific runtime instances.
+- Added support for runtime queue control operations targeting specific runtime instances.
+- Added fallback behavior to the root runtime queue when a runtime instance cannot be resolved.
+- Added MCP visibility for fast-draining shared queues through activity history.
+- Added MCP support for inspecting shared run activity even when the active shared queue is empty.
+
+### Added MCP Test Support
+
+- Added MCP client support for `shared_queue.activity`.
+- Added MCP test client argument binding for `AiSharedQueueActivityRequest`.
+- Added shared queue activity integration test coverage.
+- Added MCP scenario output helpers for shared queue activity summaries.
+- Added tests validating shared queue activity visibility after fast dispatch.
+- Updated shared queue drain tests to support both manual drain and background pump dispatch behavior.
+- Updated runtime queue status tests to support runtime-instance-routed queue status inspection.
+- Added coverage for local runtime instance pool startup and shared runtime registry registration.
+
+### Architecture
+
+- Introduced the foundation for local multi-instance execution:
+  - Shared Queue
+  - Shared Run Store
+  - Shared Runtime Registry
+  - Multiple Runtime Instances
+  - Dedicated Runtime Queue per Instance
+  - Dedicated Worker Pool per Instance
+
+- Established the local execution model that mirrors the future Kubernetes architecture.
+
+### Configuration
+
+Example:
+
+~~~json
+{
+  "AiLocalRuntimeInstancePool": {
+    "Enabled": true,
+    "InstanceCount": 3,
+    "WorkerCountPerInstance": 10,
+    "MaxConcurrentRunsPerInstance": 3,
+    "LocalQueueCapacity": null,
+    "RuntimeInstanceIdPrefix": "mcp-runtime"
+  }
+}
+~~~
+
+### Known Limitation
+
+The local runtime instance pool currently succeeds at:
+
+- creating runtime instances
+- starting runtime instance pool lifecycle
+- registering local runtime instances into the shared runtime instance registry
+- dispatching shared runs to local runtime instances
+- creating local runtime runs
+- exposing runtime queue visibility through MCP
+- exposing shared queue activity through MCP
+
+However, child runtime instances do not yet execute queued runs independently in pool-only mode.
+
+Current symptoms:
+
+- Shared queue dispatch succeeds.
+- Local runs are created successfully.
+- MCP can route runtime queue status to the correct runtime instance.
+- Runtime queue status remains `queued`.
+- Execution identifiers are never assigned.
+- Runtime execution progresses only when the root `AiRuntimePipelineBackgroundControllerHostedService` is also enabled.
+
+Investigation is ongoing around:
+
+- `IAiRuntimeInstanceIdentity`
+- child service provider isolation
+- runtime queue ownership
+- worker registration and controller ownership alignment
+- ensuring pool runtime instances execute under their assigned `RuntimeInstanceId`
+
+This follow-up is required before enabling true pool-only execution without relying on the root runtime controller hosted service.
+
+---
+
 ## [1.0.5.5] - 2026-05-31 - Shared Runtime Controller V1 / Distributed Shared Queue Foundation
 
 ## Overview
