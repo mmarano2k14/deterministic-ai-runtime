@@ -604,7 +604,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
                 replayTrace.FailureReason ?? replayTrace.Message);
         }
 
-        
+
 
         [Fact]
         public async Task Submit_Long_Running_Execution_Then_Pause_And_Resume_Should_Complete()
@@ -700,13 +700,12 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
                 pauseResult.FailureReason ?? pauseResult.Message);
 
             var pausedStatus =
-                await mcp.GetExecutionStatusAsync(
-                    new AiExecutionControlPlaneRequest
+                await WaitForExecutionControlStatusAsync(
+                    executionId!,
+                    timeout: TimeSpan.FromSeconds(10),
+                    expectedStatuses: new[]
                     {
-                        Operation = AiExecutionControlPlaneOperation.GetStatus,
-                        ExecutionId = executionId!,
-                        RequestedBy = "mcp-integration-test",
-                        Source = "mcp-test"
+                "Paused"
                     });
 
             Assert.True(
@@ -738,13 +737,14 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
                 resumeResult.FailureReason ?? resumeResult.Message);
 
             var resumedStatus =
-                await mcp.GetExecutionStatusAsync(
-                    new AiExecutionControlPlaneRequest
+                await WaitForExecutionControlStatusAsync(
+                    executionId!,
+                    timeout: TimeSpan.FromSeconds(10),
+                    expectedStatuses: new[]
                     {
-                        Operation = AiExecutionControlPlaneOperation.GetStatus,
-                        ExecutionId = executionId!,
-                        RequestedBy = "mcp-integration-test",
-                        Source = "mcp-test"
+                "Running",
+                "None",
+                "Completed"
                     });
 
             Assert.True(
@@ -786,6 +786,66 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
 
             Assert.False(
                 string.IsNullOrWhiteSpace(finalStatus.ExecutionId ?? finalStatus.RunState?.ExecutionId));
+
+            async Task<AiExecutionControlPlaneResult> WaitForExecutionControlStatusAsync(
+                string targetExecutionId,
+                TimeSpan timeout,
+                IReadOnlyCollection<string> expectedStatuses)
+            {
+                ArgumentException.ThrowIfNullOrWhiteSpace(targetExecutionId);
+                ArgumentNullException.ThrowIfNull(expectedStatuses);
+
+                var expected =
+                    new HashSet<string>(
+                        expectedStatuses,
+                        StringComparer.OrdinalIgnoreCase);
+
+                var deadline =
+                    DateTimeOffset.UtcNow.Add(timeout);
+
+                AiExecutionControlPlaneResult? lastStatus = null;
+
+                while (DateTimeOffset.UtcNow < deadline)
+                {
+                    lastStatus =
+                        await mcp.GetExecutionStatusAsync(
+                            new AiExecutionControlPlaneRequest
+                            {
+                                Operation = AiExecutionControlPlaneOperation.GetStatus,
+                                ExecutionId = targetExecutionId,
+                                RequestedBy = "mcp-integration-test",
+                                Source = "mcp-test"
+                            });
+
+                    Assert.True(
+                        lastStatus.Success,
+                        lastStatus.FailureReason ?? lastStatus.Message);
+
+                    var controlStatus =
+                        Convert.ToString(
+                            lastStatus.State?.Status);
+
+                    if (!string.IsNullOrWhiteSpace(controlStatus) &&
+                        expected.Contains(controlStatus))
+                    {
+                        return lastStatus;
+                    }
+
+                    await Task.Delay(
+                        TimeSpan.FromMilliseconds(100));
+                }
+
+                var lastControlStatus =
+                    lastStatus is null
+                        ? "<none>"
+                        : Convert.ToString(lastStatus.State?.Status) ?? "<null>";
+
+                Assert.Fail(
+                    $"Execution '{targetExecutionId}' did not reach expected control status '{string.Join(", ", expectedStatuses)}' within '{timeout}'. LastControlStatus='{lastControlStatus}'.");
+
+                throw new InvalidOperationException(
+                    "Unreachable assertion path.");
+            }
         }
 
         [Fact]

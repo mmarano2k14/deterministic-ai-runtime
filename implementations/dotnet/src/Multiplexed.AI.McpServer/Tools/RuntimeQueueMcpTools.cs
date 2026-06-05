@@ -1,7 +1,6 @@
 ﻿using System.ComponentModel;
 using Microsoft.Extensions.Logging;
 using ModelContextProtocol.Server;
-using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Capacity;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.SharedInstance;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue;
@@ -9,7 +8,7 @@ using Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue;
 namespace Multiplexed.AI.McpServer.Tools
 {
     /// <summary>
-    /// Exposes MCP tools related to local runtime queue control-plane operations.
+    /// Exposes MCP tools related to runtime queue control-plane operations.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -21,8 +20,7 @@ namespace Multiplexed.AI.McpServer.Tools
     /// </para>
     ///
     /// <code>
-    /// IAiRuntimeInstanceCapacityStore
-    ///     -> IAiRuntimeInstanceProviderRouter
+    /// IAiRuntimeInstanceProviderCapabilityResolver
     ///     -> IAiRuntimeInstanceStatusProvider / IAiRuntimeInstanceControlProvider
     /// </code>
     ///
@@ -33,16 +31,30 @@ namespace Multiplexed.AI.McpServer.Tools
     ///
     /// <para>
     /// The legacy shared runtime instance registry path is preserved as a fallback
-    /// when provider resolution fails.
+    /// when provider capability resolution fails.
     /// </para>
     /// </remarks>
     [McpServerToolType]
     public sealed class RuntimeQueueMcpTools
     {
+        /// <summary>
+        /// The root runtime queue control-plane used when no runtime instance id is provided.
+        /// </summary>
         private readonly IAiRuntimeQueueControlPlane runtimeQueueControlPlane;
+
+        /// <summary>
+        /// The shared runtime instance registry used as a legacy fallback path.
+        /// </summary>
         private readonly IAiSharedRuntimeInstanceRegistry sharedRuntimeInstanceRegistry;
-        private readonly IAiRuntimeInstanceCapacityStore capacityStore;
-        private readonly IAiRuntimeInstanceProviderRouter providerRouter;
+
+        /// <summary>
+        /// The provider capability resolver used to resolve status and control providers.
+        /// </summary>
+        private readonly IAiRuntimeInstanceProviderCapabilityResolver providerCapabilityResolver;
+
+        /// <summary>
+        /// The logger.
+        /// </summary>
         private readonly ILogger<RuntimeQueueMcpTools> logger;
 
         /// <summary>
@@ -52,18 +64,14 @@ namespace Multiplexed.AI.McpServer.Tools
         /// <param name="sharedRuntimeInstanceRegistry">
         /// The shared runtime instance registry used as a legacy fallback path.
         /// </param>
-        /// <param name="capacityStore">
-        /// The runtime instance capacity store used to resolve runtime instance descriptors.
-        /// </param>
-        /// <param name="providerRouter">
-        /// The runtime instance provider router used to resolve provider capabilities.
+        /// <param name="providerCapabilityResolver">
+        /// The provider capability resolver used to resolve runtime instance providers.
         /// </param>
         /// <param name="logger">The logger.</param>
         public RuntimeQueueMcpTools(
             IAiRuntimeQueueControlPlane runtimeQueueControlPlane,
             IAiSharedRuntimeInstanceRegistry sharedRuntimeInstanceRegistry,
-            IAiRuntimeInstanceCapacityStore capacityStore,
-            IAiRuntimeInstanceProviderRouter providerRouter,
+            IAiRuntimeInstanceProviderCapabilityResolver providerCapabilityResolver,
             ILogger<RuntimeQueueMcpTools> logger)
         {
             this.runtimeQueueControlPlane =
@@ -74,13 +82,9 @@ namespace Multiplexed.AI.McpServer.Tools
                 sharedRuntimeInstanceRegistry
                 ?? throw new ArgumentNullException(nameof(sharedRuntimeInstanceRegistry));
 
-            this.capacityStore =
-                capacityStore
-                ?? throw new ArgumentNullException(nameof(capacityStore));
-
-            this.providerRouter =
-                providerRouter
-                ?? throw new ArgumentNullException(nameof(providerRouter));
+            this.providerCapabilityResolver =
+                providerCapabilityResolver
+                ?? throw new ArgumentNullException(nameof(providerCapabilityResolver));
 
             this.logger =
                 logger
@@ -116,19 +120,21 @@ namespace Multiplexed.AI.McpServer.Tools
                     .ConfigureAwait(false);
             }
 
-            var providerResolution =
-                await ResolveStatusProviderAsync(
+            var resolution =
+                await providerCapabilityResolver
+                    .ResolveAsync<IAiRuntimeInstanceStatusProvider>(
                         request.RuntimeInstanceId,
                         cancellationToken)
                     .ConfigureAwait(false);
 
-            if (providerResolution.Provider is null ||
-                providerResolution.Descriptor is null)
+            if (!resolution.Success ||
+                resolution.Provider is null ||
+                resolution.Descriptor is null)
             {
                 logger.LogWarning(
                     "Provider-aware runtime queue status resolution failed. Falling back to legacy queue control-plane resolution. RuntimeInstanceId={RuntimeInstanceId}, Reason={Reason}",
                     request.RuntimeInstanceId,
-                    providerResolution.FailureReason);
+                    resolution.FailureReason);
 
                 var controlPlane =
                     await ResolveRuntimeQueueControlPlaneAsync(
@@ -146,11 +152,11 @@ namespace Multiplexed.AI.McpServer.Tools
             logger.LogInformation(
                 "MCP runtime_queue.status routed through provider. RuntimeInstanceId={RuntimeInstanceId}, ProviderType={ProviderType}",
                 request.RuntimeInstanceId,
-                providerResolution.Provider.GetType().FullName ?? providerResolution.Provider.GetType().Name);
+                resolution.Provider.GetType().FullName ?? resolution.Provider.GetType().Name);
 
-            return await providerResolution.Provider
+            return await resolution.Provider
                 .GetQueueStatusAsync(
-                    providerResolution.Descriptor,
+                    resolution.Descriptor,
                     request,
                     cancellationToken)
                 .ConfigureAwait(false);
@@ -186,20 +192,22 @@ namespace Multiplexed.AI.McpServer.Tools
                     .ConfigureAwait(false);
             }
 
-            var providerResolution =
-                await ResolveStatusProviderAsync(
+            var resolution =
+                await providerCapabilityResolver
+                    .ResolveAsync<IAiRuntimeInstanceStatusProvider>(
                         request.RuntimeInstanceId,
                         cancellationToken)
                     .ConfigureAwait(false);
 
-            if (providerResolution.Provider is null ||
-                providerResolution.Descriptor is null)
+            if (!resolution.Success ||
+                resolution.Provider is null ||
+                resolution.Descriptor is null)
             {
                 logger.LogWarning(
                     "Provider-aware runtime run status resolution failed. Falling back to legacy queue control-plane resolution. RuntimeInstanceId={RuntimeInstanceId}, RunId={RunId}, Reason={Reason}",
                     request.RuntimeInstanceId,
                     request.RunId,
-                    providerResolution.FailureReason);
+                    resolution.FailureReason);
 
                 var controlPlane =
                     await ResolveRuntimeQueueControlPlaneAsync(
@@ -218,11 +226,11 @@ namespace Multiplexed.AI.McpServer.Tools
                 "MCP runtime_queue.run_status routed through provider. RuntimeInstanceId={RuntimeInstanceId}, RunId={RunId}, ProviderType={ProviderType}",
                 request.RuntimeInstanceId,
                 request.RunId,
-                providerResolution.Provider.GetType().FullName ?? providerResolution.Provider.GetType().Name);
+                resolution.Provider.GetType().FullName ?? resolution.Provider.GetType().Name);
 
-            return await providerResolution.Provider
+            return await resolution.Provider
                 .GetRunStatusAsync(
-                    providerResolution.Descriptor,
+                    resolution.Descriptor,
                     request,
                     cancellationToken)
                 .ConfigureAwait(false);
@@ -257,19 +265,21 @@ namespace Multiplexed.AI.McpServer.Tools
                     .ConfigureAwait(false);
             }
 
-            var providerResolution =
-                await ResolveControlProviderAsync(
+            var resolution =
+                await providerCapabilityResolver
+                    .ResolveAsync<IAiRuntimeInstanceControlProvider>(
                         request.RuntimeInstanceId,
                         cancellationToken)
                     .ConfigureAwait(false);
 
-            if (providerResolution.Provider is null ||
-                providerResolution.Descriptor is null)
+            if (!resolution.Success ||
+                resolution.Provider is null ||
+                resolution.Descriptor is null)
             {
                 logger.LogWarning(
                     "Provider-aware runtime queue pause resolution failed. Falling back to legacy queue control-plane resolution. RuntimeInstanceId={RuntimeInstanceId}, Reason={Reason}",
                     request.RuntimeInstanceId,
-                    providerResolution.FailureReason);
+                    resolution.FailureReason);
 
                 var controlPlane =
                     await ResolveRuntimeQueueControlPlaneAsync(
@@ -287,11 +297,11 @@ namespace Multiplexed.AI.McpServer.Tools
             logger.LogInformation(
                 "MCP runtime_queue.pause routed through provider. RuntimeInstanceId={RuntimeInstanceId}, ProviderType={ProviderType}",
                 request.RuntimeInstanceId,
-                providerResolution.Provider.GetType().FullName ?? providerResolution.Provider.GetType().Name);
+                resolution.Provider.GetType().FullName ?? resolution.Provider.GetType().Name);
 
-            return await providerResolution.Provider
+            return await resolution.Provider
                 .PauseQueueAsync(
-                    providerResolution.Descriptor,
+                    resolution.Descriptor,
                     request,
                     cancellationToken)
                 .ConfigureAwait(false);
@@ -326,19 +336,21 @@ namespace Multiplexed.AI.McpServer.Tools
                     .ConfigureAwait(false);
             }
 
-            var providerResolution =
-                await ResolveControlProviderAsync(
+            var resolution =
+                await providerCapabilityResolver
+                    .ResolveAsync<IAiRuntimeInstanceControlProvider>(
                         request.RuntimeInstanceId,
                         cancellationToken)
                     .ConfigureAwait(false);
 
-            if (providerResolution.Provider is null ||
-                providerResolution.Descriptor is null)
+            if (!resolution.Success ||
+                resolution.Provider is null ||
+                resolution.Descriptor is null)
             {
                 logger.LogWarning(
                     "Provider-aware runtime queue resume resolution failed. Falling back to legacy queue control-plane resolution. RuntimeInstanceId={RuntimeInstanceId}, Reason={Reason}",
                     request.RuntimeInstanceId,
-                    providerResolution.FailureReason);
+                    resolution.FailureReason);
 
                 var controlPlane =
                     await ResolveRuntimeQueueControlPlaneAsync(
@@ -356,11 +368,11 @@ namespace Multiplexed.AI.McpServer.Tools
             logger.LogInformation(
                 "MCP runtime_queue.resume routed through provider. RuntimeInstanceId={RuntimeInstanceId}, ProviderType={ProviderType}",
                 request.RuntimeInstanceId,
-                providerResolution.Provider.GetType().FullName ?? providerResolution.Provider.GetType().Name);
+                resolution.Provider.GetType().FullName ?? resolution.Provider.GetType().Name);
 
-            return await providerResolution.Provider
+            return await resolution.Provider
                 .ResumeQueueAsync(
-                    providerResolution.Descriptor,
+                    resolution.Descriptor,
                     request,
                     cancellationToken)
                 .ConfigureAwait(false);
@@ -396,20 +408,22 @@ namespace Multiplexed.AI.McpServer.Tools
                     .ConfigureAwait(false);
             }
 
-            var providerResolution =
-                await ResolveControlProviderAsync(
+            var resolution =
+                await providerCapabilityResolver
+                    .ResolveAsync<IAiRuntimeInstanceControlProvider>(
                         request.RuntimeInstanceId,
                         cancellationToken)
                     .ConfigureAwait(false);
 
-            if (providerResolution.Provider is null ||
-                providerResolution.Descriptor is null)
+            if (!resolution.Success ||
+                resolution.Provider is null ||
+                resolution.Descriptor is null)
             {
                 logger.LogWarning(
                     "Provider-aware runtime run cancel resolution failed. Falling back to legacy queue control-plane resolution. RuntimeInstanceId={RuntimeInstanceId}, RunId={RunId}, Reason={Reason}",
                     request.RuntimeInstanceId,
                     request.RunId,
-                    providerResolution.FailureReason);
+                    resolution.FailureReason);
 
                 var controlPlane =
                     await ResolveRuntimeQueueControlPlaneAsync(
@@ -428,11 +442,11 @@ namespace Multiplexed.AI.McpServer.Tools
                 "MCP runtime_queue.cancel_run routed through provider. RuntimeInstanceId={RuntimeInstanceId}, RunId={RunId}, ProviderType={ProviderType}",
                 request.RuntimeInstanceId,
                 request.RunId,
-                providerResolution.Provider.GetType().FullName ?? providerResolution.Provider.GetType().Name);
+                resolution.Provider.GetType().FullName ?? resolution.Provider.GetType().Name);
 
-            return await providerResolution.Provider
+            return await resolution.Provider
                 .CancelRunAsync(
-                    providerResolution.Descriptor,
+                    resolution.Descriptor,
                     request,
                     cancellationToken)
                 .ConfigureAwait(false);
@@ -468,20 +482,22 @@ namespace Multiplexed.AI.McpServer.Tools
                     .ConfigureAwait(false);
             }
 
-            var providerResolution =
-                await ResolveControlProviderAsync(
+            var resolution =
+                await providerCapabilityResolver
+                    .ResolveAsync<IAiRuntimeInstanceControlProvider>(
                         request.RuntimeInstanceId,
                         cancellationToken)
                     .ConfigureAwait(false);
 
-            if (providerResolution.Provider is null ||
-                providerResolution.Descriptor is null)
+            if (!resolution.Success ||
+                resolution.Provider is null ||
+                resolution.Descriptor is null)
             {
                 logger.LogWarning(
                     "Provider-aware queued runtime run cancel resolution failed. Falling back to legacy queue control-plane resolution. RuntimeInstanceId={RuntimeInstanceId}, RunId={RunId}, Reason={Reason}",
                     request.RuntimeInstanceId,
                     request.RunId,
-                    providerResolution.FailureReason);
+                    resolution.FailureReason);
 
                 var controlPlane =
                     await ResolveRuntimeQueueControlPlaneAsync(
@@ -500,90 +516,14 @@ namespace Multiplexed.AI.McpServer.Tools
                 "MCP runtime_queue.cancel_queued_run routed through provider. RuntimeInstanceId={RuntimeInstanceId}, RunId={RunId}, ProviderType={ProviderType}",
                 request.RuntimeInstanceId,
                 request.RunId,
-                providerResolution.Provider.GetType().FullName ?? providerResolution.Provider.GetType().Name);
+                resolution.Provider.GetType().FullName ?? resolution.Provider.GetType().Name);
 
-            return await providerResolution.Provider
+            return await resolution.Provider
                 .CancelQueuedRunAsync(
-                    providerResolution.Descriptor,
+                    resolution.Descriptor,
                     request,
                     cancellationToken)
                 .ConfigureAwait(false);
-        }
-
-        /// <summary>
-        /// Resolves the provider status capability for a runtime instance.
-        /// </summary>
-        /// <param name="runtimeInstanceId">The runtime instance identifier.</param>
-        /// <param name="cancellationToken">A token used to cancel the operation.</param>
-        /// <returns>The status provider resolution.</returns>
-        private async Task<RuntimeInstanceStatusProviderResolution> ResolveStatusProviderAsync(
-            string runtimeInstanceId,
-            CancellationToken cancellationToken)
-        {
-            ArgumentException.ThrowIfNullOrWhiteSpace(runtimeInstanceId);
-
-            var descriptor =
-                await capacityStore
-                    .GetAsync(
-                        runtimeInstanceId,
-                        cancellationToken)
-                    .ConfigureAwait(false);
-
-            if (descriptor is null)
-            {
-                return RuntimeInstanceStatusProviderResolution.Failed(
-                    $"Runtime instance capacity descriptor '{runtimeInstanceId}' was not found.");
-            }
-
-            if (!providerRouter.TryGetProvider<IAiRuntimeInstanceStatusProvider>(
-                    descriptor,
-                    out var provider))
-            {
-                return RuntimeInstanceStatusProviderResolution.Failed(
-                    $"No runtime instance status provider was found for runtime instance '{runtimeInstanceId}'.");
-            }
-
-            return RuntimeInstanceStatusProviderResolution.Succeeded(
-                descriptor,
-                provider);
-        }
-
-        /// <summary>
-        /// Resolves the provider control capability for a runtime instance.
-        /// </summary>
-        /// <param name="runtimeInstanceId">The runtime instance identifier.</param>
-        /// <param name="cancellationToken">A token used to cancel the operation.</param>
-        /// <returns>The control provider resolution.</returns>
-        private async Task<RuntimeInstanceControlProviderResolution> ResolveControlProviderAsync(
-            string runtimeInstanceId,
-            CancellationToken cancellationToken)
-        {
-            ArgumentException.ThrowIfNullOrWhiteSpace(runtimeInstanceId);
-
-            var descriptor =
-                await capacityStore
-                    .GetAsync(
-                        runtimeInstanceId,
-                        cancellationToken)
-                    .ConfigureAwait(false);
-
-            if (descriptor is null)
-            {
-                return RuntimeInstanceControlProviderResolution.Failed(
-                    $"Runtime instance capacity descriptor '{runtimeInstanceId}' was not found.");
-            }
-
-            if (!providerRouter.TryGetProvider<IAiRuntimeInstanceControlProvider>(
-                    descriptor,
-                    out var provider))
-            {
-                return RuntimeInstanceControlProviderResolution.Failed(
-                    $"No runtime instance control provider was found for runtime instance '{runtimeInstanceId}'.");
-            }
-
-            return RuntimeInstanceControlProviderResolution.Succeeded(
-                descriptor,
-                provider);
         }
 
         /// <summary>
@@ -618,120 +558,6 @@ namespace Multiplexed.AI.McpServer.Tools
             }
 
             return sharedRuntimeInstance.QueueControlPlane;
-        }
-
-        /// <summary>
-        /// Represents the result of resolving a runtime instance status provider.
-        /// </summary>
-        private sealed class RuntimeInstanceStatusProviderResolution
-        {
-            /// <summary>
-            /// Gets the runtime instance capacity descriptor.
-            /// </summary>
-            public AiRuntimeInstanceCapacityDescriptor? Descriptor { get; private init; }
-
-            /// <summary>
-            /// Gets the resolved runtime instance status provider.
-            /// </summary>
-            public IAiRuntimeInstanceStatusProvider? Provider { get; private init; }
-
-            /// <summary>
-            /// Gets the failure reason when provider resolution failed.
-            /// </summary>
-            public string? FailureReason { get; private init; }
-
-            /// <summary>
-            /// Creates a successful provider resolution.
-            /// </summary>
-            /// <param name="descriptor">The runtime instance capacity descriptor.</param>
-            /// <param name="provider">The runtime instance status provider.</param>
-            /// <returns>The provider resolution.</returns>
-            public static RuntimeInstanceStatusProviderResolution Succeeded(
-                AiRuntimeInstanceCapacityDescriptor descriptor,
-                IAiRuntimeInstanceStatusProvider provider)
-            {
-                ArgumentNullException.ThrowIfNull(descriptor);
-                ArgumentNullException.ThrowIfNull(provider);
-
-                return new RuntimeInstanceStatusProviderResolution
-                {
-                    Descriptor = descriptor,
-                    Provider = provider
-                };
-            }
-
-            /// <summary>
-            /// Creates a failed provider resolution.
-            /// </summary>
-            /// <param name="failureReason">The provider resolution failure reason.</param>
-            /// <returns>The provider resolution.</returns>
-            public static RuntimeInstanceStatusProviderResolution Failed(
-                string failureReason)
-            {
-                ArgumentException.ThrowIfNullOrWhiteSpace(failureReason);
-
-                return new RuntimeInstanceStatusProviderResolution
-                {
-                    FailureReason = failureReason
-                };
-            }
-        }
-
-        /// <summary>
-        /// Represents the result of resolving a runtime instance control provider.
-        /// </summary>
-        private sealed class RuntimeInstanceControlProviderResolution
-        {
-            /// <summary>
-            /// Gets the runtime instance capacity descriptor.
-            /// </summary>
-            public AiRuntimeInstanceCapacityDescriptor? Descriptor { get; private init; }
-
-            /// <summary>
-            /// Gets the resolved runtime instance control provider.
-            /// </summary>
-            public IAiRuntimeInstanceControlProvider? Provider { get; private init; }
-
-            /// <summary>
-            /// Gets the failure reason when provider resolution failed.
-            /// </summary>
-            public string? FailureReason { get; private init; }
-
-            /// <summary>
-            /// Creates a successful provider resolution.
-            /// </summary>
-            /// <param name="descriptor">The runtime instance capacity descriptor.</param>
-            /// <param name="provider">The runtime instance control provider.</param>
-            /// <returns>The provider resolution.</returns>
-            public static RuntimeInstanceControlProviderResolution Succeeded(
-                AiRuntimeInstanceCapacityDescriptor descriptor,
-                IAiRuntimeInstanceControlProvider provider)
-            {
-                ArgumentNullException.ThrowIfNull(descriptor);
-                ArgumentNullException.ThrowIfNull(provider);
-
-                return new RuntimeInstanceControlProviderResolution
-                {
-                    Descriptor = descriptor,
-                    Provider = provider
-                };
-            }
-
-            /// <summary>
-            /// Creates a failed provider resolution.
-            /// </summary>
-            /// <param name="failureReason">The provider resolution failure reason.</param>
-            /// <returns>The provider resolution.</returns>
-            public static RuntimeInstanceControlProviderResolution Failed(
-                string failureReason)
-            {
-                ArgumentException.ThrowIfNullOrWhiteSpace(failureReason);
-
-                return new RuntimeInstanceControlProviderResolution
-                {
-                    FailureReason = failureReason
-                };
-            }
         }
     }
 }

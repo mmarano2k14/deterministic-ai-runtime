@@ -10,6 +10,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers
     /// </summary>
     public static class AiRuntimeInstanceProviderServiceCollectionExtensions
     {
+        /// <summary>
+        /// Registers the built-in runtime instance providers.
+        /// </summary>
+        /// <param name="services">The service collection.</param>
+        /// <returns>The same service collection for chaining.</returns>
         public static IServiceCollection AddAiRuntimeInstanceProviders(
             this IServiceCollection services)
         {
@@ -24,9 +29,19 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers
                 IAiRuntimeInstanceProviderRouter,
                 AiRuntimeInstanceProviderRouter>();
 
+            services.TryAddSingleton<
+                IAiRuntimeInstanceProviderCapabilityResolver,
+                AiRuntimeInstanceProviderCapabilityResolver>();
+
             return services;
         }
 
+        /// <summary>
+        /// Registers runtime instance providers discovered from the supplied assemblies.
+        /// </summary>
+        /// <param name="services">The service collection.</param>
+        /// <param name="assemblies">The assemblies to scan for runtime instance providers.</param>
+        /// <returns>The same service collection for chaining.</returns>
         public static IServiceCollection AddAiRuntimeInstanceProvidersFromAssemblies(
             this IServiceCollection services,
             params Assembly[] assemblies)
@@ -56,6 +71,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers
             services.TryAddSingleton<
                 IAiRuntimeInstanceProviderRouter,
                 AiRuntimeInstanceProviderRouter>();
+
+            services.TryAddSingleton<
+                IAiRuntimeInstanceProviderCapabilityResolver,
+                AiRuntimeInstanceProviderCapabilityResolver>();
 
             return services;
         }
