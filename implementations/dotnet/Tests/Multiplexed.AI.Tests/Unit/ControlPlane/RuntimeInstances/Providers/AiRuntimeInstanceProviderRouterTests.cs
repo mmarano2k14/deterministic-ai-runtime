@@ -3,7 +3,7 @@ using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.SharedInstance;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers;
 
-namespace Multiplexed.AI.Tests.Unit.Runtime.ControlPlane.RuntimeInstances.Providers
+namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Providers
 {
     /// <summary>
     /// Unit tests for <see cref="AiRuntimeInstanceProviderRouter"/>.
