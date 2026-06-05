@@ -2,9 +2,10 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Local;
 
-namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers
+namespace Multiplexed.AI.Runtime.ControlPlane.DI
 {
     /// <summary>
     /// Provides dependency injection registration for runtime instance providers.

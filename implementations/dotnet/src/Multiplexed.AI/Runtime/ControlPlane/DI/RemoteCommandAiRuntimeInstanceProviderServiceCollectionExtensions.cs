@@ -2,8 +2,9 @@
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers.Transport;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers;
 
-namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers
+namespace Multiplexed.AI.Runtime.ControlPlane.DI
 {
     /// <summary>
     /// Provides dependency injection registration for the remote command runtime instance provider.
