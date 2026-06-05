@@ -1,4 +1,5 @@
 ﻿using System.Net.Http.Json;
+using Microsoft.Extensions.Logging;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Capacity;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers.Transport;
@@ -52,15 +53,26 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http
         private readonly HttpClient httpClient;
 
         /// <summary>
+        /// Logger used for HTTP provider diagnostics.
+        /// </summary>
+        private readonly ILogger<HttpAiRuntimeInstanceProvider> logger;
+
+        /// <summary>
         /// Initializes a new instance of the <see cref="HttpAiRuntimeInstanceProvider"/> class.
         /// </summary>
         /// <param name="httpClient">The HTTP client.</param>
+        /// <param name="logger">The logger.</param>
         public HttpAiRuntimeInstanceProvider(
-            HttpClient httpClient)
+            HttpClient httpClient,
+            ILogger<HttpAiRuntimeInstanceProvider> logger)
         {
             this.httpClient =
                 httpClient
                 ?? throw new ArgumentNullException(nameof(httpClient));
+
+            this.logger =
+                logger
+                ?? throw new ArgumentNullException(nameof(logger));
         }
 
         /// <inheritdoc />
@@ -75,11 +87,24 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http
                     out var providerName) &&
                 !string.IsNullOrWhiteSpace(providerName))
             {
-                return string.Equals(
-                    providerName.Trim(),
-                    ProviderName,
-                    StringComparison.OrdinalIgnoreCase);
+                var canHandle =
+                    string.Equals(
+                        providerName.Trim(),
+                        ProviderName,
+                        StringComparison.OrdinalIgnoreCase);
+
+                logger.LogInformation(
+                    "HTTP PROVIDER CAN HANDLE CHECK RuntimeInstanceId={RuntimeInstanceId} ProviderName={ProviderName} CanHandle={CanHandle}",
+                    descriptor.RuntimeInstanceId,
+                    providerName,
+                    canHandle);
+
+                return canHandle;
             }
+
+            logger.LogInformation(
+                "HTTP PROVIDER CAN HANDLE CHECK RuntimeInstanceId={RuntimeInstanceId} ProviderName=(missing) CanHandle=False",
+                descriptor.RuntimeInstanceId);
 
             return false;
         }
@@ -98,8 +123,21 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http
                     descriptor,
                     request.RuntimeInstanceId);
 
+            logger.LogInformation(
+                "HTTP DISPATCH START RuntimeInstanceId={RuntimeInstanceId} DescriptorRuntimeInstanceId={DescriptorRuntimeInstanceId} RequestRuntimeInstanceId={RequestRuntimeInstanceId} SharedRunId={SharedRunId} ClaimToken={ClaimToken} CorrelationId={CorrelationId}",
+                runtimeInstanceId,
+                descriptor.RuntimeInstanceId,
+                request.RuntimeInstanceId,
+                request.SharedRun.SharedRunId,
+                request.ClaimToken,
+                request.CorrelationId);
+
             if (string.IsNullOrWhiteSpace(runtimeInstanceId))
             {
+                logger.LogWarning(
+                    "HTTP DISPATCH FAILED RuntimeInstanceId=(missing) SharedRunId={SharedRunId} Reason=runtime-instance-id-missing",
+                    request.SharedRun.SharedRunId);
+
                 return CreateFailedDispatchResult(
                     request,
                     string.Empty,
@@ -113,12 +151,25 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http
 
             if (!endpointResolution.Success)
             {
+                logger.LogWarning(
+                    "HTTP DISPATCH ENDPOINT RESOLUTION FAILED RuntimeInstanceId={RuntimeInstanceId} SharedRunId={SharedRunId} Reason={FailureReason} Message={Message}",
+                    runtimeInstanceId,
+                    request.SharedRun.SharedRunId,
+                    endpointResolution.FailureReason,
+                    endpointResolution.Message);
+
                 return CreateFailedDispatchResult(
                     request,
                     runtimeInstanceId,
                     endpointResolution.FailureReason ?? "http-endpoint-missing",
                     endpointResolution.Message ?? "HTTP runtime instance endpoint is missing.");
             }
+
+            logger.LogInformation(
+                "HTTP DISPATCH ENDPOINT RESOLVED RuntimeInstanceId={RuntimeInstanceId} SharedRunId={SharedRunId} Endpoint={Endpoint}",
+                runtimeInstanceId,
+                request.SharedRun.SharedRunId,
+                endpointResolution.Endpoint);
 
             var commandResult =
                 await SendCommandAsync(
@@ -143,8 +194,26 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http
 
             if (commandResult.DispatchResult is not null)
             {
+                logger.LogInformation(
+                    "HTTP DISPATCH RESULT RuntimeInstanceId={RuntimeInstanceId} SharedRunId={SharedRunId} Success={Success} LocalRunId={LocalRunId} ExecutionId={ExecutionId} ClaimToken={ClaimToken} FailureReason={FailureReason}",
+                    runtimeInstanceId,
+                    request.SharedRun.SharedRunId,
+                    commandResult.DispatchResult.Success,
+                    commandResult.DispatchResult.LocalRunId,
+                    commandResult.DispatchResult.ExecutionId,
+                    commandResult.DispatchResult.ClaimToken,
+                    commandResult.DispatchResult.FailureReason);
+
                 return commandResult.DispatchResult;
             }
+
+            logger.LogWarning(
+                "HTTP DISPATCH RESULT MISSING RuntimeInstanceId={RuntimeInstanceId} SharedRunId={SharedRunId} CommandSuccess={CommandSuccess} CommandFailureReason={FailureReason} CommandMessage={Message}",
+                runtimeInstanceId,
+                request.SharedRun.SharedRunId,
+                commandResult.Success,
+                commandResult.FailureReason,
+                commandResult.Message);
 
             return CreateFailedDispatchResult(
                 request,
@@ -261,8 +330,24 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http
                     descriptor,
                     request.RuntimeInstanceId);
 
+            logger.LogInformation(
+                "HTTP QUEUE COMMAND START RuntimeInstanceId={RuntimeInstanceId} DescriptorRuntimeInstanceId={DescriptorRuntimeInstanceId} RequestRuntimeInstanceId={RequestRuntimeInstanceId} CommandOperation={CommandOperation} QueueOperation={QueueOperation} RunId={RunId} CorrelationId={CorrelationId}",
+                runtimeInstanceId,
+                descriptor.RuntimeInstanceId,
+                request.RuntimeInstanceId,
+                commandOperation,
+                queueOperation,
+                request.RunId,
+                request.CorrelationId);
+
             if (string.IsNullOrWhiteSpace(runtimeInstanceId))
             {
+                logger.LogWarning(
+                    "HTTP QUEUE COMMAND FAILED RuntimeInstanceId=(missing) CommandOperation={CommandOperation} QueueOperation={QueueOperation} RunId={RunId} Reason=runtime-instance-id-missing",
+                    commandOperation,
+                    queueOperation,
+                    request.RunId);
+
                 return CreateFailedQueueResult(
                     request,
                     queueOperation,
@@ -277,6 +362,15 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http
 
             if (!endpointResolution.Success)
             {
+                logger.LogWarning(
+                    "HTTP QUEUE COMMAND ENDPOINT RESOLUTION FAILED RuntimeInstanceId={RuntimeInstanceId} CommandOperation={CommandOperation} QueueOperation={QueueOperation} RunId={RunId} Reason={FailureReason} Message={Message}",
+                    runtimeInstanceId,
+                    commandOperation,
+                    queueOperation,
+                    request.RunId,
+                    endpointResolution.FailureReason,
+                    endpointResolution.Message);
+
                 return CreateFailedQueueResult(
                     request,
                     queueOperation,
@@ -284,6 +378,14 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http
                     endpointResolution.FailureReason ?? "http-endpoint-missing",
                     endpointResolution.Message ?? "HTTP runtime instance endpoint is missing.");
             }
+
+            logger.LogInformation(
+                "HTTP QUEUE COMMAND ENDPOINT RESOLVED RuntimeInstanceId={RuntimeInstanceId} CommandOperation={CommandOperation} QueueOperation={QueueOperation} RunId={RunId} Endpoint={Endpoint}",
+                runtimeInstanceId,
+                commandOperation,
+                queueOperation,
+                request.RunId,
+                endpointResolution.Endpoint);
 
             var commandResult =
                 await SendCommandAsync(
@@ -308,8 +410,28 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http
 
             if (commandResult.QueueResult is not null)
             {
+                logger.LogInformation(
+                    "HTTP QUEUE COMMAND RESULT RuntimeInstanceId={RuntimeInstanceId} CommandOperation={CommandOperation} QueueOperation={QueueOperation} RunId={RunId} Success={Success} ExecutionId={ExecutionId} FailureReason={FailureReason}",
+                    runtimeInstanceId,
+                    commandOperation,
+                    queueOperation,
+                    request.RunId,
+                    commandResult.QueueResult.Success,
+                    commandResult.QueueResult.ExecutionId,
+                    commandResult.QueueResult.FailureReason);
+
                 return commandResult.QueueResult;
             }
+
+            logger.LogWarning(
+                "HTTP QUEUE COMMAND RESULT MISSING RuntimeInstanceId={RuntimeInstanceId} CommandOperation={CommandOperation} QueueOperation={QueueOperation} RunId={RunId} CommandSuccess={CommandSuccess} CommandFailureReason={FailureReason} CommandMessage={Message}",
+                runtimeInstanceId,
+                commandOperation,
+                queueOperation,
+                request.RunId,
+                commandResult.Success,
+                commandResult.FailureReason,
+                commandResult.Message);
 
             return CreateFailedQueueResult(
                 request,
@@ -337,6 +459,17 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http
             var startedAtUtc =
                 DateTimeOffset.UtcNow;
 
+            logger.LogInformation(
+                "HTTP RUNTIME COMMAND SEND RuntimeInstanceId={RuntimeInstanceId} Operation={Operation} Endpoint={Endpoint} SharedRunId={SharedRunId} RunId={RunId} CorrelationId={CorrelationId} RequestedBy={RequestedBy} Source={Source}",
+                request.RuntimeInstanceId,
+                request.Operation,
+                endpoint,
+                request.DispatchRequest?.SharedRun.SharedRunId,
+                request.QueueRequest?.RunId,
+                request.CorrelationId,
+                request.RequestedBy,
+                request.Source);
+
             try
             {
                 using var response =
@@ -351,6 +484,16 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http
                 {
                     var completedAtUtc =
                         DateTimeOffset.UtcNow;
+
+                    logger.LogWarning(
+                        "HTTP RUNTIME COMMAND RESPONSE FAILED RuntimeInstanceId={RuntimeInstanceId} Operation={Operation} Endpoint={Endpoint} StatusCode={StatusCode} DurationMs={DurationMs}",
+                        request.RuntimeInstanceId,
+                        request.Operation,
+                        endpoint,
+                        response.StatusCode,
+                        Math.Max(
+                            0,
+                            (long)(completedAtUtc - startedAtUtc).TotalMilliseconds));
 
                     return new AiRuntimeInstanceCommandResult
                     {
@@ -377,11 +520,33 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http
 
                 if (result is not null)
                 {
+                    logger.LogInformation(
+                        "HTTP RUNTIME COMMAND RESPONSE RuntimeInstanceId={RuntimeInstanceId} Operation={Operation} Endpoint={Endpoint} Success={Success} DispatchSuccess={DispatchSuccess} QueueSuccess={QueueSuccess} LocalRunId={LocalRunId} ExecutionId={ExecutionId} FailureReason={FailureReason} DurationMs={DurationMs}",
+                        request.RuntimeInstanceId,
+                        request.Operation,
+                        endpoint,
+                        result.Success,
+                        result.DispatchResult?.Success,
+                        result.QueueResult?.Success,
+                        result.DispatchResult?.LocalRunId,
+                        result.DispatchResult?.ExecutionId ?? result.QueueResult?.ExecutionId,
+                        result.FailureReason,
+                        result.DurationMs);
+
                     return result;
                 }
 
                 var completedAtUtcForMissingBody =
                     DateTimeOffset.UtcNow;
+
+                logger.LogWarning(
+                    "HTTP RUNTIME COMMAND RESPONSE EMPTY RuntimeInstanceId={RuntimeInstanceId} Operation={Operation} Endpoint={Endpoint} DurationMs={DurationMs}",
+                    request.RuntimeInstanceId,
+                    request.Operation,
+                    endpoint,
+                    Math.Max(
+                        0,
+                        (long)(completedAtUtcForMissingBody - startedAtUtc).TotalMilliseconds));
 
                 return new AiRuntimeInstanceCommandResult
                 {
@@ -399,12 +564,32 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http
             }
             catch (OperationCanceledException)
             {
+                logger.LogWarning(
+                    "HTTP RUNTIME COMMAND CANCELLED RuntimeInstanceId={RuntimeInstanceId} Operation={Operation} Endpoint={Endpoint} SharedRunId={SharedRunId} RunId={RunId}",
+                    request.RuntimeInstanceId,
+                    request.Operation,
+                    endpoint,
+                    request.DispatchRequest?.SharedRun.SharedRunId,
+                    request.QueueRequest?.RunId);
+
                 throw;
             }
             catch (Exception exception)
             {
                 var completedAtUtc =
                     DateTimeOffset.UtcNow;
+
+                logger.LogError(
+                    exception,
+                    "HTTP RUNTIME COMMAND EXCEPTION RuntimeInstanceId={RuntimeInstanceId} Operation={Operation} Endpoint={Endpoint} SharedRunId={SharedRunId} RunId={RunId} DurationMs={DurationMs}",
+                    request.RuntimeInstanceId,
+                    request.Operation,
+                    endpoint,
+                    request.DispatchRequest?.SharedRun.SharedRunId,
+                    request.QueueRequest?.RunId,
+                    Math.Max(
+                        0,
+                        (long)(completedAtUtc - startedAtUtc).TotalMilliseconds));
 
                 return new AiRuntimeInstanceCommandResult
                 {

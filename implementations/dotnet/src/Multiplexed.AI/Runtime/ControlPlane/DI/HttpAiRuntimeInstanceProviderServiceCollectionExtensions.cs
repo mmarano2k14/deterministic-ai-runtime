@@ -1,6 +1,7 @@
 ﻿using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers.Http;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.DI
@@ -56,6 +57,15 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
         /// </para>
         ///
         /// <para>
+        /// This method also registers the runtime-side HTTP command handler:
+        /// </para>
+        ///
+        /// <code>
+        /// IAiRuntimeInstanceHttpCommandHandler
+        ///     -> AiRuntimeInstanceHttpCommandHandler
+        /// </code>
+        ///
+        /// <para>
         /// The provider router can then resolve descriptors with:
         /// </para>
         ///
@@ -91,6 +101,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
                 ServiceDescriptor.Transient<
                     IAiRuntimeInstanceProvider,
                     HttpAiRuntimeInstanceProvider>());
+
+            services.TryAddSingleton<
+                IAiRuntimeInstanceHttpCommandHandler,
+                AiRuntimeInstanceHttpCommandHandler>();
 
             return services;
         }

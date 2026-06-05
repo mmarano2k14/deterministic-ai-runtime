@@ -1,37 +1,39 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
-  <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
-    <ImplicitUsings>enable</ImplicitUsings>
-    <Nullable>enable</Nullable>
-    <IsPackable>false</IsPackable>
-  </PropertyGroup>
+	<PropertyGroup>
+		<TargetFramework>net10.0</TargetFramework>
+		<ImplicitUsings>enable</ImplicitUsings>
+		<Nullable>enable</Nullable>
+		<IsPackable>false</IsPackable>
+	</PropertyGroup>
 
-  <ItemGroup>
-    <PackageReference Include="coverlet.collector" Version="6.0.4" />
-    <PackageReference Include="FluentAssertions" Version="8.10.0" />
-    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
-    <PackageReference Include="SharpCompress" Version="0.48.1" />
-    <PackageReference Include="Snappier" Version="1.3.1" />
-    <PackageReference Include="System.Security.Cryptography.Xml" Version="8.0.3" />
-    <PackageReference Include="xunit" Version="2.9.3" />
-    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" />
-  </ItemGroup>
+	<ItemGroup>
+		<PackageReference Include="Acheve.TestHost" Version="4.0.0" />
+		<PackageReference Include="coverlet.collector" Version="6.0.4" />
+		<PackageReference Include="FluentAssertions" Version="8.10.0" />
+		<PackageReference Include="Microsoft.AspNetCore.TestHost" Version="10.0.0" />
+		<PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+		<PackageReference Include="SharpCompress" Version="0.48.1" />
+		<PackageReference Include="Snappier" Version="1.3.1" />
+		<PackageReference Include="System.Security.Cryptography.Xml" Version="8.0.3" />
+		<PackageReference Include="xunit" Version="2.9.3" />
+		<PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" />
+	</ItemGroup>
 
-  <ItemGroup>
-    <ProjectReference Include="..\..\src\Multiplexed.Abstractions\Multiplexed.Abstractions.csproj" />
-    <ProjectReference Include="..\..\src\Multiplexed.AI\Multiplexed.AI.csproj" />
-    <ProjectReference Include="..\..\src\Multiplexed.Rbac.Core\Multiplexed.Rbac.Core.csproj" />
-    <ProjectReference Include="..\..\src\Multiplexed.Realtime\Multiplexed.Realtime.csproj" />
-  </ItemGroup>
+	<ItemGroup>
+		<ProjectReference Include="..\..\src\Multiplexed.Abstractions\Multiplexed.Abstractions.csproj" />
+		<ProjectReference Include="..\..\src\Multiplexed.AI\Multiplexed.AI.csproj" />
+		<ProjectReference Include="..\..\src\Multiplexed.Rbac.Core\Multiplexed.Rbac.Core.csproj" />
+		<ProjectReference Include="..\..\src\Multiplexed.Realtime\Multiplexed.Realtime.csproj" />
+	</ItemGroup>
 
-  <ItemGroup>
-    <Using Include="Xunit" />
-  </ItemGroup>
+	<ItemGroup>
+		<Using Include="Xunit" />
+	</ItemGroup>
 
-  <ItemGroup>
-    <Folder Include="Runtime\Execution\State\" />
-    <Folder Include="Runtime\Retry\" />
-  </ItemGroup>
+	<ItemGroup>
+		<Folder Include="Runtime\Execution\State\" />
+		<Folder Include="Runtime\Retry\" />
+	</ItemGroup>
 
 </Project>

@@ -1,12 +1,16 @@
-﻿namespace Multiplexed.AI.McpServer.Host.Bootstrap
+﻿using Microsoft.Extensions.Options;
+using Multiplexed.AI.McpServer.Host.Configuration;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http;
+
+namespace Multiplexed.AI.McpServer.Host.Bootstrap
 {
     /// <summary>
-    /// Configures the application pipeline.
+    /// Configures the HTTP application pipeline.
     /// </summary>
     public static class ApplicationConfiguration
     {
         /// <summary>
-        /// Configures the application.
+        /// Configures application endpoints according to the MCP host mode.
         /// </summary>
         /// <param name="app">The web application.</param>
         public static void Configure(
@@ -14,10 +18,33 @@
         {
             ArgumentNullException.ThrowIfNull(app);
 
-            app.MapHealthChecks("/health");
-            app.MapHealthChecks("/ready");
+            var hostOptions =
+                app.Services
+                    .GetRequiredService<IOptions<AiMcpHostOptions>>()
+                    .Value;
 
-            app.MapMcp("/mcp");
+            Console.WriteLine($"[APP CONFIG] Mode='{hostOptions.Mode}'");
+
+            app.MapHealthChecks("/health");
+
+            switch (hostOptions.Mode)
+            {
+                case AiMcpHostMode.ControlPlaneOnly:
+                case AiMcpHostMode.ControlPlaneWithLocalRuntimeInstances:
+                case AiMcpHostMode.ControlPlaneWithHttpRuntimeInstances:
+                    Console.WriteLine("[APP CONFIG] Mapping MCP endpoint '/mcp'.");
+                    app.MapMcp("/mcp");
+                    break;
+
+                case AiMcpHostMode.RuntimeInstanceOnly:
+                    Console.WriteLine("[APP CONFIG] Mapping runtime command endpoint '/runtime-instance/commands'.");
+                    app.MapAiRuntimeInstanceHttpCommandEndpoint();
+                    break;
+
+                default:
+                    throw new InvalidOperationException(
+                        $"Unsupported MCP host mode '{hostOptions.Mode}'.");
+            }
         }
     }
 }
