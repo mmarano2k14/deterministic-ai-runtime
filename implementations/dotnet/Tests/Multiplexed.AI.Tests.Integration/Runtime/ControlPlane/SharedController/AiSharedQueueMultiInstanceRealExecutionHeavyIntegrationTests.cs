@@ -336,8 +336,6 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedController
                 }
 
                
-               
-
                 var providerRouter =
                     new AiRuntimeInstanceProviderRouter(
                         new IAiRuntimeInstanceProvider[]
@@ -346,10 +344,14 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedController
                             sharedRuntimeInstanceRegistry)
                         });
 
+                var providerCapabilityResolver =
+                    new AiRuntimeInstanceProviderCapabilityResolver(
+                        capacityStore,
+                        providerRouter);
+
                 var remoteSharedRunDispatcher =
                     new RemoteAiSharedRunDispatcher(
-                        capacityStore,
-                        providerRouter,
+                        providerCapabilityResolver,
                         NullLogger<RemoteAiSharedRunDispatcher>.Instance);
 
                 var sharedRunId =
@@ -602,10 +604,14 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedController
                                 sharedRuntimeInstanceRegistry)
                         });
 
+                var providerCapabilityResolver =
+                    new AiRuntimeInstanceProviderCapabilityResolver(
+                        capacityStore,
+                        providerRouter);
+
                 var remoteSharedRunDispatcher =
                     new RemoteAiSharedRunDispatcher(
-                        capacityStore,
-                        providerRouter,
+                        providerCapabilityResolver,
                         NullLogger<RemoteAiSharedRunDispatcher>.Instance);
 
                 var sharedRunId =
@@ -884,10 +890,14 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedController
                             sharedRuntimeInstanceRegistry)
                     });
 
+                var providerCapabilityResolver =
+                    new AiRuntimeInstanceProviderCapabilityResolver(
+                        capacityStore,
+                        providerRouter);
+
                 var remoteSharedRunDispatcher =
                     new RemoteAiSharedRunDispatcher(
-                        capacityStore,
-                        providerRouter,
+                        providerCapabilityResolver,
                         NullLogger<RemoteAiSharedRunDispatcher>.Instance);
 
                 var sharedRunIdPrefix =

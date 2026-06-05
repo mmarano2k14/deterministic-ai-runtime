@@ -1,5 +1,4 @@
 ﻿using Microsoft.Extensions.Logging;
-using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Capacity;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.SharedInstance;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Dispatch;
@@ -13,10 +12,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Dispatch
     /// <para>
     /// PURPOSE:
     /// - Bridges the shared queue / shared controller layer to concrete runtime instances.
-    /// - Resolves the target runtime instance capacity descriptor from
-    ///   <see cref="IAiRuntimeInstanceCapacityStore"/>.
-    /// - Resolves the correct runtime instance dispatch provider through
-    ///   <see cref="IAiRuntimeInstanceProviderRouter"/>.
+    /// - Resolves the target runtime instance dispatch provider through
+    ///   <see cref="IAiRuntimeInstanceProviderCapabilityResolver"/>.
     /// - Dispatches the shared run through the selected provider.
     /// </para>
     ///
@@ -26,7 +23,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Dispatch
     ///   Redis-command-queue based, HTTP-based, gRPC-based, Kubernetes-backed, or
     ///   provided by another future transport.
     /// - Admission decides which runtime instance should receive the run.
-    /// - The provider router decides how to communicate with that runtime instance.
+    /// - The provider capability resolver decides how to resolve the provider.
+    /// - The provider decides how to communicate with the selected runtime instance.
     /// </para>
     ///
     /// <para>
@@ -38,32 +36,23 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Dispatch
     /// </remarks>
     public sealed class RemoteAiSharedRunDispatcher : IAiSharedRunDispatcher
     {
-        private readonly IAiRuntimeInstanceCapacityStore capacityStore;
-        private readonly IAiRuntimeInstanceProviderRouter providerRouter;
+        private readonly IAiRuntimeInstanceProviderCapabilityResolver providerCapabilityResolver;
         private readonly ILogger<RemoteAiSharedRunDispatcher> logger;
 
         /// <summary>
         /// Initializes a new instance of the <see cref="RemoteAiSharedRunDispatcher"/> class.
         /// </summary>
-        /// <param name="capacityStore">
-        /// The runtime instance capacity store used to resolve the target runtime instance descriptor.
-        /// </param>
-        /// <param name="providerRouter">
-        /// The provider router used to resolve the dispatch provider for the target runtime instance.
+        /// <param name="providerCapabilityResolver">
+        /// The provider capability resolver used to resolve the dispatch provider for the target runtime instance.
         /// </param>
         /// <param name="logger">The logger used for diagnostics.</param>
         public RemoteAiSharedRunDispatcher(
-            IAiRuntimeInstanceCapacityStore capacityStore,
-            IAiRuntimeInstanceProviderRouter providerRouter,
+            IAiRuntimeInstanceProviderCapabilityResolver providerCapabilityResolver,
             ILogger<RemoteAiSharedRunDispatcher> logger)
         {
-            this.capacityStore =
-                capacityStore
-                ?? throw new ArgumentNullException(nameof(capacityStore));
-
-            this.providerRouter =
-                providerRouter
-                ?? throw new ArgumentNullException(nameof(providerRouter));
+            this.providerCapabilityResolver =
+                providerCapabilityResolver
+                ?? throw new ArgumentNullException(nameof(providerCapabilityResolver));
 
             this.logger =
                 logger
@@ -109,60 +98,49 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Dispatch
                     "Shared run does not contain a runtime pipeline run request.");
             }
 
-            var descriptor =
-                await capacityStore
-                    .GetAsync(
+            var resolution =
+                await providerCapabilityResolver
+                    .ResolveAsync<IAiRuntimeInstanceDispatchProvider>(
                         request.RuntimeInstanceId,
                         cancellationToken)
                     .ConfigureAwait(false);
 
             logger.LogInformation(
-                "REMOTE DISPATCH CAPACITY RuntimeInstanceId={RuntimeInstanceId} Found={Found}",
+                "REMOTE DISPATCH CAPABILITY RuntimeInstanceId={RuntimeInstanceId} Success={Success} Reason={Reason}",
                 request.RuntimeInstanceId,
-                descriptor is not null);
+                resolution.Success,
+                resolution.FailureReason);
 
             Console.WriteLine(
-                $"[REMOTE DISPATCH] CAPACITY RuntimeInstanceId='{request.RuntimeInstanceId}' Found='{descriptor is not null}'");
+                $"[REMOTE DISPATCH] CAPABILITY RuntimeInstanceId='{request.RuntimeInstanceId}' Success='{resolution.Success}' Reason='{resolution.FailureReason}'");
 
-            if (descriptor is null)
+            if (!resolution.Success ||
+                resolution.Provider is null ||
+                resolution.Descriptor is null)
             {
                 logger.LogWarning(
                     "REMOTE DISPATCH FAILED RuntimeInstanceId={RuntimeInstanceId} SharedRunId={SharedRunId} Reason={Reason}",
                     request.RuntimeInstanceId,
                     request.SharedRun.SharedRunId,
-                    "runtime-instance-capacity-not-found");
+                    "runtime-instance-dispatch-provider-not-found");
 
                 Console.WriteLine(
-                    $"[REMOTE DISPATCH] FAILED RuntimeInstanceId='{request.RuntimeInstanceId}' SharedRunId='{request.SharedRun.SharedRunId}' Reason='runtime-instance-capacity-not-found'");
+                    $"[REMOTE DISPATCH] FAILED RuntimeInstanceId='{request.RuntimeInstanceId}' SharedRunId='{request.SharedRun.SharedRunId}' Reason='runtime-instance-dispatch-provider-not-found'");
 
                 return CreateFailedResult(
                     request,
                     startedAtUtc,
                     request.RuntimeInstanceId,
-                    "runtime-instance-capacity-not-found",
-                    $"Runtime instance capacity descriptor '{request.RuntimeInstanceId}' was not found.");
-            }
-
-            if (!providerRouter.TryGetProvider<IAiRuntimeInstanceDispatchProvider>(
-                    descriptor,
-                    out var provider))
-            {
-                logger.LogWarning(
-                    "REMOTE DISPATCH FAILED RuntimeInstanceId={RuntimeInstanceId} SharedRunId={SharedRunId} Reason={Reason}",
-                    request.RuntimeInstanceId,
-                    request.SharedRun.SharedRunId,
-                    "runtime-instance-provider-not-found");
-
-                Console.WriteLine(
-                    $"[REMOTE DISPATCH] FAILED RuntimeInstanceId='{request.RuntimeInstanceId}' SharedRunId='{request.SharedRun.SharedRunId}' Reason='runtime-instance-provider-not-found'");
-
-                return CreateFailedResult(
-                    request,
-                    startedAtUtc,
-                    request.RuntimeInstanceId,
-                    "runtime-instance-provider-not-found",
+                    "runtime-instance-dispatch-provider-not-found",
+                    resolution.FailureReason ??
                     $"No dispatch provider was found for runtime instance '{request.RuntimeInstanceId}'.");
             }
+
+            var descriptor =
+                resolution.Descriptor;
+
+            var provider =
+                resolution.Provider;
 
             var providerTypeName =
                 provider.GetType().FullName ?? provider.GetType().Name;
