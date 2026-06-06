@@ -6,6 +6,396 @@ This project follows a deterministic runtime and observability model designed fo
 
 ---
 
+## [1.0.5.9] - 2026-06-06 HTTP Runtime Provider Execution Integration Completed
+
+### Added
+
+- Added complete HTTP runtime provider execution integration.
+- Added full end-to-end validation for provider-based runtime dispatch through HTTP.
+- Added stable HTTP runtime command transport between:
+  - MCP control-plane host
+  - HTTP runtime instance provider
+  - runtime-instance-only host
+  - runtime command endpoint
+  - local runtime queue
+  - runtime pipeline controller
+  - DAG execution engine
+- Added validation that `RuntimeInstanceOnly` automatically starts its runtime execution loop.
+- Added validation that `AiRuntimePipelineBackgroundControllerHostedService` starts automatically in `RuntimeInstanceOnly` mode.
+- Added validation that HTTP-dispatched runs move from:
+  - `ENQUEUED`
+  - `DEQUEUED`
+  - execution created
+  - runtime status exposed
+  - completed
+- Added validation that HTTP runtime queue status is routed through the HTTP provider.
+- Added validation that HTTP runtime status eventually exposes `ExecutionId`.
+- Added validation that the same runtime pipeline controller instance is used for:
+  - hosted service startup
+  - enqueue
+  - dequeue
+  - execution processing
+- Added HTTP provider integration coverage for:
+  - single-run dispatch
+  - multi-run dispatch
+  - runtime completion
+  - 100-step pipeline completion
+  - shared run listing
+  - shared queue activity
+  - runtime queue status routing
+  - queued-run cancellation
+  - preliminary execution pause
+  - preliminary execution resume
+  - preliminary execution cancellation
+- Added stronger coverage proving that the HTTP provider is not just selected, but actually executes the runtime command path.
+
+### Added Provider-Based Runtime Hosting Capabilities
+
+- Added a working provider abstraction path for runtime hosting.
+- Confirmed that local runtime dispatch and HTTP runtime dispatch can coexist.
+- Confirmed that the provider router can dispatch to a runtime instance based on provider metadata.
+- Confirmed that `provider.name=local` and `provider.name=http` can represent different runtime execution paths.
+- Confirmed that the HTTP provider sends commands to the runtime instance that owns its own queue, workers, and DAG engine.
+- Confirmed that local queues remain owned by target runtime instances.
+- Confirmed that the HTTP provider does not replace local queues; it only provides a remote command transport.
+- Confirmed that provider-based runtime hosting is now ready to support additional protocols.
+
+### Changed
+
+- Updated MCP host startup ordering so the final `AiMcpHost` mode is resolved before service registration.
+- Updated startup flow so `RuntimeInstanceOnly` enters its dedicated service registration path correctly.
+- Updated HTTP runtime test host behavior so `RuntimeInstanceOnly` starts the runtime pipeline controller automatically.
+- Updated HTTP runtime provider tests to validate real execution completion instead of only dispatch success.
+- Updated HTTP provider scenarios to verify runtime status through provider routing.
+- Updated HTTP provider scenarios to verify `ExecutionId` exposure after remote dispatch.
+- Updated HTTP provider scenarios to validate completed shared run visibility.
+- Updated HTTP provider scenarios to validate activity visibility after completion.
+- Updated HTTP provider tests to include queue control and execution control coverage.
+- Updated provider-based runtime hosting assumptions:
+  - Local provider remains the default runtime path.
+  - HTTP provider is now a fully functional opt-in provider.
+  - Future protocols can be implemented using the same provider model.
+
+### Fixed
+
+- Fixed MCP host startup ordering where service registration could use an outdated host mode.
+- Fixed `RuntimeInstanceOnly` not entering its runtime-specific service registration path.
+- Fixed HTTP runtime host not starting `AiRuntimePipelineBackgroundControllerHostedService`.
+- Fixed HTTP-dispatched runs staying stuck in `queued`.
+- Fixed the missing `ENQUEUED -> DEQUEUED` transition for HTTP-dispatched runs.
+- Fixed runtime status remaining without `ExecutionId` after HTTP dispatch.
+- Fixed incorrect assumption that HTTP provider dispatch success was enough to prove execution.
+- Fixed HTTP runtime execution integration so the provider now validates actual runtime processing.
+- Fixed control-plane background service configuration in `RuntimeInstanceOnly` test scenarios.
+- Fixed configuration ordering issues where `ApplicationConfiguration` could see the correct mode while `ServiceRegistration` had already used the wrong one.
+- Fixed provider integration flow so `RuntimeInstanceOnly` is resolved before service registration.
+- Fixed HTTP runtime provider tests so the runtime execution loop is part of the real test path.
+
+### Debugged
+
+- Debugged issue where `/runtime-instance/commands` was mapped correctly but the runtime execution loop was not started.
+- Debugged mismatch between endpoint mapping and service registration mode resolution.
+- Confirmed that `ApplicationConfiguration` could see `RuntimeInstanceOnly` while service registration had previously missed it.
+- Confirmed that the core bug was not the HTTP provider itself, but the runtime host startup path.
+- Confirmed that the HTTP command endpoint could enqueue runs successfully.
+- Confirmed that the previous blocker was the missing runtime dequeue loop.
+- Confirmed through controller hash logs that the hosted service, enqueue path, and dequeue path now use the same controller instance.
+- Confirmed that `AiRuntimePipelineBackgroundControllerHostedService` is registered and started in `RuntimeInstanceOnly`.
+- Confirmed that `runtime-http-1` receives HTTP dispatch commands and exposes runtime status through the provider.
+- Confirmed that HTTP provider integration now reaches execution id exposure.
+- Confirmed that the HTTP provider is fully functional as a runtime instance provider.
+
+### Validation
+
+- Local provider path remains functional.
+- Local MCP runtime tests remain green.
+- HTTP provider DI tests pass.
+- HTTP runtime provider dispatch tests pass.
+- HTTP runtime provider completion tests pass.
+- HTTP runtime provider 100-step pipeline tests pass.
+- HTTP runtime provider shared run listing tests pass.
+- HTTP runtime provider shared queue activity tests pass.
+- HTTP runtime provider runtime status tests pass.
+- HTTP runtime provider queued-run cancellation tests pass.
+- Preliminary HTTP runtime provider pause/resume/cancel tests pass, with known intermittent behavior shared with local mode.
+- `RuntimeInstanceOnly` now correctly reaches service registration.
+- `AiRuntimePipelineBackgroundControllerHostedService` starts automatically.
+- HTTP-dispatched runs are dequeued by the runtime pipeline controller.
+- HTTP-dispatched runs expose `ExecutionId`.
+- HTTP-dispatched runs can complete through the runtime DAG engine.
+- MCP control plane can dispatch to an HTTP-addressable runtime instance.
+- Provider-based runtime hosting is now validated beyond local-only runtime instances.
+
+### Architecture Notes
+
+- Runtime providers are now the main abstraction for dispatching shared runs to runtime instances.
+- The local provider remains the default provider for in-process or local runtime instances.
+- The HTTP provider is now a fully functional remote runtime provider.
+- HTTP runtime instances own their local queue and worker loop.
+- The control plane does not execute remote DAG steps directly.
+- The HTTP provider sends runtime commands to the target runtime instance.
+- The target runtime instance remains responsible for:
+  - queue ownership
+  - run state
+  - execution creation
+  - worker processing
+  - DAG execution
+  - status exposure
+- This architecture keeps runtime execution decentralized while allowing the control plane to dispatch across providers.
+- The provider model is now ready for additional runtime transports and deployment modes.
+
+### Supported Runtime Provider Modes
+
+- `local`
+  - Existing local runtime instance provider.
+  - Used for local runtime pools and in-process runtime execution.
+  - Stable and still supported.
+
+- `http`
+  - New fully functional HTTP runtime instance provider.
+  - Used for runtime instances addressable through HTTP endpoints.
+  - Validated end-to-end through MCP integration tests.
+  - Supports dispatch, runtime queue status, completion, queued cancellation, and preliminary execution control scenarios.
+
+### Next Provider Targets
+
+- Add Redis command transport provider.
+- Add gRPC runtime instance provider.
+- Add Kubernetes runtime instance provider.
+- Add container/pod-aware provider metadata.
+- Add provider-specific health checks.
+- Add provider-specific retry and timeout policy.
+- Add provider-specific command acknowledgements.
+- Add provider-specific observability and tracing tags.
+- Add provider-specific runtime capability discovery.
+- Add provider-specific command transport tests.
+
+### Future Protocol Direction
+
+- Local provider remains the baseline execution path.
+- HTTP provider is now the first fully functional remote provider.
+- Additional protocols should follow the same provider contract:
+  - provider capability check
+  - runtime descriptor resolution
+  - command transport
+  - dispatch result
+  - queue status query
+  - execution status exposure
+  - cancellation support
+  - observability metadata
+- Future protocols should not bypass local runtime queue ownership.
+- Future protocols must preserve the same separation:
+  - control plane decides where to send the run
+  - provider transports the command
+  - runtime instance owns execution
+
+### Known Follow-Up
+
+- Pause/resume can still be flaky in both local and HTTP modes.
+- Pause/resume flakiness appears to be an execution-control timing/state convergence issue, not an HTTP provider issue.
+- Investigate deterministic pause acknowledgement.
+- Investigate fast-completing executions that finish before pause can be observed.
+- Improve execution-control status convergence for:
+  - pause requested
+  - paused
+  - resume requested
+  - running
+  - cancelling
+  - cancelled
+- Align internal runtime controller identity currently visible as `MSI:*` with the externally registered runtime instance id such as `runtime-http-1`.
+- Improve observability consistency between:
+  - runtime instance registration id
+  - provider descriptor id
+  - queue state id
+  - pipeline controller id
+  - worker id
+- Remove or convert remaining test-only `Console.WriteLine` diagnostics to structured logging.
+- Add stronger Redis cleanup for shared queues, runtime capacity descriptors, and runtime instance registries between integration tests.
+- Add replay visibility validation for HTTP-dispatched executions.
+- Add provider-level timeout and failure simulations.
+- Add negative tests for unreachable HTTP runtime endpoints.
+- Add tests for provider fallback and provider rejection.
+- Add tests for stale runtime descriptors.
+- Add tests for runtime instance disappearing during dispatch.
+- Add tests for retrying provider command transport failures.
+
+### Summary
+
+This update completes the HTTP runtime provider integration and confirms that HTTP is now a fully functional provider-based runtime hosting mode.
+
+The runtime provider architecture now supports both local and HTTP runtime instance execution paths. The HTTP provider has been validated beyond simple provider selection: it can dispatch runs to a runtime-instance-only host, enqueue work into the target runtime queue, start the runtime controller loop, dequeue the run, create an execution, expose runtime status, expose an execution id, and complete DAG execution.
+
+This establishes the foundation for implementing additional runtime transports such as Redis command queues, gRPC, Kubernetes-native providers, and future cloud/container runtime providers.
+
+The next phase is to generalize the provider model further so local, HTTP, Redis, gRPC, Kubernetes, and future protocols can all plug into the same control-plane dispatch and runtime ownership model.
+
+---
+
+## [1.0.5.8] - 2026-06-05 Provider-Based Runtime Hosting and HTTP Runtime Instance Foundation
+
+### Added
+
+- Added provider-based runtime instance hosting foundation.
+- Added support for dispatching shared runs through runtime instance providers.
+- Added HTTP runtime instance provider foundation for remote runtime command dispatch.
+- Added local runtime instance provider validation for existing local runtime pool scenarios.
+- Added runtime instance provider metadata support through capacity descriptors.
+- Added provider metadata keys for runtime instance resolution.
+- Added transport metadata support for HTTP-addressable runtime instances.
+- Added HTTP runtime command endpoint support for runtime-instance-only hosts.
+- Added runtime command endpoint mapping for runtime instance command handling.
+- Added runtime-instance-only host mode support for HTTP command execution scenarios.
+- Added control-plane-with-HTTP-runtime-instances host mode support.
+- Added isolated HTTP runtime provider integration test fixture.
+- Added dedicated two-host MCP HTTP runtime fixture:
+  - MCP control-plane host exposing `/mcp`
+  - Runtime-instance-only host exposing `/runtime-instance/commands`
+- Added dedicated HTTP runtime provider integration test collection.
+- Added first HTTP provider scenario test for shared run dispatch through an HTTP runtime instance.
+- Added test host configuration isolation for HTTP provider scenarios.
+- Added Redis database isolation for HTTP provider tests using a dedicated Redis logical database.
+- Added forced test environment configuration for HTTP runtime test hosts.
+- Added explicit runtime instance registration override for HTTP runtime test hosts.
+- Added explicit control-plane registration override for HTTP control-plane test hosts.
+- Added diagnostic logs around runtime registration, provider resolution, capacity descriptors, and remote dispatch.
+- Added diagnostic logs to confirm effective host mode and endpoint mapping.
+- Added validation logs for runtime instance registration options after test overrides.
+
+### Added MCP / Control Plane Coverage
+
+- Added MCP HTTP runtime provider scenario coverage.
+- Added MCP shared run submission validation through the HTTP control-plane host.
+- Added MCP shared queue drain validation targeting a remote runtime instance.
+- Added validation that `RuntimeInstanceId` and `WorkerId` are handled as separate concepts.
+- Added test coverage for dispatching a shared run to a runtime instance registered with provider `http`.
+- Added verification that the MCP control plane can run in `ControlPlaneWithHttpRuntimeInstances` mode.
+- Added verification that a runtime host can run in `RuntimeInstanceOnly` mode without exposing MCP tools.
+
+### Changed
+
+- Updated local MCP integration test configuration to remain on `ControlPlaneWithLocalRuntimeInstances`.
+- Kept existing local runtime pool tests isolated from HTTP provider tests.
+- Updated local runtime instance registration to publish `Provider=local`.
+- Updated local provider metadata to use `provider.name=local`.
+- Removed incorrect HTTP transport metadata from local runtime configurations.
+- Updated HTTP runtime provider tests to use a separate fixture instead of modifying existing local MCP tests.
+- Updated test host configuration to force the expected mode through in-memory configuration.
+- Updated test host configuration to clear inherited configuration sources when required.
+- Updated HTTP runtime test configuration to disable the local runtime instance pool.
+- Updated HTTP control-plane test configuration to disable local runtime instance pool startup.
+- Updated HTTP runtime instance registration to use:
+  - `RuntimeInstanceId=runtime-http-1`
+  - `ProviderName=http`
+  - `provider.name=http`
+  - `transport.name=http`
+  - `transport.endpoint=http://localhost/runtime-instance/commands`
+- Updated HTTP control-plane registration to use:
+  - `RuntimeInstanceId=mcp-control-plane-http`
+  - `ProviderName=local`
+  - `provider.name=local`
+- Updated HTTP provider scenario test to drain toward the runtime instance id instead of the worker id.
+- Updated queue drain test request to use:
+  - `RuntimeInstanceId=RuntimeInstanceHttpTestHost.RuntimeInstanceId`
+  - `WorkerId=mcp-http-worker`
+
+### Fixed
+
+- Fixed local runtime instances being logged as `Provider=http` while actually using the local provider.
+- Fixed provider mismatch in local runtime pool logs.
+- Fixed misleading local runtime provider registration metadata.
+- Fixed MCP local test configuration after accidental HTTP-mode regression.
+- Fixed HTTP runtime test host not applying the intended runtime instance registration options.
+- Fixed `appsettings.Development.json` overriding test intent during HTTP provider test setup.
+- Fixed runtime instance registration resolving to `mcp-control-plane` instead of `runtime-http-1` in HTTP runtime tests.
+- Fixed runtime host startup in `RuntimeInstanceOnly` mode.
+- Fixed MCP control-plane host startup in `ControlPlaneWithHttpRuntimeInstances` mode.
+- Fixed minimal API runtime command endpoint parameter inference issue.
+- Fixed ASP.NET endpoint mapping failure where the runtime command handler was inferred as `UNKNOWN`.
+- Fixed runtime command endpoint by explicitly resolving the command handler from services.
+- Fixed missing service resolution path for `AiRuntimeInstanceHttpCommandHandler`.
+- Fixed incorrect test drain target where `mcp-http-worker` was incorrectly used as a runtime instance id.
+- Fixed HTTP provider test logic so the runtime target is `runtime-http-1`.
+- Fixed confusion between `RuntimeInstanceId` and `WorkerId` in shared queue drain requests.
+- Fixed Redis pollution between local runtime tests and HTTP provider tests by isolating HTTP scenarios on a dedicated Redis database.
+- Fixed provider selection issue where stale local runtime instances could be selected during HTTP provider tests.
+- Fixed test fixture structure so HTTP provider tests no longer reuse the local MCP fixture.
+- Fixed local test baseline after reverting back from broken HTTP experiments.
+
+### Debugged
+
+- Debugged failing MCP HTTP runtime provider test where the actual dispatched runtime was still `mcp-runtime-1`.
+- Identified Redis registry pollution from previous local runtime instance registrations.
+- Identified configuration override issues caused by development JSON settings.
+- Identified that the HTTP runtime host mode was correct but runtime registration options were still wrong.
+- Confirmed through logs that `RuntimeInstanceOnly` was correctly mapping `/runtime-instance/commands`.
+- Confirmed through logs that `ControlPlaneWithHttpRuntimeInstances` was correctly mapping `/mcp`.
+- Confirmed through logs that `runtime-http-1` was eventually registered successfully with provider `http`.
+- Identified that the remaining dispatch failure was caused by the test draining toward `mcp-http-worker`.
+- Confirmed that `mcp-http-worker` is a worker identifier, not a runtime instance identifier.
+- Confirmed that the correct runtime target for the HTTP provider test is `runtime-http-1`.
+- Identified background service noise where `AiMcpControlPlaneBackgroundService` still started with default `mcp-control-plane`.
+- Identified repeated background dispatch attempts toward `mcp-control-plane`.
+- Deferred background pump cleanup because it was not the primary blocker for the HTTP provider scenario.
+
+### Technical Notes
+
+- Existing local MCP tests must remain on `ControlPlaneWithLocalRuntimeInstances`.
+- HTTP provider tests must use a dedicated fixture.
+- Local runtime pool and HTTP runtime instance tests must not share the same runtime selection assumptions.
+- `RuntimeInstanceId` represents the runtime instance that owns the local queue and worker pool.
+- `WorkerId` represents the worker or pump issuing the drain or dispatch operation.
+- A shared queue drain request must target a real registered runtime instance id.
+- For the HTTP provider test, the correct values are:
+  - `RuntimeInstanceId=runtime-http-1`
+  - `WorkerId=mcp-http-worker`
+- The control-plane host should not be treated as the runtime execution target in HTTP provider tests.
+- The HTTP runtime instance host must be registered as provider `http`.
+- The MCP control-plane host may register itself as provider `local`, but should not be selected as the execution runtime for HTTP dispatch tests.
+- The local runtime pool must stay disabled in HTTP provider test hosts.
+- Redis isolation is required to avoid stale local runtime descriptors affecting HTTP provider selection.
+
+### Known Follow-Up
+
+- Investigate why `AiMcpControlPlaneBackgroundService` still starts with `RuntimeInstanceId=mcp-control-plane` in HTTP provider test scenarios.
+- Ensure `EnableSharedQueuePump=false` fully disables automatic background queue draining.
+- Ensure `AiMcpControlPlaneHostOptions.RuntimeInstanceId` is correctly propagated in HTTP control-plane mode.
+- Ensure background pump uses `mcp-control-plane-http` when enabled in HTTP control-plane tests.
+- Add cleaner test infrastructure for routing `HttpAiRuntimeInstanceProvider` calls between multiple `WebApplicationFactory` hosts.
+- Add explicit integration test proving the HTTP provider sends a command to `/runtime-instance/commands`.
+- Add integration test for HTTP runtime command status query.
+- Add integration test for HTTP runtime run cancellation.
+- Add integration test for HTTP runtime run pause and resume.
+- Add integration test for HTTP runtime replay visibility once HTTP dispatch is stable.
+- Add stronger cleanup for Redis shared queue and runtime capacity descriptors between integration test runs.
+- Consider replacing test-only `Console.WriteLine` diagnostics with structured logger output.
+- Review provider metadata naming consistency across local, HTTP, and future Kubernetes runtime providers.
+
+### Validation
+
+- Local MCP runtime tests are green again.
+- Local runtime pool dispatch works through `LocalAiRuntimeInstanceProvider`.
+- Local runtime instances now register consistently as provider `local`.
+- HTTP runtime host starts in `RuntimeInstanceOnly` mode.
+- HTTP runtime command endpoint is mapped.
+- HTTP runtime instance registers as `runtime-http-1`.
+- HTTP runtime instance registers with provider `http`.
+- HTTP control-plane host starts in `ControlPlaneWithHttpRuntimeInstances` mode.
+- MCP endpoint `/mcp` is mapped on the HTTP control-plane host.
+- HTTP control-plane registers as `mcp-control-plane-http`.
+- HTTP provider scenario now drains to `runtime-http-1` instead of `mcp-http-worker`.
+
+### Summary
+
+This update introduces the foundation for provider-based runtime hosting and begins the transition from purely local runtime instance dispatch to HTTP-addressable runtime instances.
+
+The local runtime path remains stable and green. A new isolated HTTP provider test infrastructure was introduced to avoid breaking local MCP scenarios. The main debugging work focused on configuration isolation, runtime registration correctness, provider metadata accuracy, and proper distinction between runtime instance identifiers and worker identifiers.
+
+The key correction was ensuring that HTTP provider tests drain shared runs toward the actual registered runtime instance, `runtime-http-1`, instead of the worker id `mcp-http-worker`.
+
+The next step is to validate the actual HTTP command transport between the MCP control-plane test host and the runtime-instance-only test host.
+
+---
+
 ## [1.0.5.7] - 2026-06-04 Runtime Capacity Descriptors, Worker Identity Propagation, and Shutdown Stabilization
 
 ### Added

@@ -7,6 +7,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers.Http;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers.Transport;
+using Multiplexed.AI.Runtime.ControlPlane.DI;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http;
 using Xunit;
 
@@ -151,7 +152,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Providers.Http
 
             builder.WebHost.UseTestServer();
 
-            builder.Services.AddSingleton(handler);
+            builder.Services.AddSingleton<IAiRuntimeInstanceHttpCommandHandler>(handler);
 
             var app =
                 builder.Build();
