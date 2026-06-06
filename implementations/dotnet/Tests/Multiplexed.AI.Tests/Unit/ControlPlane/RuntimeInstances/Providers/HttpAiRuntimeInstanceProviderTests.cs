@@ -1,5 +1,4 @@
-﻿using System.Net;
-using System.Net.Http.Json;
+﻿using Microsoft.Extensions.Logging.Abstractions;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Capacity;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers.Transport;
@@ -8,6 +7,8 @@ using Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Store;
 using Multiplexed.Abstractions.AI.Execution.Instance.Worker;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http;
+using System.Net;
+using System.Net.Http.Json;
 
 namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Providers
 {
@@ -414,7 +415,8 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Providers
             HttpMessageHandler handler)
         {
             return new HttpAiRuntimeInstanceProvider(
-                new HttpClient(handler));
+                new HttpClient(handler),
+                NullLogger<HttpAiRuntimeInstanceProvider>.Instance);
         }
 
         /// <summary>

@@ -5,7 +5,7 @@ namespace Multiplexed.AI.McpServer.Host
     /// <summary>
     /// Application entry point.
     /// </summary>
-    public partial class Program 
+    public partial class Program
     {
         /// <summary>
         /// Application entry point.
@@ -22,14 +22,17 @@ namespace Multiplexed.AI.McpServer.Host
                 options.ValidateOnBuild = false;
             });
 
+            Bootstrap.HostConfiguration.Configure(builder);
+
             var hostOptions = builder.Configuration
                 .GetSection("AiMcpHost")
                 .Get<AiMcpHostOptions>()
                 ?? new AiMcpHostOptions();
 
-            Bootstrap.HostModeValidator.Validate(hostOptions);
+            Console.WriteLine(
+                $"[PROGRAM] Final host mode before validation and service registration: '{hostOptions.Mode}'.");
 
-            Bootstrap.HostConfiguration.Configure(builder);
+            Bootstrap.HostModeValidator.Validate(hostOptions);
 
             Bootstrap.ServiceRegistration.Configure(
                 builder.Services,

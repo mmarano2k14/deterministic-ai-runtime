@@ -1,4 +1,6 @@
-﻿using Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue;
+﻿using ModelContextProtocol.Protocol;
+using Multiplexed.Abstractions.AI.ControlPlane.Execution;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Controller;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Store;
 using Multiplexed.AI.McpServer.Tests.Integration.Fixtures;
@@ -108,9 +110,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Helpers
         }
 
         public static async Task<AiRuntimeQueueControlPlaneResult> WaitForRuntimeRunExecutionIdAsync(
-    McpTestClient mcp,
-    AiSharedRunRecord run,
-    TimeSpan timeout)
+            McpTestClient mcp,
+            AiSharedRunRecord run,
+            TimeSpan timeout)
         {
             ArgumentNullException.ThrowIfNull(mcp);
             ArgumentNullException.ThrowIfNull(run);
@@ -152,11 +154,72 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Helpers
                 $"LastStatus='{lastStatus?.RunState?.Status}'.");
         }
 
+        public static async Task<AiExecutionControlPlaneResult> WaitForExecutionControlStatusAsync(
+            McpTestClient mcp,
+            string executionId,
+            TimeSpan timeout,
+            IReadOnlyCollection<string> expectedStatuses)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(executionId);
+            ArgumentNullException.ThrowIfNull(expectedStatuses);
+
+            var expected =
+                new HashSet<string>(
+                    expectedStatuses,
+                    StringComparer.OrdinalIgnoreCase);
+
+            var deadline =
+                DateTimeOffset.UtcNow.Add(timeout);
+
+            AiExecutionControlPlaneResult? lastStatus = null;
+
+            while (DateTimeOffset.UtcNow < deadline)
+            {
+                lastStatus =
+                    await mcp.GetExecutionStatusAsync(
+                        new AiExecutionControlPlaneRequest
+                        {
+                            Operation = AiExecutionControlPlaneOperation.GetStatus,
+                            ExecutionId = executionId,
+                            RequestedBy = "RequestedBy",
+                            Source = "Source"
+                        });
+
+                Assert.True(
+                    lastStatus.Success,
+                    lastStatus.FailureReason ?? lastStatus.Message);
+
+                var controlStatus =
+                    Convert.ToString(
+                        lastStatus.State?.Status);
+
+                if (!string.IsNullOrWhiteSpace(controlStatus) &&
+                    expected.Contains(controlStatus))
+                {
+                    return lastStatus;
+                }
+
+                await Task.Delay(
+                    TimeSpan.FromMilliseconds(100));
+            }
+
+            var lastControlStatus =
+                lastStatus is null
+                    ? "<none>"
+                    : Convert.ToString(lastStatus.State?.Status) ?? "<null>";
+
+            Assert.Fail(
+                $"Execution '{executionId}' did not reach expected control status '{string.Join(", ", expectedStatuses)}' within '{timeout}'. LastControlStatus='{lastControlStatus}'.");
+
+            throw new InvalidOperationException(
+                "Unreachable assertion path.");
+        }
+
         public static async Task<AiRuntimeQueueControlPlaneResult> WaitForRuntimeRunStatusAsync(
-    McpTestClient mcp,
-    AiSharedRunRecord run,
-    string expectedStatus,
-    TimeSpan timeout)
+            McpTestClient mcp,
+            AiSharedRunRecord run,
+            string expectedStatus,
+            TimeSpan timeout)
         {
             ArgumentNullException.ThrowIfNull(mcp);
             ArgumentNullException.ThrowIfNull(run);

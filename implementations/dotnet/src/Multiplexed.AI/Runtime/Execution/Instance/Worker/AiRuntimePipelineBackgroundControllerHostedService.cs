@@ -57,6 +57,9 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
             logger.Engine.LogInformation(
                 "[AI PIPELINE CONTROLLER HOSTED SERVICE] Starting background controller.");
 
+            Console.WriteLine(
+                 $"[AI PIPELINE CONTROLLER HOSTED SERVICE] ControllerHash='{controller.GetHashCode()}' QueueControlPlaneHash='{runtimeQueueControlPlane.GetHashCode()}'");
+
             await controller
                 .StartAsync(cancellationToken)
                 .ConfigureAwait(false);

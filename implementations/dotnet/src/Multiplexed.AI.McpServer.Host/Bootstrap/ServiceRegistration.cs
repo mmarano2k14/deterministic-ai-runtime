@@ -340,6 +340,9 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
             IServiceCollection services,
             AiMcpHostOptions hostOptions)
         {
+
+            Console.WriteLine("[SERVICE REGISTRATION] ConfigureRuntimeInstanceOnly executed.");
+
             services.AddAiControlPlane();
 
             services.Configure<AiSharedQueueBackgroundServiceOptions>(options =>
@@ -361,7 +364,25 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
 
             services.AddHostedService<AiRuntimePipelineBackgroundControllerHostedService>();
 
+            Console.WriteLine(
+                "[RUNTIME INSTANCE ONLY] Registered AiRuntimePipelineBackgroundControllerHostedService.");
+
+            var hostedServices =
+                services
+                    .Where(descriptor => descriptor.ServiceType == typeof(IHostedService))
+                    .Select(descriptor =>
+                        descriptor.ImplementationType?.FullName
+                        ?? descriptor.ImplementationInstance?.GetType().FullName
+                        ?? descriptor.ImplementationFactory?.Method.ReturnType.FullName
+                        ?? "factory")
+                    .ToArray();
+
+            Console.WriteLine(
+                "[RUNTIME INSTANCE ONLY] IHostedService registrations: " + string.Join(" | ", hostedServices));
+
             services.AddAiRuntimeInstanceRegistrationHostedService();
+
+            Console.WriteLine("[SERVICE REGISTRATION] AiRuntimePipelineBackgroundControllerHostedService registered.");
         }
 
         /// <summary>

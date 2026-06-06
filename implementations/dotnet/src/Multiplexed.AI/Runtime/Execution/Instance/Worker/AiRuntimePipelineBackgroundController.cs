@@ -181,6 +181,9 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
             _logger.Engine.LogInformation(
                 $"[AI PIPELINE CONTROLLER] Started. MaxConcurrentRuns='{_options.MaxConcurrentRuns}', QueueCapacity='{_options.QueueCapacity}'.");
 
+            Console.WriteLine(
+                $"[AI PIPELINE CONTROLLER] START CALLED ControllerHash='{GetHashCode()}' RuntimeInstanceId='{_runtimeInstanceIdentity.RuntimeInstanceId}'");
+
             return Task.CompletedTask;
         }
 
@@ -244,6 +247,9 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
         {
             ArgumentNullException.ThrowIfNull(request);
             ArgumentException.ThrowIfNullOrWhiteSpace(request.PipelineName);
+
+            Console.WriteLine(
+                $"[AI PIPELINE CONTROLLER] ENQUEUE CALLED ControllerHash='{GetHashCode()}' RuntimeInstanceId='{_runtimeInstanceIdentity.RuntimeInstanceId}'");
 
             if (_options.RejectEnqueueWhenStopped && !_started)
             {

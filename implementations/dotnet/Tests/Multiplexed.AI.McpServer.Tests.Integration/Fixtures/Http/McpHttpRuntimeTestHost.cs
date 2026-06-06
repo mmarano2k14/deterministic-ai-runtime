@@ -4,7 +4,9 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
+using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Background;
 using Multiplexed.AI.McpServer.Host;
+using Multiplexed.AI.McpServer.Host.Configuration;
 using Multiplexed.AI.McpServer.Hosting;
 
 namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures
@@ -37,6 +39,12 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures
             IWebHostBuilder builder)
         {
             builder.UseEnvironment("Test");
+
+            builder.UseSetting("AiMcpHost:Mode", "ControlPlaneWithHttpRuntimeInstances");
+            builder.UseSetting("AiMcpHost:Port", "5001");
+            builder.UseSetting("AiMcpHost:EnableSharedQueuePump", "false");
+            builder.UseSetting("AiMcpHost:EnableReplayTools", "true");
+            builder.UseSetting("AiMcpHost:EnableObservabilityTools", "true");
 
             builder.ConfigureAppConfiguration((context, configurationBuilder) =>
             {
@@ -112,6 +120,26 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures
                         "[TEST MCP HOST] Runtime HTTP client injected into control-plane host.");
                 }
 
+                services.PostConfigure<AiMcpHostOptions>(options =>
+                {
+                    options.Mode = AiMcpHostMode.ControlPlaneWithHttpRuntimeInstances;
+                    options.Port = 5001;
+                    options.EnableSharedQueuePump = false;
+                    options.EnableReplayTools = true;
+                    options.EnableObservabilityTools = true;
+
+                    Console.WriteLine(
+                        $"[TEST MCP HOST] PostConfigure MCP host. Mode='{options.Mode}', Port='{options.Port}', SharedQueuePump='{options.EnableSharedQueuePump}', Replay='{options.EnableReplayTools}', Observability='{options.EnableObservabilityTools}'.");
+                });
+
+                services.PostConfigure<AiSharedQueueBackgroundServiceOptions>(options =>
+                {
+                    options.Enabled = false;
+
+                    Console.WriteLine(
+                        $"[TEST MCP HOST] PostConfigure shared queue background service. Enabled='{options.Enabled}'.");
+                });
+
                 services.PostConfigure<AiRuntimeInstanceRegistrationOptions>(options =>
                 {
                     options.Enabled = true;
@@ -123,14 +151,37 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures
                     options.RuntimeVersion = "test";
                     options.HeartbeatInterval = TimeSpan.FromSeconds(2);
                     options.Role = AiRuntimeInstanceRole.ControlPlane;
+
+                    options.ProviderMetadata =
+                        new Dictionary<string, string>(
+                            options.ProviderMetadata ?? new Dictionary<string, string>(),
+                            StringComparer.OrdinalIgnoreCase)
+                        {
+                            [AiRuntimeInstanceProviderMetadataKeys.ProviderName] = "local"
+                        };
+
+                    options.Metadata =
+                        new Dictionary<string, string>(
+                            options.Metadata ?? new Dictionary<string, string>(),
+                            StringComparer.OrdinalIgnoreCase)
+                        {
+                            ["hostType"] = "control-plane-with-http-runtime",
+                            ["deployment"] = "test-http"
+                        };
+
+                    Console.WriteLine(
+                        $"[TEST MCP HOST] Runtime registration configured. RuntimeInstanceId='{options.RuntimeInstanceId}', Provider='{options.ProviderName}', Role='{options.Role}'.");
                 });
 
                 services.PostConfigure<AiMcpControlPlaneHostOptions>(options =>
                 {
+                    options.Enabled = true;
                     options.EnableSharedQueuePump = false;
+                    options.RuntimeInstanceId = "mcp-control-plane-http";
+                    options.WorkerId = "mcp-http-background-pump";
 
                     Console.WriteLine(
-                        $"[TEST MCP HOST] PostConfigure shared queue pump = {options.EnableSharedQueuePump}");
+                        $"[TEST MCP HOST] PostConfigure MCP control-plane host. Enabled='{options.Enabled}', SharedQueuePump='{options.EnableSharedQueuePump}', RuntimeInstanceId='{options.RuntimeInstanceId}', WorkerId='{options.WorkerId}'.");
                 });
             });
         }
