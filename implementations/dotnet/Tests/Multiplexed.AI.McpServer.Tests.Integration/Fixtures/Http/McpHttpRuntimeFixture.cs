@@ -40,7 +40,8 @@
         public HttpClient? ControlPlaneClient { get; private set; }
 
         /// <summary>
-        /// Gets the HTTP client used to call the runtime-instance-only host.
+        /// Gets the HTTP client used by the control-plane HTTP provider to call
+        /// the runtime-instance-only host in-memory.
         /// </summary>
         public HttpClient? RuntimeClient { get; private set; }
 
@@ -59,7 +60,8 @@
                 RuntimeHost.CreateClient();
 
             ControlPlaneHost =
-                new McpHttpRuntimeTestHost();
+                new McpHttpRuntimeTestHost(
+                    RuntimeClient);
 
             ControlPlaneClient =
                 ControlPlaneHost.CreateClient();

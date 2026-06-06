@@ -5,6 +5,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
 using Multiplexed.AI.McpServer.Host;
+using Multiplexed.AI.McpServer.Hosting;
 
 namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures
 {
@@ -13,6 +14,21 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures
     /// </summary>
     public sealed class McpHttpRuntimeTestHost : WebApplicationFactory<Program>
     {
+        private readonly HttpClient? runtimeClient;
+
+        /// <summary>
+        /// Initializes a new instance of the <see cref="McpHttpRuntimeTestHost"/> class.
+        /// </summary>
+        /// <param name="runtimeClient">
+        /// The in-memory HTTP client of the runtime-instance-only test host.
+        /// When provided, the HTTP runtime provider uses this client instead of a real network client.
+        /// </param>
+        public McpHttpRuntimeTestHost(
+            HttpClient? runtimeClient = null)
+        {
+            this.runtimeClient = runtimeClient;
+        }
+
         /// <summary>
         /// Configures the MCP control-plane test host.
         /// </summary>
@@ -84,6 +100,18 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures
 
             builder.ConfigureServices(services =>
             {
+                if (runtimeClient is not null)
+                {
+                    services.AddSingleton(runtimeClient);
+
+                    services.AddSingleton<IHttpClientFactory>(
+                        new TestRuntimeHttpClientFactory(
+                            runtimeClient));
+
+                    Console.WriteLine(
+                        "[TEST MCP HOST] Runtime HTTP client injected into control-plane host.");
+                }
+
                 services.PostConfigure<AiRuntimeInstanceRegistrationOptions>(options =>
                 {
                     options.Enabled = true;
@@ -94,10 +122,35 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures
                     options.QueueCapacity = 100;
                     options.RuntimeVersion = "test";
                     options.HeartbeatInterval = TimeSpan.FromSeconds(2);
+                    options.Role = AiRuntimeInstanceRole.ControlPlane;
+                });
 
-          
+                services.PostConfigure<AiMcpControlPlaneHostOptions>(options =>
+                {
+                    options.EnableSharedQueuePump = false;
+
+                    Console.WriteLine(
+                        $"[TEST MCP HOST] PostConfigure shared queue pump = {options.EnableSharedQueuePump}");
                 });
             });
+        }
+
+        private sealed class TestRuntimeHttpClientFactory : IHttpClientFactory
+        {
+            private readonly HttpClient client;
+
+            public TestRuntimeHttpClientFactory(
+                HttpClient client)
+            {
+                this.client =
+                    client ?? throw new ArgumentNullException(nameof(client));
+            }
+
+            public HttpClient CreateClient(
+                string name)
+            {
+                return client;
+            }
         }
     }
 }

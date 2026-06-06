@@ -57,6 +57,14 @@ namespace Multiplexed.AI.McpServer.Hosting
                 return;
             }
 
+            if (string.IsNullOrWhiteSpace(host.RuntimeInstanceId))
+            {
+                logger.LogWarning(
+                    "MCP control-plane background service disabled because RuntimeInstanceId is empty.");
+
+                return;
+            }
+
             logger.LogInformation(
                 "MCP control-plane background service started. RuntimeInstanceId={RuntimeInstanceId}, WorkerId={WorkerId}",
                 host.RuntimeInstanceId,

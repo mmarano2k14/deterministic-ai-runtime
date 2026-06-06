@@ -1,8 +1,12 @@
 ﻿using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers.Http;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.SharedInstance;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.SharedInstance;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.DI
 {
@@ -102,9 +106,29 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
                     IAiRuntimeInstanceProvider,
                     HttpAiRuntimeInstanceProvider>());
 
+            services.TryAddSingleton<IAiSharedRuntimeInstance>(serviceProvider =>
+            {
+                var options = serviceProvider
+                    .GetRequiredService<IOptions<AiRuntimeInstanceRegistrationOptions>>()
+                    .Value;
+
+                var runtimeInstanceId =
+                    !string.IsNullOrWhiteSpace(options.RuntimeInstanceId)
+                        ? options.RuntimeInstanceId
+                        : "runtime-http-1";
+
+                return ActivatorUtilities.CreateInstance<LocalAiSharedRuntimeInstance>(
+                    serviceProvider,
+                    runtimeInstanceId);
+            });
+
             services.TryAddSingleton<
-                IAiRuntimeInstanceHttpCommandHandler,
                 AiRuntimeInstanceHttpCommandHandler>();
+
+            services.TryAddSingleton<
+                IAiRuntimeInstanceHttpCommandHandler>(
+                    serviceProvider =>
+                        serviceProvider.GetRequiredService<AiRuntimeInstanceHttpCommandHandler>());
 
             return services;
         }

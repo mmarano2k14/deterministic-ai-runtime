@@ -89,7 +89,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
                     mcp,
                     pipelineName,
                     expectedCount: 1,
-                    timeout: TimeSpan.FromMinutes(1));
+                    timeout: TimeSpan.FromSeconds(20));
 
             var dispatchedRun =
                 dispatchedRuns.Single();

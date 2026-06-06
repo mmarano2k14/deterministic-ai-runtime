@@ -6,6 +6,9 @@ using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers.Transport;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
 using Multiplexed.AI.McpServer.Host;
+using Multiplexed.AI.McpServer.Hosting;
+using Multiplexed.AI.Runtime.ControlPlane.DI;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http;
 
 namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures
 {
@@ -99,6 +102,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures
 
             builder.ConfigureServices(services =>
             {
+
+                services.AddAiHttpRuntimeInstanceProvider();
+
                 services.PostConfigure<AiRuntimeInstanceRegistrationOptions>(options =>
                 {
                     options.Enabled = true;
@@ -112,6 +118,44 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures
 
                     Console.WriteLine($"[TEST HOST] PostConfigure runtime id = {options.RuntimeInstanceId}");
                 });
+
+                services.PostConfigure<AiRuntimeInstanceRegistrationOptions>(options =>
+                {
+                    options.Enabled = true;
+                    options.RuntimeInstanceId = RuntimeInstanceHttpTestHost.RuntimeInstanceId;
+                    options.ProviderName = "http";
+                    options.Role = AiRuntimeInstanceRole.Runtime;
+
+                    options.ProviderMetadata =
+                        new Dictionary<string, string>(
+                            options.ProviderMetadata ?? new Dictionary<string, string>(),
+                            StringComparer.OrdinalIgnoreCase)
+                        {
+                            ["provider.name"] = "http",
+                            ["transport.endpoint"] = "http://localhost"
+                        };
+
+                    options.Metadata =
+                        new Dictionary<string, string>(
+                            options.Metadata ?? new Dictionary<string, string>(),
+                            StringComparer.OrdinalIgnoreCase)
+                        {
+                            ["provider.name"] = "http",
+                            ["transport.endpoint"] = "http://localhost"
+                        };
+
+                    Console.WriteLine(
+                        $"[TEST HOST] Runtime provider = {options.ProviderName}, endpoint = {options.ProviderMetadata["transport.endpoint"]}");
+                });
+
+
+                services.PostConfigure<AiMcpControlPlaneHostOptions>(options =>
+                {
+                    options.EnableSharedQueuePump = false;
+
+                    Console.WriteLine($"[TEST HOST] PostConfigure shared queue pump = {options.EnableSharedQueuePump}");
+                });
+
             });
         }
     }
