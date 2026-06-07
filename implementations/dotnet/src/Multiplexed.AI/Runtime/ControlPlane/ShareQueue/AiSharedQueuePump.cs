@@ -47,7 +47,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
             CancellationToken cancellationToken = default)
         {
             ArgumentNullException.ThrowIfNull(request);
-            ArgumentException.ThrowIfNullOrWhiteSpace(request.RuntimeInstanceId);
+            ArgumentException.ThrowIfNullOrWhiteSpace(request.PumpRuntimeInstanceId);
 
             var startedAtUtc = DateTimeOffset.UtcNow;
 
@@ -58,7 +58,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                 return new AiSharedQueuePumpResult
                 {
                     Success = false,
-                    RuntimeInstanceId = request.RuntimeInstanceId,
+                    RuntimeInstanceId = request.PumpRuntimeInstanceId,
                     FailureReason = "Shared queue pump is disabled.",
                     StartedAtUtc = startedAtUtc,
                     CompletedAtUtc = disabledCompletedAtUtc,
@@ -87,7 +87,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                         .DispatchNextAsync(
                             new AiSharedQueueDispatchRequest
                             {
-                                RuntimeInstanceId = request.RuntimeInstanceId,
+                                RuntimeInstanceId = request.PumpRuntimeInstanceId,
                                 WorkerId = workerId,
                                 TenantId = request.TenantId,
                                 PipelineKey = request.PipelineKey,
@@ -134,7 +134,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                 return new AiSharedQueuePumpResult
                 {
                     Success = true,
-                    RuntimeInstanceId = request.RuntimeInstanceId,
+                    RuntimeInstanceId = request.PumpRuntimeInstanceId,
                     AttemptedDispatchCount = dispatchResults.Count,
                     SuccessfulDispatchCount = successfulDispatches,
                     FailedDispatchCount = failedDispatches,
@@ -153,7 +153,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                 return new AiSharedQueuePumpResult
                 {
                     Success = false,
-                    RuntimeInstanceId = request.RuntimeInstanceId,
+                    RuntimeInstanceId = request.PumpRuntimeInstanceId,
                     AttemptedDispatchCount = dispatchResults.Count,
                     SuccessfulDispatchCount = successfulDispatches,
                     FailedDispatchCount = failedDispatches,
@@ -198,9 +198,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
         private string? ResolveWorkerId(
             AiSharedQueuePumpRequest request)
         {
-            return string.IsNullOrWhiteSpace(request.WorkerId)
+            return string.IsNullOrWhiteSpace(request.PumpWorkerId)
                 ? _options.WorkerId
-                : request.WorkerId;
+                : request.PumpWorkerId;
         }
 
         /// <summary>

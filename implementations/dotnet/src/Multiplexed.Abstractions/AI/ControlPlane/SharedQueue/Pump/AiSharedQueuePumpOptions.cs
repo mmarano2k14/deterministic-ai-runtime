@@ -8,7 +8,7 @@
         /// <summary>
         /// Enables the shared queue pump.
         /// </summary>
-        public bool Enabled { get; init; } = true;
+        public bool Enabled { get; set; } = true;
 
         /// <summary>
         /// Maximum number of queue items to dispatch in a single pump cycle.

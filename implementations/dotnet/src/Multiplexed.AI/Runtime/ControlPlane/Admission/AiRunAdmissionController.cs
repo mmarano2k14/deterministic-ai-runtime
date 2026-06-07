@@ -76,6 +76,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission
             }
 
             var selected = available.FirstOrDefault();
+            
 
             if (selected is not null)
             {

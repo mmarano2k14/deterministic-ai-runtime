@@ -408,8 +408,8 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedController
                 var result = await pump.PumpOnceAsync(
                     new AiSharedQueuePumpRequest
                     {
-                        RuntimeInstanceId = runtimeInstanceId,
-                        WorkerId = workerId,
+                        PumpRuntimeInstanceId = runtimeInstanceId,
+                        PumpWorkerId = workerId,
                         MaxDispatches = maxDispatchesPerPumpCycle,
                         ClaimTtl = TimeSpan.FromSeconds(30),
                         CorrelationId = $"correlation-{runtimeInstanceId}-{cycles}",

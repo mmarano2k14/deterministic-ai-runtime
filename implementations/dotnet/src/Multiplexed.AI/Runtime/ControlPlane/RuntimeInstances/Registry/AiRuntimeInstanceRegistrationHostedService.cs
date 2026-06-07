@@ -106,7 +106,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
                 }
                 catch (Exception ex)
                 {
-                    logger.LogError(
+                    SafeLogError(
                         ex,
                         "Failed to publish runtime instance heartbeat.");
 
@@ -114,14 +114,22 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
                         $"[RUNTIME REGISTRATION] HEARTBEAT EXCEPTION RuntimeInstanceId='{runtimeInstanceId}' Exception='{ex}'");
                 }
 
-                await Task.Delay(
-                        options.HeartbeatInterval,
-                        stoppingToken)
-                    .ConfigureAwait(false);
+                try
+                {
+                    await Task.Delay(
+                            options.HeartbeatInterval,
+                            stoppingToken)
+                        .ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+                {
+                    break;
+                }
             }
         }
 
-        /// <inheritdoc />
+
+
         /// <inheritdoc />
         public override async Task StopAsync(
             CancellationToken cancellationToken)
@@ -136,15 +144,51 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
 
             try
             {
-                await UnregisterRuntimeInstanceAsync(
-                        cancellationToken)
-                    .ConfigureAwait(false);
+                try
+                {
+                    await UnregisterRuntimeInstanceAsync(
+                            cancellationToken)
+                        .ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    Console.WriteLine(
+                        $"[RUNTIME REGISTRATION] STOP CANCELLED RuntimeInstanceId='{runtimeInstanceId}' Reason='ShutdownCancellationRequested'");
+                }
+                catch (ObjectDisposedException exception)
+                {
+                    Console.WriteLine(
+                        $"[RUNTIME REGISTRATION] STOP IGNORED RuntimeInstanceId='{runtimeInstanceId}' Reason='DisposedDuringShutdown' Exception='{exception.Message}'");
+                }
+                catch (Exception exception)
+                {
+                    SafeLogError(
+                        exception,
+                        "Failed to unregister runtime instance during shutdown. RuntimeInstanceId={RuntimeInstanceId}",
+                        runtimeInstanceId);
+
+                    Console.WriteLine(
+                        $"[RUNTIME REGISTRATION] STOP UNREGISTER FAILED RuntimeInstanceId='{runtimeInstanceId}' Exception='{exception.Message}'");
+                }
             }
             finally
             {
-                await base.StopAsync(
-                        cancellationToken)
-                    .ConfigureAwait(false);
+                try
+                {
+                    await base.StopAsync(
+                            cancellationToken)
+                        .ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    Console.WriteLine(
+                        $"[RUNTIME REGISTRATION] BASE STOP CANCELLED RuntimeInstanceId='{runtimeInstanceId}' Reason='ShutdownCancellationRequested'");
+                }
+                catch (ObjectDisposedException exception)
+                {
+                    Console.WriteLine(
+                        $"[RUNTIME REGISTRATION] BASE STOP IGNORED RuntimeInstanceId='{runtimeInstanceId}' Reason='DisposedDuringShutdown' Exception='{exception.Message}'");
+                }
             }
         }
 
@@ -347,7 +391,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
                 $"RegistryType='{registry.GetType().FullName}' " +
                 $"RegistryHash='{registry.GetHashCode()}'");
 
-            logger.LogInformation(
+            SafeLogInformation(
                 "Runtime instance unregistered. RuntimeInstanceId={RuntimeInstanceId}, Status={Status}",
                 runtimeInstanceId,
                 snapshot?.Status);
@@ -428,7 +472,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
                 }
                 catch (Exception exception)
                 {
-                    logger.LogError(
+                    SafeLogError(
                         exception,
                         "Failed to publish runtime instance capacity descriptor. RuntimeInstanceId={RuntimeInstanceId}, StoreType={StoreType}",
                         runtimeInstanceId,
@@ -466,7 +510,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
                 }
                 catch (Exception exception)
                 {
-                    logger.LogError(
+                    SafeLogError(
                         exception,
                         "Failed to remove runtime instance capacity descriptor. RuntimeInstanceId={RuntimeInstanceId}, StoreType={StoreType}",
                         runtimeInstanceId,
@@ -519,6 +563,54 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
             }
 
             return result;
+        }
+
+        private void SafeLogInformation(
+            string message,
+            params object?[] args)
+        {
+            try
+            {
+                logger.LogInformation(
+                    message,
+                    args);
+            }
+            catch
+            {
+                // Never allow logging failures to break shutdown.
+            }
+        }
+
+        private void SafeLogError(
+            Exception exception,
+            string message,
+            params object?[] args)
+        {
+            try
+            {
+                logger.LogError(
+                    exception,
+                    message,
+                    args);
+            }
+            catch (AggregateException aggregateException)
+                when (aggregateException.InnerExceptions.Any(inner =>
+                    inner is ObjectDisposedException or InvalidOperationException))
+            {
+                // Logger provider was already disposed during host shutdown.
+            }
+            catch (ObjectDisposedException)
+            {
+                // Logger provider was already disposed during host shutdown.
+            }
+            catch (InvalidOperationException)
+            {
+                // Logger infrastructure may already be unavailable during shutdown.
+            }
+            catch
+            {
+                // Never allow logging failures to break shutdown.
+            }
         }
     }
 }

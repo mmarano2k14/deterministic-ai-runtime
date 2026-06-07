@@ -68,5 +68,11 @@
         /// This is useful for future Grafana metrics and control-plane diagnostics.
         /// </summary>
         public bool MeasureDuration { get; init; } = true;
+
+        /// <summary>
+        /// Defines how submitted runs are handled by the shared controller.
+        /// </summary>
+        public AiSharedRuntimeSubmitMode SubmitMode { get; set; } =
+            AiSharedRuntimeSubmitMode.DirectDispatch;
     }
 }

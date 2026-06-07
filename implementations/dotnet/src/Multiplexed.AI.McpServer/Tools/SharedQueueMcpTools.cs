@@ -40,8 +40,8 @@ namespace Multiplexed.AI.McpServer.Tools
         {
             logger.LogInformation(
                 "MCP queue.drain called. RuntimeInstanceId={RuntimeInstanceId}, WorkerId={WorkerId}",
-                request.RuntimeInstanceId,
-                request.WorkerId);
+                request.PumpRuntimeInstanceId,
+                request.PumpWorkerId);
 
             return await sharedQueuePump
                 .PumpOnceAsync(request, cancellationToken)

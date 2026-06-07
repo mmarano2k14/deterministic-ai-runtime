@@ -1229,8 +1229,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
             return await mcp.DrainQueueAsync(
                 new AiSharedQueuePumpRequest
                 {
-                    RuntimeInstanceId = RuntimeInstanceHttpTestHost.RuntimeInstanceId,
-                    WorkerId = WorkerId,
+                    PumpRuntimeInstanceId = RuntimeInstanceHttpTestHost.RuntimeInstanceId,
+                    PumpWorkerId = WorkerId,
                     MaxDispatches = maxDispatches,
                     RequestedBy = RequestedBy,
                     Source = Source

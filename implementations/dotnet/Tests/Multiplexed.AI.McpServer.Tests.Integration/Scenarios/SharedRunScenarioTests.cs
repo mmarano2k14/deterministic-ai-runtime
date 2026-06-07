@@ -170,8 +170,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
                 await mcp.DrainQueueAsync(
                     new AiSharedQueuePumpRequest
                     {
-                        RuntimeInstanceId = "mcp-instance",
-                        WorkerId = "mcp-worker",
+                        PumpRuntimeInstanceId = "mcp-instance",
+                        PumpWorkerId = "mcp-worker",
                         MaxDispatches = 4,
                         RequestedBy = "mcp-integration-test",
                         Source = "mcp-test"
@@ -294,8 +294,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
                 await mcp.DrainQueueAsync(
                     new AiSharedQueuePumpRequest
                     {
-                        RuntimeInstanceId = "mcp-instance",
-                        WorkerId = "mcp-worker",
+                        PumpRuntimeInstanceId = "mcp-instance",
+                        PumpWorkerId = "mcp-worker",
                         MaxDispatches = 4,
                         RequestedBy = "mcp-integration-test",
                         Source = "mcp-test"
@@ -394,8 +394,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
                 await mcp.DrainQueueAsync(
                     new AiSharedQueuePumpRequest
                     {
-                        RuntimeInstanceId = "mcp-instance",
-                        WorkerId = "mcp-worker",
+                        PumpRuntimeInstanceId = "mcp-instance",
+                        PumpWorkerId = "mcp-worker",
                         MaxDispatches = 1,
                         RequestedBy = "mcp-integration-test",
                         Source = "mcp-test"
@@ -511,8 +511,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
                 await mcp.DrainQueueAsync(
                     new AiSharedQueuePumpRequest
                     {
-                        RuntimeInstanceId = "mcp-instance",
-                        WorkerId = "mcp-worker",
+                        PumpRuntimeInstanceId = "mcp-instance",
+                        PumpWorkerId = "mcp-worker",
                         MaxDispatches = 1,
                         RequestedBy = "mcp-integration-test",
                         Source = "mcp-test"
@@ -650,8 +650,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
                 await mcp.DrainQueueAsync(
                     new AiSharedQueuePumpRequest
                     {
-                        RuntimeInstanceId = "mcp-instance",
-                        WorkerId = "mcp-worker",
+                        PumpRuntimeInstanceId = "mcp-instance",
+                        PumpWorkerId = "mcp-worker",
                         MaxDispatches = 1,
                         RequestedBy = "mcp-integration-test",
                         Source = "mcp-test"
@@ -901,8 +901,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
                 await mcp.DrainQueueAsync(
                     new AiSharedQueuePumpRequest
                     {
-                        RuntimeInstanceId = "mcp",
-                        WorkerId = "mcp-worker",
+                        PumpRuntimeInstanceId = "mcp",
+                        PumpWorkerId = "mcp-worker",
                         MaxDispatches = 1,
                         RequestedBy = "mcp-integration-test",
                         Source = "mcp-test"
@@ -1079,8 +1079,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
                 await mcp.DrainQueueAsync(
                     new AiSharedQueuePumpRequest
                     {
-                        RuntimeInstanceId = "mcp-instance",
-                        WorkerId = "mcp-worker",
+                        PumpRuntimeInstanceId = "mcp-instance",
+                        PumpWorkerId = "mcp-worker",
                         MaxDispatches = 1,
                         RequestedBy = "mcp-integration-test",
                         Source = "mcp-test"

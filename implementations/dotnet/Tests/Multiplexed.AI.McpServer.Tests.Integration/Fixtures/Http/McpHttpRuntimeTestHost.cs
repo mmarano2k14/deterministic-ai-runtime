@@ -8,6 +8,7 @@ using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Background;
 using Multiplexed.AI.McpServer.Host;
 using Multiplexed.AI.McpServer.Host.Configuration;
 using Multiplexed.AI.McpServer.Hosting;
+using Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Http;
 
 namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures
 {
@@ -184,24 +185,6 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures
                         $"[TEST MCP HOST] PostConfigure MCP control-plane host. Enabled='{options.Enabled}', SharedQueuePump='{options.EnableSharedQueuePump}', RuntimeInstanceId='{options.RuntimeInstanceId}', WorkerId='{options.WorkerId}'.");
                 });
             });
-        }
-
-        private sealed class TestRuntimeHttpClientFactory : IHttpClientFactory
-        {
-            private readonly HttpClient client;
-
-            public TestRuntimeHttpClientFactory(
-                HttpClient client)
-            {
-                this.client =
-                    client ?? throw new ArgumentNullException(nameof(client));
-            }
-
-            public HttpClient CreateClient(
-                string name)
-            {
-                return client;
-            }
         }
     }
 }

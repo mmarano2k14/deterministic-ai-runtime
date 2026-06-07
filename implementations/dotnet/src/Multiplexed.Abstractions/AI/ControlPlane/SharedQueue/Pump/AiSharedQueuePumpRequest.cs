@@ -8,12 +8,12 @@
         /// <summary>
         /// Runtime instance id that should claim and dispatch queued shared runs.
         /// </summary>
-        public required string RuntimeInstanceId { get; init; }
+        public required string PumpRuntimeInstanceId { get; init; }
 
         /// <summary>
         /// Optional worker id or pump id.
         /// </summary>
-        public string? WorkerId { get; init; }
+        public string? PumpWorkerId { get; init; }
 
         /// <summary>
         /// Optional tenant filter.

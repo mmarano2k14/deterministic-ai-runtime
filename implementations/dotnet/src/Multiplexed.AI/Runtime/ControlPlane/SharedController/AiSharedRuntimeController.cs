@@ -285,17 +285,25 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController
                     cancellationToken)
                 .ConfigureAwait(false);
 
-            var status = MapAdmissionDecisionToStatus(admissionDecision);
-            var failureReason = admissionDecision.Rejected
+            var queueFirst =
+                _options.SubmitMode == AiSharedRuntimeSubmitMode.QueueFirst;
+
+            var effectiveStatus = queueFirst
+                ? AiSharedRunStatus.QueuedGlobally
+                : MapAdmissionDecisionToStatus(admissionDecision);
+
+            var failureReason = !queueFirst && admissionDecision.Rejected
                 ? admissionDecision.Reason
                 : null;
 
             var record = new AiSharedRunRecord
             {
                 SharedRunId = sharedRunId,
-                Status = status,
+                Status = effectiveStatus,
                 RunRequest = request.RunRequest!,
-                AssignedRuntimeInstanceId = admissionDecision.AssignedRuntimeInstanceId,
+                AssignedRuntimeInstanceId = queueFirst
+                    ? null
+                    : admissionDecision.AssignedRuntimeInstanceId,
                 AdmissionDecision = admissionDecision,
                 TenantId = request.TenantId,
                 PipelineKey = request.PipelineKey ?? request.RunRequest?.PipelineName,
@@ -316,6 +324,21 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController
                 .ConfigureAwait(false);
 
             var current = created;
+
+            if (queueFirst)
+            {
+                await EnqueueGloballyAsync(
+                        created,
+                        admissionDecision,
+                        now,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+                return new SharedRuntimeControllerOperationResult
+                {
+                    Run = current
+                };
+            }
 
             if (admissionDecision.DecisionType == AiRunAdmissionDecisionType.AssignToInstance &&
                 !string.IsNullOrWhiteSpace(created.AssignedRuntimeInstanceId))

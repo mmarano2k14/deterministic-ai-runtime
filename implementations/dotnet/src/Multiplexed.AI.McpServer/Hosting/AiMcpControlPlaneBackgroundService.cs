@@ -78,8 +78,8 @@ namespace Multiplexed.AI.McpServer.Hosting
                         .PumpOnceAsync(
                             new AiSharedQueuePumpRequest
                             {
-                                RuntimeInstanceId = host.RuntimeInstanceId,
-                                WorkerId = host.WorkerId,
+                                PumpRuntimeInstanceId = host.RuntimeInstanceId,
+                                PumpWorkerId = host.WorkerId,
                                 MaxDispatches = queue.MaxDispatchesPerCycle,
                                 ClaimTtl = queue.ClaimTtl,
                                 Source = "mcp-control-plane",
@@ -87,6 +87,14 @@ namespace Multiplexed.AI.McpServer.Hosting
                             },
                             stoppingToken)
                         .ConfigureAwait(false);
+
+                    logger.LogInformation(
+                        "MCP shared queue pump cycle completed. Success={Success}, AttemptedDispatchCount={AttemptedDispatchCount}, SuccessfulDispatchCount={SuccessfulDispatchCount}, FailedDispatchCount={FailedDispatchCount}, FailureReason={FailureReason}",
+                        result.Success,
+                        result.AttemptedDispatchCount,
+                        result.SuccessfulDispatchCount,
+                        result.FailedDispatchCount,
+                        result.FailureReason);
 
                     var delay = result.SuccessfulDispatchCount > 0
                         ? queue.ActiveDelay

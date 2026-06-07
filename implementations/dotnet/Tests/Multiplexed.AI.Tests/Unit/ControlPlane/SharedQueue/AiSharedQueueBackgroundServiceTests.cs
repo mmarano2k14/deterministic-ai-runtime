@@ -61,8 +61,8 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
 
             Assert.True(pump.CallCount > 0);
             Assert.NotNull(pump.LastRequest);
-            Assert.Equal("runtime-1", pump.LastRequest!.RuntimeInstanceId);
-            Assert.Equal("worker-1", pump.LastRequest.WorkerId);
+            Assert.Equal("runtime-1", pump.LastRequest!.PumpRuntimeInstanceId);
+            Assert.Equal("worker-1", pump.LastRequest.PumpWorkerId);
         }
 
         [Fact]
@@ -105,8 +105,8 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
             await service.StopAsync(CancellationToken.None);
 
             Assert.NotNull(pump.LastRequest);
-            Assert.Equal("runtime-1", pump.LastRequest!.RuntimeInstanceId);
-            Assert.Equal("worker-1", pump.LastRequest.WorkerId);
+            Assert.Equal("runtime-1", pump.LastRequest!.PumpRuntimeInstanceId);
+            Assert.Equal("worker-1", pump.LastRequest.PumpWorkerId);
             Assert.Equal("tenant-1", pump.LastRequest.TenantId);
             Assert.Equal("pipeline-1", pump.LastRequest.PipelineKey);
             Assert.Equal(7, pump.LastRequest.MaxDispatches);
@@ -145,9 +145,9 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
             await service.StopAsync(CancellationToken.None);
 
             Assert.NotNull(pump.LastRequest);
-            Assert.False(string.IsNullOrWhiteSpace(pump.LastRequest!.RuntimeInstanceId));
-            Assert.False(string.IsNullOrWhiteSpace(pump.LastRequest.WorkerId));
-            Assert.Contains("shared-queue-worker", pump.LastRequest.WorkerId);
+            Assert.False(string.IsNullOrWhiteSpace(pump.LastRequest!.PumpRuntimeInstanceId));
+            Assert.False(string.IsNullOrWhiteSpace(pump.LastRequest.PumpWorkerId));
+            Assert.Contains("shared-queue-worker", pump.LastRequest.PumpWorkerId);
         }
 
         [Fact]
@@ -247,7 +247,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
                 return Task.FromResult(new AiSharedQueuePumpResult
                 {
                     Success = true,
-                    RuntimeInstanceId = request.RuntimeInstanceId,
+                    RuntimeInstanceId = request.PumpRuntimeInstanceId,
                     AttemptedDispatchCount = 1,
                     SuccessfulDispatchCount = 0,
                     FailedDispatchCount = 0,

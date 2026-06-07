@@ -1,4 +1,5 @@
-﻿using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Dispatch;
+﻿using Multiplexed.Abstractions.AI.ControlPlane.Admission;
+using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Dispatch;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Store;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Claiming;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Dispatch;
@@ -15,13 +16,13 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
     /// Responsibilities:
     /// - atomically claim one pending shared queue item
     /// - load the associated shared run record
-    /// - dispatch the shared run to the requesting runtime instance
+    /// - select an available runtime instance through admission
+    /// - dispatch the shared run to the selected runtime instance
     /// - mark the queue item as dispatched on success
     /// - mark the shared run record as dispatched on success
     /// - requeue the item when dispatch fails
     ///
-    /// This service does not decide admission.
-    /// It does not scale Kubernetes.
+    /// This service does not scale Kubernetes.
     /// It does not execute DAG steps directly.
     /// </remarks>
     public sealed class AiSharedQueueDispatcher : IAiSharedQueueDispatcher
@@ -29,24 +30,21 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
         private readonly IAiSharedQueue _sharedQueue;
         private readonly IAiSharedRunStore _sharedRunStore;
         private readonly IAiSharedRunDispatcher _sharedRunDispatcher;
+        private readonly IAiRunAdmissionController _admissionController;
 
         /// <summary>
         /// Initializes a new instance of the <see cref="AiSharedQueueDispatcher"/> class.
         /// </summary>
-        /// <param name="sharedQueue">The shared queue.</param>
-        /// <param name="sharedRunStore">The shared run store.</param>
-        /// <param name="sharedRunDispatcher">The shared run dispatcher.</param>
-        /// <exception cref="ArgumentNullException">
-        /// Thrown when one of the dependencies is null.
-        /// </exception>
         public AiSharedQueueDispatcher(
             IAiSharedQueue sharedQueue,
             IAiSharedRunStore sharedRunStore,
-            IAiSharedRunDispatcher sharedRunDispatcher)
+            IAiSharedRunDispatcher sharedRunDispatcher,
+            IAiRunAdmissionController admissionController)
         {
             _sharedQueue = sharedQueue ?? throw new ArgumentNullException(nameof(sharedQueue));
             _sharedRunStore = sharedRunStore ?? throw new ArgumentNullException(nameof(sharedRunStore));
             _sharedRunDispatcher = sharedRunDispatcher ?? throw new ArgumentNullException(nameof(sharedRunDispatcher));
+            _admissionController = admissionController ?? throw new ArgumentNullException(nameof(admissionController));
         }
 
         /// <inheritdoc />
@@ -122,13 +120,66 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                     };
                 }
 
+                var admissionDecision = await _admissionController
+                    .AdmitAsync(
+                        new AiRunAdmissionRequest
+                        {
+                            RunRequest = sharedRun.RunRequest,
+                            RunId = sharedRun.SharedRunId,
+                            TenantId = sharedRun.TenantId,
+                            PipelineKey = sharedRun.PipelineKey,
+                            PreferredRuntimeInstanceId = sharedRun.AssignedRuntimeInstanceId,
+                            CorrelationId = request.CorrelationId ?? sharedRun.CorrelationId,
+                            RequestedBy = request.RequestedBy,
+                            Source = request.Source,
+                            Reason = request.Reason ?? "Selecting runtime instance for shared queue dispatch.",
+                            Metadata = MergeMetadata(
+                                sharedRun.Metadata,
+                                request.Metadata)
+                        },
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+                if (admissionDecision.DecisionType != AiRunAdmissionDecisionType.AssignToInstance ||
+                    string.IsNullOrWhiteSpace(admissionDecision.AssignedRuntimeInstanceId))
+                {
+                    await RequeueBestEffortAsync(
+                            queueItem,
+                            admissionDecision.Reason ?? "No runtime instance available for shared queue dispatch.",
+                            cancellationToken)
+                        .ConfigureAwait(false);
+
+                    var completedAtUtc = DateTimeOffset.UtcNow;
+
+                    return new AiSharedQueueDispatchResult
+                    {
+                        Success = false,
+                        SharedRunId = queueItem.SharedRunId,
+                        RuntimeInstanceId = request.RuntimeInstanceId,
+                        QueueItem = queueItem,
+                        SharedRun = sharedRun,
+                        Message = "Shared queue item could not be dispatched because admission did not assign a runtime instance.",
+                        FailureReason = admissionDecision.Reason,
+                        StartedAtUtc = startedAtUtc,
+                        CompletedAtUtc = completedAtUtc,
+                        DurationMs = CalculateDurationMs(startedAtUtc, completedAtUtc),
+                        Diagnostics = new[]
+                        {
+                            admissionDecision.Reason ?? "Admission did not assign a runtime instance."
+                        }
+                    };
+                }
+
+                var targetRuntimeInstanceId =
+                    admissionDecision.AssignedRuntimeInstanceId;
+
                 var dispatchResult = await _sharedRunDispatcher
                     .DispatchAsync(
                         new AiSharedRunDispatchRequest
                         {
                             SharedRun = sharedRun,
                             QueueItem = queueItem,
-                            RuntimeInstanceId = request.RuntimeInstanceId,
+                            RuntimeInstanceId = targetRuntimeInstanceId,
                             ClaimToken = queueItem.ClaimToken,
                             CorrelationId = request.CorrelationId ?? sharedRun.CorrelationId,
                             RequestedBy = request.RequestedBy,
@@ -155,7 +206,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                     {
                         Success = false,
                         SharedRunId = queueItem.SharedRunId,
-                        RuntimeInstanceId = request.RuntimeInstanceId,
+                        RuntimeInstanceId = targetRuntimeInstanceId,
                         QueueItem = queueItem,
                         SharedRun = sharedRun,
                         DispatchResult = dispatchResult,
@@ -179,7 +230,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                 var dispatchedRun = await _sharedRunStore
                     .MarkDispatchedAsync(
                         sharedRun.SharedRunId,
-                        request.RuntimeInstanceId,
+                        targetRuntimeInstanceId,
                         dispatchResult.LocalRunId,
                         dispatchResult.ExecutionId,
                         dispatchResult.Message,
@@ -193,7 +244,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                 {
                     Success = true,
                     SharedRunId = queueItem.SharedRunId,
-                    RuntimeInstanceId = request.RuntimeInstanceId,
+                    RuntimeInstanceId = targetRuntimeInstanceId,
                     QueueItem = dispatchedQueueItem ?? queueItem,
                     SharedRun = completed,
                     DispatchResult = dispatchResult,
@@ -225,9 +276,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
         /// <summary>
         /// Attempts to requeue a claimed queue item without masking the original failure.
         /// </summary>
-        /// <param name="queueItem">The claimed queue item.</param>
-        /// <param name="reason">The requeue reason.</param>
-        /// <param name="cancellationToken">A token used to cancel the operation.</param>
         private async Task RequeueBestEffortAsync(
             AiSharedQueueItem queueItem,
             string reason,
@@ -258,9 +306,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
         /// <summary>
         /// Calculates operation duration in milliseconds.
         /// </summary>
-        /// <param name="startedAtUtc">The operation start timestamp.</param>
-        /// <param name="completedAtUtc">The operation completion timestamp.</param>
-        /// <returns>The duration in milliseconds.</returns>
         private static long CalculateDurationMs(
             DateTimeOffset startedAtUtc,
             DateTimeOffset completedAtUtc)
@@ -271,9 +316,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
         /// <summary>
         /// Merges metadata dictionaries.
         /// </summary>
-        /// <param name="baseMetadata">The base metadata.</param>
-        /// <param name="overrideMetadata">The override metadata.</param>
-        /// <returns>The merged metadata.</returns>
         private static IReadOnlyDictionary<string, string> MergeMetadata(
             IReadOnlyDictionary<string, string> baseMetadata,
             IReadOnlyDictionary<string, string> overrideMetadata)

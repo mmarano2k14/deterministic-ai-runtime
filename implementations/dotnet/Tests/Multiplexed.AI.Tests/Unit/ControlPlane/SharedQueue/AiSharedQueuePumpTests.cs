@@ -32,7 +32,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
 
             var result = await pump.PumpOnceAsync(new AiSharedQueuePumpRequest
             {
-                RuntimeInstanceId = "runtime-1"
+                PumpRuntimeInstanceId = "runtime-1"
             });
 
             Assert.True(result.Success);
@@ -69,7 +69,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
 
             var result = await pump.PumpOnceAsync(new AiSharedQueuePumpRequest
             {
-                RuntimeInstanceId = "runtime-1"
+                PumpRuntimeInstanceId = "runtime-1"
             });
 
             Assert.True(result.Success);
@@ -100,7 +100,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
 
             var result = await pump.PumpOnceAsync(new AiSharedQueuePumpRequest
             {
-                RuntimeInstanceId = "runtime-1",
+                PumpRuntimeInstanceId = "runtime-1",
                 MaxDispatches = 2
             });
 
@@ -131,7 +131,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
 
             var result = await pump.PumpOnceAsync(new AiSharedQueuePumpRequest
             {
-                RuntimeInstanceId = "runtime-1"
+                PumpRuntimeInstanceId = "runtime-1"
             });
 
             Assert.True(result.Success);
@@ -165,7 +165,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
 
             var result = await pump.PumpOnceAsync(new AiSharedQueuePumpRequest
             {
-                RuntimeInstanceId = "runtime-1"
+                PumpRuntimeInstanceId = "runtime-1"
             });
 
             Assert.True(result.Success);
@@ -194,7 +194,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
 
             var result = await pump.PumpOnceAsync(new AiSharedQueuePumpRequest
             {
-                RuntimeInstanceId = "runtime-1"
+                PumpRuntimeInstanceId = "runtime-1"
             });
 
             Assert.True(result.Success);
@@ -217,7 +217,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
 
             var result = await pump.PumpOnceAsync(new AiSharedQueuePumpRequest
             {
-                RuntimeInstanceId = "runtime-1"
+                PumpRuntimeInstanceId = "runtime-1"
             });
 
             Assert.False(result.Success);
@@ -245,8 +245,8 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
 
             await pump.PumpOnceAsync(new AiSharedQueuePumpRequest
             {
-                RuntimeInstanceId = "runtime-1",
-                WorkerId = "request-worker",
+                PumpRuntimeInstanceId = "runtime-1",
+                PumpWorkerId = "request-worker",
                 TenantId = "tenant-1",
                 PipelineKey = "pipeline-1",
                 ClaimTtl = TimeSpan.FromSeconds(45),
@@ -292,7 +292,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
 
             await pump.PumpOnceAsync(new AiSharedQueuePumpRequest
             {
-                RuntimeInstanceId = "runtime-1"
+                PumpRuntimeInstanceId = "runtime-1"
             });
 
             Assert.NotNull(dispatcher.LastRequest);
@@ -321,7 +321,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
             await Assert.ThrowsAsync<ArgumentException>(() =>
                 pump.PumpOnceAsync(new AiSharedQueuePumpRequest
                 {
-                    RuntimeInstanceId = " "
+                    PumpRuntimeInstanceId = " "
                 }));
         }
 

@@ -73,8 +73,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                         .PumpOnceAsync(
                             new AiSharedQueuePumpRequest
                             {
-                                RuntimeInstanceId = runtimeInstanceId,
-                                WorkerId = workerId,
+                                PumpRuntimeInstanceId = runtimeInstanceId,
+                                PumpWorkerId = workerId,
                                 TenantId = _options.TenantId,
                                 PipelineKey = _options.PipelineKey,
                                 MaxDispatches = _options.MaxDispatchesPerCycle,

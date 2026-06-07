@@ -63,5 +63,6 @@
         /// This is useful for future Grafana metrics and control-plane diagnostics.
         /// </summary>
         public bool MeasureDuration { get; set; } = true;
+
     }
 }

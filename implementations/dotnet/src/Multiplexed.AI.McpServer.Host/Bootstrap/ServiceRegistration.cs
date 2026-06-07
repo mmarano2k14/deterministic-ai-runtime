@@ -1,8 +1,11 @@
 ﻿using Microsoft.Extensions.DependencyInjection.Extensions;
+using Multiplexed.Abstractions.AI.ControlPlane.Admission;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Pool;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
+using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Controller;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Dispatch;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Background;
+using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Pump;
 using Multiplexed.AI.Configuration;
 using Multiplexed.AI.ControlPlane.RuntimeInstances.Pool;
 using Multiplexed.AI.DI.Engine;
@@ -20,9 +23,7 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
     /// Registers application services for the MCP host.
     /// </summary>
     /// <remarks>
-    /// <para>
     /// The MCP host can run in several modes:
-    /// </para>
     ///
     /// <list type="bullet">
     /// <item>
@@ -75,12 +76,17 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
             services.Configure<AiLocalRuntimeInstancePoolOptions>(
                 configuration.GetSection("AiLocalRuntimeInstancePool"));
 
-            var hostOptions = configuration
-                .GetSection("AiMcpHost")
-                .Get<AiMcpHostOptions>()
+            services.Configure<AiSharedRuntimeControllerOptions>(
+                configuration.GetSection("AiSharedRuntimeController"));
+
+            var hostOptions =
+                configuration
+                    .GetSection("AiMcpHost")
+                    .Get<AiMcpHostOptions>()
                 ?? new AiMcpHostOptions();
 
-            var aiEngineOptions = new AiEngineOptions();
+            var aiEngineOptions =
+                new AiEngineOptions();
 
             configuration
                 .GetSection("AiEngine")
@@ -96,18 +102,21 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
                 case AiMcpHostMode.ControlPlaneOnly:
                     ConfigureControlPlaneOnly(
                         services,
+                        configuration,
                         hostOptions);
                     break;
 
                 case AiMcpHostMode.ControlPlaneWithLocalRuntimeInstances:
                     ConfigureControlPlaneWithLocalRuntimeInstances(
                         services,
+                        configuration,
                         hostOptions);
                     break;
 
                 case AiMcpHostMode.ControlPlaneWithHttpRuntimeInstances:
                     ConfigureControlPlaneWithHttpRuntimeInstances(
                         services,
+                        configuration,
                         hostOptions);
                     break;
 
@@ -127,39 +136,33 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
         /// Configures the host as a control-plane only MCP server.
         /// </summary>
         /// <remarks>
-        /// <para>
         /// This mode exposes MCP tools and can pump the shared queue, but it does not
         /// host local runtime instances.
-        /// </para>
         ///
-        /// <para>
         /// It is useful when runtime instances are hosted by other processes, pods,
         /// or external workers.
-        /// </para>
         /// </remarks>
         /// <param name="services">The service collection.</param>
+        /// <param name="configuration">The application configuration.</param>
         /// <param name="hostOptions">The MCP host options.</param>
         private static void ConfigureControlPlaneOnly(
             IServiceCollection services,
+            IConfiguration configuration,
             AiMcpHostOptions hostOptions)
         {
-
-
-
-
-
             services.AddAiControlPlane(
                 configureAdmission: options =>
                 {
-                    options.EnableScaleOutRequest = false;
-                    options.EnableGlobalQueueFallback = true;
-                    options.RejectWhenNoCapacity = false;
+                    ConfigureAdmissionOptions(
+                        configuration,
+                        options);
                 });
 
             services.AddAiMcpServer();
 
             ConfigureSharedQueueBackgroundService(
                 services,
+                configuration,
                 hostOptions);
 
             services.AddAiMcpControlPlaneHost(options =>
@@ -181,28 +184,26 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
         /// Configures the host as a control-plane with local runtime instances.
         /// </summary>
         /// <remarks>
-        /// <para>
         /// This mode hosts runtime instances inside the same MCP host process.
-        /// </para>
         ///
-        /// <para>
-        /// Dispatch uses <c>LocalAiRuntimeInstanceProvider</c> through the shared
+        /// Dispatch uses LocalAiRuntimeInstanceProvider through the shared
         /// runtime instance registry. Runtime instances still own their own local
         /// queues, workers, and DAG execution engines.
-        /// </para>
         /// </remarks>
         /// <param name="services">The service collection.</param>
+        /// <param name="configuration">The application configuration.</param>
         /// <param name="hostOptions">The MCP host options.</param>
         private static void ConfigureControlPlaneWithLocalRuntimeInstances(
             IServiceCollection services,
+            IConfiguration configuration,
             AiMcpHostOptions hostOptions)
         {
             services.AddAiControlPlane(
                 configureAdmission: options =>
                 {
-                    options.EnableScaleOutRequest = false;
-                    options.EnableGlobalQueueFallback = true;
-                    options.RejectWhenNoCapacity = false;
+                    ConfigureAdmissionOptions(
+                        configuration,
+                        options);
                 });
 
             services.RemoveAll<IAiSharedRunDispatcher>();
@@ -212,6 +213,7 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
 
             ConfigureSharedQueueBackgroundService(
                 services,
+                configuration,
                 hostOptions);
 
             services.AddAiMcpControlPlaneHost(options =>
@@ -240,48 +242,42 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
         /// Configures the host as a control-plane that dispatches to HTTP runtime instances.
         /// </summary>
         /// <remarks>
-        /// <para>
         /// This mode is used to test or run MCP/control-plane separately from runtime
         /// instances that are addressable through HTTP.
-        /// </para>
         ///
-        /// <para>
-        /// Dispatch uses <c>HttpAiRuntimeInstanceProvider</c> when runtime capacity
+        /// Dispatch uses HttpAiRuntimeInstanceProvider when runtime capacity
         /// descriptors publish:
-        /// </para>
         ///
         /// <code>
         /// provider.name = http
         /// transport.endpoint = http://runtime-instance-1:8081
         /// </code>
         ///
-        /// <para>
-        /// The control-plane still uses <see cref="RemoteAiSharedRunDispatcher"/>.
+        /// The control-plane still uses <see cref="IAiSharedRunDispatcher"/>.
         /// The dispatcher resolves the provider through the centralized provider
         /// capability resolver.
-        /// </para>
         ///
-        /// <para>
         /// This mode does not host local runtime instances. The target runtime
         /// instance process must expose the HTTP command endpoint:
-        /// </para>
         ///
         /// <code>
         /// POST /runtime-instance/commands
         /// </code>
         /// </remarks>
         /// <param name="services">The service collection.</param>
+        /// <param name="configuration">The application configuration.</param>
         /// <param name="hostOptions">The MCP host options.</param>
         private static void ConfigureControlPlaneWithHttpRuntimeInstances(
             IServiceCollection services,
+            IConfiguration configuration,
             AiMcpHostOptions hostOptions)
         {
             services.AddAiControlPlane(
                 configureAdmission: options =>
                 {
-                    options.EnableScaleOutRequest = false;
-                    options.EnableGlobalQueueFallback = true;
-                    options.RejectWhenNoCapacity = false;
+                    ConfigureAdmissionOptions(
+                        configuration,
+                        options);
                 });
 
             services.RemoveAll<IAiSharedRunDispatcher>();
@@ -293,6 +289,7 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
 
             ConfigureSharedQueueBackgroundService(
                 services,
+                configuration,
                 hostOptions);
 
             services.AddAiMcpControlPlaneHost(options =>
@@ -315,24 +312,18 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
         /// Configures the host as a runtime-instance only process.
         /// </summary>
         /// <remarks>
-        /// <para>
         /// This mode hosts the local runtime execution engine and runtime queue
         /// without enabling MCP control-plane tools.
-        /// </para>
         ///
-        /// <para>
         /// When used with the HTTP provider, the runtime host must also map the HTTP
         /// runtime command endpoint in the web application pipeline:
-        /// </para>
         ///
         /// <code>
         /// app.MapAiRuntimeInstanceHttpCommandEndpoint();
         /// </code>
         ///
-        /// <para>
         /// Its runtime instance registration must publish HTTP provider metadata so
         /// the control-plane can route to it.
-        /// </para>
         /// </remarks>
         /// <param name="services">The service collection.</param>
         /// <param name="hostOptions">The MCP host options.</param>
@@ -340,12 +331,16 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
             IServiceCollection services,
             AiMcpHostOptions hostOptions)
         {
-
             Console.WriteLine("[SERVICE REGISTRATION] ConfigureRuntimeInstanceOnly executed.");
 
             services.AddAiControlPlane();
 
             services.Configure<AiSharedQueueBackgroundServiceOptions>(options =>
+            {
+                options.Enabled = false;
+            });
+
+            services.Configure<AiSharedQueuePumpOptions>(options =>
             {
                 options.Enabled = false;
             });
@@ -371,14 +366,15 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
                 services
                     .Where(descriptor => descriptor.ServiceType == typeof(IHostedService))
                     .Select(descriptor =>
-                        descriptor.ImplementationType?.FullName
-                        ?? descriptor.ImplementationInstance?.GetType().FullName
-                        ?? descriptor.ImplementationFactory?.Method.ReturnType.FullName
-                        ?? "factory")
+                        descriptor.ImplementationType?.FullName ??
+                        descriptor.ImplementationInstance?.GetType().FullName ??
+                        descriptor.ImplementationFactory?.Method.ReturnType.FullName ??
+                        "factory")
                     .ToArray();
 
             Console.WriteLine(
-                "[RUNTIME INSTANCE ONLY] IHostedService registrations: " + string.Join(" | ", hostedServices));
+                "[RUNTIME INSTANCE ONLY] IHostedService registrations: " +
+                string.Join(" | ", hostedServices));
 
             services.AddAiRuntimeInstanceRegistrationHostedService();
 
@@ -386,18 +382,59 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
         }
 
         /// <summary>
-        /// Configures the shared queue background service.
+        /// Configures the shared queue background service and pump options.
         /// </summary>
         /// <param name="services">The service collection.</param>
+        /// <param name="configuration">The application configuration.</param>
         /// <param name="hostOptions">The MCP host options.</param>
         private static void ConfigureSharedQueueBackgroundService(
             IServiceCollection services,
+            IConfiguration configuration,
             AiMcpHostOptions hostOptions)
         {
+            ArgumentNullException.ThrowIfNull(services);
+            ArgumentNullException.ThrowIfNull(configuration);
+            ArgumentNullException.ThrowIfNull(hostOptions);
+
             services.Configure<AiSharedQueueBackgroundServiceOptions>(options =>
             {
-                options.Enabled = hostOptions.EnableSharedQueuePump;
+                configuration
+                    .GetSection("AiSharedQueueBackgroundService")
+                    .Bind(options);
             });
+
+            services.Configure<AiSharedQueuePumpOptions>(options =>
+            {
+                configuration
+                    .GetSection("AiSharedQueuePump")
+                    .Bind(options);
+
+            });
+        }
+
+        /// <summary>
+        /// Configures run admission options for MCP control-plane modes.
+        /// </summary>
+        /// <remarks>
+        /// Configuration values from the <c>AiRunAdmission</c> section are applied
+        /// first, then MCP-safe defaults are applied only when they are part of the
+        /// MCP host policy.
+        /// </remarks>
+        /// <param name="configuration">The application configuration.</param>
+        /// <param name="options">The run admission options.</param>
+        private static void ConfigureAdmissionOptions(
+            IConfiguration configuration,
+            AiRunAdmissionOptions options)
+        {
+            ArgumentNullException.ThrowIfNull(configuration);
+            ArgumentNullException.ThrowIfNull(options);
+
+            configuration
+                .GetSection("AiRunAdmission")
+                .Bind(options);
+
+            options.EnableGlobalQueueFallback = true;
+            options.RejectWhenNoCapacity = false;
         }
     }
 }
