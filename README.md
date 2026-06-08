@@ -1,7 +1,5 @@
 # Deterministic AI Runtime
 
-<!-- Updated by ChatGPT: original README content preserved; global positioning updated from road-to-MLOps wording toward roadmap-to-product/product-roadmap positioning. -->
-
 A deterministic AI execution runtime for production-grade AI workloads.
 
 This repository provides a reference implementation of a distributed, state-driven runtime for executing AI workflows with deterministic DAG orchestration, context resolution, Redis Lua coordination, retry/recovery, retention/compaction, distributed concurrency control, execution control state, replay validation, correlated metrics and tracing, execution-correlated decision ledger, shared runtime control-plane orchestration, Redis-backed shared queue coordination, queue-first submission, shared queue pumping/manual drain, dispatch-time admission, runtime instance provider hosting, runtime worker-capacity visibility, scale-out request publication, and executable enterprise demo scenarios.
