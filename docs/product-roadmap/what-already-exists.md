@@ -4,7 +4,7 @@
 
 This document summarizes the current technical foundation that already exists in the Deterministic AI Runtime Platform.
 
-The purpose of this page is to make clear that the project is not only a product idea or future roadmap. It already contains a strong execution foundation for deterministic AI workflows, replay, audit, distributed execution, decision tracking, runtime control, and production-oriented runtime architecture.
+The purpose of this page is to make clear that the project is not only a product idea or future roadmap. It already contains a strong execution foundation for deterministic AI workflows, replay, audit, distributed execution, decision tracking, runtime control, policy governance, provider-based hosting, retention lifecycle, observability, testing, memory/context direction, and production-oriented runtime architecture.
 
 ---
 
@@ -24,19 +24,30 @@ The current foundation already covers several critical areas required for produc
 - context-driven runtime behavior;
 - policy-driven execution direction;
 - policy engine foundation;
+- pluggable policy-by-context model;
+- RBAC-aware execution context direction;
+- ARN-inspired resource scoping direction;
 - policy and decision event direction;
 - provider-driven architecture direction;
+- provider-based runtime hosting direction;
+- runtime provider and transport model direction;
 - retention, eviction, and compaction foundation;
+- automatic snapshot mechanism direction;
 - safe retention decision direction;
 - hot-state cleanup direction;
+- stale claim cleanup direction;
 - archive and retained-history direction;
 - pause, resume, and cancellation direction;
+- execution control and state lifecycle direction;
 - queue and run management direction;
 - shared queue and multi-instance runtime direction;
 - MCP server and control-plane direction;
 - Redis and MongoDB infrastructure direction;
-- observability direction through logs, metrics, traces, and decision history;
+- observability direction through logs, metrics, traces, telemetry, provider/transport signals, lifecycle events, memory/context events, and decision history;
 - integration and reliability testing direction;
+- security and encryption hardening direction;
+- developer experience, API, SDK, and CLI direction;
+- memory, context, and reasoning lifecycle direction;
 - Kubernetes-ready architecture direction.
 
 The platform is already moving beyond a simple AI agent framework. It is being structured as an execution layer for production AI workflows.
@@ -116,8 +127,11 @@ The execution state model is also the foundation for:
 - retention;
 - queue control;
 - runtime control;
+- execution lifecycle control;
 - distributed execution;
-- observability.
+- memory/context evidence direction;
+- observability;
+- retention, eviction, compaction, and snapshot direction.
 
 Without execution state, an AI workflow is difficult to debug, replay, or control after it has started.
 
@@ -200,6 +214,8 @@ The platform distinguishes between concepts such as:
 - run identity;
 - runtime instance identity;
 - worker identity;
+- step identity;
+- claim identity direction;
 - correlation identity.
 
 This is important because production execution needs traceability.
@@ -234,7 +250,13 @@ Replay is intended to support:
 - issue detection;
 - reproducibility checks;
 - execution timeline analysis;
-- comparison between expected and actual behavior.
+- comparison between expected and actual behavior;
+- retry/cancellation replay;
+- policy decision replay;
+- lifecycle replay;
+- retention-aware replay;
+- compacted-history transparency;
+- memory/context evidence direction.
 
 Replay is critical for production AI systems because teams need to understand what happened after an execution completed or failed.
 
@@ -244,6 +266,8 @@ In enterprise environments, replay can help answer:
 - Which steps were executed?
 - Which decisions were made?
 - Which policies were evaluated?
+- Which memory/context sources were used?
+- Which retention or lifecycle decisions affected the evidence?
 - Where did the workflow fail?
 - Can the execution be reproduced?
 - Can the result be explained later?
@@ -270,7 +294,12 @@ This can include:
 - cancellation decisions;
 - replay decisions;
 - finalization decisions;
-- retention and compaction decisions.
+- retention decisions;
+- eviction decisions;
+- compaction decisions;
+- snapshot/archive decisions;
+- memory/context decisions;
+- security/access decisions.
 
 The decision ledger is important because production AI systems need more than logs.
 
@@ -340,6 +369,9 @@ Runtime behavior can depend on:
 - operation context;
 - runtime instance context;
 - worker context;
+- memory/context source;
+- data sensitivity direction;
+- retention profile direction;
 - correlation context.
 
 This matters because real AI workflows often execute under a specific security, business, tenant, or operational scope.
@@ -392,7 +424,11 @@ Policies can influence:
 - replay access;
 - ledger access;
 - retention behavior;
+- snapshot and archive behavior;
+- memory access;
+- memory decay direction;
 - sensitive data access;
+- replay and ledger access;
 - tenant quotas;
 - runtime instance capacity;
 - worker capacity.
@@ -426,7 +462,9 @@ A policy evaluation can produce outcomes such as:
 - delayed direction;
 - blocked direction;
 - requires approval direction;
-- retry later direction.
+- retry later direction;
+- redaction required direction;
+- encryption required direction.
 
 The policy engine is important because runtime decisions should not be invisible.
 
@@ -545,6 +583,9 @@ Provider areas can include:
 - decision ledger providers;
 - replay report providers;
 - observability providers;
+- memory/context providers direction;
+- retention/archive providers direction;
+- runtime transport providers direction;
 - AI model/provider execution adapters;
 - MCP hosting direction.
 
@@ -584,7 +625,7 @@ Example:
 A tenant submits a pipeline execution.
 The runtime loads execution context.
 Configuration defines queue, retry, provider, storage, and hosting behavior.
-The policy engine evaluates tenant quota, provider access, model access, concurrency, and operation permissions.
+The policy engine evaluates tenant quota, provider access, model access, concurrency, operation permissions, memory access, and lifecycle rules.
 The runtime records policy decisions into the decision ledger.
 The execution is admitted, queued, throttled, denied, delayed, or executed.
 Workers execute allowed steps under deterministic runtime control.
@@ -646,6 +687,51 @@ Operators may need to:
 - inspect the current state before taking action.
 
 Runtime control is a critical foundation for enterprise usage and future MCP/dashboard operations.
+
+---
+
+## 19. Execution Control and State Lifecycle Direction
+
+The project already includes direction for execution control and state lifecycle.
+
+This is more than pause, resume, and cancel.
+
+It includes the ability to understand and control:
+
+- run lifecycle;
+- execution lifecycle;
+- step lifecycle;
+- retry state;
+- waiting-for-input direction;
+- claim ownership;
+- worker ownership;
+- runtime instance ownership;
+- finalization;
+- lifecycle diagnostics;
+- lifecycle Decision Ledger events;
+- lifecycle replay evidence.
+
+This matters because production AI workflows must be operable.
+
+A workflow should not become a black box once it starts.
+
+The runtime should eventually be able to answer:
+
+- what is running;
+- what is queued;
+- what is paused;
+- what is waiting for retry;
+- what is waiting for input;
+- what was cancelled;
+- why finalization happened;
+- which worker claimed a step;
+- which runtime instance hosted the work;
+- whether cleanup is safe after finalization.
+
+This foundation already exists as part of the runtime direction.
+
+The next stage is to harden, expose, test, document, and productize it through API, MCP, replay, dashboard, and telemetry.
+
 
 ---
 
@@ -829,6 +915,11 @@ The observability direction includes:
 - retry visibility;
 - failure visibility;
 - replay visibility;
+- provider/transport telemetry;
+- lifecycle telemetry;
+- retention/eviction/compaction/snapshot telemetry;
+- memory/context telemetry direction;
+- MCP telemetry;
 - export direction toward tools such as Grafana, Kibana, OpenSearch, or SIEM-style systems.
 
 Observability is important because AI workflow execution must be explainable at runtime and after execution.
@@ -880,6 +971,45 @@ Correlation is essential for dashboards, troubleshooting, replay, audit, and dis
 
 ---
 
+## 27. Runtime Telemetry Direction
+
+The project already includes direction for runtime telemetry beyond basic logs.
+
+Runtime telemetry should make the execution layer visible across:
+
+- executions;
+- runs;
+- steps;
+- queues;
+- runtime instances;
+- workers;
+- policies;
+- providers;
+- transports;
+- replay;
+- Decision Ledger;
+- retention lifecycle;
+- memory/context direction;
+- MCP tools.
+
+The purpose is to make the runtime explain what it is doing while it is doing it.
+
+Telemetry should preserve correlation across:
+
+- ExecutionId;
+- RunId;
+- StepId;
+- StepKey;
+- RuntimeInstanceId;
+- WorkerId;
+- ClaimToken;
+- CorrelationId.
+
+This foundation supports dashboard views, MCP diagnostics, Kubernetes-style demos, managed hosting direction, and observability export.
+
+
+---
+
 ## 27. Tests and Reliability Work
 
 The project already includes significant reliability and testing direction.
@@ -900,7 +1030,14 @@ Existing or current testing direction includes:
 - pause/resume direction;
 - chaos and reliability direction;
 - Redis coordination direction;
-- distributed worker behavior validation.
+- distributed worker behavior validation;
+- retention/eviction/compaction/snapshot safety;
+- execution lifecycle tests;
+- policy engine tests;
+- RBAC/scoped context tests;
+- provider/transport tests;
+- observability tests;
+- memory/context direction tests.
 
 The presence of tests helps show that the project is not just architecture documentation. It is being validated as an execution system.
 
@@ -941,6 +1078,35 @@ The HTTP provider direction supports:
 - future distributed deployment.
 
 This provides a foundation for multi-process and multi-instance execution.
+
+---
+
+## 30. Runtime Provider and Transport Model Direction
+
+The project already includes direction for a runtime provider and transport model.
+
+This means the runtime core should not be tied permanently to one hosting or communication mechanism.
+
+The current direction supports:
+
+- local provider direction;
+- HTTP runtime provider direction;
+- runtime-instance-only mode direction;
+- control-plane with runtime instances direction;
+- provider-based dispatch direction;
+- future transport direction.
+
+This is important because distributed execution should preserve the same runtime semantics whether execution happens:
+
+- in-process;
+- through a local provider;
+- through an HTTP runtime provider;
+- through runtime-instance-only hosts;
+- through future gRPC direction;
+- through future message-bus direction.
+
+The runtime provider and transport model is a foundation for Kubernetes-style execution and future managed hosting.
+
 
 ---
 
@@ -1137,9 +1303,9 @@ The current roadmap recognizes that audit data must be protected, not only store
 
 ---
 
-## 38. Retention, Eviction, and Compaction Foundation
+## 38. Retention, Eviction, Compaction, and Snapshot Foundation
 
-The platform already contains retention, eviction, and compaction foundations.
+The platform already contains retention, eviction, compaction, and snapshot foundations.
 
 This is important because production AI execution can generate a large amount of runtime and historical data:
 
@@ -1157,7 +1323,7 @@ This is important because production AI execution can generate a large amount of
 - expired claims;
 - completed execution metadata.
 
-Retention, eviction, and compaction are not only cleanup concerns.
+Retention, eviction, compaction, and snapshotting are not only cleanup concerns.
 
 They are part of the runtime lifecycle, audit strategy, replay strategy, storage strategy, cost-control strategy, and future compliance-support direction.
 
@@ -1232,9 +1398,45 @@ The goal is not to delete blindly.
 
 The goal is to reduce storage pressure while preserving operational and audit value.
 
+
+### Automatic Snapshot Mechanism Direction
+
+Automatic snapshots are a key part of safe lifecycle management.
+
+Before hot-state eviction, archive, or compaction, the runtime should be able to preserve enough execution evidence for replay, audit, diagnostics, and future inspection.
+
+A snapshot can preserve:
+
+- execution identity;
+- run identity;
+- final status;
+- step summary;
+- retry summary;
+- cancellation summary;
+- policy decision references;
+- Decision Ledger references;
+- worker identity;
+- runtime instance identity;
+- replay report reference;
+- retained payload references;
+- memory/context evidence direction;
+- archive reference direction;
+- fingerprint or integrity metadata direction.
+
+The important principle is:
+
+> Evict hot state only after required evidence has been preserved.
+
+Snapshot depth should be policy-driven.
+
+A low-risk development workflow may only need a minimal snapshot.
+
+A sensitive or audit-oriented workflow may require a stronger replay or audit snapshot.
+
+
 ### Safe Retention Decisions
 
-Retention, eviction, and compaction should be treated as runtime decisions.
+Retention, eviction, compaction, snapshotting, and archiving should be treated as runtime decisions defined by policy.
 
 Important retention decisions should be visible through:
 
@@ -1297,6 +1499,52 @@ This foundation is already an important part of the platform direction.
 
 ---
 
+## 39. Memory, Context, and Reasoning Lifecycle Direction
+
+The project already has the foundations required for future memory/context governance.
+
+These foundations include:
+
+- context-driven execution;
+- RBAC-aware execution context;
+- policy engine;
+- pluggable policy-by-context model;
+- Decision Ledger;
+- replay and audit;
+- retention lifecycle;
+- observability;
+- multi-tenant readiness;
+- security hardening direction.
+
+The product direction is to make memory and context:
+
+- scoped;
+- policy-driven;
+- decay-aware;
+- freshness-aware;
+- replayable;
+- auditable;
+- tenant-aware;
+- safe.
+
+This does not mean exposing hidden model chain-of-thought.
+
+The correct direction is to capture runtime reasoning evidence, such as:
+
+- which context was injected;
+- which memory source was used;
+- which policy allowed access;
+- which data was retrieved;
+- which tool was called;
+- which branch or runtime decision was selected;
+- which retry or cancellation decision happened;
+- which replay evidence explains the execution later.
+
+This makes memory and context part of the execution lifecycle instead of invisible global state.
+
+
+---
+
 ## 39. RBAC and Execution Context Direction
 
 The project originated from a real need around AI-assisted analysis of RBAC/log execution behavior.
@@ -1334,8 +1582,15 @@ The current foundation already supports the direction toward:
 - runtime control plane;
 - Kubernetes-style demo;
 - observability exports;
+- runtime telemetry;
 - replay and audit reports;
+- execution lifecycle diagnostics;
+- retention lifecycle diagnostics;
+- memory/context diagnostics direction;
 - ledger hardening;
+- security and encryption hardening;
+- developer experience / API / SDK / CLI direction;
+- testing and reliability strategy;
 - multi-tenant readiness;
 - managed hosting model.
 
@@ -1351,7 +1606,9 @@ The current foundation enables several future product layers.
 
 The runtime can become a developer-facing platform with:
 
+- quickstart;
 - SDK/API surface;
+- CLI direction;
 - workflow execution;
 - replay API;
 - audit API;
@@ -1365,6 +1622,8 @@ The runtime can become a developer-facing platform with:
 The runtime can become an operational platform with:
 
 - dashboard;
+- lifecycle diagnostics;
+- memory/context diagnostics direction;
 - run/queue management;
 - runtime instance visibility;
 - worker visibility;
@@ -1377,6 +1636,8 @@ The runtime can become an operational platform with:
 The runtime can evolve toward enterprise usage with:
 
 - multi-tenant isolation;
+- RBAC-aware memory/context governance direction;
+- access-controlled replay and ledger direction;
 - RBAC direction;
 - audit reports;
 - compliance profiles;
@@ -1398,6 +1659,21 @@ The runtime can become a complete AI workflow platform with:
 - test-run mode;
 - deterministic execution.
 
+
+### Memory and Context Product
+
+The runtime can evolve toward controlled AI memory and context management with:
+
+- scoped memory;
+- context injection;
+- memory access policy;
+- memory decay;
+- memory freshness;
+- memory replay evidence;
+- memory diagnostics;
+- tenant-aware memory boundaries.
+
+
 ---
 
 ## 42. Why This Matters
@@ -1417,7 +1693,10 @@ They need:
 - traceability;
 - tenant isolation direction;
 - operational control;
-- retention, eviction, and compaction controls.
+- retention, eviction, compaction, and snapshot controls;
+- memory and context governance;
+- security and encryption hardening direction;
+- developer experience and testing visibility.
 
 This platform is being built around those needs.
 
@@ -1450,15 +1729,23 @@ The project already has strong foundations in the following areas:
 | Eviction | Foundation exists |
 | Compaction | Foundation exists |
 | Safe retention decisions | Direction exists |
+| Automatic snapshot mechanism direction | Foundation exists / active direction |
 | Archive and retained-history direction | Direction exists |
 | Runtime control | Direction exists |
+| Execution control and state lifecycle | Foundation exists |
 | Queue and run management | Direction exists |
 | Shared queue / multi-instance direction | Foundation exists |
 | MCP server / control-plane direction | Foundation exists |
 | Redis coordination direction | Foundation exists |
 | MongoDB audit/storage direction | Foundation exists |
 | Observability direction | Foundation exists |
+| Runtime telemetry direction | Foundation exists / active direction |
 | Integration and reliability testing | Foundation exists |
+| Testing and reliability strategy | Foundation exists / active direction |
+| Developer experience / API / SDK / CLI | Productization target |
+| Security and encryption hardening | Planned hardening direction |
+| Memory, context, and reasoning lifecycle | Productization target |
+| Memory decay policy direction | Productization target |
 | Kubernetes-ready architecture direction | Foundation exists |
 | Dashboard product layer | Planned on existing foundation |
 | Pipeline builder product layer | Planned on existing foundation |
@@ -1474,7 +1761,7 @@ The project already has strong foundations in the following areas:
 
 The platform already contains the core foundation required to become a deterministic LLMOps execution platform.
 
-The current work proves that the project is not only a concept. It already includes architectural and technical foundations for deterministic execution, replay, audit, decision tracking, configuration-driven behavior, context-driven execution, policy-driven runtime decisions, a policy engine foundation, provider-driven architecture, retention, eviction, compaction, distributed workers, runtime control, MCP control-plane direction, observability, and multi-instance execution.
+The current work proves that the project is not only a concept. It already includes architectural and technical foundations for deterministic execution, replay, audit, decision tracking, configuration-driven behavior, context-driven execution, policy-driven runtime decisions, a policy engine foundation, provider-driven architecture, retention, eviction, compaction, automatic snapshot direction, distributed workers, runtime control, execution lifecycle direction, MCP control-plane direction, observability, runtime telemetry, testing reliability, security hardening direction, memory/context governance direction, and multi-instance execution.
 
 The roadmap is now focused on productization:
 
@@ -1484,7 +1771,12 @@ The roadmap is now focused on productization:
 - allow workflows to be designed visually;
 - strengthen MCP control;
 - prepare Kubernetes-style execution;
-- harden audit, ledger, retention, eviction, compaction, and observability;
+- harden audit, ledger, retention, eviction, compaction, snapshotting, and observability;
+- expose execution lifecycle diagnostics;
+- improve developer experience, API, SDK, and CLI direction;
+- strengthen testing and reliability visibility;
+- prepare security and encryption hardening;
+- define memory, context, and reasoning lifecycle direction;
 - evolve toward multi-tenant and managed hosting readiness.
 
 This is the foundation for a production-grade AI workflow execution platform.

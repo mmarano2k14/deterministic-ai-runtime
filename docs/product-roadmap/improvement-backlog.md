@@ -6,7 +6,7 @@ This document describes the planned improvement backlog for the Deterministic AI
 
 The purpose of this document is not to list weaknesses. It is to make the product direction explicit and transparent.
 
-The platform already has a strong technical foundation. The backlog below explains the next improvements required to transform that foundation into a clearer, more usable, more observable, more scalable, and more product-ready platform.
+The platform already has a strong technical foundation. The backlog below explains the next improvements required to transform that foundation into a clearer, more usable, more observable, more secure, more scalable, and more product-ready platform.
 
 Because the project is currently built and maintained by a single developer, this backlog should be understood as a staged prioritization guide, not as a fixed delivery commitment.
 
@@ -23,16 +23,21 @@ The improvement backlog helps answer three questions:
 The goal is to progressively improve the platform across:
 
 - runtime stability;
+- execution control and state lifecycle;
 - replay and audit;
 - decision ledger;
+- policy engine and governance;
 - MCP control;
-- APIs and SDKs;
+- APIs, SDKs, and CLI;
 - dashboard;
 - pipeline builder;
-- observability;
+- observability and runtime telemetry;
 - distributed execution;
 - Kubernetes readiness;
-- security and retention hardening;
+- retention, eviction, compaction, and snapshot lifecycle;
+- memory, context, and reasoning lifecycle;
+- security and encryption hardening;
+- testing and reliability strategy;
 - multi-tenant readiness;
 - managed hosting direction;
 - regulated-market technical controls.
@@ -55,7 +60,10 @@ Each improvement should strengthen one of the core product pillars:
 - runtime control;
 - observability;
 - distributed execution;
+- lifecycle safety;
+- memory/context governance;
 - product usability;
+- security hardening;
 - enterprise readiness.
 
 ---
@@ -69,7 +77,7 @@ The backlog can be prioritized using the following criteria:
 | Runtime Safety | Does it make execution more reliable or deterministic? |
 | Product Clarity | Does it make the project easier to understand or demonstrate? |
 | Operational Value | Does it help users inspect, control, or debug executions? |
-| Enterprise Value | Does it support audit, governance, scale, or isolation? |
+| Enterprise Value | Does it support audit, governance, scale, isolation, security, lifecycle management, or regulated-market technical controls? |
 | Build Dependency | Does another feature depend on this foundation? |
 | Single-Developer Feasibility | Can it be delivered progressively without blocking the entire roadmap? |
 
@@ -81,17 +89,22 @@ The backlog can be prioritized using the following criteria:
 |---|---|---|
 | Documentation | Make the product easier to understand publicly | High |
 | Runtime Core | Harden execution state, step lifecycle, retry, and finalization | High |
-| Replay and Audit | Improve reports, diagnostics, replay comparison, and API access | High |
-| Decision Ledger | Strengthen event taxonomy, correlation, dashboard visibility, and exports | High |
-| MCP Control Plane | Improve runtime tools for execution, replay, queue, instance, and diagnostics | High |
-| API / SDK Surface | Make runtime usage cleaner and easier for external users | High |
-| Observability | Add structured logs, metrics, traces, export direction, and dashboards | High |
-| Dashboard | Build execution, queue, instance, ledger, replay, and observability views | Medium / High |
-| Pipeline Builder | Build visual DAG workflow design progressively | Medium |
-| Distributed Runtime | Improve shared queue, runtime instance registry, dispatch, and capacity visibility | High |
+| Execution Control and State Lifecycle | Harden pause/resume/cancel, waiting-for-input, claims, finalization, and lifecycle diagnostics | High |
+| Replay and Audit | Improve reports, diagnostics, replay comparison, memory evidence, lifecycle replay, and API access | High |
+| Decision Ledger | Strengthen event taxonomy, correlation, dashboard visibility, security events, lifecycle events, memory/context events, and exports | High |
+| Policy Engine and Governance | Improve policy-by-context examples, policy inspection, RBAC scope, ARN-style resources, and policy decision visibility | High |
+| MCP Control Plane | Improve runtime tools for execution, replay, queue, instance, memory/context, lifecycle, policy, and diagnostics | High |
+| API / SDK / CLI Surface | Make runtime usage cleaner and easier for external users | High |
+| Observability and Runtime Telemetry | Add structured logs, metrics, traces, provider/transport telemetry, lifecycle telemetry, memory/context telemetry, export direction, and dashboards | High |
+| Retention / Eviction / Compaction / Snapshot | Harden lifecycle policy rules, automatic snapshots, hot-state eviction, stale claim cleanup, archive direction, and replay preservation | High |
+| Testing and Reliability Strategy | Organize and expand runtime, replay, ledger, policy, MCP, provider, queue, lifecycle, observability, and distributed tests | High |
+| Dashboard | Build execution, queue, instance, ledger, replay, policy, lifecycle, memory/context, security, and observability views | Medium / High |
+| Pipeline Builder | Build visual DAG workflow design progressively with policy, retention, memory/context, retry, timeout, and validation configuration | Medium |
+| Distributed Runtime | Improve shared queue, runtime instance registry, dispatch, provider/transport behavior, and capacity visibility | High |
 | Kubernetes Demo | Prepare visible multi-instance/multi-worker demo | Medium / High |
-| Security Hardening | Improve encryption, retention, redaction, and access-control direction | Medium / High |
-| Multi-Tenant Readiness | Prepare tenant/project/pipeline isolation direction | Medium |
+| Security and Encryption Hardening | Improve access-control, redaction, sensitive payload handling, encrypted ledger payload direction, and encrypted retention archive direction | Medium / High |
+| Memory / Context / Reasoning Lifecycle | Define memory source model, scoped context injection, memory decay, freshness, replay memory evidence, and policy-driven memory governance | Medium / High |
+| Multi-Tenant Readiness | Prepare tenant/project/pipeline/execution/memory/telemetry/retention isolation direction | Medium |
 | Managed Hosting | Prepare runtime instance/worker capacity hosting model | Medium |
 | Banking / Finance Controls | Prepare technical controls for audit-sensitive environments | Medium / Long-term |
 
@@ -110,7 +123,7 @@ The documentation should clearly explain:
 - what already works;
 - what is planned;
 - how the architecture is structured;
-- how the runtime relates to replay, ledger, MCP, dashboard, pipeline builder, and distributed execution.
+- how the runtime relates to replay, ledger, MCP, dashboard, pipeline builder, execution lifecycle, retention lifecycle, memory/context governance, testing reliability, security hardening, and distributed execution.
 
 ## Planned Improvements
 
@@ -130,7 +143,7 @@ The documentation should clearly explain:
 
 Strong documentation turns a complex engineering project into an understandable product.
 
-This is especially important because the project solves difficult infrastructure problems: deterministic execution, replay, audit, distributed workers, shared queues, MCP control, and observability.
+This is especially important because the project solves difficult infrastructure problems: deterministic execution, replay, audit, distributed workers, shared queues, MCP control, policy governance, lifecycle management, memory/context governance, testing reliability, and observability.
 
 ## Suggested Priority
 
@@ -168,7 +181,7 @@ The runtime core is the foundation of everything else.
 
 ## Why It Matters
 
-The dashboard, pipeline builder, MCP control plane, replay, and observability all depend on a stable runtime core.
+The dashboard, pipeline builder, MCP control plane, replay, lifecycle management, memory/context governance, testing reliability, security hardening, and observability all depend on a stable runtime core.
 
 If the runtime core is unclear, product layers become harder to build and harder to trust.
 
@@ -177,6 +190,59 @@ If the runtime core is unclear, product layers become harder to build and harder
 High.
 
 Runtime reliability must remain the first priority.
+
+---
+
+# 3. Execution Control and State Lifecycle Improvements
+
+## Goal
+
+Make execution control reliable, inspectable, auditable, and product-ready.
+
+Execution control is one of the key differences between a production runtime and a fire-and-forget agent runner.
+
+## Planned Improvements
+
+- Improve execution state inspection.
+- Improve run-to-execution mapping.
+- Improve pause/resume/cancel consistency.
+- Improve queued run cancellation.
+- Improve running execution cancellation.
+- Improve cancellation propagation direction.
+- Improve waiting-for-retry visibility.
+- Improve waiting-for-input direction.
+- Improve finalization diagnostics.
+- Improve claim ownership visibility.
+- Improve worker/runtime-instance ownership visibility.
+- Improve lifecycle Decision Ledger events.
+- Improve replay timeline for lifecycle transitions.
+- Improve MCP tools for lifecycle inspection.
+- Improve dashboard lifecycle views.
+- Improve lifecycle telemetry.
+
+## Why It Matters
+
+Production workflows must be controllable.
+
+Users must be able to inspect, pause, resume, cancel, replay, and audit workflows reliably.
+
+The runtime should be able to explain:
+
+- what is running;
+- what is queued;
+- what is paused;
+- what is waiting for retry;
+- what was cancelled;
+- why finalization happened;
+- which worker claimed a step;
+- whether retention, eviction, or compaction is safe after finalization.
+
+## Suggested Priority
+
+High.
+
+Execution control and lifecycle visibility are core production differentiators.
+
 
 ---
 
@@ -204,6 +270,10 @@ Replay is a major product differentiator.
 - Add dashboard views for replay and audit.
 - Add replay filtering by execution, run, pipeline, status, and time range.
 - Add replay support for redacted or protected payload views.
+- Add replay memory/context evidence direction.
+- Add replay of lifecycle decisions.
+- Add replay transparency after hot-state eviction or compaction.
+- Add replay visibility for snapshot/archive references.
 
 ## Why It Matters
 
@@ -242,6 +312,11 @@ The ledger should explain why the runtime behaved the way it did.
 - Improve retry decision recording.
 - Improve finalization decision recording.
 - Improve retention decision recording.
+- Improve eviction decision recording.
+- Improve compaction decision recording.
+- Improve snapshot/archive decision recording.
+- Improve memory/context decision recording.
+- Improve security/access decision recording.
 - Add integrity/fingerprint direction.
 - Prepare encrypted payload direction.
 - Prepare access-control direction for sensitive ledger details.
@@ -259,6 +334,58 @@ This is important for debugging, replay, enterprise review, and future regulated
 High.
 
 Ledger visibility should become a core part of the product.
+
+---
+
+# 5. Policy Engine and Governance Improvements
+
+## Goal
+
+Make configuration-driven, context-driven, policy-driven, and provider-driven runtime behavior easier to explain, inspect, test, and extend.
+
+The policy engine is already part of the platform foundation.
+
+This improvement track makes policy behavior more visible and product-ready.
+
+## Planned Improvements
+
+- Improve policy engine documentation.
+- Add policy-by-context examples.
+- Add tenant/project/pipeline policy examples.
+- Add RBAC-aware execution context examples.
+- Add ARN-inspired resource scope examples.
+- Add provider/model/tool access policy examples.
+- Add replay access policy examples.
+- Add ledger access policy examples.
+- Add retention/snapshot/compaction policy examples.
+- Add memory access and memory decay policy examples.
+- Add security/access policy examples.
+- Add policy decision diagnostics.
+- Add MCP policy inspection.
+- Add dashboard policy views.
+- Add policy simulation/dry-run direction.
+- Add tests for policy allow/deny/throttle/failure behavior.
+
+## Why It Matters
+
+Enterprise AI execution requires governance.
+
+Policy-driven runtime behavior makes the platform adaptable without rewriting the deterministic core.
+
+The runtime should not only ask:
+
+> Can this operation technically run?
+
+It should also ask:
+
+> Is this operation allowed in this context?
+
+## Suggested Priority
+
+High.
+
+The policy engine is one of the core enterprise foundations.
+
 
 ---
 
@@ -281,6 +408,10 @@ The MCP control plane should expose runtime operations in a structured way.
 - Improve worker visibility tools.
 - Improve decision ledger inspection tools.
 - Improve diagnostics tools.
+- Improve policy decision inspection tools.
+- Improve retention lifecycle diagnostics tools.
+- Improve memory/context diagnostics tools.
+- Improve security/access diagnostics direction.
 - Improve MCP response consistency.
 - Improve MCP error handling.
 - Add MCP request/response history direction.
@@ -302,13 +433,13 @@ MCP control is central to the product direction.
 
 ---
 
-# 6. API and SDK Productization
+# 6. API, SDK, CLI, and Developer Experience Productization
 
 ## Goal
 
 Make the runtime easier to use outside of internal tests and samples.
 
-A product needs clear APIs and SDK surfaces.
+A product needs clear APIs, SDK surfaces, CLI direction, examples, diagnostics, and local developer experience.
 
 ## Planned Improvements
 
@@ -327,6 +458,13 @@ A product needs clear APIs and SDK surfaces.
 - Add SDK packaging direction.
 - Add CLI direction.
 - Add local developer setup.
+- Add quickstart documentation.
+- Add RunId / ExecutionId clarity.
+- Add diagnostics examples.
+- Add custom policy examples.
+- Add custom step examples.
+- Add provider examples.
+- Add MCP examples.
 
 ## Why It Matters
 
@@ -363,6 +501,10 @@ The dashboard should allow users to inspect executions, runs, queues, runtime in
 - Basic decision ledger viewer.
 - Basic replay viewer.
 - Basic metrics summary.
+- Basic lifecycle diagnostics view.
+- Basic retention/eviction/compaction/snapshot view.
+- Basic policy decision view.
+- Basic memory/context evidence direction.
 
 ## Dashboard V2
 
@@ -376,6 +518,9 @@ The dashboard should allow users to inspect executions, runs, queues, runtime in
 - Runtime instance health.
 - Replay comparison.
 - Ledger correlation.
+- Policy timeline.
+- Memory/context evidence.
+- Retention lifecycle activity.
 
 ## Dashboard V3
 
@@ -387,6 +532,8 @@ The dashboard should allow users to inspect executions, runs, queues, runtime in
 - Runtime capacity views.
 - Cost/usage direction.
 - Compliance-oriented views.
+- Security/access-control views.
+- Memory/context governance views.
 
 ## Why It Matters
 
@@ -428,6 +575,9 @@ The pipeline builder should sit on top of the DAG execution foundation.
 - Retry policy configuration.
 - Timeout configuration.
 - Concurrency policy configuration.
+- Policy configuration.
+- Memory/context configuration direction.
+- Retention profile configuration direction.
 - Human-in-the-loop steps.
 - Test-run mode.
 - Workflow versioning foundation.
@@ -456,7 +606,7 @@ The builder is important, but it should not be built before the runtime APIs and
 
 ---
 
-# 9. Observability Improvements
+# 9. Observability and Runtime Telemetry Improvements
 
 ## Goal
 
@@ -480,6 +630,12 @@ Expose meaningful runtime signals through logs, metrics, traces, decision ledger
 - Add SIEM-style export direction.
 - Add observability documentation.
 - Add demo dashboards direction.
+- Add provider/transport telemetry.
+- Add retention/eviction/compaction/snapshot telemetry.
+- Add memory/context telemetry direction.
+- Add MCP telemetry.
+- Add lifecycle telemetry.
+- Add Kubernetes demo telemetry.
 
 ## Why It Matters
 
@@ -518,6 +674,8 @@ The distributed runtime direction is one of the strongest foundations for future
 - Improve cancellation across runtime instances.
 - Improve run/execution indexing.
 - Improve distributed trace correlation.
+- Improve provider/transport telemetry.
+- Improve runtime provider and transport model documentation.
 - Improve structured logs for distributed decisions.
 - Improve tests for no double-dispatch.
 - Improve tests for worker collision safety.
@@ -576,7 +734,7 @@ The demo should be prepared after the shared queue and observability foundations
 
 ---
 
-# 12. Security and Encryption Hardening
+# 12. Security and Encryption Hardening Improvements
 
 ## Goal
 
@@ -598,6 +756,12 @@ This should be approached carefully and progressively.
 - Add redaction direction.
 - Add access-controlled decryption direction.
 - Add audit events for sensitive access direction.
+- Add access-controlled replay direction.
+- Add access-controlled Decision Ledger direction.
+- Add MCP access-control direction.
+- Add dashboard access-control direction.
+- Add security Decision Ledger events.
+- Add security tests.
 
 ## Why It Matters
 
@@ -615,16 +779,19 @@ Security hardening should be designed before being rushed into implementation.
 
 ---
 
-# 13. Retention and Compaction Improvements
+# 13. Retention, Eviction, Compaction, and Snapshot Improvements
 
 ## Goal
 
-Improve how execution history, replay data, ledger events, traces, and payloads are retained, compacted, archived, or removed.
+Improve how execution history, replay data, ledger events, traces, payloads, snapshots, archives, hot state, stale claims, and memory/context evidence are retained, compacted, archived, or removed.
 
 ## Planned Improvements
 
 - Improve retention policy model.
 - Add tenant/project/pipeline retention direction.
+- Improve automatic snapshot before cleanup direction.
+- Improve hot-state eviction safety.
+- Improve stale claim cleanup.
 - Improve compaction safety.
 - Add archive direction.
 - Add encrypted archive direction.
@@ -633,6 +800,12 @@ Improve how execution history, replay data, ledger events, traces, and payloads 
 - Add audit export before purge direction.
 - Add retention dashboard direction.
 - Add retention ledger events.
+- Add eviction ledger events.
+- Add compaction ledger events.
+- Add snapshot/archive ledger events.
+- Add MCP lifecycle diagnostics.
+- Add dashboard lifecycle views.
+- Add lifecycle telemetry.
 - Add deletion/anonymization direction.
 
 ## Why It Matters
@@ -646,6 +819,59 @@ Retention is not only a storage concern. It is part of audit, compliance support
 Medium.
 
 Retention should evolve together with ledger, replay, and encryption hardening.
+
+---
+
+# 14. Memory, Context, and Reasoning Lifecycle Improvements
+
+## Goal
+
+Define controlled memory and context behavior for production AI workflows.
+
+Production AI memory should not be unlimited, invisible, or uncontrolled.
+
+It should be scoped, policy-driven, decay-aware, replayable, auditable, and safe.
+
+## Planned Improvements
+
+- Define memory source model.
+- Define scoped context injection.
+- Define memory access policy direction.
+- Define memory freshness metadata.
+- Define memory decay policy.
+- Define memory retention and compaction direction.
+- Add memory/context Decision Ledger events.
+- Add replay memory evidence direction.
+- Add MCP memory diagnostics.
+- Add dashboard memory/context views direction.
+- Add tenant-aware memory boundary direction.
+- Add memory redaction and security direction.
+- Prepare vector memory integration direction.
+
+## Why It Matters
+
+Memory and context strongly influence AI behavior.
+
+A production runtime should know:
+
+- which memory was used;
+- why it was allowed;
+- which policy controlled it;
+- whether it was fresh or stale;
+- whether it decayed;
+- whether it was retained only for audit;
+- whether it was excluded from future context.
+
+The platform should not claim to expose hidden model chain-of-thought.
+
+The correct direction is runtime reasoning evidence: context used, memory source, policy decision, retrieved data reference, tool usage, branch decision, retry decision, and replay evidence.
+
+## Suggested Priority
+
+Medium / High.
+
+This is a strategic differentiator for production AI execution.
+
 
 ---
 
@@ -665,6 +891,8 @@ Prepare the platform for tenant-aware execution and future SaaS/enterprise deplo
 - Isolate ledger events.
 - Isolate replay data.
 - Isolate traces and metrics.
+- Isolate memory/context data.
+- Isolate retention lifecycle data.
 - Prepare tenant-aware retention.
 - Prepare tenant-aware encryption boundaries.
 - Prepare tenant-aware runtime capacity.
@@ -751,6 +979,8 @@ The correct position is:
 - Improve encrypted ledger direction.
 - Improve encrypted retention direction.
 - Improve sensitive access audit direction.
+- Improve memory/context governance direction.
+- Improve retention/snapshot/compaction policy profiles.
 - Improve compliance profile direction.
 - Improve observability export direction.
 
@@ -786,6 +1016,9 @@ Improve local development, testing, debugging, and runtime operations.
 - Add diagnostic commands.
 - Add export commands direction.
 - Add developer-focused documentation.
+- Add API usage examples.
+- Add SDK helper direction.
+- Add diagnostics examples.
 
 ## Why It Matters
 
@@ -892,7 +1125,14 @@ Continue strengthening trust in the runtime through tests.
 - Add stress tests for distributed execution.
 - Add chaos-style test scenarios.
 - Add tests for retention safety.
+- Add tests for automatic snapshot behavior.
+- Add tests for eviction and stale claim cleanup.
+- Add tests for compaction safety.
 - Add tests for observability events.
+- Add tests for policy engine decisions.
+- Add tests for RBAC/scoped context.
+- Add tests for provider/transport behavior.
+- Add tests for memory/context direction.
 
 ## Why It Matters
 
@@ -916,19 +1156,24 @@ For a single-developer roadmap, the backlog should be staged carefully.
 
 1. Documentation and examples.
 2. Runtime stabilization.
-3. Replay and audit improvements.
-4. Decision ledger improvements.
-5. MCP control plane improvements.
-6. API/SDK cleanup.
-7. Observability improvements.
-8. Distributed runtime and shared queue improvements.
-9. Kubernetes-style demo.
-10. Dashboard V1.
-11. Pipeline builder foundation.
-12. Security and retention hardening.
-13. Multi-tenant readiness.
-14. Managed hosting direction.
-15. Banking/financial-services technical controls.
+3. Execution control and state lifecycle hardening.
+4. Replay and audit improvements.
+5. Decision ledger improvements.
+6. Policy engine and governance visibility.
+7. MCP control plane improvements.
+8. API/SDK/CLI cleanup.
+9. Observability and runtime telemetry improvements.
+10. Retention, eviction, compaction, and snapshot hardening.
+11. Testing and reliability visibility.
+12. Distributed runtime and shared queue improvements.
+13. Kubernetes-style demo.
+14. Dashboard V1.
+15. Pipeline builder foundation.
+16. Security and encryption hardening.
+17. Memory, context, and reasoning lifecycle.
+18. Multi-tenant readiness.
+19. Managed hosting direction.
+20. Banking/financial-services technical controls.
 
 This order is not fixed, but it keeps the core foundation protected.
 
@@ -949,6 +1194,8 @@ These include:
 - managed hosting;
 - advanced pipeline builder features;
 - enterprise RBAC;
+- tenant-aware memory isolation;
+- complete memory decay engine;
 - dedicated clusters.
 
 These areas require strong design and should be built after the runtime and observability foundations are stable enough.
@@ -962,17 +1209,21 @@ These areas require strong design and should be built after the runtime and obse
 | Documentation | High | Immediate |
 | Examples and demos | High | Immediate |
 | Runtime stabilization | High | Immediate / Short term |
+| Execution control and state lifecycle | High | Immediate / Short term |
 | Replay and audit | High | Short term |
 | Decision ledger | High | Short term |
+| Policy engine and governance | High | Short term |
 | MCP control plane | High | Short term |
-| API/SDK cleanup | High | Short term |
-| Observability | High | Short / Mid term |
+| API/SDK/CLI cleanup | High | Short term |
+| Observability and runtime telemetry | High | Short / Mid term |
+| Retention, eviction, compaction, and snapshot | High | Short / Mid term |
+| Testing and reliability strategy | High | Short / Mid term |
 | Distributed runtime | High | Short / Mid term |
 | Kubernetes demo | Medium / High | Mid term |
 | Dashboard V1 | Medium / High | Mid term |
 | Pipeline builder V1 | Medium | Mid / Long term |
-| Security hardening | Medium / High | Mid / Long term |
-| Retention hardening | Medium | Mid / Long term |
+| Security and encryption hardening | Medium / High | Mid / Long term |
+| Memory, context, and reasoning lifecycle | Medium / High | Mid / Long term |
 | Multi-tenant readiness | Medium | Long term |
 | Managed hosting | Medium | Long term |
 | Banking/finance technical controls | Medium | Long term |
@@ -985,7 +1236,7 @@ This backlog is a productization guide.
 
 It does not describe weaknesses. It describes the next layers required to transform an existing deterministic AI runtime foundation into a complete platform.
 
-The platform already has important foundations around deterministic execution, replay, audit, decision ledger, distributed workers, shared queue direction, MCP control, and observability direction.
+The platform already has important foundations around deterministic execution, replay, audit, decision ledger, policy engine, distributed workers, shared queue direction, MCP control, retention lifecycle, execution lifecycle, observability direction, runtime telemetry, testing reliability, and memory/context direction.
 
 The next improvements should make the platform:
 
@@ -995,6 +1246,10 @@ The next improvements should make the platform:
 - easier to replay;
 - easier to audit;
 - easier to observe;
+- easier to govern through policy;
+- easier to manage through lifecycle rules;
+- easier to secure;
+- easier to test;
 - easier to scale;
 - easier to demonstrate;
 - easier to productize.
