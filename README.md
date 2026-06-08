@@ -1,10 +1,12 @@
 # Deterministic AI Runtime
 
+<!-- Updated by ChatGPT: original README content preserved; global positioning updated from road-to-MLOps wording toward roadmap-to-product/product-roadmap positioning. -->
+
 A deterministic AI execution runtime for production-grade AI workloads.
 
 This repository provides a reference implementation of a distributed, state-driven runtime for executing AI workflows with deterministic DAG orchestration, context resolution, Redis Lua coordination, retry/recovery, retention/compaction, distributed concurrency control, execution control state, replay validation, correlated metrics and tracing, execution-correlated decision ledger, shared runtime control-plane orchestration, Redis-backed shared queue coordination, queue-first submission, shared queue pumping/manual drain, dispatch-time admission, runtime instance provider hosting, runtime worker-capacity visibility, scale-out request publication, and executable enterprise demo scenarios.
 
-The current runtime foundations are intentionally designed as the base for a broader AI execution and MLOps-oriented platform.
+The current runtime foundations are intentionally designed as the base for a broader product platform for deterministic AI execution, runtime control, replay, audit, governance, observability, dashboarding, pipeline building, managed hosting, and enterprise-oriented AI operations.
 
 [![Version](https://img.shields.io/badge/Version-1.0.6.0-blue)](./CHANGELOG.md)
 [![Changelog](https://img.shields.io/badge/Changelog-view-lightgrey)](./CHANGELOG.md)
@@ -38,9 +40,9 @@ The latest major updates focused on turning the runtime from a DAG executor into
 | Correlated metrics and tracing storage modes | Added runtime correlation for metrics and traces with configurable `Disabled`, `Memory`, `Mongo`, and `MemoryAndMongo` storage modes. |
 | Context resolution and helpers | Added a dedicated helper layer for input bindings, previous step outputs, payload rehydration, provider/model/operation context, policy context, RAG context, and replay-safe helpers. |
 | Documentation restructure | Completed Phase 0 V1 with a shorter README, preserved runtime internals, documentation index, roadmap, enterprise readiness matrix, ecosystem comparison, and focused runtime documentation under `docs/ai/`. |
-| Long-term platform direction | Added a dedicated road-to-MLOps direction document to describe how the runtime foundations can evolve toward AI execution infrastructure and MLOps-oriented runtime operations. |
+| Product roadmap direction | Added a dedicated product roadmap documentation track describing how the runtime foundations evolve toward a complete deterministic AI execution platform with dashboard, pipeline builder, MCP control interface, managed hosting direction, memory/context lifecycle, security hardening, testing strategy, observability, and enterprise readiness. |
 
-For detailed changes, see [`CHANGELOG.md`](./CHANGELOG.md), [`docs/index.md`](docs/index.md), and [`docs/road-to-mlops.md`](docs/road-to-mlops.md).
+For detailed changes, see [`CHANGELOG.md`](./CHANGELOG.md), [`docs/index.md`](docs/index.md), and the product roadmap documentation under [`docs/product-roadmap/index.md`](docs/product-roadmap/index.md).
 
 ## Overview
 
@@ -73,7 +75,7 @@ It provides a state-driven execution layer where:
 - runtime instances expose run capacity, worker capacity, queue pressure, and worker-aware `CanAcceptRun`
 - local and HTTP provider hosting foundations validate the path toward Kubernetes-style runtime instances
 
-The project should be read as an AI execution infrastructure foundation. The runtime core is already substantial, while the longer-term direction is to evolve toward a broader AI operations and MLOps-oriented platform.
+The project should be read as an AI execution infrastructure foundation. The runtime core is already substantial, while the longer-term direction is to evolve toward a broader product platform for deterministic AI execution, operational control, replay/audit, dashboarding, pipeline building, managed hosting, and enterprise AI workflow governance.
 
 ---
 
@@ -128,7 +130,7 @@ This runtime is designed to fix the operational problems that appear when AI wor
 | Dispatch and scaling can become transport-specific | Provider-based runtime instance model and foundations for local and HTTP runtime providers, with future Redis command queue, gRPC, and Kubernetes providers. |
 | Kubernetes scaling needs runtime visibility | Runtime roles, runtime capacity descriptors, shared queue coordination, scale-out request publication, and provider-based administration direction. |
 
-The main goal is to make production AI execution controllable, observable, recoverable, auditable, replayable, and eventually scalable across runtime instances without turning the runtime core into a transport-specific scheduler.
+The main goal is to make production AI execution controllable, observable, recoverable, auditable, replayable, and eventually scalable across runtime instances without turning the runtime core into a transport-specific scheduler. The product roadmap extends this foundation toward dashboard, pipeline builder, MCP control interface, managed hosting, memory/context governance, and enterprise-oriented operational surfaces.
 
 The runtime treats AI execution as infrastructure:
 
@@ -216,7 +218,7 @@ This project explores what an AI execution runtime should look like when reliabi
 | Snapshot and Replay API foundations | Implemented | Terminal snapshots, replay metadata, deterministic fingerprint validation, audit-only replay, restore replay, ledger loading, and timeline loading are available. |
 | Execution-correlated decision ledger | Implemented | Durable correlated ledger events exist for execution lifecycle, run lifecycle, queue control, claims, steps, retry, recovery, policy evaluation, concurrency, execution control, human input, snapshots, storage failures, replay lifecycle, retention, compaction, and finalization. |
 | Observability, metrics, and tracing | Foundation available | Runtime metrics, trace recording, realtime events, correlated trace timelines, and configurable Memory/Mongo/MemoryAndMongo persistence exist; production-grade OpenTelemetry integration and dashboarding remain planned. |
-| MLOps-oriented platform evolution | Direction defined | Long-term platform direction is documented in `docs/road-to-mlops.md`. |
+| Product-platform evolution | Direction defined | Long-term product direction is documented under `docs/product-roadmap/`, including roadmap, dashboard, pipeline builder, MCP interface, memory/context lifecycle, security, testing, observability, and managed hosting direction. |
 | Durable decision ledger | Foundation available | Execution-correlated runtime ledger foundations are implemented and aligned with runtime correlation, including replay lifecycle visibility. |
 | Public API / SDK polish | Planned | Future work for cleaner external developer experience. |
 
@@ -327,7 +329,7 @@ The project is designed around production questions that enterprise AI systems m
 | How do you prevent one execution from consuming all workers? | `MaxLocalWorkersPerExecution`, active/free worker tracking, effective worker reservation, and worker-aware runtime capacity snapshots. |
 | How do you dispatch queued work without an automatic background pump? | Queue-first submit mode plus manual shared queue drain through MCP/control-plane tooling. |
 | How do you prove deterministic convergence? | Integration tests and enterprise demo scenarios validate completion, replay fingerprints, distributed execution, throttling, recovery behavior, atomic retention, compaction consistency, ledger visibility, and trace timeline visibility. |
-| How does this evolve toward AI operations and MLOps? | Runtime foundations are designed to support future AI execution control planes, governance, observability, replay, and operational workflows. |
+| How does this evolve toward a product platform? | Runtime foundations are designed to support future AI execution control planes, governance, observability, replay, dashboard, pipeline builder, MCP tools, managed hosting, memory/context governance, and operational workflows. |
 
 For the detailed enterprise matrix, see [`docs/enterprise-readiness.md`](docs/enterprise-readiness.md).
 
@@ -595,7 +597,7 @@ Runtime metrics and traces can be configured as `Disabled`, `Memory`, `Mongo`, o
 
 Replay can validate persisted executions without re-running LLMs, tools, external providers, or side effects. It can expose replay metadata, decision ledger events, and trace timeline events when requested.
 
-OpenTelemetry-style distributed tracing, richer dashboards, HTTP replay APIs, replay audit tooling, and advanced decision lineage remain roadmap items.
+OpenTelemetry-style distributed tracing, richer dashboards, HTTP replay APIs, replay audit tooling, advanced decision lineage, lifecycle diagnostics, memory/context evidence, and product-roadmap features remain roadmap items.
 
 ---
 
@@ -648,7 +650,11 @@ Areas still evolving include:
 - operational dashboarding
 - Kubernetes deployment assets
 - real enterprise sample workflows
-- MLOps-oriented platform capabilities
+- product-roadmap platform capabilities
+- dashboard and pipeline builder product layers
+- memory/context lifecycle productization
+- security and encryption hardening direction
+- developer experience / API / SDK / CLI polish
 - production documentation split
 
 ---
@@ -711,7 +717,7 @@ The `throttling-100` scenario demonstrates:
 
 The demo validates the controller execution path, distributed worker participation, runtime controls, realtime logging, correlated observability, and terminal completion behavior. It is intended to show distributed AI execution infrastructure, not only a simple batch or in-memory execution path.
 
-Future demo work will expand further into crash recovery, human-in-the-loop, advanced replay workflows, Kubernetes deployment assets, real enterprise sample workflows, and broader AI operations/MLOps-oriented runtime capabilities.
+Future demo work will expand further into crash recovery, human-in-the-loop, advanced replay workflows, Kubernetes deployment assets, real enterprise sample workflows, dashboard visibility, pipeline builder direction, MCP control scenarios, memory/context lifecycle diagnostics, and broader product-platform capabilities.
 
 ---
 
@@ -735,11 +741,41 @@ The roadmap is organized into phases.
 
 The roadmap above tracks the current runtime and enterprise demo evolution.
 
-The longer-term platform direction is tracked separately in [`docs/road-to-mlops.md`](docs/road-to-mlops.md), which describes how these deterministic execution foundations can evolve toward broader AI execution infrastructure, governance, observability, replay, and MLOps-oriented runtime operations.
+The broader product direction is tracked in [`docs/product-roadmap/index.md`](docs/product-roadmap/index.md), which describes how these deterministic execution foundations evolve toward a complete product platform: runtime engine, replay/audit, Decision Ledger, policy governance, retention lifecycle, observability, execution control, MCP interface, enterprise dashboard, pipeline builder, memory/context lifecycle, security hardening, testing reliability, multi-tenant readiness, managed hosting, and banking/financial-services technical-control direction.
 
-For the detailed roadmap, see [`docs/roadmap.md`](docs/roadmap.md).
+For the runtime roadmap, see [`docs/roadmap.md`](docs/roadmap.md). For the product roadmap, see [`docs/product-roadmap/product-roadmap.md`](docs/product-roadmap/product-roadmap.md).
 
 ---
+
+
+## Roadmap to Product
+
+The runtime foundations are now documented as the base for a product roadmap, not only as a road-to-MLOps direction.
+
+The product roadmap explains how the project can evolve from deterministic execution infrastructure into a broader product platform with:
+
+- deterministic runtime engine;
+- execution control and state lifecycle;
+- replay and audit layer;
+- execution-correlated Decision Ledger;
+- policy engine and runtime governance;
+- retention, eviction, compaction, snapshot, and archive lifecycle;
+- observability and runtime telemetry;
+- MCP control interface;
+- enterprise dashboard;
+- visual pipeline builder;
+- developer experience / API / SDK / CLI direction;
+- testing and reliability strategy;
+- security and encryption hardening;
+- memory, context, and reasoning lifecycle;
+- multi-tenant readiness;
+- managed hosting by runtime instance and worker capacity;
+- banking and financial-services technical-control direction.
+
+The main product roadmap entry point is [`docs/product-roadmap/index.md`](docs/product-roadmap/index.md).
+
+---
+
 
 ## Documentation
 
@@ -750,7 +786,13 @@ The full documentation map is available here:
 - [`docs/enterprise-readiness.md`](docs/enterprise-readiness.md) — Enterprise readiness matrix.
 - [`docs/comparison-existing-tools.md`](docs/comparison-existing-tools.md) — Ecosystem positioning and comparison with existing tools.
 - [`docs/roadmap.md`](docs/roadmap.md) — Project roadmap.
-- [`docs/road-to-mlops.md`](docs/road-to-mlops.md) — Long-term evolution from deterministic AI runtime foundations toward a broader AI execution and MLOps-oriented platform.
+- [`docs/product-roadmap/index.md`](docs/product-roadmap/index.md) — Product roadmap index and product-platform reading guide.
+- [`docs/product-roadmap/product-roadmap.md`](docs/product-roadmap/product-roadmap.md) — Public product roadmap from runtime foundation toward dashboard, pipeline builder, MCP interface, managed hosting, security, memory/context lifecycle, and enterprise readiness.
+- [`docs/product-roadmap/what-already-exists.md`](docs/product-roadmap/what-already-exists.md) — Summary of the foundations already implemented or actively in place today.
+- [`docs/product-roadmap/current-foundation.md`](docs/product-roadmap/current-foundation.md) — Current architectural foundation for deterministic execution, replay, policy, providers, lifecycle management, observability, and control-plane direction.
+- [`docs/product-roadmap/improvement-backlog.md`](docs/product-roadmap/improvement-backlog.md) — Planned improvements required to productize the existing runtime foundation.
+- [`docs/product-roadmap/roadmap-6-months.md`](docs/product-roadmap/roadmap-6-months.md) — Short-term productization direction for a single-developer project.
+- [`docs/product-roadmap/roadmap-12-24-months.md`](docs/product-roadmap/roadmap-12-24-months.md) — Longer-term product maturity, enterprise readiness, and commercial scale direction.
 - [`docs/ai/runtime-control-plane.md`](docs/ai/runtime-control-plane.md) — Runtime control-plane foundation for replay, execution control, runtime queue control, runtime instance visibility/control, run admission, Shared Runtime Controller V1, Redis shared queue coordination, queue pump/background service, and scale-out request publication.
 - [`docs/ai/mcp-server-control-plane.md`](docs/ai/mcp-server-control-plane.md) — MCP server as a runtime control-plane adapter, including host modes, tool groups, runtime role separation, local runtime pool behavior, shared queue dispatch flow, and Kubernetes direction.
 - [`docs/ai/runtime-instance-provider-model.md`](docs/ai/runtime-instance-provider-model.md) — Provider-based runtime instance administration model for local, Redis command queue, HTTP, gRPC, and Kubernetes providers.

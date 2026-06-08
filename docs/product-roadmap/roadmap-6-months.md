@@ -1,5 +1,7 @@
 # 6-Month Roadmap
 
+<!-- Updated by ChatGPT: original content preserved; missing roadmap pillars and alignment notes were added without rewriting the document from scratch. -->
+
 ## Deterministic AI Runtime Platform
 
 This document describes the 6-month public roadmap direction for the Deterministic AI Runtime Platform.
@@ -33,7 +35,14 @@ The platform already has strong foundations in place:
 - provider-based runtime hosting;
 - replay/audit visibility direction;
 - observability direction;
-- retention, eviction, and compaction foundation;
+- runtime telemetry direction;
+- retention, eviction, compaction, and snapshot foundation;
+- automatic snapshot mechanism direction;
+- execution control and state lifecycle direction;
+- testing and reliability direction;
+- developer experience, API, SDK, and CLI direction;
+- security and encryption hardening direction;
+- memory, context, and reasoning lifecycle direction;
 - managed hosting by runtime instance and worker capacity direction.
 
 The goal of the next 6 months is not to rebuild these foundations.
@@ -58,8 +67,14 @@ This means the roadmap should prioritize:
 - MCP control-plane completeness;
 - decision ledger visibility;
 - policy engine visibility;
+- execution lifecycle diagnostics;
+- retention lifecycle diagnostics;
+- memory/context model direction;
+- security hardening direction;
+- developer experience and API/SDK/CLI direction;
+- testing reliability visibility;
 - multi-instance runtime demonstration;
-- observability;
+- observability and runtime telemetry;
 - dashboard foundation;
 - pipeline builder foundation.
 
@@ -94,7 +109,11 @@ However, productization requires:
 - stronger demos;
 - easier local setup;
 - better developer experience;
+- API/SDK/CLI direction;
 - security hardening;
+- retention lifecycle diagnostics;
+- memory/context governance direction;
+- testing and reliability visibility;
 - packaging;
 - onboarding.
 
@@ -127,12 +146,16 @@ By the end of this roadmap period, the project should ideally have:
 - improved decision ledger visibility;
 - improved MCP control-plane tools;
 - better examples and demos;
-- stronger observability direction;
+- stronger observability and runtime telemetry direction;
+- lifecycle diagnostics for execution control, retention, eviction, compaction, and snapshots;
+- initial memory/context model documentation direction;
+- initial developer quickstart / API / SDK / CLI direction;
+- stronger testing and reliability visibility;
 - visible multi-instance / multi-worker execution demo;
 - first dashboard foundation;
 - first pipeline builder foundation direction;
 - better explanation of policy engine and RBAC/context model;
-- clearer managed hosting and banking-readiness positioning.
+- clearer security hardening, managed hosting, and banking-readiness positioning.
 
 This is ambitious for one developer, so execution should remain staged and prioritized.
 
@@ -158,6 +181,13 @@ The platform is complex. Before adding too many new features, the repository mus
 - document deterministic runtime engine;
 - document replay/audit layer;
 - document decision ledger;
+- document retention, eviction, compaction, and snapshot lifecycle;
+- document observability and runtime telemetry;
+- document execution control and state lifecycle;
+- document testing and reliability strategy;
+- document developer experience / API / SDK / CLI direction;
+- document security and encryption hardening direction;
+- document memory, context, and reasoning lifecycle;
 - document MCP control interface;
 - document multi-tenant readiness;
 - document managed hosting model;
@@ -177,6 +207,13 @@ The platform is complex. Before adding too many new features, the repository mus
 - `docs/product-roadmap/deterministic-runtime-engine.md`;
 - `docs/product-roadmap/replay-audit-layer.md`;
 - `docs/product-roadmap/decision-ledger.md`;
+- `docs/product-roadmap/retention-eviction-compaction.md`;
+- `docs/product-roadmap/observability-and-runtime-telemetry.md`;
+- `docs/product-roadmap/execution-control-and-state-lifecycle.md`;
+- `docs/product-roadmap/testing-and-reliability-strategy.md`;
+- `docs/product-roadmap/developer-experience-api-sdk-cli.md`;
+- `docs/product-roadmap/security-and-encryption-hardening.md`;
+- `docs/product-roadmap/memory-context-reasoning-lifecycle.md`;
 - `docs/product-roadmap/mcp-control-interface.md`;
 - `docs/product-roadmap/enterprise-dashboard.md`;
 - `docs/product-roadmap/pipeline-builder.md`;
@@ -198,7 +235,7 @@ Month 1 is successful if a visitor can quickly understand:
 - what is planned;
 - why it matters for production AI execution;
 - why the project is more than an AI demo;
-- how replay, audit, ledger, MCP, policy engine, workers, runtime instances, and observability fit together.
+- how replay, audit, ledger, MCP, policy engine, workers, runtime instances, execution lifecycle, retention lifecycle, memory/context, telemetry, security, testing, and observability fit together.
 
 ## Important Note
 
@@ -212,7 +249,7 @@ For a complex infrastructure project, documentation is part of productization.
 
 ## Main Objective
 
-Stabilize and expose the runtime foundations more clearly through APIs, MCP tools, examples, and tests.
+Stabilize and expose the runtime foundations more clearly through APIs, MCP tools, examples, diagnostics, and tests.
 
 The runtime already has important foundations. Month 2 should focus on making them easier to use and easier to validate.
 
@@ -228,6 +265,11 @@ The runtime already has important foundations. Month 2 should focus on making th
 - improve pause/resume/cancel consistency;
 - improve shared run and shared queue inspection;
 - improve runtime instance inspection;
+- improve lifecycle diagnostics;
+- improve retention lifecycle diagnostics;
+- improve policy decision diagnostics;
+- improve memory/context diagnostics direction;
+- improve developer quickstart direction;
 - improve diagnostics;
 - strengthen tests around MCP control scenarios.
 
@@ -245,7 +287,10 @@ The runtime already has important foundations. Month 2 should focus on making th
 - run-to-execution indexing;
 - replay integration;
 - decision ledger correlation;
-- policy decision visibility.
+- policy decision visibility;
+- retention/eviction/compaction/snapshot safety;
+- memory/context evidence direction;
+- provider/transport diagnostics.
 
 ## MCP Areas to Harden
 
@@ -260,6 +305,9 @@ The runtime already has important foundations. Month 2 should focus on making th
 - inspect runtime instances;
 - inspect workers direction;
 - inspect decision ledger direction;
+- inspect policy decisions direction;
+- inspect retention lifecycle direction;
+- inspect memory/context direction;
 - diagnostics tools.
 
 ## Expected Deliverables
@@ -284,7 +332,7 @@ Month 2 is successful if:
 
 ---
 
-# Month 3 — Decision Ledger, Replay/Audit, and Runtime Governance Visibility
+# Month 3 — Decision Ledger, Replay/Audit, Runtime Governance, and Lifecycle Visibility
 
 ## Main Objective
 
@@ -300,7 +348,9 @@ The platform already has a decision ledger and replay/audit foundation. Month 3 
 - improve decision ledger event taxonomy;
 - improve policy decision visibility;
 - improve retry/cancellation replay;
-- improve retention/eviction/compaction visibility;
+- improve execution lifecycle replay;
+- improve retention/eviction/compaction/snapshot visibility;
+- improve memory/context evidence direction;
 - improve ledger correlation with ExecutionId, RunId, StepId, RuntimeInstanceId, WorkerId, and CorrelationId;
 - improve audit summary direction;
 - improve diagnostic summaries.
@@ -326,7 +376,10 @@ Focus areas:
 - retention decisions;
 - eviction decisions;
 - compaction decisions;
-- archive decisions.
+- snapshot decisions;
+- archive decisions;
+- memory/context decisions;
+- security/access decisions.
 
 ## Replay/Audit Focus
 
@@ -343,7 +396,9 @@ Focus areas:
 - retry replay;
 - cancellation replay;
 - retention-aware replay;
-- compacted-history transparency.
+- compacted-history transparency;
+- snapshot/archive reference transparency;
+- memory/context evidence direction.
 
 ## Runtime Governance Focus
 
@@ -377,11 +432,12 @@ Month 3 is successful if the platform can clearly show:
 - which policy decision was applied;
 - how replay explains the execution;
 - how ledger events support audit;
-- how retention/eviction/compaction decisions are visible.
+- how retention/eviction/compaction/snapshot decisions are visible;
+- how memory/context evidence is preserved or excluded by policy.
 
 ---
 
-# Month 4 — Distributed Runtime Demo and Observability Foundation
+# Month 4 — Distributed Runtime Demo, Observability, and Developer Experience
 
 ## Main Objective
 
@@ -401,7 +457,11 @@ This is one of the strongest differentiators of the project.
 - improve runtime-instance-only mode documentation;
 - improve structured logs for distributed runtime events;
 - improve metrics direction;
-- improve trace/correlation direction.
+- improve trace/correlation direction;
+- improve provider/transport telemetry;
+- improve retention lifecycle telemetry;
+- improve memory/context telemetry direction;
+- improve developer quickstart and examples.
 
 ## Demo Target
 
@@ -449,7 +509,10 @@ Observability should include:
 - queue pressure;
 - dispatch decisions;
 - replay activity;
-- ledger events.
+- ledger events;
+- provider/transport telemetry;
+- retention lifecycle telemetry;
+- memory/context telemetry direction.
 
 ## Expected Deliverables
 
@@ -459,7 +522,9 @@ Observability should include:
 - structured logs for distributed runtime events;
 - observability examples;
 - replay/audit after distributed execution;
-- documentation for running the demo.
+- documentation for running the demo;
+- improved developer quickstart;
+- API/SDK/CLI direction notes.
 
 ## Success Criteria
 
@@ -467,7 +532,7 @@ Month 4 is successful if a user can see the platform run work across multiple ru
 
 ---
 
-# Month 5 — Dashboard Foundation and Operational Visibility
+# Month 5 — Dashboard Foundation, Security Direction, and Lifecycle Views
 
 ## Main Objective
 
@@ -486,8 +551,11 @@ The first dashboard should not attempt to be a full enterprise product. It shoul
 - basic replay report view;
 - basic decision ledger view;
 - basic policy decision view;
-- basic retention/eviction/compaction view;
-- basic observability summary.
+- basic retention/eviction/compaction/snapshot view;
+- basic lifecycle diagnostics view;
+- basic memory/context evidence direction;
+- basic observability summary;
+- basic security/access-control direction documentation.
 
 ## Dashboard V1 Scope
 
@@ -502,7 +570,10 @@ Dashboard V1 should show:
 - decision ledger events;
 - policy decisions;
 - diagnostics;
-- retention activity.
+- retention activity;
+- lifecycle activity;
+- memory/context evidence direction;
+- security/access-control direction.
 
 It should avoid advanced features at first, such as:
 
@@ -532,7 +603,7 @@ A visitor should be able to see that the platform is not only code. It is becomi
 
 ---
 
-# Month 6 — Pipeline Builder Foundation and Pilot-Ready Demo
+# Month 6 — Pipeline Builder Foundation, Memory Model Direction, and Pilot-Ready Demo
 
 ## Main Objective
 
@@ -554,6 +625,8 @@ The goal is to connect a basic visual or schema-driven pipeline definition to th
 - connect execution to dashboard;
 - connect execution to replay;
 - connect execution to decision ledger;
+- document initial memory/context model direction;
+- prepare policy-driven memory/context configuration direction;
 - prepare pilot demo documentation.
 
 ## Product Loop Target
@@ -582,6 +655,7 @@ This product loop is more important than advanced UI polish.
 - pipeline-to-runtime execution example;
 - dashboard integration direction;
 - replay/ledger integration direction;
+- memory/context model documentation direction;
 - pilot-ready demo narrative.
 
 ## Success Criteria
@@ -615,8 +689,12 @@ Continue strengthening tests around:
 - runtime instances;
 - distributed workers;
 - provider-based hosting;
-- retention/eviction/compaction;
-- policy decisions.
+- retention/eviction/compaction/snapshot;
+- policy decisions;
+- memory/context direction;
+- provider/transport behavior;
+- observability events;
+- security/access-control direction.
 
 ## 2. Documentation
 
@@ -633,7 +711,10 @@ Every runtime feature should become visible through:
 - traces direction;
 - decision ledger;
 - replay;
-- dashboard direction.
+- dashboard direction;
+- runtime telemetry;
+- retention lifecycle diagnostics;
+- memory/context diagnostics direction.
 
 ## 4. Safety
 
@@ -643,8 +724,10 @@ Avoid rushing:
 - legal compliance claims;
 - billing/metering;
 - production SLAs;
-- encrypted key hierarchy;
+- complete encrypted key hierarchy;
 - country/sector compliance profiles;
+- tenant-aware memory isolation;
+- complete memory decay engine;
 - advanced dashboard permissions.
 
 These require careful design.
@@ -656,11 +739,11 @@ These require careful design.
 | Month | Focus | Outcome |
 |---|---|---|
 | Month 1 | Documentation and public positioning | Visitors understand the platform and existing foundations. |
-| Month 2 | Runtime APIs and MCP control | Runtime operations become easier to use and demonstrate. |
-| Month 3 | Replay, ledger, and governance visibility | Runtime decisions become easier to inspect and explain. |
-| Month 4 | Distributed runtime demo and observability | Multi-instance / multi-worker execution becomes visible. |
-| Month 5 | Dashboard foundation | Runtime behavior becomes visually understandable. |
-| Month 6 | Pipeline builder foundation and pilot demo | A complete product loop becomes demonstrable. |
+| Month 2 | Runtime APIs, lifecycle diagnostics, and MCP control | Runtime operations become easier to use and demonstrate. |
+| Month 3 | Replay, ledger, governance, and lifecycle visibility | Runtime decisions become easier to inspect and explain. |
+| Month 4 | Distributed runtime demo, observability, and DX | Multi-instance / multi-worker execution becomes visible and easier to run. |
+| Month 5 | Dashboard foundation, lifecycle views, and security direction | Runtime behavior becomes visually understandable. |
+| Month 6 | Pipeline builder foundation, memory model direction, and pilot demo | A complete product loop becomes demonstrable. |
 
 ---
 
@@ -696,7 +779,12 @@ The next 6 months should focus on:
 - improving replay and audit;
 - making the decision ledger visible;
 - demonstrating distributed execution;
-- preparing observability;
+- preparing observability and runtime telemetry;
+- improving developer experience;
+- exposing execution lifecycle diagnostics;
+- exposing retention lifecycle diagnostics;
+- documenting memory/context model direction;
+- strengthening security hardening direction;
 - building the first dashboard foundation;
 - creating the first pipeline builder foundation.
 

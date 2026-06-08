@@ -1,12 +1,14 @@
 # Product Roadmap
 
+<!-- Updated by ChatGPT: original content preserved; missing roadmap pillars and alignment notes were added without rewriting the document from scratch. -->
+
 ## Deterministic AI Runtime Platform
 
 This document describes the public product roadmap for the Deterministic AI Runtime Platform.
 
-The roadmap is intentionally realistic and must be understood in the context of a project currently built and maintained by a single developer. Several important foundations already exist, including deterministic execution, replay and audit, decision ledger, configuration-driven runtime behavior, context-driven execution, policy-driven runtime decisions, provider-driven architecture, retention/eviction/compaction, distributed workers, MCP control-plane direction, observability direction, and multi-instance runtime direction.
+The roadmap is intentionally realistic and must be understood in the context of a project currently built and maintained by a single developer. Several important foundations already exist, including deterministic execution, replay and audit, decision ledger, configuration-driven runtime behavior, context-driven execution, policy-driven runtime decisions, provider-driven architecture, retention/eviction/compaction, automatic snapshot direction, execution control and state lifecycle, distributed workers, MCP control-plane direction, observability and runtime telemetry direction, testing and reliability direction, developer experience/API/SDK/CLI direction, security and encryption hardening direction, memory/context/reasoning lifecycle direction, and multi-instance runtime direction.
 
-Transforming these foundations into a complete product requires progressive work across runtime hardening, APIs, MCP control, dashboard, pipeline builder, observability, deployment, multi-tenant readiness, managed hosting direction, and enterprise-oriented controls.
+Transforming these foundations into a complete product requires progressive work across runtime hardening, execution lifecycle visibility, APIs, SDK/CLI, MCP control, dashboard, pipeline builder, observability, deployment, retention lifecycle diagnostics, memory/context governance, security hardening, multi-tenant readiness, managed hosting direction, and enterprise-oriented controls.
 
 Because the project is currently driven by one developer, the roadmap should be read as a product direction and prioritization guide, not as a fixed delivery promise.
 
@@ -24,8 +26,10 @@ The platform aims to help teams:
 - replay and audit execution history;
 - inspect runtime decisions;
 - govern execution through configuration, context, policy, and providers;
-- manage retention, eviction, and compaction safely;
-- observe runtime behavior;
+- manage retention, eviction, compaction, snapshots, and archive direction safely;
+- manage memory, context, and runtime reasoning evidence safely;
+- observe runtime behavior through telemetry, logs, metrics, traces, ledger events, and diagnostics;
+- expose developer-friendly APIs, SDK direction, CLI direction, examples, and local setup;
 - coordinate workers and runtime instances;
 - prepare distributed execution;
 - prepare multi-tenant and managed hosting models;
@@ -40,7 +44,8 @@ The long-term product direction is:
 > Replay and audit every execution.  
 > Record runtime decisions in a ledger.  
 > Observe runtime behavior in real time.  
-> Manage execution history through retention, eviction, and compaction.  
+> Manage execution history through retention, eviction, compaction, snapshots, and archive direction.  
+> Manage memory and context as scoped, policy-driven, decay-aware runtime capabilities.  
 > Scale execution through runtime instances and workers.
 
 ---
@@ -57,7 +62,7 @@ Before adding too much UI or commercial packaging, the core execution layer must
 
 ## 2. Productize Existing Strengths
 
-The project already has strong foundations around deterministic execution, replay, audit, decision ledger, configuration-driven behavior, context-driven execution, policy-driven runtime decisions, provider-driven architecture, retention/eviction/compaction, workers, queues, MCP direction, observability, and distributed runtime direction.
+The project already has strong foundations around deterministic execution, replay, audit, decision ledger, configuration-driven behavior, context-driven execution, policy-driven runtime decisions, provider-driven architecture, retention/eviction/compaction, automatic snapshot direction, execution lifecycle control, workers, queues, MCP direction, observability/runtime telemetry, testing reliability, memory/context direction, security hardening direction, and distributed runtime direction.
 
 The roadmap should expose those strengths through better documentation, APIs, demos, dashboard views, and product modules.
 
@@ -74,6 +79,8 @@ The goal is not to build everything at once. The goal is to deliver visible prog
 - basic dashboard;
 - pipeline builder foundation;
 - observability exports;
+- lifecycle diagnostics;
+- developer quickstart / API / SDK / CLI direction;
 - Kubernetes-style demo;
 - multi-tenant readiness;
 - managed hosting direction.
@@ -84,7 +91,7 @@ The platform should not claim automatic enterprise readiness, banking compliance
 
 The correct positioning is:
 
-> The platform is designed to provide the technical foundations required for reliable, auditable, replayable, controllable, and scalable AI workflow execution.
+> The platform is designed to provide the technical foundations required for reliable, auditable, replayable, controllable, governable, observable, lifecycle-aware, memory/context-aware, and scalable AI workflow execution.
 
 ---
 
@@ -95,16 +102,21 @@ The roadmap is organized into several product tracks.
 | Track | Purpose |
 |---|---|
 | Runtime Foundation | Harden deterministic execution, state, workers, retry, replay, and control. |
-| Replay and Audit | Strengthen replay reports, audit timeline, deterministic validation, and diagnostics. |
+| Execution Control and State Lifecycle | Harden run lifecycle, execution lifecycle, step lifecycle, pause, resume, cancel, retry, waiting-for-input, claims, and finalization. |
+| Replay and Audit | Strengthen replay reports, audit timeline, deterministic validation, memory/context evidence, lifecycle replay, retention-aware replay, and diagnostics. |
 | Decision Ledger | Improve structured runtime decision history and future compliance-oriented audit support. |
 | Policy Engine and Runtime Governance | Expose and harden configuration-driven, context-driven, policy-driven, and provider-driven execution foundations. |
-| Retention, Eviction, and Compaction | Harden execution data lifecycle management, hot-state cleanup, archive direction, and safe retention decisions. |
+| Retention, Eviction, Compaction, and Snapshotting | Harden execution data lifecycle management, automatic snapshots, hot-state cleanup, stale claim cleanup, archive direction, and safe policy-driven lifecycle decisions. |
+| Memory, Context, and Reasoning Lifecycle | Define scoped memory, context injection, memory decay, runtime reasoning evidence, replay memory evidence, and policy-driven memory governance. |
 | MCP Control Plane | Expose runtime operations through MCP tools and future MCP control UI. |
-| Enterprise Dashboard | Make executions, runs, queues, workers, ledger, replay, and observability visible. |
+| Enterprise Dashboard | Make executions, runs, queues, workers, ledger, replay, policy, memory/context, lifecycle, security, and observability visible. |
 | Pipeline Builder | Allow visual design of deterministic AI workflows. |
-| Observability | Export logs, metrics, traces, ledger events, and runtime health signals. |
-| Distributed Runtime | Improve shared queue, runtime instances, worker capacity, and Kubernetes-style execution. |
-| Multi-Tenant Readiness | Prepare isolation by tenant, project, pipeline, execution, storage, and runtime capacity. |
+| Observability and Runtime Telemetry | Export logs, metrics, traces, ledger events, provider/transport telemetry, lifecycle telemetry, memory/context telemetry, and runtime health signals. |
+| Developer Experience / API / SDK / CLI | Improve quickstart, examples, API packaging, SDK direction, CLI direction, diagnostics, and error model. |
+| Testing and Reliability | Prove runtime guarantees through unit, integration, distributed, provider, MCP, replay, lifecycle, and chaos-style tests. |
+| Security and Encryption Hardening | Improve RBAC-aware access, replay/ledger/MCP/dashboard security, redaction, payload protection, encrypted retention archive direction, and access-control direction. |
+| Distributed Runtime | Improve shared queue, runtime instances, worker capacity, provider/transport behavior, and Kubernetes-style execution. |
+| Multi-Tenant Readiness | Prepare isolation by tenant, project, pipeline, execution, storage, memory/context, telemetry, retention policy, and runtime capacity. |
 | Managed Hosting | Prepare a long-term hosting model based on runtime instances and workers. |
 | Regulated-Market Controls | Prepare technical controls for audit-sensitive and financial-service environments. |
 
@@ -137,12 +149,21 @@ The project already contains the foundation for several major product capabiliti
 | Retention | Foundation exists |
 | Eviction | Foundation exists |
 | Compaction | Foundation exists |
+| Automatic snapshot mechanism direction | Foundation exists / active direction |
 | Safe retention decisions | Foundation exists / active direction |
+| Execution control and state lifecycle | Foundation exists |
 | MCP server / control-plane direction | Foundation exists |
 | Redis coordination direction | Foundation exists |
 | MongoDB durable audit/history direction | Foundation exists |
 | Observability direction | Foundation exists |
+| Runtime telemetry direction | Foundation exists / active direction |
 | Provider-based hosting direction | Foundation exists |
+| Runtime provider and transport model | Foundation exists |
+| Testing and reliability strategy | Foundation exists / active direction |
+| Developer experience / API / SDK / CLI | Productization target |
+| Security and encryption hardening | Planned hardening direction |
+| Memory, context, and reasoning lifecycle | Productization target |
+| Memory decay policy direction | Productization target |
 | Kubernetes-ready architecture direction | Direction exists |
 | Dashboard product layer | Planned |
 | Pipeline builder product layer | Planned |
@@ -177,7 +198,9 @@ It includes:
 - configuration-driven behavior;
 - context-driven execution;
 - policy-driven decisions;
-- retention/eviction/compaction decisions.
+- retention/eviction/compaction/snapshot decisions;
+- memory/context evidence direction;
+- security/access-control decision direction.
 
 ## Roadmap Direction
 
@@ -189,7 +212,9 @@ The runtime should continue to improve in these areas:
 - better failure convergence;
 - safer distributed coordination;
 - stronger policy-driven concurrency and throttling visibility;
-- stronger retention, eviction, and compaction safety;
+- stronger retention, eviction, compaction, and automatic snapshot safety;
+- stronger execution lifecycle diagnostics;
+- stronger memory/context evidence direction;
 - stronger tests around concurrency;
 - better runtime diagnostics;
 - clearer extension points;
@@ -197,7 +222,55 @@ The runtime should continue to improve in these areas:
 
 ## Expected Outcome
 
-A stable runtime core that can support product layers such as dashboard, pipeline builder, MCP control, replay, and managed hosting.
+A stable runtime core that can support product layers such as dashboard, pipeline builder, MCP control, replay, lifecycle diagnostics, memory/context governance, and managed hosting.
+
+---
+
+## 2. Execution Control and State Lifecycle
+
+Execution control makes AI workflows operable.
+
+The runtime should not behave like a fire-and-forget system.
+
+It should expose and harden:
+
+- run lifecycle;
+- execution lifecycle;
+- step lifecycle;
+- pause;
+- resume;
+- cancel;
+- retry;
+- waiting-for-input direction;
+- claim ownership;
+- worker ownership;
+- runtime instance ownership;
+- finalization;
+- lifecycle Decision Ledger events;
+- lifecycle replay evidence;
+- lifecycle diagnostics through MCP, API, dashboard, and telemetry.
+
+## Roadmap Direction
+
+Execution control and state lifecycle should progressively improve:
+
+- pause/resume/cancel consistency;
+- queued run cancellation;
+- running execution cancellation;
+- cancellation propagation direction;
+- waiting-for-retry visibility;
+- waiting-for-input direction;
+- finalization diagnostics;
+- claim ownership visibility;
+- lifecycle replay timeline;
+- MCP lifecycle tools;
+- dashboard lifecycle views;
+- lifecycle telemetry.
+
+## Expected Outcome
+
+AI workflows become controllable production workloads instead of fire-and-forget executions.
+
 
 ---
 
@@ -217,6 +290,12 @@ Replay and audit should evolve toward:
 - deterministic validation;
 - replay timeline reconstruction;
 - comparison between execution state and replay output;
+- policy decision replay;
+- retry/cancellation replay;
+- lifecycle replay;
+- retention-aware replay;
+- snapshot/archive reference transparency;
+- memory/context evidence direction;
 - exportable audit report direction;
 - replay integration with dashboard;
 - replay access through MCP;
@@ -249,6 +328,11 @@ The decision ledger should progressively cover:
 - replay decisions;
 - finalization decisions;
 - retention decisions;
+- eviction decisions;
+- compaction decisions;
+- snapshot/archive decisions;
+- memory/context decisions;
+- security/access decisions;
 - diagnostic decisions.
 
 Future hardening may include:
@@ -287,6 +371,9 @@ Policy engine and runtime governance should progressively expose and harden:
 - tenant/project/pipeline-aware execution context;
 - RBAC-aware execution direction;
 - provider/model/tool access decisions;
+- memory access and memory decay policy decisions;
+- retention/snapshot/compaction policy decisions;
+- security/access policy decisions;
 - policy decision events in the decision ledger;
 - policy visibility through MCP, API, dashboard, and observability.
 
@@ -296,19 +383,21 @@ The runtime becomes more governable, explainable, and enterprise-ready because i
 
 ---
 
-## 5. Retention, Eviction, and Compaction
+## 5. Retention, Eviction, Compaction, and Snapshotting
 
-The runtime already includes retention, eviction, and compaction foundations.
+The runtime already includes retention, eviction, compaction, and snapshot foundations.
 
 This product track is about hardening execution data lifecycle management.
 
-Retention, eviction, and compaction are not only cleanup jobs. They are part of replay, audit, storage cost control, hot-state safety, and future compliance-support direction.
+Retention, eviction, compaction, and snapshotting are not only cleanup jobs. They are part of replay, audit, storage cost control, hot-state safety, and future compliance-support direction.
 
 ## Roadmap Direction
 
-Retention, eviction, and compaction should progressively improve:
+Retention, eviction, compaction, and snapshotting should progressively improve:
 
 - retention policy model;
+- automatic snapshot mechanism direction;
+- snapshot policy model direction;
 - hot-state eviction safety;
 - stale claim cleanup;
 - completed execution cleanup;
@@ -320,6 +409,8 @@ Retention, eviction, and compaction should progressively improve:
 - retention decision events;
 - eviction decision events;
 - compaction decision events;
+- snapshot/archive decision events;
+- MCP lifecycle diagnostics;
 - dashboard visibility;
 - observability metrics;
 - future encrypted retention archives.
@@ -327,6 +418,40 @@ Retention, eviction, and compaction should progressively improve:
 ## Expected Outcome
 
 The runtime can manage execution history safely while preserving replay value, audit value, and operational visibility.
+
+---
+
+## 6. Memory, Context, and Reasoning Lifecycle
+
+Memory and context are critical for production AI execution.
+
+The platform should not treat memory as an invisible global state.
+
+## Roadmap Direction
+
+Memory, context, and reasoning lifecycle should progressively define:
+
+- memory sources;
+- scoped context injection;
+- RBAC-aware memory access;
+- memory freshness;
+- memory decay;
+- runtime reasoning evidence;
+- memory access Decision Ledger events;
+- replay memory evidence;
+- memory retention and compaction;
+- tenant-aware memory boundaries;
+- memory policy rules;
+- redaction and sensitive memory direction.
+
+The platform should not claim to capture hidden model chain-of-thought.
+
+It should capture runtime reasoning evidence: context used, memory source, policy decision, retrieved data reference, tool usage, branch decision, retry decision, and replay evidence.
+
+## Expected Outcome
+
+AI workflows become more explainable and safer because context and memory usage are scoped, policy-driven, replayable, decay-aware, and auditable.
+
 
 ---
 
@@ -350,6 +475,9 @@ MCP tools should progressively support:
 - inspecting queues;
 - inspecting runtime instances;
 - inspecting decision ledger events;
+- inspecting policy decisions;
+- inspecting retention lifecycle decisions;
+- inspecting memory/context decisions direction;
 - running diagnostics;
 - exposing runtime health.
 
@@ -378,7 +506,11 @@ The dashboard can be built progressively.
 - runtime instance list;
 - worker status;
 - basic replay access;
-- basic ledger viewer.
+- basic ledger viewer;
+- basic policy decision view;
+- basic lifecycle diagnostics;
+- basic retention/eviction/compaction/snapshot view;
+- basic memory/context evidence direction.
 
 ### Dashboard V2
 
@@ -390,7 +522,10 @@ The dashboard can be built progressively.
 - queue pressure;
 - worker utilization;
 - runtime instance health;
-- trace/ledger correlation.
+- trace/ledger correlation;
+- policy timeline;
+- memory/context evidence;
+- retention lifecycle activity.
 
 ### Dashboard V3
 
@@ -400,7 +535,9 @@ The dashboard can be built progressively.
 - audit report export;
 - failure investigation views;
 - cost/usage direction;
-- compliance-oriented views.
+- compliance-oriented views;
+- security/access-control views;
+- memory/context governance views.
 
 ## Expected Outcome
 
@@ -434,6 +571,9 @@ The pipeline builder can evolve in stages.
 - retry policy configuration;
 - timeout configuration;
 - concurrency policy configuration;
+- policy configuration;
+- memory/context configuration direction;
+- retention profile configuration direction;
 - human-in-the-loop steps;
 - workflow versioning;
 - test-run mode.
@@ -454,7 +594,7 @@ The runtime becomes usable as a product platform, not only as an engineering lib
 
 ---
 
-## 9. Observability
+## 9. Observability and Runtime Telemetry
 
 Observability is essential for production AI workflows.
 
@@ -476,13 +616,109 @@ Observability should cover:
 - replay activity;
 - ledger events;
 - policy decision events;
-- retention/eviction/compaction events;
+- retention/eviction/compaction/snapshot events;
+- provider/transport telemetry;
+- lifecycle telemetry;
+- memory/context telemetry direction;
+- MCP telemetry;
 - correlation identifiers;
 - export direction to Grafana, Kibana, OpenSearch, or SIEM-style tools.
 
 ## Expected Outcome
 
 Runtime behavior becomes visible in real time and after execution, making operations, support, debugging, and demos much easier.
+
+---
+
+## 10. Developer Experience, API, SDK, and CLI
+
+Developer experience turns the runtime into an adoptable platform.
+
+## Roadmap Direction
+
+Developer experience should progressively improve:
+
+- quickstart;
+- local setup;
+- sample workflows;
+- API documentation;
+- RunId / ExecutionId clarity;
+- SDK direction;
+- CLI direction;
+- MCP tool examples;
+- diagnostics;
+- error model;
+- configuration examples;
+- policy examples;
+- step plugin examples;
+- provider examples;
+- test documentation.
+
+## Expected Outcome
+
+Developers can run, inspect, extend, test, and operate the platform more easily.
+
+---
+
+## 11. Testing and Reliability Strategy
+
+Testing proves that the architecture works.
+
+## Roadmap Direction
+
+Testing and reliability should progressively improve:
+
+- runtime invariant tests;
+- DAG execution tests;
+- replay/audit tests;
+- Decision Ledger tests;
+- policy engine tests;
+- RBAC/scoped context tests;
+- execution control tests;
+- retry/recovery tests;
+- worker/claim safety tests;
+- shared queue tests;
+- runtime instance tests;
+- provider/transport tests;
+- MCP integration tests;
+- retention/eviction/compaction/snapshot tests;
+- observability tests;
+- chaos-style tests;
+- performance/load direction.
+
+## Expected Outcome
+
+The platform can prove its runtime guarantees under concurrency, failure, replay, policy, lifecycle management, and distributed execution.
+
+---
+
+## 12. Security and Encryption Hardening
+
+Security is a runtime lifecycle concern.
+
+## Roadmap Direction
+
+Security and encryption hardening should progressively improve:
+
+- RBAC-aware access;
+- ARN-inspired resource scopes;
+- policy-driven security;
+- access-controlled replay;
+- access-controlled Decision Ledger;
+- MCP access control;
+- dashboard access control;
+- provider/transport security;
+- sensitive payload handling;
+- redaction;
+- secret reference direction;
+- encrypted ledger payload direction;
+- encrypted retention archive direction;
+- audit of sensitive access.
+
+## Expected Outcome
+
+The platform becomes more credible for enterprise and audit-sensitive environments without overclaiming automatic compliance.
+
 
 ---
 
@@ -507,6 +743,8 @@ The distributed runtime should continue improving:
 - cancellation across runtime instances;
 - replay across distributed executions;
 - structured logs for distributed events;
+- provider/transport telemetry;
+- runtime provider and transport hardening;
 - Kubernetes-style demo.
 
 ## Expected Outcome
@@ -533,7 +771,9 @@ Multi-tenant readiness should progressively include:
 - ledger isolation;
 - replay data isolation;
 - trace and metric separation;
+- memory/context isolation direction;
 - retention policy separation;
+- security/access policy separation;
 - runtime capacity allocation;
 - quota direction;
 - usage metering direction;
@@ -602,7 +842,8 @@ Relevant technical controls include:
 - policy engine direction;
 - RBAC direction;
 - tenant isolation direction;
-- retention, eviction, and compaction foundation;
+- retention, eviction, compaction, and snapshot foundation;
+- memory/context governance direction;
 - encrypted ledger direction;
 - encrypted retention archive direction;
 - observability export;
@@ -722,7 +963,9 @@ The first dashboard version should focus on visibility before advanced features.
 - expose worker visibility;
 - expose decision ledger events;
 - expose policy decision events;
-- expose retention/eviction/compaction activity;
+- expose retention/eviction/compaction/snapshot activity;
+- expose memory/context events direction;
+- expose lifecycle diagnostics;
 - expose replay/audit views;
 - expose basic observability data.
 
@@ -759,7 +1002,8 @@ The builder should start simple and evolve progressively.
 - allow step creation and configuration;
 - connect pipeline definitions to runtime execution;
 - validate workflows before execution;
-- prepare versioning foundation.
+- prepare versioning foundation;
+- prepare memory/context configuration direction.
 
 ## Deliverables
 
@@ -793,7 +1037,7 @@ This phase depends on runtime stability and control-plane readiness.
 - improve structured logs;
 - expose metrics;
 - expose traces;
-- correlate logs, traces, ledger, execution, run, worker, and runtime instance data;
+- correlate logs, traces, ledger, execution, run, worker, runtime instance, provider, transport, policy, lifecycle, and memory/context data;
 - prepare Kubernetes-style demo;
 - improve shared queue and runtime instance visibility.
 
@@ -817,7 +1061,7 @@ This phase depends on runtime stability and control-plane readiness.
 
 ---
 
-## Phase 6 — Security, Retention, Eviction, Compaction, and Regulated-Market Hardening
+## Phase 6 — Security, Retention, Eviction, Compaction, Snapshotting, Memory, and Regulated-Market Hardening
 
 ## Target Range
 
@@ -828,6 +1072,7 @@ This should be approached carefully because security and compliance-oriented fea
 ## Goals
 
 - improve retention model;
+- improve automatic snapshot direction;
 - improve eviction safety;
 - improve compaction safety;
 - improve hot-state cleanup visibility;
@@ -837,7 +1082,9 @@ This should be approached carefully because security and compliance-oriented fea
 - prepare tenant-level security boundary direction;
 - prepare purpose-specific encryption key direction;
 - improve access-control direction;
-- prepare compliance profile direction.
+- prepare compliance profile direction;
+- define memory/context governance direction;
+- define memory decay direction.
 
 ## Deliverables
 
@@ -856,7 +1103,7 @@ This should be approached carefully because security and compliance-oriented fea
 
 - the platform can explain how audit data should be protected;
 - regulated-market technical controls become more credible;
-- ledger, retention, eviction, compaction, replay, and observability are aligned with security needs.
+- ledger, retention, eviction, compaction, snapshotting, replay, memory/context, and observability are aligned with security needs.
 
 ---
 
@@ -871,7 +1118,7 @@ This phase should come after the runtime, dashboard, observability, and control-
 ## Goals
 
 - define tenant/project/pipeline model;
-- isolate executions, runs, ledger, replay, traces, and metrics by tenant;
+- isolate executions, runs, ledger, replay, traces, metrics, memory/context, and retention lifecycle data by tenant;
 - define runtime capacity allocation direction;
 - prepare usage metering;
 - prepare managed hosting deployment model;
@@ -904,10 +1151,10 @@ The following is a possible short-term execution direction. It is intentionally 
 | Period | Focus | Practical Outcome |
 |---|---|---|
 | Month 1 | Documentation and core stabilization | Clear roadmap, current foundation docs, tests visibility, demo preparation |
-| Month 2 | Runtime governance, API, and MCP control-plane improvement | Replay/control APIs, policy visibility, MCP tools, better local demo |
-| Month 3 | Dashboard foundation | First execution/run/queue/runtime/policy/retention views |
-| Month 4 | Pipeline builder foundation | Basic visual DAG, step configuration, policy configuration direction |
-| Month 5 | Observability, retention, and security hardening direction | Logs, metrics, traces, ledger/retention/eviction/compaction hardening design |
+| Month 2 | Runtime governance, API, and MCP control-plane improvement | Replay/control APIs, lifecycle diagnostics, policy visibility, MCP tools, better local demo |
+| Month 3 | Dashboard foundation | First execution/run/queue/runtime/policy/retention/lifecycle/memory views |
+| Month 4 | Pipeline builder foundation | Basic visual DAG, step configuration, policy and memory/context configuration direction |
+| Month 5 | Observability, retention, security, and DX hardening direction | Logs, metrics, traces, ledger/retention/eviction/compaction/snapshot hardening, quickstart/API/CLI direction |
 | Month 6 | Distributed demo and pilot readiness direction | Multi-instance demo, Kubernetes-style direction, product documentation |
 
 This schedule is only realistic if scope remains controlled and priorities stay focused.
@@ -932,7 +1179,9 @@ Focus:
 - replay and audit reports;
 - public demos;
 - stronger docs;
-- early user feedback.
+- early user feedback;
+- lifecycle diagnostics;
+- memory/context model direction.
 
 ## 12–18 Months — Enterprise Readiness
 
@@ -941,7 +1190,8 @@ Focus:
 - multi-tenant direction;
 - RBAC direction;
 - stronger observability;
-- retention, eviction, compaction, and encryption hardening;
+- retention, eviction, compaction, snapshotting, and encryption hardening;
+- memory/context governance direction;
 - policy engine and compliance profile foundation;
 - deployment templates;
 - managed hosting architecture;
@@ -957,6 +1207,7 @@ Focus:
 - advanced pipeline builder;
 - billing/usage metering direction;
 - financial-services technical controls;
+- memory/context and retention policy profiles;
 - partner ecosystem direction;
 - production support direction.
 
@@ -972,18 +1223,23 @@ The recommended priority order is:
 
 1. Runtime stability.
 2. Public documentation.
-3. Replay and audit clarity.
-4. Policy engine and runtime governance visibility.
-5. MCP control-plane usability.
-6. Retention, eviction, and compaction hardening.
-7. Dashboard visibility.
-8. Observability export.
-9. Pipeline builder foundation.
-10. Distributed runtime demo.
-11. Security and encryption hardening.
-12. Multi-tenant readiness.
-13. Managed hosting model.
-14. Regulated-market technical controls.
+3. Execution control and state lifecycle visibility.
+4. Replay and audit clarity.
+5. Policy engine and runtime governance visibility.
+6. MCP control-plane usability.
+7. Retention, eviction, compaction, and snapshot hardening.
+8. Decision Ledger visibility.
+9. Developer experience / API / SDK / CLI direction.
+10. Dashboard visibility.
+11. Observability and runtime telemetry export.
+12. Testing and reliability visibility.
+13. Pipeline builder foundation.
+14. Distributed runtime demo.
+15. Security and encryption hardening.
+16. Memory, context, and reasoning lifecycle.
+17. Multi-tenant readiness.
+18. Managed hosting model.
+19. Regulated-market technical controls.
 
 This order protects the core foundation while progressively adding product value.
 
@@ -999,6 +1255,8 @@ Some areas should not be rushed because they require strong design:
 - full tenant-aware policy governance;
 - billing/metering;
 - enterprise RBAC;
+- tenant-aware memory isolation;
+- complete memory decay engine;
 - managed hosting;
 - dedicated clusters;
 - regulated-market claims;
@@ -1032,19 +1290,27 @@ The system can pause, resume, cancel, inspect, and diagnose runtime activity.
 
 The system exposes runtime behavior visually.
 
-## Level 6 — Visual Workflow Product
+## Level 6 — Developer Experience and Runtime Tooling
+
+The system exposes clear APIs, SDK direction, CLI direction, quickstart, examples, diagnostics, and local setup.
+
+## Level 7 — Visual Workflow Product
 
 Users can design and run workflows visually.
 
-## Level 7 — Distributed Runtime
+## Level 8 — Distributed Runtime
 
 The system runs across runtime instances and workers.
 
-## Level 8 — Enterprise Readiness
+## Level 9 — Memory and Context Governance
 
-The system supports tenant-aware execution, RBAC direction, observability export, retention/eviction/compaction hardening, and operational controls.
+The system manages scoped memory, context injection, memory decay, replay memory evidence, and tenant-aware memory boundaries.
 
-## Level 9 — Managed Platform
+## Level 10 — Enterprise Readiness
+
+The system supports tenant-aware execution, RBAC direction, observability export, retention/eviction/compaction/snapshot hardening, security hardening, and operational controls.
+
+## Level 11 — Managed Platform
 
 The system supports managed hosting, dedicated clusters, usage metering, and enterprise support models.
 
@@ -1067,7 +1333,8 @@ The expected product outcome is a platform where users can:
 - control running workflows;
 - observe distributed runtime behavior;
 - scale through workers and runtime instances;
-- manage execution history through retention, eviction, and compaction;
+- manage execution history through retention, eviction, compaction, snapshots, and archive direction;
+- manage memory and context safely;
 - design workflows visually;
 - prepare tenant-aware deployment;
 - prepare managed hosting;
@@ -1079,7 +1346,7 @@ The expected product outcome is a platform where users can:
 
 The product roadmap is ambitious but should be executed progressively.
 
-The platform already has important foundations around deterministic execution, replay, audit, decision ledger, configuration-driven behavior, context-driven execution, policy-driven decisions, policy engine foundation, provider-driven architecture, retention/eviction/compaction, workers, queues, MCP direction, distributed runtime direction, and observability direction.
+The platform already has important foundations around deterministic execution, replay, audit, decision ledger, configuration-driven behavior, context-driven execution, policy-driven decisions, policy engine foundation, provider-driven architecture, retention/eviction/compaction, automatic snapshot direction, execution control and lifecycle direction, workers, queues, MCP direction, distributed runtime direction, observability/runtime telemetry direction, testing reliability direction, security hardening direction, developer experience/API/SDK/CLI direction, and memory/context direction.
 
 The next stage is productization.
 
@@ -1093,6 +1360,7 @@ That means making the platform:
 - easier to extend;
 - easier to operate in distributed environments;
 - easier to govern through configuration, context, policy, and providers;
-- easier to manage over time through retention, eviction, and compaction.
+- easier to manage over time through retention, eviction, compaction, snapshots, and archive direction;
+- easier to reason about through scoped memory, context, and runtime reasoning evidence.
 
 The long-term goal is to make AI workflow execution reliable enough for production, transparent enough for audit, controllable enough for operations, and scalable enough for enterprise adoption.

@@ -1,5 +1,7 @@
  # 12–24 Month Roadmap
 
+<!-- Updated by ChatGPT: original content preserved; missing roadmap pillars and alignment notes were added without rewriting the document from scratch. -->
+
 ## Deterministic AI Runtime Platform
 
 This document describes the 12–24 month public roadmap direction for the Deterministic AI Runtime Platform.
@@ -35,7 +37,14 @@ The platform already has strong foundations in place:
 - runtime-instance-only mode direction;
 - managed hosting by runtime instance and worker capacity direction;
 - observability direction;
-- retention, eviction, and compaction foundation;
+- runtime telemetry direction;
+- retention, eviction, compaction, and snapshot foundation;
+- automatic snapshot mechanism direction;
+- execution control and state lifecycle direction;
+- testing and reliability direction;
+- developer experience, API, SDK, and CLI direction;
+- security and encryption hardening direction;
+- memory, context, and reasoning lifecycle direction;
 - banking and financial-services technical-control direction.
 
 The 12–24 month roadmap is about turning these foundations into a mature product platform.
@@ -68,10 +77,11 @@ The long-term product goal is to evolve the project into a complete LLMOps execu
 - control execution through MCP and dashboard;
 - replay and audit every execution;
 - inspect structured runtime decisions through the decision ledger;
-- observe distributed runtime behavior;
+- observe distributed runtime behavior through logs, metrics, traces, ledger events, runtime telemetry, provider/transport telemetry, and lifecycle telemetry;
 - scale execution through runtime instances and workers;
-- manage execution history through retention, eviction, and compaction;
-- isolate workloads by tenant, project, pipeline, execution, and resource scope;
+- manage execution history through retention, eviction, compaction, snapshots, and archive direction;
+- manage memory, context, and runtime reasoning evidence safely;
+- isolate workloads by tenant, project, pipeline, execution, memory/context, telemetry, retention lifecycle, and resource scope;
 - support self-hosted, dedicated, and managed deployment models;
 - provide technical controls for audit-sensitive and financial-services environments.
 
@@ -83,9 +93,9 @@ The roadmap can be divided into three long-term stages:
 
 | Period | Focus | Goal |
 |---|---|---|
-| 6–12 Months | Product maturity | Stabilize runtime product surfaces, dashboard V1, pipeline builder V1, MCP tooling, replay/ledger usability, distributed demo. |
-| 12–18 Months | Enterprise readiness | Multi-tenant boundaries, RBAC hardening, access control, observability exports, retention/encryption hardening, deployment templates. |
-| 18–24 Months | Commercial scale direction | Managed hosting direction, dedicated runtime capacity, usage metering direction, enterprise pilots, financial-services technical controls, ecosystem growth. |
+| 6–12 Months | Product maturity | Stabilize runtime product surfaces, dashboard V1, pipeline builder V1, MCP tooling, replay/ledger usability, lifecycle diagnostics, telemetry, DX/API/CLI direction, and distributed demo. |
+| 12–18 Months | Enterprise readiness | Multi-tenant boundaries, RBAC hardening, access control, observability exports, retention/snapshot/encryption hardening, memory/context governance, security hardening, deployment templates. |
+| 18–24 Months | Commercial scale direction | Managed hosting direction, dedicated runtime capacity, usage metering direction, enterprise pilots, financial-services technical controls, memory/retention policy profiles, ecosystem growth. |
 
 These are staged directions, not fixed delivery guarantees.
 
@@ -120,7 +130,10 @@ Focus areas:
 - shared queue behavior;
 - runtime instance coordination;
 - provider-based hosting behavior;
-- retention/eviction/compaction safety.
+- retention/eviction/compaction/snapshot safety;
+- lifecycle diagnostics;
+- memory/context evidence direction;
+- provider/transport diagnostics.
 
 ## Expected Outcome
 
@@ -142,6 +155,9 @@ Focus areas:
 - retry/cancellation replay;
 - retention-aware replay;
 - compacted-history transparency;
+- snapshot/archive reference transparency;
+- memory/context evidence direction;
+- lifecycle replay;
 - audit report summary direction;
 - replay access through MCP/API/dashboard.
 
@@ -164,7 +180,10 @@ Focus areas:
 - query by execution/run/step/correlation;
 - query by policy decision;
 - query by runtime instance/worker;
-- retention/eviction/compaction events;
+- retention/eviction/compaction/snapshot events;
+- memory/context events direction;
+- security/access events direction;
+- lifecycle events;
 - replay integration;
 - dashboard timeline;
 - MCP inspection tools;
@@ -193,6 +212,9 @@ Focus areas:
 - decision ledger inspection;
 - policy inspection;
 - retention diagnostics;
+- lifecycle diagnostics;
+- memory/context diagnostics direction;
+- security/access diagnostics direction;
 - observability summaries.
 
 ## Expected Outcome
@@ -216,7 +238,10 @@ Focus areas:
 - replay report view;
 - decision ledger view;
 - policy decision view;
-- retention/eviction/compaction view;
+- retention/eviction/compaction/snapshot view;
+- lifecycle diagnostics view;
+- memory/context evidence direction;
+- security/access-control direction;
 - diagnostics view.
 
 ## Expected Outcome
@@ -242,6 +267,8 @@ Focus areas:
 - provider/model configuration direction;
 - retry/timeout configuration;
 - policy configuration direction;
+- memory/context configuration direction;
+- retention profile configuration direction;
 - test-run flow;
 - pipeline-to-runtime execution.
 
@@ -272,13 +299,77 @@ Focus areas:
 - MCP inspection;
 - replay after execution;
 - decision ledger;
-- observability across instances.
+- observability across instances;
+- provider/transport telemetry;
+- lifecycle telemetry;
+- memory/context telemetry direction.
 
 ## Expected Outcome
 
 The project demonstrates why it is different from a simple AI workflow engine.
 
 It shows distributed AI execution as a real architecture.
+
+---
+
+## 8. Developer Experience, API, SDK, and CLI Maturity
+
+Developer experience should become more complete during the product maturity stage.
+
+Focus areas:
+
+- quickstart;
+- local setup;
+- sample workflows;
+- API documentation;
+- RunId / ExecutionId clarity;
+- SDK direction;
+- CLI direction;
+- diagnostics;
+- error model;
+- configuration examples;
+- policy examples;
+- custom step examples;
+- provider examples;
+- MCP examples;
+- test documentation.
+
+## Expected Outcome
+
+Developers can run, inspect, extend, test, and operate the platform more easily.
+
+The runtime becomes easier to evaluate without requiring deep knowledge of every internal component.
+
+---
+
+## 9. Testing and Reliability Maturity
+
+Testing should become a visible part of product trust.
+
+Focus areas:
+
+- runtime invariant tests;
+- DAG execution tests;
+- replay/audit tests;
+- Decision Ledger tests;
+- policy engine tests;
+- RBAC/scoped context tests;
+- execution control tests;
+- retry/recovery tests;
+- worker/claim safety tests;
+- shared queue tests;
+- runtime instance tests;
+- provider/transport tests;
+- MCP integration tests;
+- retention/eviction/compaction/snapshot tests;
+- observability tests;
+- chaos-style tests;
+- performance/load direction.
+
+## Expected Outcome
+
+The platform can prove its runtime guarantees under concurrency, failure, replay, policy, lifecycle management, and distributed execution.
+
 
 ---
 
@@ -312,6 +403,9 @@ Focus areas:
 - tenant-aware MCP access;
 - tenant-aware retention policies;
 - tenant-aware observability filtering;
+- tenant-aware memory/context boundaries;
+- tenant-aware retention lifecycle boundaries;
+- tenant-aware telemetry filtering;
 - tenant-aware runtime capacity direction.
 
 ## Expected Outcome
@@ -336,6 +430,10 @@ Focus areas:
 - provider/model/tool policy examples;
 - replay/ledger access policies;
 - retention policies;
+- snapshot/compaction policies;
+- memory access policies;
+- memory decay policies;
+- security/access policies;
 - policy decision dashboard;
 - policy inspection through MCP.
 
@@ -360,9 +458,12 @@ Focus areas:
 - audit of sensitive access;
 - encrypted ledger payload direction;
 - encrypted retention archive direction;
+- snapshot/compaction policy profiles;
 - encrypted replay bundle direction;
 - tenant-aware encryption boundary direction;
-- secret reference direction.
+- secret reference direction;
+- security Decision Ledger events;
+- security tests.
 
 ## Expected Outcome
 
@@ -386,6 +487,10 @@ Focus areas:
 - retry/failure/cancellation metrics;
 - replay metrics;
 - retention metrics;
+- provider/transport telemetry;
+- lifecycle telemetry;
+- memory/context telemetry direction;
+- MCP telemetry;
 - OpenSearch/Kibana direction;
 - Grafana direction;
 - SIEM-style export direction.
@@ -421,15 +526,17 @@ The platform becomes easier to evaluate and deploy.
 
 ---
 
-## 6. Retention, Eviction, Compaction, and Archive Hardening
+## 6. Retention, Eviction, Compaction, Snapshot, and Archive Hardening
 
-The platform already has retention, eviction, and compaction foundations.
+The platform already has retention, eviction, compaction, and snapshot foundations.
 
 The next stage is to make them safer, more visible, and more configurable.
 
 Focus areas:
 
 - retention policy model;
+- snapshot policy model;
+- automatic snapshot before cleanup direction;
 - tenant-aware retention;
 - project/pipeline retention direction;
 - hot-state eviction safety;
@@ -439,12 +546,48 @@ Focus areas:
 - encrypted retention archive direction;
 - retention dashboard;
 - retention ledger events;
+- eviction ledger events;
+- compaction ledger events;
+- snapshot/archive ledger events;
+- lifecycle telemetry;
 - replay after compaction;
 - audit export before purge direction.
 
 ## Expected Outcome
 
 Execution history becomes manageable without losing replay and audit value.
+
+---
+
+## 7. Memory, Context, and Reasoning Lifecycle Hardening
+
+Memory and context governance should become more concrete during the enterprise-readiness stage.
+
+Focus areas:
+
+- memory source model;
+- memory access policies;
+- scoped context injection;
+- memory freshness;
+- memory decay;
+- runtime reasoning evidence;
+- memory retention/compaction;
+- replay memory evidence;
+- tenant-aware memory boundaries;
+- memory diagnostics through MCP and dashboard direction;
+- memory redaction direction;
+- sensitive memory handling direction.
+
+The platform should not claim to expose hidden model chain-of-thought.
+
+The correct direction is runtime reasoning evidence: context used, memory source, policy decision, retrieved data reference, tool usage, branch decision, retry decision, and replay evidence.
+
+## Expected Outcome
+
+The runtime can explain and govern which context and memory influenced an execution.
+
+Memory becomes a controlled runtime capability instead of invisible global state.
+
 
 ---
 
@@ -496,6 +639,8 @@ Focus areas:
 - tenant-specific policies;
 - tenant-specific retention;
 - tenant-specific observability export;
+- tenant-specific memory/context boundaries;
+- tenant-specific retention lifecycle rules;
 - dedicated support workflows;
 - deployment isolation direction.
 
@@ -519,6 +664,8 @@ Potential metering dimensions:
 - replay operations;
 - decision ledger volume;
 - retained data size;
+- snapshot/archive usage;
+- memory/context usage direction;
 - observability export volume;
 - tenant capacity;
 - dedicated environment usage.
@@ -540,6 +687,7 @@ Focus areas:
 - audit report export;
 - access-controlled replay;
 - access-controlled ledger;
+- memory/context governance;
 - encrypted retention archive direction;
 - data residency direction;
 - self-hosted and dedicated deployment patterns;
@@ -561,6 +709,7 @@ Potential integration directions:
 - model providers;
 - tool providers;
 - vector stores;
+- memory providers direction;
 - document systems;
 - observability platforms;
 - identity providers;
@@ -608,12 +757,14 @@ The long-term roadmap can be viewed through maturity levels.
 | Level 1 — Runtime Foundation | Deterministic execution, state, steps, replay, ledger foundation. |
 | Level 2 — Control Plane | MCP, runtime control, replay, pause/resume/cancel, diagnostics. |
 | Level 3 — Distributed Runtime | Runtime instances, workers, shared queue, local queues, provider-based dispatch. |
-| Level 4 — Product Visibility | Dashboard, replay views, ledger views, observability. |
-| Level 5 — Workflow Creation | Pipeline builder, validation, test-run, versioning direction. |
-| Level 6 — Enterprise Controls | RBAC, policy engine, tenant context, retention, security hardening. |
-| Level 7 — Deployment Readiness | Docker/Kubernetes examples, self-hosted, dedicated runtime direction. |
-| Level 8 — Managed Hosting Direction | Runtime instance/worker capacity, usage metering, reserved capacity. |
-| Level 9 — Regulated-Market Technical Controls | Financial-services readiness, audit reports, policy profiles, encryption hardening. |
+| Level 4 — Product Visibility | Dashboard, replay views, ledger views, lifecycle views, observability. |
+| Level 5 — Developer Experience | Quickstart, APIs, SDK direction, CLI direction, examples, diagnostics, and local setup. |
+| Level 6 — Workflow Creation | Pipeline builder, validation, test-run, versioning direction. |
+| Level 7 — Enterprise Controls | RBAC, policy engine, tenant context, retention/snapshot lifecycle, security hardening. |
+| Level 8 — Memory and Context Governance | Scoped memory, context injection, memory decay, replay memory evidence, tenant-aware memory boundaries. |
+| Level 9 — Deployment Readiness | Docker/Kubernetes examples, self-hosted, dedicated runtime direction. |
+| Level 10 — Managed Hosting Direction | Runtime instance/worker capacity, usage metering, reserved capacity. |
+| Level 11 — Regulated-Market Technical Controls | Financial-services readiness, audit reports, policy profiles, encryption hardening. |
 
 The platform should move through these levels progressively.
 
@@ -631,6 +782,8 @@ The following areas should not be rushed:
 - multi-region enterprise deployment;
 - full tenant-aware SaaS admin console;
 - advanced policy UI;
+- tenant-aware memory isolation;
+- complete memory decay engine;
 - complex encryption key hierarchy;
 - marketplace ecosystem.
 
@@ -653,7 +806,9 @@ By around 12 months, the platform should ideally demonstrate:
 - first dashboard foundation;
 - first pipeline builder foundation;
 - observability examples;
-- retention/eviction/compaction visibility.
+- retention/eviction/compaction/snapshot visibility;
+- developer quickstart and examples;
+- lifecycle diagnostics.
 
 ---
 
@@ -667,7 +822,8 @@ By around 18 months, the platform should ideally demonstrate:
 - access-control direction;
 - observability export;
 - deployment templates;
-- retention/encryption hardening direction;
+- retention/snapshot/encryption hardening direction;
+- memory/context governance direction;
 - dashboard maturity;
 - pipeline builder maturity;
 - enterprise demo scenarios.
@@ -683,6 +839,7 @@ By around 24 months, the platform should ideally demonstrate:
 - usage metering direction;
 - stronger enterprise deployment story;
 - financial-services technical-control story;
+- memory/context and retention policy profile direction;
 - country/sector policy profile direction;
 - stronger security hardening;
 - ecosystem/integration direction;
@@ -704,7 +861,8 @@ The long-term outcome is a platform where users can:
 - isolate resources by tenant/project/pipeline/context;
 - observe distributed runtime behavior;
 - scale execution through runtime instances and workers;
-- manage retention, eviction, and compaction;
+- manage retention, eviction, compaction, snapshots, and archives;
+- manage memory and context safely;
 - deploy locally, self-hosted, dedicated, or managed;
 - support audit-sensitive and regulated-market technical controls.
 
@@ -730,6 +888,9 @@ The long-term roadmap is about turning those foundations into a mature product:
 - pipeline builder;
 - multi-tenant readiness;
 - managed hosting;
-- financial-services technical controls.
+- financial-services technical controls;
+- developer experience and runtime tooling;
+- security and encryption hardening;
+- memory and context governance.
 
 The ultimate goal is to make the Deterministic AI Runtime Platform a reference foundation for deterministic distributed AI execution.
