@@ -177,6 +177,16 @@ This roadmap should not present the platform as idea-stage only.
 | Multi-tenant readiness foundation | Foundation exists |
 | Managed hosting by runtime instance and worker capacity | Active product direction |
 | Banking and financial-services technical controls | Active product direction |
+| Automatic snapshot mechanism direction | Foundation exists / active direction |
+| Hot-state eviction and stale claim cleanup | Foundation exists |
+| Lifecycle policy model | Foundation exists |
+| Runtime telemetry and diagnostics | Foundation exists |
+| Execution control and state lifecycle | Foundation exists |
+| Testing and reliability strategy | Foundation exists |
+| Developer experience and API packaging | Productization target |
+| Security and encryption hardening | Planned hardening direction |
+| Memory, context, and reasoning lifecycle | Productization target |
+| Memory decay policy direction | Productization target |
 
 The next stage is to harden, expose, document, demonstrate, secure, and productize these foundations.
 
@@ -218,7 +228,17 @@ The platform is evolving toward a complete LLMOps execution infrastructure compo
 - multi-tenant readiness;
 - managed hosting by runtime instance and worker capacity;
 - banking and financial-services-oriented technical controls;
-- observability through logs, metrics, traces, decision history, replay, and runtime health.
+- observability through logs, metrics, traces, decision history, replay, and runtime health;
+- automatic snapshot mechanism direction;
+- hot-state eviction and stale claim cleanup;
+- policy-driven lifecycle rules;
+- runtime telemetry and diagnostics;
+- execution control and state lifecycle;
+- testing and reliability strategy;
+- developer API, SDK, and CLI direction;
+- security and encryption hardening;
+- memory, context, and reasoning lifecycle;
+- memory decay and freshness direction.
 
 ---
 
@@ -242,6 +262,13 @@ docs/
     policy-engine-and-governance.md
     replay-audit-layer.md
     decision-ledger.md
+    retention-eviction-compaction.md
+    observability-and-runtime-telemetry.md
+    execution-control-and-state-lifecycle.md
+    testing-and-reliability-strategy.md
+    developer-experience-api-sdk-cli.md
+    security-and-encryption-hardening.md
+    memory-context-reasoning-lifecycle.md
     enterprise-dashboard.md
     pipeline-builder.md
     mcp-control-interface.md
@@ -274,14 +301,21 @@ docs/
 | 11 | Policy Engine and Governance | [`policy-engine-and-governance.md`](policy-engine-and-governance.md) | Explains the pluggable policy engine, policy-by-context model, RBAC scope, ARN-inspired resources, governance, and policy decision recording. |
 | 12 | Replay and Audit Layer | [`replay-audit-layer.md`](replay-audit-layer.md) | Explains replay, audit, diagnostics, validation, replay reports, and retained execution evidence. |
 | 13 | Decision Ledger | [`decision-ledger.md`](decision-ledger.md) | Explains the decision ledger foundation for structured runtime decision history. |
-| 14 | Enterprise Dashboard | [`enterprise-dashboard.md`](enterprise-dashboard.md) | Describes the dashboard for executions, runs, queues, workers, ledger, replay, policy, retention, diagnostics, and observability. |
-| 15 | Pipeline Builder | [`pipeline-builder.md`](pipeline-builder.md) | Describes the visual workflow builder for deterministic AI pipelines. |
-| 16 | MCP Control Interface | [`mcp-control-interface.md`](mcp-control-interface.md) | Describes MCP-based execution control, replay, diagnostics, queue, runtime instance, ledger, and policy inspection. |
-| 17 | Multi-Tenant Readiness | [`multi-tenant-readiness.md`](multi-tenant-readiness.md) | Describes tenant, project, pipeline, execution, RBAC, ledger, replay, retention, and runtime capacity boundaries. |
-| 18 | Managed Hosting Model | [`managed-hosting-model.md`](managed-hosting-model.md) | Describes the hosting model based on runtime instances, workers, shared queue, admission, providers, transport, and MCP. |
-| 19 | Banking and Financial Services Readiness | [`banking-financial-services-readiness.md`](banking-financial-services-readiness.md) | Describes technical controls for audit-sensitive and regulated environments without claiming automatic compliance. |
-| 20 | 6-Month Roadmap | [`roadmap-6-months.md`](roadmap-6-months.md) | Describes the short-term execution plan for a single-developer project moving toward productization and demos. |
-| 21 | 12–24 Month Roadmap | [`roadmap-12-24-months.md`](roadmap-12-24-months.md) | Describes the longer-term direction toward product maturity, enterprise readiness, and commercial scale. |
+| 14 | Retention, Eviction, and Compaction | [`retention-eviction-compaction.md`](retention-eviction-compaction.md) | Explains policy-driven retention, automatic snapshots, hot-state eviction, stale claim cleanup, compaction, archive direction, and lifecycle auditability. |
+| 15 | Observability and Runtime Telemetry | [`observability-and-runtime-telemetry.md`](observability-and-runtime-telemetry.md) | Explains runtime telemetry across executions, runs, queues, workers, runtime instances, providers, transports, policies, replay, ledger, MCP, and retention lifecycle. |
+| 16 | Execution Control and State Lifecycle | [`execution-control-and-state-lifecycle.md`](execution-control-and-state-lifecycle.md) | Explains execution/run/step lifecycle, pause, resume, cancel, retry, waiting-for-input, finalization, claims, and distributed lifecycle safety. |
+| 17 | Testing and Reliability Strategy | [`testing-and-reliability-strategy.md`](testing-and-reliability-strategy.md) | Explains runtime, replay, ledger, policy, MCP, provider, queue, lifecycle, observability, chaos, and distributed reliability test strategy. |
+| 18 | Developer Experience, API, SDK, and CLI | [`developer-experience-api-sdk-cli.md`](developer-experience-api-sdk-cli.md) | Explains API packaging, SDK direction, CLI direction, local setup, examples, diagnostics, error model, and developer onboarding. |
+| 19 | Security and Encryption Hardening | [`security-and-encryption-hardening.md`](security-and-encryption-hardening.md) | Explains RBAC-aware access control, ARN-inspired scopes, replay/ledger/MCP/dashboard security, redaction, payload protection, encrypted retention archives, and security hardening direction. |
+| 20 | Memory, Context, and Reasoning Lifecycle | [`memory-context-reasoning-lifecycle.md`](memory-context-reasoning-lifecycle.md) | Explains scoped memory, context injection, memory decay, freshness, runtime reasoning evidence, memory replay, and policy-driven memory governance. |
+| 21 | Enterprise Dashboard | [`enterprise-dashboard.md`](enterprise-dashboard.md) | Describes the dashboard for executions, runs, queues, workers, ledger, replay, policy, retention, diagnostics, and observability. |
+| 22 | Pipeline Builder | [`pipeline-builder.md`](pipeline-builder.md) | Describes the visual workflow builder for deterministic AI pipelines. |
+| 23 | MCP Control Interface | [`mcp-control-interface.md`](mcp-control-interface.md) | Describes MCP-based execution control, replay, diagnostics, queue, runtime instance, ledger, and policy inspection. |
+| 24 | Multi-Tenant Readiness | [`multi-tenant-readiness.md`](multi-tenant-readiness.md) | Describes tenant, project, pipeline, execution, RBAC, ledger, replay, retention, memory, and runtime capacity boundaries. |
+| 25 | Managed Hosting Model | [`managed-hosting-model.md`](managed-hosting-model.md) | Describes the hosting model based on runtime instances, workers, shared queue, admission, providers, transport, and MCP. |
+| 26 | Banking and Financial Services Readiness | [`banking-financial-services-readiness.md`](banking-financial-services-readiness.md) | Describes technical controls for audit-sensitive and regulated environments without claiming automatic compliance. |
+| 27 | 6-Month Roadmap | [`roadmap-6-months.md`](roadmap-6-months.md) | Describes the short-term execution plan for a single-developer project moving toward productization and demos. |
+| 28 | 12–24 Month Roadmap | [`roadmap-12-24-months.md`](roadmap-12-24-months.md) | Describes the longer-term direction toward product maturity, enterprise readiness, and commercial scale. |
 
 ---
 
@@ -299,72 +333,76 @@ This table maps the roadmap topics to the public documentation files.
 | 6 | Deterministic Runtime Foundation | [`deterministic-runtime-engine.md`](deterministic-runtime-engine.md) | Runtime foundation for controlled execution. |
 | 7 | DAG Execution Engine | [`deterministic-runtime-engine.md`](deterministic-runtime-engine.md) | DAG-based step execution, workflow structure, and execution lifecycle. |
 | 8 | Execution State Management | [`current-foundation.md`](current-foundation.md) | Durable state, hot state direction, execution lifecycle, and state transitions. |
-| 9 | Distributed Worker Model | [`current-foundation.md`](current-foundation.md) | Runtime instances, workers, worker identity, and execution capacity. |
-| 10 | Shared Queue Direction | [`current-foundation.md`](current-foundation.md) | Shared queue above local queues for multi-instance execution. |
-| 11 | Runtime Instance / Worker Model | [`managed-hosting-model.md`](managed-hosting-model.md) | Technical and commercial basis for instance/worker hosting model. |
-| 12 | Redis / MongoDB Direction | [`current-foundation.md`](current-foundation.md) | Redis coordination/hot state direction and MongoDB ledger/audit/storage direction. |
-| 13 | Replay / Audit Foundation | [`replay-audit-layer.md`](replay-audit-layer.md) | Replay, audit, validation, diagnostics, reports, retained evidence, and reproducibility direction. |
-| 14 | Decision Ledger Foundation | [`decision-ledger.md`](decision-ledger.md) | Ledger as audit foundation for runtime decisions. |
-| 15 | Configuration-Driven Runtime | [`policy-engine-and-governance.md`](policy-engine-and-governance.md) | Runtime behavior controlled through options, host modes, providers, queue settings, worker settings, replay settings, retention settings, and observability settings. |
-| 16 | Context-Driven Execution | [`policy-engine-and-governance.md`](policy-engine-and-governance.md) | Runtime behavior scoped by tenant, project, pipeline, execution, run, step, user, RBAC, provider, model, operation, runtime instance, worker, and correlation context. |
-| 17 | Policy-Driven Runtime | [`policy-engine-and-governance.md`](policy-engine-and-governance.md) | Runtime decisions evaluated through policies instead of hardcoded orchestration behavior. |
-| 18 | Policy Engine Foundation | [`policy-engine-and-governance.md`](policy-engine-and-governance.md) | Pluggable policy engine with policy-by-context model. |
-| 19 | RBAC-Aware Execution Context | [`multi-tenant-readiness.md`](multi-tenant-readiness.md) | Scoped execution context for safe AI workflow execution. |
-| 20 | ARN-Inspired Resource Scoping | [`multi-tenant-readiness.md`](multi-tenant-readiness.md) | Resource identity model for tenant/project/pipeline/execution/tool/model/operation scopes. |
-| 21 | Policy-Driven Concurrency and Throttling | [`policy-engine-and-governance.md`](policy-engine-and-governance.md) | Controlled admission, limits, throttling, and concurrency protection across scopes. |
-| 22 | Provider-Driven Architecture | [`pluggable-runtime-architecture.md`](pluggable-runtime-architecture.md) | Hosting, storage, hot state, shared queue, registry, ledger, replay, observability, model/provider execution, and retention behind abstractions. |
-| 23 | Pluggable Runtime Architecture | [`pluggable-runtime-architecture.md`](pluggable-runtime-architecture.md) | Pluggable steps, tools, policies, providers, storage, ledger, replay, observability, retention, hosting, and MCP tools. |
-| 24 | Pluggable Steps and Tools | [`pluggable-runtime-architecture.md`](pluggable-runtime-architecture.md) | Add new workflow capabilities and governed tool operations without rewriting the deterministic core. |
-| 25 | Runtime Provider and Transport Model | [`runtime-provider-and-transport-model.md`](runtime-provider-and-transport-model.md) | Local provider, HTTP provider, dynamic runtime providers, runtime-instance-only mode, and future transport options. |
-| 26 | Pluggable Transport Between Instances | [`runtime-provider-and-transport-model.md`](runtime-provider-and-transport-model.md) | Transport abstraction for local, HTTP, future gRPC, message bus, NATS, RabbitMQ, or cloud queue direction. |
-| 27 | Runtime-Instance-Only Mode | [`runtime-provider-and-transport-model.md`](runtime-provider-and-transport-model.md) | Runtime host mode for remote runtime instances, containers, pods, and managed execution units. |
-| 28 | Admission Control | [`managed-hosting-model.md`](managed-hosting-model.md) | Policy-aware run admission, queue admission, capacity evaluation, throttling, and dispatch decisions. |
-| 29 | Retention, Eviction, and Compaction Foundation | [`current-foundation.md`](current-foundation.md) | Retention, hot-state eviction, compaction, archive direction, cleanup safety, and retention decision events. |
-| 30 | MCP Server / Control Plane Direction | [`mcp-control-interface.md`](mcp-control-interface.md) | MCP as control surface for run, replay, pause, resume, cancel, diagnostics, ledger, policy, and runtime inspection. |
-| 31 | Pause / Resume / Cancel Direction | [`mcp-control-interface.md`](mcp-control-interface.md) | Execution control through API, MCP, and future UI. |
-| 32 | Observability Direction | [`current-foundation.md`](current-foundation.md) | Logs, metrics, traces, ledger, replay, runtime health, Grafana/Kibana/OpenSearch direction. |
-| 33 | Tests and Reliability Work | [`current-foundation.md`](current-foundation.md) | Integration tests, replay tests, shared queue tests, provider tests, MCP tests, and reliability work. |
-| 34 | Improvement Backlog | [`improvement-backlog.md`](improvement-backlog.md) | Planned improvements required for product maturity. |
-| 35 | Enterprise Dashboard UI | [`enterprise-dashboard.md`](enterprise-dashboard.md) | Dashboard for executions, runs, queues, instances, workers, ledger, replay, policy, retention, and metrics. |
-| 36 | Visual Pipeline Builder | [`pipeline-builder.md`](pipeline-builder.md) | Visual DAG builder, workflow design, step configuration, validation, versioning, and test-run mode. |
-| 37 | User / Tenant Management | [`multi-tenant-readiness.md`](multi-tenant-readiness.md) | Users, tenants, projects, roles, isolation, quotas direction, RBAC, and scoped resources. |
-| 38 | Stronger SDK / API Packaging | [`improvement-backlog.md`](improvement-backlog.md) | External developer usability and product packaging. |
-| 39 | Hosted Demo | [`roadmap-6-months.md`](roadmap-6-months.md) | Hosted demo for technical visitors, partners, pilots, and product validation. |
-| 40 | Documentation Improvements | [`improvement-backlog.md`](improvement-backlog.md) | README, docs, examples, onboarding, architecture pages. |
-| 41 | Kubernetes Deployment Demo | [`roadmap-6-months.md`](roadmap-6-months.md) | Multi-instance, multi-worker, shared queue, provider-based transport, and observability demo. |
-| 42 | Encryption Hardening | [`banking-financial-services-readiness.md`](banking-financial-services-readiness.md) | High-level encryption and audit-data protection direction. |
-| 43 | Compliance Profile Foundation | [`banking-financial-services-readiness.md`](banking-financial-services-readiness.md) | High-level direction for future configurable country/sector policy profiles. |
-| 44 | Production Observability Export | [`improvement-backlog.md`](improvement-backlog.md) | Export direction toward Grafana, Kibana, OpenSearch, and SIEM-style tools. |
-| 45 | CLI / SDK Improvements | [`improvement-backlog.md`](improvement-backlog.md) | CLI/admin tooling, SDKs, and developer experience. |
-| 46 | Cloud Deployment Templates | [`improvement-backlog.md`](improvement-backlog.md) | Docker, Kubernetes, Helm, cloud deployment templates. |
-| 47 | Product Modules Overview | [`product-roadmap.md`](product-roadmap.md) | Overview of runtime, replay, ledger, dashboard, builder, MCP, policy, providers, transport, and hosting. |
-| 48 | Banking / Financial Services Readiness | [`banking-financial-services-readiness.md`](banking-financial-services-readiness.md) | Technical controls for audit-sensitive and regulated environments. |
-| 49 | Multi-Tenant SaaS Readiness | [`multi-tenant-readiness.md`](multi-tenant-readiness.md) | Tenants, projects, pipelines, executions, ledger, replay, metrics, quotas, RBAC, and scoped resources. |
-| 50 | Execution Dashboard | [`enterprise-dashboard.md`](enterprise-dashboard.md) | Execution list, timeline, status, failures, duration, replay, ledger, policy, and controls. |
-| 51 | Run / Queue Dashboard | [`enterprise-dashboard.md`](enterprise-dashboard.md) | Submitted, queued, running, completed, dispatch, queue pressure, shared/local queue. |
-| 52 | Runtime Instance Dashboard | [`enterprise-dashboard.md`](enterprise-dashboard.md) | Instances, workers, capacity, heartbeat, local queue, load, unhealthy detection. |
-| 53 | Decision Ledger Dashboard | [`enterprise-dashboard.md`](enterprise-dashboard.md) | Ledger viewer, decisions, policies, claims, correlation IDs, retention, and replay links. |
-| 54 | Replay / Audit Dashboard | [`enterprise-dashboard.md`](enterprise-dashboard.md) | Replay execution, validate, inspect issues, inspect policy decisions, and export reports direction. |
-| 55 | Observability Dashboard | [`enterprise-dashboard.md`](enterprise-dashboard.md) | Logs, metrics, traces, latency, throughput, failures, retries, queue saturation, workers, instances. |
-| 56 | Visual DAG Editor | [`pipeline-builder.md`](pipeline-builder.md) | Drag/drop workflow graph and step layout. |
-| 57 | Step Configuration | [`pipeline-builder.md`](pipeline-builder.md) | Model, provider, tools, input/output mapping, retry, timeout, policy, and retention configuration direction. |
-| 58 | Retry / Timeout / Concurrency Policy Configuration | [`pipeline-builder.md`](pipeline-builder.md) | Policies configurable per step or pipeline. |
-| 59 | Human-in-the-Loop Steps | [`pipeline-builder.md`](pipeline-builder.md) | Approval, waiting-for-input, manual review, and intervention steps. |
-| 60 | Pipeline Versioning | [`pipeline-builder.md`](pipeline-builder.md) | Version history, rollback, and comparison direction. |
-| 61 | Pipeline Templates | [`pipeline-builder.md`](pipeline-builder.md) | Templates for repeatable enterprise AI workflow patterns. |
-| 62 | MCP Tool Explorer | [`mcp-control-interface.md`](mcp-control-interface.md) | List tools, schemas, inputs, outputs, diagnostics, and operational behavior. |
-| 63 | MCP Execution Control | [`mcp-control-interface.md`](mcp-control-interface.md) | Submit run, replay, pause, resume, cancel, diagnostics. |
-| 64 | MCP Request / Response History | [`mcp-control-interface.md`](mcp-control-interface.md) | History of MCP calls and operational control-plane interactions. |
-| 65 | Differentiation vs Existing LLMOps Tools | [`llmops-positioning.md`](llmops-positioning.md) | Key difference: control execution from the beginning, not only observe after execution. |
-| 66 | Managed Hosting by Instance / Worker | [`managed-hosting-model.md`](managed-hosting-model.md) | Commercial direction aligned with architecture: instance, worker, queue, provider, transport, retention, observability. |
-| 67 | Self-Hosted Deployment | [`managed-hosting-model.md`](managed-hosting-model.md) | Customer runs platform in their infrastructure. |
-| 68 | Managed Cloud Hosting | [`managed-hosting-model.md`](managed-hosting-model.md) | Platform provider hosts runtime capacity. |
-| 69 | Dedicated Enterprise Cluster | [`managed-hosting-model.md`](managed-hosting-model.md) | Isolated cluster direction for enterprise and regulated customers. |
-| 70 | Multi-Tenant SaaS | [`multi-tenant-readiness.md`](multi-tenant-readiness.md) | SaaS model with tenant isolation and shared platform operations. |
-| 71 | 6-Month Roadmap | [`roadmap-6-months.md`](roadmap-6-months.md) | Public short-term productization plan for a single-developer project. |
-| 72 | 12–24 Month Roadmap | [`roadmap-12-24-months.md`](roadmap-12-24-months.md) | Long-term product maturity and commercial scale path. |
-| 73 | Final Product Positioning | [`product-roadmap.md`](product-roadmap.md) | Central product message and strategic positioning. |
-| 74 | Final Vision Statement | [`product-vision.md`](product-vision.md) | Build visually, run deterministically, govern through policy, control through MCP, replay/audit, and scale by instances/workers. |
+| 9 | Execution Control and State Lifecycle | [`execution-control-and-state-lifecycle.md`](execution-control-and-state-lifecycle.md) | Pause, resume, cancel, retry, waiting-for-input, finalization, claims, run lifecycle, step lifecycle, and distributed lifecycle safety. |
+| 10 | Distributed Worker Model | [`current-foundation.md`](current-foundation.md) | Runtime instances, workers, worker identity, and execution capacity. |
+| 11 | Shared Queue Direction | [`current-foundation.md`](current-foundation.md) | Shared queue above local queues for multi-instance execution. |
+| 12 | Runtime Instance / Worker Model | [`managed-hosting-model.md`](managed-hosting-model.md) | Technical and commercial basis for instance/worker hosting model. |
+| 13 | Redis / MongoDB Direction | [`current-foundation.md`](current-foundation.md) | Redis coordination/hot state direction and MongoDB ledger/audit/storage direction. |
+| 14 | Replay / Audit Foundation | [`replay-audit-layer.md`](replay-audit-layer.md) | Replay, audit, validation, diagnostics, reports, retained evidence, and reproducibility direction. |
+| 15 | Decision Ledger Foundation | [`decision-ledger.md`](decision-ledger.md) | Ledger as audit foundation for runtime decisions. |
+| 16 | Configuration-Driven Runtime | [`policy-engine-and-governance.md`](policy-engine-and-governance.md) | Runtime behavior controlled through options, host modes, providers, queue settings, worker settings, replay settings, retention settings, and observability settings. |
+| 17 | Context-Driven Execution | [`policy-engine-and-governance.md`](policy-engine-and-governance.md) | Runtime behavior scoped by tenant, project, pipeline, execution, run, step, user, RBAC, provider, model, operation, runtime instance, worker, and correlation context. |
+| 18 | Policy-Driven Runtime | [`policy-engine-and-governance.md`](policy-engine-and-governance.md) | Runtime decisions evaluated through policies instead of hardcoded orchestration behavior. |
+| 19 | Policy Engine Foundation | [`policy-engine-and-governance.md`](policy-engine-and-governance.md) | Pluggable policy engine with policy-by-context model. |
+| 20 | RBAC-Aware Execution Context | [`multi-tenant-readiness.md`](multi-tenant-readiness.md) | Scoped execution context for safe AI workflow execution. |
+| 21 | ARN-Inspired Resource Scoping | [`multi-tenant-readiness.md`](multi-tenant-readiness.md) | Resource identity model for tenant/project/pipeline/execution/tool/model/operation scopes. |
+| 22 | Policy-Driven Concurrency and Throttling | [`policy-engine-and-governance.md`](policy-engine-and-governance.md) | Controlled admission, limits, throttling, and concurrency protection across scopes. |
+| 23 | Provider-Driven Architecture | [`pluggable-runtime-architecture.md`](pluggable-runtime-architecture.md) | Hosting, storage, hot state, shared queue, registry, ledger, replay, observability, model/provider execution, and retention behind abstractions. |
+| 24 | Pluggable Runtime Architecture | [`pluggable-runtime-architecture.md`](pluggable-runtime-architecture.md) | Pluggable steps, tools, policies, providers, storage, ledger, replay, observability, retention, hosting, and MCP tools. |
+| 25 | Pluggable Steps and Tools | [`pluggable-runtime-architecture.md`](pluggable-runtime-architecture.md) | Add new workflow capabilities and governed tool operations without rewriting the deterministic core. |
+| 26 | Runtime Provider and Transport Model | [`runtime-provider-and-transport-model.md`](runtime-provider-and-transport-model.md) | Local provider, HTTP provider, dynamic runtime providers, runtime-instance-only mode, and future transport options. |
+| 27 | Pluggable Transport Between Instances | [`runtime-provider-and-transport-model.md`](runtime-provider-and-transport-model.md) | Transport abstraction for local, HTTP, future gRPC, message bus, NATS, RabbitMQ, or cloud queue direction. |
+| 28 | Runtime-Instance-Only Mode | [`runtime-provider-and-transport-model.md`](runtime-provider-and-transport-model.md) | Runtime host mode for remote runtime instances, containers, pods, and managed execution units. |
+| 29 | Admission Control | [`managed-hosting-model.md`](managed-hosting-model.md) | Policy-aware run admission, queue admission, capacity evaluation, throttling, and dispatch decisions. |
+| 30 | Retention, Eviction, and Compaction Foundation | [`retention-eviction-compaction.md`](retention-eviction-compaction.md) | Policy-driven retention, automatic snapshots, hot-state eviction, stale claim cleanup, compaction, archive direction, replay preservation, and lifecycle auditability. |
+| 31 | Automatic Snapshot Mechanism | [`retention-eviction-compaction.md`](retention-eviction-compaction.md) | Snapshot creation before cleanup, compaction, archive, or replay-sensitive lifecycle transitions. |
+| 32 | Hot-State Eviction | [`retention-eviction-compaction.md`](retention-eviction-compaction.md) | Safe eviction of Redis/hot runtime state after durable evidence and policy requirements are satisfied. |
+| 33 | Lifecycle Policy Rules | [`retention-eviction-compaction.md`](retention-eviction-compaction.md) | Retention, eviction, snapshot, compaction, archive, and purge direction controlled by policy. |
+| 34 | MCP Server / Control Plane Direction | [`mcp-control-interface.md`](mcp-control-interface.md) | MCP as control surface for run, replay, pause, resume, cancel, diagnostics, ledger, policy, and runtime inspection. |
+| 35 | Pause / Resume / Cancel Direction | [`execution-control-and-state-lifecycle.md`](execution-control-and-state-lifecycle.md) | Execution control through API, MCP, dashboard, lifecycle state, ledger, and replay. |
+| 36 | Observability and Runtime Telemetry | [`observability-and-runtime-telemetry.md`](observability-and-runtime-telemetry.md) | Telemetry across execution, run, queue, runtime instance, worker, provider, transport, policy, replay, ledger, MCP, and lifecycle activity. |
+| 37 | Grafana / Kibana / OpenSearch Direction | [`observability-and-runtime-telemetry.md`](observability-and-runtime-telemetry.md) | Runtime telemetry export direction for dashboards, logs, metrics, traces, and operational visibility. |
+| 38 | Tests and Reliability Work | [`testing-and-reliability-strategy.md`](testing-and-reliability-strategy.md) | Runtime, replay, ledger, policy, MCP, provider, queue, lifecycle, observability, chaos, and distributed reliability tests. |
+| 39 | Improvement Backlog | [`improvement-backlog.md`](improvement-backlog.md) | Planned improvements required for product maturity. |
+| 40 | Developer Experience / API / SDK / CLI | [`developer-experience-api-sdk-cli.md`](developer-experience-api-sdk-cli.md) | Developer-facing API, SDK, CLI, quickstart, examples, diagnostics, errors, and onboarding. |
+| 41 | Security and Encryption Hardening | [`security-and-encryption-hardening.md`](security-and-encryption-hardening.md) | RBAC-aware access control, replay/ledger/MCP/dashboard security, redaction, payload protection, encrypted archives, and encryption direction. |
+| 42 | Memory, Context, and Reasoning Lifecycle | [`memory-context-reasoning-lifecycle.md`](memory-context-reasoning-lifecycle.md) | Scoped memory, context injection, memory decay, freshness, runtime reasoning evidence, memory replay, and policy-driven memory governance. |
+| 43 | Enterprise Dashboard UI | [`enterprise-dashboard.md`](enterprise-dashboard.md) | Dashboard for executions, runs, queues, instances, workers, ledger, replay, policy, retention, telemetry, diagnostics, and metrics. |
+| 44 | Visual Pipeline Builder | [`pipeline-builder.md`](pipeline-builder.md) | Visual DAG builder, workflow design, step configuration, validation, versioning, and test-run mode. |
+| 45 | User / Tenant Management | [`multi-tenant-readiness.md`](multi-tenant-readiness.md) | Users, tenants, projects, roles, isolation, quotas direction, RBAC, and scoped resources. |
+| 46 | Hosted Demo | [`roadmap-6-months.md`](roadmap-6-months.md) | Hosted demo for technical visitors, partners, pilots, and product validation. |
+| 47 | Documentation Improvements | [`improvement-backlog.md`](improvement-backlog.md) | README, docs, examples, onboarding, architecture pages. |
+| 48 | Kubernetes Deployment Demo | [`roadmap-6-months.md`](roadmap-6-months.md) | Multi-instance, multi-worker, shared queue, provider-based transport, and observability demo. |
+| 49 | Compliance Profile Foundation | [`banking-financial-services-readiness.md`](banking-financial-services-readiness.md) | High-level direction for future configurable country/sector policy profiles. |
+| 50 | Cloud Deployment Templates | [`improvement-backlog.md`](improvement-backlog.md) | Docker, Kubernetes, Helm, cloud deployment templates. |
+| 51 | Product Modules Overview | [`product-roadmap.md`](product-roadmap.md) | Overview of runtime, replay, ledger, dashboard, builder, MCP, policy, providers, transport, lifecycle, memory, and hosting. |
+| 52 | Banking / Financial Services Readiness | [`banking-financial-services-readiness.md`](banking-financial-services-readiness.md) | Technical controls for audit-sensitive and regulated environments. |
+| 53 | Multi-Tenant SaaS Readiness | [`multi-tenant-readiness.md`](multi-tenant-readiness.md) | Tenants, projects, pipelines, executions, ledger, replay, metrics, quotas, RBAC, memory, and scoped resources. |
+| 54 | Execution Dashboard | [`enterprise-dashboard.md`](enterprise-dashboard.md) | Execution list, timeline, status, failures, duration, replay, ledger, policy, telemetry, and controls. |
+| 55 | Run / Queue Dashboard | [`enterprise-dashboard.md`](enterprise-dashboard.md) | Submitted, queued, running, completed, dispatch, queue pressure, shared/local queue. |
+| 56 | Runtime Instance Dashboard | [`enterprise-dashboard.md`](enterprise-dashboard.md) | Instances, workers, capacity, heartbeat, local queue, load, unhealthy detection. |
+| 57 | Decision Ledger Dashboard | [`enterprise-dashboard.md`](enterprise-dashboard.md) | Ledger viewer, decisions, policies, claims, correlation IDs, retention, and replay links. |
+| 58 | Replay / Audit Dashboard | [`enterprise-dashboard.md`](enterprise-dashboard.md) | Replay execution, validate, inspect issues, inspect policy decisions, inspect memory evidence, and export reports direction. |
+| 59 | Observability Dashboard | [`enterprise-dashboard.md`](enterprise-dashboard.md) | Logs, metrics, traces, latency, throughput, failures, retries, queue saturation, workers, instances. |
+| 60 | Visual DAG Editor | [`pipeline-builder.md`](pipeline-builder.md) | Drag/drop workflow graph and step layout. |
+| 61 | Step Configuration | [`pipeline-builder.md`](pipeline-builder.md) | Model, provider, tools, input/output mapping, retry, timeout, policy, memory, and retention configuration direction. |
+| 62 | Retry / Timeout / Concurrency Policy Configuration | [`pipeline-builder.md`](pipeline-builder.md) | Policies configurable per step or pipeline. |
+| 63 | Human-in-the-Loop Steps | [`pipeline-builder.md`](pipeline-builder.md) | Approval, waiting-for-input, manual review, and intervention steps. |
+| 64 | Pipeline Versioning | [`pipeline-builder.md`](pipeline-builder.md) | Version history, rollback, and comparison direction. |
+| 65 | Pipeline Templates | [`pipeline-builder.md`](pipeline-builder.md) | Templates for repeatable enterprise AI workflow patterns. |
+| 66 | MCP Tool Explorer | [`mcp-control-interface.md`](mcp-control-interface.md) | List tools, schemas, inputs, outputs, diagnostics, and operational behavior. |
+| 67 | MCP Execution Control | [`mcp-control-interface.md`](mcp-control-interface.md) | Submit run, replay, pause, resume, cancel, diagnostics. |
+| 68 | MCP Request / Response History | [`mcp-control-interface.md`](mcp-control-interface.md) | History of MCP calls and operational control-plane interactions. |
+| 69 | Differentiation vs Existing LLMOps Tools | [`llmops-positioning.md`](llmops-positioning.md) | Key difference: control execution from the beginning, not only observe after execution. |
+| 70 | Managed Hosting by Instance / Worker | [`managed-hosting-model.md`](managed-hosting-model.md) | Commercial direction aligned with architecture: instance, worker, queue, provider, transport, retention, observability. |
+| 71 | Self-Hosted Deployment | [`managed-hosting-model.md`](managed-hosting-model.md) | Customer runs platform in their infrastructure. |
+| 72 | Managed Cloud Hosting | [`managed-hosting-model.md`](managed-hosting-model.md) | Platform provider hosts runtime capacity. |
+| 73 | Dedicated Enterprise Cluster | [`managed-hosting-model.md`](managed-hosting-model.md) | Isolated cluster direction for enterprise and regulated customers. |
+| 74 | Multi-Tenant SaaS | [`multi-tenant-readiness.md`](multi-tenant-readiness.md) | SaaS model with tenant isolation and shared platform operations. |
+| 75 | 6-Month Roadmap | [`roadmap-6-months.md`](roadmap-6-months.md) | Public short-term productization plan for a single-developer project. |
+| 76 | 12–24 Month Roadmap | [`roadmap-12-24-months.md`](roadmap-12-24-months.md) | Long-term product maturity and commercial scale path. |
+| 77 | Final Product Positioning | [`product-roadmap.md`](product-roadmap.md) | Central product message and strategic positioning. |
+| 78 | Final Vision Statement | [`product-vision.md`](product-vision.md) | Build visually, run deterministically, govern through policy, control through MCP, replay/audit, manage memory/context, and scale by instances/workers. |
 
 ---
 
@@ -389,7 +427,31 @@ It is responsible for:
 
 ---
 
-## 2. Replay and Audit Layer
+## 2. Execution Control and State Lifecycle
+
+Execution control makes the runtime operable.
+
+It covers:
+
+- run lifecycle;
+- execution lifecycle;
+- step lifecycle;
+- pause;
+- resume;
+- cancel;
+- retry;
+- waiting-for-input direction;
+- claim ownership;
+- finalization;
+- lifecycle Decision Ledger events;
+- replayable state transitions;
+- distributed lifecycle safety.
+
+This is what separates a production runtime from a fire-and-forget agent runner.
+
+---
+
+## 3. Replay and Audit Layer
 
 Replay and audit are strategic capabilities.
 
@@ -401,11 +463,12 @@ They help teams:
 - compare replay results;
 - generate audit reports direction;
 - investigate production incidents;
+- inspect memory/context evidence;
 - improve trust in AI workflow execution.
 
 ---
 
-## 3. Decision Ledger
+## 4. Decision Ledger
 
 The Decision Ledger is the structured audit foundation.
 
@@ -423,11 +486,13 @@ It records important runtime decisions such as:
 - retention decisions;
 - eviction decisions;
 - compaction decisions;
-- archive decisions.
+- archive decisions;
+- memory/context decisions;
+- security decisions.
 
 ---
 
-## 4. Policy Engine and Runtime Governance
+## 5. Policy Engine and Runtime Governance
 
 The Policy Engine is a core governance foundation.
 
@@ -440,6 +505,8 @@ It supports:
 - RBAC-aware execution context;
 - ARN-inspired resource scoping;
 - policy-driven concurrency and throttling;
+- policy-driven lifecycle rules;
+- policy-driven memory access and decay direction;
 - policy decisions recorded in the Decision Ledger.
 
 The runtime model can be summarized as:
@@ -453,7 +520,7 @@ Providers define how infrastructure responsibilities are implemented.
 
 ---
 
-## 5. Pluggable Runtime Architecture
+## 6. Pluggable Runtime Architecture
 
 The runtime is designed around extension points.
 
@@ -469,6 +536,7 @@ It supports or is designed to support:
 - pluggable replay;
 - pluggable observability;
 - pluggable retention;
+- pluggable memory/context providers direction;
 - pluggable hosting modes;
 - pluggable MCP tools.
 
@@ -476,7 +544,7 @@ This allows the deterministic core to remain stable while execution capabilities
 
 ---
 
-## 6. Runtime Provider and Transport Model
+## 7. Runtime Provider and Transport Model
 
 The runtime provider and transport model allows execution to move from local execution to distributed runtime instances.
 
@@ -495,28 +563,79 @@ This is a key foundation for Kubernetes-style execution and managed hosting.
 
 ---
 
-## 7. Retention, Eviction, and Compaction
+## 8. Retention, Eviction, Compaction, and Snapshotting
 
-Retention, eviction, and compaction are part of the runtime foundation.
+Retention, eviction, compaction, and snapshotting are part of the runtime foundation.
 
-They are not only cleanup concerns. They are product, storage, replay, audit, cost-control, and future compliance-support concerns.
+They are not only cleanup concerns. They are product, storage, replay, audit, cost-control, memory lifecycle, and future compliance-support concerns.
 
 This foundation includes direction for:
 
 - retaining execution records;
 - preserving replay reports;
 - preserving decision ledger events;
+- creating automatic snapshots before cleanup;
 - evicting expired hot state;
 - cleaning stale claims;
 - compacting large execution histories;
 - archiving payloads;
 - preserving audit value while reducing storage pressure;
-- recording retention, eviction, compaction, and archive decisions;
+- recording retention, eviction, compaction, snapshot, and archive decisions;
 - preparing encrypted retention archive direction.
 
 ---
 
-## 8. MCP Control Interface
+## 9. Observability and Runtime Telemetry
+
+Observability makes the runtime operable.
+
+It should cover:
+
+- executions;
+- runs;
+- queues;
+- runtime instances;
+- workers;
+- providers;
+- transports;
+- policies;
+- replay;
+- ledger;
+- MCP;
+- memory/context usage;
+- retention lifecycle;
+- logs;
+- metrics;
+- traces;
+- external exports to Grafana, Kibana, OpenSearch, and SIEM-style systems direction.
+
+---
+
+## 10. Memory, Context, and Reasoning Lifecycle
+
+Memory and context must be governed.
+
+This pillar covers:
+
+- scoped memory;
+- context injection;
+- RBAC-aware memory access;
+- memory source tracking;
+- memory freshness;
+- memory decay;
+- runtime reasoning evidence;
+- replay memory evidence;
+- memory retention;
+- memory compaction;
+- memory archive direction;
+- policy-driven memory lifecycle;
+- tenant-aware memory boundaries.
+
+The runtime should not treat memory as an invisible global state.
+
+---
+
+## 11. MCP Control Interface
 
 The MCP control interface exposes runtime operations through a structured control plane.
 
@@ -533,13 +652,14 @@ It should support:
 - inspect decision ledger;
 - inspect policy decisions;
 - inspect retention decisions;
+- inspect memory/context decisions;
 - trigger diagnostics;
 - expose MCP tool schemas;
 - provide operational visibility.
 
 ---
 
-## 9. Enterprise Dashboard
+## 12. Enterprise Dashboard
 
 The dashboard is the product visibility layer.
 
@@ -555,6 +675,7 @@ It should expose:
 - replay reports;
 - audit reports direction;
 - retention/eviction/compaction activity;
+- memory/context evidence;
 - logs;
 - metrics;
 - traces;
@@ -564,7 +685,7 @@ It should expose:
 
 ---
 
-## 10. Visual Pipeline Builder
+## 13. Visual Pipeline Builder
 
 The pipeline builder is the product usability layer.
 
@@ -575,6 +696,7 @@ It should support:
 - provider/model configuration;
 - tool execution steps;
 - input/output mapping;
+- memory/context configuration direction;
 - conditional branches;
 - retry policy configuration;
 - timeout configuration;
@@ -587,7 +709,76 @@ It should support:
 
 ---
 
-## 11. Multi-Tenant Readiness
+## 14. Testing and Reliability Strategy
+
+Reliability must be proven.
+
+The platform should continue strengthening tests around:
+
+- runtime invariants;
+- DAG execution;
+- replay/audit;
+- Decision Ledger;
+- policy engine;
+- RBAC/scoped context;
+- execution control;
+- retry/recovery;
+- claims and worker safety;
+- shared queue;
+- runtime instances;
+- provider/transport;
+- MCP integration;
+- retention/eviction/compaction/snapshot;
+- observability;
+- chaos and load direction.
+
+---
+
+## 15. Developer Experience, API, SDK, and CLI
+
+Developer experience turns the runtime into an adoptable platform.
+
+This pillar covers:
+
+- public API surface;
+- RunId / ExecutionId clarity;
+- SDK direction;
+- CLI direction;
+- local setup;
+- examples;
+- error model;
+- diagnostics;
+- configuration examples;
+- policy developer experience;
+- step developer experience;
+- provider developer experience;
+- MCP developer experience.
+
+---
+
+## 16. Security and Encryption Hardening
+
+Security hardening protects the runtime lifecycle.
+
+It includes:
+
+- RBAC-aware access control;
+- ARN-inspired resources;
+- policy-driven security;
+- access-controlled replay;
+- access-controlled Decision Ledger;
+- MCP security;
+- dashboard security;
+- provider/transport security;
+- sensitive payload handling;
+- redaction;
+- encrypted retention archives direction;
+- encrypted ledger payload direction;
+- tenant-aware security boundaries.
+
+---
+
+## 17. Multi-Tenant Readiness
 
 The platform is intended to evolve toward multi-tenant readiness.
 
@@ -604,6 +795,7 @@ This includes isolation of:
 - policy decisions;
 - metrics;
 - traces;
+- memory/context data;
 - retention policies;
 - runtime capacity;
 - worker allocation;
@@ -611,7 +803,7 @@ This includes isolation of:
 
 ---
 
-## 12. Managed Hosting Model
+## 18. Managed Hosting Model
 
 The long-term hosting model is aligned with the runtime architecture.
 
@@ -627,7 +819,7 @@ This allows the product to evolve from a technical runtime into a scalable execu
 
 ---
 
-## 13. Banking and Financial Services Readiness
+## 19. Banking and Financial Services Readiness
 
 The platform is designed to support technical controls needed by audit-sensitive and regulated environments.
 
@@ -646,8 +838,9 @@ Relevant technical directions include:
 - audit reports direction;
 - runtime control;
 - tenant isolation;
+- memory/context governance;
 - observability export;
-- retention, eviction, and compaction foundation;
+- retention, eviction, compaction, and snapshot foundation;
 - encrypted ledger and encrypted retention hardening direction;
 - country/sector policy profile direction;
 - data residency direction.
@@ -665,6 +858,11 @@ The following documents describe the most important extension points.
 | Policy engine and governance | [`policy-engine-and-governance.md`](policy-engine-and-governance.md) | Explains how policies can be created by context and recorded through the Decision Ledger. |
 | MCP control interface | [`mcp-control-interface.md`](mcp-control-interface.md) | Explains how runtime control is exposed through structured MCP tools. |
 | Managed hosting model | [`managed-hosting-model.md`](managed-hosting-model.md) | Explains how runtime instances, workers, shared queues, admission, providers, and transport become the foundation for hosting. |
+| Retention, eviction, and compaction | [`retention-eviction-compaction.md`](retention-eviction-compaction.md) | Explains policy-driven lifecycle management, automatic snapshots, hot-state eviction, compaction, archive direction, and replay preservation. |
+| Observability and runtime telemetry | [`observability-and-runtime-telemetry.md`](observability-and-runtime-telemetry.md) | Explains how execution, queue, provider, worker, policy, replay, ledger, MCP, memory, and lifecycle telemetry become visible. |
+| Execution control and state lifecycle | [`execution-control-and-state-lifecycle.md`](execution-control-and-state-lifecycle.md) | Explains lifecycle states, pause/resume/cancel, retry, claims, finalization, and distributed lifecycle safety. |
+| Memory, context, and reasoning lifecycle | [`memory-context-reasoning-lifecycle.md`](memory-context-reasoning-lifecycle.md) | Explains scoped memory, context injection, memory decay, runtime reasoning evidence, replay memory evidence, and policy-driven memory governance. |
+| Security and encryption hardening | [`security-and-encryption-hardening.md`](security-and-encryption-hardening.md) | Explains access control, replay/ledger/MCP/dashboard security, redaction, payload protection, and encrypted archive direction. |
 
 ---
 
@@ -690,6 +888,13 @@ The current focus is to:
 - prepare Kubernetes-style distributed execution demonstrations;
 - improve observability exports;
 - harden replay, audit, ledger, retention, eviction, compaction, access control, and encryption direction.
+- expose automatic snapshot, hot-state eviction, stale claim cleanup, and policy-driven compaction foundations more clearly;
+- expose observability and runtime telemetry as a product foundation;
+- expose execution control and state lifecycle as a production differentiator;
+- expose testing and reliability strategy as proof of architecture;
+- expose developer experience, API, SDK, and CLI direction;
+- expose security and encryption hardening direction carefully without overclaiming;
+- expose memory, context, reasoning lifecycle, and memory decay as a future product differentiator;
 
 ---
 
@@ -717,3 +922,5 @@ The long-term objective is to support enterprise-grade and regulated AI workflow
 The roadmap must remain ambitious, but realistic.
 
 The project is currently maintained by a single developer, so the roadmap should focus on staged productization, strong demos, visible architecture, and carefully prioritized hardening.
+
+The roadmap is now broad enough to represent the product direction. Future additions should be selective and should only be added when they clarify a major product pillar or architectural foundation.
