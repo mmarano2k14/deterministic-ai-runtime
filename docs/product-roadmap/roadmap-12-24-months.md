@@ -1,7 +1,5 @@
  # 12–24 Month Roadmap
 
-<!-- Updated by ChatGPT: original content preserved; missing roadmap pillars and alignment notes were added without rewriting the document from scratch. -->
-
 ## Deterministic AI Runtime Platform
 
 This document describes the 12–24 month public roadmap direction for the Deterministic AI Runtime Platform.

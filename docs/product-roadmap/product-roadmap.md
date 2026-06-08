@@ -1,7 +1,5 @@
 # Product Roadmap
 
-<!-- Updated by ChatGPT: original content preserved; missing roadmap pillars and alignment notes were added without rewriting the document from scratch. -->
-
 ## Deterministic AI Runtime Platform
 
 This document describes the public product roadmap for the Deterministic AI Runtime Platform.

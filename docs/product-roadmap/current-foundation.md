@@ -1,7 +1,5 @@
 # Current Foundation
 
-<!-- Updated by ChatGPT: original content preserved; only alignment sections and missing roadmap pillars were added. -->
-
 ## Deterministic AI Runtime Platform
 
 This document describes the current architectural foundation of the Deterministic AI Runtime Platform.
