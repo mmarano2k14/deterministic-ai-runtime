@@ -804,6 +804,101 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
         }
 
         /// <summary>
+        /// Verifies that MCP local runtime instance visibility exposes worker capacity
+        /// and admission availability when all local workers are reserved by one execution.
+        /// </summary>
+        [Fact]
+        public async Task Local_Runtime_Instance_Should_Report_No_Available_Workers_When_Execution_Uses_All_Workers()
+        {
+            var settings =
+                GenericMcpServerTestSettings.CreateMcpSettings(
+                    new Dictionary<string, string?>
+                    {
+                        ["AiMcpHost:Mode"] = "ControlPlaneWithLocalRuntimeInstances",
+                        ["AiMcpHost:EnableSharedQueuePump"] = "true",
+
+                        ["AiSharedQueueBackgroundService:Enabled"] = "true",
+                        ["AiSharedQueuePump:Enabled"] = "true",
+                        ["AiSharedRuntimeController:SubmitMode"] = "QueueFirst",
+
+                        ["AiRuntimeInstanceRegistration:ProviderName"] = "local",
+                        ["AiRuntimeInstanceRegistration:ProviderMetadata:provider.name"] = "local",
+                        ["AiRuntimeInstanceRegistration:Metadata:provider.name"] = "local",
+                        ["AiRuntimeInstanceRegistration:RuntimeInstanceId"] = "mcp-control-plane-local",
+                        ["AiRuntimeInstanceRegistration:Metadata:hostType"] = "control-plane-with-local-runtime",
+                        ["AiRuntimeInstanceRegistration:Metadata:deployment"] = "test-local-worker-capacity",
+
+                        ["AiLocalRuntimeInstancePool:Enabled"] = "true",
+                        ["AiLocalRuntimeInstancePool:InstanceCount"] = "1",
+                        ["AiLocalRuntimeInstancePool:WorkerCountPerInstance"] = "2",
+                        ["AiLocalRuntimeInstancePool:MaxConcurrentRunsPerInstance"] = "2",
+                        ["AiLocalRuntimeInstancePool:RuntimeInstanceIdPrefix"] = "mcp-runtime",
+
+                        ["AiEngine:RuntimeInstanceId"] = "mcp-control-plane-local",
+                        ["AiEngine:PipelineBackgroundController:MaxConcurrentRuns"] = "2",
+                        ["AiEngine:PipelineBackgroundController:QueueCapacity"] = "100",
+                        ["AiEngine:PipelineBackgroundController:Distributed:Enabled"] = "true",
+                        ["AiEngine:PipelineBackgroundController:Distributed:WorkerCount"] = "2",
+                        ["AiEngine:PipelineBackgroundController:MaxLocalWorkersPerExecution"] = "2"
+                    });
+
+            await using var host =
+                new GenericMcpServerTestHost(
+                    settings);
+
+            using var client =
+                host.CreateClient();
+
+            var mcp =
+                new McpTestClient(
+                    client);
+
+            var pipelineName =
+                $"mcp-local-worker-capacity-{Guid.NewGuid():N}";
+
+            await SubmitRunsAsync(
+                    mcp,
+                    pipelineName,
+                    count: 1)
+                .ConfigureAwait(false);
+
+            var dispatchedRuns =
+                await McpTestWaitHelpers.WaitForDispatchedRunsAsync(
+                        mcp,
+                        pipelineName,
+                        expectedCount: 1,
+                        timeout: TimeSpan.FromMinutes(1))
+                    .ConfigureAwait(false);
+
+            Assert.Single(
+                dispatchedRuns);
+
+            var saturatedInstance =
+                await McpTestWaitHelpers.WaitForRuntimeInstanceWorkerSaturationAsync(
+                        mcp,
+                        runtimeInstanceId: "mcp-runtime-1",
+                        expectedWorkerCount: 2,
+                        expectedMaxLocalWorkersPerExecution: 2,
+                        timeout: TimeSpan.FromMinutes(1))
+                    .ConfigureAwait(false);
+
+            Assert.Equal(
+                2,
+                saturatedInstance.WorkerCount);
+
+            Assert.Equal(
+                2,
+                saturatedInstance.ActiveWorkerCount);
+
+            Assert.Equal(
+                0,
+                saturatedInstance.AvailableWorkerCount);
+
+            Assert.False(
+                saturatedInstance.CanAcceptRun);
+        }
+
+        /// <summary>
         /// Creates a shared runtime controller submit request.
         /// </summary>
         /// <param name="pipelineName">The pipeline key.</param>

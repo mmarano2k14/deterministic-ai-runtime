@@ -102,5 +102,20 @@ namespace Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Control
         /// Indicates whether diagnostics should be included when available.
         /// </summary>
         public bool IncludeDiagnostics { get; init; } = true;
+
+        /// <summary>
+        /// Gets or sets the number of local workers currently assigned to active executions.
+        /// </summary>
+        public int? ActiveWorkerCount { get; init; }
+
+        /// <summary>
+        /// Gets or sets the number of local workers currently available on this runtime instance.
+        /// </summary>
+        public int? AvailableWorkerCount { get; init; }
+
+        /// <summary>
+        /// Gets or sets the maximum number of local workers allowed per execution.
+        /// </summary>
+        public int? MaxLocalWorkersPerExecution { get; init; }
     }
 }

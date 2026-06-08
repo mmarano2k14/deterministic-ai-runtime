@@ -281,7 +281,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances
         }
 
         /// <summary>
-        /// Records a runtime instance heartbeat and updates its queue/run visibility state.
+        /// Records a runtime instance heartbeat and updates its queue/run/worker visibility state.
         /// </summary>
         /// <param name="request">The runtime instance control-plane request.</param>
         /// <param name="cancellationToken">A token used to cancel the operation.</param>
@@ -297,6 +297,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances
                     request.RunningRunCount,
                     request.ActiveRunCount,
                     request.AvailableRunSlots,
+                    request.ActiveWorkerCount,
+                    request.AvailableWorkerCount,
+                    request.MaxLocalWorkersPerExecution,
                     request.IsQueuePaused,
                     request.CanAcceptRun,
                     request.Status,

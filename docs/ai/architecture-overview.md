@@ -4,6 +4,8 @@ Status: Documentation split in progress.
 
 This document provides a high-level overview of the **Deterministic AI Runtime** architecture.
 
+It also reflects the current control-plane evolution: shared queue pump, queue-first submit mode, dispatch-time admission, runtime instance providers, MCP control-plane integration, and worker-capacity visibility.
+
 The complete technical reference is currently preserved in:
 
 - [runtime-internals.md](../runtime-internals.md)
@@ -27,6 +29,11 @@ It is an execution runtime responsible for:
 - applying concurrency and throttling policies
 - supporting replay and audit foundations
 - exposing observability and tracing foundations
+- exposing runtime control-plane operations
+- coordinating shared queue dispatch
+- supporting queue-first shared run submission
+- managing runtime instance visibility
+- exposing runtime worker capacity
 
 The core idea is simple:
 
@@ -39,7 +46,9 @@ The core idea is simple:
 At a high level, the runtime is composed of the following layers:
 
 ```text
-Client / API Layer
+Client / API / MCP Layer
+        ↓
+Control Plane and Shared Queue Layer
         ↓
 Runtime Orchestration Layer
         ↓
@@ -48,6 +57,8 @@ Pipeline Resolution Layer
 Context Resolution and Helper Layer
         ↓
 DAG Execution Engine
+        ↓
+Runtime Instance and Worker Capacity Layer
         ↓
 Distributed Coordination Layer
         ↓
@@ -136,7 +147,52 @@ It delegates execution to the runtime.
 
 ---
 
-### 2. Runtime Orchestration Layer
+### 2. Control Plane and Shared Queue Layer
+
+The control-plane layer exposes operational runtime capabilities without replacing the runtime engine.
+
+It is responsible for:
+
+- shared run submission
+- shared run visibility
+- queue-first submit mode
+- global shared queue coordination
+- shared queue pump and manual drain
+- dispatch-time admission
+- runtime instance registry visibility
+- runtime capacity descriptors
+- runtime queue control
+- execution control
+- replay and observability adapters
+- MCP server tool exposure
+
+This layer operates above local runtime queues.
+
+It does not execute DAG steps directly.
+
+The shared queue provides global coordination before a run is assigned to a runtime instance.
+
+```text
+Shared Runtime Controller
+        ↓
+Shared Run Store
+        ↓
+Shared Queue
+        ↓
+Shared Queue Pump / Manual Drain
+        ↓
+Dispatch-Time Admission
+        ↓
+Runtime Instance Dispatch
+        ↓
+Local Runtime Queue
+```
+
+Queue-first mode uses this layer to persist a shared run and place it in the global queue before selecting a runtime instance.
+
+---
+
+### 3. Runtime Orchestration Layer
 
 The orchestration layer turns an external request into a runtime execution.
 
@@ -153,7 +209,7 @@ This layer separates external lifecycle concerns from internal execution logic.
 
 ---
 
-### 3. Pipeline Resolution Layer
+### 4. Pipeline Resolution Layer
 
 Pipeline definitions describe the workflow declaratively.
 
@@ -174,7 +230,7 @@ The runtime controls execution.
 
 ---
 
-### 4. Context Resolution and Helper Layer
+### 5. Context Resolution and Helper Layer
 
 The context resolution layer transforms configuration and state into concrete runtime context.
 
@@ -205,7 +261,7 @@ The helper layer provides the resolved context.
 
 ---
 
-### 5. DAG Execution Engine
+### 6. DAG Execution Engine
 
 The DAG execution engine is the core execution coordinator.
 
@@ -228,7 +284,47 @@ Context-building logic belongs in context helpers.
 
 ---
 
-### 6. Distributed Coordination Layer
+### 7. Runtime Instance and Worker Capacity Layer
+
+Runtime instances are the execution participants that own local queues and workers.
+
+A runtime instance may be local, HTTP-backed, or later connected through Redis command queues, gRPC, or Kubernetes provider transports.
+
+Each runtime instance publishes visibility and capacity.
+
+Important capacity fields include:
+
+```text
+WorkerCount
+ActiveWorkerCount
+AvailableWorkerCount
+MaxLocalWorkersPerExecution
+QueuedRunCount
+RunningRunCount
+ActiveRunCount
+QueueCapacity
+MaxConcurrentRuns
+AvailableRunSlots
+IsQueuePaused
+CanAcceptRun
+```
+
+This layer allows the control plane, MCP tools, and future dashboards to see:
+
+- which runtime instances exist
+- which runtime instances are executable
+- which queues are paused
+- how many run slots are available
+- how many workers are active or free
+- whether a runtime instance can accept another run
+
+`MaxLocalWorkersPerExecution` limits how many local workers from one runtime instance can work on a single execution.
+
+This prevents one execution from consuming the whole local worker pool unless explicitly configured.
+
+---
+
+### 7. Distributed Coordination Layer
 
 The runtime uses Redis as the hot coordination layer.
 
@@ -249,7 +345,7 @@ This allows multiple workers or runtime instances to coordinate safely without d
 
 ---
 
-### 7. Step Execution Layer
+### 8. Step Execution Layer
 
 Steps are executed by registered step executors.
 
@@ -272,7 +368,7 @@ Step executors receive resolved context from the context resolution layer.
 
 ---
 
-### 8. Policy and Governance Layer
+### 9. Policy and Governance Layer
 
 Policies provide reusable runtime decision logic.
 
@@ -304,7 +400,7 @@ The runtime applies state transitions safely.
 
 ---
 
-### 9. Persistence Layer
+### 10. Persistence Layer
 
 The persistence layer stores durable execution data.
 
@@ -324,7 +420,7 @@ MongoDB acts as the cold durable layer.
 
 ---
 
-### 10. Retention and Compaction Layer
+### 11. Retention and Compaction Layer
 
 AI workflows can generate large intermediate payloads.
 
@@ -344,7 +440,7 @@ The context resolver is what allows downstream steps to continue working even wh
 
 ---
 
-### 11. Replay and Audit Foundations
+### 12. Replay and Audit Foundations
 
 The runtime includes foundations for replay and auditability.
 
@@ -364,7 +460,7 @@ This creates the basis for future official replay APIs and durable decision ledg
 
 ---
 
-### 12. Observability Layer
+### 13. Observability Layer
 
 Observability is built into the runtime.
 
@@ -379,6 +475,11 @@ The runtime tracks:
 - context resolution failures
 - distributed concurrency admission
 - queue and control-plane activity
+- shared queue pump activity
+- runtime instance capacity
+- worker capacity
+- max local workers per execution
+- effective worker count per execution
 
 This allows the runtime to be inspected, tested, and eventually monitored through dashboards.
 
@@ -389,7 +490,15 @@ This allows the runtime to be inspected, tested, and eventually monitored throug
 A simplified runtime data flow is:
 
 ```text
-Client submits pipeline run
+Client / API / MCP submits pipeline run
+        ↓
+Shared controller may create shared run
+        ↓
+Queue-first mode may enqueue in shared queue
+        ↓
+Shared queue pump or manual drain may dispatch
+        ↓
+Runtime instance local queue receives run
         ↓
 Runtime creates execution
         ↓
@@ -424,12 +533,62 @@ This flow keeps configuration, context, execution, distributed coordination, and
 
 The runtime includes a control-plane layer for long-running workflows.
 
-This includes two distinct control levels:
+This includes three related but separate control scopes:
 
 ```text
+SharedRunId-level control
 RunId-level control
 ExecutionId-level control
 ```
+
+`SharedRunId` belongs to the shared runtime controller and shared/global queue.
+
+`RunId` belongs to one runtime instance local queue.
+
+`ExecutionId` belongs to the durable DAG execution.
+
+### SharedRunId-Level Control
+
+SharedRunId-level control belongs to the shared runtime controller.
+
+It manages:
+
+- shared run records
+- queue-first submit mode
+- global shared queue state
+- shared queue item lifecycle
+- shared queue pump/manual drain
+- dispatch-time admission
+- assigned runtime instance id
+- LocalRunId visibility after dispatch
+- ExecutionId visibility after local execution starts
+
+A shared run can exist before a local `RunId` exists.
+
+A local `RunId` appears only after dispatch into a selected runtime instance local queue.
+
+### Pump Identity vs Assigned Runtime Identity
+
+The shared queue pump uses explicit pump identity:
+
+```text
+PumpRuntimeInstanceId
+PumpWorkerId
+```
+
+These identify who is draining the shared queue.
+
+They do not necessarily identify who receives the run.
+
+```text
+PumpRuntimeInstanceId
+    = runtime instance executing the pump cycle
+
+AssignedRuntimeInstanceId
+    = runtime instance selected by admission for dispatch
+```
+
+This separation is required for provider-based runtime hosting, MCP manual drain, HTTP runtime instances, and future Kubernetes control-plane/runtime-pod separation.
 
 ### RunId-Level Control
 
@@ -490,6 +649,8 @@ This model enables:
 - no duplicate step ownership
 - recovery after worker crashes
 - deterministic convergence under concurrency
+- runtime-local worker capacity control
+- cross-instance execution assistance foundations
 
 ---
 
@@ -546,6 +707,49 @@ This allows the runtime to evolve by adding policies instead of hardcoding behav
 
 ---
 
+## Runtime Instance Provider Model
+
+Runtime instance dispatch is moving toward a provider-based model.
+
+Admission decides which runtime instance should receive work.
+
+Providers decide how to contact that runtime instance.
+
+```text
+Admission
+    decides WHO
+
+Provider Router
+    decides HOW
+
+Provider
+    performs transport-specific dispatch/control/status operation
+```
+
+Current provider-oriented foundations include:
+
+- local runtime instance provider
+- HTTP runtime provider foundation
+- runtime instance provider metadata
+- runtime instance registry visibility
+- capacity descriptor visibility
+- MCP control-plane scenarios
+
+Future providers may include:
+
+- Redis command queue provider
+- gRPC provider
+- Kubernetes metadata provider
+- Kubernetes scaling provider
+
+Providers must not replace local runtime queues.
+
+They must deliver work into the selected runtime instance local queue.
+
+The DAG engine and workers remain the only layer responsible for durable execution.
+
+---
+
 ## Extension Model
 
 The runtime is extensible through step plugins.
@@ -587,9 +791,20 @@ Plugins remain responsible for domain-specific execution.
 | Distributed concurrency and throttling | Implemented |
 | Execution control state | Implemented |
 | Runtime queue control | Implemented |
+| Shared runtime controller | Implemented / validated foundations |
+| Shared queue pump | Implemented / validated |
+| Queue-first submit mode | Implemented / validated |
+| Manual shared queue drain | Implemented / validated |
+| Dispatch-time admission | Implemented / validated |
+| Runtime instance provider hosting | Implemented foundations |
+| Local runtime instance provider | Implemented / validated |
+| HTTP runtime provider foundation | Implemented / validated |
+| Runtime worker capacity visibility | Implemented / validated |
+| Max local workers per execution | Implemented / validated |
 | Human-in-the-loop foundations | Implemented |
 | Replay and snapshot foundations | Implemented / validated foundations |
-| Durable decision ledger | Planned |
+| Decision ledger foundation | Implemented foundations |
+| Durable decision ledger hardening | Planned |
 | Observability dashboard | Planned |
 | Kubernetes deployment | Planned |
 | Public SDK polish | Planned |
@@ -602,6 +817,9 @@ Plugins remain responsible for domain-specific execution.
 - [Distributed Execution](distributed-execution.md)
 - [Execution Control State](execution-control-state.md)
 - [Runtime Queue Control](runtime-queue-control.md)
+- [Shared Runtime Controller / Shared Queue Usage](shared-controller-usage.md)
+- [Runtime Instance Provider Model](runtime-instance-provider-model.md)
+- [MCP Server as Runtime Control Plane](mcp-server-control-plane.md)
 - [Retry and Recovery](retry-and-recovery.md)
 - [Retention and Compaction](retention-and-compaction.md)
 - [Distributed Concurrency and Throttling](distributed-concurrency-throttling.md)

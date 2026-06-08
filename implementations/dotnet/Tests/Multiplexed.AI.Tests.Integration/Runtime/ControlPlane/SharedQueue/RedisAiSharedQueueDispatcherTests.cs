@@ -10,6 +10,7 @@ using Multiplexed.Abstractions.AI.Runtime.Execution.Instance.Worker;
 using Multiplexed.AI.Runtime.ControlPlane.SharedController.Store;
 using Multiplexed.AI.Runtime.ControlPlane.SharedQueue;
 using Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis;
+using Multiplexed.AI.Tests.Fixtures;
 using StackExchange.Redis;
 
 namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedQueue
@@ -79,11 +80,13 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedQueue
                 CreateQueueItem("shared-run-1"));
 
             var runDispatcher = new FakeSharedRunDispatcher();
+            var admissionController = new FakeRunAdmissionController();
 
             var dispatcher = new AiSharedQueueDispatcher(
                 queue,
                 store,
-                runDispatcher);
+                runDispatcher,
+                admissionController);
 
             var result = await dispatcher.DispatchNextAsync(new AiSharedQueueDispatchRequest
             {
@@ -139,7 +142,8 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedQueue
             var dispatcher = new AiSharedQueueDispatcher(
                 CreateQueue(),
                 CreateRunStore(),
-                new FakeSharedRunDispatcher());
+                new FakeSharedRunDispatcher(),
+                new FakeRunAdmissionController());
 
             var result = await dispatcher.DispatchNextAsync(new AiSharedQueueDispatchRequest
             {
@@ -163,7 +167,8 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedQueue
             var dispatcher = new AiSharedQueueDispatcher(
                 queue,
                 store,
-                new FakeSharedRunDispatcher());
+                new FakeSharedRunDispatcher(), 
+                new FakeRunAdmissionController());
 
             var result = await dispatcher.DispatchNextAsync(new AiSharedQueueDispatchRequest
             {
@@ -212,7 +217,8 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedQueue
             var dispatcher = new AiSharedQueueDispatcher(
                 queue,
                 store,
-                runDispatcher);
+                runDispatcher,
+                new FakeRunAdmissionController());
 
             var result = await dispatcher.DispatchNextAsync(new AiSharedQueueDispatchRequest
             {
@@ -257,20 +263,22 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedQueue
                 .Select(index =>
                 {
                     var dispatcher = new AiSharedQueueDispatcher(
-                        queue,
-                        store,
-                        new FakeSharedRunDispatcher(
-                            new AiSharedRunDispatchResult
-                            {
-                                Success = true,
-                                SharedRunId = "shared-run-1",
-                                RuntimeInstanceId = $"runtime-{index}",
-                                LocalRunId = $"local-run-{index}",
-                                ExecutionId = $"execution-{index}",
-                                Message = "Dispatched.",
-                                StartedAtUtc = DateTimeOffset.UtcNow,
-                                CompletedAtUtc = DateTimeOffset.UtcNow
-                            }));
+                     queue,
+                     store,
+                     new FakeSharedRunDispatcher(
+                         new AiSharedRunDispatchResult
+                         {
+                             Success = true,
+                             SharedRunId = "shared-run-1",
+                             RuntimeInstanceId = $"runtime-{index}",
+                             LocalRunId = $"local-run-{index}",
+                             ExecutionId = $"execution-{index}",
+                             Message = "Dispatched.",
+                             StartedAtUtc = DateTimeOffset.UtcNow,
+                             CompletedAtUtc = DateTimeOffset.UtcNow
+                         }),
+                     new FakeRunAdmissionController(
+                         assignedRuntimeInstanceId: $"runtime-{index}"));
 
                     return dispatcher.DispatchNextAsync(new AiSharedQueueDispatchRequest
                     {

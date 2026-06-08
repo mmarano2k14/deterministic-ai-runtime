@@ -2,11 +2,11 @@
 
 A deterministic AI execution runtime for production-grade AI workloads.
 
-This repository provides a reference implementation of a distributed, state-driven runtime for executing AI workflows with deterministic DAG orchestration, context resolution, Redis Lua coordination, retry/recovery, retention/compaction, distributed concurrency control, execution control state, replay validation, correlated metrics and tracing, execution-correlated decision ledger, shared runtime control-plane orchestration, Redis-backed shared queue coordination, queue pumping/background consumption, scale-out request publication, and executable enterprise demo scenarios.
+This repository provides a reference implementation of a distributed, state-driven runtime for executing AI workflows with deterministic DAG orchestration, context resolution, Redis Lua coordination, retry/recovery, retention/compaction, distributed concurrency control, execution control state, replay validation, correlated metrics and tracing, execution-correlated decision ledger, shared runtime control-plane orchestration, Redis-backed shared queue coordination, queue-first submission, shared queue pumping/manual drain, dispatch-time admission, runtime instance provider hosting, runtime worker-capacity visibility, scale-out request publication, and executable enterprise demo scenarios.
 
 The current runtime foundations are intentionally designed as the base for a broader AI execution and MLOps-oriented platform.
 
-[![Version](https://img.shields.io/badge/Version-1.0.5.6-blue)](./CHANGELOG.md)
+[![Version](https://img.shields.io/badge/Version-1.0.6.0-blue)](./CHANGELOG.md)
 [![Changelog](https://img.shields.io/badge/Changelog-view-lightgrey)](./CHANGELOG.md)
 ![AI Runtime](https://img.shields.io/badge/AI-Deterministic%20Execution-purple)
 ![Runtime](https://img.shields.io/badge/Runtime-distributed-brightgreen)
@@ -24,10 +24,12 @@ The latest major updates focused on turning the runtime from a DAG executor into
 |---|---|
 | Distributed multi-runtime-instance execution | Added foundations for multiple runtime instances and workers to coordinate through shared Redis-backed execution state. |
 | Runtime control plane foundation | Added adapter-neutral control-plane foundations for replay, execution control, local runtime queue control, runtime instance registry/control, run admission decisions, Shared Runtime Controller V1, shared queue dispatch, queue pump/background service, and scale-out request publication. |
-| Shared Runtime Controller V1 | Added shared run persistence, Redis-backed shared run store, Redis-backed shared queue, assigned-run dispatch, global shared queue dispatch, queue pump, hosted background queue consumption, and scale-out request publication. |
-| Runtime capacity descriptors | Added Redis-backed runtime instance capacity descriptors, runtime capacity publication, worker identity propagation, and idempotent runtime shutdown foundations. |
-| MCP Server as control plane | Added MCP server documentation as a concrete runtime control-plane adapter with ControlPlaneOnly, ControlPlaneWithLocalRuntimeInstances, and RuntimeInstanceOnly host modes. |
-| Runtime instance provider model | Added provider-based runtime instance administration direction for local, Redis command queue, HTTP, gRPC, and Kubernetes providers. |
+| Shared Runtime Controller V1 | Added shared run persistence, Redis-backed shared run store, Redis-backed shared queue, assigned-run dispatch, global shared queue dispatch, queue pump, hosted background queue consumption, queue-first submit mode, dispatch-time admission, and scale-out request publication. |
+| Shared queue pump and manual drain | Added queue-first submission, manual shared queue drain, background pump validation, pump identity separation, and local/HTTP runtime provider dispatch validation. |
+| Runtime capacity descriptors | Added Redis-backed runtime instance capacity descriptors, runtime capacity publication, worker identity propagation, active/free worker visibility, worker-aware `CanAcceptRun`, and idempotent runtime shutdown foundations. |
+| MCP Server as control plane | Added MCP server documentation as a concrete runtime control-plane adapter with ControlPlaneOnly, ControlPlaneWithLocalRuntimeInstances, ControlPlaneWithHttpRuntimeInstances, and RuntimeInstanceOnly host modes. |
+| Runtime instance provider model | Added provider-based runtime instance administration direction and foundations for local and HTTP runtime instance providers, with future Redis command queue, gRPC, and Kubernetes providers. |
+| Runtime worker capacity control | Added `MaxLocalWorkersPerExecution`, effective worker reservation, worker saturation visibility, and runtime instance snapshots exposing active/free worker capacity. |
 | Distributed concurrency and throttling demo | Added an executable `throttling-100` enterprise demo scenario with provider-level concurrency control, realtime throttling visibility, Redis lease-based admission control, randomized provider distribution, and bounded provider capacity under worker pressure. |
 | Execution control state | Added durable `ExecutionId`-level pause, resume, cancel, waiting-for-input, and human input submission. |
 | Runtime queue control | Added `RunId`-level queue pause/resume, queued cancellation, running cancellation bridge, and hot enqueue support. |
@@ -67,7 +69,9 @@ It provides a state-driven execution layer where:
 - metrics, traces, and ledger events share runtime correlation
 - executions can be replay-validated from persisted snapshots
 - execution can be paused, resumed, cancelled, or blocked for human input
-- submitted runs can be admitted, assigned, globally queued, dispatched, scale-out requested, rejected, listed, retrieved, or cancelled through the shared runtime controller
+- submitted runs can be admitted, assigned, globally queued, queue-first submitted, pumped manually or by background service, dispatched, scale-out requested, rejected, listed, retrieved, or cancelled through the shared runtime controller
+- runtime instances expose run capacity, worker capacity, queue pressure, and worker-aware `CanAcceptRun`
+- local and HTTP provider hosting foundations validate the path toward Kubernetes-style runtime instances
 
 The project should be read as an AI execution infrastructure foundation. The runtime core is already substantial, while the longer-term direction is to evolve toward a broader AI operations and MLOps-oriented platform.
 
@@ -117,9 +121,11 @@ This runtime is designed to fix the operational problems that appear when AI wor
 | Queued work is hard to control | RunId-level queue control, queue pause/resume, queued cancellation, running cancellation bridge, shared run records, and shared queue coordination. |
 | Live executions are hard to control | ExecutionId-level pause, resume, cancel, waiting-for-input, and human input submission. |
 | Runtime behavior is hard to audit | Execution-correlated decision ledger, runtime lifecycle events, claim/retry/recovery/concurrency events, and replay lifecycle events. |
-| Distributed runtime instances are hard to observe | Runtime instance registration, heartbeat, Redis-backed capacity descriptors, queue pressure, available run slots, and worker identity propagation. |
+| Distributed runtime instances are hard to observe | Runtime instance registration, heartbeat, Redis-backed capacity descriptors, queue pressure, available run slots, worker identity propagation, active worker count, available worker count, and worker-aware `CanAcceptRun`. |
+| Queued global work needs controlled dispatch | Queue-first submit mode, shared queue pump, manual drain, dispatch-time admission, and no-double-dispatch shared queue coordination. |
+| One execution can consume too many local workers | `MaxLocalWorkersPerExecution`, effective worker reservation, active/free worker visibility, and worker-aware runtime capacity snapshots. |
 | Control-plane operations become coupled to internals | Adapter-neutral control-plane facades for MCP, HTTP API, CLI, dashboards, and Kubernetes-oriented orchestration. |
-| Dispatch and scaling can become transport-specific | Provider-based runtime instance model planned for local, Redis command queue, HTTP, gRPC, and Kubernetes providers. |
+| Dispatch and scaling can become transport-specific | Provider-based runtime instance model and foundations for local and HTTP runtime providers, with future Redis command queue, gRPC, and Kubernetes providers. |
 | Kubernetes scaling needs runtime visibility | Runtime roles, runtime capacity descriptors, shared queue coordination, scale-out request publication, and provider-based administration direction. |
 
 The main goal is to make production AI execution controllable, observable, recoverable, auditable, replayable, and eventually scalable across runtime instances without turning the runtime core into a transport-specific scheduler.
@@ -197,13 +203,15 @@ This project explores what an AI execution runtime should look like when reliabi
 | Policy-driven execution | Implemented | Retry, retention, and concurrency use configurable policy definitions. |
 | Execution control state | Implemented | ExecutionId-level pause, resume, cancel, waiting-for-input, and human input submission. |
 | Runtime queue control | Implemented | RunId-level queue pause/resume, queued cancellation, running cancellation bridge, and hot enqueue. |
-| Runtime control plane foundation | Implemented | Adapter-neutral facades expose replay, execution control, local queue control, runtime instance control, admission, shared runtime controller, shared queue dispatch, queue pump/background service, and scale-out publication for API/MCP/CLI/dashboard/Kubernetes adapters. |
-| Runtime instance registry and control | Implemented | Runtime instances can register, heartbeat, expose queue capacity, be listed, marked draining, or unregistered. |
+| Runtime control plane foundation | Implemented | Adapter-neutral facades expose replay, execution control, local queue control, runtime instance control, admission, shared runtime controller, shared queue dispatch, queue pump/manual drain, background service, and scale-out publication for API/MCP/CLI/dashboard/Kubernetes adapters. |
+| Runtime instance registry and control | Implemented | Runtime instances can register, heartbeat, expose queue capacity, expose worker capacity, be listed, marked draining, or unregistered. |
 | Run admission / slot decisions | Implemented | Admission can assign runs to an available runtime instance, request scale-out, queue globally, or reject according to policy. |
-| Shared Runtime Controller V1 | Implemented | Shared controller handles assigned dispatch, global queue enqueue, Redis-backed shared queue dispatch, queue pump/background consumption, scale-out request publication, and shared run visibility. |
-| Redis runtime capacity descriptors | Foundation available | Runtime instances publish Redis-backed capacity descriptors for worker count, run slots, queue pressure, heartbeat, and future capacity-aware admission. |
-| MCP server control-plane adapter | Foundation available | MCP tools expose shared run, shared queue, runtime instance, runtime queue, replay, execution control, and observability operations. |
-| Runtime instance provider model | Planned | Provider-based runtime administration will route dispatch, status, control, capacity, and scaling through local, Redis command queue, HTTP, gRPC, or Kubernetes providers. |
+| Shared Runtime Controller V1 | Implemented | Shared controller handles assigned dispatch, queue-first submission, global queue enqueue, Redis-backed shared queue dispatch, dispatch-time admission, queue pump/background consumption, scale-out request publication, and shared run visibility. |
+| Shared queue pump and manual drain | Implemented / validated | Queue-first runs can remain globally queued, be dispatched by a background pump, or be manually drained later through MCP/control-plane tools. |
+| Redis runtime capacity descriptors | Foundation available | Runtime instances publish Redis-backed capacity descriptors for worker count, active/free workers, max workers per execution, run slots, queue pressure, heartbeat, and future capacity-aware admission. |
+| Runtime worker capacity visibility | Implemented / validated | Runtime snapshots expose `WorkerCount`, `ActiveWorkerCount`, `AvailableWorkerCount`, `MaxLocalWorkersPerExecution`, and worker-aware `CanAcceptRun`. |
+| MCP server control-plane adapter | Foundation available | MCP tools expose shared run, shared queue, manual drain, runtime instance, runtime queue, replay, execution control, observability, and worker-capacity visibility operations. |
+| Runtime instance provider model | Implemented foundations / ongoing | Provider-based runtime administration has local and HTTP foundations, with future Redis command queue, gRPC, and Kubernetes providers. |
 | RunId vs ExecutionId separation | Implemented | Controller lifecycle identity is separated from durable DAG execution identity. |
 | Snapshot and Replay API foundations | Implemented | Terminal snapshots, replay metadata, deterministic fingerprint validation, audit-only replay, restore replay, ledger loading, and timeline loading are available. |
 | Execution-correlated decision ledger | Implemented | Durable correlated ledger events exist for execution lifecycle, run lifecycle, queue control, claims, steps, retry, recovery, policy evaluation, concurrency, execution control, human input, snapshots, storage failures, replay lifecycle, retention, compaction, and finalization. |
@@ -217,10 +225,18 @@ This project explores what an AI execution runtime should look like when reliabi
 ## Architecture at a Glance
 
 ```text
-Client / API / Controller
+Client / API / MCP / Controller
         |
         v
 Runtime Orchestration / Shared Control Plane Layer
+        |
+        +--> Shared Run Store
+        +--> Shared Queue
+        +--> Queue Pump / Manual Drain
+        +--> Dispatch-Time Admission
+        |
+        v
+Runtime Instance Provider / Local Queue Layer
         |
         v
 Pipeline Definition + DAG Resolution
@@ -255,7 +271,7 @@ Redis Hot State + Redis Lua Coordination
         +--> Shared queue claims
         |
         v
-Stateless Workers / Runtime Instances
+Runtime Instances / Local Queues / Stateless Workers
         |
         v
 Step Executors
@@ -285,7 +301,9 @@ The runtime is intentionally split into layers:
 - workers execute claimed steps
 - persistence stores large payloads and snapshots
 - replay validates deterministic reconstruction from persisted snapshots
-- shared controller coordinates run admission, shared run persistence, global queue dispatch, queue pumping, and scale-out publication
+- shared controller coordinates run admission, shared run persistence, queue-first submission, global queue dispatch, queue pumping/manual drain, dispatch-time admission, and scale-out publication
+- runtime instance providers route selected runs to local or HTTP-hosted runtime instances while preserving local queues
+- runtime capacity snapshots expose run slots, worker pressure, and worker-aware `CanAcceptRun`
 - correlated observability records runtime behavior across ledger, metrics, traces, workers, and executions
 
 ---
@@ -305,7 +323,9 @@ The project is designed around production questions that enterprise AI systems m
 | How do you pause/resume/cancel safely? | Execution control state blocks new claims and coordinates deterministic finalization. |
 | How do you control human-in-the-loop? | WaitingForInput and SubmitHumanInput are supported through durable control state. |
 | How do you keep memory/state bounded? | Retention, compaction, eviction, and payload externalization control hot state size. |
-| How do you coordinate multiple runtime instances? | Shared Redis state, Lua coordination, leases, shared run records, Redis-backed shared queue claims, queue pump/background consumption, and deterministic convergence enable coordination. |
+| How do you coordinate multiple runtime instances? | Shared Redis state, Lua coordination, leases, shared run records, Redis-backed shared queue claims, queue pump/background consumption, dispatch-time admission, provider-hosting foundations, and deterministic convergence enable coordination. |
+| How do you prevent one execution from consuming all workers? | `MaxLocalWorkersPerExecution`, active/free worker tracking, effective worker reservation, and worker-aware runtime capacity snapshots. |
+| How do you dispatch queued work without an automatic background pump? | Queue-first submit mode plus manual shared queue drain through MCP/control-plane tooling. |
 | How do you prove deterministic convergence? | Integration tests and enterprise demo scenarios validate completion, replay fingerprints, distributed execution, throttling, recovery behavior, atomic retention, compaction consistency, ledger visibility, and trace timeline visibility. |
 | How does this evolve toward AI operations and MLOps? | Runtime foundations are designed to support future AI execution control planes, governance, observability, replay, and operational workflows. |
 
@@ -333,23 +353,30 @@ The control plane currently exposes foundations for:
 - Redis-backed shared run store
 - Redis-backed shared queue
 - direct assigned-run dispatch
+- queue-first submit mode
 - global shared queue dispatch
+- dispatch-time admission
 - shared queue pump
+- manual shared queue drain
 - hosted shared queue background consumption
+- runtime worker-capacity visibility
 - scale-out request publication
 - future API, MCP, CLI, dashboard, and Kubernetes adapters
 
-The control plane is also split into two identity levels.
+The control plane separates three identity levels.
 
 ```text
+SharedRunId
+= shared controller / global queue lifecycle id
+
 RunId
-= controller / queue / background job lifecycle id
+= local runtime queue / background controller lifecycle id
 
 ExecutionId
 = authoritative durable DAG execution id
 ```
 
-This separation allows the runtime to manage queue-level work without confusing it with durable execution state.
+This separation allows the runtime to manage global queue work, local queue work, and durable execution state without mixing their lifecycles.
 
 ### ExecutionId-Level Control
 
@@ -386,6 +413,10 @@ Implemented runtime instance capabilities include:
 - list runtime instances
 - expose local queue pressure
 - expose available run slots
+- expose active worker count
+- expose available worker count
+- expose max local workers per execution
+- expose worker-aware CanAcceptRun
 - mark runtime instance as draining
 - unregister runtime instance
 
@@ -411,6 +442,7 @@ It only decides what should happen next. The shared runtime controller now appli
 Implemented shared controller capabilities include:
 
 - submit shared run
+- submit shared run in queue-first mode
 - get shared run
 - list shared runs
 - cancel shared run
@@ -419,6 +451,8 @@ Implemented shared controller capabilities include:
 - queue run globally
 - claim globally queued run
 - dispatch globally queued run
+- re-admit queued work at dispatch time
+- separate pump identity from assigned runtime identity
 - requeue failed dispatch
 - mark shared run dispatched
 - mark shared queue item dispatched
@@ -440,10 +474,18 @@ SubmitRun
       -> IAiSharedRunStore.MarkDispatchedAsync(...)
       -> SharedRun.Status = Dispatched
 
-  -> QueueGlobally
+  -> QueueGlobally / QueueFirst
       -> IAiSharedRunStore.CreateAsync(...)
       -> IAiSharedQueue.EnqueueAsync(...)
       -> SharedRun.Status = QueuedGlobally
+      -> SharedQueueItem.Status = Pending
+
+  -> SharedQueuePump / ManualDrain
+      -> IAiSharedQueue.ClaimNextAsync(...)
+      -> IAiRunAdmissionController.AdmitAsync(...)
+      -> IAiSharedRunDispatcher.DispatchAsync(...)
+      -> IAiSharedQueue.MarkDispatchedAsync(...)
+      -> IAiSharedRunStore.MarkDispatchedAsync(...)
 
   -> RequestScaleOut
       -> IAiSharedRunStore.CreateAsync(...)
@@ -526,6 +568,9 @@ The runtime includes foundations for production visibility and replayability:
 - shared runtime controller foundations
 - Redis-backed shared queue coordination
 - queue pump and background consumption
+- queue-first and manual drain visibility
+- dispatch-time admission visibility
+- runtime worker capacity visibility
 - scale-out request publication
 - snapshot persistence audit events
 - replay lifecycle ledger events
@@ -578,7 +623,11 @@ The strongest areas today are:
 - MCP server control-plane adapter documentation
 - runtime instance provider model direction
 - Redis-backed shared run store and shared queue
-- shared queue dispatcher, pump, and background service
+- shared queue dispatcher, pump, manual drain, and background service
+- queue-first submit mode
+- dispatch-time admission
+- runtime worker capacity visibility
+- local and HTTP runtime provider hosting foundations
 - scale-out request publication
 - runtime instance registry and control
 - run admission / slot decisioning
@@ -591,9 +640,8 @@ The strongest areas today are:
 Areas still evolving include:
 
 - public API/SDK polish
-- remote runtime instance dispatch
-- provider-based runtime instance administration
-- Redis-backed runtime instance registry
+- remote runtime instance dispatch hardening
+- provider-based runtime instance administration beyond local/HTTP foundations
 - automatic Kubernetes scaling adapter
 - HTTP replay/control-plane APIs and controller abstractions
 - OpenTelemetry/exporter polish for tracing and metrics
@@ -638,6 +686,9 @@ It currently includes:
 - shared runtime controller foundations
 - Redis-backed shared queue coordination
 - queue pump and background consumption
+- queue-first and manual drain visibility
+- dispatch-time admission visibility
+- runtime worker capacity visibility
 - scale-out request publication
 
 The current executable console scenarios are:
@@ -703,6 +754,7 @@ The full documentation map is available here:
 - [`docs/ai/runtime-control-plane.md`](docs/ai/runtime-control-plane.md) — Runtime control-plane foundation for replay, execution control, runtime queue control, runtime instance visibility/control, run admission, Shared Runtime Controller V1, Redis shared queue coordination, queue pump/background service, and scale-out request publication.
 - [`docs/ai/mcp-server-control-plane.md`](docs/ai/mcp-server-control-plane.md) — MCP server as a runtime control-plane adapter, including host modes, tool groups, runtime role separation, local runtime pool behavior, shared queue dispatch flow, and Kubernetes direction.
 - [`docs/ai/runtime-instance-provider-model.md`](docs/ai/runtime-instance-provider-model.md) — Provider-based runtime instance administration model for local, Redis command queue, HTTP, gRPC, and Kubernetes providers.
+- [`docs/ai/shared-queue-pump-and-worker-capacity.md`](docs/ai/shared-queue-pump-and-worker-capacity.md) — Shared queue pump, queue-first submit mode, manual drain, dispatch-time admission, pump identity separation, runtime worker capacity visibility, and `MaxLocalWorkersPerExecution`.
 - [`demo/enterprise-runtime/README.md`](demo/enterprise-runtime/README.md) — Local enterprise runtime demo using Docker Compose, Redis, MongoDB, external demo steps, controller execution, distributed workers, and scenario documentation.
 - [`demo/enterprise-runtime/scenarios/06-distributed-throttling.md`](demo/enterprise-runtime/scenarios/06-distributed-throttling.md) — Executable distributed throttling scenario documentation.
 - [`demo/enterprise-runtime/scenarios/08-deterministic-convergence.md`](demo/enterprise-runtime/scenarios/08-deterministic-convergence.md) — Deterministic convergence scenario documentation.
@@ -716,6 +768,7 @@ Focused AI runtime documentation:
 - [`docs/ai/runtime-control-plane.md`](docs/ai/runtime-control-plane.md)
 - [`docs/ai/mcp-server-control-plane.md`](docs/ai/mcp-server-control-plane.md)
 - [`docs/ai/runtime-instance-provider-model.md`](docs/ai/runtime-instance-provider-model.md)
+- [`docs/ai/shared-queue-pump-and-worker-capacity.md`](docs/ai/shared-queue-pump-and-worker-capacity.md)
 - [`docs/ai/retry-and-recovery.md`](docs/ai/retry-and-recovery.md)
 - [`docs/ai/retention-and-compaction.md`](docs/ai/retention-and-compaction.md)
 - [`docs/ai/distributed-concurrency-throttling.md`](docs/ai/distributed-concurrency-throttling.md)

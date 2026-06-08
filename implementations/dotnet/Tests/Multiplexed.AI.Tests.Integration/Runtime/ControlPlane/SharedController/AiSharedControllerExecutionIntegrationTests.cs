@@ -586,6 +586,7 @@ namespace Multiplexed.AI.Tests.Integration.ControlPlane.SharedController
                     IdleDelay = scenario.WorkerIdleDelay,
                     MaxCycles = scenario.MaxWorkerCycles,
                     IgnoreConcurrencyConflicts = true
+
                 },
                 PipelineBackgroundController = new AiRuntimePipelineBackgroundControllerOptions
                 {
@@ -593,6 +594,10 @@ namespace Multiplexed.AI.Tests.Integration.ControlPlane.SharedController
                     QueueCapacity = 8,
                     RejectEnqueueWhenStopped = false,
                     StopOnFirstFailure = false,
+                    // Keep this scenario validating distributed worker participation.
+                    // Without this, the default MaxLocalWorkersPerExecution may cap participation
+                    // below scenario.MinimumExpectedParticipatingWorkers.
+                    MaxLocalWorkersPerExecution = 5,
                     Distributed = new AiRuntimeDistributedExecutionOptions
                     {
                         Enabled = true,

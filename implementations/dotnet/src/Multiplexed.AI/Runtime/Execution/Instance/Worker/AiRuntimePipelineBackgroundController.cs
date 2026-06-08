@@ -87,6 +87,8 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
         private string? _queuePauseRequestedBy;
         private DateTime? _queuePausedAtUtc;
 
+        private int _activeWorkerCount;
+
         /// <summary>
         /// Initializes a new instance of the <see cref="AiRuntimePipelineBackgroundController"/> class.
         /// </summary>
@@ -773,24 +775,56 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
             var queuedRunCount = _queuedRuns.Count;
             var runningRunCount = _runningRuns.Count;
             var activeRunCount = _activeRuns.Count;
-            var availableRunSlots = Math.Max(0, _options.MaxConcurrentRuns - runningRunCount);
 
-            return Task.FromResult(new AiRuntimePipelineQueueState
-            {
-                RuntimeInstanceId = _runtimeInstanceIdentity.RuntimeInstanceId,
-                IsPaused = _queuePaused,
-                QueuedRunCount = queuedRunCount,
-                RunningRunCount = runningRunCount,
-                ActiveRunCount = activeRunCount,
-                QueueCapacity = _options.QueueCapacity,
-                MaxConcurrentRuns = _options.MaxConcurrentRuns,
-                AvailableRunSlots = availableRunSlots,
-                CanAcceptRun =
-                    !_queuePaused &&
-                    queuedRunCount < _options.QueueCapacity &&
-                    availableRunSlots > 0,
-                SnapshotAtUtc = DateTimeOffset.UtcNow
-            });
+            var availableRunSlots =
+                Math.Max(
+                    0,
+                    _options.MaxConcurrentRuns - runningRunCount);
+
+            var workerCount =
+                _options.Distributed.Enabled
+                    ? Math.Max(
+                        1,
+                        _options.Distributed.WorkerCount)
+                    : 1;
+
+            var activeWorkerCount =
+                Math.Max(
+                    0,
+                    Volatile.Read(ref _activeWorkerCount));
+
+            var availableWorkerCount =
+                Math.Max(
+                    0,
+                    workerCount - activeWorkerCount);
+
+            var canAcceptRun =
+                !_queuePaused &&
+                queuedRunCount < _options.QueueCapacity &&
+                availableRunSlots > 0 &&
+                availableWorkerCount > 0;
+
+            return Task.FromResult(
+                new AiRuntimePipelineQueueState
+                {
+                    RuntimeInstanceId = _runtimeInstanceIdentity.RuntimeInstanceId,
+                    IsPaused = _queuePaused,
+                    QueuedRunCount = queuedRunCount,
+                    RunningRunCount = runningRunCount,
+                    ActiveRunCount = activeRunCount,
+                    QueueCapacity = _options.QueueCapacity,
+                    MaxConcurrentRuns = _options.MaxConcurrentRuns,
+                    AvailableRunSlots = availableRunSlots,
+
+                    WorkerCount = workerCount,
+                    ActiveWorkerCount = activeWorkerCount,
+                    AvailableWorkerCount = availableWorkerCount,
+                    MaxLocalWorkersPerExecution = _options.MaxLocalWorkersPerExecution,
+
+                    CanAcceptRun = canAcceptRun,
+
+                    SnapshotAtUtc = DateTimeOffset.UtcNow
+                });
         }
 
         /// <summary>
@@ -903,7 +937,9 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
                         ["execution.id"] = created.ExecutionId,
                         ["pipeline.name"] = request.PipelineName,
                         ["distributed.enabled"] = _options.Distributed.Enabled.ToString(),
-                        ["distributed.worker.count"] = _options.Distributed.WorkerCount.ToString()
+                        ["distributed.worker.count"] = _options.Distributed.WorkerCount.ToString(),
+                        ["max.local.workers.per.execution"] = _options.MaxLocalWorkersPerExecution.ToString(),
+                        ["effective.worker.count.per.execution"] = ResolveMaxWorkerCountForExecution().ToString()
                     },
                     cancellationToken)
                 .ConfigureAwait(false);
@@ -1005,9 +1041,7 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
 
             var estimatedReadyStepCount = CountRootSteps(definition);
             var estimatedRemainingStepCount = definition.Steps.Count;
-            var estimatedActiveWorkerCount = _options.Distributed.Enabled
-                ? Math.Max(1, _options.Distributed.WorkerCount)
-                : 1;
+            var estimatedActiveWorkerCount = ResolveMaxWorkerCountForExecution();
 
             await _assistanceCandidateStore.UpsertAsync(
                     new AiExecutionAssistanceCandidate
@@ -1070,6 +1104,32 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
         }
 
         /// <summary>
+        /// Resolves the maximum number of local workers that may be assigned to one execution.
+        /// </summary>
+        /// <returns>The maximum worker count for one execution.</returns>
+        private int ResolveMaxWorkerCountForExecution()
+        {
+            if (!_options.Distributed.Enabled)
+            {
+                return 1;
+            }
+
+            var configuredWorkerCount =
+                Math.Max(
+                    1,
+                    _options.Distributed.WorkerCount);
+
+            var maxLocalWorkersPerExecution =
+                Math.Max(
+                    1,
+                    _options.MaxLocalWorkersPerExecution);
+
+            return Math.Min(
+                configuredWorkerCount,
+                maxLocalWorkersPerExecution);
+        }
+
+        /// <summary>
         /// Counts root steps in a pipeline definition.
         /// </summary>
         /// <param name="definition">The pipeline definition.</param>
@@ -1125,20 +1185,89 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(executionId);
 
-            if (!_options.Distributed.Enabled)
+            var workerCount =
+                await ReserveWorkersForExecutionAsync(
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+            try
             {
-                return await _worker.RunExecutionAsync(
+                if (!_options.Distributed.Enabled || workerCount == 1)
+                {
+                    return await _worker.RunExecutionAsync(
+                        executionId,
+                        cancellationToken).ConfigureAwait(false);
+                }
+
+                var workers = _workerFactory.CreateWorkers(
+                    workerCount);
+
+                return await _workerGroup.RunExecutionAsync(
                     executionId,
+                    workers,
                     cancellationToken).ConfigureAwait(false);
             }
+            finally
+            {
+                Interlocked.Add(
+                    ref _activeWorkerCount,
+                    -workerCount);
+            }
+        }
 
-            var workers = _workerFactory.CreateWorkers(
-                _options.Distributed.WorkerCount);
+        private async Task<int> ReserveWorkersForExecutionAsync(
+            CancellationToken cancellationToken)
+        {
+            var totalWorkerCount =
+                _options.Distributed.Enabled
+                    ? Math.Max(1, _options.Distributed.WorkerCount)
+                    : 1;
 
-            return await _workerGroup.RunExecutionAsync(
-                executionId,
-                workers,
-                cancellationToken).ConfigureAwait(false);
+            var maxWorkersForExecution =
+                _options.Distributed.Enabled
+                    ? Math.Max(1, _options.MaxLocalWorkersPerExecution)
+                    : 1;
+
+            while (true)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                var activeWorkerCount =
+                    Math.Max(
+                        0,
+                        Volatile.Read(ref _activeWorkerCount));
+
+                var availableWorkerCount =
+                    Math.Max(
+                        0,
+                        totalWorkerCount - activeWorkerCount);
+
+                if (availableWorkerCount <= 0)
+                {
+                    await Task.Delay(
+                            TimeSpan.FromMilliseconds(25),
+                            cancellationToken)
+                        .ConfigureAwait(false);
+
+                    continue;
+                }
+
+                var workerCount =
+                    Math.Min(
+                        maxWorkersForExecution,
+                        availableWorkerCount);
+
+                var updatedWorkerCount =
+                    activeWorkerCount + workerCount;
+
+                if (Interlocked.CompareExchange(
+                        ref _activeWorkerCount,
+                        updatedWorkerCount,
+                        activeWorkerCount) == activeWorkerCount)
+                {
+                    return workerCount;
+                }
+            }
         }
 
         /// <summary>

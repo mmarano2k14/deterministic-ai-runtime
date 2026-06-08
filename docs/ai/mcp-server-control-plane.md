@@ -4,6 +4,8 @@ Status: Active foundation.
 
 This document describes how the **MCP Server** acts as a concrete runtime control-plane adapter for the Deterministic AI Runtime.
 
+It also reflects the current shared queue pump, queue-first submit mode, dispatch-time admission, runtime instance provider hosting, and worker-capacity visibility work.
+
 The MCP server does not replace the runtime engine.
 
 It does not own DAG execution.
@@ -29,9 +31,13 @@ Its purpose is to expose operational runtime commands such as:
 
 - submit shared runs
 - inspect shared runs
-- drain shared queues
+- submit queue-first runs
+- drain shared queues manually
+- run or disable the background shared queue pump
 - list runtime instances
 - inspect runtime capacity
+- inspect worker capacity
+- inspect local queue pressure
 - control runtime queues
 - pause, resume, or cancel executions
 - replay executions
@@ -185,6 +191,45 @@ Each local runtime instance has its own:
 - hosted pipeline background controller
 
 The control-plane host remains separate from executable runtime instances.
+
+---
+
+## ControlPlaneWithHttpRuntimeInstances Mode
+
+`ControlPlaneWithHttpRuntimeInstances` means the MCP host acts as a control-plane process while runtime instances are exposed through HTTP provider metadata.
+
+```text
+MCP Host
+    Role = ControlPlane
+    Hosts MCP tools = true
+    Executes runs = false
+    Dispatches through HTTP runtime provider metadata = true
+
+HTTP Runtime Instance Host
+    Role = Runtime
+    Owns local queue = true
+    Owns workers = true
+    Receives dispatch through HTTP provider path
+```
+
+This mode validates the provider-based hosting direction without requiring Kubernetes.
+
+It is useful for proving:
+
+- control plane and runtime instance can be separated
+- shared queue pump can dispatch to a remote-style runtime instance
+- queue-first runs can remain queued until a background pump or manual drain dispatches them
+- provider metadata can identify the runtime instance transport
+- MCP tools can control and observe the distributed shape
+
+Example provider metadata:
+
+```text
+provider.name = http
+transport.name = http
+transport.endpoint = http://localhost
+runtime.instance.id = runtime-http-1
+```
 
 ---
 
@@ -352,6 +397,71 @@ The local runtime queue remains inside the runtime instance.
 
 ---
 
+## Queue-First Submit Mode
+
+The MCP control plane can submit runs in queue-first mode.
+
+In queue-first mode, submission does not immediately dispatch to a runtime instance.
+
+```text
+MCP shared run submit
+    ↓
+IAiSharedRuntimeController.SubmitRunAsync
+    ↓
+SharedRun.Status = QueuedGlobally
+    ↓
+SharedQueueItem.Status = Pending
+    ↓
+Wait for background pump or manual drain
+```
+
+This mode is configured through the shared runtime controller:
+
+```text
+AiSharedRuntimeController:SubmitMode = QueueFirst
+```
+
+Queue-first mode is useful for:
+
+- Kubernetes-style queue consumption
+- manual operator-controlled drain
+- MCP demo flows
+- validating pump disabled behavior
+- proving that shared queue persistence works independently from immediate dispatch
+
+---
+
+## Manual Drain and Background Pump Control
+
+The MCP server can expose shared queue drain through MCP tooling.
+
+Manual drain can be enabled while the automatic background pump is disabled.
+
+Recommended controlled-drain configuration:
+
+```text
+AiSharedQueuePump:Enabled = true
+AiMcpHost:EnableSharedQueuePump = false
+AiSharedQueueBackgroundService:Enabled = false
+```
+
+This means:
+
+```text
+Manual queue.drain works.
+Automatic background pump does not run.
+Queued shared runs remain queued until manually drained.
+```
+
+This is important for tests and demos because it proves:
+
+- queue-first submit persists work
+- pump disabled does not break the runtime
+- manual drain can dispatch later
+- local and HTTP runtime providers can both complete runs after manual drain
+
+---
+
 ## Shared Queue and Runtime Dispatch
 
 The shared queue handles work that cannot immediately be assigned or needs global coordination.
@@ -387,9 +497,75 @@ LocalRunId
 ExecutionId when execution starts
 ```
 
-The dispatch layer is currently local/in-memory for local pool mode.
+Current queue-first dispatch flow:
 
-The next architecture step is provider-based dispatch.
+```text
+MCP run.submit_many_runs
+    ↓
+IAiSharedRuntimeController.SubmitAsync
+    ↓
+SubmitMode = QueueFirst
+    ↓
+SharedRun.Status = QueuedGlobally
+    ↓
+SharedQueueItem.Status = Pending
+    ↓
+MCP queue.drain or background pump
+    ↓
+IAiSharedQueueDispatcher
+    ↓
+dispatch-time admission
+    ↓
+AssignedRuntimeInstanceId selected
+    ↓
+IAiSharedRunDispatcher
+    ↓
+selected runtime instance local queue
+    ↓
+LocalRunId
+    ↓
+ExecutionId when execution starts
+```
+
+The dispatch layer now supports provider-oriented local and HTTP runtime instance scenarios.
+
+Provider-based dispatch remains the direction for Redis command queues, gRPC, and Kubernetes-native transports.
+
+---
+
+## Pump Identity vs Assigned Runtime Identity
+
+The shared queue pump uses explicit pump identity:
+
+```text
+PumpRuntimeInstanceId
+PumpWorkerId
+```
+
+These fields identify the runtime instance and worker executing the pump cycle.
+
+They do not necessarily identify the runtime instance selected for dispatch.
+
+```text
+PumpRuntimeInstanceId
+    = who drains the shared queue
+
+AssignedRuntimeInstanceId
+    = who receives the shared run
+```
+
+Dispatch-time admission chooses the assigned runtime instance.
+
+This separation allows:
+
+- MCP control-plane host to drain shared work
+- runtime instance pumps to drain shared work
+- HTTP/runtime provider dispatch to target a different runtime instance
+- future Kubernetes control-plane pods to dispatch to runtime pods
+
+Tests that expect pump-local dispatch should explicitly configure admission so the assigned runtime instance equals the pump runtime instance.
+
+Production code should not assume `PumpRuntimeInstanceId == AssignedRuntimeInstanceId`.
 
 ---
 
@@ -404,6 +580,9 @@ Capacity descriptors allow the control plane to know:
 - which can accept runs
 - how many run slots are available
 - how many workers exist
+- how many workers are active
+- how many workers are available
+- how many workers may be used by one execution
 - how much queue pressure exists
 - whether a queue is paused
 - when the last heartbeat was published
@@ -413,12 +592,15 @@ Example:
 ```text
 mcp-runtime-1
     WorkerCount = 10
+    ActiveWorkerCount = 0
+    AvailableWorkerCount = 10
+    MaxLocalWorkersPerExecution = 4
     MaxRunSlots = 5
     AvailableRunSlots = 5
     CanAcceptRun = true
 ```
 
-Capacity descriptors are the foundation for capacity-aware admission and future provider-based dispatch.
+Capacity descriptors are the foundation for capacity-aware admission, MCP visibility, dashboard visibility, future autoscaling, and provider-based dispatch.
 
 ---
 
@@ -481,6 +663,42 @@ Typical responsibilities:
 - unregister or hide stopped instances when supported
 
 These tools are the main visibility layer for local pools and future Kubernetes pods.
+
+---
+
+## Worker Capacity Visibility in Runtime Instance Tools
+
+Runtime instance tools should expose worker capacity fields from `AiRuntimeInstanceSnapshot`.
+
+Important fields:
+
+```text
+WorkerCount
+ActiveWorkerCount
+AvailableWorkerCount
+MaxLocalWorkersPerExecution
+QueuedRunCount
+RunningRunCount
+ActiveRunCount
+QueueCapacity
+MaxConcurrentRuns
+AvailableRunSlots
+IsQueuePaused
+CanAcceptRun
+```
+
+These fields are used to show whether a runtime instance is idle, saturated, queue-limited, worker-limited, or paused.
+
+`CanAcceptRun` should be interpreted as a combined readiness signal.
+
+```text
+CanAcceptRun = queue not paused
+            + queue capacity available
+            + run slot available
+            + worker available
+```
+
+This is especially useful for MCP demos before a dashboard UI exists.
 
 ---
 
@@ -610,13 +828,15 @@ Despite the name `RemoteAiSharedRunDispatcher`, in local pool mode the dispatch 
 
 This is expected for the current local control-plane demo.
 
-The next step is to make runtime dispatch provider-based.
+The current provider-based hosting work also validates HTTP runtime instance scenarios.
+
+The next step is to continue hardening provider routing, provider capabilities, and remote transports.
 
 ---
 
 ## Provider-Based Dispatch Direction
 
-Dispatch should become provider-based.
+Dispatch is moving toward a provider-based model.
 
 The shared controller should not need to know whether a runtime instance is:
 
@@ -715,12 +935,17 @@ Current MCP integration tests validate:
 - MCP host startup
 - control-plane role registration
 - local runtime instance pool startup
+- HTTP runtime instance provider flow
 - runtime instance role separation
 - runtime capacity descriptor publication
+- runtime worker capacity visibility
 - Redis registry usage
 - Redis capacity store usage
 - shared run submission
+- queue-first shared run submission
 - assigned runtime dispatch
+- shared queue background pump dispatch
+- manual queue drain with background pump disabled
 - local queue enqueue
 - local run status polling
 - execution replay
@@ -739,16 +964,25 @@ mcp-control-plane
 mcp-runtime-1
     Role = Runtime
     WorkerCount = 10
+    ActiveWorkerCount = 0
+    AvailableWorkerCount = 10
+    MaxLocalWorkersPerExecution = 4
     MaxRunSlots = 5
 
 mcp-runtime-2
     Role = Runtime
     WorkerCount = 10
+    ActiveWorkerCount = 0
+    AvailableWorkerCount = 10
+    MaxLocalWorkersPerExecution = 4
     MaxRunSlots = 5
 
 mcp-runtime-3
     Role = Runtime
     WorkerCount = 10
+    ActiveWorkerCount = 0
+    AvailableWorkerCount = 10
+    MaxLocalWorkersPerExecution = 4
     MaxRunSlots = 5
 ```
 
@@ -758,37 +992,37 @@ mcp-runtime-3
 
 The current MCP server/control-plane adapter does not yet provide:
 
-- provider-based runtime dispatch
 - cross-pod dispatch through Redis command queues
-- HTTP/gRPC runtime dispatch
+- gRPC runtime dispatch
 - Kubernetes scale-out implementation
 - distributed shared controller leader election
 - production dashboard UI
 - OpenTelemetry exporter polish
 - production security model for MCP access
 - tenant-aware operational authorization
-- provider capability negotiation
+- full provider capability negotiation
 - Redis/Lua slot reservation for multi-control-plane dispatch safety
+- atomic admission capacity reservation
 
 ---
 
 ## Next Steps
 
-The next implementation step is provider-based runtime instance administration.
+The next implementation step is to continue hardening provider-based runtime instance administration.
 
-Planned first layer:
+Current first layer direction:
 
 ```text
-AiRuntimeInstanceProviderAttribute
 IAiRuntimeInstanceProvider
 IAiRuntimeInstanceDispatchProvider
 IAiRuntimeInstanceStatusProvider
 IAiRuntimeInstanceControlProvider
 IAiRuntimeInstanceProviderRouter
 LocalAiRuntimeInstanceProvider
+HTTP runtime instance provider foundation
 ```
 
-The first provider should preserve existing behavior:
+The local provider preserves existing behavior:
 
 ```text
 Local provider
@@ -797,7 +1031,16 @@ Local provider
     enqueues into existing local runtime queue
 ```
 
-After that, future providers can be added without changing the shared controller architecture.
+Next provider targets:
+
+```text
+Redis command queue provider
+gRPC provider
+Kubernetes metadata provider
+Kubernetes scaling provider
+```
+
+Future providers should be added without changing the shared controller architecture.
 
 ---
 
@@ -811,9 +1054,12 @@ After that, future providers can be added without changing the shared controller
 | Admission Controller | Decides what should happen to a submitted run. |
 | Runtime Instance Registry | Tracks visible runtime instances and roles. |
 | Runtime Capacity Store | Tracks real runtime capacity descriptors. |
+| Shared Queue Pump | Claims shared queue work and triggers dispatch-time admission. |
+| Shared Queue Dispatcher | Re-admits queued runs, dispatches to selected runtime instances, and updates shared queue/run state. |
 | Provider Router | Resolves how to contact a selected runtime instance. |
 | Provider | Performs transport-specific operations such as dispatch, status, control, capacity, or scaling. |
 | Runtime Queue Control Plane | Exposes one runtime instance local queue. |
+| Runtime Instance Snapshot | Exposes role, heartbeat, queue pressure, run slots, and worker capacity. |
 | Local Runtime Queue | Owned by one runtime instance and unchanged by shared queue. |
 | Workers | Execute DAG steps after local queue starts an execution. |
 | Replay Control Plane | Exposes replay and audit operations. |
@@ -825,6 +1071,8 @@ After that, future providers can be added without changing the shared controller
 
 - [Runtime Control Plane](runtime-control-plane.md)
 - [Runtime Queue Control](runtime-queue-control.md)
+- [Shared Runtime Controller / Shared Queue Usage](shared-controller-usage.md)
+- [Runtime Instance Provider Model](runtime-instance-provider-model.md)
 - [Distributed Execution](distributed-execution.md)
 - [Replay and Audit](replay-and-audit.md)
 - [Observability and Tracing](observability-tracing.md)

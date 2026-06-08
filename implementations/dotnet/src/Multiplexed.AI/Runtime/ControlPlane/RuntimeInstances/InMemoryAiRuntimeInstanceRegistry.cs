@@ -42,6 +42,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances
             int runningRunCount,
             int activeRunCount,
             int? availableRunSlots,
+            int? activeWorkerCount,
+            int? availableWorkerCount,
+            int? maxLocalWorkersPerExecution,
             bool isQueuePaused,
             bool canAcceptRun,
             AiRuntimeInstanceStatus status,
@@ -72,6 +75,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances
                 runningRunCount,
                 activeRunCount,
                 effectiveAvailableRunSlots,
+                activeWorkerCount,
+                availableWorkerCount,
+                maxLocalWorkersPerExecution,
                 isQueuePaused,
                 effectiveCanAcceptRun,
                 status,
@@ -182,6 +188,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances
                 int? queueCapacity,
                 int? maxConcurrentRuns,
                 int? availableRunSlots,
+                int? activeWorkerCount,
+                int? availableWorkerCount,
+                int? maxLocalWorkersPerExecution,
                 bool isQueuePaused,
                 bool canAcceptRun,
                 DateTimeOffset registeredAtUtc,
@@ -204,6 +213,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances
                 QueueCapacity = queueCapacity;
                 MaxConcurrentRuns = maxConcurrentRuns;
                 AvailableRunSlots = availableRunSlots;
+                ActiveWorkerCount = activeWorkerCount;
+                AvailableWorkerCount = availableWorkerCount;
+                MaxLocalWorkersPerExecution = maxLocalWorkersPerExecution;
                 IsQueuePaused = isQueuePaused;
                 CanAcceptRun = canAcceptRun;
                 RegisteredAtUtc = registeredAtUtc;
@@ -242,6 +254,12 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances
 
             public int? AvailableRunSlots { get; }
 
+            public int? ActiveWorkerCount { get; }
+
+            public int? AvailableWorkerCount { get; }
+
+            public int? MaxLocalWorkersPerExecution { get; }
+
             public bool IsQueuePaused { get; }
 
             public bool CanAcceptRun { get; }
@@ -279,6 +297,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances
                     availableRunSlots: canAcceptRun
                         ? registration.MaxConcurrentRuns
                         : 0,
+                    activeWorkerCount: 0,
+                    availableWorkerCount: registration.Role == AiRuntimeInstanceRole.Runtime
+                        ? registration.WorkerCount
+                        : 0,
+                    maxLocalWorkersPerExecution: null,
                     isQueuePaused: false,
                     canAcceptRun: canAcceptRun,
                     now,
@@ -315,6 +338,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances
                     registration.Role == AiRuntimeInstanceRole.Runtime
                         ? AvailableRunSlots
                         : 0,
+                    ActiveWorkerCount,
+                    registration.Role == AiRuntimeInstanceRole.Runtime
+                        ? AvailableWorkerCount
+                        : 0,
+                    MaxLocalWorkersPerExecution,
                     IsQueuePaused,
                     canAcceptRun,
                     RegisteredAtUtc,
@@ -328,6 +356,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances
                 int runningRunCount,
                 int activeRunCount,
                 int? availableRunSlots,
+                int? activeWorkerCount,
+                int? availableWorkerCount,
+                int? maxLocalWorkersPerExecution,
                 bool isQueuePaused,
                 bool canAcceptRun,
                 AiRuntimeInstanceStatus status,
@@ -349,6 +380,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances
                     QueueCapacity,
                     MaxConcurrentRuns,
                     availableRunSlots,
+                    activeWorkerCount,
+                    availableWorkerCount,
+                    maxLocalWorkersPerExecution,
                     isQueuePaused,
                     canAcceptRun,
                     RegisteredAtUtc,
@@ -377,6 +411,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances
                     QueueCapacity,
                     MaxConcurrentRuns,
                     AvailableRunSlots,
+                    ActiveWorkerCount,
+                    AvailableWorkerCount,
+                    MaxLocalWorkersPerExecution,
                     IsQueuePaused,
                     CanAcceptRun,
                     RegisteredAtUtc,
@@ -405,6 +442,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances
                     QueueCapacity = QueueCapacity,
                     MaxConcurrentRuns = MaxConcurrentRuns,
                     AvailableRunSlots = AvailableRunSlots,
+                    ActiveWorkerCount = ActiveWorkerCount,
+                    AvailableWorkerCount = AvailableWorkerCount,
+                    MaxLocalWorkersPerExecution = MaxLocalWorkersPerExecution,
                     IsQueuePaused = IsQueuePaused,
                     CanAcceptRun = CanAcceptRun,
                     RegisteredAtUtc = RegisteredAtUtc,

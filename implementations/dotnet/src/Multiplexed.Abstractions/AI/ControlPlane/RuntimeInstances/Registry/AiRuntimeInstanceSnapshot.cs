@@ -117,5 +117,20 @@
             new Dictionary<string, string>();
 
         public AiRuntimeInstanceRole Role { get; set; } = AiRuntimeInstanceRole.Runtime;
+
+        /// <summary>
+        /// Number of local workers currently assigned to active executions.
+        /// </summary>
+        public int? ActiveWorkerCount { get; init; }
+
+        /// <summary>
+        /// Number of local workers currently available on this runtime instance.
+        /// </summary>
+        public int? AvailableWorkerCount { get; init; }
+
+        /// <summary>
+        /// Maximum number of local workers allowed per execution.
+        /// </summary>
+        public int? MaxLocalWorkersPerExecution { get; init; }
     }
 }

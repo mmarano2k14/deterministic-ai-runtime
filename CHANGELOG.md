@@ -6,6 +6,295 @@ This project follows a deterministic runtime and observability model designed fo
 
 ---
 
+## [1.0.6.0] - 2026-06-08 - Shared Queue Pump, QueueFirst Dispatch, Runtime Worker Capacity Visibility
+
+### Added
+
+#### Shared Runtime Controller Submit Mode
+
+- Added support for a queue-first shared runtime controller submission flow.
+- Added `AiSharedRuntimeController:SubmitMode` configuration support.
+- Added support for submitting shared runs directly into the shared/global queue instead of immediate dispatch.
+- Added support for keeping submitted shared runs in `QueuedGlobally` status until a background pump or manual drain dispatches them.
+- Added support for validating queue-first behavior with the background pump disabled.
+- Added support for validating manual queue drain after a delay while the background pump remains disabled.
+
+#### Shared Queue Pump and Manual Drain
+
+- Added and validated manual shared queue drain through MCP tooling.
+- Added tests proving that when the background pump is disabled:
+  - submitted queue-first runs remain in the shared queue,
+  - runs are not dispatched automatically,
+  - a manual drain can dispatch them later,
+  - local and HTTP runtime instance providers both support the flow.
+- Added test coverage for local and HTTP queue-first submission with pump disabled, manual drain after waiting 10 seconds, dispatch after manual drain, and completion.
+- Confirmed that `AiSharedQueuePump:Enabled=true` allows manual drain while `AiMcpHost:EnableSharedQueuePump=false` and `AiSharedQueueBackgroundService:Enabled=false` prevent automatic background pumping.
+- Validated that the demo path is not impacted when the background pump is disabled.
+
+#### Pump Runtime Identity Separation
+
+- Clarified shared queue pump request identity with `PumpRuntimeInstanceId` and `PumpWorkerId`.
+- Separated pump identity from the assigned runtime target identity.
+- Ensured the pump runtime instance id represents the runtime instance executing the pump cycle, not necessarily the runtime instance selected for dispatch.
+- Updated MCP control-plane background service to send `PumpRuntimeInstanceId` and `PumpWorkerId` into `AiSharedQueuePumpRequest`.
+
+#### Shared Queue Dispatcher Admission Re-Evaluation
+
+- Updated shared queue dispatch flow so queued items are re-admitted at drain/dispatch time.
+- Ensured the dispatcher no longer blindly dispatches to the pump runtime instance.
+- Added support for admission selecting the assigned runtime instance during shared queue drain.
+- Preserved the ability for tests to inject fake admission controllers for deterministic dispatch behavior.
+- Updated shared queue dispatcher unit tests to provide `FakeRunAdmissionController`.
+
+#### Fake Admission Controller
+
+- Added reusable `FakeRunAdmissionController` test fixture.
+- Added optional constructor argument `assignedRuntimeInstanceId`.
+- Preserved backward compatibility by defaulting to requested preferred runtime instance id when available, otherwise `runtime-1`.
+- Enabled tests to assign dispatch targets explicitly without breaking existing tests.
+- Used the fake admission controller to restore deterministic behavior in queue dispatcher and multi-instance shared queue tests.
+
+---
+
+### Added MCP and Runtime Tests
+
+#### QueueFirst and Manual Drain Tests
+
+- Added MCP tests for local runtime queue-first mode with pump disabled.
+- Added MCP tests for HTTP runtime queue-first mode with pump disabled.
+- Added tests that submit queue-first runs, verify they remain queued, wait 10 seconds, verify they are still queued, manually drain the shared queue, verify dispatch, and verify completion.
+
+#### Background Pump Tests
+
+- Validated local background pump dispatch and completion.
+- Validated HTTP background pump dispatch and completion.
+- Fixed failing tests where queue items remained `QueuedGlobally` because the pump was not correctly active or not using the right target dispatch path.
+- Confirmed queue-first runs can be dispatched by the background pump and can also be dispatched manually when the background pump is disabled.
+
+#### Shared Queue Multi-Instance Dispatch Tests
+
+- Updated multi-instance shared queue tests after admission re-evaluation was introduced.
+- Fixed tests where all dispatches went to one runtime instance because the fake admission controller returned the same default runtime instance.
+- Updated multi-instance pump tests to pass the current pump runtime instance id into `FakeRunAdmissionController`.
+- Restored expected multi-instance participation by assigning each pump to its matching runtime target.
+- Preserved the core test goal: shared queue can be consumed by multiple runtime pumps, no double dispatch occurs, and multiple runtime instances participate.
+
+#### Heavy Real Execution Shared Queue Tests
+
+- Updated heavy multi-instance real execution tests so the shared queue dispatcher uses the current runtime instance id as the fake admission target.
+- Fixed pump loops that did not finish because admission assigned to a non-existing/default runtime id such as `runtime-1` while real test instances were named `runtime-instance-1`, `runtime-instance-2`, etc.
+- Updated `RunRuntimeInstancePumpUntilEmptyAsync` to create `FakeRunAdmissionController` with `assignedRuntimeInstanceId: runtimeInstance.RuntimeInstanceId`.
+- Ensured remote dispatch can resolve the correct `LocalAiSharedRuntimeInstance`.
+
+---
+
+### Added Runtime Worker Capacity Control
+
+#### MaxLocalWorkersPerExecution
+
+- Added local runtime worker capacity policy `MaxLocalWorkersPerExecution`.
+- Added the option to `AiRuntimePipelineBackgroundControllerOptions`.
+- Defined the option as a runtime-local policy controlling how many local workers from one runtime instance may work on one execution concurrently.
+- Kept it separate from `AiExecutionAssistanceOptions`.
+- Clarified that `AiExecutionAssistanceOptions` controls cross-instance helper behavior, while `AiRuntimePipelineBackgroundControllerOptions.MaxLocalWorkersPerExecution` controls local worker allocation per execution.
+
+#### Worker Reservation Logic
+
+- Added real local worker reservation logic in `AiRuntimePipelineBackgroundController`.
+- Added `_activeWorkerCount` tracking.
+- Added async worker reservation method that waits when no local workers are available instead of failing the run.
+- Ensured worker count is reserved before execution processing starts.
+- Ensured reserved worker count is released in `finally`.
+- Supported both non-distributed single worker execution and distributed worker group execution.
+- Ensured effective worker count per execution is the minimum of configured distributed worker count, max local workers per execution, and available worker count.
+- Prevented new executions from reserving more workers than are available.
+
+#### Runtime Queue State Worker Visibility
+
+- Extended `AiRuntimePipelineQueueState` with `WorkerCount`, `ActiveWorkerCount`, `AvailableWorkerCount`, and `MaxLocalWorkersPerExecution`.
+- Updated `GetQueueStateAsync()` to expose actual local worker capacity.
+- Updated `CanAcceptRun` to also consider available workers.
+- Confirmed the distinction between run-level capacity through `AvailableRunSlots` and worker-level capacity through `AvailableWorkerCount`.
+
+#### Ledger and Assistance Candidate Consistency
+
+- Updated runtime run ledger metadata to include `max.local.workers.per.execution` and `effective.worker.count.per.execution`.
+- Updated `RegisterExecutionAssistanceCandidateAsync` so `EstimatedActiveWorkerCount` uses the effective worker cap instead of raw `Distributed.WorkerCount`.
+- Ensured execution assistance candidates reflect the actual local worker policy.
+
+---
+
+### Added Runtime Instance Capacity Visibility
+
+#### Runtime Instance Snapshot
+
+- Extended `AiRuntimeInstanceSnapshot` with `ActiveWorkerCount`, `AvailableWorkerCount`, and `MaxLocalWorkersPerExecution`.
+- Enabled runtime instance listing through MCP/control-plane to expose total workers, active workers, free workers, max workers per execution, run slot availability, queue paused state, and `CanAcceptRun`.
+
+#### Runtime Instance Entry
+
+- Updated `RuntimeInstanceEntry` model with `ActiveWorkerCount`, `AvailableWorkerCount`, and `MaxLocalWorkersPerExecution`.
+- Added XML documentation.
+- Updated `Create`, `UpdateRegistration`, `UpdateHeartbeat`, `WithStatus`, and `ToSnapshot`.
+- Ensured worker capacity fields persist through registry entries and project correctly into snapshots.
+
+#### Runtime Instance Registry Interface
+
+- Updated `IAiRuntimeInstanceRegistry.HeartbeatAsync(...)` signature to include `activeWorkerCount`, `availableWorkerCount`, and `maxLocalWorkersPerExecution`.
+- Updated XML documentation for heartbeat worker visibility.
+
+#### In-Memory Runtime Instance Registry
+
+- Updated `InMemoryAiRuntimeInstanceRegistry` to support the new heartbeat signature.
+- Updated internal runtime instance entry model to track worker capacity.
+- Updated snapshot projection to include worker capacity fields.
+- Ensured local/test registries preserve the new worker capacity data.
+
+#### Redis Runtime Instance Registry
+
+- Updated `RedisAiRuntimeInstanceRegistry` to support the new heartbeat signature.
+- Updated heartbeat flow to pass active worker count, available worker count, and max local workers per execution.
+- Updated Redis persisted `RuntimeInstanceEntry` model to store worker capacity fields.
+- Updated Redis snapshot projection to expose worker capacity fields.
+- Preserved existing Redis registry behavior while extending visibility data.
+
+#### Runtime Instance Registration Hosted Service
+
+- Updated `AiRuntimeInstanceRegistrationHostedService` heartbeat publishing.
+- Updated heartbeat calls to pass worker capacity values from `AiRuntimePipelineQueueState`.
+- Fixed capacity descriptor publishing where worker values were previously hardcoded as active workers `0` and available workers equal to total workers.
+- Updated descriptor publishing to use real queue state values: `queueState.WorkerCount`, `queueState.ActiveWorkerCount`, `queueState.AvailableWorkerCount`, and `queueState.MaxLocalWorkersPerExecution`.
+- Mapped `MaxLocalWorkersPerExecution` into `MaxWorkersPerRun`.
+- Preserved safe shutdown logging improvements to avoid disposed logger failures.
+
+#### Runtime Instance Control Plane
+
+- Updated `AiRuntimeInstanceControlPlane.HeartbeatInnerAsync(...)` to pass worker capacity fields to the registry.
+- Required `AiRuntimeInstanceControlPlaneRequest` to expose `ActiveWorkerCount`, `AvailableWorkerCount`, and `MaxLocalWorkersPerExecution`.
+- Preserved existing control-plane register/list/get/drain/unregister behavior.
+
+---
+
+### Added Worker Saturation Test Helpers
+
+- Added MCP wait helper for runtime worker saturation.
+- Helper waits until a runtime instance reports expected `WorkerCount`, `ActiveWorkerCount == WorkerCount`, `AvailableWorkerCount == 0`, expected `MaxLocalWorkersPerExecution`, and `CanAcceptRun == false`.
+- Fixed helper usage by matching actual `McpTestClient.ListRuntimeInstancesAsync(...)` return type: direct `IReadOnlyList<AiRuntimeInstanceSnapshot>`, not a wrapper result.
+- Added timeout diagnostics showing last observed worker capacity state.
+- Added MCP local runtime worker saturation test validating that runtime instance list exposes worker capacity correctly.
+
+---
+
+### Fixed
+
+#### EventLog Logger Disposal
+
+- Fixed shutdown failures caused by logging after the logger provider was already disposed.
+- Added safe logging wrappers: `SafeLogInformation` and `SafeLogError`.
+- Ensured shutdown does not fail when logger provider is already disposed.
+- Handled `AggregateException`, `ObjectDisposedException`, and `InvalidOperationException`.
+- Prevented test failures during `WebApplicationFactory.DisposeAsync()` caused by disposed logging infrastructure.
+
+#### Queue Dispatcher Dispatch Failure Test
+
+- Fixed `DispatchNextAsync_Should_Requeue_When_Dispatch_Fails`.
+- The test created a failing `FakeSharedRunDispatcher` but accidentally passed a new default successful dispatcher into `AiSharedQueueDispatcher`.
+- Replaced the default fake dispatcher with the intended `runDispatcher`.
+- Restored expected behavior: dispatch failure returns `Success=false`, queue item is requeued as `Pending`, shared run remains `QueuedGlobally`, and `LocalRunId` / `ExecutionId` remain null.
+
+#### QueueFirst and ForceGlobalQueue Transition
+
+- Identified that `ForceGlobalQueue` was useful for tests but semantically too forceful for normal configuration.
+- Moved toward cleaner `SubmitMode = QueueFirst`.
+- Ensured queue-first behavior is controlled through shared runtime controller options rather than forcing admission globally.
+- Kept compatibility with tests requiring queued behavior.
+- Clarified that `ForceGlobalQueue` can be problematic because it bypasses natural admission assignment and forces all submitted runs through shared queue semantics.
+
+#### Shared Queue Pump Disabled Behavior
+
+- Fixed misunderstanding where manual drain failed because `AiSharedQueuePump:Enabled` was also false.
+- Confirmed correct config split:
+  - `AiSharedQueuePump:Enabled=true` allows manual drain,
+  - `AiMcpHost:EnableSharedQueuePump=false` disables background auto pump,
+  - `AiSharedQueueBackgroundService:Enabled=false` disables hosted background pump.
+- Validated manual drain works while automatic pump remains disabled.
+
+#### Runtime Capacity Test Behavior
+
+- Confirmed failures in distributed worker participation tests were expected after adding `MaxLocalWorkersPerExecution`.
+- Updated test configuration to explicitly set `MaxLocalWorkersPerExecution = scenario.WorkerCount` when tests intend to validate full distributed worker participation.
+- Preserved dedicated capacity behavior where lower `MaxLocalWorkersPerExecution` intentionally limits workers per execution.
+
+#### Multi-Instance Shared Queue Distribution
+
+- Fixed tests where distribution collapsed to one runtime instance because drain-time admission used a default fake target.
+- Updated multi-pump tests to assign the fake admission target to the current runtime instance.
+- Preserved the distinction between pump identity, selected dispatch target, and assigned runtime instance.
+
+---
+
+### Changed
+
+#### Shared Queue Dispatcher Semantics
+
+- Changed shared queue drain behavior so dispatch target selection is resolved through admission at dispatch time.
+- The pump runtime instance id is no longer automatically treated as the assigned runtime instance.
+- Tests that expect pump-local dispatch now explicitly inject an admission controller assigning the pump runtime instance as the target.
+- This makes production behavior cleaner and avoids coupling pump execution identity to dispatch target identity.
+
+#### Heavy Integration Test Configuration
+
+- Updated heavy execution scenarios to explicitly configure `MaxLocalWorkersPerExecution = scenario.WorkerCount` when the scenario expects all configured workers to participate.
+- Prevented accidental worker cap from reducing intended test parallelism.
+- Preserved the new worker cap feature for dedicated runtime capacity tests.
+
+#### Test Fakes
+
+- Updated all `FakeRuntimeInstanceRegistry` implementations to match the new registry heartbeat signature.
+- Updated fake snapshots to include worker capacity fields.
+- Updated fake admission controller to support optional assigned runtime id.
+- Updated shared queue dispatcher tests to pass the required admission controller dependency.
+- Updated multi-instance tests to use deterministic target assignment after dispatch-time admission was introduced.
+
+---
+
+### Validated
+
+- Queue-first mode works.
+- Manual drain works.
+- Background pump works.
+- Local provider works.
+- HTTP provider works.
+- Pump disabled does not impact the demo.
+- Runtime instance list can expose worker capacity.
+- Worker capacity policy is active and impacts worker participation.
+- `MaxLocalWorkersPerExecution` correctly limits workers per execution.
+- Runtime instance `CanAcceptRun` can become false when workers are saturated.
+- Shared queue no-double-dispatch behavior remains valid.
+- Multi-instance pump tests require explicit test admission assignment after dispatcher admission re-evaluation.
+- Dispatch-time admission correctly separates pump identity from assigned runtime identity.
+
+---
+
+### Notes
+
+- The new worker capacity model is now visible across the full path:
+  - `AiRuntimePipelineBackgroundController`
+  - `AiRuntimePipelineQueueState`
+  - `AiRuntimeInstanceRegistrationHostedService`
+  - `AiRuntimeInstanceCapacityDescriptor`
+  - `IAiRuntimeInstanceRegistry`
+  - `RuntimeInstanceEntry`
+  - `AiRuntimeInstanceSnapshot`
+  - MCP / control-plane list instances
+
+- This prepares the runtime for future Kubernetes dashboards showing total workers, active workers, free workers, run slots, queue depth, instance readiness, and capacity pressure.
+- Admission currently selects based on visible capacity but does not yet atomically reserve target runtime capacity.
+- Future production improvement: add admission reservation / capacity reservation to avoid hotspotting when many dispatches happen faster than heartbeat updates.
+
+
+---
+
 ## [1.0.5.9] - 2026-06-06 HTTP Runtime Provider Execution Integration Completed
 
 ### Added

@@ -362,15 +362,18 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.Admission
             }
 
             public Task<AiRuntimeInstanceSnapshot?> HeartbeatAsync(
-                string runtimeInstanceId,
-                int queuedRunCount,
-                int runningRunCount,
-                int activeRunCount,
-                int? availableRunSlots,
-                bool isQueuePaused,
-                bool canAcceptRun,
-                AiRuntimeInstanceStatus status,
-                CancellationToken cancellationToken = default)
+                 string runtimeInstanceId,
+                 int queuedRunCount,
+                 int runningRunCount,
+                 int activeRunCount,
+                 int? availableRunSlots,
+                 int? activeWorkerCount,
+                 int? availableWorkerCount,
+                 int? maxLocalWorkersPerExecution,
+                 bool isQueuePaused,
+                 bool canAcceptRun,
+                 AiRuntimeInstanceStatus status,
+                 CancellationToken cancellationToken = default)
             {
                 throw new NotSupportedException();
             }

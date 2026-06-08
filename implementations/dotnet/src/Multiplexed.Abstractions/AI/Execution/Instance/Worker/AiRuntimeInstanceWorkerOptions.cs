@@ -45,5 +45,7 @@
         /// should be treated as expected distributed race losses.
         /// </summary>
         public bool IgnoreConcurrencyConflicts { get; set; } = true;
+
+        
     }
 }

@@ -24,7 +24,7 @@
         /// <summary>
         /// Gets or sets the maximum number of workers allowed to work on the same execution.
         /// </summary>
-        public int MaxWorkersPerExecution { get; set; } = 4;
+        public int MaxWorkersPerExecution { get; set; } = 5;
 
         /// <summary>
         /// Gets or sets the maximum number of helper workers allowed per helper runtime instance.

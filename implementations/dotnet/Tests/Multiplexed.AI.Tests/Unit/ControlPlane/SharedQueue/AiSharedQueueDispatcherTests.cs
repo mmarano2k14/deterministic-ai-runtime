@@ -8,6 +8,7 @@ using Multiplexed.Abstractions.AI.Runtime.Execution.Instance.Worker;
 using Multiplexed.AI.Runtime.ControlPlane.SharedController;
 using Multiplexed.AI.Runtime.ControlPlane.SharedController.Store;
 using Multiplexed.AI.Runtime.ControlPlane.SharedQueue;
+using Multiplexed.AI.Tests.Fixtures;
 
 namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
 {
@@ -19,7 +20,8 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
             var dispatcher = new AiSharedQueueDispatcher(
                 new InMemoryAiSharedQueue(),
                 new InMemoryAiSharedRunStore(),
-                new FakeSharedRunDispatcher());
+                new FakeSharedRunDispatcher(),
+                new FakeRunAdmissionController());
 
             var result = await dispatcher.DispatchNextAsync(new AiSharedQueueDispatchRequest
             {
@@ -44,11 +46,13 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
                 CreateQueueItem("shared-run-1"));
 
             var runDispatcher = new FakeSharedRunDispatcher();
+            var fakeAdmission = new FakeRunAdmissionController();
 
             var dispatcher = new AiSharedQueueDispatcher(
                 queue,
                 store,
-                runDispatcher);
+                runDispatcher,
+                fakeAdmission);
 
             var result = await dispatcher.DispatchNextAsync(new AiSharedQueueDispatchRequest
             {
@@ -104,7 +108,8 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
             var dispatcher = new AiSharedQueueDispatcher(
                 queue,
                 store,
-                new FakeSharedRunDispatcher());
+                new FakeSharedRunDispatcher(),
+                new FakeRunAdmissionController());
 
             var result = await dispatcher.DispatchNextAsync(new AiSharedQueueDispatchRequest
             {
@@ -149,7 +154,8 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
             var dispatcher = new AiSharedQueueDispatcher(
                 queue,
                 store,
-                runDispatcher);
+                runDispatcher,
+                new FakeRunAdmissionController());
 
             var result = await dispatcher.DispatchNextAsync(new AiSharedQueueDispatchRequest
             {
@@ -181,10 +187,18 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
             var store = new InMemoryAiSharedRunStore();
 
             await store.CreateAsync(
-                CreateSharedRun("shared-run-1", AiSharedRunStatus.QueuedGlobally, tenantId: "tenant-a", pipelineKey: "pipeline-a"));
+                CreateSharedRun(
+                    "shared-run-1",
+                    AiSharedRunStatus.QueuedGlobally,
+                    tenantId: "tenant-a",
+                    pipelineKey: "pipeline-a"));
 
             await store.CreateAsync(
-                CreateSharedRun("shared-run-2", AiSharedRunStatus.QueuedGlobally, tenantId: "tenant-b", pipelineKey: "pipeline-b"));
+                CreateSharedRun(
+                    "shared-run-2",
+                    AiSharedRunStatus.QueuedGlobally,
+                    tenantId: "tenant-b",
+                    pipelineKey: "pipeline-b"));
 
             await queue.EnqueueAsync(
                 CreateQueueItem("shared-run-1", tenantId: "tenant-a", pipelineKey: "pipeline-a"));
@@ -195,7 +209,8 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
             var dispatcher = new AiSharedQueueDispatcher(
                 queue,
                 store,
-                new FakeSharedRunDispatcher());
+                new FakeSharedRunDispatcher(),
+                new FakeRunAdmissionController());
 
             var result = await dispatcher.DispatchNextAsync(new AiSharedQueueDispatchRequest
             {
@@ -236,11 +251,13 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
                 CreateQueueItem("shared-run-1"));
 
             var runDispatcher = new FakeSharedRunDispatcher();
+            var admissionController = new FakeRunAdmissionController();
 
             var dispatcher = new AiSharedQueueDispatcher(
                 queue,
                 store,
-                runDispatcher);
+                runDispatcher,
+                admissionController);
 
             var result = await dispatcher.DispatchNextAsync(new AiSharedQueueDispatchRequest
             {
@@ -265,7 +282,8 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
             var dispatcher = new AiSharedQueueDispatcher(
                 new InMemoryAiSharedQueue(),
                 new InMemoryAiSharedRunStore(),
-                new FakeSharedRunDispatcher());
+                new FakeSharedRunDispatcher(),
+                new FakeRunAdmissionController());
 
             await Assert.ThrowsAsync<ArgumentNullException>(() =>
                 dispatcher.DispatchNextAsync(null!));
@@ -277,7 +295,8 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
             var dispatcher = new AiSharedQueueDispatcher(
                 new InMemoryAiSharedQueue(),
                 new InMemoryAiSharedRunStore(),
-                new FakeSharedRunDispatcher());
+                new FakeSharedRunDispatcher(),
+                new FakeRunAdmissionController());
 
             await Assert.ThrowsAsync<ArgumentException>(() =>
                 dispatcher.DispatchNextAsync(new AiSharedQueueDispatchRequest

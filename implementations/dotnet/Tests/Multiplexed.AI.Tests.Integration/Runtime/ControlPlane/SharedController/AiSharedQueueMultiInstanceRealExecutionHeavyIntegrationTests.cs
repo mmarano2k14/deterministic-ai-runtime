@@ -1286,7 +1286,9 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedController
             var queueDispatcher = new AiSharedQueueDispatcher(
                 queue,
                 store,
-                sharedRunDispatcher);
+                sharedRunDispatcher,
+                new FakeRunAdmissionController(
+                    assignedRuntimeInstanceId: runtimeInstance.RuntimeInstanceId));
 
             var pump = new AiSharedQueuePump(
                 queueDispatcher,
@@ -1995,6 +1997,7 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedController
                     QueueCapacity = scenario.QueueCapacityPerInstance,
                     RejectEnqueueWhenStopped = false,
                     StopOnFirstFailure = false,
+                    MaxLocalWorkersPerExecution = scenario.WorkerCount,
                     Distributed = new AiRuntimeDistributedExecutionOptions
                     {
                         Enabled = true,

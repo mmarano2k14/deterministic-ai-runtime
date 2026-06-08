@@ -1,8 +1,10 @@
 # Runtime Instance Provider Model
 
-Status: Architecture direction.
+Status: Architecture direction, partially implemented.
 
-This document describes the planned **runtime instance provider model** for the Deterministic AI Runtime control plane.
+This document describes the **runtime instance provider model** for the Deterministic AI Runtime control plane.
+
+The first provider-based hosting layer is now partially implemented through local and HTTP runtime instance providers, runtime instance visibility, shared queue dispatch, and MCP control-plane integration.
 
 The goal is to make runtime instance administration and dispatch provider-based, dynamically loadable, and extensible without changing the local runtime queue architecture.
 
@@ -22,14 +24,20 @@ The runtime now has:
 - runtime roles
 - Redis-backed runtime registry
 - runtime capacity descriptors
+- runtime worker capacity visibility
 - local runtime instance pool
+- local runtime instance provider
+- HTTP runtime instance provider foundation
 - shared queue
 - shared runtime controller
+- queue-first submit mode
+- shared queue pump and manual drain
+- dispatch-time admission
 - MCP control-plane adapter
 
-The next step is to make the path between shared queue/admission and runtime instance transport generic.
+The next step is to continue making the path between shared queue/admission and runtime instance transport generic.
 
-Today, dispatch is mostly local.
+Today, dispatch can already flow through provider-style runtime instance resolution for local and HTTP-oriented test scenarios.
 
 Tomorrow, runtime instances may live behind:
 
@@ -44,6 +52,18 @@ Tomorrow, runtime instances may live behind:
 The core architecture should not be rewritten for each transport.
 
 Providers solve this.
+
+The provider model must also preserve the new shared queue pump semantics:
+
+```text
+PumpRuntimeInstanceId
+    identifies the runtime instance executing a pump cycle
+
+AssignedRuntimeInstanceId
+    identifies the runtime instance selected by admission for dispatch
+```
+
+These two identities are intentionally separate.
 
 ---
 
@@ -133,6 +153,99 @@ New transports are added as providers.
 
 ---
 
+## Runtime Instance Capacity and Worker Visibility
+
+Runtime instance descriptors are not only transport descriptors.
+
+They are also visibility snapshots used by admission, dashboards, MCP tools, and future autoscaling.
+
+The runtime now exposes worker-aware capacity fields through the runtime instance snapshot path:
+
+```text
+AiRuntimePipelineBackgroundController
+    ↓
+AiRuntimePipelineQueueState
+    ↓
+AiRuntimeInstanceRegistrationHostedService
+    ↓
+AiRuntimeInstanceCapacityDescriptor
+    ↓
+IAiRuntimeInstanceRegistry
+    ↓
+RuntimeInstanceEntry
+    ↓
+AiRuntimeInstanceSnapshot
+```
+
+Important fields:
+
+```text
+WorkerCount
+ActiveWorkerCount
+AvailableWorkerCount
+MaxLocalWorkersPerExecution
+QueuedRunCount
+RunningRunCount
+ActiveRunCount
+QueueCapacity
+MaxConcurrentRuns
+AvailableRunSlots
+IsQueuePaused
+CanAcceptRun
+```
+
+`CanAcceptRun` is now worker-aware.
+
+A runtime instance should only be considered available when it has both run capacity and worker capacity.
+
+```text
+CanAcceptRun = queue not paused
+            + queue capacity available
+            + run slot available
+            + worker available
+```
+
+This matters for provider routing because a provider can only deliver work correctly if the target runtime instance is visible and able to accept work.
+
+---
+
+## Max Local Workers Per Execution
+
+`MaxLocalWorkersPerExecution` controls how many local workers from one runtime instance may be assigned to one execution.
+
+This is a local runtime policy.
+
+It is not the same as cross-instance execution assistance.
+
+Example:
+
+```text
+Distributed.WorkerCount = 30
+MaxLocalWorkersPerExecution = 4
+```
+
+Result:
+
+```text
+The runtime instance owns 30 workers.
+One execution can use at most 4 local workers.
+The remaining workers stay available for other executions.
+```
+
+The effective worker count per execution is resolved from:
+
+```text
+min(
+  Distributed.WorkerCount,
+  MaxLocalWorkersPerExecution,
+  AvailableWorkerCount
+)
+```
+
+This policy is visible through runtime instance snapshots and should be considered by admission and dashboards.
+
+---
+
 ## Runtime Instance Descriptor as Source of Dispatch Metadata
 
 Runtime instances already publish descriptors and capacity information.
@@ -143,6 +256,19 @@ A runtime instance descriptor should expose metadata such as:
 
 ```text
 provider.name = local
+```
+
+A runtime instance capacity descriptor should also expose runtime capacity values such as:
+
+```text
+worker.count
+active.worker.count
+available.worker.count
+max.workers.per.run
+queued.run.count
+running.run.count
+available.run.slots
+can.accept.run
 ```
 
 Future examples:
@@ -481,9 +607,9 @@ Remote runtime instance enqueues local run
 
 ## Local Provider
 
-The first provider should be local.
+The first provider is local.
 
-It should preserve the current behavior.
+It preserves the current behavior.
 
 ```text
 Local provider
@@ -504,6 +630,14 @@ The local provider should support:
 - drain queue if supported
 
 It should not change local queue internals.
+
+Current implementation direction:
+
+- local runtime instances are registered through `IAiSharedRuntimeInstanceRegistry`
+- `LocalAiRuntimeInstanceProvider` resolves the target local runtime instance
+- dispatch still enters the target runtime instance local queue
+- DAG execution remains owned by the runtime engine and local workers
+- provider routing does not mutate DAG execution state directly
 
 ---
 
@@ -543,6 +677,8 @@ This keeps cross-pod communication simple and resilient.
 ## HTTP Provider
 
 The HTTP provider can dispatch or control runtime instances through HTTP endpoints.
+
+The current provider-based runtime hosting work includes an HTTP runtime provider foundation for runtime-instance-only and control-plane-with-HTTP-runtime-instances scenarios.
 
 Example metadata:
 
@@ -604,6 +740,47 @@ This keeps Kubernetes responsibilities clean.
 
 ---
 
+## Shared Queue Pump and Provider Dispatch
+
+The shared queue pump does not own the final target runtime identity.
+
+It owns the pump cycle.
+
+The dispatch target is selected through admission during drain.
+
+```text
+Shared queue item pending
+    ↓
+PumpRuntimeInstanceId claims queue work
+    ↓
+Shared queue dispatcher loads shared run
+    ↓
+Admission re-evaluates the run
+    ↓
+AssignedRuntimeInstanceId is selected
+    ↓
+Provider router resolves transport for assigned instance
+    ↓
+Provider dispatches into target runtime local queue
+```
+
+This is important for provider design.
+
+A runtime instance can execute a pump cycle without necessarily receiving the run itself.
+
+This enables future patterns such as:
+
+- control-plane pod draining queue into remote runtime pods
+- one runtime instance assisting dispatch to another runtime instance
+- MCP manual drain selecting a target runtime through admission
+- Kubernetes control-plane dispatching to HTTP/gRPC/runtime service endpoints
+
+Tests that need deterministic pump-local dispatch should use a fake admission controller assigning the current pump runtime instance id as the dispatch target.
+
+Production code should not assume `PumpRuntimeInstanceId == AssignedRuntimeInstanceId`.
+
+---
+
 ## Admission and Provider Separation
 
 Admission should not perform provider-specific dispatch.
@@ -648,6 +825,8 @@ Eligible runtime instances should satisfy:
 - heartbeat is not stale
 - can accept run
 - effective available run slots is greater than zero
+- available worker count is greater than zero
+- max local workers per execution allows the requested execution shape
 
 Recommended ordering:
 
@@ -665,6 +844,8 @@ Recommended ordering:
 ## Slot Reservations
 
 Capacity descriptors are snapshots.
+
+The current implementation exposes the required capacity visibility, but admission capacity is not yet atomically reserved.
 
 In multi-control-plane setups, snapshots are not enough.
 
@@ -844,24 +1025,34 @@ This is not fully implemented yet but should be considered in provider design.
 
 ---
 
-## Current Implementation Target
+## Current Implementation Status
 
-The first implementation target should be minimal:
+The implementation has moved beyond pure design.
+
+Current completed or partially completed pieces:
 
 ```text
-1. AiRuntimeInstanceProviderAttribute
-2. IAiRuntimeInstanceProvider
-3. IAiRuntimeInstanceDispatchProvider
-4. IAiRuntimeInstanceProviderRouter
-5. LocalAiRuntimeInstanceProvider
-6. Adapter from existing shared run dispatcher to provider router
+1. Runtime instance registration
+2. Runtime instance roles
+3. Runtime capacity descriptors
+4. Runtime worker capacity visibility
+5. In-memory runtime instance registry
+6. Redis runtime instance registry
+7. Local runtime instance provider foundation
+8. HTTP runtime instance provider foundation
+9. Shared queue pump
+10. Queue-first submit mode
+11. Dispatch-time admission
+12. MCP control-plane integration
 ```
 
-The first implementation must preserve existing behavior.
+The implementation must continue to preserve existing behavior.
 
 No local queue behavior should change.
 
-No shared controller behavior should change except delegating dispatch to the provider router.
+No provider should bypass the runtime queue or DAG engine.
+
+Shared controller behavior should remain stable and delegate transport-specific dispatch to provider-capable components.
 
 ---
 
@@ -888,14 +1079,14 @@ The provider model is not fully implemented yet.
 
 Current limitations include:
 
-- local dispatch still uses the existing shared runtime instance registry path
-- no provider router yet
-- no Redis command queue provider yet
-- no HTTP/gRPC provider yet
-- no Kubernetes provider yet
-- no capability negotiation yet
-- no Redis/Lua slot reservation yet
-- admission still needs to become fully descriptor/capacity-first
+- provider routing is still evolving
+- Redis command queue provider is not implemented yet
+- gRPC provider is not implemented yet
+- Kubernetes provider is not implemented yet
+- capability negotiation is not complete yet
+- Redis/Lua slot reservation is not implemented yet
+- admission uses visible capacity but does not yet atomically reserve selected capacity
+- admission still needs to become fully descriptor/capacity-first for production multi-control-plane scheduling
 
 ---
 
@@ -908,6 +1099,7 @@ Current limitations include:
 - [Observability and Tracing](observability-tracing.md)
 - [Runtime Metrics](runtime-metrics.md)
 - [Testing Strategy](testing-strategy.md)
+- [Shared Queue Pump and Worker Capacity](shared-queue-pump-and-worker-capacity.md)
 
 ---
 

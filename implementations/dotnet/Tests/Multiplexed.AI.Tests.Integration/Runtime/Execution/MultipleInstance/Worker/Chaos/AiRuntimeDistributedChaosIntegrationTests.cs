@@ -2297,6 +2297,7 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution.MultipleInstance.Wo
                     QueueCapacity = 8,
                     RejectEnqueueWhenStopped = false,
                     StopOnFirstFailure = false,
+                    MaxLocalWorkersPerExecution = 5,
                     Distributed = new AiRuntimeDistributedExecutionOptions
                     {
                         Enabled = true,

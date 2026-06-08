@@ -1,5 +1,6 @@
 ﻿using ModelContextProtocol.Protocol;
 using Multiplexed.Abstractions.AI.ControlPlane.Execution;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Controller;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Store;
@@ -271,6 +272,75 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Helpers
                    string.Equals(status, "failed", StringComparison.OrdinalIgnoreCase) ||
                    string.Equals(status, "cancelled", StringComparison.OrdinalIgnoreCase) ||
                    string.Equals(status, "canceled", StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>
+        /// Waits until the specified runtime instance reports full local worker saturation.
+        /// </summary>
+        /// <param name="mcp">The MCP test client.</param>
+        /// <param name="runtimeInstanceId">The expected runtime instance id.</param>
+        /// <param name="expectedWorkerCount">The expected total worker count.</param>
+        /// <param name="expectedMaxLocalWorkersPerExecution">The expected maximum local workers per execution.</param>
+        /// <param name="timeout">The maximum wait duration.</param>
+        /// <returns>The saturated runtime instance snapshot.</returns>
+        /// <summary>
+        /// Waits until the specified runtime instance reports full local worker saturation.
+        /// </summary>
+        public static async Task<AiRuntimeInstanceSnapshot> WaitForRuntimeInstanceWorkerSaturationAsync(
+            McpTestClient mcp,
+            string runtimeInstanceId,
+            int expectedWorkerCount,
+            int expectedMaxLocalWorkersPerExecution,
+            TimeSpan timeout)
+        {
+            ArgumentNullException.ThrowIfNull(mcp);
+            ArgumentException.ThrowIfNullOrWhiteSpace(runtimeInstanceId);
+
+            var deadline =
+                DateTimeOffset.UtcNow.Add(timeout);
+
+            AiRuntimeInstanceSnapshot? lastInstance = null;
+
+            while (DateTimeOffset.UtcNow < deadline)
+            {
+                var instances =
+                    await mcp.ListRuntimeInstancesAsync(
+                            includeStopped: true)
+                        .ConfigureAwait(false);
+
+                var instance =
+                    instances.FirstOrDefault(item =>
+                        string.Equals(
+                            item.RuntimeInstanceId,
+                            runtimeInstanceId,
+                            StringComparison.Ordinal));
+
+                if (instance is not null)
+                {
+                    lastInstance = instance;
+
+                    if (instance.WorkerCount == expectedWorkerCount &&
+                        instance.ActiveWorkerCount == expectedWorkerCount &&
+                        instance.AvailableWorkerCount == 0 &&
+                        instance.MaxLocalWorkersPerExecution == expectedMaxLocalWorkersPerExecution &&
+                        !instance.CanAcceptRun)
+                    {
+                        return instance;
+                    }
+                }
+
+                await Task.Delay(
+                        TimeSpan.FromMilliseconds(100))
+                    .ConfigureAwait(false);
+            }
+
+            throw new TimeoutException(
+                $"Runtime instance '{runtimeInstanceId}' did not report worker saturation within '{timeout}'. " +
+                $"LastWorkerCount='{lastInstance?.WorkerCount}', " +
+                $"LastActiveWorkerCount='{lastInstance?.ActiveWorkerCount}', " +
+                $"LastAvailableWorkerCount='{lastInstance?.AvailableWorkerCount}', " +
+                $"LastMaxLocalWorkersPerExecution='{lastInstance?.MaxLocalWorkersPerExecution}', " +
+                $"LastCanAcceptRun='{lastInstance?.CanAcceptRun}'.");
         }
     }
 }

@@ -33,6 +33,10 @@ The runtime must prove that it behaves correctly under:
 - concurrency throttling
 - terminal finalization races
 - deterministic convergence under pressure
+- queue-first dispatch behavior
+- shared queue pump/manual drain behavior
+- runtime instance provider dispatch behavior
+- worker-capacity saturation
 
 The purpose of the testing strategy is to validate that the runtime behaves like reliable execution infrastructure, not only like isolated application code.
 
@@ -62,7 +66,7 @@ They are checking that runtime guarantees hold.
 
 ---
 
-The current repository contains **more than 800 test cases** across unit, integration, distributed, replay, observability, control-plane, Redis, MCP, and runtime orchestration scenarios.
+The current repository contains **more than 900 test cases** across unit, integration, distributed, replay, observability, control-plane, Redis, MCP, provider-hosting, shared queue, and runtime orchestration scenarios.
 
 This number is important because the runtime is not validated only through happy-path execution.
 
@@ -76,6 +80,12 @@ The test suite is used as proof that the runtime can survive:
 - control-plane operations
 - runtime queue operations
 - shared queue dispatch
+- queue-first submit mode
+- manual shared queue drain
+- background shared queue pump behavior
+- dispatch-time admission
+- runtime provider-hosting scenarios
+- worker capacity visibility
 - MCP tool execution
 - shutdown and lifecycle races
 
@@ -151,6 +161,9 @@ Main categories include:
 - deterministic convergence tests
 - stress and chaos tests
 - MCP control-plane integration tests
+- shared queue pump/manual drain tests
+- provider-based runtime hosting tests
+- runtime worker capacity tests
 
 ---
 
@@ -323,11 +336,14 @@ They should cover:
 - runtime capacity descriptor heartbeat updates
 - runtime capacity descriptor removal on unregister
 - worker count publication
+- active worker count publication
+- available worker count publication
+- max local workers per execution publication
 - max run slot publication
 - available run slot publication
 - queue pressure publication
 - paused queue visibility
-- `CanAcceptRun` correctness
+- worker-aware `CanAcceptRun` correctness
 - stale or stopped runtime visibility
 
 Important assertions:
@@ -335,7 +351,7 @@ Important assertions:
 ```text
 A control-plane registration must not be treated as a dispatchable runtime instance.
 
-A runtime instance must publish capacity during registration and heartbeat.
+A runtime instance must publish run capacity and worker capacity during registration and heartbeat.
 
 CapacityStore resolution must not register duplicate stores.
 
@@ -346,6 +362,130 @@ Admission should eventually use capacity descriptors as the primary scheduling s
 
 ---
 
+
+## Shared Queue Pump and Queue-First Tests
+
+Shared queue pump tests validate the control-plane path above local runtime queues.
+
+They should cover:
+
+- queue-first shared run submission
+- shared run remains `QueuedGlobally` before dispatch
+- shared queue item remains `Pending` before dispatch
+- background pump dispatch
+- manual drain dispatch
+- manual drain while background pump is disabled
+- local runtime dispatch after manual drain
+- HTTP runtime dispatch after manual drain
+- no automatic dispatch when the hosted pump is disabled
+- queue item marked `Dispatched` only after successful dispatch
+- shared run marked `Dispatched` only after successful dispatch
+- dispatch failure requeues correctly
+- missing shared run requeues correctly
+- pump stops when no item is available
+- pump respects max dispatches per cycle
+
+Important assertions:
+
+```text
+QueueFirst submit must create a shared run and queue item without creating a local RunId.
+
+Manual drain must work when AiSharedQueuePump is enabled even if the background hosted pump is disabled.
+
+A shared queue item must not become Dispatched unless runtime dispatch succeeds.
+
+A failed dispatch must requeue the shared queue item and preserve the shared run as QueuedGlobally.
+```
+
+---
+
+## Dispatch-Time Admission Tests
+
+Shared queue dispatch now re-evaluates admission at drain time.
+
+Tests should prove:
+
+- pump identity is not automatically the assigned runtime identity
+- `PumpRuntimeInstanceId` identifies who is draining
+- `AssignedRuntimeInstanceId` identifies who receives the run
+- admission can select a different runtime instance during drain
+- fake admission can deterministically assign a runtime target for tests
+- multi-instance pump tests remain deterministic when each pump injects its own assigned target
+- no-double-dispatch behavior still holds after dispatch-time admission
+
+Important assertions:
+
+```text
+PumpRuntimeInstanceId must not be treated as the dispatch target by default.
+
+Dispatch target must come from admission.
+
+Tests that expect pump-local dispatch must explicitly configure admission to assign the pump runtime instance.
+```
+
+---
+
+## Runtime Provider Hosting Tests
+
+Provider-hosting tests validate that control-plane and runtime-instance responsibilities can be separated.
+
+They should cover:
+
+- local runtime instance provider flow
+- HTTP runtime provider flow
+- `RuntimeInstanceOnly` host mode
+- `ControlPlaneWithLocalRuntimeInstances` host mode
+- `ControlPlaneWithHttpRuntimeInstances` host mode
+- runtime instance registration with provider metadata
+- provider metadata propagation
+- dispatch through selected runtime instance provider path
+- queue-first run completion through local provider
+- queue-first run completion through HTTP provider
+- pump disabled / manual drain behavior with provider-hosted runtime instances
+
+Important assertions:
+
+```text
+The selected runtime provider must deliver the run into the target runtime instance local queue.
+
+The control-plane host must not execute DAG steps directly when operating as a control-plane-only participant.
+
+Provider-hosted runtime instances must expose local RunId and ExecutionId after dispatch.
+```
+
+---
+
+## Runtime Worker Capacity Tests
+
+Runtime worker capacity tests validate the worker-aware queue state and runtime instance visibility.
+
+They should cover:
+
+- `WorkerCount` publication
+- `ActiveWorkerCount` publication
+- `AvailableWorkerCount` publication
+- `MaxLocalWorkersPerExecution` publication
+- worker-aware `CanAcceptRun`
+- saturation when all workers are reserved
+- runtime instance list exposes worker capacity fields
+- capacity descriptor uses real queue state values
+- runtime registry heartbeat preserves worker capacity fields
+- Redis registry preserves worker capacity fields
+- in-memory registry preserves worker capacity fields
+
+Important assertions:
+
+```text
+A runtime instance with no available workers should report CanAcceptRun = false.
+
+MaxLocalWorkersPerExecution should cap the number of local workers used by one execution.
+
+Worker capacity values should flow from local queue state to runtime instance snapshots.
+
+Distributed worker participation tests must explicitly configure MaxLocalWorkersPerExecution when they expect all configured workers to participate.
+```
+
+---
 
 ## Retry Tests
 
@@ -492,6 +632,10 @@ They should cover:
 - queued run completion task behavior
 - controller shutdown cancellation for queued runs
 - `RunId` / `ExecutionId` separation
+- runtime queue state visibility
+- worker capacity visibility
+- worker-aware `CanAcceptRun`
+- max local workers per execution saturation
 
 Important assertions:
 
@@ -520,6 +664,7 @@ MCP tests should validate:
 - `ControlPlaneOnly` behavior
 - `ControlPlaneWithLocalRuntimeInstances` behavior
 - `RuntimeInstanceOnly` preparation
+- `ControlPlaneWithHttpRuntimeInstances` behavior
 - runtime role separation
 - control-plane host not selected as executable runtime
 - local runtime instance pool startup
@@ -529,6 +674,11 @@ MCP tests should validate:
 - shared run submission through MCP tools
 - shared run listing through MCP tools
 - shared queue drain through MCP tools
+- queue-first submit through MCP tools
+- manual queue drain while background pump is disabled
+- local provider queue-first dispatch through MCP
+- HTTP provider queue-first dispatch through MCP
+- runtime worker capacity visibility through MCP
 - runtime queue run-status polling through MCP tools
 - replay execution through MCP tools
 - replay report retrieval through MCP tools
@@ -593,16 +743,25 @@ mcp-control-plane
 mcp-runtime-1
     Role = Runtime
     WorkerCount = 10
+    ActiveWorkerCount = 0
+    AvailableWorkerCount = 10
+    MaxLocalWorkersPerExecution = 4
     MaxRunSlots = 5
 
 mcp-runtime-2
     Role = Runtime
     WorkerCount = 10
+    ActiveWorkerCount = 0
+    AvailableWorkerCount = 10
+    MaxLocalWorkersPerExecution = 4
     MaxRunSlots = 5
 
 mcp-runtime-3
     Role = Runtime
     WorkerCount = 10
+    ActiveWorkerCount = 0
+    AvailableWorkerCount = 10
+    MaxLocalWorkersPerExecution = 4
     MaxRunSlots = 5
 ```
 
@@ -631,6 +790,10 @@ They should cover:
 - mark shared queue item dispatched
 - mark shared run dispatched
 - queue pump cycles
+- manual queue drain
+- queue-first submit mode
+- dispatch-time admission
+- pump identity vs assigned runtime identity separation
 - background queue service lifecycle
 - scale-out request publication
 - Redis-backed shared run store behavior
@@ -648,6 +811,10 @@ A shared run record must exist independently from local runtime queue state.
 Assigned dispatch must preserve the local queue model.
 
 Global queue fallback must not bypass admission.
+
+Dispatch-time admission must select the assigned runtime target.
+
+Pump identity must remain separate from assigned runtime identity.
 
 Dispatch failures must requeue when policy requires it.
 
@@ -763,6 +930,9 @@ They may cover:
 - diagnostic denial reasons
 - trace/timeline events
 - control-plane events
+- runtime worker capacity visibility
+- ledger metadata for max local workers per execution
+- ledger metadata for effective worker count per execution
 
 Observability tests should avoid making execution correctness depend on logs or UI.
 
@@ -815,6 +985,9 @@ They may include:
 - replay reconstruction after cleanup
 - convergence validation after distributed execution
 - queue/control operations during distributed execution
+- queue-first shared dispatch under pressure
+- shared queue pump/manual drain under pressure
+- worker capacity saturation scenarios
 
 These tests help prove that the runtime model survives more than simple happy paths.
 
@@ -924,6 +1097,14 @@ Provider throttle denies capacity when the limit is reached.
 Lease is released when concurrency admission succeeds but DAG claim fails.
 
 A distributed execution converges to the same terminal fingerprint.
+
+Queue-first submit does not create a local RunId until dispatch.
+
+Manual drain can dispatch queued work while the background pump is disabled.
+
+MaxLocalWorkersPerExecution caps local worker participation.
+
+Runtime instance snapshots expose active and available worker capacity.
 ```
 
 ---
@@ -933,12 +1114,16 @@ A distributed execution converges to the same terminal fingerprint.
 | Test Area | Status |
 |---|---|
 | MCP control-plane tests | Implemented / ongoing |
+| MCP queue-first/manual drain tests | Implemented / validated |
 | Shared runtime controller tests | Implemented / ongoing |
+| Shared queue pump tests | Implemented / validated |
+| Dispatch-time admission tests | Implemented / validated |
 | Redis shared run store tests | Implemented / ongoing |
 | Redis shared queue tests | Implemented / ongoing |
 | Runtime registry and capacity descriptor tests | Implemented / ongoing |
+| Runtime worker capacity visibility tests | Implemented / validated |
 | Runtime shutdown lifecycle tests | Implemented / ongoing |
-| Runtime provider model tests | Planned |
+| Runtime provider model tests | Implemented foundations / ongoing |
 | DAG execution tests | Implemented / ongoing |
 | Redis Lua claim tests | Implemented / ongoing |
 | Distributed worker tests | Implemented / ongoing |
@@ -952,6 +1137,8 @@ A distributed execution converges to the same terminal fingerprint.
 | Deterministic fingerprint tests | Implemented / validated foundations |
 | Observability tests | Foundation available / ongoing |
 | RAG pipeline tests | Implemented / ongoing |
+| Provider-based local runtime hosting tests | Implemented / validated |
+| Provider-based HTTP runtime hosting tests | Implemented / validated |
 | Kubernetes scenario tests | Planned |
 | Full enterprise demo scenario | Planned |
 | Durable decision ledger tests | Planned |
@@ -978,7 +1165,7 @@ The testing strategy validates the runtime as execution infrastructure.
 
 It proves that:
 
-- more than 800 test cases validate the runtime across unit, integration, distributed, Redis, replay, observability, control-plane, and MCP scenarios
+- more than 900 test cases validate the runtime across unit, integration, distributed, Redis, replay, observability, control-plane, MCP, provider-hosting, and shared queue scenarios
 - worker crashes can be recovered
 - retries are deterministic and observable
 - retention reduces hot state without losing required data
@@ -987,6 +1174,9 @@ It proves that:
 - concurrency limits are enforced before execution
 - policy-driven behavior is testable
 - deterministic convergence holds under distributed execution
+- queue-first and manual drain behavior are validated
+- provider-hosted runtime instance flows are validated
+- runtime worker capacity is visible and enforceable
 
 The goal is not only to test features.
 
@@ -1003,6 +1193,7 @@ The goal is to prove runtime guarantees.
 - [Distributed Concurrency and Throttling](distributed-concurrency-throttling.md)
 - [Execution Control State](execution-control-state.md)
 - [Runtime Queue Control](runtime-queue-control.md)
+- [Shared Runtime Controller / Shared Queue Usage](shared-controller-usage.md)
 - [Runtime Control Plane](runtime-control-plane.md)
 - [MCP Server as Runtime Control Plane](mcp-server-control-plane.md)
 - [Runtime Instance Provider Model](runtime-instance-provider-model.md)

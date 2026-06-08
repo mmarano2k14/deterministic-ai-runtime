@@ -84,6 +84,9 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances
                 runningRunCount: 2,
                 activeRunCount: 5,
                 availableRunSlots: 0,
+                activeWorkerCount: 4,
+                availableWorkerCount: 0,
+                maxLocalWorkersPerExecution: 2,
                 isQueuePaused: false,
                 canAcceptRun: false,
                 status: AiRuntimeInstanceStatus.Busy);
@@ -109,6 +112,9 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances
                 runningRunCount: 0,
                 activeRunCount: 0,
                 availableRunSlots: 1,
+                activeWorkerCount: 0,
+                availableWorkerCount: 1,
+                maxLocalWorkersPerExecution: 1,
                 isQueuePaused: false,
                 canAcceptRun: true,
                 status: AiRuntimeInstanceStatus.Ready);

@@ -61,6 +61,16 @@ namespace Multiplexed.Abstractions.AI.Execution.Instance.Worker
         public bool StopOnFirstFailure { get; set; }
 
         /// <summary>
+        /// Gets or sets the maximum number of local workers from this runtime instance
+        /// allowed to work on the same execution concurrently.
+        /// </summary>
+        /// <remarks>
+        /// This limits the worker group size created for one execution by this controller.
+        /// It does not limit total runtime instance workers across different executions.
+        /// </remarks>
+        public int MaxLocalWorkersPerExecution { get; set; } = 5;
+
+        /// <summary>
         /// Gets or sets the distributed multi-runtime-instance execution options.
         /// </summary>
         public AiRuntimeDistributedExecutionOptions Distributed { get; set; } = new();

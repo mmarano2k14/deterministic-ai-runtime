@@ -26,13 +26,16 @@
             CancellationToken cancellationToken = default);
 
         /// <summary>
-        /// Records a heartbeat for a runtime instance and updates its visible queue/run state.
+        /// Records a heartbeat for a runtime instance and updates its visible queue/run/worker state.
         /// </summary>
         /// <param name="runtimeInstanceId">The runtime instance identifier.</param>
         /// <param name="queuedRunCount">The number of locally queued runs.</param>
         /// <param name="runningRunCount">The number of locally running runs.</param>
         /// <param name="activeRunCount">The number of active runs known by the local controller.</param>
         /// <param name="availableRunSlots">The number of available local run slots.</param>
+        /// <param name="activeWorkerCount">The number of local workers currently assigned to active executions.</param>
+        /// <param name="availableWorkerCount">The number of local workers currently available.</param>
+        /// <param name="maxLocalWorkersPerExecution">The maximum number of local workers allowed per execution.</param>
         /// <param name="isQueuePaused">Whether the local runtime queue is paused.</param>
         /// <param name="canAcceptRun">Whether the runtime instance can accept a new local run.</param>
         /// <param name="status">The current runtime instance status.</param>
@@ -44,6 +47,9 @@
             int runningRunCount,
             int activeRunCount,
             int? availableRunSlots,
+            int? activeWorkerCount,
+            int? availableWorkerCount,
+            int? maxLocalWorkersPerExecution,
             bool isQueuePaused,
             bool canAcceptRun,
             AiRuntimeInstanceStatus status,

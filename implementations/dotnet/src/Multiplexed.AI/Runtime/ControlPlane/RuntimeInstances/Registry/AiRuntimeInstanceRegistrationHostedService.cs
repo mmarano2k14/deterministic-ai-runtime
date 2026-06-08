@@ -321,6 +321,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
                         queueState.RunningRunCount,
                         queueState.ActiveRunCount,
                         queueState.AvailableRunSlots,
+                        queueState.ActiveWorkerCount,
+                        queueState.AvailableWorkerCount,
+                        queueState.MaxLocalWorkersPerExecution,
                         queueState.IsPaused,
                         queueState.CanAcceptRun,
                         AiRuntimeInstanceStatus.Ready,
@@ -425,13 +428,18 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
                 queueState.CanAcceptRun;
 
             var workerCount =
-                options.WorkerCount;
+                queueState.WorkerCount ?? options.WorkerCount;
 
             var activeWorkerCount =
-                0;
+                queueState.ActiveWorkerCount ?? 0;
 
             var availableWorkerCount =
-                workerCount;
+                queueState.AvailableWorkerCount ?? Math.Max(
+                    0,
+                    workerCount - activeWorkerCount);
+
+            var maxLocalWorkersPerExecution =
+                queueState.MaxLocalWorkersPerExecution;
 
             var descriptor =
                 new AiRuntimeInstanceCapacityDescriptor
@@ -442,7 +450,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
                     WorkerCount = workerCount,
                     ActiveWorkerCount = activeWorkerCount,
                     AvailableWorkerCount = availableWorkerCount,
-                    MaxWorkersPerRun = null,
+                    MaxWorkersPerRun = maxLocalWorkersPerExecution,
                     MinWorkersRequiredPerRun = 1,
                     QueuedRunCount = queueState.QueuedRunCount,
                     RunningRunCount = queueState.RunningRunCount,

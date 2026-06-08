@@ -76,6 +76,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances
             int runningRunCount,
             int activeRunCount,
             int? availableRunSlots,
+            int? activeWorkerCount,
+            int? availableWorkerCount,
+            int? maxLocalWorkersPerExecution,
             bool isQueuePaused,
             bool canAcceptRun,
             AiRuntimeInstanceStatus status,
@@ -106,11 +109,29 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances
                     ? availableRunSlots
                     : 0;
 
+            var effectiveActiveWorkerCount =
+                existing.Role == AiRuntimeInstanceRole.Runtime
+                    ? activeWorkerCount
+                    : 0;
+
+            var effectiveAvailableWorkerCount =
+                existing.Role == AiRuntimeInstanceRole.Runtime
+                    ? availableWorkerCount
+                    : 0;
+
+            var effectiveMaxLocalWorkersPerExecution =
+                existing.Role == AiRuntimeInstanceRole.Runtime
+                    ? maxLocalWorkersPerExecution
+                    : null;
+
             var updated = existing.UpdateHeartbeat(
                 queuedRunCount,
                 runningRunCount,
                 activeRunCount,
                 effectiveAvailableRunSlots,
+                effectiveActiveWorkerCount,
+                effectiveAvailableWorkerCount,
+                effectiveMaxLocalWorkersPerExecution,
                 isQueuePaused,
                 effectiveCanAcceptRun,
                 status,
@@ -309,7 +330,5 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances
         {
             return $"{InstanceKeyPrefix}{runtimeInstanceId}";
         }
-
-       
     }
 }

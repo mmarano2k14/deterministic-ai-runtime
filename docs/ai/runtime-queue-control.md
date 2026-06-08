@@ -4,6 +4,8 @@ Status: Documentation split in progress.
 
 This document describes the **RunId-level background controller queue control** used by the Deterministic AI Runtime.
 
+It also clarifies how local runtime queue control relates to the shared/global queue, queue-first submit mode, shared queue pump/manual drain, and runtime worker-capacity visibility.
+
 The complete technical reference is currently preserved in:
 
 - [runtime-internals.md](../runtime-internals.md)
@@ -19,13 +21,15 @@ It also needs a controller layer capable of managing work before and while runti
 Production systems often need to:
 
 - enqueue multiple pipeline runs
-- pause the queue
-- resume the queue
+- pause the local runtime queue
+- resume the local runtime queue
 - cancel queued work before execution starts
 - cancel a running controller run
 - add new work while the controller is already active
 - accept work while the queue is paused
 - complete waiting callers when queued work is cancelled
+- expose queue capacity to the control plane
+- expose worker capacity to the control plane
 - preserve strict separation between queue lifecycle and execution lifecycle
 
 This is handled by the runtime queue control layer.
@@ -90,6 +94,52 @@ The `ExecutionId` then becomes the durable runtime execution identity.
 
 ---
 
+## Local Runtime Queue vs Shared Queue
+
+The runtime now has two queue layers.
+
+```text
+Shared / global queue
+= control-plane queue for shared runs
+= SharedRunId / shared queue item lifecycle
+= consumed by shared queue pump or manual drain
+
+Local runtime queue
+= runtime-instance queue for executable pipeline runs
+= RunId lifecycle
+= owned by IAiRuntimePipelineBackgroundController
+```
+
+The shared queue does not execute DAG steps.
+
+The local runtime queue does not coordinate global dispatch ownership.
+
+The flow is:
+
+```text
+QueueFirst shared submit
+    ↓
+SharedRun.Status = QueuedGlobally
+    ↓
+Shared queue item = Pending
+    ↓
+Shared queue pump / manual drain
+    ↓
+Dispatch-time admission selects runtime instance
+    ↓
+IAiSharedRunDispatcher sends work to selected runtime instance
+    ↓
+Selected runtime instance enqueues local runtime RunId
+    ↓
+Local background controller creates ExecutionId
+    ↓
+DAG workers execute the durable execution
+```
+
+This separation is important for MCP, HTTP runtime providers, Kubernetes-style runtime instances, and no-double-dispatch guarantees.
+
+---
+
 ## Why the Separation Matters
 
 Without separating `RunId` and `ExecutionId`, the runtime risks mixing:
@@ -121,13 +171,61 @@ The two namespaces must not overlap.
 
 ---
 
+## Queue-First Submit and Manual Drain
+
+Queue-first mode affects the shared controller before a local `RunId` exists.
+
+In queue-first mode:
+
+```text
+SubmitRunAsync
+    ↓
+SharedRun is persisted
+    ↓
+SharedRun.Status = QueuedGlobally
+    ↓
+SharedQueueItem.Status = Pending
+```
+
+At this point:
+
+```text
+No local RunId exists yet.
+No ExecutionId exists yet.
+No DAG state exists yet.
+```
+
+A local `RunId` appears only after a shared queue pump or manual drain dispatches the shared run to a selected runtime instance.
+
+Manual drain can be enabled without enabling the background pump.
+
+Recommended controlled-drain configuration:
+
+```text
+AiSharedQueuePump:Enabled = true
+AiMcpHost:EnableSharedQueuePump = false
+AiSharedQueueBackgroundService:Enabled = false
+```
+
+This means:
+
+```text
+Manual drain works.
+Automatic background pump does not run.
+Queued shared runs remain queued until an operator or test drains them.
+```
+
+This is useful for MCP demos, controlled test scenarios, and proving that the demo path does not depend on the automatic background pump.
+
+---
+
 ## Queue Control Scope
 
 Queue control applies to background controller state.
 
 It manages:
 
-- queued runs
+- queued local runtime runs
 - currently running controller jobs
 - queue pause and resume
 - queued run cancellation
@@ -136,10 +234,97 @@ It manages:
 - completion task behavior
 - handle status updates
 - queue shutdown behavior
+- local queue visibility
+- local run slot visibility
+- local worker capacity visibility
 
 It does not directly mutate DAG step state.
 
 Once a runtime execution exists, execution-level control must be delegated to the execution control service.
+
+---
+
+## Runtime Queue State and Capacity Visibility
+
+The local runtime queue exposes a visibility snapshot through `AiRuntimePipelineQueueState`.
+
+The snapshot is intended for:
+
+- control plane APIs
+- MCP tools
+- dashboards
+- diagnostics
+- admission visibility
+- future Kubernetes autoscaling
+
+Important fields include:
+
+```text
+RuntimeInstanceId
+IsPaused
+QueuedRunCount
+RunningRunCount
+ActiveRunCount
+QueueCapacity
+MaxConcurrentRuns
+AvailableRunSlots
+WorkerCount
+ActiveWorkerCount
+AvailableWorkerCount
+MaxLocalWorkersPerExecution
+CanAcceptRun
+SnapshotAtUtc
+```
+
+`CanAcceptRun` is now worker-aware.
+
+A runtime instance can accept a new local run only when it has queue capacity, available run slots, and available worker capacity.
+
+```text
+CanAcceptRun = queue not paused
+            + queue capacity available
+            + run slot available
+            + worker available
+```
+
+This visibility is published through runtime instance registration and projected into `AiRuntimeInstanceSnapshot`.
+
+---
+
+## Max Local Workers Per Execution
+
+`MaxLocalWorkersPerExecution` limits how many local workers from one runtime instance may work on a single execution.
+
+It belongs to `AiRuntimePipelineBackgroundControllerOptions`.
+
+Example:
+
+```text
+Distributed.WorkerCount = 10
+MaxLocalWorkersPerExecution = 4
+```
+
+Result:
+
+```text
+The runtime instance owns 10 workers.
+One execution can reserve up to 4 workers.
+Remaining workers can stay available for other executions.
+```
+
+The effective worker count per execution is resolved from:
+
+```text
+min(
+  Distributed.WorkerCount,
+  MaxLocalWorkersPerExecution,
+  AvailableWorkerCount
+)
+```
+
+If no worker capacity is available, the controller waits for worker capacity instead of immediately failing the run.
+
+This setting is local to one runtime instance. It is not the same as cross-instance execution assistance.
 
 ---
 
@@ -611,6 +796,39 @@ Distributed execution remains at the `ExecutionId` layer.
 
 ---
 
+## Interaction with Shared Queue Pump
+
+The shared queue pump operates before the local runtime queue receives work.
+
+The pump request contains pump identity:
+
+```text
+PumpRuntimeInstanceId
+PumpWorkerId
+```
+
+These identify the runtime instance and worker executing the pump cycle.
+
+They do not necessarily identify the runtime instance that will receive the run.
+
+Dispatch-time admission selects the assigned runtime instance.
+
+```text
+PumpRuntimeInstanceId
+    = who is draining / pumping
+
+AssignedRuntimeInstanceId
+    = who receives the run
+```
+
+After dispatch, the selected runtime instance receives the run through its local queue control plane and creates a local `RunId`.
+
+Tests that expect pump-local dispatch should explicitly configure admission so the assigned runtime instance equals the pump runtime instance.
+
+Production code should not assume those two identities are always the same.
+
+---
+
 ## Interaction with Replay and Snapshots
 
 Only runtime executions with an `ExecutionId` can produce DAG state, snapshots, and replayable records.
@@ -657,6 +875,13 @@ The queue-control implementation is validated by integration tests covering:
 - queued run remains without `ExecutionId`
 - cancelled queued run completes its completion task
 - running run cancellation finalizes through `ExecutionId` control
+- queue-first shared submit
+- manual shared queue drain with background pump disabled
+- local runtime dispatch after manual drain
+- HTTP runtime dispatch after manual drain
+- worker capacity visibility
+- worker saturation visibility
+- `CanAcceptRun` becoming false when workers are saturated
 - chaos scenarios with distributed execution
 
 The broader execution-control and queue-control implementation is validated together through integration tests covering:
@@ -738,6 +963,13 @@ The answer is yes, with explicit state, durable transitions, completion handling
 | Completion task per handle | Implemented / validated |
 | Queue shutdown cancellation for queued runs | Implemented / validated |
 | Distributed execution integration | Implemented / validated foundations |
+| Shared queue-first submit path | Implemented / validated |
+| Manual shared queue drain | Implemented / validated |
+| Background shared queue pump | Implemented / validated |
+| Pump identity / assigned runtime identity separation | Implemented / validated |
+| Runtime worker capacity visibility | Implemented / validated |
+| Max local workers per execution | Implemented / validated |
+| Worker-aware CanAcceptRun | Implemented / validated |
 | Rich queue audit history | Planned |
 | Public controller API polish | Planned |
 
@@ -750,6 +982,9 @@ The answer is yes, with explicit state, durable transitions, completion handling
 | Background controller | Owns queue lifecycle and `RunId` state. |
 | Run handle | Tracks `RunId`, optional `ExecutionId`, status, and completion. |
 | Queue state | Determines whether queued runs may start. |
+| Runtime queue state snapshot | Exposes run slots, queue depth, worker usage, and accept capacity. |
+| Shared queue pump | Claims shared queue items and requests dispatch into selected runtime instances. |
+| Dispatch-time admission | Selects the assigned runtime instance during shared queue drain. |
 | Execution control service | Handles cancellation once an `ExecutionId` exists. |
 | DAG runtime | Executes the durable `ExecutionId` once started. |
 | Completion source | Notifies callers when queued/running work completes, fails, or is cancelled. |
@@ -762,6 +997,8 @@ The answer is yes, with explicit state, durable transitions, completion handling
 - [Architecture Overview](architecture-overview.md)
 - [Execution Control State](execution-control-state.md)
 - [Distributed Execution](distributed-execution.md)
+- [Shared Runtime Controller / Shared Queue Usage](shared-controller-usage.md)
+- [Runtime Instance Provider Model](runtime-instance-provider-model.md)
 - [Replay and Audit](replay-and-audit.md)
 - [Testing Strategy](testing-strategy.md)
 

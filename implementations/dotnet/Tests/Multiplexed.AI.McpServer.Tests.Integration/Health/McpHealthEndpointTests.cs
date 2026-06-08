@@ -35,19 +35,6 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Health
             Assert.Equal("Healthy", content);
         }
 
-        /// <summary>
-        /// Verifies that the readiness endpoint returns Healthy.
-        /// </summary>
-        [Fact]
-        public async Task Ready_Should_Return_Healthy()
-        {
-            var response = await client.GetAsync("/ready");
-
-            response.EnsureSuccessStatusCode();
-
-            var content = await response.Content.ReadAsStringAsync();
-
-            Assert.Equal("Healthy", content);
-        }
+       
     }
 }

@@ -305,6 +305,12 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances
 
             public int? LastAvailableRunSlots { get; private set; }
 
+            public int? LastActiveWorkerCount { get; private set; }
+
+            public int? LastAvailableWorkerCount { get; private set; }
+
+            public int? LastMaxLocalWorkersPerExecution { get; private set; }
+
             public bool LastIsQueuePaused { get; private set; }
 
             public bool LastCanAcceptRun { get; private set; }
@@ -324,6 +330,9 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances
                     registration.RuntimeInstanceId,
                     AiRuntimeInstanceStatus.Ready,
                     registration.WorkerCount,
+                    activeWorkerCount: 0,
+                    availableWorkerCount: registration.WorkerCount,
+                    maxLocalWorkersPerExecution: null,
                     queuedRunCount: 0,
                     runningRunCount: 0,
                     activeRunCount: 0,
@@ -340,6 +349,9 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances
                 int runningRunCount,
                 int activeRunCount,
                 int? availableRunSlots,
+                int? activeWorkerCount,
+                int? availableWorkerCount,
+                int? maxLocalWorkersPerExecution,
                 bool isQueuePaused,
                 bool canAcceptRun,
                 AiRuntimeInstanceStatus status,
@@ -351,6 +363,9 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances
                 LastRunningRunCount = runningRunCount;
                 LastActiveRunCount = activeRunCount;
                 LastAvailableRunSlots = availableRunSlots;
+                LastActiveWorkerCount = activeWorkerCount;
+                LastAvailableWorkerCount = availableWorkerCount;
+                LastMaxLocalWorkersPerExecution = maxLocalWorkersPerExecution;
                 LastIsQueuePaused = isQueuePaused;
                 LastCanAcceptRun = canAcceptRun;
                 LastStatus = status;
@@ -360,6 +375,9 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances
                         runtimeInstanceId,
                         status,
                         workerCount: 4,
+                        activeWorkerCount: activeWorkerCount,
+                        availableWorkerCount: availableWorkerCount,
+                        maxLocalWorkersPerExecution: maxLocalWorkersPerExecution,
                         queuedRunCount,
                         runningRunCount,
                         activeRunCount,
@@ -382,6 +400,9 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances
                         runtimeInstanceId,
                         AiRuntimeInstanceStatus.Ready,
                         workerCount: 4,
+                        activeWorkerCount: 0,
+                        availableWorkerCount: 4,
+                        maxLocalWorkersPerExecution: 2,
                         queuedRunCount: 0,
                         runningRunCount: 0,
                         activeRunCount: 0,
@@ -402,18 +423,21 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances
                 IReadOnlyList<AiRuntimeInstanceSnapshot> snapshots =
                     new[]
                     {
-                        CreateSnapshot(
-                            "runtime-1",
-                            AiRuntimeInstanceStatus.Ready,
-                            workerCount: 4,
-                            queuedRunCount: 0,
-                            runningRunCount: 0,
-                            activeRunCount: 0,
-                            queueCapacity: 8,
-                            maxConcurrentRuns: 2,
-                            availableRunSlots: 2,
-                            isQueuePaused: false,
-                            canAcceptRun: true)
+                CreateSnapshot(
+                    "runtime-1",
+                    AiRuntimeInstanceStatus.Ready,
+                    workerCount: 4,
+                    activeWorkerCount: 0,
+                    availableWorkerCount: 4,
+                    maxLocalWorkersPerExecution: 2,
+                    queuedRunCount: 0,
+                    runningRunCount: 0,
+                    activeRunCount: 0,
+                    queueCapacity: 8,
+                    maxConcurrentRuns: 2,
+                    availableRunSlots: 2,
+                    isQueuePaused: false,
+                    canAcceptRun: true)
                     };
 
                 return Task.FromResult(snapshots);
@@ -431,6 +455,9 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances
                         runtimeInstanceId,
                         AiRuntimeInstanceStatus.Draining,
                         workerCount: 4,
+                        activeWorkerCount: 0,
+                        availableWorkerCount: 0,
+                        maxLocalWorkersPerExecution: 2,
                         queuedRunCount: 0,
                         runningRunCount: 0,
                         activeRunCount: 0,
@@ -453,6 +480,9 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances
                         runtimeInstanceId,
                         AiRuntimeInstanceStatus.Stopped,
                         workerCount: 4,
+                        activeWorkerCount: 0,
+                        availableWorkerCount: 0,
+                        maxLocalWorkersPerExecution: 2,
                         queuedRunCount: 0,
                         runningRunCount: 0,
                         activeRunCount: 0,
@@ -467,6 +497,9 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances
                 string runtimeInstanceId,
                 AiRuntimeInstanceStatus status,
                 int workerCount,
+                int? activeWorkerCount,
+                int? availableWorkerCount,
+                int? maxLocalWorkersPerExecution,
                 int queuedRunCount,
                 int runningRunCount,
                 int activeRunCount,
@@ -483,6 +516,9 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances
                     RuntimeInstanceId = runtimeInstanceId,
                     Status = status,
                     WorkerCount = workerCount,
+                    ActiveWorkerCount = activeWorkerCount,
+                    AvailableWorkerCount = availableWorkerCount,
+                    MaxLocalWorkersPerExecution = maxLocalWorkersPerExecution,
                     QueuedRunCount = queuedRunCount,
                     RunningRunCount = runningRunCount,
                     ActiveRunCount = activeRunCount,

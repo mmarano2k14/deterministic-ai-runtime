@@ -15,6 +15,7 @@ using Multiplexed.AI.Runtime.ControlPlane.SharedController;
 using Multiplexed.AI.Runtime.ControlPlane.SharedController.Store;
 using Multiplexed.AI.Runtime.ControlPlane.SharedQueue;
 using Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis;
+using Multiplexed.AI.Tests.Fixtures;
 using StackExchange.Redis;
 using System.Collections.Concurrent;
 using Xunit;
@@ -360,101 +361,73 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedController
         }
 
         private async Task<AiSharedQueuePumpResult> RunRuntimeInstancePumpUntilEmptyAsync(
-            string runtimeInstanceId,
-            string workerId,
-            IAiSharedQueue queue,
-            IAiSharedRunStore store,
-            IAiSharedRunDispatcher dispatcher,
-            int maxDispatchesPerPumpCycle)
+    string runtimeInstanceId,
+    string workerId,
+    IAiSharedQueue queue,
+    IAiSharedRunStore store,
+    MultiInstanceDispatchRecorder recorder,
+    int maxDispatchesPerPumpCycle)
         {
-            ArgumentException.ThrowIfNullOrWhiteSpace(runtimeInstanceId);
-            ArgumentException.ThrowIfNullOrWhiteSpace(workerId);
-            ArgumentNullException.ThrowIfNull(queue);
-            ArgumentNullException.ThrowIfNull(store);
-            ArgumentNullException.ThrowIfNull(dispatcher);
-            ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxDispatchesPerPumpCycle);
-
-            var queueDispatcher = new AiSharedQueueDispatcher(
+            var dispatcher = new AiSharedQueueDispatcher(
                 queue,
                 store,
-                dispatcher);
+                recorder,
+                new FakeRunAdmissionController(
+                    assignedRuntimeInstanceId: runtimeInstanceId));
 
             var pump = new AiSharedQueuePump(
-                queueDispatcher,
+                dispatcher,
                 Options.Create(new AiSharedQueuePumpOptions
                 {
                     Enabled = true,
                     MaxDispatchesPerCycle = maxDispatchesPerPumpCycle,
                     DefaultClaimTtl = TimeSpan.FromSeconds(30),
                     StopCycleWhenNoItemAvailable = true,
-                    StopCycleOnDispatchFailure = true,
-                    WorkerId = workerId,
-                    Source = "multi-instance-shared-queue-test"
+                    StopCycleOnDispatchFailure = true
                 }));
 
-            var startedAtUtc = DateTimeOffset.UtcNow;
-
-            var attemptedDispatchCount = 0;
-            var successfulDispatchCount = 0;
-            var failedDispatchCount = 0;
-            var stoppedBecauseNoItemAvailable = false;
-
-            var cycles = 0;
+            var total = new AiSharedQueuePumpResult
+            {
+                Success = true,
+                RuntimeInstanceId = runtimeInstanceId,
+                StartedAtUtc = DateTimeOffset.UtcNow
+            };
 
             while (true)
             {
-                cycles++;
-
                 var result = await pump.PumpOnceAsync(
-                    new AiSharedQueuePumpRequest
-                    {
-                        PumpRuntimeInstanceId = runtimeInstanceId,
-                        PumpWorkerId = workerId,
-                        MaxDispatches = maxDispatchesPerPumpCycle,
-                        ClaimTtl = TimeSpan.FromSeconds(30),
-                        CorrelationId = $"correlation-{runtimeInstanceId}-{cycles}",
-                        RequestedBy = "integration-test",
-                        Source = "multi-instance-shared-queue-test",
-                        Reason = "Runtime instance is consuming the shared queue.",
-                        Metadata = new Dictionary<string, string>
+                        new AiSharedQueuePumpRequest
                         {
-                            ["runtime.instance.id"] = runtimeInstanceId,
-                            ["worker.id"] = workerId,
-                            ["cycle"] = cycles.ToString()
-                        }
-                    });
+                            PumpRuntimeInstanceId = runtimeInstanceId,
+                            PumpWorkerId = workerId,
+                            MaxDispatches = maxDispatchesPerPumpCycle,
+                            ClaimTtl = TimeSpan.FromSeconds(30),
+                            RequestedBy = "integration-test",
+                            Source = "multi-instance-shared-queue-test",
+                            Reason = "Drain shared queue from simulated runtime instance."
+                        })
+                    .ConfigureAwait(false);
 
-                Assert.True(
-                    result.Success,
-                    result.FailureReason ?? $"Pump failed for runtime instance '{runtimeInstanceId}'.");
-
-                Assert.Equal(
-                    0,
-                    result.FailedDispatchCount);
-
-                attemptedDispatchCount += result.AttemptedDispatchCount;
-                successfulDispatchCount += result.SuccessfulDispatchCount;
-                failedDispatchCount += result.FailedDispatchCount;
-                stoppedBecauseNoItemAvailable = result.StoppedBecauseNoItemAvailable;
-
-                if (result.StoppedBecauseNoItemAvailable)
+                total = new AiSharedQueuePumpResult
                 {
-                    return new AiSharedQueuePumpResult
-                    {
-                        Success = true,
-                        RuntimeInstanceId = runtimeInstanceId,
-                        AttemptedDispatchCount = attemptedDispatchCount,
-                        SuccessfulDispatchCount = successfulDispatchCount,
-                        FailedDispatchCount = failedDispatchCount,
-                        StoppedBecauseNoItemAvailable = stoppedBecauseNoItemAvailable,
-                        StartedAtUtc = startedAtUtc,
-                        CompletedAtUtc = DateTimeOffset.UtcNow
-                    };
-                }
+                    Success = total.Success && result.Success,
+                    RuntimeInstanceId = runtimeInstanceId,
+                    AttemptedDispatchCount = total.AttemptedDispatchCount + result.AttemptedDispatchCount,
+                    SuccessfulDispatchCount = total.SuccessfulDispatchCount + result.SuccessfulDispatchCount,
+                    FailedDispatchCount = total.FailedDispatchCount + result.FailedDispatchCount,
+                    StoppedBecauseNoItemAvailable = result.StoppedBecauseNoItemAvailable,
+                    StartedAtUtc = total.StartedAtUtc,
+                    CompletedAtUtc = DateTimeOffset.UtcNow,
+                    DurationMs = result.DurationMs,
+                    FailureReason = result.FailureReason
+                };
 
-                Assert.True(
-                    cycles <= 10_000,
-                    $"Pump for runtime instance '{runtimeInstanceId}' did not finish within the expected number of cycles.");
+                if (result.StoppedBecauseNoItemAvailable ||
+                    result.SuccessfulDispatchCount == 0 ||
+                    result.FailedDispatchCount > 0)
+                {
+                    return total;
+                }
             }
         }
 
