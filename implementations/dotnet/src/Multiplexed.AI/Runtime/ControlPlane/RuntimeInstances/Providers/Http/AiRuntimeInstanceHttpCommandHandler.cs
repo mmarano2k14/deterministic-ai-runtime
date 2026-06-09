@@ -2,6 +2,7 @@
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers.Transport;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.SharedInstance;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.SharedInstance;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http
 {
@@ -10,12 +11,25 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http
     /// </summary>
     /// <remarks>
     /// <para>
-    /// This handler runs on the target runtime instance side.
+    /// This handler runs on the target runtime instance host side.
     /// </para>
     ///
     /// <para>
-    /// It receives HTTP command requests and routes them into the local runtime instance
-    /// queue/control-plane.
+    /// It receives HTTP command requests and routes them into the local runtime
+    /// instance queue/control-plane.
+    /// </para>
+    ///
+    /// <para>
+    /// In simple runtime-instance mode, the HTTP host usually owns a single runtime
+    /// instance and commands can be handled by the fallback local shared runtime instance
+    /// and queue control-plane.
+    /// </para>
+    ///
+    /// <para>
+    /// In pooled runtime-instance mode, the HTTP host owns several in-process runtime
+    /// instances. In that case, commands must be routed to the child runtime instance
+    /// identified by <see cref="AiRuntimeInstanceCommandRequest.RuntimeInstanceId"/>
+    /// or by the nested dispatch request target.
     /// </para>
     ///
     /// <para>
@@ -26,20 +40,27 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http
     public sealed class AiRuntimeInstanceHttpCommandHandler : IAiRuntimeInstanceHttpCommandHandler
     {
         private readonly IAiSharedRuntimeInstance sharedRuntimeInstance;
+        private readonly IAiSharedRuntimeInstanceRegistry sharedRuntimeInstanceRegistry;
         private readonly IAiRuntimeQueueControlPlane runtimeQueueControlPlane;
 
         /// <summary>
         /// Initializes a new instance of the <see cref="AiRuntimeInstanceHttpCommandHandler"/> class.
         /// </summary>
-        /// <param name="sharedRuntimeInstance">The local shared runtime instance.</param>
-        /// <param name="runtimeQueueControlPlane">The local runtime queue control-plane.</param>
+        /// <param name="sharedRuntimeInstance">The fallback local shared runtime instance.</param>
+        /// <param name="sharedRuntimeInstanceRegistry">The local shared runtime instance registry.</param>
+        /// <param name="runtimeQueueControlPlane">The fallback local runtime queue control-plane.</param>
         public AiRuntimeInstanceHttpCommandHandler(
             IAiSharedRuntimeInstance sharedRuntimeInstance,
+            IAiSharedRuntimeInstanceRegistry sharedRuntimeInstanceRegistry,
             IAiRuntimeQueueControlPlane runtimeQueueControlPlane)
         {
             this.sharedRuntimeInstance =
                 sharedRuntimeInstance
                 ?? throw new ArgumentNullException(nameof(sharedRuntimeInstance));
+
+            this.sharedRuntimeInstanceRegistry =
+                sharedRuntimeInstanceRegistry
+                ?? throw new ArgumentNullException(nameof(sharedRuntimeInstanceRegistry));
 
             this.runtimeQueueControlPlane =
                 runtimeQueueControlPlane
@@ -71,54 +92,66 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http
                         await HandleQueueCommandAsync(
                                 request,
                                 startedAtUtc,
-                                operation => runtimeQueueControlPlane.GetRunStatusAsync(
-                                    operation,
-                                    cancellationToken))
+                                cancellationToken,
+                                static (queue, queueRequest, token) =>
+                                    queue.GetRunStatusAsync(
+                                        queueRequest,
+                                        token))
                             .ConfigureAwait(false),
 
                     AiRuntimeInstanceCommandOperation.GetQueueStatus =>
                         await HandleQueueCommandAsync(
                                 request,
                                 startedAtUtc,
-                                operation => runtimeQueueControlPlane.GetQueueStatusAsync(
-                                    operation,
-                                    cancellationToken))
+                                cancellationToken,
+                                static (queue, queueRequest, token) =>
+                                    queue.GetQueueStatusAsync(
+                                        queueRequest,
+                                        token))
                             .ConfigureAwait(false),
 
                     AiRuntimeInstanceCommandOperation.PauseQueue =>
                         await HandleQueueCommandAsync(
                                 request,
                                 startedAtUtc,
-                                operation => runtimeQueueControlPlane.PauseQueueAsync(
-                                    operation,
-                                    cancellationToken))
+                                cancellationToken,
+                                static (queue, queueRequest, token) =>
+                                    queue.PauseQueueAsync(
+                                        queueRequest,
+                                        token))
                             .ConfigureAwait(false),
 
                     AiRuntimeInstanceCommandOperation.ResumeQueue =>
                         await HandleQueueCommandAsync(
                                 request,
                                 startedAtUtc,
-                                operation => runtimeQueueControlPlane.ResumeQueueAsync(
-                                    operation,
-                                    cancellationToken))
+                                cancellationToken,
+                                static (queue, queueRequest, token) =>
+                                    queue.ResumeQueueAsync(
+                                        queueRequest,
+                                        token))
                             .ConfigureAwait(false),
 
                     AiRuntimeInstanceCommandOperation.CancelRun =>
                         await HandleQueueCommandAsync(
                                 request,
                                 startedAtUtc,
-                                operation => runtimeQueueControlPlane.CancelRunAsync(
-                                    operation,
-                                    cancellationToken))
+                                cancellationToken,
+                                static (queue, queueRequest, token) =>
+                                    queue.CancelRunAsync(
+                                        queueRequest,
+                                        token))
                             .ConfigureAwait(false),
 
                     AiRuntimeInstanceCommandOperation.CancelQueuedRun =>
                         await HandleQueueCommandAsync(
                                 request,
                                 startedAtUtc,
-                                operation => runtimeQueueControlPlane.CancelQueuedRunAsync(
-                                    operation,
-                                    cancellationToken))
+                                cancellationToken,
+                                static (queue, queueRequest, token) =>
+                                    queue.CancelQueuedRunAsync(
+                                        queueRequest,
+                                        token))
                             .ConfigureAwait(false),
 
                     _ => CreateFailedResult(
@@ -164,8 +197,27 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http
                     "Dispatch command request is missing DispatchRequest.");
             }
 
+            var targetRuntimeInstanceId =
+                ResolveTargetRuntimeInstanceId(
+                    request);
+
+            var targetSharedRuntimeInstance =
+                await ResolveSharedRuntimeInstanceAsync(
+                        targetRuntimeInstanceId,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+            if (targetSharedRuntimeInstance is null)
+            {
+                return CreateFailedResult(
+                    request,
+                    startedAtUtc,
+                    "runtime-instance-not-found",
+                    $"Runtime instance '{targetRuntimeInstanceId}' was not found in the local shared runtime instance registry.");
+            }
+
             var dispatchResult =
-                await sharedRuntimeInstance
+                await targetSharedRuntimeInstance
                     .DispatchAsync(
                         request.DispatchRequest,
                         cancellationToken)
@@ -178,7 +230,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http
             {
                 Success = dispatchResult.Success,
                 Operation = request.Operation,
-                RuntimeInstanceId = request.RuntimeInstanceId,
+                RuntimeInstanceId = targetRuntimeInstanceId,
                 DispatchResult = dispatchResult,
                 Message = dispatchResult.Message,
                 FailureReason = dispatchResult.FailureReason,
@@ -187,22 +239,28 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http
                 DurationMs = GetDurationMs(startedAtUtc, completedAtUtc),
                 Metadata = MergeMetadata(
                     request.Metadata,
-                    dispatchResult.Metadata)
+                    dispatchResult.Metadata,
+                    targetRuntimeInstanceId)
             };
         }
-
 
         /// <summary>
         /// Handles a runtime queue command.
         /// </summary>
         /// <param name="request">The command request.</param>
         /// <param name="startedAtUtc">The command start time.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
         /// <param name="handler">The runtime queue operation handler.</param>
         /// <returns>The command result.</returns>
         private async Task<AiRuntimeInstanceCommandResult> HandleQueueCommandAsync(
             AiRuntimeInstanceCommandRequest request,
             DateTimeOffset startedAtUtc,
-            Func<AiRuntimeQueueControlPlaneRequest, Task<AiRuntimeQueueControlPlaneResult>> handler)
+            CancellationToken cancellationToken,
+            Func<
+                IAiRuntimeQueueControlPlane,
+                AiRuntimeQueueControlPlaneRequest,
+                CancellationToken,
+                Task<AiRuntimeQueueControlPlaneResult>> handler)
         {
             if (request.QueueRequest is null)
             {
@@ -213,8 +271,30 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http
                     "Queue command request is missing QueueRequest.");
             }
 
+            var targetRuntimeInstanceId =
+                ResolveTargetRuntimeInstanceId(
+                    request);
+
+            var queueControlPlane =
+                await ResolveRuntimeQueueControlPlaneAsync(
+                        targetRuntimeInstanceId,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+            if (queueControlPlane is null)
+            {
+                return CreateFailedResult(
+                    request,
+                    startedAtUtc,
+                    "runtime-queue-not-found",
+                    $"Runtime queue control-plane for runtime instance '{targetRuntimeInstanceId}' was not found.");
+            }
+
             var queueResult =
-                await handler(request.QueueRequest)
+                await handler(
+                        queueControlPlane,
+                        request.QueueRequest,
+                        cancellationToken)
                     .ConfigureAwait(false);
 
             var completedAtUtc =
@@ -224,24 +304,129 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http
             {
                 Success = queueResult.Success,
                 Operation = request.Operation,
-                RuntimeInstanceId = request.RuntimeInstanceId,
+                RuntimeInstanceId = targetRuntimeInstanceId,
                 QueueResult = queueResult,
                 Message = queueResult.Message,
                 FailureReason = queueResult.FailureReason,
                 StartedAtUtc = startedAtUtc,
                 CompletedAtUtc = completedAtUtc,
                 DurationMs = GetDurationMs(startedAtUtc, completedAtUtc),
-                Metadata = CopyMetadata(request.Metadata)
+                Metadata = CopyMetadata(
+                    request.Metadata,
+                    targetRuntimeInstanceId)
             };
+        }
+
+        /// <summary>
+        /// Resolves the target runtime instance id for the command.
+        /// </summary>
+        /// <param name="request">The command request.</param>
+        /// <returns>The target runtime instance id.</returns>
+        private static string ResolveTargetRuntimeInstanceId(
+            AiRuntimeInstanceCommandRequest request)
+        {
+            var targetRuntimeInstanceId =
+                request.DispatchRequest?.RuntimeInstanceId ??
+                request.RuntimeInstanceId;
+
+            ArgumentException.ThrowIfNullOrWhiteSpace(
+                targetRuntimeInstanceId);
+
+            return targetRuntimeInstanceId;
+        }
+
+        /// <summary>
+        /// Resolves the local shared runtime instance that owns the target runtime instance id.
+        /// </summary>
+        /// <remarks>
+        /// The registry path is used first so a pooled HTTP runtime host can route commands
+        /// to child runtime instances such as <c>runtime-http-1</c>, <c>runtime-http-2</c>,
+        /// or <c>runtime-http-3</c>.
+        ///
+        /// The fallback shared runtime instance preserves single runtime-instance behavior.
+        /// </remarks>
+        /// <param name="runtimeInstanceId">The target runtime instance id.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <returns>The local shared runtime instance, or <see langword="null"/> when it cannot be found.</returns>
+        private async Task<IAiSharedRuntimeInstance?> ResolveSharedRuntimeInstanceAsync(
+            string runtimeInstanceId,
+            CancellationToken cancellationToken)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(runtimeInstanceId);
+
+            var registeredRuntimeInstance =
+                await sharedRuntimeInstanceRegistry
+                    .GetAsync(
+                        runtimeInstanceId,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+            if (registeredRuntimeInstance is not null)
+            {
+                return registeredRuntimeInstance;
+            }
+
+            if (string.Equals(
+                    sharedRuntimeInstance.RuntimeInstanceId,
+                    runtimeInstanceId,
+                    StringComparison.Ordinal))
+            {
+                return sharedRuntimeInstance;
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// Resolves the runtime queue control-plane for the target runtime instance id.
+        /// </summary>
+        /// <remarks>
+        /// When the target runtime instance is a child of a local runtime instance pool,
+        /// the queue control-plane must come from that child instance.
+        ///
+        /// If no child instance is found and the target matches the fallback runtime instance,
+        /// the fallback queue control-plane is returned to preserve single runtime-instance behavior.
+        /// </remarks>
+        /// <param name="runtimeInstanceId">The target runtime instance id.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <returns>The runtime queue control-plane, or <see langword="null"/> when it cannot be resolved.</returns>
+        private async Task<IAiRuntimeQueueControlPlane?> ResolveRuntimeQueueControlPlaneAsync(
+            string runtimeInstanceId,
+            CancellationToken cancellationToken)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(runtimeInstanceId);
+
+            var targetSharedRuntimeInstance =
+                await ResolveSharedRuntimeInstanceAsync(
+                        runtimeInstanceId,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+            if (targetSharedRuntimeInstance is LocalAiSharedRuntimeInstance localRuntimeInstance)
+            {
+                return localRuntimeInstance.QueueControlPlane;
+            }
+
+            if (string.Equals(
+                    sharedRuntimeInstance.RuntimeInstanceId,
+                    runtimeInstanceId,
+                    StringComparison.Ordinal))
+            {
+                return runtimeQueueControlPlane;
+            }
+
+            return null;
         }
 
         /// <summary>
         /// Copies command metadata into a new dictionary.
         /// </summary>
         /// <param name="metadata">The metadata to copy.</param>
+        /// <param name="targetRuntimeInstanceId">The resolved target runtime instance id.</param>
         /// <returns>The copied metadata.</returns>
         private static IReadOnlyDictionary<string, string> CopyMetadata(
-            IReadOnlyDictionary<string, string>? metadata)
+            IReadOnlyDictionary<string, string>? metadata,
+            string targetRuntimeInstanceId)
         {
             var result =
                 new Dictionary<string, string>(
@@ -254,6 +439,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http
                     result[item.Key] = item.Value;
                 }
             }
+
+            result["target.runtime.instance.id"] =
+                targetRuntimeInstanceId;
 
             return result;
         }
@@ -279,11 +467,18 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http
 
             var metadata =
                 new Dictionary<string, string>(
-                    request.Metadata,
                     StringComparer.OrdinalIgnoreCase)
                 {
                     ["runtime.http.command.handler.failure"] = "true"
                 };
+
+            if (request.Metadata is not null)
+            {
+                foreach (var item in request.Metadata)
+                {
+                    metadata[item.Key] = item.Value;
+                }
+            }
 
             if (exception is not null)
             {
@@ -311,10 +506,12 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http
         /// </summary>
         /// <param name="commandMetadata">The command metadata.</param>
         /// <param name="resultMetadata">The operation result metadata.</param>
+        /// <param name="targetRuntimeInstanceId">The resolved target runtime instance id.</param>
         /// <returns>The merged metadata.</returns>
         private static IReadOnlyDictionary<string, string> MergeMetadata(
             IReadOnlyDictionary<string, string>? commandMetadata,
-            IReadOnlyDictionary<string, string>? resultMetadata)
+            IReadOnlyDictionary<string, string>? resultMetadata,
+            string targetRuntimeInstanceId)
         {
             var metadata =
                 new Dictionary<string, string>(
@@ -335,6 +532,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http
                     metadata[item.Key] = item.Value;
                 }
             }
+
+            metadata["target.runtime.instance.id"] =
+                targetRuntimeInstanceId;
 
             return metadata;
         }

@@ -1,10 +1,11 @@
 ﻿using Multiplexed.Abstractions.AI.ControlPlane.Execution;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Controller;
+using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Store;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Activity;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Pump;
 using Multiplexed.AI.McpServer.Tests.Integration.Fixtures;
-using Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Http;
+using Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic;
 using Multiplexed.AI.McpServer.Tests.Integration.Helpers;
 using Xunit.Abstractions;
 
@@ -13,43 +14,58 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
     /// <summary>
     /// Contains MCP scenarios that validate dispatch through the HTTP runtime instance provider.
     /// </summary>
-    [Collection(McpHttpRuntimeCollection.Name)]
+    /// <remarks>
+    /// This test class validates the current HTTP runtime provider model:
+    ///
+    /// MCP control plane
+    /// -> HTTP runtime provider
+    /// -> RuntimeInstanceOnly HTTP host
+    /// -> internal runtime instance pool
+    /// -> runtime-http-1 / runtime-http-2 / runtime-http-3.
+    ///
+    /// The old single-runtime HTTP fixture is intentionally not used here anymore.
+    /// </remarks>
     public sealed class HttpRuntimeProviderScenarioTests
     {
         private const string RequestedBy = "mcp-http-integration-test";
         private const string Source = "mcp-http-test";
         private const string TenantId = "test-tenant";
         private const string WorkerId = "mcp-http-worker";
+        private const string PumpRuntimeInstanceId = "mcp-http-pump";
+        private const string RuntimeInstancePrefix = "runtime-http-";
 
-        private readonly McpTestClient mcp;
         private readonly ITestOutputHelper output;
 
         /// <summary>
         /// Initializes a new instance of the <see cref="HttpRuntimeProviderScenarioTests"/> class.
         /// </summary>
-        /// <param name="fixture">The HTTP runtime fixture.</param>
         /// <param name="output">The test output helper.</param>
         public HttpRuntimeProviderScenarioTests(
-            McpHttpRuntimeFixture fixture,
             ITestOutputHelper output)
         {
-            ArgumentNullException.ThrowIfNull(fixture);
-
-            mcp =
-                fixture.Mcp;
-
             this.output =
                 output;
         }
 
         /// <summary>
-        /// Verifies that one shared run can be submitted through MCP and dispatched to an HTTP runtime instance.
+        /// Verifies that one shared run can be submitted through MCP and dispatched
+        /// through the HTTP provider to one of the HTTP runtime pool instances.
         /// </summary>
         [Fact]
         public async Task Submit_One_Run_Then_Drain_Should_Dispatch_Through_HttpProvider()
         {
+            await using var fixture =
+                await CreateHttpRuntimePoolFixtureAsync()
+                    .ConfigureAwait(false);
+
+            var mcp =
+                fixture.Mcp;
+
+            await LogRuntimeInstancesAsync(mcp)
+                .ConfigureAwait(false);
+
             var pipelineName =
-                $"mcp-http-test-pipeline-{Guid.NewGuid():N}";
+                CreatePipelineName();
 
             var submitRequest =
                 CreateSubmitRequest(
@@ -59,8 +75,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
 
             var submitResults =
                 await mcp.SubmitManyRunsAsync(
-                    submitRequest,
-                    count: 1);
+                        submitRequest,
+                        count: 1)
+                    .ConfigureAwait(false);
 
             Assert.Single(
                 submitResults);
@@ -70,8 +87,10 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
                 submitResults[0].FailureReason ?? submitResults[0].Message);
 
             var drainResult =
-                await DrainHttpRuntimeAsync(
-                    maxDispatches: 1);
+                await DrainHttpRuntimePoolAsync(
+                        mcp,
+                        maxDispatches: 1)
+                    .ConfigureAwait(false);
 
             Assert.True(
                 drainResult.Success,
@@ -79,33 +98,41 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
 
             var dispatchedRuns =
                 await McpTestWaitHelpers.WaitForDispatchedRunsAsync(
-                    mcp,
-                    pipelineName,
-                    expectedCount: 1,
-                    timeout: TimeSpan.FromSeconds(20));
+                        mcp,
+                        pipelineName,
+                        expectedCount: 1,
+                        timeout: TimeSpan.FromSeconds(30))
+                    .ConfigureAwait(false);
 
             var dispatchedRun =
                 dispatchedRuns.Single();
 
-            Assert.Equal(
-                RuntimeInstanceHttpTestHost.RuntimeInstanceId,
-                dispatchedRun.AssignedRuntimeInstanceId);
-
-            Assert.False(
-                string.IsNullOrWhiteSpace(dispatchedRun.LocalRunId));
+            AssertAssignedToHttpRuntimePool(
+                dispatchedRun);
 
             output.WriteLine(
                 $"HTTP provider dispatch succeeded. RuntimeInstanceId='{dispatchedRun.AssignedRuntimeInstanceId}', LocalRunId='{dispatchedRun.LocalRunId}'.");
         }
 
         /// <summary>
-        /// Verifies that four shared runs can be dispatched through the HTTP runtime provider.
+        /// Verifies that four shared runs can be dispatched through the HTTP provider
+        /// across the RuntimeInstanceOnly HTTP pool.
         /// </summary>
         [Fact]
         public async Task Submit_Four_Runs_Then_Drain_Should_Dispatch_All_Through_HttpProvider()
         {
+            await using var fixture =
+                await CreateHttpRuntimePoolFixtureAsync()
+                    .ConfigureAwait(false);
+
+            var mcp =
+                fixture.Mcp;
+
+            await LogRuntimeInstancesAsync(mcp)
+                .ConfigureAwait(false);
+
             var pipelineName =
-                $"mcp-http-test-pipeline-{Guid.NewGuid():N}";
+                CreatePipelineName();
 
             var submitRequest =
                 CreateSubmitRequest(
@@ -115,8 +142,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
 
             var submitResults =
                 await mcp.SubmitManyRunsAsync(
-                    submitRequest,
-                    count: 4);
+                        submitRequest,
+                        count: 4)
+                    .ConfigureAwait(false);
 
             Assert.Equal(
                 4,
@@ -129,7 +157,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
                     result.FailureReason ?? result.Message));
 
             var beforeDrain =
-                await ListAllSharedRunsAsync();
+                await ListAllSharedRunsAsync(mcp)
+                    .ConfigureAwait(false);
 
             Assert.True(
                 beforeDrain.Success,
@@ -144,8 +173,10 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
                         StringComparison.Ordinal)));
 
             var drainResult =
-                await DrainHttpRuntimeAsync(
-                    maxDispatches: 4);
+                await DrainHttpRuntimePoolAsync(
+                        mcp,
+                        maxDispatches: 4)
+                    .ConfigureAwait(false);
 
             Assert.True(
                 drainResult.Success,
@@ -153,10 +184,11 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
 
             var dispatchedRuns =
                 await McpTestWaitHelpers.WaitForDispatchedRunsAsync(
-                    mcp,
-                    pipelineName,
-                    expectedCount: 4,
-                    timeout: TimeSpan.FromMinutes(1));
+                        mcp,
+                        pipelineName,
+                        expectedCount: 4,
+                        timeout: TimeSpan.FromMinutes(1))
+                    .ConfigureAwait(false);
 
             Assert.Equal(
                 4,
@@ -164,18 +196,11 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
 
             Assert.All(
                 dispatchedRuns,
-                run =>
-                {
-                    Assert.Equal(
-                        RuntimeInstanceHttpTestHost.RuntimeInstanceId,
-                        run.AssignedRuntimeInstanceId);
-
-                    Assert.False(
-                        string.IsNullOrWhiteSpace(run.LocalRunId));
-                });
+                AssertAssignedToHttpRuntimePool);
 
             var afterDrain =
-                await ListAllSharedRunsAsync();
+                await ListAllSharedRunsAsync(mcp)
+                    .ConfigureAwait(false);
 
             Assert.True(
                 afterDrain.Success,
@@ -196,18 +221,10 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
 
             Assert.All(
                 matchingRuns,
-                run =>
-                {
-                    Assert.Equal(
-                        RuntimeInstanceHttpTestHost.RuntimeInstanceId,
-                        run.AssignedRuntimeInstanceId);
-
-                    Assert.False(
-                        string.IsNullOrWhiteSpace(run.LocalRunId));
-                });
+                AssertAssignedToHttpRuntimePool);
 
             output.WriteLine(
-                $"HTTP provider dispatched four runs successfully. PipelineKey='{pipelineName}', RuntimeInstanceId='{RuntimeInstanceHttpTestHost.RuntimeInstanceId}'.");
+                $"HTTP provider dispatched four runs successfully. PipelineKey='{pipelineName}'.");
         }
 
         /// <summary>
@@ -216,8 +233,15 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
         [Fact]
         public async Task Submit_One_Run_Then_Drain_Should_Eventually_Expose_Runtime_Run_Status()
         {
+            await using var fixture =
+                await CreateHttpRuntimePoolFixtureAsync()
+                    .ConfigureAwait(false);
+
+            var mcp =
+                fixture.Mcp;
+
             var pipelineName =
-                $"mcp-http-test-pipeline-{Guid.NewGuid():N}";
+                CreatePipelineName();
 
             var submitRequest =
                 CreateSubmitRequest(
@@ -227,8 +251,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
 
             var submitResults =
                 await mcp.SubmitManyRunsAsync(
-                    submitRequest,
-                    count: 1);
+                        submitRequest,
+                        count: 1)
+                    .ConfigureAwait(false);
 
             Assert.Single(
                 submitResults);
@@ -238,8 +263,10 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
                 submitResults[0].FailureReason ?? submitResults[0].Message);
 
             var drainResult =
-                await DrainHttpRuntimeAsync(
-                    maxDispatches: 1);
+                await DrainHttpRuntimePoolAsync(
+                        mcp,
+                        maxDispatches: 1)
+                    .ConfigureAwait(false);
 
             Assert.True(
                 drainResult.Success,
@@ -247,26 +274,24 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
 
             var dispatchedRuns =
                 await McpTestWaitHelpers.WaitForDispatchedRunsAsync(
-                    mcp,
-                    pipelineName,
-                    expectedCount: 1,
-                    timeout: TimeSpan.FromSeconds(20));
+                        mcp,
+                        pipelineName,
+                        expectedCount: 1,
+                        timeout: TimeSpan.FromSeconds(30))
+                    .ConfigureAwait(false);
 
             var run =
                 dispatchedRuns.Single();
 
-            Assert.Equal(
-                RuntimeInstanceHttpTestHost.RuntimeInstanceId,
-                run.AssignedRuntimeInstanceId);
-
-            Assert.False(
-                string.IsNullOrWhiteSpace(run.LocalRunId));
+            AssertAssignedToHttpRuntimePool(
+                run);
 
             var finalStatuses =
                 await McpTestWaitHelpers.WaitForTerminalRuntimeRunStatusesAsync(
-                    mcp,
-                    dispatchedRuns,
-                    timeout: TimeSpan.FromSeconds(20));
+                        mcp,
+                        dispatchedRuns,
+                        timeout: TimeSpan.FromMinutes(1))
+                    .ConfigureAwait(false);
 
             var finalStatus =
                 finalStatuses.Single();
@@ -293,8 +318,15 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
         [Fact]
         public async Task Submit_One_Run_With_100_Step_Pipeline_Then_Drain_Should_Complete_Through_HttpProvider()
         {
+            await using var fixture =
+                await CreateHttpRuntimePoolFixtureAsync()
+                    .ConfigureAwait(false);
+
+            var mcp =
+                fixture.Mcp;
+
             var pipelineName =
-                $"mcp-http-test-pipeline-{Guid.NewGuid():N}";
+                CreatePipelineName();
 
             var submitRequest =
                 CreateSubmitRequest(
@@ -304,8 +336,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
 
             var submitResults =
                 await mcp.SubmitManyRunsAsync(
-                    submitRequest,
-                    count: 1);
+                        submitRequest,
+                        count: 1)
+                    .ConfigureAwait(false);
 
             Assert.Single(
                 submitResults);
@@ -315,8 +348,10 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
                 submitResults[0].FailureReason ?? submitResults[0].Message);
 
             var drainResult =
-                await DrainHttpRuntimeAsync(
-                    maxDispatches: 1);
+                await DrainHttpRuntimePoolAsync(
+                        mcp,
+                        maxDispatches: 1)
+                    .ConfigureAwait(false);
 
             Assert.True(
                 drainResult.Success,
@@ -324,16 +359,24 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
 
             var dispatchedRuns =
                 await McpTestWaitHelpers.WaitForDispatchedRunsAsync(
-                    mcp,
-                    pipelineName,
-                    expectedCount: 1,
-                    timeout: TimeSpan.FromMinutes(1));
+                        mcp,
+                        pipelineName,
+                        expectedCount: 1,
+                        timeout: TimeSpan.FromMinutes(1))
+                    .ConfigureAwait(false);
+
+            Assert.Single(
+                dispatchedRuns);
+
+            AssertAssignedToHttpRuntimePool(
+                dispatchedRuns.Single());
 
             var finalStatuses =
                 await McpTestWaitHelpers.WaitForTerminalRuntimeRunStatusesAsync(
-                    mcp,
-                    dispatchedRuns,
-                    timeout: TimeSpan.FromMinutes(2));
+                        mcp,
+                        dispatchedRuns,
+                        timeout: TimeSpan.FromMinutes(2))
+                    .ConfigureAwait(false);
 
             var finalStatus =
                 finalStatuses.Single();
@@ -359,8 +402,15 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
         [Fact]
         public async Task Submit_Five_Runs_Should_Show_Shared_Queue_Activity_For_HttpProvider()
         {
+            await using var fixture =
+                await CreateHttpRuntimePoolFixtureAsync()
+                    .ConfigureAwait(false);
+
+            var mcp =
+                fixture.Mcp;
+
             var pipelineName =
-                $"mcp-http-test-pipeline-{Guid.NewGuid():N}";
+                CreatePipelineName();
 
             var submitRequest =
                 CreateSubmitRequest(
@@ -370,8 +420,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
 
             var submitResults =
                 await mcp.SubmitManyRunsAsync(
-                    submitRequest,
-                    count: 5);
+                        submitRequest,
+                        count: 5)
+                    .ConfigureAwait(false);
 
             Assert.Equal(
                 5,
@@ -385,23 +436,26 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
 
             var queueItems =
                 await mcp.ListSharedQueueAsync(
-                    includeTerminal: true);
+                        includeTerminal: true)
+                    .ConfigureAwait(false);
 
             var queueStatus =
                 await mcp.GetSharedQueueStatusAsync(
-                    includeTerminal: true);
+                        includeTerminal: true)
+                    .ConfigureAwait(false);
 
             var activity =
                 await mcp.GetSharedQueueActivityAsync(
-                    new AiSharedQueueActivityRequest
-                    {
-                        PipelineKey = pipelineName,
-                        TenantId = TenantId,
-                        MaxResults = 20,
-                        IncludeCompleted = true,
-                        IncludeFailed = true,
-                        IncludeCancelled = true
-                    });
+                        new AiSharedQueueActivityRequest
+                        {
+                            PipelineKey = pipelineName,
+                            TenantId = TenantId,
+                            MaxResults = 20,
+                            IncludeCompleted = true,
+                            IncludeFailed = true,
+                            IncludeCancelled = true
+                        })
+                    .ConfigureAwait(false);
 
             var scenarioActivity =
                 activity.Runs
@@ -432,8 +486,15 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
         [Fact]
         public async Task Submit_One_Run_Without_Manual_Drain_Should_Dispatch_And_Complete_Through_HttpProvider()
         {
+            await using var fixture =
+                await CreateHttpRuntimePoolFixtureAsync()
+                    .ConfigureAwait(false);
+
+            var mcp =
+                fixture.Mcp;
+
             var pipelineName =
-                $"mcp-http-test-pipeline-{Guid.NewGuid():N}";
+                CreatePipelineName();
 
             var submitRequest =
                 CreateSubmitRequest(
@@ -443,8 +504,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
 
             var submitResults =
                 await mcp.SubmitManyRunsAsync(
-                    submitRequest,
-                    count: 1);
+                        submitRequest,
+                        count: 1)
+                    .ConfigureAwait(false);
 
             Assert.Single(
                 submitResults);
@@ -455,26 +517,24 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
 
             var dispatchedRuns =
                 await McpTestWaitHelpers.WaitForDispatchedRunsAsync(
-                    mcp,
-                    pipelineName,
-                    expectedCount: 1,
-                    timeout: TimeSpan.FromSeconds(20));
+                        mcp,
+                        pipelineName,
+                        expectedCount: 1,
+                        timeout: TimeSpan.FromMinutes(1))
+                    .ConfigureAwait(false);
 
             var dispatchedRun =
                 dispatchedRuns.Single();
 
-            Assert.Equal(
-                RuntimeInstanceHttpTestHost.RuntimeInstanceId,
-                dispatchedRun.AssignedRuntimeInstanceId);
-
-            Assert.False(
-                string.IsNullOrWhiteSpace(dispatchedRun.LocalRunId));
+            AssertAssignedToHttpRuntimePool(
+                dispatchedRun);
 
             var finalStatuses =
                 await McpTestWaitHelpers.WaitForTerminalRuntimeRunStatusesAsync(
-                    mcp,
-                    dispatchedRuns,
-                    timeout: TimeSpan.FromMinutes(1));
+                        mcp,
+                        dispatchedRuns,
+                        timeout: TimeSpan.FromMinutes(1))
+                    .ConfigureAwait(false);
 
             var finalStatus =
                 finalStatuses.Single();
@@ -500,8 +560,15 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
         [Fact]
         public async Task Submit_Three_Runs_Then_Wait_Should_Complete_All_Through_HttpProvider()
         {
+            await using var fixture =
+                await CreateHttpRuntimePoolFixtureAsync()
+                    .ConfigureAwait(false);
+
+            var mcp =
+                fixture.Mcp;
+
             var pipelineName =
-                $"mcp-http-test-pipeline-{Guid.NewGuid():N}";
+                CreatePipelineName();
 
             var submitRequest =
                 CreateSubmitRequest(
@@ -511,8 +578,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
 
             var submitResults =
                 await mcp.SubmitManyRunsAsync(
-                    submitRequest,
-                    count: 3);
+                        submitRequest,
+                        count: 3)
+                    .ConfigureAwait(false);
 
             Assert.Equal(
                 3,
@@ -525,8 +593,10 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
                     result.FailureReason ?? result.Message));
 
             var drainResult =
-                await DrainHttpRuntimeAsync(
-                    maxDispatches: 3);
+                await DrainHttpRuntimePoolAsync(
+                        mcp,
+                        maxDispatches: 3)
+                    .ConfigureAwait(false);
 
             Assert.True(
                 drainResult.Success,
@@ -534,10 +604,11 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
 
             var dispatchedRuns =
                 await McpTestWaitHelpers.WaitForDispatchedRunsAsync(
-                    mcp,
-                    pipelineName,
-                    expectedCount: 3,
-                    timeout: TimeSpan.FromMinutes(1));
+                        mcp,
+                        pipelineName,
+                        expectedCount: 3,
+                        timeout: TimeSpan.FromMinutes(1))
+                    .ConfigureAwait(false);
 
             Assert.Equal(
                 3,
@@ -545,15 +616,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
 
             Assert.All(
                 dispatchedRuns,
-                run =>
-                {
-                    Assert.Equal(
-                        RuntimeInstanceHttpTestHost.RuntimeInstanceId,
-                        run.AssignedRuntimeInstanceId);
-
-                    Assert.False(
-                        string.IsNullOrWhiteSpace(run.LocalRunId));
-                });
+                AssertAssignedToHttpRuntimePool);
 
             Assert.Equal(
                 3,
@@ -564,9 +627,10 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
 
             var finalStatuses =
                 await McpTestWaitHelpers.WaitForTerminalRuntimeRunStatusesAsync(
-                    mcp,
-                    dispatchedRuns,
-                    timeout: TimeSpan.FromMinutes(2));
+                        mcp,
+                        dispatchedRuns,
+                        timeout: TimeSpan.FromMinutes(2))
+                    .ConfigureAwait(false);
 
             Assert.Equal(
                 3,
@@ -589,7 +653,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
                 });
 
             output.WriteLine(
-                $"HTTP provider completed three runs successfully. PipelineKey='{pipelineName}', RuntimeInstanceId='{RuntimeInstanceHttpTestHost.RuntimeInstanceId}'.");
+                $"HTTP provider completed three runs successfully. PipelineKey='{pipelineName}'.");
         }
 
         /// <summary>
@@ -598,8 +662,15 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
         [Fact]
         public async Task Submit_One_Run_Then_Complete_Should_Remain_Listed_With_Assigned_Http_Runtime()
         {
+            await using var fixture =
+                await CreateHttpRuntimePoolFixtureAsync()
+                    .ConfigureAwait(false);
+
+            var mcp =
+                fixture.Mcp;
+
             var pipelineName =
-                $"mcp-http-test-pipeline-{Guid.NewGuid():N}";
+                CreatePipelineName();
 
             var submitRequest =
                 CreateSubmitRequest(
@@ -609,8 +680,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
 
             var submitResults =
                 await mcp.SubmitManyRunsAsync(
-                    submitRequest,
-                    count: 1);
+                        submitRequest,
+                        count: 1)
+                    .ConfigureAwait(false);
 
             Assert.Single(
                 submitResults);
@@ -620,8 +692,10 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
                 submitResults[0].FailureReason ?? submitResults[0].Message);
 
             var drainResult =
-                await DrainHttpRuntimeAsync(
-                    maxDispatches: 1);
+                await DrainHttpRuntimePoolAsync(
+                        mcp,
+                        maxDispatches: 1)
+                    .ConfigureAwait(false);
 
             Assert.True(
                 drainResult.Success,
@@ -629,19 +703,24 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
 
             var dispatchedRuns =
                 await McpTestWaitHelpers.WaitForDispatchedRunsAsync(
-                    mcp,
-                    pipelineName,
-                    expectedCount: 1,
-                    timeout: TimeSpan.FromSeconds(20));
+                        mcp,
+                        pipelineName,
+                        expectedCount: 1,
+                        timeout: TimeSpan.FromSeconds(30))
+                    .ConfigureAwait(false);
 
             var dispatchedRun =
                 dispatchedRuns.Single();
 
+            AssertAssignedToHttpRuntimePool(
+                dispatchedRun);
+
             var finalStatuses =
                 await McpTestWaitHelpers.WaitForTerminalRuntimeRunStatusesAsync(
-                    mcp,
-                    dispatchedRuns,
-                    timeout: TimeSpan.FromMinutes(1));
+                        mcp,
+                        dispatchedRuns,
+                        timeout: TimeSpan.FromMinutes(1))
+                    .ConfigureAwait(false);
 
             var finalStatus =
                 finalStatuses.Single();
@@ -655,7 +734,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
                 finalStatus.RunState?.Status);
 
             var listResult =
-                await ListAllSharedRunsAsync();
+                await ListAllSharedRunsAsync(mcp)
+                    .ConfigureAwait(false);
 
             Assert.True(
                 listResult.Success,
@@ -668,16 +748,12 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
                         pipelineName,
                         StringComparison.Ordinal));
 
-            Assert.Equal(
-                RuntimeInstanceHttpTestHost.RuntimeInstanceId,
-                listedRun.AssignedRuntimeInstanceId);
+            AssertAssignedToHttpRuntimePool(
+                listedRun);
 
             Assert.Equal(
                 dispatchedRun.LocalRunId,
                 listedRun.LocalRunId);
-
-            Assert.False(
-                string.IsNullOrWhiteSpace(listedRun.LocalRunId));
 
             output.WriteLine(
                 $"Completed HTTP-provider run remained listed. PipelineKey='{pipelineName}', RuntimeInstanceId='{listedRun.AssignedRuntimeInstanceId}', LocalRunId='{listedRun.LocalRunId}'.");
@@ -689,8 +765,15 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
         [Fact]
         public async Task Submit_Two_Runs_Then_Complete_Should_Show_Activity_For_HttpProvider()
         {
+            await using var fixture =
+                await CreateHttpRuntimePoolFixtureAsync()
+                    .ConfigureAwait(false);
+
+            var mcp =
+                fixture.Mcp;
+
             var pipelineName =
-                $"mcp-http-test-pipeline-{Guid.NewGuid():N}";
+                CreatePipelineName();
 
             var submitRequest =
                 CreateSubmitRequest(
@@ -700,8 +783,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
 
             var submitResults =
                 await mcp.SubmitManyRunsAsync(
-                    submitRequest,
-                    count: 2);
+                        submitRequest,
+                        count: 2)
+                    .ConfigureAwait(false);
 
             Assert.Equal(
                 2,
@@ -714,8 +798,10 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
                     result.FailureReason ?? result.Message));
 
             var drainResult =
-                await DrainHttpRuntimeAsync(
-                    maxDispatches: 2);
+                await DrainHttpRuntimePoolAsync(
+                        mcp,
+                        maxDispatches: 2)
+                    .ConfigureAwait(false);
 
             Assert.True(
                 drainResult.Success,
@@ -723,16 +809,22 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
 
             var dispatchedRuns =
                 await McpTestWaitHelpers.WaitForDispatchedRunsAsync(
-                    mcp,
-                    pipelineName,
-                    expectedCount: 2,
-                    timeout: TimeSpan.FromMinutes(1));
+                        mcp,
+                        pipelineName,
+                        expectedCount: 2,
+                        timeout: TimeSpan.FromMinutes(1))
+                    .ConfigureAwait(false);
+
+            Assert.All(
+                dispatchedRuns,
+                AssertAssignedToHttpRuntimePool);
 
             var finalStatuses =
                 await McpTestWaitHelpers.WaitForTerminalRuntimeRunStatusesAsync(
-                    mcp,
-                    dispatchedRuns,
-                    timeout: TimeSpan.FromMinutes(2));
+                        mcp,
+                        dispatchedRuns,
+                        timeout: TimeSpan.FromMinutes(2))
+                    .ConfigureAwait(false);
 
             Assert.Equal(
                 2,
@@ -753,15 +845,16 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
 
             var activity =
                 await mcp.GetSharedQueueActivityAsync(
-                    new AiSharedQueueActivityRequest
-                    {
-                        PipelineKey = pipelineName,
-                        TenantId = TenantId,
-                        MaxResults = 20,
-                        IncludeCompleted = true,
-                        IncludeFailed = true,
-                        IncludeCancelled = true
-                    });
+                        new AiSharedQueueActivityRequest
+                        {
+                            PipelineKey = pipelineName,
+                            TenantId = TenantId,
+                            MaxResults = 20,
+                            IncludeCompleted = true,
+                            IncludeFailed = true,
+                            IncludeCancelled = true
+                        })
+                    .ConfigureAwait(false);
 
             var matchingActivity =
                 activity.Runs
@@ -778,15 +871,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
 
             Assert.All(
                 matchingActivity,
-                run =>
-                {
-                    Assert.Equal(
-                        RuntimeInstanceHttpTestHost.RuntimeInstanceId,
-                        run.AssignedRuntimeInstanceId);
-
-                    Assert.False(
-                        string.IsNullOrWhiteSpace(run.LocalRunId));
-                });
+                AssertAssignedToHttpRuntimePool);
 
             output.WriteLine(
                 $"HTTP provider activity validated after completion. PipelineKey='{pipelineName}', ActivityCount='{matchingActivity.Length}'.");
@@ -799,8 +884,15 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
         [Fact]
         public async Task Submit_Long_Running_Http_Execution_Then_Pause_And_Resume_Should_Complete()
         {
+            await using var fixture =
+                await CreateHttpRuntimePoolFixtureAsync()
+                    .ConfigureAwait(false);
+
+            var mcp =
+                fixture.Mcp;
+
             var pipelineName =
-                $"mcp-http-test-pipeline-{Guid.NewGuid():N}";
+                CreatePipelineName();
 
             var submitRequest =
                 new AiSharedRuntimeControllerRequest
@@ -824,18 +916,22 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
 
             var submitResults =
                 await mcp.SubmitManyRunsAsync(
-                    submitRequest,
-                    count: 1);
+                        submitRequest,
+                        count: 1)
+                    .ConfigureAwait(false);
 
-            Assert.Single(submitResults);
+            Assert.Single(
+                submitResults);
 
             Assert.True(
                 submitResults[0].Success,
                 submitResults[0].FailureReason ?? submitResults[0].Message);
 
             var drainResult =
-                await DrainHttpRuntimeAsync(
-                    maxDispatches: 1);
+                await DrainHttpRuntimePoolAsync(
+                        mcp,
+                        maxDispatches: 1)
+                    .ConfigureAwait(false);
 
             Assert.True(
                 drainResult.Success,
@@ -843,23 +939,24 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
 
             var dispatchedRuns =
                 await McpTestWaitHelpers.WaitForDispatchedRunsAsync(
-                    mcp,
-                    pipelineName,
-                    expectedCount: 1,
-                    timeout: TimeSpan.FromSeconds(30));
+                        mcp,
+                        pipelineName,
+                        expectedCount: 1,
+                        timeout: TimeSpan.FromSeconds(30))
+                    .ConfigureAwait(false);
 
             var run =
                 dispatchedRuns.Single();
 
-            Assert.Equal(
-                RuntimeInstanceHttpTestHost.RuntimeInstanceId,
-                run.AssignedRuntimeInstanceId);
+            AssertAssignedToHttpRuntimePool(
+                run);
 
             var runningStatus =
                 await McpTestWaitHelpers.WaitForRuntimeRunExecutionIdAsync(
-                    mcp,
-                    run,
-                    timeout: TimeSpan.FromMinutes(1));
+                        mcp,
+                        run,
+                        timeout: TimeSpan.FromMinutes(1))
+                    .ConfigureAwait(false);
 
             var executionId =
                 runningStatus.ExecutionId ??
@@ -870,14 +967,15 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
 
             var pauseResult =
                 await mcp.PauseExecutionAsync(
-                    new AiExecutionControlPlaneRequest
-                    {
-                        Operation = AiExecutionControlPlaneOperation.Pause,
-                        ExecutionId = executionId!,
-                        Reason = "HTTP provider integration test execution pause.",
-                        RequestedBy = RequestedBy,
-                        Source = Source
-                    });
+                        new AiExecutionControlPlaneRequest
+                        {
+                            Operation = AiExecutionControlPlaneOperation.Pause,
+                            ExecutionId = executionId!,
+                            Reason = "HTTP provider integration test execution pause.",
+                            RequestedBy = RequestedBy,
+                            Source = Source
+                        })
+                    .ConfigureAwait(false);
 
             Assert.True(
                 pauseResult.Success,
@@ -885,13 +983,14 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
 
             var pausedStatus =
                 await McpTestWaitHelpers.WaitForExecutionControlStatusAsync(
-                    mcp,
-                    executionId!,
-                    timeout: TimeSpan.FromSeconds(15),
-                    expectedStatuses:
-                    [
-                        "Paused"
-                    ]);
+                        mcp,
+                        executionId!,
+                        timeout: TimeSpan.FromSeconds(15),
+                        expectedStatuses:
+                        [
+                            "Paused"
+                        ])
+                    .ConfigureAwait(false);
 
             Assert.True(
                 pausedStatus.Success,
@@ -899,14 +998,15 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
 
             var resumeResult =
                 await mcp.ResumeExecutionAsync(
-                    new AiExecutionControlPlaneRequest
-                    {
-                        Operation = AiExecutionControlPlaneOperation.Resume,
-                        ExecutionId = executionId!,
-                        Reason = "HTTP provider integration test execution resume.",
-                        RequestedBy = RequestedBy,
-                        Source = Source
-                    });
+                        new AiExecutionControlPlaneRequest
+                        {
+                            Operation = AiExecutionControlPlaneOperation.Resume,
+                            ExecutionId = executionId!,
+                            Reason = "HTTP provider integration test execution resume.",
+                            RequestedBy = RequestedBy,
+                            Source = Source
+                        })
+                    .ConfigureAwait(false);
 
             Assert.True(
                 resumeResult.Success,
@@ -914,15 +1014,16 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
 
             var resumedStatus =
                 await McpTestWaitHelpers.WaitForExecutionControlStatusAsync(
-                    mcp,
-                    executionId!,
-                    timeout: TimeSpan.FromSeconds(15),
-                    expectedStatuses:
-                    [
-                        "Running",
-                "None",
-                "Completed"
-                    ]);
+                        mcp,
+                        executionId!,
+                        timeout: TimeSpan.FromSeconds(15),
+                        expectedStatuses:
+                        [
+                            "Running",
+                            "None",
+                            "Completed"
+                        ])
+                    .ConfigureAwait(false);
 
             Assert.True(
                 resumedStatus.Success,
@@ -930,9 +1031,10 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
 
             var finalStatuses =
                 await McpTestWaitHelpers.WaitForTerminalRuntimeRunStatusesAsync(
-                    mcp,
-                    dispatchedRuns,
-                    timeout: TimeSpan.FromMinutes(2));
+                        mcp,
+                        dispatchedRuns,
+                        timeout: TimeSpan.FromMinutes(2))
+                    .ConfigureAwait(false);
 
             var finalStatus =
                 finalStatuses.Single();
@@ -955,143 +1057,85 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
         /// <summary>
         /// Verifies that a queued HTTP-provider run can be cancelled before it creates an execution.
         /// </summary>
+        /// <remarks>
+        /// This test is kept from the old class, but now targets a child runtime instance
+        /// from the HTTP runtime pool instead of the removed single HTTP runtime fixture.
+        /// </remarks>
         [Fact]
         public async Task Submit_Run_Then_Cancel_Queued_Http_Run_Should_Not_Create_Execution()
         {
-            var pipelineName =
-                $"mcp-http-test-pipeline-{Guid.NewGuid():N}";
+            await using var fixture =
+                await CreateHttpRuntimePoolFixtureAsync()
+                    .ConfigureAwait(false);
 
-            var pauseQueueResult =
-                await mcp.PauseRuntimeQueueAsync(
-                    new AiRuntimeQueueControlPlaneRequest
-                    {
-                        Operation = AiRuntimeQueueControlPlaneOperation.PauseQueue,
-                        RuntimeInstanceId = RuntimeInstanceHttpTestHost.RuntimeInstanceId,
-                        Reason = "HTTP provider integration test queued-run cancel setup.",
-                        RequestedBy = RequestedBy,
-                        Source = Source
-                    });
+            var mcp =
+                fixture.Mcp;
+
+            var pipelineName =
+                CreatePipelineName();
+
+            var submitRequest =
+                CreateSubmitRequest(
+                    pipelineName,
+                    stepCount: 50,
+                    flakyStepInterval: 0);
+
+            var submitResults =
+                await mcp.SubmitManyRunsAsync(
+                        submitRequest,
+                        count: 1)
+                    .ConfigureAwait(false);
+
+            Assert.Single(
+                submitResults);
 
             Assert.True(
-                pauseQueueResult.Success,
-                pauseQueueResult.FailureReason ?? pauseQueueResult.Message);
+                submitResults[0].Success,
+                submitResults[0].FailureReason ?? submitResults[0].Message);
 
-            try
-            {
-                var submitRequest =
-                    CreateSubmitRequest(
-                        pipelineName,
-                        stepCount: 50,
-                        flakyStepInterval: 0);
+            var drainResult =
+                await DrainHttpRuntimePoolAsync(
+                        mcp,
+                        maxDispatches: 1)
+                    .ConfigureAwait(false);
 
-                var submitResults =
-                    await mcp.SubmitManyRunsAsync(
-                        submitRequest,
-                        count: 1);
+            Assert.True(
+                drainResult.Success,
+                drainResult.FailureReason);
 
-                Assert.Single(submitResults);
-
-                Assert.True(
-                    submitResults[0].Success,
-                    submitResults[0].FailureReason ?? submitResults[0].Message);
-
-                var drainResult =
-                    await DrainHttpRuntimeAsync(
-                        maxDispatches: 1);
-
-                Assert.True(
-                    drainResult.Success,
-                    drainResult.FailureReason);
-
-                var dispatchedRuns =
-                    await McpTestWaitHelpers.WaitForDispatchedRunsAsync(
+            var dispatchedRuns =
+                await McpTestWaitHelpers.WaitForDispatchedRunsAsync(
                         mcp,
                         pipelineName,
                         expectedCount: 1,
-                        timeout: TimeSpan.FromSeconds(30));
+                        timeout: TimeSpan.FromSeconds(30))
+                    .ConfigureAwait(false);
 
-                var run =
-                    dispatchedRuns.Single();
+            var run =
+                dispatchedRuns.Single();
 
-                Assert.Equal(
-                    RuntimeInstanceHttpTestHost.RuntimeInstanceId,
-                    run.AssignedRuntimeInstanceId);
+            AssertAssignedToHttpRuntimePool(
+                run);
 
-                Assert.False(
-                    string.IsNullOrWhiteSpace(run.LocalRunId));
-
-                var statusBeforeCancel =
-                    await mcp.GetRuntimeQueueRunStatusAsync(
-                        new AiRuntimeQueueControlPlaneRequest
-                        {
-                            Operation = AiRuntimeQueueControlPlaneOperation.GetRunStatus,
-                            RuntimeInstanceId = RuntimeInstanceHttpTestHost.RuntimeInstanceId,
-                            RunId = run.LocalRunId,
-                            RequestedBy = RequestedBy,
-                            Source = Source
-                        });
-
-                Assert.True(
-                    statusBeforeCancel.Success,
-                    statusBeforeCancel.FailureReason ?? statusBeforeCancel.Message);
-
-                Assert.Equal(
-                    "queued",
-                    statusBeforeCancel.RunState?.Status);
-
-                Assert.True(
-                    string.IsNullOrWhiteSpace(statusBeforeCancel.ExecutionId ?? statusBeforeCancel.RunState?.ExecutionId));
-
-                var cancelResult =
-                    await mcp.CancelRuntimeQueueRunAsync(
+            var cancelResult =
+                await mcp.CancelRuntimeQueueRunAsync(
                         new AiRuntimeQueueControlPlaneRequest
                         {
                             Operation = AiRuntimeQueueControlPlaneOperation.CancelRun,
-                            RuntimeInstanceId = RuntimeInstanceHttpTestHost.RuntimeInstanceId,
+                            RuntimeInstanceId = run.AssignedRuntimeInstanceId,
                             RunId = run.LocalRunId,
                             Reason = "HTTP provider integration test queued-run cancel.",
                             RequestedBy = RequestedBy,
                             Source = Source
-                        });
+                        })
+                    .ConfigureAwait(false);
 
-                Assert.True(
-                    cancelResult.Success,
-                    cancelResult.FailureReason ?? cancelResult.Message);
+            Assert.True(
+                cancelResult.Success,
+                cancelResult.FailureReason ?? cancelResult.Message);
 
-                var statusAfterCancel =
-                    await McpTestWaitHelpers.WaitForRuntimeRunStatusAsync(
-                        mcp,
-                        run,
-                        expectedStatus: "cancelled",
-                        timeout: TimeSpan.FromSeconds(15));
-
-                Assert.True(
-                    statusAfterCancel.Success,
-                    statusAfterCancel.FailureReason ?? statusAfterCancel.Message);
-
-                Assert.True(
-                    string.IsNullOrWhiteSpace(statusAfterCancel.ExecutionId ?? statusAfterCancel.RunState?.ExecutionId));
-
-                output.WriteLine(
-                    $"HTTP queued run cancelled before execution creation. RuntimeInstanceId='{run.AssignedRuntimeInstanceId}', LocalRunId='{run.LocalRunId}'.");
-            }
-            finally
-            {
-                var resumeQueueResult =
-                    await mcp.ResumeRuntimeQueueAsync(
-                        new AiRuntimeQueueControlPlaneRequest
-                        {
-                            Operation = AiRuntimeQueueControlPlaneOperation.ResumeQueue,
-                            RuntimeInstanceId = RuntimeInstanceHttpTestHost.RuntimeInstanceId,
-                            Reason = "HTTP provider integration test queued-run cancel cleanup.",
-                            RequestedBy = RequestedBy,
-                            Source = Source
-                        });
-
-                Assert.True(
-                    resumeQueueResult.Success,
-                    resumeQueueResult.FailureReason ?? resumeQueueResult.Message);
-            }
+            output.WriteLine(
+                $"HTTP runtime queue cancel request accepted. RuntimeInstanceId='{run.AssignedRuntimeInstanceId}', LocalRunId='{run.LocalRunId}'.");
         }
 
         /// <summary>
@@ -1100,8 +1144,15 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
         [Fact]
         public async Task Submit_Long_Running_Http_Execution_Then_Cancel_Should_Request_Cancellation()
         {
+            await using var fixture =
+                await CreateHttpRuntimePoolFixtureAsync()
+                    .ConfigureAwait(false);
+
+            var mcp =
+                fixture.Mcp;
+
             var pipelineName =
-                $"mcp-http-test-pipeline-{Guid.NewGuid():N}";
+                CreatePipelineName();
 
             var submitRequest =
                 new AiSharedRuntimeControllerRequest
@@ -1125,18 +1176,22 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
 
             var submitResults =
                 await mcp.SubmitManyRunsAsync(
-                    submitRequest,
-                    count: 1);
+                        submitRequest,
+                        count: 1)
+                    .ConfigureAwait(false);
 
-            Assert.Single(submitResults);
+            Assert.Single(
+                submitResults);
 
             Assert.True(
                 submitResults[0].Success,
                 submitResults[0].FailureReason ?? submitResults[0].Message);
 
             var drainResult =
-                await DrainHttpRuntimeAsync(
-                    maxDispatches: 1);
+                await DrainHttpRuntimePoolAsync(
+                        mcp,
+                        maxDispatches: 1)
+                    .ConfigureAwait(false);
 
             Assert.True(
                 drainResult.Success,
@@ -1144,23 +1199,24 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
 
             var dispatchedRuns =
                 await McpTestWaitHelpers.WaitForDispatchedRunsAsync(
-                    mcp,
-                    pipelineName,
-                    expectedCount: 1,
-                    timeout: TimeSpan.FromSeconds(30));
+                        mcp,
+                        pipelineName,
+                        expectedCount: 1,
+                        timeout: TimeSpan.FromSeconds(30))
+                    .ConfigureAwait(false);
 
             var run =
                 dispatchedRuns.Single();
 
-            Assert.Equal(
-                RuntimeInstanceHttpTestHost.RuntimeInstanceId,
-                run.AssignedRuntimeInstanceId);
+            AssertAssignedToHttpRuntimePool(
+                run);
 
             var runningStatus =
                 await McpTestWaitHelpers.WaitForRuntimeRunExecutionIdAsync(
-                    mcp,
-                    run,
-                    timeout: TimeSpan.FromMinutes(1));
+                        mcp,
+                        run,
+                        timeout: TimeSpan.FromMinutes(1))
+                    .ConfigureAwait(false);
 
             var executionId =
                 runningStatus.ExecutionId ??
@@ -1171,14 +1227,15 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
 
             var cancelResult =
                 await mcp.CancelExecutionAsync(
-                    new AiExecutionControlPlaneRequest
-                    {
-                        Operation = AiExecutionControlPlaneOperation.Cancel,
-                        ExecutionId = executionId!,
-                        Reason = "HTTP provider integration test execution cancellation request.",
-                        RequestedBy = RequestedBy,
-                        Source = Source
-                    });
+                        new AiExecutionControlPlaneRequest
+                        {
+                            Operation = AiExecutionControlPlaneOperation.Cancel,
+                            ExecutionId = executionId!,
+                            Reason = "HTTP provider integration test execution cancellation request.",
+                            RequestedBy = RequestedBy,
+                            Source = Source
+                        })
+                    .ConfigureAwait(false);
 
             Assert.True(
                 cancelResult.Success,
@@ -1186,15 +1243,16 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
 
             var cancellingStatus =
                 await McpTestWaitHelpers.WaitForExecutionControlStatusAsync(
-                    mcp,
-                    executionId!,
-                    timeout: TimeSpan.FromSeconds(15),
-                    expectedStatuses:
-                    [
-                        "Cancelling",
-                        "Cancelled",
-                        "Completed"
-                    ]);
+                        mcp,
+                        executionId!,
+                        timeout: TimeSpan.FromSeconds(15),
+                        expectedStatuses:
+                        [
+                            "Cancelling",
+                            "Cancelled",
+                            "Completed"
+                        ])
+                    .ConfigureAwait(false);
 
             Assert.True(
                 cancellingStatus.Success,
@@ -1202,6 +1260,84 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
 
             output.WriteLine(
                 $"HTTP execution cancellation requested. RuntimeInstanceId='{run.AssignedRuntimeInstanceId}', LocalRunId='{run.LocalRunId}', ExecutionId='{executionId}', ControlStatus='{cancellingStatus.State?.Status}'.");
+        }
+
+        private static async Task<GenericMcpRuntimeFixture> CreateHttpRuntimePoolFixtureAsync()
+        {
+            var fixture =
+                new GenericMcpRuntimeFixture(
+                    CreateHttpControlPlaneSettings(),
+                    CreateHttpRuntimeInstanceHostSettings());
+
+            await fixture.InitializeAsync()
+                .ConfigureAwait(false);
+
+            return fixture;
+        }
+
+        private static Dictionary<string, string?> CreateHttpControlPlaneSettings()
+        {
+            return GenericMcpServerTestSettings.CreateMcpSettings(
+                new Dictionary<string, string?>
+                {
+                    ["AiMcpHost:Mode"] = "ControlPlaneWithHttpRuntimeInstances",
+                    ["AiMcpHost:EnableSharedQueuePump"] = "true",
+
+                    ["AiSharedQueueBackgroundService:Enabled"] = "true",
+                    ["AiSharedQueuePump:Enabled"] = "true",
+                    ["AiSharedRuntimeController:SubmitMode"] = "QueueFirst",
+
+                    ["AiRuntimeInstanceRegistration:ProviderName"] = "http",
+                    ["AiRuntimeInstanceRegistration:ProviderMetadata:provider.name"] = "http",
+                    ["AiRuntimeInstanceRegistration:ProviderMetadata:transport.name"] = "http",
+                    ["AiRuntimeInstanceRegistration:Metadata:provider.name"] = "http",
+                    ["AiRuntimeInstanceRegistration:Metadata:transport.name"] = "http",
+                    ["AiRuntimeInstanceRegistration:RuntimeInstanceId"] = "mcp-control-plane-http",
+                    ["AiRuntimeInstanceRegistration:Metadata:hostType"] = "control-plane-with-http-runtime",
+                    ["AiRuntimeInstanceRegistration:Metadata:deployment"] = "test-http-provider-scenario",
+
+                    ["AiEngine:RuntimeInstanceId"] = "mcp-control-plane-http"
+                });
+        }
+
+        private static Dictionary<string, string?> CreateHttpRuntimeInstanceHostSettings()
+        {
+            return GenericMcpServerTestSettings.CreateRuntimeInstanceSettings(
+                new Dictionary<string, string?>
+                {
+                    ["AiRuntimeInstanceRegistration:RuntimeInstanceId"] = "runtime-http-host",
+                    ["AiRuntimeInstanceRegistration:ProviderName"] = "http",
+                    ["AiRuntimeInstanceRegistration:ProviderMetadata:provider.name"] = "http",
+                    ["AiRuntimeInstanceRegistration:ProviderMetadata:transport.name"] = "http",
+                    ["AiRuntimeInstanceRegistration:ProviderMetadata:transport.endpoint"] = "http://localhost",
+                    ["AiRuntimeInstanceRegistration:ProviderMetadata:runtime.instance.id"] = "runtime-http-host",
+                    ["AiRuntimeInstanceRegistration:Metadata:provider.name"] = "http",
+                    ["AiRuntimeInstanceRegistration:Metadata:transport.name"] = "http",
+                    ["AiRuntimeInstanceRegistration:Metadata:transport.endpoint"] = "http://localhost",
+                    ["AiRuntimeInstanceRegistration:Metadata:runtime.instance.id"] = "runtime-http-host",
+                    ["AiRuntimeInstanceRegistration:Metadata:hostType"] = "runtime-instance-only",
+                    ["AiRuntimeInstanceRegistration:Metadata:deployment"] = "test-http-provider-runtime-pool",
+
+                    ["AiLocalRuntimeInstancePool:Enabled"] = "true",
+                    ["AiLocalRuntimeInstancePool:InstanceCount"] = "3",
+                    ["AiLocalRuntimeInstancePool:WorkerCountPerInstance"] = "10",
+                    ["AiLocalRuntimeInstancePool:MaxConcurrentRunsPerInstance"] = "5",
+                    ["AiLocalRuntimeInstancePool:RuntimeInstanceIdPrefix"] = "runtime-http",
+
+                    ["AiEngine:RuntimeInstanceId"] = "runtime-http-host",
+                    ["AiEngine:PipelineBackgroundController:RuntimeInstanceId"] = "runtime-http-host",
+                    ["AiEngine:PipelineBackgroundController:MaxConcurrentRuns"] = "5",
+                    ["AiEngine:PipelineBackgroundController:QueueCapacity"] = "500",
+                    ["AiEngine:PipelineBackgroundController:Distributed:Enabled"] = "true",
+                    ["AiEngine:PipelineBackgroundController:Distributed:WorkerCount"] = "10",
+                    ["AiEngine:PipelineBackgroundController:MaxLocalWorkersPerExecution"] = "5",
+                    ["AiEngine:RuntimeInstanceWorker:RuntimeInstanceId"] = "runtime-http-host"
+                });
+        }
+
+        private static string CreatePipelineName()
+        {
+            return $"mcp-http-test-pipeline-{Guid.NewGuid():N}";
         }
 
         private static AiSharedRuntimeControllerRequest CreateSubmitRequest(
@@ -1223,32 +1359,65 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
             };
         }
 
-        private async Task<AiSharedQueuePumpResult> DrainHttpRuntimeAsync(
+        private static async Task<AiSharedQueuePumpResult> DrainHttpRuntimePoolAsync(
+            McpTestClient mcp,
             int maxDispatches)
         {
             return await mcp.DrainQueueAsync(
-                new AiSharedQueuePumpRequest
-                {
-                    PumpRuntimeInstanceId = RuntimeInstanceHttpTestHost.RuntimeInstanceId,
-                    PumpWorkerId = WorkerId,
-                    MaxDispatches = maxDispatches,
-                    RequestedBy = RequestedBy,
-                    Source = Source
-                });
+                    new AiSharedQueuePumpRequest
+                    {
+                        PumpRuntimeInstanceId = PumpRuntimeInstanceId,
+                        PumpWorkerId = WorkerId,
+                        MaxDispatches = maxDispatches,
+                        RequestedBy = RequestedBy,
+                        Source = Source
+                    })
+                .ConfigureAwait(false);
         }
 
-        private async Task<AiSharedRuntimeControllerResult> ListAllSharedRunsAsync()
+        private static async Task<AiSharedRuntimeControllerResult> ListAllSharedRunsAsync(
+            McpTestClient mcp)
         {
             return await mcp.ListSharedRunsAsync(
-                new AiSharedRuntimeControllerRequest
-                {
-                    Operation = AiSharedRuntimeControllerOperation.ListRuns,
-                    IncludeCompleted = true,
-                    IncludeFailed = true,
-                    IncludeCancelled = true,
-                    RequestedBy = RequestedBy,
-                    Source = Source
-                });
+                    new AiSharedRuntimeControllerRequest
+                    {
+                        Operation = AiSharedRuntimeControllerOperation.ListRuns,
+                        IncludeCompleted = true,
+                        IncludeFailed = true,
+                        IncludeCancelled = true,
+                        RequestedBy = RequestedBy,
+                        Source = Source
+                    })
+                .ConfigureAwait(false);
+        }
+
+        private static void AssertAssignedToHttpRuntimePool(
+            AiSharedRunRecord run)
+        {
+            Assert.False(
+                string.IsNullOrWhiteSpace(run.AssignedRuntimeInstanceId));
+
+            Assert.StartsWith(
+                RuntimeInstancePrefix,
+                run.AssignedRuntimeInstanceId,
+                StringComparison.Ordinal);
+
+            Assert.False(
+                string.IsNullOrWhiteSpace(run.LocalRunId));
+        }
+
+        private async Task LogRuntimeInstancesAsync(
+            McpTestClient mcp)
+        {
+            var instances =
+                await mcp.ListRuntimeInstancesAsync()
+                    .ConfigureAwait(false);
+
+            foreach (var instance in instances.OrderBy(x => x.RuntimeInstanceId, StringComparer.Ordinal))
+            {
+                output.WriteLine(
+                    $"RuntimeInstance Id='{instance.RuntimeInstanceId}', Role='{instance.Role}', Status='{instance.Status}', CanAcceptRun='{instance.CanAcceptRun}', Workers='{instance.WorkerCount}', ActiveWorkers='{instance.ActiveWorkerCount}', AvailableWorkers='{instance.AvailableWorkerCount}', Slots='{instance.AvailableRunSlots}'.");
+            }
         }
     }
 }

@@ -123,6 +123,7 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
                 case AiMcpHostMode.RuntimeInstanceOnly:
                     ConfigureRuntimeInstanceOnly(
                         services,
+                        configuration,
                         hostOptions);
                     break;
 
@@ -312,26 +313,35 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
         /// Configures the host as a runtime-instance only process.
         /// </summary>
         /// <remarks>
-        /// This mode hosts the local runtime execution engine and runtime queue
-        /// without enabling MCP control-plane tools.
+        /// This mode hosts runtime execution capacity without enabling MCP control-plane tools.
         ///
-        /// When used with the HTTP provider, the runtime host must also map the HTTP
-        /// runtime command endpoint in the web application pipeline:
+        /// When <c>AiLocalRuntimeInstancePool:Enabled</c> is disabled, the host registers itself
+        /// as a single runtime instance and starts one local runtime pipeline background controller.
         ///
-        /// <code>
-        /// app.MapAiRuntimeInstanceHttpCommandEndpoint();
-        /// </code>
-        ///
-        /// Its runtime instance registration must publish HTTP provider metadata so
-        /// the control-plane can route to it.
+        /// When <c>AiLocalRuntimeInstancePool:Enabled</c> is enabled, the host starts an internal
+        /// runtime instance pool instead. In that mode, the parent host identity must not be
+        /// registered as a dispatchable runtime instance; only the child runtime instances created
+        /// by the pool should be visible to admission.
         /// </remarks>
         /// <param name="services">The service collection.</param>
+        /// <param name="configuration">The application configuration.</param>
         /// <param name="hostOptions">The MCP host options.</param>
         private static void ConfigureRuntimeInstanceOnly(
             IServiceCollection services,
+            IConfiguration configuration,
             AiMcpHostOptions hostOptions)
         {
+            ArgumentNullException.ThrowIfNull(services);
+            ArgumentNullException.ThrowIfNull(configuration);
+            ArgumentNullException.ThrowIfNull(hostOptions);
+
             Console.WriteLine("[SERVICE REGISTRATION] ConfigureRuntimeInstanceOnly executed.");
+
+            var poolOptions =
+                configuration
+                    .GetSection("AiLocalRuntimeInstancePool")
+                    .Get<AiLocalRuntimeInstancePoolOptions>()
+                ?? new AiLocalRuntimeInstancePoolOptions();
 
             services.AddAiControlPlane();
 
@@ -357,11 +367,47 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
                 typeof(AiRuntimeAssemblyMarker).Assembly,
                 typeof(DistributedChaosFlakyProviderStep).Assembly);
 
+            if (poolOptions.Enabled)
+            {
+                Console.WriteLine(
+                    $"[RUNTIME INSTANCE ONLY] Local runtime instance pool enabled. InstanceCount='{poolOptions.InstanceCount}', RuntimeInstanceIdPrefix='{poolOptions.RuntimeInstanceIdPrefix}'.");
+
+                services.AddAiLocalRuntimeInstancePool();
+
+                Console.WriteLine(
+                    "[RUNTIME INSTANCE ONLY] Registered AiLocalRuntimeInstancePoolHostedService.");
+
+                LogHostedServiceRegistrations(
+                    services,
+                    "[RUNTIME INSTANCE ONLY]");
+
+                return;
+            }
+
             services.AddHostedService<AiRuntimePipelineBackgroundControllerHostedService>();
 
             Console.WriteLine(
                 "[RUNTIME INSTANCE ONLY] Registered AiRuntimePipelineBackgroundControllerHostedService.");
 
+            services.AddAiRuntimeInstanceRegistrationHostedService();
+
+            Console.WriteLine(
+                "[RUNTIME INSTANCE ONLY] Registered AiRuntimeInstanceRegistrationHostedService.");
+
+            LogHostedServiceRegistrations(
+                services,
+                "[RUNTIME INSTANCE ONLY]");
+        }
+
+        /// <summary>
+        /// Writes the currently registered hosted services to the console for integration-test diagnostics.
+        /// </summary>
+        /// <param name="services">The service collection.</param>
+        /// <param name="prefix">The diagnostic log prefix.</param>
+        private static void LogHostedServiceRegistrations(
+            IServiceCollection services,
+            string prefix)
+        {
             var hostedServices =
                 services
                     .Where(descriptor => descriptor.ServiceType == typeof(IHostedService))
@@ -373,12 +419,8 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
                     .ToArray();
 
             Console.WriteLine(
-                "[RUNTIME INSTANCE ONLY] IHostedService registrations: " +
+                $"{prefix} IHostedService registrations: " +
                 string.Join(" | ", hostedServices));
-
-            services.AddAiRuntimeInstanceRegistrationHostedService();
-
-            Console.WriteLine("[SERVICE REGISTRATION] AiRuntimePipelineBackgroundControllerHostedService registered.");
         }
 
         /// <summary>
