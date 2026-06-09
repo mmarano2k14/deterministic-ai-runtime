@@ -6,6 +6,91 @@ This project follows a deterministic runtime and observability model designed fo
 
 ---
 
+## [1.0.6.1] - 2026-06-09 HTTP Provider Scenario Alignment with Pooled Runtime Model
+
+### Changed
+
+- Updated HTTP provider MCP integration scenarios to align with the current pooled runtime architecture.
+- Reworked `HttpRuntimeProviderScenarioTests` to use the same runtime model validated by the heavy HTTP dispatch tests:
+  - `ControlPlaneWithHttpRuntimeInstances`
+  - HTTP runtime provider
+  - `RuntimeInstanceOnly` HTTP host
+  - internal local runtime instance pool
+  - dispatchable child runtime instances using the `runtime-http-*` prefix.
+- Removed the legacy single-runtime HTTP test assumption based on `RuntimeInstanceHttpTestHost.RuntimeInstanceId`.
+- Updated HTTP scenario assertions to validate assignment to pooled child runtime instances:
+  - `runtime-http-1`
+  - `runtime-http-2`
+  - `runtime-http-3`
+- Updated queue drain behavior in HTTP scenarios to target the shared pump model instead of a fixed single runtime instance.
+- Preserved the original HTTP provider scenario coverage while adapting it to the current architecture.
+
+### Validated
+
+- Validated HTTP provider dispatch through the pooled `RuntimeInstanceOnly` model.
+- Validated shared run submission using `QueueFirst` mode.
+- Validated manual shared queue draining through MCP.
+- Validated dispatched shared runs receive:
+  - `AssignedRuntimeInstanceId`
+  - `LocalRunId`
+  - runtime run status
+  - execution id once execution starts.
+- Validated completion of normal HTTP-provider runs.
+- Validated completion of larger HTTP-provider pipelines.
+- Validated shared queue activity visibility for HTTP-provider runs.
+- Validated automatic dispatch through the HTTP provider when the shared queue background pump is enabled.
+- Validated pause and resume behavior for long-running HTTP-provider executions.
+- Validated cancellation request behavior for long-running HTTP-provider executions.
+- Validated runtime queue cancellation routing against the assigned child runtime instance.
+
+### Fixed
+
+- Fixed incompatible HTTP provider tests that were still targeting the old single-runtime HTTP fixture model.
+- Fixed incorrect assumptions that all HTTP-provider runs must be assigned to one fixed runtime instance.
+- Fixed HTTP provider scenario timeouts caused by waiting for dispatch to the removed single-runtime model.
+- Fixed test model mismatch where the control plane was using the new pooled HTTP architecture but the assertions still expected the old runtime identity.
+- Fixed queue drain expectations so tests now validate dispatch against the active pooled runtime instance model.
+
+### Architecture Notes
+
+- The current validated HTTP runtime model is now:
+
+    MCP Control Plane
+      -> HTTP Runtime Provider
+         -> RuntimeInstanceOnly HTTP Host
+            -> Local Runtime Instance Pool
+               -> runtime-http-1
+               -> runtime-http-2
+               -> runtime-http-3
+
+- The HTTP host identity is transport and hosting infrastructure.
+- The dispatchable runtime identities are the child runtime instances created by the runtime instance pool.
+- Tests now validate the real runtime execution capacity rather than the parent HTTP host identity.
+
+### Test Coverage Preserved
+
+The following scenario coverage was preserved and adapted:
+
+- Submit one run, drain, and dispatch through HTTP provider.
+- Submit four runs, drain, and dispatch through HTTP provider.
+- Submit one run, drain, and expose runtime run status.
+- Submit one 100-step pipeline and complete through HTTP provider.
+- Submit five runs and validate shared queue activity.
+- Submit one run without manual drain and complete through background pump.
+- Submit three runs and complete all through HTTP provider.
+- Submit one run, complete, and verify it remains listed with assigned HTTP runtime.
+- Submit two runs, complete, and validate shared queue activity.
+- Submit long-running HTTP execution, pause, resume, and complete.
+- Submit HTTP run and validate runtime queue cancellation routing.
+- Submit long-running HTTP execution and request cancellation.
+
+### Result
+
+- HTTP provider MCP scenarios now pass against the current pooled runtime architecture.
+- The test suite now correctly validates the production-oriented HTTP provider model instead of the deprecated single-runtime fixture model.
+
+---
+
 ## [1.0.6.0] - 2026-06-08 - Shared Queue Pump, QueueFirst Dispatch, Runtime Worker Capacity Visibility
 
 ### Added
