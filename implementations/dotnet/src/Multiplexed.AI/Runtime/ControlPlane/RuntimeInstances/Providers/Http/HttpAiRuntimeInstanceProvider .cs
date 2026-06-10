@@ -1,6 +1,7 @@
 ﻿using System.Net.Http.Json;
 using Microsoft.Extensions.Logging;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Capacity;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Identity;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers.Transport;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.SharedInstance;
@@ -35,7 +36,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http
     public sealed class HttpAiRuntimeInstanceProvider :
         IAiRuntimeInstanceDispatchProvider,
         IAiRuntimeInstanceStatusProvider,
-        IAiRuntimeInstanceControlProvider
+        IAiRuntimeInstanceControlProvider,
+        IAiRuntimeInstanceControlPlaneContext
     {
         /// <summary>
         /// The provider name used by this HTTP runtime instance provider.
@@ -56,6 +58,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http
         /// Logger used for HTTP provider diagnostics.
         /// </summary>
         private readonly ILogger<HttpAiRuntimeInstanceProvider> logger;
+
+        public IAiControlPlaneHostIdentity? Identity { get; private set; }
 
         /// <summary>
         /// Initializes a new instance of the <see cref="HttpAiRuntimeInstanceProvider"/> class.
@@ -794,6 +798,19 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http
                     }
                     : Array.Empty<string>()
             };
+        }
+
+        public void SetControlPlaneIdentity(IAiControlPlaneHostIdentity identity)
+        {
+            ArgumentNullException.ThrowIfNull(identity);
+
+            if (string.IsNullOrWhiteSpace(identity.ControlPlaneHostId))
+            {
+                throw new InvalidOperationException(
+                    "ControlPlaneHostId must be provided.");
+            }
+
+            Identity = identity;
         }
     }
 }

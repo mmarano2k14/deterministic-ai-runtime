@@ -1,4 +1,5 @@
-﻿using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
+﻿using Microsoft.Extensions.Options;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances;
 using StackExchange.Redis;
 using Xunit;
@@ -11,7 +12,10 @@ namespace Multiplexed.AI.Tests.Runtime.ControlPlane.RuntimeInstances
         public async Task RegisterAsync_Should_Create_Runtime_Instance()
         {
             var redis = await ConnectionMultiplexer.ConnectAsync("localhost:6379");
-            var registry = new RedisAiRuntimeInstanceRegistry(redis);
+            var registry =
+                new RedisAiRuntimeInstanceRegistry(
+                    redis,
+                    Options.Create(new AiRuntimeInstanceRegistrationOptions()));
 
             var runtimeInstanceId = $"test-runtime-{Guid.NewGuid():N}";
 
@@ -46,7 +50,10 @@ namespace Multiplexed.AI.Tests.Runtime.ControlPlane.RuntimeInstances
         public async Task HeartbeatAsync_Should_Update_Runtime_Instance_Capacity()
         {
             var redis = await ConnectionMultiplexer.ConnectAsync("localhost:6379");
-            var registry = new RedisAiRuntimeInstanceRegistry(redis);
+            var registry =
+                new RedisAiRuntimeInstanceRegistry(
+                    redis,
+                    Options.Create(new AiRuntimeInstanceRegistrationOptions()));
 
             var runtimeInstanceId = $"test-runtime-{Guid.NewGuid():N}";
 
@@ -85,7 +92,10 @@ namespace Multiplexed.AI.Tests.Runtime.ControlPlane.RuntimeInstances
         public async Task HeartbeatAsync_Should_Force_ControlPlane_To_Not_Accept_Runs()
         {
             var redis = await ConnectionMultiplexer.ConnectAsync("localhost:6379");
-            var registry = new RedisAiRuntimeInstanceRegistry(redis);
+            var registry =
+                new RedisAiRuntimeInstanceRegistry(
+                    redis,
+                    Options.Create(new AiRuntimeInstanceRegistrationOptions()));
 
             var runtimeInstanceId = $"test-control-plane-{Guid.NewGuid():N}";
 
@@ -122,7 +132,10 @@ namespace Multiplexed.AI.Tests.Runtime.ControlPlane.RuntimeInstances
         public async Task ListAsync_Should_Return_Registered_Runtime_Instances()
         {
             var redis = await ConnectionMultiplexer.ConnectAsync("localhost:6379");
-            var registry = new RedisAiRuntimeInstanceRegistry(redis);
+            var registry =
+                new RedisAiRuntimeInstanceRegistry(
+                    redis,
+                    Options.Create(new AiRuntimeInstanceRegistrationOptions()));
 
             var runtimeInstanceId1 = $"test-runtime-{Guid.NewGuid():N}";
             var runtimeInstanceId2 = $"test-runtime-{Guid.NewGuid():N}";
@@ -160,7 +173,10 @@ namespace Multiplexed.AI.Tests.Runtime.ControlPlane.RuntimeInstances
         public async Task MarkDrainingAsync_Should_Mark_Runtime_Instance_As_Draining()
         {
             var redis = await ConnectionMultiplexer.ConnectAsync("localhost:6379");
-            var registry = new RedisAiRuntimeInstanceRegistry(redis);
+            var registry =
+                new RedisAiRuntimeInstanceRegistry(
+                    redis,
+                    Options.Create(new AiRuntimeInstanceRegistrationOptions()));
 
             var runtimeInstanceId = $"test-runtime-{Guid.NewGuid():N}";
 
@@ -180,10 +196,14 @@ namespace Multiplexed.AI.Tests.Runtime.ControlPlane.RuntimeInstances
         }
 
         [Fact]
-        public async Task UnregisterAsync_Should_Mark_Runtime_Instance_As_Stopped()
+        public async Task UnregisterAsync_Should_Remove_Runtime_Instance_From_Registry()
         {
             var redis = await ConnectionMultiplexer.ConnectAsync("localhost:6379");
-            var registry = new RedisAiRuntimeInstanceRegistry(redis);
+
+            var registry =
+                new RedisAiRuntimeInstanceRegistry(
+                    redis,
+                    Options.Create(new AiRuntimeInstanceRegistrationOptions()));
 
             var runtimeInstanceId = $"test-runtime-{Guid.NewGuid():N}";
 
@@ -196,20 +216,24 @@ namespace Multiplexed.AI.Tests.Runtime.ControlPlane.RuntimeInstances
                     MaxConcurrentRuns = 5
                 });
 
-            var snapshot = await registry.UnregisterAsync(runtimeInstanceId);
+            var snapshot =
+                await registry.UnregisterAsync(runtimeInstanceId);
 
             Assert.NotNull(snapshot);
+            Assert.Equal(runtimeInstanceId, snapshot.RuntimeInstanceId);
             Assert.Equal(AiRuntimeInstanceStatus.Stopped, snapshot.Status);
 
-            var visibleSnapshots = await registry.ListAsync(includeStopped: false);
+            var visibleSnapshots =
+                await registry.ListAsync(includeStopped: false);
 
             Assert.DoesNotContain(
                 visibleSnapshots,
                 item => item.RuntimeInstanceId == runtimeInstanceId);
 
-            var allSnapshots = await registry.ListAsync(includeStopped: true);
+            var allSnapshots =
+                await registry.ListAsync(includeStopped: true);
 
-            Assert.Contains(
+            Assert.DoesNotContain(
                 allSnapshots,
                 item => item.RuntimeInstanceId == runtimeInstanceId);
         }

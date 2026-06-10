@@ -1,4 +1,5 @@
 ﻿using System.Text.Json;
+using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
 using StackExchange.Redis;
 
@@ -25,16 +26,20 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances
         private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
         private readonly IDatabase database;
+        private readonly AiRuntimeInstanceRegistrationOptions registrationOptions;
 
         /// <summary>
         /// Initializes a new instance of the <see cref="RedisAiRuntimeInstanceRegistry"/> class.
         /// </summary>
         public RedisAiRuntimeInstanceRegistry(
-            IConnectionMultiplexer redis)
+            IConnectionMultiplexer redis,
+            IOptions<AiRuntimeInstanceRegistrationOptions> registrationOptions)
         {
             ArgumentNullException.ThrowIfNull(redis);
+            ArgumentNullException.ThrowIfNull(registrationOptions);
 
             database = redis.GetDatabase();
+            this.registrationOptions = registrationOptions.Value;
         }
 
         /// <inheritdoc />
@@ -204,6 +209,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances
 
                 if (entry is null)
                 {
+                    await database
+                        .SetRemoveAsync(InstanceSetKey, runtimeInstanceId)
+                        .ConfigureAwait(false);
+
                     continue;
                 }
 
@@ -268,20 +277,30 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances
 
             if (existing is null)
             {
+                await database
+                    .SetRemoveAsync(InstanceSetKey, runtimeInstanceId)
+                    .ConfigureAwait(false);
+
                 return null;
             }
 
             var now = DateTimeOffset.UtcNow;
-            var updated = existing.WithStatus(AiRuntimeInstanceStatus.Stopped, now);
+            var stopped = existing.WithStatus(AiRuntimeInstanceStatus.Stopped, now);
+            var snapshot = stopped.ToSnapshot(now);
 
-            await SaveEntryAsync(
-                    GetInstanceKey(runtimeInstanceId),
-                    runtimeInstanceId,
-                    updated,
-                    cancellationToken)
-                .ConfigureAwait(false);
+            var key = GetInstanceKey(runtimeInstanceId);
 
-            return updated.ToSnapshot(now);
+            var batch = database.CreateBatch();
+
+            var removeFromIndexTask = batch.SetRemoveAsync(InstanceSetKey, runtimeInstanceId);
+            var deleteEntryTask = batch.KeyDeleteAsync(key);
+
+            batch.Execute();
+
+            await removeFromIndexTask.ConfigureAwait(false);
+            await deleteEntryTask.ConfigureAwait(false);
+
+            return snapshot;
         }
 
         private async Task<RuntimeInstanceEntry?> GetEntryAsync(
@@ -316,7 +335,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances
 
             var batch = database.CreateBatch();
 
-            var setTask = batch.StringSetAsync(key, json);
+            var setTask = batch.StringSetAsync(
+                key,
+                json,
+                registrationOptions.RegistryTtl);
+
             var addTask = batch.SetAddAsync(InstanceSetKey, runtimeInstanceId);
 
             batch.Execute();

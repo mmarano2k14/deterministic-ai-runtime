@@ -1,5 +1,7 @@
 ﻿using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
 using Multiplexed.Abstractions.AI.ControlPlane.Admission;
+using Multiplexed.Abstractions.AI.ControlPlane.Admission.Reservations;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Pool;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Controller;
@@ -12,10 +14,12 @@ using Multiplexed.AI.DI.Engine;
 using Multiplexed.AI.McpServer.DependencyInjection;
 using Multiplexed.AI.McpServer.Host.Configuration;
 using Multiplexed.AI.Runtime;
+using Multiplexed.AI.Runtime.ControlPlane.Admission.Reservations;
 using Multiplexed.AI.Runtime.ControlPlane.DI;
 using Multiplexed.AI.Runtime.ControlPlane.SharedController.Dispatch;
 using Multiplexed.AI.Runtime.Execution.Instance.Worker;
 using Multiplexed.Sample.External.Plugins.Steps.Steps;
+using StackExchange.Redis;
 
 namespace Multiplexed.AI.McpServer.Host.Bootstrap
 {
@@ -92,14 +96,31 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
                 .GetSection("AiEngine")
                 .Bind(aiEngineOptions);
 
+            LogEffectiveHostConfiguration(
+                configuration,
+                hostOptions,
+                aiEngineOptions,
+                "[SERVICE REGISTRATION][INITIAL CONFIG]");
+
+            LogHostedServiceRegistrations(
+                services,
+                "[SERVICE REGISTRATION][BEFORE AiRuntimeServiceRegistration.Register]");
+
             AiRuntimeServiceRegistration.Register(
                 services,
                 configuration,
                 aiEngineOptions);
 
+            LogHostedServiceRegistrations(
+                services,
+                "[SERVICE REGISTRATION][AFTER AiRuntimeServiceRegistration.Register]");
+
             switch (hostOptions.Mode)
             {
                 case AiMcpHostMode.ControlPlaneOnly:
+                    Console.WriteLine(
+                        "[SERVICE REGISTRATION] Mode selected: ControlPlaneOnly.");
+
                     ConfigureControlPlaneOnly(
                         services,
                         configuration,
@@ -107,6 +128,9 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
                     break;
 
                 case AiMcpHostMode.ControlPlaneWithLocalRuntimeInstances:
+                    Console.WriteLine(
+                        "[SERVICE REGISTRATION] Mode selected: ControlPlaneWithLocalRuntimeInstances.");
+
                     ConfigureControlPlaneWithLocalRuntimeInstances(
                         services,
                         configuration,
@@ -114,6 +138,9 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
                     break;
 
                 case AiMcpHostMode.ControlPlaneWithHttpRuntimeInstances:
+                    Console.WriteLine(
+                        "[SERVICE REGISTRATION] Mode selected: ControlPlaneWithHttpRuntimeInstances.");
+
                     ConfigureControlPlaneWithHttpRuntimeInstances(
                         services,
                         configuration,
@@ -121,6 +148,9 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
                     break;
 
                 case AiMcpHostMode.RuntimeInstanceOnly:
+                    Console.WriteLine(
+                        "[SERVICE REGISTRATION] Mode selected: RuntimeInstanceOnly.");
+
                     ConfigureRuntimeInstanceOnly(
                         services,
                         configuration,
@@ -131,6 +161,16 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
                     throw new InvalidOperationException(
                         $"Unsupported host mode '{hostOptions.Mode}'.");
             }
+
+            LogHostedServiceRegistrations(
+                services,
+                $"[SERVICE REGISTRATION][AFTER MODE {hostOptions.Mode}]");
+
+            LogEffectiveHostConfiguration(
+                configuration,
+                hostOptions,
+                aiEngineOptions,
+                $"[SERVICE REGISTRATION][FINAL CONFIG {hostOptions.Mode}]");
         }
 
         /// <summary>
@@ -151,6 +191,13 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
             IConfiguration configuration,
             AiMcpHostOptions hostOptions)
         {
+            Console.WriteLine(
+                "[CONTROL PLANE ONLY] ConfigureControlPlaneOnly executed.");
+
+            LogPoolConfiguration(
+                configuration,
+                "[CONTROL PLANE ONLY][BEFORE REGISTRATION]");
+
             services.AddAiControlPlane(
                 configureAdmission: options =>
                 {
@@ -158,6 +205,10 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
                         configuration,
                         options);
                 });
+
+            AddRedisControlPlaneStoresIfAvailable(
+                services,
+                configuration);
 
             services.AddAiMcpServer();
 
@@ -179,6 +230,10 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
                 options.RuntimeInstanceId = "mcp-control-plane";
                 options.Role = AiRuntimeInstanceRole.ControlPlane;
             });
+
+            LogHostedServiceRegistrations(
+                services,
+                "[CONTROL PLANE ONLY][AFTER REGISTRATION]");
         }
 
         /// <summary>
@@ -199,6 +254,13 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
             IConfiguration configuration,
             AiMcpHostOptions hostOptions)
         {
+            Console.WriteLine(
+                "[CONTROL PLANE LOCAL] ConfigureControlPlaneWithLocalRuntimeInstances executed.");
+
+            LogPoolConfiguration(
+                configuration,
+                "[CONTROL PLANE LOCAL][BEFORE REGISTRATION]");
+
             services.AddAiControlPlane(
                 configureAdmission: options =>
                 {
@@ -206,6 +268,10 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
                         configuration,
                         options);
                 });
+
+            AddRedisControlPlaneStoresIfAvailable(
+                services,
+                configuration);
 
             services.RemoveAll<IAiSharedRunDispatcher>();
             services.AddSingleton<IAiSharedRunDispatcher, RemoteAiSharedRunDispatcher>();
@@ -229,6 +295,9 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
                 typeof(AiRuntimeAssemblyMarker).Assembly,
                 typeof(DistributedChaosFlakyProviderStep).Assembly);
 
+            Console.WriteLine(
+                "[CONTROL PLANE LOCAL] Registering AiLocalRuntimeInstancePoolHostedService through AddAiLocalRuntimeInstancePool.");
+
             services.AddAiLocalRuntimeInstancePool();
 
             services.AddAiRuntimeInstanceRegistrationHostedService(options =>
@@ -237,6 +306,10 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
                 options.RuntimeInstanceId = "mcp-control-plane";
                 options.Role = AiRuntimeInstanceRole.ControlPlane;
             });
+
+            LogHostedServiceRegistrations(
+                services,
+                "[CONTROL PLANE LOCAL][AFTER REGISTRATION]");
         }
 
         /// <summary>
@@ -273,6 +346,17 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
             IConfiguration configuration,
             AiMcpHostOptions hostOptions)
         {
+            Console.WriteLine(
+                "[CONTROL PLANE HTTP] ConfigureControlPlaneWithHttpRuntimeInstances executed.");
+
+            LogPoolConfiguration(
+                configuration,
+                "[CONTROL PLANE HTTP][BEFORE REGISTRATION]");
+
+            LogHostedServiceRegistrations(
+                services,
+                "[CONTROL PLANE HTTP][ENTRY]");
+
             services.AddAiControlPlane(
                 configureAdmission: options =>
                 {
@@ -281,17 +365,41 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
                         options);
                 });
 
+            LogHostedServiceRegistrations(
+                services,
+                "[CONTROL PLANE HTTP][AFTER AddAiControlPlane]");
+
+            AddRedisControlPlaneStoresIfAvailable(
+                services,
+                configuration);
+
+            LogHostedServiceRegistrations(
+                services,
+                "[CONTROL PLANE HTTP][AFTER AddRedisControlPlaneStoresIfAvailable]");
+
             services.RemoveAll<IAiSharedRunDispatcher>();
             services.AddSingleton<IAiSharedRunDispatcher, RemoteAiSharedRunDispatcher>();
 
             services.AddAiHttpRuntimeInstanceProvider();
 
+            LogHostedServiceRegistrations(
+                services,
+                "[CONTROL PLANE HTTP][AFTER AddAiHttpRuntimeInstanceProvider]");
+
             services.AddAiMcpServer();
+
+            LogHostedServiceRegistrations(
+                services,
+                "[CONTROL PLANE HTTP][AFTER AddAiMcpServer]");
 
             ConfigureSharedQueueBackgroundService(
                 services,
                 configuration,
                 hostOptions);
+
+            LogHostedServiceRegistrations(
+                services,
+                "[CONTROL PLANE HTTP][AFTER ConfigureSharedQueueBackgroundService]");
 
             services.AddAiMcpControlPlaneHost(options =>
             {
@@ -301,12 +409,24 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
                 options.WorkerId = "mcp-background-pump";
             });
 
+            LogHostedServiceRegistrations(
+                services,
+                "[CONTROL PLANE HTTP][AFTER AddAiMcpControlPlaneHost]");
+
             services.AddAiRuntimeInstanceRegistrationHostedService(options =>
             {
                 options.Enabled = true;
                 options.RuntimeInstanceId = "mcp-control-plane";
                 options.Role = AiRuntimeInstanceRole.ControlPlane;
             });
+
+            LogHostedServiceRegistrations(
+                services,
+                "[CONTROL PLANE HTTP][AFTER AddAiRuntimeInstanceRegistrationHostedService]");
+
+            LogPoolConfiguration(
+                configuration,
+                "[CONTROL PLANE HTTP][AFTER REGISTRATION]");
         }
 
         /// <summary>
@@ -335,7 +455,11 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
             ArgumentNullException.ThrowIfNull(configuration);
             ArgumentNullException.ThrowIfNull(hostOptions);
 
-            Console.WriteLine("[SERVICE REGISTRATION] ConfigureRuntimeInstanceOnly executed.");
+            Console.WriteLine("[RUNTIME INSTANCE ONLY] ConfigureRuntimeInstanceOnly executed.");
+
+            LogPoolConfiguration(
+                configuration,
+                "[RUNTIME INSTANCE ONLY][BEFORE REGISTRATION]");
 
             var poolOptions =
                 configuration
@@ -344,6 +468,10 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
                 ?? new AiLocalRuntimeInstancePoolOptions();
 
             services.AddAiControlPlane();
+
+            LogHostedServiceRegistrations(
+                services,
+                "[RUNTIME INSTANCE ONLY][AFTER AddAiControlPlane]");
 
             services.Configure<AiSharedQueueBackgroundServiceOptions>(options =>
             {
@@ -363,6 +491,10 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
                 options.WorkerId = "runtime-instance-worker";
             });
 
+            LogHostedServiceRegistrations(
+                services,
+                "[RUNTIME INSTANCE ONLY][AFTER AddAiMcpControlPlaneHost]");
+
             services.AddAiStepsFromAssemblies(
                 typeof(AiRuntimeAssemblyMarker).Assembly,
                 typeof(DistributedChaosFlakyProviderStep).Assembly);
@@ -379,7 +511,7 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
 
                 LogHostedServiceRegistrations(
                     services,
-                    "[RUNTIME INSTANCE ONLY]");
+                    "[RUNTIME INSTANCE ONLY][AFTER AddAiLocalRuntimeInstancePool]");
 
                 return;
             }
@@ -396,7 +528,118 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
 
             LogHostedServiceRegistrations(
                 services,
-                "[RUNTIME INSTANCE ONLY]");
+                "[RUNTIME INSTANCE ONLY][AFTER SINGLE RUNTIME REGISTRATION]");
+        }
+
+        /// <summary>
+        /// Registers Redis-backed control-plane stores when Redis is available.
+        /// </summary>
+        /// <remarks>
+        /// This keeps <see cref="AddAiControlPlane"/> safe as the default in-memory baseline,
+        /// while allowing MCP control-plane modes to switch selected control-plane stores
+        /// to Redis when a Redis connection is configured.
+        ///
+        /// IMPORTANT:
+        /// Redis-backed stores are intentionally enabled one by one for now.
+        /// This makes it possible to validate each store independently:
+        /// - shared run store
+        /// - shared queue
+        /// - admission reservation store
+        /// </remarks>
+        /// <param name="services">The service collection.</param>
+        /// <param name="configuration">The application configuration.</param>
+        private static void AddRedisControlPlaneStoresIfAvailable(
+            IServiceCollection services,
+            IConfiguration configuration)
+        {
+            ArgumentNullException.ThrowIfNull(services);
+            ArgumentNullException.ThrowIfNull(configuration);
+
+            var redisConnectionString =
+                GetRedisConnectionString(configuration);
+
+            if (!string.IsNullOrWhiteSpace(redisConnectionString))
+            {
+                Console.WriteLine(
+                    "[REDIS CONTROL PLANE] Redis connection string detected. Registering IConnectionMultiplexer if missing.");
+
+                services.TryAddSingleton<IConnectionMultiplexer>(
+                    _ => ConnectionMultiplexer.Connect(redisConnectionString));
+            }
+            else
+            {
+                Console.WriteLine(
+                    "[REDIS CONTROL PLANE] No Redis connection string detected.");
+            }
+
+            if (!HasRedisConnectionMultiplexer(services))
+            {
+                Console.WriteLine(
+                    "[REDIS CONTROL PLANE] Redis multiplexer not registered. Redis control-plane stores skipped.");
+
+                return;
+            }
+
+            var keyPrefix =
+                GetRedisKeyPrefix(configuration);
+
+            Console.WriteLine(
+                $"[REDIS CONTROL PLANE] Redis multiplexer available. KeyPrefix='{keyPrefix}'. Registering Redis shared stores.");
+
+            services.AddRedisAiSharedRunStore(options =>
+            {
+                options.KeyPrefix = keyPrefix;
+            });
+
+            services.AddRedisAiSharedQueue(options =>
+            {
+                options.KeyPrefix = keyPrefix;
+            });
+
+            services.AddRedisAiRuntimeAdmissionReservationStore(options =>
+            {
+                options.KeyPrefix = keyPrefix;
+                options.ReservationTtl = TimeSpan.FromMinutes(2);
+                options.KeyTtl = TimeSpan.FromMinutes(10);
+            });
+        }
+
+        /// <summary>
+        /// Gets the Redis connection string from known configuration locations.
+        /// </summary>
+        /// <param name="configuration">The application configuration.</param>
+        /// <returns>The configured Redis connection string, or null when no connection string exists.</returns>
+        private static string? GetRedisConnectionString(
+            IConfiguration configuration)
+        {
+            return configuration.GetConnectionString("Redis") ??
+                   configuration["Redis:ConnectionString"] ??
+                   configuration["AiRedis:ConnectionString"];
+        }
+
+        /// <summary>
+        /// Gets the Redis key prefix used by control-plane stores.
+        /// </summary>
+        /// <param name="configuration">The application configuration.</param>
+        /// <returns>The Redis key prefix.</returns>
+        private static string GetRedisKeyPrefix(
+            IConfiguration configuration)
+        {
+            return configuration["AiRedis:KeyPrefix"] ??
+                   configuration["Redis:KeyPrefix"] ??
+                   "multiplexed:ai";
+        }
+
+        /// <summary>
+        /// Determines whether a Redis connection multiplexer is already registered.
+        /// </summary>
+        /// <param name="services">The service collection.</param>
+        /// <returns>True when Redis is available through dependency injection.</returns>
+        private static bool HasRedisConnectionMultiplexer(
+            IServiceCollection services)
+        {
+            return services.Any(descriptor =>
+                descriptor.ServiceType == typeof(IConnectionMultiplexer));
         }
 
         /// <summary>
@@ -421,6 +664,70 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
             Console.WriteLine(
                 $"{prefix} IHostedService registrations: " +
                 string.Join(" | ", hostedServices));
+        }
+
+        /// <summary>
+        /// Writes the effective host and runtime configuration used during service registration.
+        /// </summary>
+        /// <param name="configuration">The application configuration.</param>
+        /// <param name="hostOptions">The MCP host options.</param>
+        /// <param name="aiEngineOptions">The AI engine options.</param>
+        /// <param name="prefix">The diagnostic log prefix.</param>
+        private static void LogEffectiveHostConfiguration(
+            IConfiguration configuration,
+            AiMcpHostOptions hostOptions,
+            AiEngineOptions aiEngineOptions,
+            string prefix)
+        {
+            var poolOptions =
+                configuration
+                    .GetSection("AiLocalRuntimeInstancePool")
+                    .Get<AiLocalRuntimeInstancePoolOptions>()
+                ?? new AiLocalRuntimeInstancePoolOptions();
+
+            var registrationOptions =
+                configuration
+                    .GetSection("AiRuntimeInstanceRegistration")
+                    .Get<AiRuntimeInstanceRegistrationOptions>()
+                ?? new AiRuntimeInstanceRegistrationOptions();
+
+            Console.WriteLine(
+                $"{prefix} Effective host configuration. " +
+                $"Mode='{hostOptions.Mode}', " +
+                $"EnableSharedQueuePump='{hostOptions.EnableSharedQueuePump}', " +
+                $"Registration.RuntimeInstanceId='{registrationOptions.RuntimeInstanceId}', " +
+                $"Registration.Role='{registrationOptions.Role}', " +
+                $"Registration.ProviderName='{registrationOptions.ProviderName}', " +
+                $"Pool.Enabled='{poolOptions.Enabled}', " +
+                $"Pool.InstanceCount='{poolOptions.InstanceCount}', " +
+                $"Pool.WorkerCountPerInstance='{poolOptions.WorkerCountPerInstance}', " +
+                $"Pool.MaxConcurrentRunsPerInstance='{poolOptions.MaxConcurrentRunsPerInstance}', " +
+                $"Pool.RuntimeInstanceIdPrefix='{poolOptions.RuntimeInstanceIdPrefix}'.");
+        }
+
+        /// <summary>
+        /// Writes the effective local runtime instance pool configuration.
+        /// </summary>
+        /// <param name="configuration">The application configuration.</param>
+        /// <param name="prefix">The diagnostic log prefix.</param>
+        private static void LogPoolConfiguration(
+            IConfiguration configuration,
+            string prefix)
+        {
+            var poolOptions =
+                configuration
+                    .GetSection("AiLocalRuntimeInstancePool")
+                    .Get<AiLocalRuntimeInstancePoolOptions>()
+                ?? new AiLocalRuntimeInstancePoolOptions();
+
+            Console.WriteLine(
+                $"{prefix} Local runtime instance pool configuration. " +
+                $"Enabled='{poolOptions.Enabled}', " +
+                $"InstanceCount='{poolOptions.InstanceCount}', " +
+                $"WorkerCountPerInstance='{poolOptions.WorkerCountPerInstance}', " +
+                $"MaxConcurrentRunsPerInstance='{poolOptions.MaxConcurrentRunsPerInstance}', " +
+                $"LocalQueueCapacity='{poolOptions.LocalQueueCapacity?.ToString() ?? "unlimited"}', " +
+                $"RuntimeInstanceIdPrefix='{poolOptions.RuntimeInstanceIdPrefix}'.");
         }
 
         /// <summary>
@@ -450,7 +757,6 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
                 configuration
                     .GetSection("AiSharedQueuePump")
                     .Bind(options);
-
             });
         }
 

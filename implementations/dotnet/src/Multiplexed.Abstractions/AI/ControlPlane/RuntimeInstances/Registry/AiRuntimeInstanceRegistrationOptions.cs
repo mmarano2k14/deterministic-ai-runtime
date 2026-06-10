@@ -61,6 +61,26 @@
             TimeSpan.FromSeconds(5);
 
         /// <summary>
+        /// Gets or sets the time-to-live applied to the runtime instance registry descriptor.
+        /// </summary>
+        /// <remarks>
+        /// The TTL protects Redis-backed registries from stale runtime instances when a host,
+        /// process, test, or Kubernetes pod stops unexpectedly without unregistering cleanly.
+        /// The heartbeat loop must renew this TTL periodically.
+        /// </remarks>
+        public TimeSpan RegistryTtl { get; set; } = TimeSpan.FromSeconds(30);
+
+        /// <summary>
+        /// Gets or sets the time-to-live applied to the runtime instance capacity descriptor.
+        /// </summary>
+        /// <remarks>
+        /// The TTL protects Redis-backed capacity stores from stale capacity descriptors when a host,
+        /// process, test, or Kubernetes pod stops unexpectedly without deleting its capacity state.
+        /// The heartbeat or capacity publication loop must renew this TTL periodically.
+        /// </remarks>
+        public TimeSpan CapacityTtl { get; set; } = TimeSpan.FromSeconds(30);
+
+        /// <summary>
         /// Gets or sets the runtime environment provider name.
         /// </summary>
         /// <remarks>
@@ -96,5 +116,7 @@
             new Dictionary<string, string>();
 
         public AiRuntimeInstanceRole Role { get; set; } = AiRuntimeInstanceRole.Runtime;
+
+        
     }
 }

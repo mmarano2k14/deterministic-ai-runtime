@@ -2,6 +2,7 @@
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Multiplexed.Abstractions.AI.ControlPlane.Admission;
+using Multiplexed.Abstractions.AI.ControlPlane.Admission.Reservations;
 using Multiplexed.Abstractions.AI.ControlPlane.Execution;
 using Multiplexed.Abstractions.AI.ControlPlane.ExecutionAssistance;
 using Multiplexed.Abstractions.AI.ControlPlane.Observability;
@@ -9,6 +10,7 @@ using Multiplexed.Abstractions.AI.ControlPlane.Replay;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Capacity;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Control;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Environment;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Identity;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.SharedInstance;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue;
@@ -21,6 +23,7 @@ using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Dispatch;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Pump;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Queue;
 using Multiplexed.AI.Runtime.ControlPlane.Admission;
+using Multiplexed.AI.Runtime.ControlPlane.Admission.Reservations;
 using Multiplexed.AI.Runtime.ControlPlane.Execution;
 using Multiplexed.AI.Runtime.ControlPlane.ExecutionAssistance;
 using Multiplexed.AI.Runtime.ControlPlane.Observability;
@@ -28,6 +31,7 @@ using Multiplexed.AI.Runtime.ControlPlane.Replay;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Capacity;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Environment;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Identity;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.SharedInstance;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue;
@@ -167,6 +171,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
             services.TryAddSingleton<IAiRuntimeEnvironmentProvider, LocalAiRuntimeEnvironmentProvider>();
             services.TryAddSingleton<IAiSharedRuntimeInstanceRegistry, InMemoryAiSharedRuntimeInstanceRegistry>();
 
+            services.TryAddSingleton<IAiRuntimeAdmissionReservationStore, InMemoryAiRuntimeAdmissionReservationStore>();
             services.TryAddSingleton<IAiRunAdmissionController, AiRunAdmissionController>();
 
             services.TryAddSingleton<IAiExecutionAssistanceStore, InMemoryAiExecutionAssistanceStore>();
@@ -189,6 +194,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
                     IAiRuntimeInstanceCapacityStore,
                     RedisAiRuntimeInstanceCapacityStore>());
 
+            services.TryAddSingleton<IAiRuntimeHostIdentity, AiRuntimeHostIdentity>();
+            services.TryAddSingleton<IAiControlPlaneHostIdentity, AiControlPlaneHostIdentity>();
+
             services.AddAiRuntimeInstanceProviders();
 
             return services;
@@ -208,11 +216,58 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
 
             if (configure is null)
             {
-                services.AddOptions<AiSharedQueueBackgroundServiceOptions>();
+                services
+                    .AddOptions<AiSharedQueueBackgroundServiceOptions>()
+                    .Validate(
+                        options => options.MaxDispatchesPerCycle > 0,
+                        "Shared queue max dispatches per cycle must be positive.")
+                    .Validate(
+                        options => options.ClaimTtl > TimeSpan.Zero,
+                        "Shared queue claim TTL must be positive.")
+                    .Validate(
+                        options => options.IdleDelay >= TimeSpan.Zero,
+                        "Shared queue idle delay must be zero or positive.")
+                    .Validate(
+                        options => options.ActiveDelay >= TimeSpan.Zero,
+                        "Shared queue active delay must be zero or positive.")
+                    .Validate(
+                        options => options.ErrorDelay > TimeSpan.Zero,
+                        "Shared queue error delay must be positive.")
+                    .Validate(
+                        options => options.RuntimeReadinessPollInterval > TimeSpan.Zero,
+                        "Runtime readiness poll interval must be positive.")
+                    .Validate(
+                        options => options.RuntimeReadinessTimeout is null ||
+                            options.RuntimeReadinessTimeout > TimeSpan.Zero,
+                        "Runtime readiness timeout must be null or positive.");
             }
             else
             {
-                services.Configure(configure);
+                services
+                    .AddOptions<AiSharedQueueBackgroundServiceOptions>()
+                    .Configure(configure)
+                    .Validate(
+                        options => options.MaxDispatchesPerCycle > 0,
+                        "Shared queue max dispatches per cycle must be positive.")
+                    .Validate(
+                        options => options.ClaimTtl > TimeSpan.Zero,
+                        "Shared queue claim TTL must be positive.")
+                    .Validate(
+                        options => options.IdleDelay >= TimeSpan.Zero,
+                        "Shared queue idle delay must be zero or positive.")
+                    .Validate(
+                        options => options.ActiveDelay >= TimeSpan.Zero,
+                        "Shared queue active delay must be zero or positive.")
+                    .Validate(
+                        options => options.ErrorDelay > TimeSpan.Zero,
+                        "Shared queue error delay must be positive.")
+                    .Validate(
+                        options => options.RuntimeReadinessPollInterval > TimeSpan.Zero,
+                        "Runtime readiness poll interval must be positive.")
+                    .Validate(
+                        options => options.RuntimeReadinessTimeout is null ||
+                            options.RuntimeReadinessTimeout > TimeSpan.Zero,
+                        "Runtime readiness timeout must be null or positive.");
             }
 
             services.TryAddEnumerable(
@@ -239,11 +294,32 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
 
             if (configure is null)
             {
-                services.AddOptions<AiRuntimeInstanceRegistrationOptions>();
+                services
+                    .AddOptions<AiRuntimeInstanceRegistrationOptions>()
+                    .Validate(
+                        options => options.HeartbeatInterval > TimeSpan.Zero,
+                        "Runtime instance heartbeat interval must be positive.")
+                    .Validate(
+                        options => options.RegistryTtl > TimeSpan.Zero,
+                        "Runtime instance registry TTL must be positive.")
+                    .Validate(
+                        options => options.CapacityTtl > TimeSpan.Zero,
+                        "Runtime instance capacity TTL must be positive.");
             }
             else
             {
-                services.Configure(configure);
+                services
+                    .AddOptions<AiRuntimeInstanceRegistrationOptions>()
+                    .Configure(configure)
+                    .Validate(
+                        options => options.HeartbeatInterval > TimeSpan.Zero,
+                        "Runtime instance heartbeat interval must be positive.")
+                    .Validate(
+                        options => options.RegistryTtl > TimeSpan.Zero,
+                        "Runtime instance registry TTL must be positive.")
+                    .Validate(
+                        options => options.CapacityTtl > TimeSpan.Zero,
+                        "Runtime instance capacity TTL must be positive.");
             }
 
             services.TryAddEnumerable(

@@ -1,5 +1,7 @@
 ﻿using System.Text.Json;
+using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Capacity;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
 using StackExchange.Redis;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Capacity
@@ -30,16 +32,20 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Capacity
             new(JsonSerializerDefaults.Web);
 
         private readonly IDatabase database;
+        private readonly AiRuntimeInstanceRegistrationOptions registrationOptions;
 
         /// <summary>
         /// Initializes a new instance of the <see cref="RedisAiRuntimeInstanceCapacityStore"/> class.
         /// </summary>
         public RedisAiRuntimeInstanceCapacityStore(
-            IConnectionMultiplexer redis)
+            IConnectionMultiplexer redis,
+            IOptions<AiRuntimeInstanceRegistrationOptions> registrationOptions)
         {
             ArgumentNullException.ThrowIfNull(redis);
+            ArgumentNullException.ThrowIfNull(registrationOptions);
 
             database = redis.GetDatabase();
+            this.registrationOptions = registrationOptions.Value;
         }
 
         /// <inheritdoc />
@@ -63,7 +69,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Capacity
             var setTask =
                 batch.StringSetAsync(
                     GetCapacityKey(descriptor.RuntimeInstanceId),
-                    json);
+                    json,
+                    registrationOptions.CapacityTtl);
 
             var addTask =
                 batch.SetAddAsync(
@@ -137,10 +144,18 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Capacity
                             cancellationToken)
                         .ConfigureAwait(false);
 
-                if (descriptor is not null)
+                if (descriptor is null)
                 {
-                    descriptors.Add(descriptor);
+                    await database
+                        .SetRemoveAsync(
+                            CapacitySetKey,
+                            runtimeInstanceId)
+                        .ConfigureAwait(false);
+
+                    continue;
                 }
+
+                descriptors.Add(descriptor);
             }
 
             return descriptors

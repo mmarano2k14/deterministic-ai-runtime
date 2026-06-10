@@ -1,4 +1,5 @@
 ﻿using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Capacity;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Identity;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.SharedInstance;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue;
@@ -31,7 +32,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Local
     public sealed class LocalAiRuntimeInstanceProvider :
         IAiRuntimeInstanceDispatchProvider,
         IAiRuntimeInstanceStatusProvider,
-        IAiRuntimeInstanceControlProvider
+        IAiRuntimeInstanceControlProvider,
+        IAiRuntimeInstanceControlPlaneContext
     {
         /// <summary>
         /// The provider name used by this local runtime instance provider.
@@ -42,6 +44,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Local
         /// The shared runtime instance registry used to resolve local runtime instances.
         /// </summary>
         private readonly IAiSharedRuntimeInstanceRegistry registry;
+
+        public IAiControlPlaneHostIdentity? Identity { get; private set; }
 
         /// <summary>
         /// Initializes a new instance of the <see cref="LocalAiRuntimeInstanceProvider"/> class.
@@ -489,6 +493,20 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Local
                     }
                     : Array.Empty<string>()
             };
+        }
+
+        public void SetControlPlaneIdentity(
+            IAiControlPlaneHostIdentity identity)
+        {
+            ArgumentNullException.ThrowIfNull(identity);
+
+            if (string.IsNullOrWhiteSpace(identity.ControlPlaneHostId))
+            {
+                throw new InvalidOperationException(
+                    "ControlPlaneHostId must be provided.");
+            }
+
+            Identity = identity;
         }
 
         /// <summary>

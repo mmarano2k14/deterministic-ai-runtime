@@ -65,6 +65,19 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic
         public McpTestClient Mcp { get; private set; } = default!;
 
         /// <summary>
+        /// Gets the initialized service provider for the MCP control-plane host.
+        /// </summary>
+        /// <remarks>
+        /// This is mainly used by integration tests that need to verify the final
+        /// dependency injection graph after host startup, for example whether Redis-backed
+        /// control-plane stores replaced the default in-memory stores.
+        /// </remarks>
+        public IServiceProvider Services =>
+            ControlPlaneHost?.Services
+            ?? throw new InvalidOperationException(
+                "The MCP control-plane host has not been initialized.");
+
+        /// <summary>
         /// Initializes a new instance of the <see cref="GenericMcpRuntimeFixture"/> class
         /// with one runtime-instance host.
         /// </summary>

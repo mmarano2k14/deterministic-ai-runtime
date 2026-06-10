@@ -8,7 +8,7 @@
         /// <summary>
         /// Gets the Redis key prefix used by the shared queue.
         /// </summary>
-        public string KeyPrefix { get; init; } = "ai:shared-queue";
+        public string KeyPrefix { get; set; } = "ai:shared-queue";
 
         /// <summary>
         /// Gets the Redis sorted set key containing pending shared run ids.

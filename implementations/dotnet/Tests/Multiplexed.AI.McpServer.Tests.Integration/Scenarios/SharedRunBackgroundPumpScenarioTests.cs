@@ -414,21 +414,33 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
             return GenericMcpServerTestSettings.CreateRuntimeInstanceSettings(
                 new Dictionary<string, string?>
                 {
-                    ["AiRuntimeInstanceRegistration:RuntimeInstanceId"] = "runtime-http-1",
+                    ["AiRuntimeInstanceRegistration:RuntimeInstanceId"] = "runtime-http-host",
                     ["AiRuntimeInstanceRegistration:ProviderName"] = "http",
                     ["AiRuntimeInstanceRegistration:ProviderMetadata:provider.name"] = "http",
                     ["AiRuntimeInstanceRegistration:ProviderMetadata:transport.name"] = "http",
                     ["AiRuntimeInstanceRegistration:ProviderMetadata:transport.endpoint"] = "http://localhost",
-                    ["AiRuntimeInstanceRegistration:ProviderMetadata:runtime.instance.id"] = "runtime-http-1",
+                    ["AiRuntimeInstanceRegistration:ProviderMetadata:runtime.instance.id"] = "runtime-http-host",
                     ["AiRuntimeInstanceRegistration:Metadata:provider.name"] = "http",
                     ["AiRuntimeInstanceRegistration:Metadata:transport.name"] = "http",
                     ["AiRuntimeInstanceRegistration:Metadata:transport.endpoint"] = "http://localhost",
-                    ["AiRuntimeInstanceRegistration:Metadata:runtime.instance.id"] = "runtime-http-1",
+                    ["AiRuntimeInstanceRegistration:Metadata:runtime.instance.id"] = "runtime-http-host",
                     ["AiRuntimeInstanceRegistration:Metadata:hostType"] = "runtime-instance-only",
                     ["AiRuntimeInstanceRegistration:Metadata:deployment"] = "test-http",
-                    ["AiEngine:RuntimeInstanceId"] = "runtime-http-1",
-                    ["AiEngine:PipelineBackgroundController:RuntimeInstanceId"] = "runtime-http-1",
-                    ["AiEngine:RuntimeInstanceWorker:RuntimeInstanceId"] = "runtime-http-1"
+
+                    ["AiLocalRuntimeInstancePool:Enabled"] = "true",
+                    ["AiLocalRuntimeInstancePool:InstanceCount"] = "1",
+                    ["AiLocalRuntimeInstancePool:WorkerCountPerInstance"] = "10",
+                    ["AiLocalRuntimeInstancePool:MaxConcurrentRunsPerInstance"] = "5",
+                    ["AiLocalRuntimeInstancePool:RuntimeInstanceIdPrefix"] = "runtime-http",
+
+                    ["AiEngine:RuntimeInstanceId"] = "runtime-http-host",
+                    ["AiEngine:PipelineBackgroundController:RuntimeInstanceId"] = "runtime-http-host",
+                    ["AiEngine:PipelineBackgroundController:MaxConcurrentRuns"] = "5",
+                    ["AiEngine:PipelineBackgroundController:QueueCapacity"] = "500",
+                    ["AiEngine:PipelineBackgroundController:Distributed:Enabled"] = "true",
+                    ["AiEngine:PipelineBackgroundController:Distributed:WorkerCount"] = "10",
+                    ["AiEngine:PipelineBackgroundController:MaxLocalWorkersPerExecution"] = "5",
+                    ["AiEngine:RuntimeInstanceWorker:RuntimeInstanceId"] = "runtime-http-host"
                 });
         }
 
@@ -512,10 +524,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
                     Assert.False(
                         string.IsNullOrWhiteSpace(run.AssignedRuntimeInstanceId));
 
-                    Assert.StartsWith(
-                        "mcp-runtime-",
+                    AssertRuntimeInstanceIdMatchesLogicalRuntimePrefix(
                         run.AssignedRuntimeInstanceId,
-                        StringComparison.Ordinal);
+                        "mcp-runtime-");
 
                     Assert.False(
                         string.IsNullOrWhiteSpace(run.LocalRunId));
@@ -546,9 +557,12 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
                 dispatchedRuns,
                 run =>
                 {
-                    Assert.Equal(
-                        "runtime-http-1",
-                        run.AssignedRuntimeInstanceId);
+                    Assert.False(
+                        string.IsNullOrWhiteSpace(run.AssignedRuntimeInstanceId));
+
+                    AssertRuntimeInstanceIdMatchesLogicalRuntimePrefix(
+                        run.AssignedRuntimeInstanceId,
+                        "runtime-http-");
 
                     Assert.False(
                         string.IsNullOrWhiteSpace(run.LocalRunId));
@@ -560,6 +574,33 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
                     .Select(run => run.LocalRunId)
                     .Distinct(StringComparer.Ordinal)
                     .Count());
+        }
+
+        private static void AssertRuntimeInstanceIdMatchesLogicalRuntimePrefix(
+            string? runtimeInstanceId,
+            string expectedRuntimeIdPrefix)
+        {
+            Assert.False(
+                string.IsNullOrWhiteSpace(runtimeInstanceId));
+
+            var parts =
+                runtimeInstanceId.Split(
+                    ':',
+                    StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+            Assert.Equal(
+                2,
+                parts.Length);
+
+            Assert.StartsWith(
+                "host-",
+                parts[0],
+                StringComparison.Ordinal);
+
+            Assert.StartsWith(
+                expectedRuntimeIdPrefix,
+                parts[1],
+                StringComparison.Ordinal);
         }
 
         /// <summary>
@@ -713,24 +754,33 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
         public async Task Submit_Http_Run_With_Queue_First_And_Pump_Disabled_Should_Dispatch_After_Manual_Drain()
         {
             var controlPlaneSettings =
-                 GenericMcpServerTestSettings.CreateMcpSettings(
-                     new Dictionary<string, string?>
-                     {
-                         ["AiMcpHost:Mode"] = "ControlPlaneWithHttpRuntimeInstances",
-                         ["AiSharedQueuePump:Enabled"] = "true",
-                         ["AiMcpHost:EnableSharedQueuePump"] = "false",
-                         ["AiSharedQueueBackgroundService:Enabled"] = "false",
-                         ["AiSharedRuntimeController:SubmitMode"] = "QueueFirst",
+                GenericMcpServerTestSettings.CreateMcpSettings(
+                    new Dictionary<string, string?>
+                    {
+                        ["AiMcpHost:Mode"] = "ControlPlaneWithHttpRuntimeInstances",
 
-                         ["AiRuntimeInstanceRegistration:ProviderName"] = "local",
-                         ["AiRuntimeInstanceRegistration:ProviderMetadata:provider.name"] = "local",
-                         ["AiRuntimeInstanceRegistration:Metadata:provider.name"] = "local",
-                         ["AiRuntimeInstanceRegistration:RuntimeInstanceId"] = "mcp-control-plane-http",
-                         ["AiRuntimeInstanceRegistration:Metadata:hostType"] = "control-plane-with-http-runtime",
-                         ["AiRuntimeInstanceRegistration:Metadata:deployment"] = "test-http",
+                        // The background service must stay disabled for this scenario.
+                        ["AiMcpHost:EnableSharedQueuePump"] = "false",
+                        ["AiSharedQueueBackgroundService:Enabled"] = "false",
 
-                         ["AiEngine:RuntimeInstanceId"] = "mcp-control-plane-http"
-                     });
+                        // Keep the pump enabled so the MCP manual drain tool can execute it.
+                        ["AiSharedQueuePump:Enabled"] = "true",
+
+                        ["AiSharedRuntimeController:SubmitMode"] = "QueueFirst",
+
+                        // IMPORTANT:
+                        // This is an HTTP control-plane scenario, not local.
+                        ["AiRuntimeInstanceRegistration:ProviderName"] = "http",
+                        ["AiRuntimeInstanceRegistration:ProviderMetadata:provider.name"] = "http",
+                        ["AiRuntimeInstanceRegistration:ProviderMetadata:transport.name"] = "http",
+                        ["AiRuntimeInstanceRegistration:Metadata:provider.name"] = "http",
+                        ["AiRuntimeInstanceRegistration:Metadata:transport.name"] = "http",
+                        ["AiRuntimeInstanceRegistration:RuntimeInstanceId"] = "mcp-control-plane-http",
+                        ["AiRuntimeInstanceRegistration:Metadata:hostType"] = "control-plane-with-http-runtime",
+                        ["AiRuntimeInstanceRegistration:Metadata:deployment"] = "test-http-manual-drain",
+
+                        ["AiEngine:RuntimeInstanceId"] = "mcp-control-plane-http"
+                    });
 
             var runtimeInstanceSettings =
                 CreateHttpRuntimeInstanceSettings();
@@ -771,12 +821,14 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
                 await fixture.Mcp.DrainQueueAsync(
                         new AiSharedQueuePumpRequest
                         {
-                            PumpRuntimeInstanceId = "runtime-http-1",
+                            // This is the pump identity, not the target runtime instance.
+                            // Do not use "runtime-http-1" anymore because runtime ids are now host-scoped.
+                            PumpRuntimeInstanceId = "mcp-http-manual-drain-pump",
                             PumpWorkerId = "manual-test-drain",
                             MaxDispatches = 10,
                             RequestedBy = RequestedBy,
                             Source = Source,
-                            Reason = "Manual test drain."
+                            Reason = "Manual HTTP provider test drain."
                         })
                     .ConfigureAwait(false);
 
@@ -873,10 +925,20 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
             Assert.Single(
                 dispatchedRuns);
 
+            var dispatchedRun =
+                dispatchedRuns.Single();
+
+            Assert.False(
+                string.IsNullOrWhiteSpace(dispatchedRun.AssignedRuntimeInstanceId));
+
+            AssertRuntimeInstanceIdMatchesLogicalRuntimePrefix(
+                dispatchedRun.AssignedRuntimeInstanceId,
+                "mcp-runtime-");
+
             var saturatedInstance =
                 await McpTestWaitHelpers.WaitForRuntimeInstanceWorkerSaturationAsync(
                         mcp,
-                        runtimeInstanceId: "mcp-runtime-1",
+                        runtimeInstanceId: dispatchedRun.AssignedRuntimeInstanceId!,
                         expectedWorkerCount: 2,
                         expectedMaxLocalWorkersPerExecution: 2,
                         timeout: TimeSpan.FromMinutes(1))

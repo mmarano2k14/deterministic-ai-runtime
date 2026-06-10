@@ -1,4 +1,6 @@
-﻿using Multiplexed.Abstractions.AI.ControlPlane.Admission;
+﻿using Microsoft.Extensions.Logging;
+using Multiplexed.Abstractions.AI.ControlPlane.Admission;
+using Multiplexed.Abstractions.AI.ControlPlane.Admission.Reservations;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Dispatch;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Store;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Claiming;
@@ -17,10 +19,12 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
     /// - atomically claim one pending shared queue item
     /// - load the associated shared run record
     /// - select an available runtime instance through admission
+    /// - reserve temporary admission capacity before dispatch
     /// - dispatch the shared run to the selected runtime instance
     /// - mark the queue item as dispatched on success
     /// - mark the shared run record as dispatched on success
     /// - requeue the item when dispatch fails
+    /// - release temporary admission reservations after dispatch attempts
     ///
     /// This service does not scale Kubernetes.
     /// It does not execute DAG steps directly.
@@ -31,6 +35,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
         private readonly IAiSharedRunStore _sharedRunStore;
         private readonly IAiSharedRunDispatcher _sharedRunDispatcher;
         private readonly IAiRunAdmissionController _admissionController;
+        private readonly IAiRuntimeAdmissionReservationStore _reservationStore;
+        private readonly ILogger<AiSharedQueueDispatcher> _logger;
 
         /// <summary>
         /// Initializes a new instance of the <see cref="AiSharedQueueDispatcher"/> class.
@@ -39,12 +45,16 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
             IAiSharedQueue sharedQueue,
             IAiSharedRunStore sharedRunStore,
             IAiSharedRunDispatcher sharedRunDispatcher,
-            IAiRunAdmissionController admissionController)
+            IAiRunAdmissionController admissionController,
+            IAiRuntimeAdmissionReservationStore reservationStore,
+            ILogger<AiSharedQueueDispatcher> logger)
         {
             _sharedQueue = sharedQueue ?? throw new ArgumentNullException(nameof(sharedQueue));
             _sharedRunStore = sharedRunStore ?? throw new ArgumentNullException(nameof(sharedRunStore));
             _sharedRunDispatcher = sharedRunDispatcher ?? throw new ArgumentNullException(nameof(sharedRunDispatcher));
             _admissionController = admissionController ?? throw new ArgumentNullException(nameof(admissionController));
+            _reservationStore = reservationStore ?? throw new ArgumentNullException(nameof(reservationStore));
+            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
 
         /// <inheritdoc />
@@ -56,6 +66,17 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
             ArgumentException.ThrowIfNullOrWhiteSpace(request.RuntimeInstanceId);
 
             var startedAtUtc = DateTimeOffset.UtcNow;
+            string? reservedRuntimeInstanceId = null;
+            string? reservedSharedRunId = null;
+
+            _logger.LogDebug(
+                "Shared queue dispatch started. PumpRuntimeInstanceId={PumpRuntimeInstanceId}, WorkerId={WorkerId}, TenantId={TenantId}, PipelineKey={PipelineKey}, ClaimTtlMs={ClaimTtlMs}, CorrelationId={CorrelationId}",
+                request.RuntimeInstanceId,
+                request.WorkerId,
+                request.TenantId,
+                request.PipelineKey,
+                request.ClaimTtl.TotalMilliseconds,
+                request.CorrelationId);
 
             try
             {
@@ -78,6 +99,14 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                 {
                     var completedAtUtc = DateTimeOffset.UtcNow;
 
+                    _logger.LogDebug(
+                        "Shared queue dispatch found no pending item. PumpRuntimeInstanceId={PumpRuntimeInstanceId}, WorkerId={WorkerId}, TenantId={TenantId}, PipelineKey={PipelineKey}, DurationMs={DurationMs}",
+                        request.RuntimeInstanceId,
+                        request.WorkerId,
+                        request.TenantId,
+                        request.PipelineKey,
+                        CalculateDurationMs(startedAtUtc, completedAtUtc));
+
                     return new AiSharedQueueDispatchResult
                     {
                         Success = false,
@@ -90,6 +119,15 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                     };
                 }
 
+                _logger.LogInformation(
+                    "Shared queue item claimed. SharedRunId={SharedRunId}, ClaimToken={ClaimToken}, PumpRuntimeInstanceId={PumpRuntimeInstanceId}, WorkerId={WorkerId}, TenantId={TenantId}, PipelineKey={PipelineKey}",
+                    queueItem.SharedRunId,
+                    queueItem.ClaimToken,
+                    request.RuntimeInstanceId,
+                    request.WorkerId,
+                    request.TenantId,
+                    request.PipelineKey);
+
                 var sharedRun = await _sharedRunStore
                     .GetAsync(
                         queueItem.SharedRunId,
@@ -98,6 +136,12 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
 
                 if (sharedRun is null)
                 {
+                    _logger.LogWarning(
+                        "Shared run record was not found after queue claim. SharedRunId={SharedRunId}, ClaimToken={ClaimToken}, PumpRuntimeInstanceId={PumpRuntimeInstanceId}",
+                        queueItem.SharedRunId,
+                        queueItem.ClaimToken,
+                        request.RuntimeInstanceId);
+
                     await RequeueBestEffortAsync(
                             queueItem,
                             "Shared run record was not found.",
@@ -120,6 +164,14 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                     };
                 }
 
+                _logger.LogDebug(
+                    "Shared run record loaded. SharedRunId={SharedRunId}, TenantId={TenantId}, PipelineKey={PipelineKey}, AssignedRuntimeInstanceId={AssignedRuntimeInstanceId}, Status={Status}",
+                    sharedRun.SharedRunId,
+                    sharedRun.TenantId,
+                    sharedRun.PipelineKey,
+                    sharedRun.AssignedRuntimeInstanceId,
+                    sharedRun.Status);
+
                 var admissionDecision = await _admissionController
                     .AdmitAsync(
                         new AiRunAdmissionRequest
@@ -140,9 +192,22 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                         cancellationToken)
                     .ConfigureAwait(false);
 
+                _logger.LogInformation(
+                    "Shared queue admission decision received. SharedRunId={SharedRunId}, DecisionType={DecisionType}, AssignedRuntimeInstanceId={AssignedRuntimeInstanceId}, Reason={Reason}",
+                    sharedRun.SharedRunId,
+                    admissionDecision.DecisionType,
+                    admissionDecision.AssignedRuntimeInstanceId,
+                    admissionDecision.Reason);
+
                 if (admissionDecision.DecisionType != AiRunAdmissionDecisionType.AssignToInstance ||
                     string.IsNullOrWhiteSpace(admissionDecision.AssignedRuntimeInstanceId))
                 {
+                    _logger.LogWarning(
+                        "Shared queue dispatch could not assign runtime instance. SharedRunId={SharedRunId}, DecisionType={DecisionType}, Reason={Reason}",
+                        sharedRun.SharedRunId,
+                        admissionDecision.DecisionType,
+                        admissionDecision.Reason);
+
                     await RequeueBestEffortAsync(
                             queueItem,
                             admissionDecision.Reason ?? "No runtime instance available for shared queue dispatch.",
@@ -173,91 +238,182 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                 var targetRuntimeInstanceId =
                     admissionDecision.AssignedRuntimeInstanceId;
 
-                var dispatchResult = await _sharedRunDispatcher
-                    .DispatchAsync(
-                        new AiSharedRunDispatchRequest
-                        {
-                            SharedRun = sharedRun,
-                            QueueItem = queueItem,
-                            RuntimeInstanceId = targetRuntimeInstanceId,
-                            ClaimToken = queueItem.ClaimToken,
-                            CorrelationId = request.CorrelationId ?? sharedRun.CorrelationId,
-                            RequestedBy = request.RequestedBy,
-                            Source = request.Source,
-                            Reason = request.Reason ?? "Dispatching claimed shared queue item.",
-                            Metadata = MergeMetadata(
-                                sharedRun.Metadata,
-                                request.Metadata)
-                        },
+                _logger.LogDebug(
+                    "Reserving temporary admission capacity. SharedRunId={SharedRunId}, RuntimeInstanceId={RuntimeInstanceId}, RunCount={RunCount}",
+                    sharedRun.SharedRunId,
+                    targetRuntimeInstanceId,
+                    1);
+
+                await _reservationStore
+                    .ReserveAsync(
+                        targetRuntimeInstanceId,
+                        runCount: 1,
                         cancellationToken)
                     .ConfigureAwait(false);
 
-                if (!dispatchResult.Success)
+                reservedRuntimeInstanceId =
+                    targetRuntimeInstanceId;
+
+                reservedSharedRunId =
+                    sharedRun.SharedRunId;
+
+                _logger.LogInformation(
+                    "Temporary admission capacity reserved. SharedRunId={SharedRunId}, RuntimeInstanceId={RuntimeInstanceId}, RunCount={RunCount}",
+                    sharedRun.SharedRunId,
+                    targetRuntimeInstanceId,
+                    1);
+
+                try
                 {
-                    await RequeueBestEffortAsync(
-                            queueItem,
-                            dispatchResult.FailureReason ?? "Shared run dispatch failed.",
+                    _logger.LogInformation(
+                        "Shared run dispatch to runtime instance started. SharedRunId={SharedRunId}, RuntimeInstanceId={RuntimeInstanceId}, ClaimToken={ClaimToken}",
+                        sharedRun.SharedRunId,
+                        targetRuntimeInstanceId,
+                        queueItem.ClaimToken);
+
+                    var dispatchResult = await _sharedRunDispatcher
+                        .DispatchAsync(
+                            new AiSharedRunDispatchRequest
+                            {
+                                SharedRun = sharedRun,
+                                QueueItem = queueItem,
+                                RuntimeInstanceId = targetRuntimeInstanceId,
+                                ClaimToken = queueItem.ClaimToken,
+                                CorrelationId = request.CorrelationId ?? sharedRun.CorrelationId,
+                                RequestedBy = request.RequestedBy,
+                                Source = request.Source,
+                                Reason = request.Reason ?? "Dispatching claimed shared queue item.",
+                                Metadata = MergeMetadata(
+                                    sharedRun.Metadata,
+                                    request.Metadata)
+                            },
                             cancellationToken)
                         .ConfigureAwait(false);
 
-                    var completedAtUtc = DateTimeOffset.UtcNow;
+                    _logger.LogInformation(
+                        "Shared run dispatch result received. SharedRunId={SharedRunId}, RuntimeInstanceId={RuntimeInstanceId}, Success={Success}, LocalRunId={LocalRunId}, ExecutionId={ExecutionId}, FailureReason={FailureReason}",
+                        sharedRun.SharedRunId,
+                        targetRuntimeInstanceId,
+                        dispatchResult.Success,
+                        dispatchResult.LocalRunId,
+                        dispatchResult.ExecutionId,
+                        dispatchResult.FailureReason);
 
-                    return new AiSharedQueueDispatchResult
+                    if (!dispatchResult.Success)
                     {
-                        Success = false,
-                        SharedRunId = queueItem.SharedRunId,
-                        RuntimeInstanceId = targetRuntimeInstanceId,
-                        QueueItem = queueItem,
-                        SharedRun = sharedRun,
-                        DispatchResult = dispatchResult,
-                        Message = "Shared queue item dispatch failed and was requeued.",
-                        FailureReason = dispatchResult.FailureReason,
-                        StartedAtUtc = startedAtUtc,
-                        CompletedAtUtc = completedAtUtc,
-                        DurationMs = CalculateDurationMs(startedAtUtc, completedAtUtc),
-                        Diagnostics = dispatchResult.Diagnostics
-                    };
-                }
+                        _logger.LogWarning(
+                            "Shared run dispatch failed. Requeuing shared queue item. SharedRunId={SharedRunId}, RuntimeInstanceId={RuntimeInstanceId}, FailureReason={FailureReason}",
+                            sharedRun.SharedRunId,
+                            targetRuntimeInstanceId,
+                            dispatchResult.FailureReason);
 
-                var dispatchedQueueItem = await _sharedQueue
-                    .MarkDispatchedAsync(
+                        await RequeueBestEffortAsync(
+                                queueItem,
+                                dispatchResult.FailureReason ?? "Shared run dispatch failed.",
+                                cancellationToken)
+                            .ConfigureAwait(false);
+
+                        var completedAtUtc = DateTimeOffset.UtcNow;
+
+                        return new AiSharedQueueDispatchResult
+                        {
+                            Success = false,
+                            SharedRunId = queueItem.SharedRunId,
+                            RuntimeInstanceId = targetRuntimeInstanceId,
+                            QueueItem = queueItem,
+                            SharedRun = sharedRun,
+                            DispatchResult = dispatchResult,
+                            Message = "Shared queue item dispatch failed and was requeued.",
+                            FailureReason = dispatchResult.FailureReason,
+                            StartedAtUtc = startedAtUtc,
+                            CompletedAtUtc = completedAtUtc,
+                            DurationMs = CalculateDurationMs(startedAtUtc, completedAtUtc),
+                            Diagnostics = dispatchResult.Diagnostics
+                        };
+                    }
+
+                    var dispatchedQueueItem = await _sharedQueue
+                        .MarkDispatchedAsync(
+                            queueItem.SharedRunId,
+                            queueItem.ClaimToken!,
+                            dispatchResult.Message,
+                            cancellationToken)
+                        .ConfigureAwait(false);
+
+                    _logger.LogDebug(
+                        "Shared queue item marked as dispatched. SharedRunId={SharedRunId}, RuntimeInstanceId={RuntimeInstanceId}, ClaimToken={ClaimToken}",
                         queueItem.SharedRunId,
-                        queueItem.ClaimToken!,
-                        dispatchResult.Message,
-                        cancellationToken)
-                    .ConfigureAwait(false);
+                        targetRuntimeInstanceId,
+                        queueItem.ClaimToken);
 
-                var dispatchedRun = await _sharedRunStore
-                    .MarkDispatchedAsync(
+                    var dispatchedRun = await _sharedRunStore
+                        .MarkDispatchedAsync(
+                            sharedRun.SharedRunId,
+                            targetRuntimeInstanceId,
+                            dispatchResult.LocalRunId,
+                            dispatchResult.ExecutionId,
+                            dispatchResult.Message,
+                            cancellationToken)
+                        .ConfigureAwait(false);
+
+                    _logger.LogInformation(
+                        "Shared run record marked as dispatched. SharedRunId={SharedRunId}, RuntimeInstanceId={RuntimeInstanceId}, LocalRunId={LocalRunId}, ExecutionId={ExecutionId}",
                         sharedRun.SharedRunId,
                         targetRuntimeInstanceId,
                         dispatchResult.LocalRunId,
-                        dispatchResult.ExecutionId,
-                        dispatchResult.Message,
-                        cancellationToken)
-                    .ConfigureAwait(false);
+                        dispatchResult.ExecutionId);
 
-                var completed = dispatchedRun ?? sharedRun;
-                var completedAtUtcSuccess = DateTimeOffset.UtcNow;
+                    var completed =
+                        dispatchedRun ?? sharedRun;
 
-                return new AiSharedQueueDispatchResult
+                    var completedAtUtcSuccess =
+                        DateTimeOffset.UtcNow;
+
+                    return new AiSharedQueueDispatchResult
+                    {
+                        Success = true,
+                        SharedRunId = queueItem.SharedRunId,
+                        RuntimeInstanceId = targetRuntimeInstanceId,
+                        QueueItem = dispatchedQueueItem ?? queueItem,
+                        SharedRun = completed,
+                        DispatchResult = dispatchResult,
+                        Message = "Shared queue item dispatched successfully.",
+                        StartedAtUtc = startedAtUtc,
+                        CompletedAtUtc = completedAtUtcSuccess,
+                        DurationMs = CalculateDurationMs(startedAtUtc, completedAtUtcSuccess),
+                        Diagnostics = dispatchResult.Diagnostics
+                    };
+                }
+                finally
                 {
-                    Success = true,
-                    SharedRunId = queueItem.SharedRunId,
-                    RuntimeInstanceId = targetRuntimeInstanceId,
-                    QueueItem = dispatchedQueueItem ?? queueItem,
-                    SharedRun = completed,
-                    DispatchResult = dispatchResult,
-                    Message = "Shared queue item dispatched successfully.",
-                    StartedAtUtc = startedAtUtc,
-                    CompletedAtUtc = completedAtUtcSuccess,
-                    DurationMs = CalculateDurationMs(startedAtUtc, completedAtUtcSuccess),
-                    Diagnostics = dispatchResult.Diagnostics
-                };
+                    await ReleaseReservationBestEffortAsync(
+                            reservedSharedRunId,
+                            reservedRuntimeInstanceId,
+                            CancellationToken.None)
+                        .ConfigureAwait(false);
+
+                    reservedSharedRunId = null;
+                    reservedRuntimeInstanceId = null;
+                }
             }
             catch (Exception exception)
             {
-                var completedAtUtc = DateTimeOffset.UtcNow;
+                _logger.LogError(
+                    exception,
+                    "Shared queue dispatch failed with exception. PumpRuntimeInstanceId={PumpRuntimeInstanceId}, WorkerId={WorkerId}, ReservedSharedRunId={ReservedSharedRunId}, ReservedRuntimeInstanceId={ReservedRuntimeInstanceId}",
+                    request.RuntimeInstanceId,
+                    request.WorkerId,
+                    reservedSharedRunId,
+                    reservedRuntimeInstanceId);
+
+                await ReleaseReservationBestEffortAsync(
+                        reservedSharedRunId,
+                        reservedRuntimeInstanceId,
+                        CancellationToken.None)
+                    .ConfigureAwait(false);
+
+                var completedAtUtc =
+                    DateTimeOffset.UtcNow;
 
                 return new AiSharedQueueDispatchResult
                 {
@@ -283,6 +439,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
         {
             if (string.IsNullOrWhiteSpace(queueItem.ClaimToken))
             {
+                _logger.LogWarning(
+                    "Shared queue item could not be requeued because claim token is missing. SharedRunId={SharedRunId}, Reason={Reason}",
+                    queueItem.SharedRunId,
+                    reason);
+
                 return;
             }
 
@@ -295,11 +456,60 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                         reason,
                         cancellationToken)
                     .ConfigureAwait(false);
+
+                _logger.LogDebug(
+                    "Shared queue item requeued. SharedRunId={SharedRunId}, ClaimToken={ClaimToken}, Reason={Reason}",
+                    queueItem.SharedRunId,
+                    queueItem.ClaimToken,
+                    reason);
             }
-            catch
+            catch (Exception exception)
             {
-                // Best-effort requeue:
-                // do not hide the original dispatch/load failure.
+                _logger.LogWarning(
+                    exception,
+                    "Shared queue item requeue failed. SharedRunId={SharedRunId}, ClaimToken={ClaimToken}, Reason={Reason}",
+                    queueItem.SharedRunId,
+                    queueItem.ClaimToken,
+                    reason);
+            }
+        }
+
+        /// <summary>
+        /// Attempts to release temporary admission capacity without masking the original failure.
+        /// </summary>
+        private async Task ReleaseReservationBestEffortAsync(
+            string? sharedRunId,
+            string? runtimeInstanceId,
+            CancellationToken cancellationToken)
+        {
+            if (string.IsNullOrWhiteSpace(runtimeInstanceId))
+            {
+                return;
+            }
+
+            try
+            {
+                await _reservationStore
+                    .ReleaseAsync(
+                        runtimeInstanceId,
+                        runCount: 1,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+                _logger.LogInformation(
+                    "Temporary admission capacity released. SharedRunId={SharedRunId}, RuntimeInstanceId={RuntimeInstanceId}, RunCount={RunCount}",
+                    sharedRunId,
+                    runtimeInstanceId,
+                    1);
+            }
+            catch (Exception exception)
+            {
+                _logger.LogWarning(
+                    exception,
+                    "Temporary admission capacity release failed. SharedRunId={SharedRunId}, RuntimeInstanceId={RuntimeInstanceId}, RunCount={RunCount}",
+                    sharedRunId,
+                    runtimeInstanceId,
+                    1);
             }
         }
 

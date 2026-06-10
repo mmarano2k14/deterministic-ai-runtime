@@ -1,4 +1,5 @@
 ﻿using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Environment;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Identity;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Environment
 {
@@ -13,6 +14,15 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Environment
     /// </remarks>
     public sealed class LocalAiRuntimeEnvironmentProvider : IAiRuntimeEnvironmentProvider
     {
+        private readonly IAiRuntimeHostIdentity runtimeHostIdentity;
+
+        public LocalAiRuntimeEnvironmentProvider(
+            IAiRuntimeHostIdentity runtimeHostIdentity)
+        {
+            this.runtimeHostIdentity = runtimeHostIdentity
+                ?? throw new ArgumentNullException(nameof(runtimeHostIdentity));
+        }
+
         /// <inheritdoc />
         public Task<AiRuntimeEnvironmentSnapshot> GetSnapshotAsync(
             CancellationToken cancellationToken = default)
@@ -20,20 +30,36 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Environment
             cancellationToken.ThrowIfCancellationRequested();
 
             var processId = System.Environment.ProcessId;
-
             var hostName = System.Environment.MachineName;
+
+            var hostId =
+                runtimeHostIdentity.HostId;
+
+            const string runtimeId =
+                "local-runtime-to-assign";
+
+            var runtimeInstanceId =
+                $"{hostId}:{runtimeId}";
+
+            var controlPlaneHostId = "control-plane-host-to-assign";   
 
             return Task.FromResult(
                 new AiRuntimeEnvironmentSnapshot
                 {
-                    ProviderName = "local",
-                    RuntimeInstanceId = $"local:{hostName}:{processId}",
+                    ProviderName = "",
+                    RuntimeInstanceId = runtimeInstanceId,
+                    HostId = hostId,
+                    RuntimeId = runtimeId,
+                    ControlPlaneHostId = controlPlaneHostId,
                     HostName = hostName,
                     ProcessId = processId,
                     ProviderMetadata = new Dictionary<string, string>
                     {
                         ["machineName"] = hostName,
-                        ["processId"] = processId.ToString()
+                        ["processId"] = processId.ToString(),
+                        ["hostId"] = hostId,
+                        ["runtimeId"] = runtimeId,
+                        ["controlPlaneHostId"] = controlPlaneHostId
                     }
                 });
         }

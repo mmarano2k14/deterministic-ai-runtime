@@ -1,4 +1,5 @@
-﻿using Microsoft.Extensions.Options;
+﻿using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Dispatch;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Pump;
 
@@ -24,21 +25,25 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
     {
         private readonly IAiSharedQueueDispatcher _dispatcher;
         private readonly AiSharedQueuePumpOptions _options;
+        private readonly ILogger<AiSharedQueuePump> _logger;
 
         /// <summary>
         /// Initializes a new instance of the <see cref="AiSharedQueuePump"/> class.
         /// </summary>
         /// <param name="dispatcher">The shared queue dispatcher.</param>
         /// <param name="options">The pump options.</param>
+        /// <param name="logger">The logger.</param>
         /// <exception cref="ArgumentNullException">
-        /// Thrown when <paramref name="dispatcher"/> or <paramref name="options"/> is null.
+        /// Thrown when <paramref name="dispatcher"/>, <paramref name="options"/>, or <paramref name="logger"/> is null.
         /// </exception>
         public AiSharedQueuePump(
             IAiSharedQueueDispatcher dispatcher,
-            IOptions<AiSharedQueuePumpOptions> options)
+            IOptions<AiSharedQueuePumpOptions> options,
+            ILogger<AiSharedQueuePump> logger)
         {
             _dispatcher = dispatcher ?? throw new ArgumentNullException(nameof(dispatcher));
             _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
+            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
 
         /// <inheritdoc />
@@ -54,6 +59,13 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
             if (!_options.Enabled)
             {
                 var disabledCompletedAtUtc = DateTimeOffset.UtcNow;
+
+                _logger.LogInformation(
+                    "Shared queue pump skipped because it is disabled. RuntimeInstanceId={RuntimeInstanceId}, WorkerId={WorkerId}, TenantId={TenantId}, PipelineKey={PipelineKey}",
+                    request.PumpRuntimeInstanceId,
+                    request.PumpWorkerId,
+                    request.TenantId,
+                    request.PipelineKey);
 
                 return new AiSharedQueuePumpResult
                 {
@@ -72,6 +84,17 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
             var workerId = ResolveWorkerId(request);
             var source = ResolveSource(request);
 
+            _logger.LogInformation(
+                "Shared queue pump cycle started. RuntimeInstanceId={RuntimeInstanceId}, WorkerId={WorkerId}, TenantId={TenantId}, PipelineKey={PipelineKey}, MaxDispatches={MaxDispatches}, ClaimTtlMs={ClaimTtlMs}, Source={Source}, Reason={Reason}",
+                request.PumpRuntimeInstanceId,
+                workerId,
+                request.TenantId,
+                request.PipelineKey,
+                maxDispatches,
+                claimTtl.TotalMilliseconds,
+                source,
+                request.Reason);
+
             var dispatchResults = new List<AiSharedQueueDispatchResult>();
             var successfulDispatches = 0;
             var failedDispatches = 0;
@@ -82,6 +105,15 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                 for (var index = 0; index < maxDispatches; index++)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
+
+                    _logger.LogDebug(
+                        "Shared queue pump dispatch attempt started. RuntimeInstanceId={RuntimeInstanceId}, WorkerId={WorkerId}, AttemptIndex={AttemptIndex}, MaxDispatches={MaxDispatches}, TenantId={TenantId}, PipelineKey={PipelineKey}",
+                        request.PumpRuntimeInstanceId,
+                        workerId,
+                        index + 1,
+                        maxDispatches,
+                        request.TenantId,
+                        request.PipelineKey);
 
                     var dispatchResult = await _dispatcher
                         .DispatchNextAsync(
@@ -107,6 +139,15 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                     {
                         stoppedBecauseNoItemAvailable = true;
 
+                        _logger.LogDebug(
+                            "Shared queue pump dispatch attempt found no item. RuntimeInstanceId={RuntimeInstanceId}, WorkerId={WorkerId}, AttemptIndex={AttemptIndex}, TenantId={TenantId}, PipelineKey={PipelineKey}, StopCycleWhenNoItemAvailable={StopCycleWhenNoItemAvailable}",
+                            request.PumpRuntimeInstanceId,
+                            workerId,
+                            index + 1,
+                            request.TenantId,
+                            request.PipelineKey,
+                            _options.StopCycleWhenNoItemAvailable);
+
                         if (_options.StopCycleWhenNoItemAvailable)
                         {
                             break;
@@ -118,10 +159,35 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                     if (dispatchResult.Success)
                     {
                         successfulDispatches++;
+
+                        _logger.LogInformation(
+                            "Shared queue pump dispatch attempt succeeded. RuntimeInstanceId={RuntimeInstanceId}, WorkerId={WorkerId}, AttemptIndex={AttemptIndex}, SuccessfulDispatchCount={SuccessfulDispatchCount}, FailedDispatchCount={FailedDispatchCount}, TenantId={TenantId}, PipelineKey={PipelineKey}, Diagnostics={Diagnostics}",
+                            request.PumpRuntimeInstanceId,
+                            workerId,
+                            index + 1,
+                            successfulDispatches,
+                            failedDispatches,
+                            request.TenantId,
+                            request.PipelineKey,
+                            string.Join(" | ", dispatchResult.Diagnostics ?? Array.Empty<string>()));
+
                         continue;
                     }
 
                     failedDispatches++;
+
+                    _logger.LogWarning(
+                        "Shared queue pump dispatch attempt failed. RuntimeInstanceId={RuntimeInstanceId}, WorkerId={WorkerId}, AttemptIndex={AttemptIndex}, SuccessfulDispatchCount={SuccessfulDispatchCount}, FailedDispatchCount={FailedDispatchCount}, TenantId={TenantId}, PipelineKey={PipelineKey}, FailureReason={FailureReason}, Diagnostics={Diagnostics}, StopCycleOnDispatchFailure={StopCycleOnDispatchFailure}",
+                        request.PumpRuntimeInstanceId,
+                        workerId,
+                        index + 1,
+                        successfulDispatches,
+                        failedDispatches,
+                        request.TenantId,
+                        request.PipelineKey,
+                        dispatchResult.FailureReason,
+                        string.Join(" | ", dispatchResult.Diagnostics ?? Array.Empty<string>()),
+                        _options.StopCycleOnDispatchFailure);
 
                     if (_options.StopCycleOnDispatchFailure)
                     {
@@ -130,6 +196,20 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                 }
 
                 var completedAtUtc = DateTimeOffset.UtcNow;
+                var durationMs = CalculateDurationMs(startedAtUtc, completedAtUtc);
+
+                _logger.LogInformation(
+                    "Shared queue pump cycle completed. Success=True, RuntimeInstanceId={RuntimeInstanceId}, WorkerId={WorkerId}, TenantId={TenantId}, PipelineKey={PipelineKey}, AttemptedDispatchCount={AttemptedDispatchCount}, SuccessfulDispatchCount={SuccessfulDispatchCount}, FailedDispatchCount={FailedDispatchCount}, StoppedBecauseNoItemAvailable={StoppedBecauseNoItemAvailable}, DurationMs={DurationMs}, Diagnostics={Diagnostics}",
+                    request.PumpRuntimeInstanceId,
+                    workerId,
+                    request.TenantId,
+                    request.PipelineKey,
+                    dispatchResults.Count,
+                    successfulDispatches,
+                    failedDispatches,
+                    stoppedBecauseNoItemAvailable,
+                    durationMs,
+                    string.Join(" | ", BuildDiagnostics(dispatchResults)));
 
                 return new AiSharedQueuePumpResult
                 {
@@ -141,7 +221,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                     StoppedBecauseNoItemAvailable = stoppedBecauseNoItemAvailable,
                     StartedAtUtc = startedAtUtc,
                     CompletedAtUtc = completedAtUtc,
-                    DurationMs = CalculateDurationMs(startedAtUtc, completedAtUtc),
+                    DurationMs = durationMs,
                     DispatchResults = dispatchResults.ToArray(),
                     Diagnostics = BuildDiagnostics(dispatchResults)
                 };
@@ -149,6 +229,21 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
             catch (Exception exception) when (exception is not OperationCanceledException)
             {
                 var completedAtUtc = DateTimeOffset.UtcNow;
+                var durationMs = CalculateDurationMs(startedAtUtc, completedAtUtc);
+
+                _logger.LogError(
+                    exception,
+                    "Shared queue pump cycle failed. RuntimeInstanceId={RuntimeInstanceId}, WorkerId={WorkerId}, TenantId={TenantId}, PipelineKey={PipelineKey}, AttemptedDispatchCount={AttemptedDispatchCount}, SuccessfulDispatchCount={SuccessfulDispatchCount}, FailedDispatchCount={FailedDispatchCount}, StoppedBecauseNoItemAvailable={StoppedBecauseNoItemAvailable}, DurationMs={DurationMs}, FailureReason={FailureReason}",
+                    request.PumpRuntimeInstanceId,
+                    workerId,
+                    request.TenantId,
+                    request.PipelineKey,
+                    dispatchResults.Count,
+                    successfulDispatches,
+                    failedDispatches,
+                    stoppedBecauseNoItemAvailable,
+                    durationMs,
+                    exception.Message);
 
                 return new AiSharedQueuePumpResult
                 {
@@ -161,7 +256,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                     FailureReason = exception.Message,
                     StartedAtUtc = startedAtUtc,
                     CompletedAtUtc = completedAtUtc,
-                    DurationMs = CalculateDurationMs(startedAtUtc, completedAtUtc),
+                    DurationMs = durationMs,
                     DispatchResults = dispatchResults.ToArray(),
                     Diagnostics = new[] { exception.Message }
                 };

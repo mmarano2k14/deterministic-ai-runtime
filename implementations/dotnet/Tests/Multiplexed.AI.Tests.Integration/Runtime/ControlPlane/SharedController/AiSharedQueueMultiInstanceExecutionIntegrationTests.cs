@@ -1,4 +1,5 @@
-﻿using Microsoft.Extensions.Options;
+﻿using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.ControlPlane.Admission;
 using Multiplexed.Abstractions.AI.ControlPlane.Observability;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController;
@@ -10,6 +11,7 @@ using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Pump;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Queue;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Redis;
 using Multiplexed.Abstractions.AI.Execution.Instance.Worker;
+using Multiplexed.AI.Runtime.ControlPlane.Admission.Reservations;
 using Multiplexed.AI.Runtime.ControlPlane.Observability;
 using Multiplexed.AI.Runtime.ControlPlane.SharedController;
 using Multiplexed.AI.Runtime.ControlPlane.SharedController.Store;
@@ -373,7 +375,9 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedController
                 store,
                 recorder,
                 new FakeRunAdmissionController(
-                    assignedRuntimeInstanceId: runtimeInstanceId));
+                    assignedRuntimeInstanceId: runtimeInstanceId),
+                new InMemoryAiRuntimeAdmissionReservationStore(), 
+                NullLogger<AiSharedQueueDispatcher>.Instance);
 
             var pump = new AiSharedQueuePump(
                 dispatcher,
@@ -384,7 +388,8 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedController
                     DefaultClaimTtl = TimeSpan.FromSeconds(30),
                     StopCycleWhenNoItemAvailable = true,
                     StopCycleOnDispatchFailure = true
-                }));
+                }),
+                NullLogger<AiSharedQueuePump>.Instance);
 
             var total = new AiSharedQueuePumpResult
             {

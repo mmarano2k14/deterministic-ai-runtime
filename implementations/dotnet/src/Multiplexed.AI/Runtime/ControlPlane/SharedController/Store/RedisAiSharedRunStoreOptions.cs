@@ -8,7 +8,7 @@
         /// <summary>
         /// Gets the Redis key prefix used by the shared run store.
         /// </summary>
-        public string KeyPrefix { get; init; } = "ai:shared-runs";
+        public string KeyPrefix { get; set; } = "ai:shared-runs";
 
         /// <summary>
         /// Gets the Redis sorted set key used to index shared runs by submission time.

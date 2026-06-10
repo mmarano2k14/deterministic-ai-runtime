@@ -100,7 +100,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures
                         ["AiLocalRuntimeInstancePool:MaxConcurrentRunsPerInstance"] = "0",
                         ["AiLocalRuntimeInstancePool:RuntimeInstanceIdPrefix"] = "disabled",
 
-                        ["ConnectionStrings:Redis"] = "localhost:6379,defaultDatabase=15",
+                        ["ConnectionStrings:Redis"] = "localhost:6379",
                         ["ConnectionStrings:Mongo"] = "mongodb://localhost:27017",
                         ["Mongo:DatabaseName"] = "multiplexed-ai-mcp-http-tests",
 

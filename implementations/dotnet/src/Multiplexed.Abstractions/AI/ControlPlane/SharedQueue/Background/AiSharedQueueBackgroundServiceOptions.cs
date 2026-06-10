@@ -56,6 +56,27 @@
         public TimeSpan ErrorDelay { get; set; } = TimeSpan.FromSeconds(2);
 
         /// <summary>
+        /// Gets or sets a value indicating whether the shared queue pump should wait
+        /// for at least one ready runtime instance and matching capacity descriptor before starting.
+        /// </summary>
+        public bool WaitForRuntimeReadiness { get; set; } = true;
+
+        /// <summary>
+        /// Gets or sets the delay between runtime readiness checks.
+        /// </summary>
+        public TimeSpan RuntimeReadinessPollInterval { get; set; } =
+            TimeSpan.FromMilliseconds(250);
+
+        /// <summary>
+        /// Gets or sets the maximum amount of time to wait for runtime readiness before continuing.
+        /// </summary>
+        /// <remarks>
+        /// When null, the pump waits indefinitely until cancellation.
+        /// </remarks>
+        public TimeSpan? RuntimeReadinessTimeout { get; set; } =
+            TimeSpan.FromSeconds(30);
+
+        /// <summary>
         /// Optional source label used for diagnostics and observability.
         /// </summary>
         public string Source { get; set; } = "shared-queue-background-service";

@@ -1,4 +1,5 @@
-﻿using Microsoft.Extensions.Options;
+﻿using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Dispatch;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Pump;
@@ -12,23 +13,24 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
         public async Task PumpOnceAsync_Should_Return_NoItemAvailable_When_Dispatcher_Has_No_Item()
         {
             var pump = new AiSharedQueuePump(
-                new FakeSharedQueueDispatcher(
-                    new[]
-                    {
+                 new FakeSharedQueueDispatcher(
+                     new[]
+                     {
                         new AiSharedQueueDispatchResult
                         {
                             Success = false,
                             NoItemAvailable = true,
-                            RuntimeInstanceId = "runtime-1",
-                            Message = "No pending shared queue item is available.",
+                            RuntimeInstanceId = null,
+                            Message = "No item available.",
                             StartedAtUtc = DateTimeOffset.UtcNow,
                             CompletedAtUtc = DateTimeOffset.UtcNow
                         }
-                    }),
-                Options.Create(new AiSharedQueuePumpOptions
-                {
-                    MaxDispatchesPerCycle = 10
-                }));
+                     }),
+                 Options.Create(new AiSharedQueuePumpOptions
+                 {
+                     MaxDispatchesPerCycle = 10
+                 }),
+                 NullLogger<AiSharedQueuePump>.Instance);
 
             var result = await pump.PumpOnceAsync(new AiSharedQueuePumpRequest
             {
@@ -65,7 +67,8 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
                 Options.Create(new AiSharedQueuePumpOptions
                 {
                     MaxDispatchesPerCycle = 10
-                }));
+                }),
+                NullLogger<AiSharedQueuePump>.Instance);
 
             var result = await pump.PumpOnceAsync(new AiSharedQueuePumpRequest
             {
@@ -96,7 +99,8 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
                 Options.Create(new AiSharedQueuePumpOptions
                 {
                     MaxDispatchesPerCycle = 10
-                }));
+                }),
+                NullLogger<AiSharedQueuePump>.Instance);
 
             var result = await pump.PumpOnceAsync(new AiSharedQueuePumpRequest
             {
@@ -127,7 +131,8 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
                 Options.Create(new AiSharedQueuePumpOptions
                 {
                     MaxDispatchesPerCycle = 2
-                }));
+                }),
+                NullLogger<AiSharedQueuePump>.Instance);
 
             var result = await pump.PumpOnceAsync(new AiSharedQueuePumpRequest
             {
@@ -161,7 +166,8 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
                 {
                     MaxDispatchesPerCycle = 10,
                     StopCycleOnDispatchFailure = false
-                }));
+                }),
+                NullLogger<AiSharedQueuePump>.Instance);
 
             var result = await pump.PumpOnceAsync(new AiSharedQueuePumpRequest
             {
@@ -190,7 +196,8 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
                 {
                     MaxDispatchesPerCycle = 10,
                     StopCycleOnDispatchFailure = true
-                }));
+                }),
+                NullLogger<AiSharedQueuePump>.Instance);
 
             var result = await pump.PumpOnceAsync(new AiSharedQueuePumpRequest
             {
@@ -213,7 +220,8 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
                 Options.Create(new AiSharedQueuePumpOptions
                 {
                     Enabled = false
-                }));
+                }),
+                NullLogger<AiSharedQueuePump>.Instance);
 
             var result = await pump.PumpOnceAsync(new AiSharedQueuePumpRequest
             {
@@ -241,7 +249,8 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
                 {
                     WorkerId = "option-worker",
                     Source = "option-source"
-                }));
+                }),
+                NullLogger<AiSharedQueuePump>.Instance);
 
             await pump.PumpOnceAsync(new AiSharedQueuePumpRequest
             {
@@ -288,7 +297,8 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
                 {
                     WorkerId = "option-worker",
                     Source = "option-source"
-                }));
+                }),
+                NullLogger<AiSharedQueuePump>.Instance);
 
             await pump.PumpOnceAsync(new AiSharedQueuePumpRequest
             {
@@ -305,7 +315,8 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
         {
             var pump = new AiSharedQueuePump(
                 new FakeSharedQueueDispatcher(Array.Empty<AiSharedQueueDispatchResult>()),
-                Options.Create(new AiSharedQueuePumpOptions()));
+                Options.Create(new AiSharedQueuePumpOptions()),
+                NullLogger<AiSharedQueuePump>.Instance);
 
             await Assert.ThrowsAsync<ArgumentNullException>(() =>
                 pump.PumpOnceAsync(null!));
@@ -316,7 +327,8 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
         {
             var pump = new AiSharedQueuePump(
                 new FakeSharedQueueDispatcher(Array.Empty<AiSharedQueueDispatchResult>()),
-                Options.Create(new AiSharedQueuePumpOptions()));
+                Options.Create(new AiSharedQueuePumpOptions()),
+                NullLogger<AiSharedQueuePump>.Instance);
 
             await Assert.ThrowsAsync<ArgumentException>(() =>
                 pump.PumpOnceAsync(new AiSharedQueuePumpRequest

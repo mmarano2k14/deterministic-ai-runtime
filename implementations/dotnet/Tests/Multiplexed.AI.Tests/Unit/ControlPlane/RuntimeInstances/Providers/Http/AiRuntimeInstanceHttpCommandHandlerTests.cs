@@ -5,6 +5,7 @@ using Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Store;
 using Multiplexed.Abstractions.AI.Execution.Instance.Worker;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.SharedInstance;
 
 namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Providers.Http
 {
@@ -23,9 +24,13 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Providers.Http
             var sharedRuntimeInstance = new TestSharedRuntimeInstance(runtimeInstanceId);
             var queueControlPlane = new TestRuntimeQueueControlPlane();
 
+            var sharedRuntimeInstanceRegistry =
+                new InMemoryAiSharedRuntimeInstanceRegistry();
+
             var handler =
                 new AiRuntimeInstanceHttpCommandHandler(
                     sharedRuntimeInstance,
+                    sharedRuntimeInstanceRegistry,
                     queueControlPlane);
 
             var result =
@@ -131,9 +136,11 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Providers.Http
         [Fact]
         public async Task HandleAsync_WithDispatchRunMissingDispatchRequest_ShouldReturnFailure()
         {
+
             var handler =
                 new AiRuntimeInstanceHttpCommandHandler(
                     new TestSharedRuntimeInstance("runtime-http-1"),
+                    new InMemoryAiSharedRuntimeInstanceRegistry(),
                     new TestRuntimeQueueControlPlane());
 
             var result =
@@ -160,6 +167,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Providers.Http
             var handler =
                 new AiRuntimeInstanceHttpCommandHandler(
                     new TestSharedRuntimeInstance("runtime-http-1"),
+                    new InMemoryAiSharedRuntimeInstanceRegistry(),
                     new TestRuntimeQueueControlPlane());
 
             var result =
@@ -186,6 +194,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Providers.Http
             var handler =
                 new AiRuntimeInstanceHttpCommandHandler(
                     new TestSharedRuntimeInstance("runtime-http-1"),
+                    new InMemoryAiSharedRuntimeInstanceRegistry(),
                     new TestRuntimeQueueControlPlane());
 
             var result =
@@ -210,6 +219,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Providers.Http
             var handler =
                 new AiRuntimeInstanceHttpCommandHandler(
                     new TestSharedRuntimeInstance("runtime-http-1"),
+                    new InMemoryAiSharedRuntimeInstanceRegistry(),
                     new TestRuntimeQueueControlPlane());
 
             var result =
@@ -246,10 +256,12 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Providers.Http
             var runtimeInstanceId = "runtime-http-1";
             var sharedRuntimeInstance = new TestSharedRuntimeInstance(runtimeInstanceId);
             var queueControlPlane = new TestRuntimeQueueControlPlane();
+            var sharedRuntimeInstanceRegistry = new InMemoryAiSharedRuntimeInstanceRegistry();
 
             var handler =
                 new AiRuntimeInstanceHttpCommandHandler(
                     sharedRuntimeInstance,
+                    sharedRuntimeInstanceRegistry,
                     queueControlPlane);
 
             var result =

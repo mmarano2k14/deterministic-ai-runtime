@@ -1,4 +1,5 @@
-﻿using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Capacity;
+﻿using Microsoft.Extensions.Options;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Capacity;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Capacity;
 using StackExchange.Redis;
@@ -12,7 +13,10 @@ namespace Multiplexed.AI.Tests.Runtime.ControlPlane.RuntimeInstances.Capacity
         public async Task PublishAsync_Should_Store_Capacity_Descriptor()
         {
             var redis = await ConnectionMultiplexer.ConnectAsync("localhost:6379");
-            var store = new RedisAiRuntimeInstanceCapacityStore(redis);
+            var store =
+                new RedisAiRuntimeInstanceCapacityStore(
+                    redis,
+                    Options.Create(new AiRuntimeInstanceRegistrationOptions()));
 
             var runtimeInstanceId = $"test-runtime-{Guid.NewGuid():N}";
 
@@ -67,7 +71,10 @@ namespace Multiplexed.AI.Tests.Runtime.ControlPlane.RuntimeInstances.Capacity
         public async Task ListAsync_Should_Return_Published_Descriptors()
         {
             var redis = await ConnectionMultiplexer.ConnectAsync("localhost:6379");
-            var store = new RedisAiRuntimeInstanceCapacityStore(redis);
+            var store =
+                new RedisAiRuntimeInstanceCapacityStore(
+                    redis,
+                    Options.Create(new AiRuntimeInstanceRegistrationOptions()));
 
             var runtimeInstanceId1 = $"test-runtime-{Guid.NewGuid():N}";
             var runtimeInstanceId2 = $"test-runtime-{Guid.NewGuid():N}";
@@ -90,7 +97,10 @@ namespace Multiplexed.AI.Tests.Runtime.ControlPlane.RuntimeInstances.Capacity
         public async Task RemoveAsync_Should_Remove_Descriptor()
         {
             var redis = await ConnectionMultiplexer.ConnectAsync("localhost:6379");
-            var store = new RedisAiRuntimeInstanceCapacityStore(redis);
+            var store =
+                new RedisAiRuntimeInstanceCapacityStore(
+                    redis,
+                    Options.Create(new AiRuntimeInstanceRegistrationOptions()));
 
             var runtimeInstanceId = $"test-runtime-{Guid.NewGuid():N}";
 

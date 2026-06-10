@@ -13,9 +13,6 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Helpers
     /// </summary>
     public static class McpTestWaitHelpers
     {
-        /// <summary>
-        /// Waits until the expected number of runs are dispatched.
-        /// </summary>
         /// <param name="mcp">The MCP test client.</param>
         /// <param name="pipelineKey">The pipeline key.</param>
         /// <param name="expectedCount">The expected run count.</param>
@@ -27,40 +24,217 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Helpers
             int expectedCount,
             TimeSpan timeout)
         {
+            return await WaitForDispatchedRunsAsync(
+                    mcp,
+                    pipelineKey,
+                    expectedSharedRunIds: null,
+                    expectedCount,
+                    timeout)
+                .ConfigureAwait(false);
+        }
+
+        /// <summary>
+        /// Waits until the expected number of specific shared runs are dispatched.
+        /// </summary>
+        /// <param name="mcp">The MCP test client.</param>
+        /// <param name="pipelineKey">The pipeline key.</param>
+        /// <param name="expectedSharedRunIds">The expected shared run ids to track. When null, all runs matching the pipeline are considered.</param>
+        /// <param name="expectedCount">The expected run count.</param>
+        /// <param name="timeout">The timeout.</param>
+        /// <returns>The dispatched runs.</returns>
+        public static async Task<IReadOnlyList<AiSharedRunRecord>> WaitForDispatchedRunsAsync(
+            McpTestClient mcp,
+            string pipelineKey,
+            IReadOnlySet<string>? expectedSharedRunIds,
+            int expectedCount,
+            TimeSpan timeout)
+        {
             ArgumentNullException.ThrowIfNull(mcp);
+            ArgumentException.ThrowIfNullOrWhiteSpace(pipelineKey);
 
-            var deadline = DateTimeOffset.UtcNow.Add(timeout);
-
-            while (DateTimeOffset.UtcNow < deadline)
+            if (expectedCount <= 0)
             {
-                var listResult = await mcp.ListSharedRunsAsync(
-                    new AiSharedRuntimeControllerRequest
-                    {
-                        Operation = AiSharedRuntimeControllerOperation.ListRuns,
-                        IncludeCompleted = true,
-                        IncludeFailed = true,
-                        IncludeCancelled = true,
-                        RequestedBy = "mcp-integration-test",
-                        Source = "mcp-test"
-                    });
+                throw new ArgumentOutOfRangeException(
+                    nameof(expectedCount),
+                    expectedCount,
+                    "Expected count must be greater than zero.");
+            }
 
-                var runs = listResult.Runs
-                    .Where(run => string.Equals(run.PipelineKey, pipelineKey, StringComparison.Ordinal))
+            if (expectedSharedRunIds is not null &&
+                expectedSharedRunIds.Count != expectedCount)
+            {
+                throw new InvalidOperationException(
+                    $"ExpectedSharedRunIds count mismatch. ExpectedCount='{expectedCount}', ActualIds='{expectedSharedRunIds.Count}'.");
+            }
+
+            var startedAtUtc = DateTimeOffset.UtcNow;
+            var deadlineUtc = startedAtUtc.Add(timeout);
+            var lastRuns = Array.Empty<AiSharedRunRecord>();
+            var strictIdFiltering =
+                expectedSharedRunIds is not null;
+
+            while (DateTimeOffset.UtcNow < deadlineUtc)
+            {
+                var runs = await mcp
+                    .ListSharedRunsAsync(
+                        new AiSharedRuntimeControllerRequest
+                        {
+                            Operation = AiSharedRuntimeControllerOperation.ListRuns,
+                            PipelineKey = pipelineKey,
+                            TenantId = null,
+                            IncludeCompleted = true,
+                            IncludeFailed = true,
+                            IncludeCancelled = true,
+                            IncludeDiagnostics = true
+                        })
+                    .ConfigureAwait(false);
+
+                lastRuns = expectedSharedRunIds is null
+                    ? runs.Runs.ToArray()
+                    : runs.Runs
+                        .Where(run => expectedSharedRunIds.Contains(run.SharedRunId))
+                        .ToArray();
+
+                var missingRunIds = expectedSharedRunIds is null
+                    ? Array.Empty<string>()
+                    : expectedSharedRunIds
+                        .Except(
+                            lastRuns.Select(run => run.SharedRunId),
+                            StringComparer.Ordinal)
+                        .ToArray();
+
+                var queuedRuns = FilterByStatus(lastRuns, "Queued");
+                var claimedRuns = FilterByStatus(lastRuns, "Claimed");
+                var dispatchingRuns = FilterByStatus(lastRuns, "Dispatching");
+                var dispatchedRuns = FilterByStatus(lastRuns, "Dispatched");
+                var runningRuns = FilterByStatus(lastRuns, "Running");
+                var completedRuns = FilterByStatus(lastRuns, "Completed");
+                var failedRuns = FilterByStatus(lastRuns, "Failed");
+                var cancelledRuns = FilterByStatus(lastRuns, "Cancelled");
+
+                var acceptedRuns = lastRuns
+                    .Where(IsDispatchedOrBeyond)
                     .ToArray();
 
-                if (runs.Length == expectedCount &&
-                    runs.All(run =>
-                        !string.IsNullOrWhiteSpace(run.LocalRunId) &&
-                        !string.IsNullOrWhiteSpace(run.AssignedRuntimeInstanceId)))
+                var knownCount =
+                    queuedRuns.Length +
+                    claimedRuns.Length +
+                    dispatchingRuns.Length +
+                    dispatchedRuns.Length +
+                    runningRuns.Length +
+                    completedRuns.Length +
+                    failedRuns.Length +
+                    cancelledRuns.Length;
+
+                var otherCount =
+                    lastRuns.Length - knownCount;
+
+                Console.WriteLine(
+                    "[WAIT DISPATCHED RUNS] PipelineKey='{0}' Expected='{1}' FilteredByIds='{2}' Total='{3}' Accepted='{4}' Missing='{5}' Queued='{6}' Claimed='{7}' Dispatching='{8}' Dispatched='{9}' Running='{10}' Completed='{11}' Failed='{12}' Cancelled='{13}' Other='{14}' ElapsedMs='{15}'",
+                    pipelineKey,
+                    expectedCount,
+                    strictIdFiltering,
+                    lastRuns.Length,
+                    acceptedRuns.Length,
+                    missingRunIds.Length,
+                    queuedRuns.Length,
+                    claimedRuns.Length,
+                    dispatchingRuns.Length,
+                    dispatchedRuns.Length,
+                    runningRuns.Length,
+                    completedRuns.Length,
+                    failedRuns.Length,
+                    cancelledRuns.Length,
+                    otherCount,
+                    (long)(DateTimeOffset.UtcNow - startedAtUtc).TotalMilliseconds);
+
+                if (strictIdFiltering &&
+                    (failedRuns.Length > 0 || cancelledRuns.Length > 0))
                 {
-                    return runs;
+                    throw new InvalidOperationException(
+                        "One or more expected shared runs reached a failed/cancelled state." +
+                        Environment.NewLine +
+                        BuildSharedRunDebugDump(lastRuns));
                 }
 
-                await Task.Delay(100);
+                if (strictIdFiltering)
+                {
+                    if (acceptedRuns.Length == expectedCount &&
+                        missingRunIds.Length == 0)
+                    {
+                        return acceptedRuns
+                            .OrderBy(run => run.SharedRunId, StringComparer.Ordinal)
+                            .ToArray();
+                    }
+                }
+                else if (acceptedRuns.Length >= expectedCount)
+                {
+                    return acceptedRuns
+                        .Take(expectedCount)
+                        .ToArray();
+                }
+
+                await Task
+                    .Delay(TimeSpan.FromMilliseconds(500))
+                    .ConfigureAwait(false);
             }
 
             throw new TimeoutException(
-                $"Expected '{expectedCount}' dispatched runs for pipeline '{pipelineKey}' within '{timeout}'.");
+                $"Expected '{expectedCount}' dispatched/running/completed runs for pipeline '{pipelineKey}' within '{timeout}'. " +
+                $"FilteredByIds='{strictIdFiltering}'. LastTotal='{lastRuns.Length}'." +
+                Environment.NewLine +
+                BuildSharedRunDebugDump(lastRuns));
+        }
+
+        private static bool IsDispatchedOrBeyond(
+            AiSharedRunRecord run)
+        {
+            var status =
+                run.Status.ToString();
+
+            return string.Equals(status, "Dispatched", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(status, "Running", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(status, "Completed", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static AiSharedRunRecord[] FilterByStatus(
+            IReadOnlyCollection<AiSharedRunRecord> runs,
+            string status)
+        {
+            return runs
+                .Where(run => string.Equals(
+                    run.Status.ToString(),
+                    status,
+                    StringComparison.OrdinalIgnoreCase))
+                .ToArray();
+        }
+
+        private static string BuildStatusBreakdown(
+            IReadOnlyCollection<AiSharedRunRecord> runs)
+        {
+            return string.Join(
+                ", ",
+                runs
+                    .GroupBy(run => run.Status.ToString())
+                    .OrderBy(group => group.Key, StringComparer.Ordinal)
+                    .Select(group => $"{group.Key}={group.Count()}"));
+        }
+
+        private static string BuildSharedRunDebugDump(
+            IReadOnlyCollection<AiSharedRunRecord> runs)
+        {
+            var sampleRuns = string.Join(
+                Environment.NewLine,
+                runs
+                    .OrderBy(run => run.SharedRunId, StringComparer.Ordinal)
+                    .Take(50)
+                    .Select(run =>
+                        $"SharedRunId={run.SharedRunId}, Status={run.Status}, AssignedRuntimeInstanceId={run.AssignedRuntimeInstanceId}, LocalRunId={run.LocalRunId}, ExecutionId={run.ExecutionId}, FailureReason={run.FailureReason}"));
+
+            return
+                $"StatusBreakdown='{BuildStatusBreakdown(runs)}'." +
+                Environment.NewLine +
+                sampleRuns;
         }
 
         public static async Task<IReadOnlyList<AiRuntimeQueueControlPlaneResult>> WaitForTerminalRuntimeRunStatusesAsync(

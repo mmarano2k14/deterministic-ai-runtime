@@ -1,5 +1,8 @@
-﻿using Microsoft.Extensions.Options;
+﻿using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.ControlPlane.Admission;
+using Multiplexed.Abstractions.AI.ControlPlane.Admission.Reservations;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Capacity;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.Admission
@@ -18,20 +21,32 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission
     public sealed class AiRunAdmissionController : IAiRunAdmissionController
     {
         private readonly IAiRuntimeInstanceRegistry _registry;
+        private readonly IAiRuntimeAdmissionReservationStore _reservationStore;
+        private readonly IAiRuntimeInstanceCapacityStore _capacityStore;
         private readonly AiRunAdmissionOptions _options;
+        private readonly ILogger<AiRunAdmissionController> _logger;
         private long _admissionSequence;
 
         /// <summary>
         /// Initializes a new instance of the <see cref="AiRunAdmissionController"/> class.
         /// </summary>
         /// <param name="registry">The runtime instance registry used to discover visible runtime instances.</param>
+        /// <param name="reservationStore">The admission reservation store used to account for temporary reserved capacity.</param>
+        /// <param name="capacityStore">The runtime instance capacity store used to verify dispatchable runtime capacity.</param>
         /// <param name="options">The run admission options.</param>
+        /// <param name="logger">The logger.</param>
         public AiRunAdmissionController(
             IAiRuntimeInstanceRegistry registry,
-            IOptions<AiRunAdmissionOptions> options)
+            IAiRuntimeAdmissionReservationStore reservationStore,
+            IAiRuntimeInstanceCapacityStore capacityStore,
+            IOptions<AiRunAdmissionOptions> options,
+            ILogger<AiRunAdmissionController> logger)
         {
             _registry = registry ?? throw new ArgumentNullException(nameof(registry));
+            _reservationStore = reservationStore ?? throw new ArgumentNullException(nameof(reservationStore));
+            _capacityStore = capacityStore ?? throw new ArgumentNullException(nameof(capacityStore));
             _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
+            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
 
         /// <summary>
@@ -51,6 +66,12 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission
 
             if (!_options.Enabled)
             {
+                _logger.LogWarning(
+                    "Admission rejected because run admission is disabled. RunId={RunId}, TenantId={TenantId}, PipelineKey={PipelineKey}",
+                    request.RunId,
+                    request.TenantId,
+                    request.PipelineKey);
+
                 return CreateDecision(
                     AiRunAdmissionDecisionType.Reject,
                     reason: "Run admission is disabled.",
@@ -62,79 +83,359 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission
                 .ListAsync(includeStopped: false, cancellationToken)
                 .ConfigureAwait(false);
 
+            _logger.LogInformation(
+                "Admission started. RunId={RunId}, TenantId={TenantId}, PipelineKey={PipelineKey}, PreferredRuntimeInstanceId={PreferredRuntimeInstanceId}, VisibleInstanceCount={VisibleInstanceCount}, EnableScaleOutRequest={EnableScaleOutRequest}, MaxInstanceCount={MaxInstanceCount}, EnableGlobalQueueFallback={EnableGlobalQueueFallback}, RejectWhenNoCapacity={RejectWhenNoCapacity}",
+                request.RunId,
+                request.TenantId,
+                request.PipelineKey,
+                request.PreferredRuntimeInstanceId,
+                instances.Count,
+                _options.EnableScaleOutRequest,
+                _options.MaxInstanceCount,
+                _options.EnableGlobalQueueFallback,
+                _options.RejectWhenNoCapacity);
+
+            foreach (var instance in instances)
+            {
+                _logger.LogInformation(
+                    "Admission visible instance. RunId={RunId}, RuntimeInstanceId={RuntimeInstanceId}, Role={Role}, Status={Status}, CanAcceptRun={CanAcceptRun}, IsQueuePaused={IsQueuePaused}, QueuedRunCount={QueuedRunCount}, RunningRunCount={RunningRunCount}, ActiveRunCount={ActiveRunCount}, AvailableRunSlots={AvailableRunSlots}, WorkerCount={WorkerCount}, ActiveWorkerCount={ActiveWorkerCount}, AvailableWorkerCount={AvailableWorkerCount}",
+                    request.RunId,
+                    instance.RuntimeInstanceId,
+                    instance.Role,
+                    instance.Status,
+                    instance.CanAcceptRun,
+                    instance.IsQueuePaused,
+                    instance.QueuedRunCount,
+                    instance.RunningRunCount,
+                    instance.ActiveRunCount,
+                    instance.AvailableRunSlots,
+                    instance.WorkerCount,
+                    instance.ActiveWorkerCount,
+                    instance.AvailableWorkerCount);
+            }
+
             var runtimeCandidates = instances
                 .Where(instance => instance.Role == AiRuntimeInstanceRole.Runtime)
-                .Where(IsEligibleForAdmission)
+                .Where(instance =>
+                {
+                    var eligible = IsEligibleForAdmission(instance);
+
+                    if (!eligible)
+                    {
+                        _logger.LogInformation(
+                            "Admission runtime instance rejected before capacity evaluation. RunId={RunId}, RuntimeInstanceId={RuntimeInstanceId}, Status={Status}, Reason={Reason}",
+                            request.RunId,
+                            instance.RuntimeInstanceId,
+                            instance.Status,
+                            "Runtime instance status is not eligible for admission.");
+                    }
+
+                    return eligible;
+                })
                 .ToArray();
 
-            var available = runtimeCandidates
-                .Where(instance => instance.CanAcceptRun)
-                .OrderByDescending(instance => instance.AvailableRunSlots ?? 0)
-                .ThenByDescending(instance => instance.AvailableWorkerCount ?? 0)
-                .ThenBy(instance => instance.ActiveWorkerCount ?? 0)
-                .ThenBy(instance => instance.RunningRunCount)
-                .ThenBy(instance => instance.QueuedRunCount)
-                .ThenBy(instance => instance.RuntimeInstanceId, StringComparer.Ordinal)
-                .ToArray();
+            var availableCandidates = await BuildAvailableAdmissionCandidatesAsync(
+                    request,
+                    runtimeCandidates,
+                    cancellationToken)
+                .ConfigureAwait(false);
+
+            var availableInstances =
+                availableCandidates
+                    .Select(candidate => candidate.Instance)
+                    .ToArray();
+
+            _logger.LogInformation(
+                "Admission candidates resolved. RunId={RunId}, VisibleInstanceCount={VisibleInstanceCount}, RuntimeCandidateCount={RuntimeCandidateCount}, AvailableCandidateCount={AvailableCandidateCount}",
+                request.RunId,
+                instances.Count,
+                runtimeCandidates.Length,
+                availableCandidates.Count);
 
             var preferred = TrySelectPreferredInstance(
                 request,
-                available);
+                availableCandidates);
 
             if (preferred is not null)
             {
+                _logger.LogInformation(
+                    "Admission selected preferred runtime instance. RunId={RunId}, RuntimeInstanceId={RuntimeInstanceId}, EffectiveAvailableRunSlots={EffectiveAvailableRunSlots}, ReservedRunCount={ReservedRunCount}",
+                    request.RunId,
+                    preferred.Instance.RuntimeInstanceId,
+                    preferred.EffectiveAvailableRunSlots,
+                    preferred.ReservedRunCount);
+
                 return CreateAssignmentDecision(
                     preferred,
                     instances,
-                    available,
+                    availableInstances,
                     "Preferred runtime instance selected for run admission.");
             }
 
             var selected =
                 SelectRuntimeInstanceForAdmission(
-                    available);
+                    availableCandidates);
 
             if (selected is not null)
             {
+                _logger.LogInformation(
+                    "Admission selected runtime instance. RunId={RunId}, RuntimeInstanceId={RuntimeInstanceId}, EffectiveAvailableRunSlots={EffectiveAvailableRunSlots}, ReservedRunCount={ReservedRunCount}, AvailableWorkerCount={AvailableWorkerCount}, RunningRunCount={RunningRunCount}, QueuedRunCount={QueuedRunCount}",
+                    request.RunId,
+                    selected.Instance.RuntimeInstanceId,
+                    selected.EffectiveAvailableRunSlots,
+                    selected.ReservedRunCount,
+                    GetAvailableWorkerCount(selected),
+                    GetRunningRunCount(selected),
+                    GetQueuedRunCount(selected));
+
                 return CreateAssignmentDecision(
                     selected,
                     instances,
-                    available,
+                    availableInstances,
                     "Runtime instance selected for run admission.");
             }
 
             if (ShouldRequestScaleOut(runtimeCandidates.Length))
             {
+                _logger.LogWarning(
+                    "Admission requesting scale-out. RunId={RunId}, VisibleInstanceCount={VisibleInstanceCount}, RuntimeCandidateCount={RuntimeCandidateCount}, AvailableCandidateCount={AvailableCandidateCount}, CurrentRuntimeInstanceCount={CurrentRuntimeInstanceCount}, MaxInstanceCount={MaxInstanceCount}, Reason={Reason}",
+                    request.RunId,
+                    instances.Count,
+                    runtimeCandidates.Length,
+                    availableCandidates.Count,
+                    runtimeCandidates.Length,
+                    _options.MaxInstanceCount,
+                    "No runtime instance can currently accept the run and scale-out is allowed.");
+
                 return CreateDecision(
                     AiRunAdmissionDecisionType.RequestScaleOut,
                     reason: "No runtime instance can currently accept the run and scale-out is allowed.",
                     visibleInstances: instances,
-                    availableInstances: available);
+                    availableInstances: availableInstances);
             }
 
             if (_options.EnableGlobalQueueFallback)
             {
+                _logger.LogWarning(
+                    "Admission falling back to global queue. RunId={RunId}, VisibleInstanceCount={VisibleInstanceCount}, RuntimeCandidateCount={RuntimeCandidateCount}, AvailableCandidateCount={AvailableCandidateCount}, Reason={Reason}",
+                    request.RunId,
+                    instances.Count,
+                    runtimeCandidates.Length,
+                    availableCandidates.Count,
+                    "No runtime instance can currently accept the run; global queue fallback is allowed.");
+
                 return CreateDecision(
                     AiRunAdmissionDecisionType.QueueGlobally,
                     reason: "No runtime instance can currently accept the run; global queue fallback is allowed.",
                     visibleInstances: instances,
-                    availableInstances: available);
+                    availableInstances: availableInstances);
             }
 
             if (_options.RejectWhenNoCapacity)
             {
+                _logger.LogWarning(
+                    "Admission rejecting run because no capacity is available. RunId={RunId}, VisibleInstanceCount={VisibleInstanceCount}, RuntimeCandidateCount={RuntimeCandidateCount}, AvailableCandidateCount={AvailableCandidateCount}",
+                    request.RunId,
+                    instances.Count,
+                    runtimeCandidates.Length,
+                    availableCandidates.Count);
+
                 return CreateDecision(
                     AiRunAdmissionDecisionType.Reject,
                     reason: "No runtime instance can currently accept the run.",
                     visibleInstances: instances,
-                    availableInstances: available);
+                    availableInstances: availableInstances);
             }
+
+            _logger.LogWarning(
+                "Admission produced unknown decision. RunId={RunId}, VisibleInstanceCount={VisibleInstanceCount}, RuntimeCandidateCount={RuntimeCandidateCount}, AvailableCandidateCount={AvailableCandidateCount}",
+                request.RunId,
+                instances.Count,
+                runtimeCandidates.Length,
+                availableCandidates.Count);
 
             return CreateDecision(
                 AiRunAdmissionDecisionType.Unknown,
                 reason: "No admission policy produced a terminal decision.",
                 visibleInstances: instances,
-                availableInstances: available);
+                availableInstances: availableInstances);
+        }
+
+        /// <summary>
+        /// Builds ranked admission candidates after subtracting temporary reserved run capacity.
+        /// </summary>
+        /// <param name="request">The admission request.</param>
+        /// <param name="runtimeCandidates">The eligible runtime instances.</param>
+        /// <param name="cancellationToken">A token used to cancel the operation.</param>
+        /// <returns>The ranked available admission candidates.</returns>
+        private async Task<IReadOnlyList<AdmissionCandidate>> BuildAvailableAdmissionCandidatesAsync(
+            AiRunAdmissionRequest request,
+            IReadOnlyCollection<AiRuntimeInstanceSnapshot> runtimeCandidates,
+            CancellationToken cancellationToken)
+        {
+            var candidates =
+                new List<AdmissionCandidate>(runtimeCandidates.Count);
+
+            foreach (var instance in runtimeCandidates)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                var capacityDescriptor =
+                    await _capacityStore
+                        .GetAsync(
+                            instance.RuntimeInstanceId,
+                            cancellationToken)
+                        .ConfigureAwait(false);
+
+                if (capacityDescriptor is null &&
+                    IsProbablyStaleRuntimeInstance(instance))
+                {
+                    LogAdmissionCandidateRejected(
+                        request,
+                        instance,
+                        capacityDescriptor,
+                        reservedRunCount: 0,
+                        availableRunSlots: instance.AvailableRunSlots ?? 0,
+                        effectiveAvailableRunSlots: instance.AvailableRunSlots ?? 0,
+                        reason: "Runtime instance has no capacity descriptor and looks stale.");
+
+                    continue;
+                }
+
+                if (capacityDescriptor is not null &&
+                    capacityDescriptor.Role != AiRuntimeInstanceRole.Runtime)
+                {
+                    LogAdmissionCandidateRejected(
+                        request,
+                        instance,
+                        capacityDescriptor,
+                        reservedRunCount: 0,
+                        availableRunSlots: capacityDescriptor.AvailableRunSlots ?? instance.AvailableRunSlots ?? 0,
+                        effectiveAvailableRunSlots: capacityDescriptor.AvailableRunSlots ?? instance.AvailableRunSlots ?? 0,
+                        reason: "Capacity descriptor role is not Runtime.");
+
+                    continue;
+                }
+
+                if (capacityDescriptor is not null &&
+                    capacityDescriptor.Status == AiRuntimeInstanceStatus.Stopped)
+                {
+                    LogAdmissionCandidateRejected(
+                        request,
+                        instance,
+                        capacityDescriptor,
+                        reservedRunCount: 0,
+                        availableRunSlots: capacityDescriptor.AvailableRunSlots ?? instance.AvailableRunSlots ?? 0,
+                        effectiveAvailableRunSlots: capacityDescriptor.AvailableRunSlots ?? instance.AvailableRunSlots ?? 0,
+                        reason: "Capacity descriptor status is Stopped.");
+
+                    continue;
+                }
+
+                var canAcceptRun =
+                    capacityDescriptor?.CanAcceptRun ??
+                    instance.CanAcceptRun;
+
+                if (!canAcceptRun)
+                {
+                    LogAdmissionCandidateRejected(
+                        request,
+                        instance,
+                        capacityDescriptor,
+                        reservedRunCount: 0,
+                        availableRunSlots: capacityDescriptor?.AvailableRunSlots ?? instance.AvailableRunSlots ?? 0,
+                        effectiveAvailableRunSlots: capacityDescriptor?.AvailableRunSlots ?? instance.AvailableRunSlots ?? 0,
+                        reason: "Runtime instance cannot accept run according to capacity descriptor or registry snapshot.");
+
+                    continue;
+                }
+
+                var isQueuePaused =
+                    capacityDescriptor?.IsQueuePaused ??
+                    instance.IsQueuePaused;
+
+                if (isQueuePaused)
+                {
+                    LogAdmissionCandidateRejected(
+                        request,
+                        instance,
+                        capacityDescriptor,
+                        reservedRunCount: 0,
+                        availableRunSlots: capacityDescriptor?.AvailableRunSlots ?? instance.AvailableRunSlots ?? 0,
+                        effectiveAvailableRunSlots: capacityDescriptor?.AvailableRunSlots ?? instance.AvailableRunSlots ?? 0,
+                        reason: "Runtime instance queue is paused.");
+
+                    continue;
+                }
+
+                var reservedRunCount =
+                    await _reservationStore
+                        .GetReservedRunCountAsync(
+                            instance.RuntimeInstanceId,
+                            cancellationToken)
+                        .ConfigureAwait(false);
+
+                var availableRunSlots =
+                    capacityDescriptor?.AvailableRunSlots ??
+                    instance.AvailableRunSlots ??
+                    0;
+
+                var effectiveAvailableRunSlots =
+                    Math.Max(
+                        0,
+                        availableRunSlots - reservedRunCount);
+
+                _logger.LogInformation(
+                    "Admission candidate accepted. RunId={RunId}, RuntimeInstanceId={RuntimeInstanceId}, Role={Role}, Status={Status}, RegistryCanAcceptRun={RegistryCanAcceptRun}, CapacityCanAcceptRun={CapacityCanAcceptRun}, EffectiveCanAcceptRun={EffectiveCanAcceptRun}, IsQueuePaused={IsQueuePaused}, AvailableRunSlots={AvailableRunSlots}, ReservedRunCount={ReservedRunCount}, EffectiveAvailableRunSlots={EffectiveAvailableRunSlots}, WorkerCount={WorkerCount}, ActiveWorkerCount={ActiveWorkerCount}, AvailableWorkerCount={AvailableWorkerCount}, QueuedRunCount={QueuedRunCount}, RunningRunCount={RunningRunCount}, QueueFirstAdmission={QueueFirstAdmission}",
+                    request.RunId,
+                    instance.RuntimeInstanceId,
+                    instance.Role,
+                    capacityDescriptor?.Status ?? instance.Status,
+                    instance.CanAcceptRun,
+                    capacityDescriptor?.CanAcceptRun,
+                    canAcceptRun,
+                    isQueuePaused,
+                    availableRunSlots,
+                    reservedRunCount,
+                    effectiveAvailableRunSlots,
+                    capacityDescriptor?.WorkerCount ?? instance.WorkerCount,
+                    capacityDescriptor?.ActiveWorkerCount ?? instance.ActiveWorkerCount,
+                    capacityDescriptor?.AvailableWorkerCount ?? instance.AvailableWorkerCount,
+                    capacityDescriptor?.QueuedRunCount ?? instance.QueuedRunCount,
+                    capacityDescriptor?.RunningRunCount ?? instance.RunningRunCount,
+                    effectiveAvailableRunSlots <= 0);
+
+                candidates.Add(
+                    new AdmissionCandidate(
+                        instance,
+                        capacityDescriptor,
+                        reservedRunCount,
+                        effectiveAvailableRunSlots));
+            }
+
+            return candidates
+                .OrderByDescending(candidate => candidate.EffectiveAvailableRunSlots)
+                .ThenByDescending(candidate => GetAvailableWorkerCount(candidate))
+                .ThenBy(candidate => GetActiveWorkerCount(candidate))
+                .ThenBy(candidate => GetRunningRunCount(candidate))
+                .ThenBy(candidate => GetQueuedRunCount(candidate))
+                .ThenBy(candidate => candidate.Instance.RuntimeInstanceId, StringComparer.Ordinal)
+                .ToArray();
+        }
+
+        /// <summary>
+        /// Determines whether a runtime instance without capacity descriptor is likely
+        /// to be a stale test runtime left behind by a previous Redis-backed test run.
+        /// </summary>
+        /// <param name="instance">The runtime instance snapshot.</param>
+        /// <returns><see langword="true"/> when the instance is likely stale; otherwise, <see langword="false"/>.</returns>
+        private static bool IsProbablyStaleRuntimeInstance(
+            AiRuntimeInstanceSnapshot instance)
+        {
+            return !string.IsNullOrWhiteSpace(instance.RuntimeInstanceId) &&
+                   instance.RuntimeInstanceId.StartsWith(
+                       "test-runtime-",
+                       StringComparison.Ordinal);
         }
 
         /// <summary>
@@ -177,11 +478,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission
         /// Attempts to select the preferred runtime instance requested by the caller.
         /// </summary>
         /// <param name="request">The run admission request.</param>
-        /// <param name="availableInstances">The currently available runtime instances.</param>
+        /// <param name="availableCandidates">The currently available runtime admission candidates.</param>
         /// <returns>The preferred runtime instance when it is available and allowed; otherwise, <see langword="null"/>.</returns>
-        private AiRuntimeInstanceSnapshot? TrySelectPreferredInstance(
+        private AdmissionCandidate? TrySelectPreferredInstance(
             AiRunAdmissionRequest request,
-            IReadOnlyCollection<AiRuntimeInstanceSnapshot> availableInstances)
+            IReadOnlyCollection<AdmissionCandidate> availableCandidates)
         {
             if (!_options.PreferRequestedRuntimeInstance ||
                 string.IsNullOrWhiteSpace(request.PreferredRuntimeInstanceId))
@@ -189,46 +490,50 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission
                 return null;
             }
 
-            return availableInstances.FirstOrDefault(instance =>
+            return availableCandidates.FirstOrDefault(candidate =>
                 string.Equals(
-                    instance.RuntimeInstanceId,
+                    candidate.Instance.RuntimeInstanceId,
                     request.PreferredRuntimeInstanceId,
                     StringComparison.Ordinal));
         }
 
         /// <summary>
-        /// Selects the best runtime instance for admission from the already-ranked available instances.
+        /// Selects the best runtime instance for admission from the already-ranked available candidates.
         /// </summary>
         /// <remarks>
-        /// Runtime instances are first ranked by capacity before this method is called.
+        /// Runtime instances are first ranked by effective capacity before this method is called.
+        /// Effective capacity subtracts temporary admission reservations from the visible runtime
+        /// capacity snapshot.
+        ///
+        /// Queue-first admission allows selecting a runtime instance even when immediate run slots
+        /// are currently exhausted, as long as the runtime explicitly reports that it can accept
+        /// another run into its local queue.
+        ///
         /// When several instances have the same admission rank, this method rotates between them
         /// using an in-process admission sequence. This prevents all equal-capacity runs from
         /// being assigned to the first runtime instance in lexical order.
-        ///
-        /// This is not the final distributed reservation model. A future implementation should
-        /// reserve run slots and worker capacity atomically with a TTL before dispatch.
         /// </remarks>
-        /// <param name="availableInstances">The ranked available runtime instances.</param>
-        /// <returns>The selected runtime instance, or <see langword="null"/> when none is available.</returns>
-        private AiRuntimeInstanceSnapshot? SelectRuntimeInstanceForAdmission(
-            IReadOnlyList<AiRuntimeInstanceSnapshot> availableInstances)
+        /// <param name="availableCandidates">The ranked available admission candidates.</param>
+        /// <returns>The selected admission candidate, or <see langword="null"/> when none is available.</returns>
+        private AdmissionCandidate? SelectRuntimeInstanceForAdmission(
+            IReadOnlyList<AdmissionCandidate> availableCandidates)
         {
-            if (availableInstances.Count == 0)
+            if (availableCandidates.Count == 0)
             {
                 return null;
             }
 
             var highestRanked =
-                availableInstances[0];
+                availableCandidates[0];
 
-            var equallyRankedInstances =
-                availableInstances
-                    .Where(instance => HasSameAdmissionRank(instance, highestRanked))
+            var equallyRankedCandidates =
+                availableCandidates
+                    .Where(candidate => HasSameAdmissionRank(candidate, highestRanked))
                     .ToArray();
 
-            if (equallyRankedInstances.Length == 1)
+            if (equallyRankedCandidates.Length == 1)
             {
-                return equallyRankedInstances[0];
+                return equallyRankedCandidates[0];
             }
 
             var sequence =
@@ -236,26 +541,26 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission
                     ref _admissionSequence);
 
             var index =
-                (int)((sequence - 1) % equallyRankedInstances.Length);
+                (int)((sequence - 1) % equallyRankedCandidates.Length);
 
-            return equallyRankedInstances[index];
+            return equallyRankedCandidates[index];
         }
 
         /// <summary>
-        /// Determines whether two runtime instances have the same admission rank.
+        /// Determines whether two admission candidates have the same admission rank.
         /// </summary>
-        /// <param name="instance">The runtime instance snapshot to compare.</param>
-        /// <param name="baseline">The baseline runtime instance snapshot.</param>
-        /// <returns><see langword="true"/> if both snapshots have the same admission rank; otherwise, <see langword="false"/>.</returns>
+        /// <param name="candidate">The admission candidate to compare.</param>
+        /// <param name="baseline">The baseline admission candidate.</param>
+        /// <returns><see langword="true"/> if both candidates have the same admission rank; otherwise, <see langword="false"/>.</returns>
         private static bool HasSameAdmissionRank(
-            AiRuntimeInstanceSnapshot instance,
-            AiRuntimeInstanceSnapshot baseline)
+            AdmissionCandidate candidate,
+            AdmissionCandidate baseline)
         {
-            return (instance.AvailableRunSlots ?? 0) == (baseline.AvailableRunSlots ?? 0) &&
-                   (instance.AvailableWorkerCount ?? 0) == (baseline.AvailableWorkerCount ?? 0) &&
-                   (instance.ActiveWorkerCount ?? 0) == (baseline.ActiveWorkerCount ?? 0) &&
-                   instance.RunningRunCount == baseline.RunningRunCount &&
-                   instance.QueuedRunCount == baseline.QueuedRunCount;
+            return candidate.EffectiveAvailableRunSlots == baseline.EffectiveAvailableRunSlots &&
+                   GetAvailableWorkerCount(candidate) == GetAvailableWorkerCount(baseline) &&
+                   GetActiveWorkerCount(candidate) == GetActiveWorkerCount(baseline) &&
+                   GetRunningRunCount(candidate) == GetRunningRunCount(baseline) &&
+                   GetQueuedRunCount(candidate) == GetQueuedRunCount(baseline);
         }
 
         /// <summary>
@@ -282,17 +587,20 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission
         /// <summary>
         /// Creates an assignment decision for a selected runtime instance.
         /// </summary>
-        /// <param name="instance">The selected runtime instance.</param>
+        /// <param name="candidate">The selected admission candidate.</param>
         /// <param name="visibleInstances">All visible runtime instances.</param>
         /// <param name="availableInstances">The available runtime instances considered for assignment.</param>
         /// <param name="reason">The decision reason.</param>
         /// <returns>The assignment admission decision.</returns>
         private AiRunAdmissionDecision CreateAssignmentDecision(
-            AiRuntimeInstanceSnapshot instance,
+            AdmissionCandidate candidate,
             IReadOnlyCollection<AiRuntimeInstanceSnapshot> visibleInstances,
             IReadOnlyCollection<AiRuntimeInstanceSnapshot> availableInstances,
             string reason)
         {
+            var instance =
+                candidate.Instance;
+
             return new AiRunAdmissionDecision
             {
                 DecisionType = AiRunAdmissionDecisionType.AssignToInstance,
@@ -306,17 +614,23 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission
                 Metadata = new Dictionary<string, string>
                 {
                     ["assigned.runtime.instance.id"] = instance.RuntimeInstanceId,
-                    ["assigned.runtime.instance.status"] = instance.Status.ToString(),
-                    ["assigned.runtime.instance.queued"] = instance.QueuedRunCount.ToString(),
-                    ["assigned.runtime.instance.running"] = instance.RunningRunCount.ToString(),
+                    ["assigned.runtime.instance.status"] = (candidate.CapacityDescriptor?.Status ?? instance.Status).ToString(),
+                    ["assigned.runtime.instance.queued"] = GetQueuedRunCount(candidate).ToString(),
+                    ["assigned.runtime.instance.running"] = GetRunningRunCount(candidate).ToString(),
                     ["assigned.runtime.instance.available.run.slots"] =
-                        instance.AvailableRunSlots?.ToString() ?? string.Empty,
+                        GetAvailableRunSlots(candidate).ToString(),
+                    ["assigned.runtime.instance.reserved.run.count"] =
+                        candidate.ReservedRunCount.ToString(),
+                    ["assigned.runtime.instance.effective.available.run.slots"] =
+                        candidate.EffectiveAvailableRunSlots.ToString(),
                     ["assigned.runtime.instance.active.workers"] =
-                        instance.ActiveWorkerCount?.ToString() ?? string.Empty,
+                        GetActiveWorkerCount(candidate).ToString(),
                     ["assigned.runtime.instance.available.workers"] =
-                        instance.AvailableWorkerCount?.ToString() ?? string.Empty,
+                        GetAvailableWorkerCount(candidate).ToString(),
                     ["assigned.runtime.instance.max.local.workers.per.execution"] =
-                        instance.MaxLocalWorkersPerExecution?.ToString() ?? string.Empty
+                        GetMaxWorkersPerRun(candidate).ToString(),
+                    ["assigned.runtime.instance.queue.first"] =
+                        (candidate.EffectiveAvailableRunSlots <= 0).ToString()
                 }
             };
         }
@@ -351,5 +665,103 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission
                 }
             };
         }
+
+        /// <summary>
+        /// Logs a rejected admission candidate.
+        /// </summary>
+        /// <param name="request">The admission request.</param>
+        /// <param name="instance">The runtime instance snapshot.</param>
+        /// <param name="capacityDescriptor">The capacity descriptor.</param>
+        /// <param name="reservedRunCount">The reserved run count.</param>
+        /// <param name="availableRunSlots">The available run slots.</param>
+        /// <param name="effectiveAvailableRunSlots">The effective available run slots.</param>
+        /// <param name="reason">The rejection reason.</param>
+        private void LogAdmissionCandidateRejected(
+            AiRunAdmissionRequest request,
+            AiRuntimeInstanceSnapshot instance,
+            AiRuntimeInstanceCapacityDescriptor? capacityDescriptor,
+            int reservedRunCount,
+            int availableRunSlots,
+            int effectiveAvailableRunSlots,
+            string reason)
+        {
+            _logger.LogInformation(
+                "Admission candidate rejected. RunId={RunId}, RuntimeInstanceId={RuntimeInstanceId}, Role={Role}, Status={Status}, RegistryCanAcceptRun={RegistryCanAcceptRun}, CapacityCanAcceptRun={CapacityCanAcceptRun}, IsQueuePaused={IsQueuePaused}, AvailableRunSlots={AvailableRunSlots}, ReservedRunCount={ReservedRunCount}, EffectiveAvailableRunSlots={EffectiveAvailableRunSlots}, WorkerCount={WorkerCount}, ActiveWorkerCount={ActiveWorkerCount}, AvailableWorkerCount={AvailableWorkerCount}, QueuedRunCount={QueuedRunCount}, RunningRunCount={RunningRunCount}, Reason={Reason}",
+                request.RunId,
+                instance.RuntimeInstanceId,
+                instance.Role,
+                capacityDescriptor?.Status ?? instance.Status,
+                instance.CanAcceptRun,
+                capacityDescriptor?.CanAcceptRun,
+                capacityDescriptor?.IsQueuePaused ?? instance.IsQueuePaused,
+                availableRunSlots,
+                reservedRunCount,
+                effectiveAvailableRunSlots,
+                capacityDescriptor?.WorkerCount ?? instance.WorkerCount,
+                capacityDescriptor?.ActiveWorkerCount ?? instance.ActiveWorkerCount,
+                capacityDescriptor?.AvailableWorkerCount ?? instance.AvailableWorkerCount,
+                capacityDescriptor?.QueuedRunCount ?? instance.QueuedRunCount,
+                capacityDescriptor?.RunningRunCount ?? instance.RunningRunCount,
+                reason);
+        }
+
+        private static int GetQueuedRunCount(
+            AdmissionCandidate candidate)
+        {
+            return candidate.CapacityDescriptor?.QueuedRunCount ??
+                   candidate.Instance.QueuedRunCount;
+        }
+
+        private static int GetRunningRunCount(
+            AdmissionCandidate candidate)
+        {
+            return candidate.CapacityDescriptor?.RunningRunCount ??
+                   candidate.Instance.RunningRunCount;
+        }
+
+        private static int GetAvailableRunSlots(
+            AdmissionCandidate candidate)
+        {
+            return candidate.CapacityDescriptor?.AvailableRunSlots ??
+                   candidate.Instance.AvailableRunSlots ??
+                   0;
+        }
+
+        private static int GetActiveWorkerCount(
+            AdmissionCandidate candidate)
+        {
+            return candidate.CapacityDescriptor?.ActiveWorkerCount ??
+                   candidate.Instance.ActiveWorkerCount ??
+                   0;
+        }
+
+        private static int GetAvailableWorkerCount(
+            AdmissionCandidate candidate)
+        {
+            return candidate.CapacityDescriptor?.AvailableWorkerCount ??
+                   candidate.Instance.AvailableWorkerCount ??
+                   0;
+        }
+
+        private static int? GetMaxWorkersPerRun(
+            AdmissionCandidate candidate)
+        {
+            return candidate.CapacityDescriptor?.MaxWorkersPerRun ??
+                   candidate.Instance.MaxLocalWorkersPerExecution;
+        }
+
+        /// <summary>
+        /// Represents a runtime instance candidate for run admission after applying
+        /// temporary admission reservations.
+        /// </summary>
+        /// <param name="Instance">The runtime instance snapshot.</param>
+        /// <param name="CapacityDescriptor">The latest runtime instance capacity descriptor.</param>
+        /// <param name="ReservedRunCount">The temporary reserved run count.</param>
+        /// <param name="EffectiveAvailableRunSlots">The available run slots after subtracting reservations.</param>
+        private sealed record AdmissionCandidate(
+            AiRuntimeInstanceSnapshot Instance,
+            AiRuntimeInstanceCapacityDescriptor? CapacityDescriptor,
+            int ReservedRunCount,
+            int EffectiveAvailableRunSlots);
     }
 }

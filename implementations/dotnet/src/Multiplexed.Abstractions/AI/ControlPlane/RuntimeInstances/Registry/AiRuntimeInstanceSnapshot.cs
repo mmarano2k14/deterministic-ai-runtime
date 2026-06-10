@@ -132,5 +132,20 @@
         /// Maximum number of local workers allowed per execution.
         /// </summary>
         public int? MaxLocalWorkersPerExecution { get; init; }
+
+        /// <summary>
+        /// Gets the physical host, process, or pod identity that owns this runtime instance.
+        /// </summary>
+        public string? HostId { get; init; }
+
+        /// <summary>
+        /// Gets the logical runtime identity inside the owning host.
+        /// </summary>
+        public string? RuntimeId { get; init; }
+
+        /// <summary>
+        /// Gets the control-plane host identity that owns or manages this runtime instance.
+        /// </summary>
+        public string? ControlPlaneHostId { get; init; }
     }
 }

@@ -52,8 +52,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
             this.options = options?.Value ?? throw new ArgumentNullException(nameof(options));
             this.logger = logger ?? throw new ArgumentNullException(nameof(logger));
 
-            Console.WriteLine(
-                $"[RUNTIME CAPACITY] STORES RESOLVED Count='{this.capacityStores.Count}' Stores='{string.Join(",", this.capacityStores.Select(store => store.GetType().FullName))}'");
+            SafeLogInformation(
+                "Runtime capacity stores resolved. Count={StoreCount}, Stores={Stores}",
+                this.capacityStores.Count,
+                string.Join(",", this.capacityStores.Select(store => store.GetType().FullName)));
         }
 
         /// <inheritdoc />
@@ -62,17 +64,16 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
         {
             if (!options.Enabled)
             {
-                logger.LogInformation(
+                SafeLogInformation(
                     "Runtime instance registration is disabled.");
-
-                Console.WriteLine(
-                    "[RUNTIME REGISTRATION] DISABLED");
 
                 return;
             }
 
-            Console.WriteLine(
-                $"[RUNTIME REGISTRATION] START SERVICE RegistryType='{registry.GetType().FullName}' RegistryHash='{registry.GetHashCode()}'");
+            SafeLogInformation(
+                "Runtime instance registration service starting. RegistryType={RegistryType}, RegistryHash={RegistryHash}",
+                registry.GetType().FullName,
+                registry.GetHashCode());
 
             await RegisterRuntimeInstanceAsync(
                     cancellationToken)
@@ -104,14 +105,12 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
                 {
                     break;
                 }
-                catch (Exception ex)
+                catch (Exception exception)
                 {
                     SafeLogError(
-                        ex,
-                        "Failed to publish runtime instance heartbeat.");
-
-                    Console.WriteLine(
-                        $"[RUNTIME REGISTRATION] HEARTBEAT EXCEPTION RuntimeInstanceId='{runtimeInstanceId}' Exception='{ex}'");
+                        exception,
+                        "Failed to publish runtime instance heartbeat. RuntimeInstanceId={RuntimeInstanceId}",
+                        runtimeInstanceId);
                 }
 
                 try
@@ -128,16 +127,16 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
             }
         }
 
-
-
         /// <inheritdoc />
         public override async Task StopAsync(
             CancellationToken cancellationToken)
         {
             if (Interlocked.Exchange(ref stopRequested, 1) == 1)
             {
-                Console.WriteLine(
-                    $"[RUNTIME REGISTRATION] STOP SKIPPED RuntimeInstanceId='{runtimeInstanceId}' Reason='AlreadyStoppedOrStopping'");
+                SafeLogInformation(
+                    "Runtime instance registration stop skipped. RuntimeInstanceId={RuntimeInstanceId}, Reason={Reason}",
+                    runtimeInstanceId,
+                    "AlreadyStoppedOrStopping");
 
                 return;
             }
@@ -152,13 +151,18 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
                 }
                 catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
                 {
-                    Console.WriteLine(
-                        $"[RUNTIME REGISTRATION] STOP CANCELLED RuntimeInstanceId='{runtimeInstanceId}' Reason='ShutdownCancellationRequested'");
+                    SafeLogWarning(
+                        "Runtime instance registration stop cancelled. RuntimeInstanceId={RuntimeInstanceId}, Reason={Reason}",
+                        runtimeInstanceId,
+                        "ShutdownCancellationRequested");
                 }
                 catch (ObjectDisposedException exception)
                 {
-                    Console.WriteLine(
-                        $"[RUNTIME REGISTRATION] STOP IGNORED RuntimeInstanceId='{runtimeInstanceId}' Reason='DisposedDuringShutdown' Exception='{exception.Message}'");
+                    SafeLogWarning(
+                        "Runtime instance registration stop ignored. RuntimeInstanceId={RuntimeInstanceId}, Reason={Reason}, ExceptionMessage={ExceptionMessage}",
+                        runtimeInstanceId,
+                        "DisposedDuringShutdown",
+                        exception.Message);
                 }
                 catch (Exception exception)
                 {
@@ -166,9 +170,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
                         exception,
                         "Failed to unregister runtime instance during shutdown. RuntimeInstanceId={RuntimeInstanceId}",
                         runtimeInstanceId);
-
-                    Console.WriteLine(
-                        $"[RUNTIME REGISTRATION] STOP UNREGISTER FAILED RuntimeInstanceId='{runtimeInstanceId}' Exception='{exception.Message}'");
                 }
             }
             finally
@@ -181,13 +182,18 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
                 }
                 catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
                 {
-                    Console.WriteLine(
-                        $"[RUNTIME REGISTRATION] BASE STOP CANCELLED RuntimeInstanceId='{runtimeInstanceId}' Reason='ShutdownCancellationRequested'");
+                    SafeLogWarning(
+                        "Runtime instance registration base stop cancelled. RuntimeInstanceId={RuntimeInstanceId}, Reason={Reason}",
+                        runtimeInstanceId,
+                        "ShutdownCancellationRequested");
                 }
                 catch (ObjectDisposedException exception)
                 {
-                    Console.WriteLine(
-                        $"[RUNTIME REGISTRATION] BASE STOP IGNORED RuntimeInstanceId='{runtimeInstanceId}' Reason='DisposedDuringShutdown' Exception='{exception.Message}'");
+                    SafeLogWarning(
+                        "Runtime instance registration base stop ignored. RuntimeInstanceId={RuntimeInstanceId}, Reason={Reason}, ExceptionMessage={ExceptionMessage}",
+                        runtimeInstanceId,
+                        "DisposedDuringShutdown",
+                        exception.Message);
                 }
             }
         }
@@ -206,30 +212,44 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
             runtimeInstanceId =
                 ResolveRuntimeInstanceId(environment);
 
-            Console.WriteLine(
-                $"[RUNTIME REGISTRATION] RESOLVED RuntimeInstanceId='{runtimeInstanceId}' " +
-                $"OptionsRuntimeInstanceId='{options.RuntimeInstanceId}' " +
-                $"EnvironmentRuntimeInstanceId='{environment.RuntimeInstanceId}' " +
-                $"HostName='{environment.HostName}' " +
-                $"ProcessId='{environment.ProcessId}' " +
-                $"RegistryType='{registry.GetType().FullName}' " +
-                $"RegistryHash='{registry.GetHashCode()}'");
+            SafeLogInformation(
+                "Runtime instance id resolved. RuntimeInstanceId={RuntimeInstanceId}, OptionsRuntimeInstanceId={OptionsRuntimeInstanceId}, EnvironmentRuntimeInstanceId={EnvironmentRuntimeInstanceId}, HostName={HostName}, ProcessId={ProcessId}, HostId={HostId}, RuntimeId={RuntimeId}, ControlPlaneHostId={ControlPlaneHostId}, RegistryType={RegistryType}, RegistryHash={RegistryHash}",
+                runtimeInstanceId,
+                options.RuntimeInstanceId,
+                environment.RuntimeInstanceId,
+                environment.HostName,
+                environment.ProcessId,
+                environment.HostId,
+                environment.RuntimeId,
+                environment.ControlPlaneHostId,
+                registry.GetType().FullName,
+                registry.GetHashCode());
 
             var queueState =
                 await controller
                     .GetQueueStateAsync(cancellationToken)
                     .ConfigureAwait(false);
 
-            Console.WriteLine(
-                $"[RUNTIME REGISTRATION] QUEUE STATE RuntimeInstanceId='{runtimeInstanceId}' " +
-                $"QueuedRunCount='{queueState.QueuedRunCount}' " +
-                $"RunningRunCount='{queueState.RunningRunCount}' " +
-                $"ActiveRunCount='{queueState.ActiveRunCount}' " +
-                $"AvailableRunSlots='{queueState.AvailableRunSlots}' " +
-                $"QueueCapacity='{queueState.QueueCapacity}' " +
-                $"MaxConcurrentRuns='{queueState.MaxConcurrentRuns}' " +
-                $"IsPaused='{queueState.IsPaused}' " +
-                $"CanAcceptRun='{queueState.CanAcceptRun}'");
+            var effectiveCapacity =
+                CreateEffectiveCapacity(
+                    AiRuntimeInstanceStatus.Ready,
+                    queueState);
+
+            SafeLogInformation(
+                "Runtime instance queue state resolved. RuntimeInstanceId={RuntimeInstanceId}, Role={Role}, QueuedRunCount={QueuedRunCount}, RunningRunCount={RunningRunCount}, ActiveRunCount={ActiveRunCount}, QueueStateAvailableRunSlots={QueueStateAvailableRunSlots}, EffectiveAvailableRunSlots={EffectiveAvailableRunSlots}, QueueCapacity={QueueCapacity}, MaxConcurrentRuns={MaxConcurrentRuns}, IsPaused={IsPaused}, QueueStateCanAcceptRun={QueueStateCanAcceptRun}, EffectiveCanAcceptRun={EffectiveCanAcceptRun}, QueueHasCapacity={QueueHasCapacity}",
+                runtimeInstanceId,
+                options.Role,
+                queueState.QueuedRunCount,
+                queueState.RunningRunCount,
+                queueState.ActiveRunCount,
+                queueState.AvailableRunSlots,
+                effectiveCapacity.AvailableRunSlots,
+                queueState.QueueCapacity,
+                queueState.MaxConcurrentRuns,
+                queueState.IsPaused,
+                queueState.CanAcceptRun,
+                effectiveCapacity.CanAcceptRun,
+                effectiveCapacity.QueueHasCapacity);
 
             var registration =
                 new AiRuntimeInstanceRegistration
@@ -237,6 +257,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
                     RuntimeInstanceId = runtimeInstanceId,
                     HostName = environment.HostName,
                     ProcessId = environment.ProcessId,
+                    HostId = environment.HostId,
+                    RuntimeId = environment.RuntimeId,
+                    ControlPlaneHostId = environment.ControlPlaneHostId,
                     WorkerCount = options.WorkerCount,
                     QueueCapacity = options.QueueCapacity ?? queueState.QueueCapacity,
                     MaxConcurrentRuns = options.MaxConcurrentRuns ?? queueState.MaxConcurrentRuns,
@@ -252,35 +275,39 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
                         })
                 };
 
-            Console.WriteLine(
-                $"[RUNTIME REGISTRATION] REGISTER START RuntimeInstanceId='{runtimeInstanceId}' " +
-                $"RegistryType='{registry.GetType().FullName}' " +
-                $"RegistryHash='{registry.GetHashCode()}'");
+            SafeLogInformation(
+                "Runtime instance capacity publication before registry registration started. RuntimeInstanceId={RuntimeInstanceId}",
+                runtimeInstanceId);
+
+            await PublishCapacityDescriptorAsync(
+                    runtimeInstanceId,
+                    AiRuntimeInstanceStatus.Ready,
+                    queueState,
+                    registration.Metadata,
+                    cancellationToken)
+                .ConfigureAwait(false);
+
+            SafeLogInformation(
+                "Runtime instance registration started. RuntimeInstanceId={RuntimeInstanceId}, RegistryType={RegistryType}, RegistryHash={RegistryHash}",
+                runtimeInstanceId,
+                registry.GetType().FullName,
+                registry.GetHashCode());
 
             var snapshot =
                 await registry
                     .RegisterAsync(registration, cancellationToken)
                     .ConfigureAwait(false);
 
-            await PublishCapacityDescriptorAsync(
-                    runtimeInstanceId,
-                    snapshot.Status,
-                    queueState,
-                    registration.Metadata,
-                    cancellationToken)
-                .ConfigureAwait(false);
-
-            Console.WriteLine(
-                $"[RUNTIME REGISTRATION] REGISTER SUCCESS RuntimeInstanceId='{snapshot.RuntimeInstanceId}' " +
-                $"Status='{snapshot.Status}' " +
-                $"RegistryType='{registry.GetType().FullName}' " +
-                $"RegistryHash='{registry.GetHashCode()}'");
-
-            logger.LogInformation(
-                "Runtime instance registered. RuntimeInstanceId={RuntimeInstanceId}, Status={Status}, Provider={Provider}",
+            SafeLogInformation(
+                "Runtime instance registered. RuntimeInstanceId={RuntimeInstanceId}, Status={Status}, Provider={Provider}, HostId={HostId}, RuntimeId={RuntimeId}, ControlPlaneHostId={ControlPlaneHostId}, RegistryType={RegistryType}, RegistryHash={RegistryHash}",
                 snapshot.RuntimeInstanceId,
                 snapshot.Status,
-                options.ProviderName ?? environment.ProviderName);
+                options.ProviderName ?? environment.ProviderName,
+                snapshot.HostId,
+                snapshot.RuntimeId,
+                snapshot.ControlPlaneHostId,
+                registry.GetType().FullName,
+                registry.GetHashCode());
         }
 
         /// <summary>
@@ -291,8 +318,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
         {
             if (string.IsNullOrWhiteSpace(runtimeInstanceId))
             {
-                Console.WriteLine(
-                    "[RUNTIME REGISTRATION] HEARTBEAT SKIPPED RuntimeInstanceId is empty.");
+                SafeLogWarning(
+                    "Runtime instance heartbeat skipped because RuntimeInstanceId is empty.");
 
                 return;
             }
@@ -302,16 +329,34 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
                     .GetQueueStateAsync(cancellationToken)
                     .ConfigureAwait(false);
 
-            Console.WriteLine(
-                $"[RUNTIME REGISTRATION] HEARTBEAT RuntimeInstanceId='{runtimeInstanceId}' " +
-                $"QueuedRunCount='{queueState.QueuedRunCount}' " +
-                $"RunningRunCount='{queueState.RunningRunCount}' " +
-                $"ActiveRunCount='{queueState.ActiveRunCount}' " +
-                $"AvailableRunSlots='{queueState.AvailableRunSlots}' " +
-                $"IsPaused='{queueState.IsPaused}' " +
-                $"CanAcceptRun='{queueState.CanAcceptRun}' " +
-                $"RegistryType='{registry.GetType().FullName}' " +
-                $"RegistryHash='{registry.GetHashCode()}'");
+            var effectiveCapacity =
+                CreateEffectiveCapacity(
+                    AiRuntimeInstanceStatus.Ready,
+                    queueState);
+
+            SafeLogInformation(
+                "Runtime instance heartbeat started. RuntimeInstanceId={RuntimeInstanceId}, Role={Role}, QueuedRunCount={QueuedRunCount}, RunningRunCount={RunningRunCount}, ActiveRunCount={ActiveRunCount}, QueueStateAvailableRunSlots={QueueStateAvailableRunSlots}, EffectiveAvailableRunSlots={EffectiveAvailableRunSlots}, IsPaused={IsPaused}, QueueStateCanAcceptRun={QueueStateCanAcceptRun}, EffectiveCanAcceptRun={EffectiveCanAcceptRun}, QueueHasCapacity={QueueHasCapacity}, RegistryType={RegistryType}, RegistryHash={RegistryHash}",
+                runtimeInstanceId,
+                options.Role,
+                queueState.QueuedRunCount,
+                queueState.RunningRunCount,
+                queueState.ActiveRunCount,
+                queueState.AvailableRunSlots,
+                effectiveCapacity.AvailableRunSlots,
+                queueState.IsPaused,
+                queueState.CanAcceptRun,
+                effectiveCapacity.CanAcceptRun,
+                effectiveCapacity.QueueHasCapacity,
+                registry.GetType().FullName,
+                registry.GetHashCode());
+
+            await PublishCapacityDescriptorAsync(
+                    runtimeInstanceId,
+                    AiRuntimeInstanceStatus.Ready,
+                    queueState,
+                    options.Metadata,
+                    cancellationToken)
+                .ConfigureAwait(false);
 
             var snapshot =
                 await registry
@@ -320,42 +365,37 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
                         queueState.QueuedRunCount,
                         queueState.RunningRunCount,
                         queueState.ActiveRunCount,
-                        queueState.AvailableRunSlots,
-                        queueState.ActiveWorkerCount,
-                        queueState.AvailableWorkerCount,
-                        queueState.MaxLocalWorkersPerExecution,
+                        effectiveCapacity.AvailableRunSlots,
+                        effectiveCapacity.ActiveWorkerCount,
+                        effectiveCapacity.AvailableWorkerCount,
+                        effectiveCapacity.MaxLocalWorkersPerExecution,
                         queueState.IsPaused,
-                        queueState.CanAcceptRun,
+                        effectiveCapacity.CanAcceptRun,
                         AiRuntimeInstanceStatus.Ready,
                         cancellationToken)
                     .ConfigureAwait(false);
 
-            await PublishCapacityDescriptorAsync(
-                    runtimeInstanceId,
-                    snapshot?.Status ?? AiRuntimeInstanceStatus.Ready,
-                    queueState,
-                    options.Metadata,
-                    cancellationToken)
-                .ConfigureAwait(false);
-
             if (snapshot is null)
             {
-                logger.LogWarning(
-                    "Runtime instance heartbeat ignored because instance is not registered. RuntimeInstanceId={RuntimeInstanceId}",
-                    runtimeInstanceId);
-
-                Console.WriteLine(
-                    $"[RUNTIME REGISTRATION] HEARTBEAT IGNORED RuntimeInstanceId='{runtimeInstanceId}' " +
-                    $"RegistryType='{registry.GetType().FullName}' " +
-                    $"RegistryHash='{registry.GetHashCode()}'");
+                SafeLogWarning(
+                    "Runtime instance heartbeat ignored because instance is not registered. RuntimeInstanceId={RuntimeInstanceId}, RegistryType={RegistryType}, RegistryHash={RegistryHash}",
+                    runtimeInstanceId,
+                    registry.GetType().FullName,
+                    registry.GetHashCode());
             }
             else
             {
-                Console.WriteLine(
-                    $"[RUNTIME REGISTRATION] HEARTBEAT SUCCESS RuntimeInstanceId='{snapshot.RuntimeInstanceId}' " +
-                    $"Status='{snapshot.Status}' " +
-                    $"RegistryType='{registry.GetType().FullName}' " +
-                    $"RegistryHash='{registry.GetHashCode()}'");
+                SafeLogInformation(
+                    "Runtime instance heartbeat succeeded. RuntimeInstanceId={RuntimeInstanceId}, Status={Status}, HostId={HostId}, RuntimeId={RuntimeId}, ControlPlaneHostId={ControlPlaneHostId}, CanAcceptRun={CanAcceptRun}, AvailableRunSlots={AvailableRunSlots}, RegistryType={RegistryType}, RegistryHash={RegistryHash}",
+                    snapshot.RuntimeInstanceId,
+                    snapshot.Status,
+                    snapshot.HostId,
+                    snapshot.RuntimeId,
+                    snapshot.ControlPlaneHostId,
+                    snapshot.CanAcceptRun,
+                    snapshot.AvailableRunSlots,
+                    registry.GetType().FullName,
+                    registry.GetHashCode());
             }
         }
 
@@ -367,16 +407,17 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
         {
             if (string.IsNullOrWhiteSpace(runtimeInstanceId))
             {
-                Console.WriteLine(
-                    "[RUNTIME REGISTRATION] UNREGISTER SKIPPED RuntimeInstanceId is empty.");
+                SafeLogWarning(
+                    "Runtime instance unregister skipped because RuntimeInstanceId is empty.");
 
                 return;
             }
 
-            Console.WriteLine(
-                $"[RUNTIME REGISTRATION] UNREGISTER START RuntimeInstanceId='{runtimeInstanceId}' " +
-                $"RegistryType='{registry.GetType().FullName}' " +
-                $"RegistryHash='{registry.GetHashCode()}'");
+            SafeLogInformation(
+                "Runtime instance unregister started. RuntimeInstanceId={RuntimeInstanceId}, RegistryType={RegistryType}, RegistryHash={RegistryHash}",
+                runtimeInstanceId,
+                registry.GetType().FullName,
+                registry.GetHashCode());
 
             var snapshot =
                 await registry
@@ -388,16 +429,15 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
                     cancellationToken)
                 .ConfigureAwait(false);
 
-            Console.WriteLine(
-                $"[RUNTIME REGISTRATION] UNREGISTER SUCCESS RuntimeInstanceId='{runtimeInstanceId}' " +
-                $"Status='{snapshot?.Status}' " +
-                $"RegistryType='{registry.GetType().FullName}' " +
-                $"RegistryHash='{registry.GetHashCode()}'");
-
             SafeLogInformation(
-                "Runtime instance unregistered. RuntimeInstanceId={RuntimeInstanceId}, Status={Status}",
+                "Runtime instance unregistered. RuntimeInstanceId={RuntimeInstanceId}, Status={Status}, HostId={HostId}, RuntimeId={RuntimeId}, ControlPlaneHostId={ControlPlaneHostId}, RegistryType={RegistryType}, RegistryHash={RegistryHash}",
                 runtimeInstanceId,
-                snapshot?.Status);
+                snapshot?.Status,
+                snapshot?.HostId,
+                snapshot?.RuntimeId,
+                snapshot?.ControlPlaneHostId,
+                registry.GetType().FullName,
+                registry.GetHashCode());
         }
 
         /// <summary>
@@ -415,56 +455,51 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
                 return;
             }
 
-            var role =
-                options.Role;
-
-            var availableRunSlots =
-                role == AiRuntimeInstanceRole.Runtime
-                    ? queueState.AvailableRunSlots
-                    : 0;
-
-            var canAcceptRun =
-                role == AiRuntimeInstanceRole.Runtime &&
-                queueState.CanAcceptRun;
-
-            var workerCount =
-                queueState.WorkerCount ?? options.WorkerCount;
-
-            var activeWorkerCount =
-                queueState.ActiveWorkerCount ?? 0;
-
-            var availableWorkerCount =
-                queueState.AvailableWorkerCount ?? Math.Max(
-                    0,
-                    workerCount - activeWorkerCount);
-
-            var maxLocalWorkersPerExecution =
-                queueState.MaxLocalWorkersPerExecution;
+            var effectiveCapacity =
+                CreateEffectiveCapacity(
+                    status,
+                    queueState);
 
             var descriptor =
                 new AiRuntimeInstanceCapacityDescriptor
                 {
                     RuntimeInstanceId = runtimeInstanceId,
-                    Role = role,
+                    Role = options.Role,
                     Status = status,
-                    WorkerCount = workerCount,
-                    ActiveWorkerCount = activeWorkerCount,
-                    AvailableWorkerCount = availableWorkerCount,
-                    MaxWorkersPerRun = maxLocalWorkersPerExecution,
+                    WorkerCount = effectiveCapacity.WorkerCount,
+                    ActiveWorkerCount = effectiveCapacity.ActiveWorkerCount,
+                    AvailableWorkerCount = effectiveCapacity.AvailableWorkerCount,
+                    MaxWorkersPerRun = effectiveCapacity.MaxLocalWorkersPerExecution,
                     MinWorkersRequiredPerRun = 1,
                     QueuedRunCount = queueState.QueuedRunCount,
                     RunningRunCount = queueState.RunningRunCount,
                     ActiveRunCount = queueState.ActiveRunCount,
                     MaxConcurrentRuns = queueState.MaxConcurrentRuns,
                     MaxRunSlots = queueState.MaxConcurrentRuns,
-                    AvailableRunSlots = availableRunSlots,
+                    AvailableRunSlots = effectiveCapacity.AvailableRunSlots,
                     ReservedRunSlots = 0,
-                    EffectiveAvailableRunSlots = availableRunSlots,
+                    EffectiveAvailableRunSlots = effectiveCapacity.AvailableRunSlots,
                     IsQueuePaused = queueState.IsPaused,
-                    CanAcceptRun = canAcceptRun,
+                    CanAcceptRun = effectiveCapacity.CanAcceptRun,
                     LastHeartbeatAtUtc = DateTimeOffset.UtcNow,
                     Metadata = metadata
                 };
+
+            SafeLogInformation(
+                "Runtime instance capacity descriptor publishing. RuntimeInstanceId={RuntimeInstanceId}, Role={Role}, Status={Status}, QueuedRunCount={QueuedRunCount}, RunningRunCount={RunningRunCount}, ActiveRunCount={ActiveRunCount}, QueueCapacity={QueueCapacity}, QueueHasCapacity={QueueHasCapacity}, AvailableRunSlots={AvailableRunSlots}, AvailableWorkerCount={AvailableWorkerCount}, CanAcceptRun={CanAcceptRun}, IsQueuePaused={IsQueuePaused}, StoreCount={StoreCount}",
+                runtimeInstanceId,
+                descriptor.Role,
+                descriptor.Status,
+                descriptor.QueuedRunCount,
+                descriptor.RunningRunCount,
+                descriptor.ActiveRunCount,
+                queueState.QueueCapacity,
+                effectiveCapacity.QueueHasCapacity,
+                descriptor.AvailableRunSlots,
+                descriptor.AvailableWorkerCount,
+                descriptor.CanAcceptRun,
+                descriptor.IsQueuePaused,
+                capacityStores.Count);
 
             foreach (var capacityStore in capacityStores)
             {
@@ -485,9 +520,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
                         "Failed to publish runtime instance capacity descriptor. RuntimeInstanceId={RuntimeInstanceId}, StoreType={StoreType}",
                         runtimeInstanceId,
                         capacityStore.GetType().FullName);
-
-                    Console.WriteLine(
-                        $"[RUNTIME CAPACITY] PUBLISH FAILED RuntimeInstanceId='{runtimeInstanceId}' StoreType='{capacityStore.GetType().FullName}' Exception='{exception.Message}'");
                 }
             }
         }
@@ -523,11 +555,78 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
                         "Failed to remove runtime instance capacity descriptor. RuntimeInstanceId={RuntimeInstanceId}, StoreType={StoreType}",
                         runtimeInstanceId,
                         capacityStore.GetType().FullName);
-
-                    Console.WriteLine(
-                        $"[RUNTIME CAPACITY] REMOVE FAILED RuntimeInstanceId='{runtimeInstanceId}' StoreType='{capacityStore.GetType().FullName}' Exception='{exception.Message}'");
                 }
             }
+        }
+
+        /// <summary>
+        /// Creates the effective capacity values that must be published to the registry
+        /// and capacity stores.
+        /// </summary>
+        /// <remarks>
+        /// Queue-first semantics:
+        /// - <c>AvailableRunSlots</c> represents immediate execution capacity.
+        /// - <c>CanAcceptRun</c> represents whether the local queue can accept another run.
+        /// - A runtime can accept a run even when all workers are currently busy, as long
+        ///   as the local queue has capacity.
+        /// - Non-runtime roles must never be dispatchable.
+        /// </remarks>
+        /// <param name="status">The runtime instance status.</param>
+        /// <param name="queueState">The local runtime queue state.</param>
+        /// <returns>The effective runtime capacity.</returns>
+        private EffectiveRuntimeCapacity CreateEffectiveCapacity(
+            AiRuntimeInstanceStatus status,
+            AiRuntimePipelineQueueState queueState)
+        {
+            var role =
+                options.Role;
+
+            var workerCount =
+                queueState.WorkerCount ?? options.WorkerCount;
+
+            var activeWorkerCount =
+                queueState.ActiveWorkerCount ?? 0;
+
+            var availableWorkerCount =
+                queueState.AvailableWorkerCount ?? Math.Max(
+                    0,
+                    workerCount - activeWorkerCount);
+
+            var queueHasCapacity =
+                queueState.QueueCapacity is null ||
+                queueState.QueuedRunCount < queueState.QueueCapacity.Value;
+
+            var isRuntime =
+                role == AiRuntimeInstanceRole.Runtime;
+
+            if (!isRuntime)
+            {
+                return new EffectiveRuntimeCapacity(
+                    WorkerCount: 0,
+                    ActiveWorkerCount: 0,
+                    AvailableWorkerCount: 0,
+                    AvailableRunSlots: 0,
+                    MaxLocalWorkersPerExecution: queueState.MaxLocalWorkersPerExecution,
+                    QueueHasCapacity: queueHasCapacity,
+                    CanAcceptRun: false);
+            }
+
+            var availableRunSlots =
+                queueState.AvailableRunSlots;
+
+            var canAcceptRun =
+                status == AiRuntimeInstanceStatus.Ready &&
+                !queueState.IsPaused &&
+                queueHasCapacity;
+
+            return new EffectiveRuntimeCapacity(
+                WorkerCount: workerCount,
+                ActiveWorkerCount: activeWorkerCount,
+                AvailableWorkerCount: availableWorkerCount,
+                AvailableRunSlots: availableRunSlots,
+                MaxLocalWorkersPerExecution: queueState.MaxLocalWorkersPerExecution,
+                QueueHasCapacity: queueHasCapacity,
+                CanAcceptRun: canAcceptRun);
         }
 
         /// <summary>
@@ -544,6 +643,12 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
             if (!string.IsNullOrWhiteSpace(environment.RuntimeInstanceId))
             {
                 return environment.RuntimeInstanceId;
+            }
+
+            if (!string.IsNullOrWhiteSpace(environment.HostId) &&
+                !string.IsNullOrWhiteSpace(environment.RuntimeId))
+            {
+                return $"{environment.HostId}:{environment.RuntimeId}";
             }
 
             return $"runtime:{environment.HostName ?? "unknown"}:{environment.ProcessId?.ToString() ?? Guid.NewGuid().ToString("N")}";
@@ -589,6 +694,36 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
             }
         }
 
+        private void SafeLogWarning(
+            string message,
+            params object?[] args)
+        {
+            try
+            {
+                logger.LogWarning(
+                    message,
+                    args);
+            }
+            catch (AggregateException aggregateException)
+                when (aggregateException.InnerExceptions.Any(inner =>
+                    inner is ObjectDisposedException or InvalidOperationException))
+            {
+                // Logger provider was already disposed during host shutdown.
+            }
+            catch (ObjectDisposedException)
+            {
+                // Logger provider was already disposed during host shutdown.
+            }
+            catch (InvalidOperationException)
+            {
+                // Logger infrastructure may already be unavailable during shutdown.
+            }
+            catch
+            {
+                // Never allow logging failures to break shutdown.
+            }
+        }
+
         private void SafeLogError(
             Exception exception,
             string message,
@@ -620,5 +755,14 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
                 // Never allow logging failures to break shutdown.
             }
         }
+
+        private sealed record EffectiveRuntimeCapacity(
+            int WorkerCount,
+            int ActiveWorkerCount,
+            int AvailableWorkerCount,
+            int? AvailableRunSlots,
+            int? MaxLocalWorkersPerExecution,
+            bool QueueHasCapacity,
+            bool CanAcceptRun);
     }
 }

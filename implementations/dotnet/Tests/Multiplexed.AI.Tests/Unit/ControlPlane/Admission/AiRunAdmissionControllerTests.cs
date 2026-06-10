@@ -1,9 +1,14 @@
-﻿using Microsoft.Extensions.Options;
+﻿using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.ControlPlane.Admission;
+using Multiplexed.Abstractions.AI.ControlPlane.Admission.Reservations;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Capacity;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
 using Multiplexed.Abstractions.AI.Execution.Instance.Worker;
 using Multiplexed.Abstractions.AI.Runtime.Execution.Instance.Worker;
 using Multiplexed.AI.Runtime.ControlPlane.Admission;
+using Multiplexed.AI.Runtime.ControlPlane.Admission.Reservations;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Capacity;
 
 namespace Multiplexed.AI.Tests.Unit.ControlPlane.Admission
 {
@@ -76,8 +81,8 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.Admission
 
             var controller = CreateController(registry);
 
-            var decision = await controller.AdmitAsync(CreateRequest(
-                preferredRuntimeInstanceId: "runtime-b"));
+            var decision = await controller.AdmitAsync(
+                CreateRequest(preferredRuntimeInstanceId: "runtime-b"));
 
             Assert.Equal(AiRunAdmissionDecisionType.AssignToInstance, decision.DecisionType);
             Assert.Equal("runtime-b", decision.AssignedRuntimeInstanceId);
@@ -103,8 +108,8 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.Admission
 
             var controller = CreateController(registry);
 
-            var decision = await controller.AdmitAsync(CreateRequest(
-                preferredRuntimeInstanceId: "runtime-b"));
+            var decision = await controller.AdmitAsync(
+                CreateRequest(preferredRuntimeInstanceId: "runtime-b"));
 
             Assert.Equal(AiRunAdmissionDecisionType.AssignToInstance, decision.DecisionType);
             Assert.Equal("runtime-a", decision.AssignedRuntimeInstanceId);
@@ -249,7 +254,8 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.Admission
                     AiRuntimeInstanceStatus.Paused,
                     canAcceptRun: true,
                     queuedRunCount: 0,
-                    runningRunCount: 0));
+                    runningRunCount: 0,
+                    isQueuePaused: false));
 
             var controller = CreateController(
                 registry,
@@ -296,11 +302,67 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.Admission
 
         private static AiRunAdmissionController CreateController(
             IAiRuntimeInstanceRegistry registry,
-            AiRunAdmissionOptions? options = null)
+            AiRunAdmissionOptions? options = null,
+            IAiRuntimeAdmissionReservationStore? reservationStore = null)
         {
+            var capacityStore =
+                new InMemoryAiRuntimeInstanceCapacityStore();
+
+            var snapshots =
+                registry
+                    .ListAsync(includeStopped: true)
+                    .GetAwaiter()
+                    .GetResult();
+
+            foreach (var snapshot in snapshots)
+            {
+                capacityStore
+                    .PublishAsync(CreateCapacityDescriptor(snapshot))
+                    .GetAwaiter()
+                    .GetResult();
+            }
+
             return new AiRunAdmissionController(
                 registry,
-                Options.Create(options ?? new AiRunAdmissionOptions()));
+                reservationStore ?? new InMemoryAiRuntimeAdmissionReservationStore(),
+                capacityStore,
+                Options.Create(options ?? new AiRunAdmissionOptions()), 
+                NullLogger<AiRunAdmissionController>.Instance);
+        }
+
+        private static AiRuntimeInstanceCapacityDescriptor CreateCapacityDescriptor(
+            AiRuntimeInstanceSnapshot snapshot)
+        {
+            return new AiRuntimeInstanceCapacityDescriptor
+            {
+                RuntimeInstanceId = snapshot.RuntimeInstanceId,
+                Role = snapshot.Role,
+                Status = snapshot.Status,
+
+                WorkerCount = snapshot.WorkerCount,
+                ActiveWorkerCount = snapshot.ActiveWorkerCount ?? 0,
+                AvailableWorkerCount = snapshot.AvailableWorkerCount ?? snapshot.WorkerCount,
+
+                MaxWorkersPerRun = snapshot.MaxLocalWorkersPerExecution,
+                MinWorkersRequiredPerRun = 1,
+
+                QueuedRunCount = snapshot.QueuedRunCount,
+                RunningRunCount = snapshot.RunningRunCount,
+                ActiveRunCount = snapshot.ActiveRunCount,
+
+                MaxConcurrentRuns = snapshot.MaxConcurrentRuns,
+                MaxRunSlots = snapshot.MaxConcurrentRuns,
+                AvailableRunSlots = snapshot.AvailableRunSlots,
+
+                ReservedRunSlots = 0,
+                EffectiveAvailableRunSlots = snapshot.AvailableRunSlots,
+
+                IsQueuePaused = snapshot.IsQueuePaused,
+                CanAcceptRun = snapshot.CanAcceptRun,
+
+                LastHeartbeatAtUtc = snapshot.LastHeartbeatAtUtc,
+                Metadata = snapshot.Metadata
+            };
         }
 
         private static AiRunAdmissionRequest CreateRequest(
@@ -321,30 +383,45 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.Admission
             AiRuntimeInstanceStatus status,
             bool canAcceptRun,
             int queuedRunCount,
-            int runningRunCount)
+            int runningRunCount,
+            bool? isQueuePaused = null)
         {
-            var now = DateTimeOffset.UtcNow;
+            var now =
+                DateTimeOffset.UtcNow;
+
+            var queuePaused =
+                isQueuePaused ?? status == AiRuntimeInstanceStatus.Paused;
 
             return new AiRuntimeInstanceSnapshot
             {
                 RuntimeInstanceId = runtimeInstanceId,
+                Role = AiRuntimeInstanceRole.Runtime,
                 Status = status,
+
                 WorkerCount = 4,
+                ActiveWorkerCount = runningRunCount,
+                AvailableWorkerCount = canAcceptRun ? 4 : 0,
+                MaxLocalWorkersPerExecution = 1,
+
                 QueuedRunCount = queuedRunCount,
                 RunningRunCount = runningRunCount,
                 ActiveRunCount = queuedRunCount + runningRunCount,
+
                 QueueCapacity = 8,
                 MaxConcurrentRuns = 2,
                 AvailableRunSlots = canAcceptRun ? 1 : 0,
-                IsQueuePaused = status == AiRuntimeInstanceStatus.Paused,
+
+                IsQueuePaused = queuePaused,
                 CanAcceptRun = canAcceptRun,
+
                 RegisteredAtUtc = now,
                 LastHeartbeatAtUtc = now,
                 SnapshotAtUtc = now
             };
         }
 
-        private sealed class FakeRuntimeInstanceRegistry : IAiRuntimeInstanceRegistry
+        private sealed class FakeRuntimeInstanceRegistry :
+            IAiRuntimeInstanceRegistry
         {
             private readonly IReadOnlyList<AiRuntimeInstanceSnapshot> _instances;
 
@@ -362,18 +439,18 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.Admission
             }
 
             public Task<AiRuntimeInstanceSnapshot?> HeartbeatAsync(
-                 string runtimeInstanceId,
-                 int queuedRunCount,
-                 int runningRunCount,
-                 int activeRunCount,
-                 int? availableRunSlots,
-                 int? activeWorkerCount,
-                 int? availableWorkerCount,
-                 int? maxLocalWorkersPerExecution,
-                 bool isQueuePaused,
-                 bool canAcceptRun,
-                 AiRuntimeInstanceStatus status,
-                 CancellationToken cancellationToken = default)
+                string runtimeInstanceId,
+                int queuedRunCount,
+                int runningRunCount,
+                int activeRunCount,
+                int? availableRunSlots,
+                int? activeWorkerCount,
+                int? availableWorkerCount,
+                int? maxLocalWorkersPerExecution,
+                bool isQueuePaused,
+                bool canAcceptRun,
+                AiRuntimeInstanceStatus status,
+                CancellationToken cancellationToken = default)
             {
                 throw new NotSupportedException();
             }

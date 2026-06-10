@@ -1,7 +1,9 @@
 ﻿using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Environment;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Pool;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.SharedInstance;
@@ -71,6 +73,9 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
 
             cancellationToken.ThrowIfCancellationRequested();
 
+            var identity =
+                RuntimeInstanceIdentityParts.Parse(runtimeInstanceId);
+
             var services =
                 new ServiceCollection();
 
@@ -106,6 +111,14 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
             services.RemoveAll<IAiExecutionReplayMetadataStore>();
             services.AddSingleton(replayMetadataStore);
 
+            services.RemoveAll<IAiRuntimeEnvironmentProvider>();
+            services.AddSingleton<IAiRuntimeEnvironmentProvider>(
+                _ => new PooledLocalRuntimeEnvironmentProvider(
+                    runtimeInstanceId,
+                    identity.HostId,
+                    identity.RuntimeId,
+                    identity.ControlPlaneHostId));
+
             services.TryAddEnumerable(
                 ServiceDescriptor.Singleton<IHostedService,
                     AiRuntimeInstanceRegistrationHostedService>());
@@ -128,14 +141,15 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
                 }
             });
 
-           
-
             services.RemoveAll<IAiRuntimeInstanceIdentityDescriptor>();
             services.AddSingleton<IAiRuntimeInstanceIdentityDescriptor>(
                 _ => new DefaultAiRuntimeInstanceIdentity(runtimeInstanceId));
 
             var serviceProvider =
                 services.BuildServiceProvider();
+
+            var logger =
+                serviceProvider.GetRequiredService<ILogger<AiLocalRuntimeInstanceHost>>();
 
             var controller =
                 serviceProvider.GetRequiredService<IAiRuntimePipelineBackgroundController>();
@@ -148,22 +162,27 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
                     .GetQueueStateAsync(cancellationToken)
                     .ConfigureAwait(false);
 
-            Console.WriteLine(
-                $"POOL INSTANCE CREATED RuntimeInstanceId={runtimeInstanceId}, QueueStateRuntimeInstanceId={queueState.RuntimeInstanceId}");
+            logger.LogInformation(
+                "Pool runtime instance created. RuntimeInstanceId={RuntimeInstanceId}, HostId={HostId}, RuntimeId={RuntimeId}, QueueStateRuntimeInstanceId={QueueStateRuntimeInstanceId}",
+                runtimeInstanceId,
+                identity.HostId,
+                identity.RuntimeId,
+                queueState.RuntimeInstanceId);
 
-
-            Console.WriteLine(
-                "POOL INSTANCE CAPACITY " +
-                $"RuntimeInstanceId={runtimeInstanceId}, " +
-                $"WorkerCountArg={workerCount}, " +
-                $"MaxConcurrentRunsArg={maxConcurrentRuns}, " +
-                $"LocalQueueCapacityArg={localQueueCapacity?.ToString() ?? "null"}, " +
-                $"QueueStateRuntimeInstanceId={queueState.RuntimeInstanceId}, " +
-                $"QueueStateMaxConcurrentRuns={queueState.MaxConcurrentRuns}, " +
-                $"QueueStateAvailableRunSlots={queueState.AvailableRunSlots}, " +
-                $"QueueStateRunningRunCount={queueState.RunningRunCount}, " +
-                $"QueueStateQueuedRunCount={queueState.QueuedRunCount}, " +
-                $"QueueStateQueueCapacity={queueState.QueueCapacity}");
+            logger.LogInformation(
+                "Pool runtime instance capacity resolved. RuntimeInstanceId={RuntimeInstanceId}, HostId={HostId}, RuntimeId={RuntimeId}, WorkerCountArg={WorkerCountArg}, MaxConcurrentRunsArg={MaxConcurrentRunsArg}, LocalQueueCapacityArg={LocalQueueCapacityArg}, QueueStateRuntimeInstanceId={QueueStateRuntimeInstanceId}, QueueStateMaxConcurrentRuns={QueueStateMaxConcurrentRuns}, QueueStateAvailableRunSlots={QueueStateAvailableRunSlots}, QueueStateRunningRunCount={QueueStateRunningRunCount}, QueueStateQueuedRunCount={QueueStateQueuedRunCount}, QueueStateQueueCapacity={QueueStateQueueCapacity}",
+                runtimeInstanceId,
+                identity.HostId,
+                identity.RuntimeId,
+                workerCount,
+                maxConcurrentRuns,
+                localQueueCapacity?.ToString() ?? "null",
+                queueState.RuntimeInstanceId,
+                queueState.MaxConcurrentRuns,
+                queueState.AvailableRunSlots,
+                queueState.RunningRunCount,
+                queueState.QueuedRunCount,
+                queueState.QueueCapacity);
 
             var sharedRuntimeInstance =
                 new LocalAiSharedRuntimeInstance(
@@ -177,9 +196,112 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
                     serviceProvider,
                     controller,
                     queueControlPlane,
-                    sharedRuntimeInstance);
+                    sharedRuntimeInstance,
+                    logger);
 
             return host;
+        }
+
+        private sealed class RuntimeInstanceIdentityParts
+        {
+            private RuntimeInstanceIdentityParts(
+                string hostId,
+                string runtimeId,
+                string controlPlaneHostId)
+            {
+                HostId = hostId;
+                RuntimeId = runtimeId;
+                ControlPlaneHostId = controlPlaneHostId;
+            }
+
+            public string HostId { get; }
+
+            public string RuntimeId { get; }
+
+            public string ControlPlaneHostId { get; }
+
+            public static RuntimeInstanceIdentityParts Parse(
+                string runtimeInstanceId)
+            {
+                ArgumentException.ThrowIfNullOrWhiteSpace(runtimeInstanceId);
+
+                var separatorIndex =
+                    runtimeInstanceId.IndexOf(':', StringComparison.Ordinal);
+
+                if (separatorIndex <= 0 ||
+                    separatorIndex >= runtimeInstanceId.Length - 1)
+                {
+                    return new RuntimeInstanceIdentityParts(
+                        runtimeInstanceId,
+                        runtimeInstanceId,
+                        runtimeInstanceId);
+                }
+
+                var hostId =
+                    runtimeInstanceId[..separatorIndex];
+
+                var runtimeId =
+                    runtimeInstanceId[(separatorIndex + 1)..];
+
+                return new RuntimeInstanceIdentityParts(
+                    hostId,
+                    runtimeId,
+                    hostId);
+            }
+        }
+
+        private sealed class PooledLocalRuntimeEnvironmentProvider :
+            IAiRuntimeEnvironmentProvider
+        {
+            private readonly string runtimeInstanceId;
+            private readonly string hostId;
+            private readonly string runtimeId;
+            private readonly string controlPlaneHostId;
+
+            public PooledLocalRuntimeEnvironmentProvider(
+                string runtimeInstanceId,
+                string hostId,
+                string runtimeId,
+                string controlPlaneHostId)
+            {
+                this.runtimeInstanceId = runtimeInstanceId;
+                this.hostId = hostId;
+                this.runtimeId = runtimeId;
+                this.controlPlaneHostId = controlPlaneHostId;
+            }
+
+            public Task<AiRuntimeEnvironmentSnapshot> GetSnapshotAsync(
+                CancellationToken cancellationToken = default)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                var processId =
+                    Environment.ProcessId;
+
+                var hostName =
+                    Environment.MachineName;
+
+                return Task.FromResult(
+                    new AiRuntimeEnvironmentSnapshot
+                    {
+                        ProviderName = "local-pool",
+                        RuntimeInstanceId = runtimeInstanceId,
+                        HostId = hostId,
+                        RuntimeId = runtimeId,
+                        ControlPlaneHostId = controlPlaneHostId,
+                        HostName = hostName,
+                        ProcessId = processId,
+                        ProviderMetadata = new Dictionary<string, string>
+                        {
+                            ["provider"] = "local-pool",
+                            ["machineName"] = hostName,
+                            ["processId"] = processId.ToString(),
+                            ["hostId"] = hostId,
+                            ["runtimeId"] = runtimeId,
+                            ["controlPlaneHostId"] = controlPlaneHostId
+                        }
+                    });
+            }
         }
     }
 }

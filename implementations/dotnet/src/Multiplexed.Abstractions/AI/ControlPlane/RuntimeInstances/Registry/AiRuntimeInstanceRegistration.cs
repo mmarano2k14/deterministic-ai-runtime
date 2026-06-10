@@ -8,7 +8,6 @@
     /// </summary>
     public sealed class AiRuntimeInstanceRegistration
     {
-
         /// <summary>
         /// Optional MCP runtime identifier that owns this runtime instance.
         /// Multiple runtime instances may belong to the same MCP runtime.
@@ -25,6 +24,21 @@
         /// Runtime process / Kubernetes pod / replica identifier.
         /// </summary>
         public required string RuntimeInstanceId { get; init; }
+
+        /// <summary>
+        /// Gets the physical host, process, or pod identity that owns this runtime instance.
+        /// </summary>
+        public string? HostId { get; init; }
+
+        /// <summary>
+        /// Gets the logical runtime identity inside the owning host.
+        /// </summary>
+        public string? RuntimeId { get; init; }
+
+        /// <summary>
+        /// Gets the control-plane host identity that owns or manages this runtime instance.
+        /// </summary>
+        public string? ControlPlaneHostId { get; init; }
 
         /// <summary>
         /// Optional host name where the runtime instance is running.

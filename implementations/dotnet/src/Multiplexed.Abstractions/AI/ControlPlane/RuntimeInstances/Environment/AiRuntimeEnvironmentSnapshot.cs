@@ -29,6 +29,35 @@
         public string? RuntimeInstanceId { get; init; }
 
         /// <summary>
+        /// Gets the physical host, process, container, or Kubernetes pod identity
+        /// that owns one or more logical runtime instances.
+        /// </summary>
+        /// <remarks>
+        /// In Kubernetes this normally maps to the pod identity.
+        /// In local or test mode this normally maps to a generated host/process identity.
+        /// </remarks>
+        public string? HostId { get; init; }
+
+        /// <summary>
+        /// Gets the logical runtime identity inside the owning host.
+        /// </summary>
+        /// <remarks>
+        /// A single host may create multiple local runtime instances.
+        /// This value identifies the logical runtime within that host.
+        /// </remarks>
+        public string? RuntimeId { get; init; }
+
+        /// <summary>
+        /// Gets the control-plane host identity that owns or manages this runtime instance.
+        /// </summary>
+        /// <remarks>
+        /// This is useful when a control-plane process creates several local runtime instances
+        /// and needs to expose ownership clearly for dispatch, diagnostics, dashboards,
+        /// and Kubernetes-ready observability.
+        /// </remarks>
+        public string? ControlPlaneHostId { get; init; }
+
+        /// <summary>
         /// Gets the host name where the runtime process is running, when available.
         /// </summary>
         public string? HostName { get; init; }

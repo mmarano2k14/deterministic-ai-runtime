@@ -6,7 +6,7 @@
     public static class GenericMcpServerTestSettings
     {
         private const string RedisConnectionString =
-            "localhost:6379,defaultDatabase=15";
+            "localhost:6379";
 
         private const string MongoConnectionString =
             "mongodb://localhost:27017";

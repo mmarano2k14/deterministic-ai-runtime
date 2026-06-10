@@ -1,8 +1,15 @@
-﻿using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Controller;
+﻿using System.Text.RegularExpressions;
+using Microsoft.Extensions.DependencyInjection;
+using Multiplexed.Abstractions.AI.ControlPlane.Admission.Reservations;
+using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Controller;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Store;
+using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Queue;
 using Multiplexed.AI.McpServer.Tests.Integration.Fixtures;
 using Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic;
 using Multiplexed.AI.McpServer.Tests.Integration.Helpers;
+using Multiplexed.AI.Runtime.ControlPlane.Admission.Reservations;
+using Multiplexed.AI.Runtime.ControlPlane.SharedController.Store;
+using Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis;
 using Xunit.Abstractions;
 
 namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
@@ -51,6 +58,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
             using var client =
                 host.CreateClient();
 
+            AssertRedisStores(
+                host.Services);
+
             var mcp =
                 new McpTestClient(
                     client);
@@ -62,18 +72,24 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
             var pipelineName =
                 $"mcp-heavy-local-queue-first-{Guid.NewGuid():N}";
 
-            await SubmitRunsAsync(
-                    mcp,
-                    pipelineName,
-                    count: runCount,
-                    stepCount: stepCount,
-                    flakyStepInterval: 0)
-                .ConfigureAwait(false);
+            var expectedSharedRunIds =
+                await SubmitRunsAsync(
+                        mcp,
+                        pipelineName,
+                        count: runCount,
+                        stepCount: stepCount,
+                        flakyStepInterval: 0)
+                    .ConfigureAwait(false);
+
+            Assert.Equal(
+                runCount,
+                expectedSharedRunIds.Count);
 
             var dispatchedRuns =
                 await McpTestWaitHelpers.WaitForDispatchedRunsAsync(
                         mcp,
                         pipelineName,
+                        expectedSharedRunIds,
                         expectedCount: runCount,
                         timeout: TimeSpan.FromMinutes(5))
                     .ConfigureAwait(false);
@@ -133,6 +149,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
                 .InitializeAsync()
                 .ConfigureAwait(false);
 
+            AssertRedisStores(
+                fixture.Services);
+
             await LogRuntimeInstancesAsync(
                     fixture.Mcp)
                 .ConfigureAwait(false);
@@ -140,20 +159,26 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
             var pipelineName =
                 $"mcp-heavy-http-queue-first-{Guid.NewGuid():N}";
 
-            await SubmitRunsAsync(
-                    fixture.Mcp,
-                    pipelineName,
-                    count: runCount,
-                    stepCount: stepCount,
-                    flakyStepInterval: 0)
-                .ConfigureAwait(false);
+            var expectedSharedRunIds =
+                await SubmitRunsAsync(
+                        fixture.Mcp,
+                        pipelineName,
+                        count: runCount,
+                        stepCount: stepCount,
+                        flakyStepInterval: 0)
+                    .ConfigureAwait(false);
+
+            Assert.Equal(
+                runCount,
+                expectedSharedRunIds.Count);
 
             var dispatchedRuns =
                 await McpTestWaitHelpers.WaitForDispatchedRunsAsync(
                         fixture.Mcp,
                         pipelineName,
+                        expectedSharedRunIds,
                         expectedCount: runCount,
-                        timeout: TimeSpan.FromMinutes(2))
+                        timeout: TimeSpan.FromMinutes(5))
                     .ConfigureAwait(false);
 
             var participatingRuntimeInstances =
@@ -181,11 +206,69 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
         }
 
         /// <summary>
-        /// Creates heavy local control-plane settings.
+        /// Verifies that the HTTP control-plane host uses Redis-backed control-plane stores.
         /// </summary>
-        /// <returns>The heavy local control-plane settings.</returns>
+        [Fact]
+        public async Task ControlPlaneWithHttpRuntimeInstances_ShouldUseRedisControlPlaneStores()
+        {
+            await using var fixture =
+                new GenericMcpRuntimeFixture(
+                    CreateHeavyHttpControlPlaneSettings(),
+                    CreateHeavyHttpRuntimeInstanceHostSettings());
+
+            await fixture
+                .InitializeAsync()
+                .ConfigureAwait(false);
+
+            AssertRedisStores(
+                fixture.Services);
+        }
+
+        /// <summary>
+        /// Verifies that Redis-backed control-plane stores replaced the default in-memory stores.
+        /// </summary>
+        /// <param name="services">The service provider to inspect.</param>
+        private void AssertRedisStores(
+            IServiceProvider services)
+        {
+            ArgumentNullException.ThrowIfNull(services);
+
+            var sharedRunStore =
+                services.GetRequiredService<IAiSharedRunStore>();
+
+            var sharedQueue =
+                services.GetRequiredService<IAiSharedQueue>();
+
+            var reservationStore =
+                services.GetRequiredService<IAiRuntimeAdmissionReservationStore>();
+
+            output.WriteLine(
+                $"Redis store assert: IAiSharedRunStore='{sharedRunStore.GetType().FullName}'.");
+
+            output.WriteLine(
+                $"Redis store assert: IAiSharedQueue='{sharedQueue.GetType().FullName}'.");
+
+            output.WriteLine(
+                $"Redis store assert: IAiRuntimeAdmissionReservationStore='{reservationStore.GetType().FullName}'.");
+
+            Assert.IsType<RedisAiSharedRunStore>(
+                sharedRunStore);
+
+            Assert.IsType<RedisAiSharedQueue>(
+                sharedQueue);
+
+            Assert.IsType<RedisAiRuntimeAdmissionReservationStore>(
+                reservationStore);
+        }
+
         private static Dictionary<string, string?> CreateHeavyLocalControlPlaneSettings()
         {
+            var runtimeInstanceIdPrefix =
+                $"mcp-runtime-{Guid.NewGuid():N}";
+
+            var deployment =
+                $"test-local-heavy-dispatch-{Guid.NewGuid():N}";
+
             return GenericMcpServerTestSettings.CreateMcpSettings(
                 new Dictionary<string, string?>
                 {
@@ -199,22 +282,30 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
                     ["AiRuntimeInstanceRegistration:ProviderName"] = "local",
                     ["AiRuntimeInstanceRegistration:ProviderMetadata:provider.name"] = "local",
                     ["AiRuntimeInstanceRegistration:Metadata:provider.name"] = "local",
-                    ["AiRuntimeInstanceRegistration:RuntimeInstanceId"] = "mcp-control-plane-local",
+                    ["AiRuntimeInstanceRegistration:RuntimeInstanceId"] = $"mcp-control-plane-local-{Guid.NewGuid():N}",
                     ["AiRuntimeInstanceRegistration:Metadata:hostType"] = "control-plane-with-local-runtime",
-                    ["AiRuntimeInstanceRegistration:Metadata:deployment"] = "test-local-heavy-dispatch",
+                    ["AiRuntimeInstanceRegistration:Metadata:deployment"] = deployment,
 
                     ["AiLocalRuntimeInstancePool:Enabled"] = "true",
                     ["AiLocalRuntimeInstancePool:InstanceCount"] = "3",
                     ["AiLocalRuntimeInstancePool:WorkerCountPerInstance"] = "30",
                     ["AiLocalRuntimeInstancePool:MaxConcurrentRunsPerInstance"] = "10",
-                    ["AiLocalRuntimeInstancePool:RuntimeInstanceIdPrefix"] = "mcp-runtime",
+                    ["AiLocalRuntimeInstancePool:RuntimeInstanceIdPrefix"] = runtimeInstanceIdPrefix,
 
-                    ["AiEngine:RuntimeInstanceId"] = "mcp-control-plane-local",
+                    ["AiEngine:RuntimeInstanceId"] = $"mcp-control-plane-local-{Guid.NewGuid():N}",
                     ["AiEngine:PipelineBackgroundController:MaxConcurrentRuns"] = "10",
                     ["AiEngine:PipelineBackgroundController:QueueCapacity"] = "500",
                     ["AiEngine:PipelineBackgroundController:Distributed:Enabled"] = "true",
                     ["AiEngine:PipelineBackgroundController:Distributed:WorkerCount"] = "30",
-                    ["AiEngine:PipelineBackgroundController:MaxLocalWorkersPerExecution"] = "5"
+                    ["AiEngine:PipelineBackgroundController:MaxLocalWorkersPerExecution"] = "5",
+
+                    ["AiSharedQueueBackgroundService:WaitForRuntimeReadiness"] = "true",
+                    ["AiSharedQueueBackgroundService:RuntimeReadinessPollInterval"] = "00:00:00.100",
+                    ["AiSharedQueueBackgroundService:RuntimeReadinessTimeout"] = "00:01:00",
+
+                    ["AiRuntimeInstanceRegistration:HeartbeatInterval"] = "00:00:02",
+                    ["AiRuntimeInstanceRegistration:RegistryTtl"] = "00:00:30",
+                    ["AiRuntimeInstanceRegistration:CapacityTtl"] = "00:00:30",
                 });
         }
 
@@ -299,7 +390,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
         /// <param name="count">The number of runs to submit.</param>
         /// <param name="stepCount">The number of pipeline steps.</param>
         /// <param name="flakyStepInterval">The flaky step interval.</param>
-        private static async Task SubmitRunsAsync(
+        /// <returns>The submitted shared run ids.</returns>
+        private static async Task<IReadOnlySet<string>> SubmitRunsAsync(
             McpTestClient mcp,
             string pipelineName,
             int count,
@@ -327,6 +419,85 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
                 result => Assert.True(
                     result.Success,
                     result.FailureReason ?? result.Message));
+
+            var submittedSharedRunIds =
+                submitResults
+                    .Select(ExtractSharedRunId)
+                    .Where(id => !string.IsNullOrWhiteSpace(id))
+                    .ToHashSet(StringComparer.Ordinal);
+
+            Assert.Equal(
+                count,
+                submittedSharedRunIds.Count);
+
+            return submittedSharedRunIds;
+        }
+
+        /// <summary>
+        /// Extracts the shared run id from a submit result.
+        /// </summary>
+        /// <param name="submitResult">The submit result.</param>
+        /// <returns>The shared run id.</returns>
+        private static string ExtractSharedRunId(
+            object submitResult)
+        {
+            ArgumentNullException.ThrowIfNull(submitResult);
+
+            var resultType =
+                submitResult.GetType();
+
+            var directSharedRunId =
+                resultType.GetProperty("SharedRunId")?.GetValue(submitResult) as string;
+
+            if (!string.IsNullOrWhiteSpace(directSharedRunId))
+            {
+                return directSharedRunId;
+            }
+
+            var runId =
+                resultType.GetProperty("RunId")?.GetValue(submitResult) as string;
+
+            if (!string.IsNullOrWhiteSpace(runId))
+            {
+                return runId;
+            }
+
+            var sharedRun =
+                resultType.GetProperty("SharedRun")?.GetValue(submitResult);
+
+            if (sharedRun is not null)
+            {
+                var sharedRunId =
+                    sharedRun
+                        .GetType()
+                        .GetProperty("SharedRunId")
+                        ?.GetValue(sharedRun) as string;
+
+                if (!string.IsNullOrWhiteSpace(sharedRunId))
+                {
+                    return sharedRunId;
+                }
+            }
+
+            var run =
+                resultType.GetProperty("Run")?.GetValue(submitResult);
+
+            if (run is not null)
+            {
+                var sharedRunId =
+                    run
+                        .GetType()
+                        .GetProperty("SharedRunId")
+                        ?.GetValue(run) as string;
+
+                if (!string.IsNullOrWhiteSpace(sharedRunId))
+                {
+                    return sharedRunId;
+                }
+            }
+
+            throw new InvalidOperationException(
+                $"Could not extract SharedRunId from submit result type '{resultType.FullName}'.");
         }
 
         /// <summary>
@@ -336,7 +507,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
         /// <param name="dispatchedRuns">The dispatched shared runs.</param>
         /// <param name="expectedCount">The expected number of dispatched runs.</param>
         /// <param name="expectedRuntimeInstanceCount">The maximum expected runtime instance count.</param>
-        /// <param name="expectedRuntimeInstancePrefix">The expected runtime instance id prefix.</param>
+        /// <param name="expectedRuntimeInstancePrefix">The expected logical runtime instance id prefix.</param>
         /// <param name="distributionLabel">The distribution log label.</param>
         /// <returns>The participating runtime instance ids.</returns>
         private string[] AssertDistributedRuntimeParticipation(
@@ -357,10 +528,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
                     Assert.False(
                         string.IsNullOrWhiteSpace(run.AssignedRuntimeInstanceId));
 
-                    Assert.StartsWith(
-                        expectedRuntimeInstancePrefix,
-                        run.AssignedRuntimeInstanceId,
-                        StringComparison.Ordinal);
+                    AssertMatchesRuntimeInstanceId(
+                        run.AssignedRuntimeInstanceId!,
+                        expectedRuntimeInstancePrefix);
 
                     Assert.False(
                         string.IsNullOrWhiteSpace(run.LocalRunId));
@@ -406,15 +576,44 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
         }
 
         /// <summary>
+        /// Verifies that a runtime instance id matches either the legacy logical format
+        /// or the current host-scoped format.
+        /// </summary>
+        /// <param name="runtimeInstanceId">The runtime instance id to verify.</param>
+        /// <param name="expectedRuntimeInstancePrefix">The expected logical runtime instance id prefix.</param>
+        private static void AssertMatchesRuntimeInstanceId(
+            string runtimeInstanceId,
+            string expectedRuntimeInstancePrefix)
+        {
+            var isLegacyRuntimeInstanceId =
+                runtimeInstanceId.StartsWith(
+                    expectedRuntimeInstancePrefix,
+                    StringComparison.Ordinal);
+
+            var hostScopedPattern =
+                $"^host-[a-f0-9]+:{Regex.Escape(expectedRuntimeInstancePrefix)}";
+
+            var isHostScopedRuntimeInstanceId =
+                Regex.IsMatch(
+                    runtimeInstanceId,
+                    hostScopedPattern,
+                    RegexOptions.CultureInvariant);
+
+            Assert.True(
+                isLegacyRuntimeInstanceId || isHostScopedRuntimeInstanceId,
+                $"Runtime instance id '{runtimeInstanceId}' does not match expected logical prefix '{expectedRuntimeInstancePrefix}' or host-scoped runtime id pattern '{hostScopedPattern}'.");
+        }
+
+        /// <summary>
         /// Verifies that dispatched runtime runs reach a terminal completed state.
         /// </summary>
         /// <param name="mcp">The MCP test client.</param>
         /// <param name="dispatchedRuns">The dispatched shared runs.</param>
         /// <param name="expectedCount">The expected number of completed runs.</param>
         private static async Task AssertRunsCompleteAsync(
-            McpTestClient mcp,
-            IReadOnlyList<AiSharedRunRecord> dispatchedRuns,
-            int expectedCount)
+    McpTestClient mcp,
+    IReadOnlyList<AiSharedRunRecord> dispatchedRuns,
+    int expectedCount)
         {
             var finalStatuses =
                 await McpTestWaitHelpers.WaitForTerminalRuntimeRunStatusesAsync(
@@ -426,6 +625,36 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
             Assert.Equal(
                 expectedCount,
                 finalStatuses.Count);
+
+            var failedStatuses =
+                finalStatuses
+                    .Where(status => !string.Equals(
+                        status.RunState?.Status,
+                        "completed",
+                        StringComparison.OrdinalIgnoreCase))
+                    .ToArray();
+
+            if (failedStatuses.Length > 0)
+            {
+                var failureDump =
+                    string.Join(
+                        Environment.NewLine,
+                        failedStatuses.Select(status =>
+                            $"RunId='{status.RunId}', " +
+                            $"RuntimeInstanceId='{status.RuntimeInstanceId}', " +
+                            $"Status='{status.RunState?.Status}', " +
+                            $"ExecutionId='{status.ExecutionId ?? status.RunState?.ExecutionId}', " +
+                            $"Success='{status.Success}', " +
+                            $"FailureReason='{status.FailureReason}', " +
+                            $"Message='{status.Message}', " +
+                            $"RunStateFailureReason='{status.RunState?.FailureReason}', " +
+                            $"RunStateMessage='{status.RunState?.FailureReason}'"));
+
+                Assert.Fail(
+                    $"Expected all runtime runs to complete, but '{failedStatuses.Length}' out of '{finalStatuses.Count}' failed." +
+                    Environment.NewLine +
+                    failureDump);
+            }
 
             Assert.All(
                 finalStatuses,

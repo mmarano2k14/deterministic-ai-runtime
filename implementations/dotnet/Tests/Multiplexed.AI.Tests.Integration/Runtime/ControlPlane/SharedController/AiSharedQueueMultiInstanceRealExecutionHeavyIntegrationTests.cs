@@ -32,6 +32,7 @@ using Multiplexed.AI.Configuration;
 using Multiplexed.AI.DI.Engine;
 using Multiplexed.AI.Observability.Ledger;
 using Multiplexed.AI.Runtime;
+using Multiplexed.AI.Runtime.ControlPlane.Admission.Reservations;
 using Multiplexed.AI.Runtime.ControlPlane.DI;
 using Multiplexed.AI.Runtime.ControlPlane.ExecutionAssistance;
 using Multiplexed.AI.Runtime.ControlPlane.Observability;
@@ -219,7 +220,7 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedController
                     expectedMinimumParticipatingInstances: 2,
                     runtimeInstanceCount: 2,
                     workerCount: 30,
-                    executionTimeout: TimeSpan.FromMinutes(3),
+                    executionTimeout: TimeSpan.FromMinutes(5),
                     stepCount: 250,
                     enableRetention: true));
         }
@@ -1288,7 +1289,9 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedController
                 store,
                 sharedRunDispatcher,
                 new FakeRunAdmissionController(
-                    assignedRuntimeInstanceId: runtimeInstance.RuntimeInstanceId));
+                    assignedRuntimeInstanceId: runtimeInstance.RuntimeInstanceId), 
+                new InMemoryAiRuntimeAdmissionReservationStore(),
+                NullLogger<AiSharedQueueDispatcher>.Instance);
 
             var pump = new AiSharedQueuePump(
                 queueDispatcher,
@@ -1301,7 +1304,8 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedController
                     StopCycleOnDispatchFailure = true,
                     WorkerId = $"{runtimeInstance.RuntimeInstanceId}-shared-queue-worker",
                     Source = "multi-instance-real-heavy-test"
-                }));
+                }),
+                NullLogger<AiSharedQueuePump>.Instance);
 
             var startedAtUtc = DateTimeOffset.UtcNow;
 

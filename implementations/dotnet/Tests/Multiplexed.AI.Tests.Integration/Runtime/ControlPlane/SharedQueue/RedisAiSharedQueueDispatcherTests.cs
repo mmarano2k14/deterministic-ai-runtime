@@ -1,4 +1,5 @@
-﻿using Microsoft.Extensions.Options;
+﻿using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Dispatch;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Store;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue;
@@ -7,6 +8,7 @@ using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Queue;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Redis;
 using Multiplexed.Abstractions.AI.Execution.Instance.Worker;
 using Multiplexed.Abstractions.AI.Runtime.Execution.Instance.Worker;
+using Multiplexed.AI.Runtime.ControlPlane.Admission.Reservations;
 using Multiplexed.AI.Runtime.ControlPlane.SharedController.Store;
 using Multiplexed.AI.Runtime.ControlPlane.SharedQueue;
 using Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis;
@@ -86,7 +88,9 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedQueue
                 queue,
                 store,
                 runDispatcher,
-                admissionController);
+                admissionController, 
+                new InMemoryAiRuntimeAdmissionReservationStore(),
+                NullLogger<AiSharedQueueDispatcher>.Instance);
 
             var result = await dispatcher.DispatchNextAsync(new AiSharedQueueDispatchRequest
             {
@@ -143,7 +147,9 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedQueue
                 CreateQueue(),
                 CreateRunStore(),
                 new FakeSharedRunDispatcher(),
-                new FakeRunAdmissionController());
+                new FakeRunAdmissionController(),
+                new InMemoryAiRuntimeAdmissionReservationStore(),
+                NullLogger<AiSharedQueueDispatcher>.Instance);
 
             var result = await dispatcher.DispatchNextAsync(new AiSharedQueueDispatchRequest
             {
@@ -168,7 +174,9 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedQueue
                 queue,
                 store,
                 new FakeSharedRunDispatcher(), 
-                new FakeRunAdmissionController());
+                new FakeRunAdmissionController(), 
+                new InMemoryAiRuntimeAdmissionReservationStore(), 
+                NullLogger<AiSharedQueueDispatcher>.Instance);
 
             var result = await dispatcher.DispatchNextAsync(new AiSharedQueueDispatchRequest
             {
@@ -218,7 +226,9 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedQueue
                 queue,
                 store,
                 runDispatcher,
-                new FakeRunAdmissionController());
+                new FakeRunAdmissionController(),
+                new InMemoryAiRuntimeAdmissionReservationStore(),
+                NullLogger<AiSharedQueueDispatcher>.Instance);
 
             var result = await dispatcher.DispatchNextAsync(new AiSharedQueueDispatchRequest
             {
@@ -278,7 +288,9 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedQueue
                              CompletedAtUtc = DateTimeOffset.UtcNow
                          }),
                      new FakeRunAdmissionController(
-                         assignedRuntimeInstanceId: $"runtime-{index}"));
+                         assignedRuntimeInstanceId: $"runtime-{index}"), 
+                     new InMemoryAiRuntimeAdmissionReservationStore(),
+                     NullLogger<AiSharedQueueDispatcher>.Instance);
 
                     return dispatcher.DispatchNextAsync(new AiSharedQueueDispatchRequest
                     {
