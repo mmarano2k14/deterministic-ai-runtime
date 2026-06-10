@@ -83,6 +83,11 @@ namespace Multiplexed.AI.Configuration
         /// 
         public AiRuntimeInstanceWorkerOptions RuntimeInstanceWorker { get; set; } = new();
 
+        /// <summary>
+        /// Gets or sets the control-plane identity and discovery options used to isolate shared runtime state.
+        /// </summary>
+        public AiControlPlaneOptions ControlPlane { get; set; } = new();
+
 
     }
 }

@@ -16,6 +16,7 @@ using Multiplexed.AI.McpServer.Host.Configuration;
 using Multiplexed.AI.Runtime;
 using Multiplexed.AI.Runtime.ControlPlane.Admission.Reservations;
 using Multiplexed.AI.Runtime.ControlPlane.DI;
+using Multiplexed.AI.Runtime.ControlPlane.Discovery;
 using Multiplexed.AI.Runtime.ControlPlane.SharedController.Dispatch;
 using Multiplexed.AI.Runtime.Execution.Instance.Worker;
 using Multiplexed.Sample.External.Plugins.Steps.Steps;
@@ -96,6 +97,10 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
                 .GetSection("AiEngine")
                 .Bind(aiEngineOptions);
 
+            ApplyControlPlaneDiscoveryDefaults(
+                aiEngineOptions,
+                hostOptions);
+
             LogEffectiveHostConfiguration(
                 configuration,
                 hostOptions,
@@ -114,6 +119,8 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
             LogHostedServiceRegistrations(
                 services,
                 "[SERVICE REGISTRATION][AFTER AiRuntimeServiceRegistration.Register]");
+
+            
 
             switch (hostOptions.Mode)
             {
@@ -212,6 +219,9 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
 
             services.AddAiMcpServer();
 
+            services.AddAiControlPlaneDiscoveryCore();
+            services.AddAiControlPlaneDiscoveryPublisher();
+
             ConfigureSharedQueueBackgroundService(
                 services,
                 configuration,
@@ -272,6 +282,9 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
             AddRedisControlPlaneStoresIfAvailable(
                 services,
                 configuration);
+
+            services.AddAiControlPlaneDiscoveryCore();
+            services.AddAiControlPlaneDiscoveryPublisher();
 
             services.RemoveAll<IAiSharedRunDispatcher>();
             services.AddSingleton<IAiSharedRunDispatcher, RemoteAiSharedRunDispatcher>();
@@ -373,6 +386,9 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
                 services,
                 configuration);
 
+            services.AddAiControlPlaneDiscoveryCore();
+            services.AddAiControlPlaneDiscoveryPublisher();
+
             LogHostedServiceRegistrations(
                 services,
                 "[CONTROL PLANE HTTP][AFTER AddRedisControlPlaneStoresIfAvailable]");
@@ -468,6 +484,8 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
                 ?? new AiLocalRuntimeInstancePoolOptions();
 
             services.AddAiControlPlane();
+
+            services.AddAiControlPlaneDiscoveryCore();
 
             LogHostedServiceRegistrations(
                 services,
@@ -783,6 +801,45 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
 
             options.EnableGlobalQueueFallback = true;
             options.RejectWhenNoCapacity = false;
+        }
+
+        /// <summary>
+        /// Applies MCP host mode defaults to control-plane discovery options.
+        /// </summary>
+        /// <param name="aiEngineOptions">The AI engine options.</param>
+        /// <param name="hostOptions">The MCP host options.</param>
+        private static void ApplyControlPlaneDiscoveryDefaults(
+            AiEngineOptions aiEngineOptions,
+            AiMcpHostOptions hostOptions)
+        {
+            ArgumentNullException.ThrowIfNull(aiEngineOptions);
+            ArgumentNullException.ThrowIfNull(hostOptions);
+
+            aiEngineOptions.ControlPlane.RedisDiscoveryKey =
+                string.IsNullOrWhiteSpace(aiEngineOptions.ControlPlane.RedisDiscoveryKey)
+                    ? AiControlPlaneOptions.DefaultRedisDiscoveryKey
+                    : aiEngineOptions.ControlPlane.RedisDiscoveryKey;
+
+            switch (hostOptions.Mode)
+            {
+                case AiMcpHostMode.ControlPlaneOnly:
+                case AiMcpHostMode.ControlPlaneWithLocalRuntimeInstances:
+                case AiMcpHostMode.ControlPlaneWithHttpRuntimeInstances:
+                    aiEngineOptions.ControlPlane.EnableDiscovery = true;
+                    aiEngineOptions.ControlPlane.PublishDiscovery = true;
+                    aiEngineOptions.ControlPlane.RequireDiscovery = false;
+                    break;
+
+                case AiMcpHostMode.RuntimeInstanceOnly:
+                    aiEngineOptions.ControlPlane.EnableDiscovery = true;
+                    aiEngineOptions.ControlPlane.PublishDiscovery = false;
+                    aiEngineOptions.ControlPlane.RequireDiscovery = true;
+                    break;
+
+                default:
+                    throw new InvalidOperationException(
+                        $"Unsupported MCP host mode '{hostOptions.Mode}'.");
+            }
         }
     }
 }

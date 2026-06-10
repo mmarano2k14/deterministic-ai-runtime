@@ -41,6 +41,11 @@
         public string? ControlPlaneHostId { get; init; }
 
         /// <summary>
+        /// Gets the logical control-plane identifier that owns this capacity descriptor.
+        /// </summary>
+        public string? ControlPlaneId { get; init; }
+
+        /// <summary>
         /// Optional host name where the runtime instance is running.
         /// </summary>
         public string? HostName { get; init; }

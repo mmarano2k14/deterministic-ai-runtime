@@ -147,5 +147,10 @@
         /// Gets the control-plane host identity that owns or manages this runtime instance.
         /// </summary>
         public string? ControlPlaneHostId { get; init; }
+
+        /// <summary>
+        /// Gets the logical control-plane identifier that owns this capacity descriptor.
+        /// </summary>
+        public string? ControlPlaneId { get; init; }
     }
 }
