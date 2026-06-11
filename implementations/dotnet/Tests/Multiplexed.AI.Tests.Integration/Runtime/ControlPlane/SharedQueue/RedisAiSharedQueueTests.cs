@@ -4,6 +4,7 @@ using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Claiming;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Queue;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Redis;
 using Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis;
+using Multiplexed.AI.Tests.Fixtures;
 using StackExchange.Redis;
 
 namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedQueue
@@ -445,7 +446,8 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedQueue
                 {
                     KeyPrefix = _keyPrefix,
                     ListScanLimit = 100
-                }));
+                }), 
+                new StaticAiControlPlaneIdResolver("test-control-plane"));
         }
 
         private static AiSharedQueueItem CreateItem(

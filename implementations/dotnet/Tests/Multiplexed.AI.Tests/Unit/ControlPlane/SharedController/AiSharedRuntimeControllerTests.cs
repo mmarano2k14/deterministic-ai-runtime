@@ -15,6 +15,7 @@ using Multiplexed.AI.Runtime.ControlPlane.Observability;
 using Multiplexed.AI.Runtime.ControlPlane.SharedController;
 using Multiplexed.AI.Runtime.ControlPlane.SharedController.Store;
 using Multiplexed.AI.Runtime.ControlPlane.SharedQueue;
+using Multiplexed.AI.Tests.Fixtures;
 
 namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController
 {
@@ -189,6 +190,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController
                 sharedQueue,
                 new FakeSharedRunDispatcher(),
                 new NoopAiRuntimeScaleOutRequestPublisher(),
+                new StaticAiControlPlaneIdResolver("test-control-plane"),
                 Options.Create(new AiSharedRuntimeControllerOptions()),
                 new NoopAiControlPlaneObserver());
 
@@ -565,6 +567,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController
                 new InMemoryAiSharedQueue(),
                 new FakeSharedRunDispatcher(),
                 new NoopAiRuntimeScaleOutRequestPublisher(),
+                new StaticAiControlPlaneIdResolver("test-control-plane"),
                 Options.Create(new AiSharedRuntimeControllerOptions()),
                 observer);
 
@@ -605,6 +608,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController
                 new InMemoryAiSharedQueue(),
                 dispatcher ?? new FakeSharedRunDispatcher(),
                 scaleOutPublisher ?? new NoopAiRuntimeScaleOutRequestPublisher(),
+                new StaticAiControlPlaneIdResolver("test-control-plane"),
                 Options.Create(options ?? new AiSharedRuntimeControllerOptions()),
                 new NoopAiControlPlaneObserver());
         }

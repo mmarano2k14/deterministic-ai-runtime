@@ -1,5 +1,6 @@
 ﻿using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.ControlPlane.Admission.Reservations;
+using Multiplexed.Abstractions.AI.ControlPlane.Discovery;
 using StackExchange.Redis;
 using System.Globalization;
 
@@ -15,7 +16,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission.Reservations
     ///   selecting the same runtime instance before heartbeat/capacity snapshots catch up.
     ///
     /// DESIGN:
-    /// - One Redis ZSET key is used per runtime instance.
+    /// - One Redis ZSET key is used per runtime instance and per logical control-plane.
     /// - Each reservation is stored as a unique GUID-based ZSET member.
     /// - The ZSET score is the reservation expiration timestamp in Unix milliseconds.
     /// - Lua scripts are loaded into Redis and executed by SHA using EVALSHA.
@@ -26,10 +27,14 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission.Reservations
     /// - This implementation does not send Lua script text on each operation.
     /// - Scripts are loaded once and then executed by SHA.
     /// - If Redis evicts scripts and returns NOSCRIPT, scripts are reloaded and retried once.
+    /// - Reservation keys are scoped by logical control-plane identifier.
     /// </remarks>
     public sealed class RedisAiRuntimeAdmissionReservationStore :
         IAiRuntimeAdmissionReservationStore
     {
+        private const string ControlPlaneKeySegment =
+            "control-plane";
+
         private const string ReservationKeySegment =
             "runtime-admission-reservations";
 
@@ -151,6 +156,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission.Reservations
         private readonly IConnectionMultiplexer redis;
         private readonly IDatabase database;
         private readonly AiRuntimeAdmissionReservationRedisOptions options;
+        private readonly IAiControlPlaneIdResolver controlPlaneIdResolver;
         private readonly SemaphoreSlim scriptLoadLock = new(1, 1);
 
         private volatile byte[]? reserveScriptSha;
@@ -162,12 +168,15 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission.Reservations
         /// </summary>
         /// <param name="redis">The Redis connection multiplexer.</param>
         /// <param name="options">The Redis admission reservation options.</param>
+        /// <param name="controlPlaneIdResolver">The control-plane identifier resolver.</param>
         public RedisAiRuntimeAdmissionReservationStore(
             IConnectionMultiplexer redis,
-            IOptions<AiRuntimeAdmissionReservationRedisOptions> options)
+            IOptions<AiRuntimeAdmissionReservationRedisOptions> options,
+            IAiControlPlaneIdResolver controlPlaneIdResolver)
         {
             ArgumentNullException.ThrowIfNull(redis);
             ArgumentNullException.ThrowIfNull(options);
+            ArgumentNullException.ThrowIfNull(controlPlaneIdResolver);
 
             this.redis =
                 redis;
@@ -177,6 +186,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission.Reservations
 
             this.options =
                 options.Value ?? throw new ArgumentNullException(nameof(options));
+
+            this.controlPlaneIdResolver =
+                controlPlaneIdResolver;
         }
 
         /// <inheritdoc />
@@ -192,6 +204,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission.Reservations
 
             await EnsureScriptsLoadedAsync(cancellationToken)
                 .ConfigureAwait(false);
+
+            var controlPlaneId =
+                await ResolveControlPlaneIdAsync(cancellationToken)
+                    .ConfigureAwait(false);
 
             var now =
                 DateTimeOffset.UtcNow;
@@ -217,7 +233,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission.Reservations
             for (var index = 0; index < runCount; index++)
             {
                 values[4 + index] =
-                    CreateReservationMember(runtimeInstanceId);
+                    CreateReservationMember(
+                        controlPlaneId,
+                        runtimeInstanceId);
             }
 
             await EvaluateShaWithNoScriptRetryAsync(
@@ -225,7 +243,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission.Reservations
                     ReserveScript,
                     new RedisKey[]
                     {
-                        GetReservationKey(runtimeInstanceId)
+                        GetReservationKey(
+                            controlPlaneId,
+                            runtimeInstanceId)
                     },
                     values,
                     cancellationToken)
@@ -246,6 +266,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission.Reservations
             await EnsureScriptsLoadedAsync(cancellationToken)
                 .ConfigureAwait(false);
 
+            var controlPlaneId =
+                await ResolveControlPlaneIdAsync(cancellationToken)
+                    .ConfigureAwait(false);
+
             var now =
                 DateTimeOffset.UtcNow;
 
@@ -254,7 +278,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission.Reservations
                     ReleaseScript,
                     new RedisKey[]
                     {
-                        GetReservationKey(runtimeInstanceId)
+                        GetReservationKey(
+                            controlPlaneId,
+                            runtimeInstanceId)
                     },
                     new RedisValue[]
                     {
@@ -278,6 +304,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission.Reservations
             await EnsureScriptsLoadedAsync(cancellationToken)
                 .ConfigureAwait(false);
 
+            var controlPlaneId =
+                await ResolveControlPlaneIdAsync(cancellationToken)
+                    .ConfigureAwait(false);
+
             var now =
                 DateTimeOffset.UtcNow;
 
@@ -287,7 +317,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission.Reservations
                         CountScript,
                         new RedisKey[]
                         {
-                            GetReservationKey(runtimeInstanceId)
+                            GetReservationKey(
+                                controlPlaneId,
+                                runtimeInstanceId)
                         },
                         new RedisValue[]
                         {
@@ -460,10 +492,50 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission.Reservations
             return redis.GetServer(endpoints[0]);
         }
 
+        /// <summary>
+        /// Resolves the logical control-plane identifier used to scope admission reservation keys.
+        /// </summary>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <returns>The resolved logical control-plane identifier.</returns>
+        private async Task<string> ResolveControlPlaneIdAsync(
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var resolvedControlPlaneId =
+                await controlPlaneIdResolver
+                    .ResolveAsync(cancellationToken)
+                    .ConfigureAwait(false);
+
+            if (string.IsNullOrWhiteSpace(resolvedControlPlaneId))
+            {
+                throw new InvalidOperationException(
+                    "The resolved control-plane identifier cannot be null or empty.");
+            }
+
+            return resolvedControlPlaneId;
+        }
+
+        /// <summary>
+        /// Builds the Redis reservation key for a runtime instance inside one logical control-plane.
+        /// </summary>
+        /// <param name="controlPlaneId">The logical control-plane identifier.</param>
+        /// <param name="runtimeInstanceId">The runtime instance identifier.</param>
+        /// <returns>The Redis reservation key.</returns>
         private RedisKey GetReservationKey(
+            string controlPlaneId,
             string runtimeInstanceId)
         {
-            return $"{NormalizeKeyPrefix(options.KeyPrefix)}:{ReservationKeySegment}:{runtimeInstanceId}";
+            return string.Concat(
+                NormalizeKeyPrefix(options.KeyPrefix),
+                ":",
+                ControlPlaneKeySegment,
+                ":",
+                NormalizeKeySegment(controlPlaneId),
+                ":",
+                ReservationKeySegment,
+                ":",
+                NormalizeKeySegment(runtimeInstanceId));
         }
 
         private long GetKeyTtlMilliseconds()
@@ -491,11 +563,30 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission.Reservations
                 .TrimEnd(':');
         }
 
+        /// <summary>
+        /// Normalizes a value so it can be used as a stable Redis key segment.
+        /// </summary>
+        /// <param name="value">The value to normalize.</param>
+        /// <returns>The normalized Redis key segment.</returns>
+        private static string NormalizeKeySegment(
+            string value)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(value);
+
+            return value
+                .Trim()
+                .Replace(" ", "-", StringComparison.Ordinal)
+                .Replace("\\", "/", StringComparison.Ordinal);
+        }
+
         private static string CreateReservationMember(
+            string controlPlaneId,
             string runtimeInstanceId)
         {
             return string.Concat(
-                runtimeInstanceId,
+                NormalizeKeySegment(controlPlaneId),
+                ":",
+                NormalizeKeySegment(runtimeInstanceId),
                 ":",
                 Environment.MachineName,
                 ":",

@@ -20,6 +20,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
     /// This class is not a background service by itself.
     /// A hosted service, CLI command, API endpoint, MCP server, or runtime instance loop
     /// can call it.
+    ///
+    /// The pump does not build Redis keys directly.
+    /// Redis scoping is owned by Redis-backed stores.
+    /// The pump only transports metadata, including the logical control-plane identifier,
+    /// to the dispatcher.
     /// </remarks>
     public sealed class AiSharedQueuePump : IAiSharedQueuePump
     {
@@ -55,13 +60,16 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
             ArgumentException.ThrowIfNullOrWhiteSpace(request.PumpRuntimeInstanceId);
 
             var startedAtUtc = DateTimeOffset.UtcNow;
+            var controlPlaneId =
+                ResolveControlPlaneId(request.Metadata);
 
             if (!_options.Enabled)
             {
                 var disabledCompletedAtUtc = DateTimeOffset.UtcNow;
 
                 _logger.LogInformation(
-                    "Shared queue pump skipped because it is disabled. RuntimeInstanceId={RuntimeInstanceId}, WorkerId={WorkerId}, TenantId={TenantId}, PipelineKey={PipelineKey}",
+                    "Shared queue pump skipped because it is disabled. ControlPlaneId={ControlPlaneId}, RuntimeInstanceId={RuntimeInstanceId}, WorkerId={WorkerId}, TenantId={TenantId}, PipelineKey={PipelineKey}",
+                    controlPlaneId,
                     request.PumpRuntimeInstanceId,
                     request.PumpWorkerId,
                     request.TenantId,
@@ -85,7 +93,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
             var source = ResolveSource(request);
 
             _logger.LogInformation(
-                "Shared queue pump cycle started. RuntimeInstanceId={RuntimeInstanceId}, WorkerId={WorkerId}, TenantId={TenantId}, PipelineKey={PipelineKey}, MaxDispatches={MaxDispatches}, ClaimTtlMs={ClaimTtlMs}, Source={Source}, Reason={Reason}",
+                "Shared queue pump cycle started. ControlPlaneId={ControlPlaneId}, RuntimeInstanceId={RuntimeInstanceId}, WorkerId={WorkerId}, TenantId={TenantId}, PipelineKey={PipelineKey}, MaxDispatches={MaxDispatches}, ClaimTtlMs={ClaimTtlMs}, Source={Source}, Reason={Reason}",
+                controlPlaneId,
                 request.PumpRuntimeInstanceId,
                 workerId,
                 request.TenantId,
@@ -107,7 +116,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                     cancellationToken.ThrowIfCancellationRequested();
 
                     _logger.LogDebug(
-                        "Shared queue pump dispatch attempt started. RuntimeInstanceId={RuntimeInstanceId}, WorkerId={WorkerId}, AttemptIndex={AttemptIndex}, MaxDispatches={MaxDispatches}, TenantId={TenantId}, PipelineKey={PipelineKey}",
+                        "Shared queue pump dispatch attempt started. ControlPlaneId={ControlPlaneId}, RuntimeInstanceId={RuntimeInstanceId}, WorkerId={WorkerId}, AttemptIndex={AttemptIndex}, MaxDispatches={MaxDispatches}, TenantId={TenantId}, PipelineKey={PipelineKey}",
+                        controlPlaneId,
                         request.PumpRuntimeInstanceId,
                         workerId,
                         index + 1,
@@ -140,7 +150,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                         stoppedBecauseNoItemAvailable = true;
 
                         _logger.LogDebug(
-                            "Shared queue pump dispatch attempt found no item. RuntimeInstanceId={RuntimeInstanceId}, WorkerId={WorkerId}, AttemptIndex={AttemptIndex}, TenantId={TenantId}, PipelineKey={PipelineKey}, StopCycleWhenNoItemAvailable={StopCycleWhenNoItemAvailable}",
+                            "Shared queue pump dispatch attempt found no item. ControlPlaneId={ControlPlaneId}, RuntimeInstanceId={RuntimeInstanceId}, WorkerId={WorkerId}, AttemptIndex={AttemptIndex}, TenantId={TenantId}, PipelineKey={PipelineKey}, StopCycleWhenNoItemAvailable={StopCycleWhenNoItemAvailable}",
+                            controlPlaneId,
                             request.PumpRuntimeInstanceId,
                             workerId,
                             index + 1,
@@ -161,7 +172,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                         successfulDispatches++;
 
                         _logger.LogInformation(
-                            "Shared queue pump dispatch attempt succeeded. RuntimeInstanceId={RuntimeInstanceId}, WorkerId={WorkerId}, AttemptIndex={AttemptIndex}, SuccessfulDispatchCount={SuccessfulDispatchCount}, FailedDispatchCount={FailedDispatchCount}, TenantId={TenantId}, PipelineKey={PipelineKey}, Diagnostics={Diagnostics}",
+                            "Shared queue pump dispatch attempt succeeded. ControlPlaneId={ControlPlaneId}, RuntimeInstanceId={RuntimeInstanceId}, WorkerId={WorkerId}, AttemptIndex={AttemptIndex}, SuccessfulDispatchCount={SuccessfulDispatchCount}, FailedDispatchCount={FailedDispatchCount}, TenantId={TenantId}, PipelineKey={PipelineKey}, Diagnostics={Diagnostics}",
+                            controlPlaneId,
                             request.PumpRuntimeInstanceId,
                             workerId,
                             index + 1,
@@ -177,7 +189,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                     failedDispatches++;
 
                     _logger.LogWarning(
-                        "Shared queue pump dispatch attempt failed. RuntimeInstanceId={RuntimeInstanceId}, WorkerId={WorkerId}, AttemptIndex={AttemptIndex}, SuccessfulDispatchCount={SuccessfulDispatchCount}, FailedDispatchCount={FailedDispatchCount}, TenantId={TenantId}, PipelineKey={PipelineKey}, FailureReason={FailureReason}, Diagnostics={Diagnostics}, StopCycleOnDispatchFailure={StopCycleOnDispatchFailure}",
+                        "Shared queue pump dispatch attempt failed. ControlPlaneId={ControlPlaneId}, RuntimeInstanceId={RuntimeInstanceId}, WorkerId={WorkerId}, AttemptIndex={AttemptIndex}, SuccessfulDispatchCount={SuccessfulDispatchCount}, FailedDispatchCount={FailedDispatchCount}, TenantId={TenantId}, PipelineKey={PipelineKey}, FailureReason={FailureReason}, Diagnostics={Diagnostics}, StopCycleOnDispatchFailure={StopCycleOnDispatchFailure}",
+                        controlPlaneId,
                         request.PumpRuntimeInstanceId,
                         workerId,
                         index + 1,
@@ -199,7 +212,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                 var durationMs = CalculateDurationMs(startedAtUtc, completedAtUtc);
 
                 _logger.LogInformation(
-                    "Shared queue pump cycle completed. Success=True, RuntimeInstanceId={RuntimeInstanceId}, WorkerId={WorkerId}, TenantId={TenantId}, PipelineKey={PipelineKey}, AttemptedDispatchCount={AttemptedDispatchCount}, SuccessfulDispatchCount={SuccessfulDispatchCount}, FailedDispatchCount={FailedDispatchCount}, StoppedBecauseNoItemAvailable={StoppedBecauseNoItemAvailable}, DurationMs={DurationMs}, Diagnostics={Diagnostics}",
+                    "Shared queue pump cycle completed. Success=True, ControlPlaneId={ControlPlaneId}, RuntimeInstanceId={RuntimeInstanceId}, WorkerId={WorkerId}, TenantId={TenantId}, PipelineKey={PipelineKey}, AttemptedDispatchCount={AttemptedDispatchCount}, SuccessfulDispatchCount={SuccessfulDispatchCount}, FailedDispatchCount={FailedDispatchCount}, StoppedBecauseNoItemAvailable={StoppedBecauseNoItemAvailable}, DurationMs={DurationMs}, Diagnostics={Diagnostics}",
+                    controlPlaneId,
                     request.PumpRuntimeInstanceId,
                     workerId,
                     request.TenantId,
@@ -233,7 +247,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
 
                 _logger.LogError(
                     exception,
-                    "Shared queue pump cycle failed. RuntimeInstanceId={RuntimeInstanceId}, WorkerId={WorkerId}, TenantId={TenantId}, PipelineKey={PipelineKey}, AttemptedDispatchCount={AttemptedDispatchCount}, SuccessfulDispatchCount={SuccessfulDispatchCount}, FailedDispatchCount={FailedDispatchCount}, StoppedBecauseNoItemAvailable={StoppedBecauseNoItemAvailable}, DurationMs={DurationMs}, FailureReason={FailureReason}",
+                    "Shared queue pump cycle failed. ControlPlaneId={ControlPlaneId}, RuntimeInstanceId={RuntimeInstanceId}, WorkerId={WorkerId}, TenantId={TenantId}, PipelineKey={PipelineKey}, AttemptedDispatchCount={AttemptedDispatchCount}, SuccessfulDispatchCount={SuccessfulDispatchCount}, FailedDispatchCount={FailedDispatchCount}, StoppedBecauseNoItemAvailable={StoppedBecauseNoItemAvailable}, DurationMs={DurationMs}, FailureReason={FailureReason}",
+                    controlPlaneId,
                     request.PumpRuntimeInstanceId,
                     workerId,
                     request.TenantId,
@@ -266,6 +281,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
         /// <summary>
         /// Resolves the maximum number of dispatch attempts for the pump cycle.
         /// </summary>
+        /// <param name="request">The pump request.</param>
+        /// <returns>The maximum number of dispatch attempts.</returns>
         private int ResolveMaxDispatches(
             AiSharedQueuePumpRequest request)
         {
@@ -277,6 +294,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
         /// <summary>
         /// Resolves the claim TTL for queue item claims.
         /// </summary>
+        /// <param name="request">The pump request.</param>
+        /// <returns>The claim TTL.</returns>
         private TimeSpan ResolveClaimTtl(
             AiSharedQueuePumpRequest request)
         {
@@ -290,6 +309,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
         /// <summary>
         /// Resolves the worker id used for the pump cycle.
         /// </summary>
+        /// <param name="request">The pump request.</param>
+        /// <returns>The worker id.</returns>
         private string? ResolveWorkerId(
             AiSharedQueuePumpRequest request)
         {
@@ -301,6 +322,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
         /// <summary>
         /// Resolves the source label used for the pump cycle.
         /// </summary>
+        /// <param name="request">The pump request.</param>
+        /// <returns>The source label.</returns>
         private string ResolveSource(
             AiSharedQueuePumpRequest request)
         {
@@ -310,8 +333,28 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
         }
 
         /// <summary>
+        /// Resolves the logical control-plane identifier from pump metadata.
+        /// </summary>
+        /// <param name="metadata">The pump metadata.</param>
+        /// <returns>The logical control-plane identifier, or an empty string when unavailable.</returns>
+        private static string ResolveControlPlaneId(
+            IReadOnlyDictionary<string, string> metadata)
+        {
+            if (metadata.TryGetValue("controlPlaneId", out var controlPlaneId) &&
+                !string.IsNullOrWhiteSpace(controlPlaneId))
+            {
+                return controlPlaneId;
+            }
+
+            return string.Empty;
+        }
+
+        /// <summary>
         /// Calculates duration in milliseconds.
         /// </summary>
+        /// <param name="startedAtUtc">The start timestamp.</param>
+        /// <param name="completedAtUtc">The completion timestamp.</param>
+        /// <returns>The duration in milliseconds.</returns>
         private static long CalculateDurationMs(
             DateTimeOffset startedAtUtc,
             DateTimeOffset completedAtUtc)
@@ -322,6 +365,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
         /// <summary>
         /// Builds compact diagnostics from dispatch results.
         /// </summary>
+        /// <param name="dispatchResults">The dispatch results.</param>
+        /// <returns>The compact diagnostics.</returns>
         private static IReadOnlyList<string> BuildDiagnostics(
             IReadOnlyList<AiSharedQueueDispatchResult> dispatchResults)
         {

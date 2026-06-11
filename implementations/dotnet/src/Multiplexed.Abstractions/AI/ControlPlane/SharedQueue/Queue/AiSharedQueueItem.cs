@@ -17,6 +17,11 @@
         public required string SharedRunId { get; init; }
 
         /// <summary>
+        /// Gets the logical control-plane identifier that owns this shared queue item.
+        /// </summary>
+        public string? ControlPlaneId { get; init; }
+
+        /// <summary>
         /// Current shared queue item status.
         /// </summary>
         public required AiSharedQueueItemStatus Status { get; init; }

@@ -4,6 +4,7 @@ using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Background;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Pump;
 using Multiplexed.AI.Runtime.ControlPlane.SharedQueue;
+using Multiplexed.AI.Tests.Fixtures;
 
 namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
 {
@@ -22,6 +23,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
                     RuntimeInstanceId = "runtime-1",
                     WorkerId = "worker-1"
                 }),
+                new StaticAiControlPlaneIdResolver("test-control-plane"),
                 NullLogger<AiSharedQueueBackgroundService>.Instance);
 
             await service.StartAsync(CancellationToken.None);
@@ -49,6 +51,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
                     ActiveDelay = TimeSpan.FromMilliseconds(1),
                     ErrorDelay = TimeSpan.FromMilliseconds(1)
                 }),
+                new StaticAiControlPlaneIdResolver("test-control-plane"),
                 NullLogger<AiSharedQueueBackgroundService>.Instance);
 
             await service.StartAsync(cts.Token);
@@ -94,6 +97,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
                     ActiveDelay = TimeSpan.FromMilliseconds(1),
                     ErrorDelay = TimeSpan.FromMilliseconds(1)
                 }),
+                new StaticAiControlPlaneIdResolver("test-control-plane"),
                 NullLogger<AiSharedQueueBackgroundService>.Instance);
 
             await service.StartAsync(cts.Token);
@@ -134,6 +138,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
                     ActiveDelay = TimeSpan.FromMilliseconds(1),
                     ErrorDelay = TimeSpan.FromMilliseconds(1)
                 }),
+                new StaticAiControlPlaneIdResolver("test-control-plane"),
                 NullLogger<AiSharedQueueBackgroundService>.Instance);
 
             await service.StartAsync(cts.Token);
@@ -178,6 +183,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
                     ActiveDelay = TimeSpan.FromMilliseconds(1),
                     ErrorDelay = TimeSpan.FromMilliseconds(1)
                 }),
+                new StaticAiControlPlaneIdResolver("test-control-plane"),   
                 NullLogger<AiSharedQueueBackgroundService>.Instance);
 
             await service.StartAsync(cts.Token);

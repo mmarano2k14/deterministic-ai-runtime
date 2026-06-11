@@ -1,6 +1,7 @@
 ﻿using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.ControlPlane.Admission.Reservations;
 using Multiplexed.AI.Runtime.ControlPlane.Admission.Reservations;
+using Multiplexed.AI.Tests.Fixtures;
 using StackExchange.Redis;
 using Xunit;
 
@@ -38,7 +39,8 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.Admission
                             KeyPrefix = keyPrefix,
                             ReservationTtl = TimeSpan.FromMilliseconds(500),
                             KeyTtl = TimeSpan.FromSeconds(5)
-                        }));
+                        }), 
+                    new StaticAiControlPlaneIdResolver("test-control-plane"));
         }
 
         public async Task DisposeAsync()

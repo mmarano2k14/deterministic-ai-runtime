@@ -120,8 +120,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                 }
 
                 _logger.LogInformation(
-                    "Shared queue item claimed. SharedRunId={SharedRunId}, ClaimToken={ClaimToken}, PumpRuntimeInstanceId={PumpRuntimeInstanceId}, WorkerId={WorkerId}, TenantId={TenantId}, PipelineKey={PipelineKey}",
+                    "Shared queue item claimed. SharedRunId={SharedRunId}, ControlPlaneId={ControlPlaneId}, ClaimToken={ClaimToken}, PumpRuntimeInstanceId={PumpRuntimeInstanceId}, WorkerId={WorkerId}, TenantId={TenantId}, PipelineKey={PipelineKey}",
                     queueItem.SharedRunId,
+                    queueItem.ControlPlaneId,
                     queueItem.ClaimToken,
                     request.RuntimeInstanceId,
                     request.WorkerId,
@@ -137,8 +138,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                 if (sharedRun is null)
                 {
                     _logger.LogWarning(
-                        "Shared run record was not found after queue claim. SharedRunId={SharedRunId}, ClaimToken={ClaimToken}, PumpRuntimeInstanceId={PumpRuntimeInstanceId}",
+                        "Shared run record was not found after queue claim. SharedRunId={SharedRunId}, ControlPlaneId={ControlPlaneId}, ClaimToken={ClaimToken}, PumpRuntimeInstanceId={PumpRuntimeInstanceId}",
                         queueItem.SharedRunId,
+                        queueItem.ControlPlaneId,
                         queueItem.ClaimToken,
                         request.RuntimeInstanceId);
 
@@ -164,9 +166,25 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                     };
                 }
 
+                var controlPlaneId =
+                    ResolveControlPlaneId(
+                        queueItem,
+                        sharedRun);
+
+                var operationMetadata =
+                    MergeMetadata(
+                        sharedRun.Metadata,
+                        queueItem.Metadata,
+                        request.Metadata,
+                        new Dictionary<string, string>
+                        {
+                            ["controlPlaneId"] = controlPlaneId
+                        });
+
                 _logger.LogDebug(
-                    "Shared run record loaded. SharedRunId={SharedRunId}, TenantId={TenantId}, PipelineKey={PipelineKey}, AssignedRuntimeInstanceId={AssignedRuntimeInstanceId}, Status={Status}",
+                    "Shared run record loaded. SharedRunId={SharedRunId}, ControlPlaneId={ControlPlaneId}, TenantId={TenantId}, PipelineKey={PipelineKey}, AssignedRuntimeInstanceId={AssignedRuntimeInstanceId}, Status={Status}",
                     sharedRun.SharedRunId,
+                    controlPlaneId,
                     sharedRun.TenantId,
                     sharedRun.PipelineKey,
                     sharedRun.AssignedRuntimeInstanceId,
@@ -185,16 +203,15 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                             RequestedBy = request.RequestedBy,
                             Source = request.Source,
                             Reason = request.Reason ?? "Selecting runtime instance for shared queue dispatch.",
-                            Metadata = MergeMetadata(
-                                sharedRun.Metadata,
-                                request.Metadata)
+                            Metadata = operationMetadata
                         },
                         cancellationToken)
                     .ConfigureAwait(false);
 
                 _logger.LogInformation(
-                    "Shared queue admission decision received. SharedRunId={SharedRunId}, DecisionType={DecisionType}, AssignedRuntimeInstanceId={AssignedRuntimeInstanceId}, Reason={Reason}",
+                    "Shared queue admission decision received. SharedRunId={SharedRunId}, ControlPlaneId={ControlPlaneId}, DecisionType={DecisionType}, AssignedRuntimeInstanceId={AssignedRuntimeInstanceId}, Reason={Reason}",
                     sharedRun.SharedRunId,
+                    controlPlaneId,
                     admissionDecision.DecisionType,
                     admissionDecision.AssignedRuntimeInstanceId,
                     admissionDecision.Reason);
@@ -203,8 +220,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                     string.IsNullOrWhiteSpace(admissionDecision.AssignedRuntimeInstanceId))
                 {
                     _logger.LogWarning(
-                        "Shared queue dispatch could not assign runtime instance. SharedRunId={SharedRunId}, DecisionType={DecisionType}, Reason={Reason}",
+                        "Shared queue dispatch could not assign runtime instance. SharedRunId={SharedRunId}, ControlPlaneId={ControlPlaneId}, DecisionType={DecisionType}, Reason={Reason}",
                         sharedRun.SharedRunId,
+                        controlPlaneId,
                         admissionDecision.DecisionType,
                         admissionDecision.Reason);
 
@@ -239,8 +257,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                     admissionDecision.AssignedRuntimeInstanceId;
 
                 _logger.LogDebug(
-                    "Reserving temporary admission capacity. SharedRunId={SharedRunId}, RuntimeInstanceId={RuntimeInstanceId}, RunCount={RunCount}",
+                    "Reserving temporary admission capacity. SharedRunId={SharedRunId}, ControlPlaneId={ControlPlaneId}, RuntimeInstanceId={RuntimeInstanceId}, RunCount={RunCount}",
                     sharedRun.SharedRunId,
+                    controlPlaneId,
                     targetRuntimeInstanceId,
                     1);
 
@@ -258,16 +277,18 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                     sharedRun.SharedRunId;
 
                 _logger.LogInformation(
-                    "Temporary admission capacity reserved. SharedRunId={SharedRunId}, RuntimeInstanceId={RuntimeInstanceId}, RunCount={RunCount}",
+                    "Temporary admission capacity reserved. SharedRunId={SharedRunId}, ControlPlaneId={ControlPlaneId}, RuntimeInstanceId={RuntimeInstanceId}, RunCount={RunCount}",
                     sharedRun.SharedRunId,
+                    controlPlaneId,
                     targetRuntimeInstanceId,
                     1);
 
                 try
                 {
                     _logger.LogInformation(
-                        "Shared run dispatch to runtime instance started. SharedRunId={SharedRunId}, RuntimeInstanceId={RuntimeInstanceId}, ClaimToken={ClaimToken}",
+                        "Shared run dispatch to runtime instance started. SharedRunId={SharedRunId}, ControlPlaneId={ControlPlaneId}, RuntimeInstanceId={RuntimeInstanceId}, ClaimToken={ClaimToken}",
                         sharedRun.SharedRunId,
+                        controlPlaneId,
                         targetRuntimeInstanceId,
                         queueItem.ClaimToken);
 
@@ -283,16 +304,15 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                                 RequestedBy = request.RequestedBy,
                                 Source = request.Source,
                                 Reason = request.Reason ?? "Dispatching claimed shared queue item.",
-                                Metadata = MergeMetadata(
-                                    sharedRun.Metadata,
-                                    request.Metadata)
+                                Metadata = operationMetadata
                             },
                             cancellationToken)
                         .ConfigureAwait(false);
 
                     _logger.LogInformation(
-                        "Shared run dispatch result received. SharedRunId={SharedRunId}, RuntimeInstanceId={RuntimeInstanceId}, Success={Success}, LocalRunId={LocalRunId}, ExecutionId={ExecutionId}, FailureReason={FailureReason}",
+                        "Shared run dispatch result received. SharedRunId={SharedRunId}, ControlPlaneId={ControlPlaneId}, RuntimeInstanceId={RuntimeInstanceId}, Success={Success}, LocalRunId={LocalRunId}, ExecutionId={ExecutionId}, FailureReason={FailureReason}",
                         sharedRun.SharedRunId,
+                        controlPlaneId,
                         targetRuntimeInstanceId,
                         dispatchResult.Success,
                         dispatchResult.LocalRunId,
@@ -302,8 +322,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                     if (!dispatchResult.Success)
                     {
                         _logger.LogWarning(
-                            "Shared run dispatch failed. Requeuing shared queue item. SharedRunId={SharedRunId}, RuntimeInstanceId={RuntimeInstanceId}, FailureReason={FailureReason}",
+                            "Shared run dispatch failed. Requeuing shared queue item. SharedRunId={SharedRunId}, ControlPlaneId={ControlPlaneId}, RuntimeInstanceId={RuntimeInstanceId}, FailureReason={FailureReason}",
                             sharedRun.SharedRunId,
+                            controlPlaneId,
                             targetRuntimeInstanceId,
                             dispatchResult.FailureReason);
 
@@ -341,8 +362,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                         .ConfigureAwait(false);
 
                     _logger.LogDebug(
-                        "Shared queue item marked as dispatched. SharedRunId={SharedRunId}, RuntimeInstanceId={RuntimeInstanceId}, ClaimToken={ClaimToken}",
+                        "Shared queue item marked as dispatched. SharedRunId={SharedRunId}, ControlPlaneId={ControlPlaneId}, RuntimeInstanceId={RuntimeInstanceId}, ClaimToken={ClaimToken}",
                         queueItem.SharedRunId,
+                        controlPlaneId,
                         targetRuntimeInstanceId,
                         queueItem.ClaimToken);
 
@@ -357,8 +379,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                         .ConfigureAwait(false);
 
                     _logger.LogInformation(
-                        "Shared run record marked as dispatched. SharedRunId={SharedRunId}, RuntimeInstanceId={RuntimeInstanceId}, LocalRunId={LocalRunId}, ExecutionId={ExecutionId}",
+                        "Shared run record marked as dispatched. SharedRunId={SharedRunId}, ControlPlaneId={ControlPlaneId}, RuntimeInstanceId={RuntimeInstanceId}, LocalRunId={LocalRunId}, ExecutionId={ExecutionId}",
                         sharedRun.SharedRunId,
+                        controlPlaneId,
                         targetRuntimeInstanceId,
                         dispatchResult.LocalRunId,
                         dispatchResult.ExecutionId);
@@ -440,8 +463,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
             if (string.IsNullOrWhiteSpace(queueItem.ClaimToken))
             {
                 _logger.LogWarning(
-                    "Shared queue item could not be requeued because claim token is missing. SharedRunId={SharedRunId}, Reason={Reason}",
+                    "Shared queue item could not be requeued because claim token is missing. SharedRunId={SharedRunId}, ControlPlaneId={ControlPlaneId}, Reason={Reason}",
                     queueItem.SharedRunId,
+                    queueItem.ControlPlaneId,
                     reason);
 
                 return;
@@ -458,8 +482,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                     .ConfigureAwait(false);
 
                 _logger.LogDebug(
-                    "Shared queue item requeued. SharedRunId={SharedRunId}, ClaimToken={ClaimToken}, Reason={Reason}",
+                    "Shared queue item requeued. SharedRunId={SharedRunId}, ControlPlaneId={ControlPlaneId}, ClaimToken={ClaimToken}, Reason={Reason}",
                     queueItem.SharedRunId,
+                    queueItem.ControlPlaneId,
                     queueItem.ClaimToken,
                     reason);
             }
@@ -467,8 +492,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
             {
                 _logger.LogWarning(
                     exception,
-                    "Shared queue item requeue failed. SharedRunId={SharedRunId}, ClaimToken={ClaimToken}, Reason={Reason}",
+                    "Shared queue item requeue failed. SharedRunId={SharedRunId}, ControlPlaneId={ControlPlaneId}, ClaimToken={ClaimToken}, Reason={Reason}",
                     queueItem.SharedRunId,
+                    queueItem.ControlPlaneId,
                     queueItem.ClaimToken,
                     reason);
             }
@@ -524,19 +550,60 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
         }
 
         /// <summary>
+        /// Resolves the logical control-plane identifier from a queue item and its shared run.
+        /// </summary>
+        /// <param name="queueItem">The claimed shared queue item.</param>
+        /// <param name="sharedRun">The loaded shared run record.</param>
+        /// <returns>The resolved logical control-plane identifier.</returns>
+        private static string ResolveControlPlaneId(
+            AiSharedQueueItem queueItem,
+            AiSharedRunRecord sharedRun)
+        {
+            if (!string.IsNullOrWhiteSpace(queueItem.ControlPlaneId))
+            {
+                return queueItem.ControlPlaneId;
+            }
+
+            if (!string.IsNullOrWhiteSpace(sharedRun.ControlPlaneId))
+            {
+                return sharedRun.ControlPlaneId;
+            }
+
+            if (queueItem.Metadata.TryGetValue("controlPlaneId", out var queueControlPlaneId) &&
+                !string.IsNullOrWhiteSpace(queueControlPlaneId))
+            {
+                return queueControlPlaneId;
+            }
+
+            if (sharedRun.Metadata.TryGetValue("controlPlaneId", out var sharedRunControlPlaneId) &&
+                !string.IsNullOrWhiteSpace(sharedRunControlPlaneId))
+            {
+                return sharedRunControlPlaneId;
+            }
+
+            return string.Empty;
+        }
+
+        /// <summary>
         /// Merges metadata dictionaries.
         /// </summary>
+        /// <param name="sources">The metadata sources to merge.</param>
+        /// <returns>The merged metadata dictionary.</returns>
         private static IReadOnlyDictionary<string, string> MergeMetadata(
-            IReadOnlyDictionary<string, string> baseMetadata,
-            IReadOnlyDictionary<string, string> overrideMetadata)
+            params IReadOnlyDictionary<string, string>[] sources)
         {
             var merged = new Dictionary<string, string>(
-                baseMetadata,
                 StringComparer.Ordinal);
 
-            foreach (var pair in overrideMetadata)
+            foreach (var source in sources)
             {
-                merged[pair.Key] = pair.Value;
+                foreach (var pair in source)
+                {
+                    if (!string.IsNullOrWhiteSpace(pair.Key))
+                    {
+                        merged[pair.Key] = pair.Value;
+                    }
+                }
             }
 
             return merged;

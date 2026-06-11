@@ -1,6 +1,7 @@
 ﻿using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Multiplexed.Abstractions.AI.ControlPlane.Discovery;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Background;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Pump;
 
@@ -16,17 +17,20 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
     /// Responsibilities:
     /// - run periodic pump cycles
     /// - provide runtime instance identity / worker identity
+    /// - resolve and propagate the logical control-plane identifier
     /// - delay between cycles
     /// - apply simple error backoff
     ///
     /// It does not decide admission.
     /// It does not scale Kubernetes.
     /// It does not execute DAG steps directly.
+    /// It does not build Redis keys directly.
     /// </remarks>
     public sealed class AiSharedQueueBackgroundService : BackgroundService
     {
         private readonly IAiSharedQueuePump _pump;
         private readonly AiSharedQueueBackgroundServiceOptions _options;
+        private readonly IAiControlPlaneIdResolver _controlPlaneIdResolver;
         private readonly ILogger<AiSharedQueueBackgroundService> _logger;
 
         /// <summary>
@@ -34,14 +38,21 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
         /// </summary>
         /// <param name="pump">The shared queue pump.</param>
         /// <param name="options">The background service options.</param>
+        /// <param name="controlPlaneIdResolver">The control-plane identifier resolver.</param>
         /// <param name="logger">The logger.</param>
+        /// <exception cref="ArgumentNullException">
+        /// Thrown when <paramref name="pump"/>, <paramref name="options"/>,
+        /// <paramref name="controlPlaneIdResolver"/>, or <paramref name="logger"/> is null.
+        /// </exception>
         public AiSharedQueueBackgroundService(
             IAiSharedQueuePump pump,
             IOptions<AiSharedQueueBackgroundServiceOptions> options,
+            IAiControlPlaneIdResolver controlPlaneIdResolver,
             ILogger<AiSharedQueueBackgroundService> logger)
         {
             _pump = pump ?? throw new ArgumentNullException(nameof(pump));
             _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
+            _controlPlaneIdResolver = controlPlaneIdResolver ?? throw new ArgumentNullException(nameof(controlPlaneIdResolver));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
 
@@ -60,8 +71,21 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
             var runtimeInstanceId = ResolveRuntimeInstanceId();
             var workerId = ResolveWorkerId(runtimeInstanceId);
 
+            var controlPlaneId =
+                await ResolveControlPlaneIdAsync(stoppingToken)
+                    .ConfigureAwait(false);
+
+            var metadata =
+                MergeMetadata(
+                    _options.Metadata,
+                    new Dictionary<string, string>
+                    {
+                        ["controlPlaneId"] = controlPlaneId
+                    });
+
             _logger.LogInformation(
-                "AI shared queue background service started for RuntimeInstanceId={RuntimeInstanceId}, WorkerId={WorkerId}.",
+                "AI shared queue background service started for ControlPlaneId={ControlPlaneId}, RuntimeInstanceId={RuntimeInstanceId}, WorkerId={WorkerId}.",
+                controlPlaneId,
                 runtimeInstanceId,
                 workerId);
 
@@ -83,12 +107,14 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                                 RequestedBy = _options.RequestedBy,
                                 Source = _options.Source,
                                 Reason = "Shared queue background service pump cycle.",
-                                Metadata = _options.Metadata
+                                Metadata = metadata
                             },
                             stoppingToken)
                         .ConfigureAwait(false);
 
-                    LogPumpResult(result);
+                    LogPumpResult(
+                        result,
+                        controlPlaneId);
 
                     var delay = result.SuccessfulDispatchCount > 0
                         ? _options.ActiveDelay
@@ -107,7 +133,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                 {
                     _logger.LogError(
                         exception,
-                        "AI shared queue background service cycle failed.");
+                        "AI shared queue background service cycle failed. ControlPlaneId={ControlPlaneId}, RuntimeInstanceId={RuntimeInstanceId}, WorkerId={WorkerId}.",
+                        controlPlaneId,
+                        runtimeInstanceId,
+                        workerId);
 
                     await DelayAsync(
                             _options.ErrorDelay,
@@ -117,7 +146,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
             }
 
             _logger.LogInformation(
-                "AI shared queue background service stopped for RuntimeInstanceId={RuntimeInstanceId}, WorkerId={WorkerId}.",
+                "AI shared queue background service stopped for ControlPlaneId={ControlPlaneId}, RuntimeInstanceId={RuntimeInstanceId}, WorkerId={WorkerId}.",
+                controlPlaneId,
                 runtimeInstanceId,
                 workerId);
         }
@@ -126,13 +156,16 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
         /// Logs the result of one pump cycle.
         /// </summary>
         /// <param name="result">The pump result.</param>
+        /// <param name="controlPlaneId">The logical control-plane identifier.</param>
         private void LogPumpResult(
-            AiSharedQueuePumpResult result)
+            AiSharedQueuePumpResult result,
+            string controlPlaneId)
         {
             if (!result.Success)
             {
                 _logger.LogWarning(
-                    "AI shared queue pump cycle failed for RuntimeInstanceId={RuntimeInstanceId}. FailureReason={FailureReason}",
+                    "AI shared queue pump cycle failed for ControlPlaneId={ControlPlaneId}, RuntimeInstanceId={RuntimeInstanceId}. FailureReason={FailureReason}",
+                    controlPlaneId,
                     result.RuntimeInstanceId,
                     result.FailureReason);
 
@@ -143,7 +176,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                 result.FailedDispatchCount > 0)
             {
                 _logger.LogInformation(
-                    "AI shared queue pump cycle completed for RuntimeInstanceId={RuntimeInstanceId}. Attempted={Attempted}, Success={Success}, Failed={Failed}, NoItem={NoItem}.",
+                    "AI shared queue pump cycle completed for ControlPlaneId={ControlPlaneId}, RuntimeInstanceId={RuntimeInstanceId}. Attempted={Attempted}, Success={Success}, Failed={Failed}, NoItem={NoItem}.",
+                    controlPlaneId,
                     result.RuntimeInstanceId,
                     result.AttemptedDispatchCount,
                     result.SuccessfulDispatchCount,
@@ -153,9 +187,34 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
             else
             {
                 _logger.LogDebug(
-                    "AI shared queue pump cycle completed with no item for RuntimeInstanceId={RuntimeInstanceId}.",
+                    "AI shared queue pump cycle completed with no item for ControlPlaneId={ControlPlaneId}, RuntimeInstanceId={RuntimeInstanceId}.",
+                    controlPlaneId,
                     result.RuntimeInstanceId);
             }
+        }
+
+        /// <summary>
+        /// Resolves the logical control-plane identifier used by the shared queue background service.
+        /// </summary>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <returns>The resolved logical control-plane identifier.</returns>
+        private async Task<string> ResolveControlPlaneIdAsync(
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var controlPlaneId =
+                await _controlPlaneIdResolver
+                    .ResolveAsync(cancellationToken)
+                    .ConfigureAwait(false);
+
+            if (string.IsNullOrWhiteSpace(controlPlaneId))
+            {
+                throw new InvalidOperationException(
+                    "The resolved control-plane identifier cannot be null or empty.");
+            }
+
+            return controlPlaneId;
         }
 
         /// <summary>
@@ -186,6 +245,32 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
             }
 
             return $"{runtimeInstanceId}-shared-queue-worker";
+        }
+
+        /// <summary>
+        /// Merges metadata dictionaries into an immutable dictionary shape.
+        /// </summary>
+        /// <param name="sources">The metadata sources to merge.</param>
+        /// <returns>The merged metadata dictionary.</returns>
+        private static IReadOnlyDictionary<string, string> MergeMetadata(
+            params IReadOnlyDictionary<string, string>[] sources)
+        {
+            var result =
+                new Dictionary<string, string>(
+                    StringComparer.Ordinal);
+
+            foreach (var source in sources)
+            {
+                foreach (var item in source)
+                {
+                    if (!string.IsNullOrWhiteSpace(item.Key))
+                    {
+                        result[item.Key] = item.Value;
+                    }
+                }
+            }
+
+            return result;
         }
 
         /// <summary>

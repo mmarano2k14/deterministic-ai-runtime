@@ -4,6 +4,7 @@ using Multiplexed.Abstractions.AI.Execution.Instance.Worker;
 using Multiplexed.Abstractions.AI.Runtime.Execution.Instance.Worker;
 using Multiplexed.AI.Runtime.ControlPlane.SharedController;
 using Multiplexed.AI.Runtime.ControlPlane.SharedController.Store;
+using Multiplexed.AI.Tests.Fixtures;
 using StackExchange.Redis;
 
 namespace Multiplexed.AI.Tests.Integration.Runtime.Execution
@@ -373,7 +374,7 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution
                 {
                     KeyPrefix = _keyPrefix,
                     ListScanLimit = 100
-                }));
+                }), new StaticAiControlPlaneIdResolver("test-control-plane"));
         }
 
         private static AiSharedRunRecord CreateRecord(

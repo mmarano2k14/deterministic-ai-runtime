@@ -19,6 +19,11 @@ namespace Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry
         public required string RuntimeInstanceId { get; init; }
 
         /// <summary>
+        /// Gets the logical control-plane identifier that owns this runtime instance entry.
+        /// </summary>
+        public string? ControlPlaneId { get; init; }
+
+        /// <summary>
         /// Gets the physical host, process, or pod identity that owns this runtime instance.
         /// </summary>
         public string? HostId { get; init; }
@@ -167,6 +172,7 @@ namespace Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry
             return new RuntimeInstanceEntry
             {
                 RuntimeInstanceId = registration.RuntimeInstanceId,
+                ControlPlaneId = registration.ControlPlaneId,
                 HostId = registration.HostId,
                 RuntimeId = registration.RuntimeId,
                 ControlPlaneHostId = registration.ControlPlaneHostId,
@@ -219,6 +225,7 @@ namespace Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry
             return new RuntimeInstanceEntry
             {
                 RuntimeInstanceId = registration.RuntimeInstanceId,
+                ControlPlaneId = registration.ControlPlaneId ?? ControlPlaneId,
                 HostId = registration.HostId,
                 RuntimeId = registration.RuntimeId,
                 ControlPlaneHostId = registration.ControlPlaneHostId,
@@ -289,6 +296,7 @@ namespace Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry
             return new RuntimeInstanceEntry
             {
                 RuntimeInstanceId = RuntimeInstanceId,
+                ControlPlaneId = ControlPlaneId,
                 HostId = HostId,
                 RuntimeId = RuntimeId,
                 ControlPlaneHostId = ControlPlaneHostId,
@@ -331,6 +339,7 @@ namespace Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry
             return new RuntimeInstanceEntry
             {
                 RuntimeInstanceId = RuntimeInstanceId,
+                ControlPlaneId = ControlPlaneId,
                 HostId = HostId,
                 RuntimeId = RuntimeId,
                 ControlPlaneHostId = ControlPlaneHostId,
@@ -371,6 +380,7 @@ namespace Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry
             return new AiRuntimeInstanceSnapshot
             {
                 RuntimeInstanceId = RuntimeInstanceId,
+                ControlPlaneId = ControlPlaneId,
                 HostId = HostId,
                 RuntimeId = RuntimeId,
                 ControlPlaneHostId = ControlPlaneHostId,

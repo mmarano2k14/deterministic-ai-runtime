@@ -1,6 +1,7 @@
 ﻿using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances;
+using Multiplexed.AI.Tests.Fixtures;
 using StackExchange.Redis;
 using Xunit;
 
@@ -15,7 +16,8 @@ namespace Multiplexed.AI.Tests.Runtime.ControlPlane.RuntimeInstances
             var registry =
                 new RedisAiRuntimeInstanceRegistry(
                     redis,
-                    Options.Create(new AiRuntimeInstanceRegistrationOptions()));
+                    Options.Create(new AiRuntimeInstanceRegistrationOptions()), 
+                    new StaticAiControlPlaneIdResolver("test-control-plane"));
 
             var runtimeInstanceId = $"test-runtime-{Guid.NewGuid():N}";
 
@@ -53,7 +55,8 @@ namespace Multiplexed.AI.Tests.Runtime.ControlPlane.RuntimeInstances
             var registry =
                 new RedisAiRuntimeInstanceRegistry(
                     redis,
-                    Options.Create(new AiRuntimeInstanceRegistrationOptions()));
+                    Options.Create(new AiRuntimeInstanceRegistrationOptions()), 
+                    new StaticAiControlPlaneIdResolver("test-control-plane"));
 
             var runtimeInstanceId = $"test-runtime-{Guid.NewGuid():N}";
 
@@ -95,7 +98,8 @@ namespace Multiplexed.AI.Tests.Runtime.ControlPlane.RuntimeInstances
             var registry =
                 new RedisAiRuntimeInstanceRegistry(
                     redis,
-                    Options.Create(new AiRuntimeInstanceRegistrationOptions()));
+                    Options.Create(new AiRuntimeInstanceRegistrationOptions()), 
+                    new StaticAiControlPlaneIdResolver("test-control-plane"));
 
             var runtimeInstanceId = $"test-control-plane-{Guid.NewGuid():N}";
 
@@ -135,7 +139,8 @@ namespace Multiplexed.AI.Tests.Runtime.ControlPlane.RuntimeInstances
             var registry =
                 new RedisAiRuntimeInstanceRegistry(
                     redis,
-                    Options.Create(new AiRuntimeInstanceRegistrationOptions()));
+                    Options.Create(new AiRuntimeInstanceRegistrationOptions()), 
+                    new StaticAiControlPlaneIdResolver("test-control-plane"));
 
             var runtimeInstanceId1 = $"test-runtime-{Guid.NewGuid():N}";
             var runtimeInstanceId2 = $"test-runtime-{Guid.NewGuid():N}";
@@ -176,7 +181,8 @@ namespace Multiplexed.AI.Tests.Runtime.ControlPlane.RuntimeInstances
             var registry =
                 new RedisAiRuntimeInstanceRegistry(
                     redis,
-                    Options.Create(new AiRuntimeInstanceRegistrationOptions()));
+                    Options.Create(new AiRuntimeInstanceRegistrationOptions()), 
+                    new StaticAiControlPlaneIdResolver("test-control-plane"));
 
             var runtimeInstanceId = $"test-runtime-{Guid.NewGuid():N}";
 
@@ -203,7 +209,8 @@ namespace Multiplexed.AI.Tests.Runtime.ControlPlane.RuntimeInstances
             var registry =
                 new RedisAiRuntimeInstanceRegistry(
                     redis,
-                    Options.Create(new AiRuntimeInstanceRegistrationOptions()));
+                    Options.Create(new AiRuntimeInstanceRegistrationOptions()), 
+                    new StaticAiControlPlaneIdResolver("test-control-plane"));
 
             var runtimeInstanceId = $"test-runtime-{Guid.NewGuid():N}";
 

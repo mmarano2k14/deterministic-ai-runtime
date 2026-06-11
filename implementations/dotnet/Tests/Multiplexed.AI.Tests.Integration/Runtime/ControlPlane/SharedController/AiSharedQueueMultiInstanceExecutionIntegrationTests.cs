@@ -178,6 +178,7 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedController
                 queue,
                 new NeverCalledSharedRunDispatcher(),
                 new NoopAiRuntimeScaleOutRequestPublisher(),
+                new StaticAiControlPlaneIdResolver("test-control-plane"),
                 Options.Create(new AiSharedRuntimeControllerOptions()),
                 new NoopAiControlPlaneObserver());
 
@@ -449,7 +450,8 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedController
                 {
                     KeyPrefix = _runKeyPrefix,
                     ListScanLimit = 20_000
-                }));
+                }),
+                new StaticAiControlPlaneIdResolver("test-control-plane"));
         }
 
         private RedisAiSharedQueue CreateQueue()
@@ -465,7 +467,8 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedController
                 {
                     KeyPrefix = _queueKeyPrefix,
                     ListScanLimit = 20_000
-                }));
+                }),
+                new StaticAiControlPlaneIdResolver("test-control-plane"));
         }
 
         private static string FormatDistribution(

@@ -109,5 +109,10 @@ namespace Multiplexed.Abstractions.AI.ControlPlane.SharedController.Store
         /// </summary>
         public IReadOnlyDictionary<string, string> Metadata { get; init; } =
             new Dictionary<string, string>();
+
+        /// <summary>
+        /// Gets the logical control-plane identifier that owns this shared run record.
+        /// </summary>
+        public string? ControlPlaneId { get; init; }
     }
 }

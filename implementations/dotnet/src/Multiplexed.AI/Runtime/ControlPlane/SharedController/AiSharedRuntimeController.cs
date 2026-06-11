@@ -1,5 +1,6 @@
 ﻿using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.ControlPlane.Admission;
+using Multiplexed.Abstractions.AI.ControlPlane.Discovery;
 using Multiplexed.Abstractions.AI.ControlPlane.Observability;
 using Multiplexed.Abstractions.AI.ControlPlane.Observability.Area;
 using Multiplexed.Abstractions.AI.ControlPlane.Observability.Events;
@@ -36,6 +37,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController
         private readonly IAiSharedQueue _sharedQueue;
         private readonly IAiSharedRunDispatcher _dispatcher;
         private readonly IAiRuntimeScaleOutRequestPublisher _scaleOutPublisher;
+        private readonly IAiControlPlaneIdResolver _controlPlaneIdResolver;
         private readonly AiSharedRuntimeControllerOptions _options;
         private readonly IAiControlPlaneObserver _observer;
 
@@ -47,13 +49,14 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController
         /// <param name="sharedQueue">The shared/global queue used when admission queues runs globally.</param>
         /// <param name="dispatcher">The shared run dispatcher used when admission assigns a run to an instance.</param>
         /// <param name="scaleOutPublisher">The scale-out request publisher used when admission requests more capacity.</param>
+        /// <param name="controlPlaneIdResolver">The control-plane identifier resolver.</param>
         /// <param name="options">The shared runtime controller options.</param>
         /// <param name="observer">The control-plane observer used to record operation events.</param>
         /// <exception cref="ArgumentNullException">
         /// Thrown when <paramref name="admissionController"/>, <paramref name="store"/>,
         /// <paramref name="sharedQueue"/>, <paramref name="dispatcher"/>,
-        /// <paramref name="scaleOutPublisher"/>, <paramref name="options"/>,
-        /// or <paramref name="observer"/> is null.
+        /// <paramref name="scaleOutPublisher"/>, <paramref name="controlPlaneIdResolver"/>,
+        /// <paramref name="options"/>, or <paramref name="observer"/> is null.
         /// </exception>
         public AiSharedRuntimeController(
             IAiRunAdmissionController admissionController,
@@ -61,6 +64,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController
             IAiSharedQueue sharedQueue,
             IAiSharedRunDispatcher dispatcher,
             IAiRuntimeScaleOutRequestPublisher scaleOutPublisher,
+            IAiControlPlaneIdResolver controlPlaneIdResolver,
             IOptions<AiSharedRuntimeControllerOptions> options,
             IAiControlPlaneObserver observer)
         {
@@ -69,6 +73,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController
             _sharedQueue = sharedQueue ?? throw new ArgumentNullException(nameof(sharedQueue));
             _dispatcher = dispatcher ?? throw new ArgumentNullException(nameof(dispatcher));
             _scaleOutPublisher = scaleOutPublisher ?? throw new ArgumentNullException(nameof(scaleOutPublisher));
+            _controlPlaneIdResolver = controlPlaneIdResolver ?? throw new ArgumentNullException(nameof(controlPlaneIdResolver));
             _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
             _observer = observer ?? throw new ArgumentNullException(nameof(observer));
         }
@@ -262,10 +267,22 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController
             AiSharedRuntimeControllerRequest request,
             CancellationToken cancellationToken)
         {
+            var controlPlaneId =
+                await ResolveControlPlaneIdAsync(cancellationToken)
+                    .ConfigureAwait(false);
+
             var now = DateTimeOffset.UtcNow;
             var sharedRunId = string.IsNullOrWhiteSpace(request.RequestedSharedRunId)
                 ? Guid.NewGuid().ToString("N")
                 : request.RequestedSharedRunId;
+
+            var metadata =
+                MergeMetadata(
+                    request.Metadata,
+                    new Dictionary<string, string>
+                    {
+                        ["controlPlaneId"] = controlPlaneId
+                    });
 
             var admissionDecision = await _admissionController
                 .AdmitAsync(
@@ -280,7 +297,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController
                         RequestedBy = request.RequestedBy,
                         Source = request.Source,
                         Reason = request.Reason,
-                        Metadata = request.Metadata
+                        Metadata = metadata
                     },
                     cancellationToken)
                 .ConfigureAwait(false);
@@ -299,6 +316,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController
             var record = new AiSharedRunRecord
             {
                 SharedRunId = sharedRunId,
+                ControlPlaneId = controlPlaneId,
                 Status = effectiveStatus,
                 RunRequest = request.RunRequest!,
                 AssignedRuntimeInstanceId = queueFirst
@@ -316,7 +334,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController
                 FailureReason = failureReason,
                 SubmittedAtUtc = now,
                 UpdatedAtUtc = now,
-                Metadata = CopyMetadata(request.Metadata)
+                Metadata = metadata
             };
 
             var created = await _store
@@ -426,6 +444,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController
                     new AiSharedQueueItem
                     {
                         SharedRunId = created.SharedRunId,
+                        ControlPlaneId = created.ControlPlaneId,
                         Status = AiSharedQueueItemStatus.Pending,
                         TenantId = created.TenantId,
                         PipelineKey = created.PipelineKey,
@@ -621,6 +640,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController
                     {
                         ["source"] = request.Source,
                         ["requestedBy"] = request.RequestedBy,
+                        ["controlPlaneId"] = operationResult.Run?.ControlPlaneId,
                         ["sharedRunId"] = operationResult.Run?.SharedRunId ?? request.SharedRunId ?? request.RequestedSharedRunId,
                         ["status"] = operationResult.Run?.Status.ToString(),
                         ["assignedRuntimeInstanceId"] = operationResult.Run?.AssignedRuntimeInstanceId,
@@ -663,6 +683,30 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController
                     }
                 },
                 cancellationToken).ConfigureAwait(false);
+        }
+
+        /// <summary>
+        /// Resolves the logical control-plane identifier used to scope shared run records.
+        /// </summary>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <returns>The resolved logical control-plane identifier.</returns>
+        private async Task<string> ResolveControlPlaneIdAsync(
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var controlPlaneId =
+                await _controlPlaneIdResolver
+                    .ResolveAsync(cancellationToken)
+                    .ConfigureAwait(false);
+
+            if (string.IsNullOrWhiteSpace(controlPlaneId))
+            {
+                throw new InvalidOperationException(
+                    "The resolved control-plane identifier cannot be null or empty.");
+            }
+
+            return controlPlaneId;
         }
 
         /// <summary>
@@ -748,6 +792,30 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController
             return new Dictionary<string, string>(
                 metadata,
                 StringComparer.Ordinal);
+        }
+
+        /// <summary>
+        /// Merges shared run metadata dictionaries into an immutable dictionary shape.
+        /// </summary>
+        private static IReadOnlyDictionary<string, string> MergeMetadata(
+            params IReadOnlyDictionary<string, string>[] sources)
+        {
+            var result =
+                new Dictionary<string, string>(
+                    StringComparer.Ordinal);
+
+            foreach (var source in sources)
+            {
+                foreach (var item in source)
+                {
+                    if (!string.IsNullOrWhiteSpace(item.Key))
+                    {
+                        result[item.Key] = item.Value;
+                    }
+                }
+            }
+
+            return result;
         }
 
         /// <summary>

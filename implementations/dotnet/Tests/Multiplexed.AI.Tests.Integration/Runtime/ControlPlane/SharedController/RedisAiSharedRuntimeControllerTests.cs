@@ -13,6 +13,7 @@ using Multiplexed.AI.Runtime.ControlPlane.Observability;
 using Multiplexed.AI.Runtime.ControlPlane.SharedController;
 using Multiplexed.AI.Runtime.ControlPlane.SharedController.Store;
 using Multiplexed.AI.Runtime.ControlPlane.SharedQueue;
+using Multiplexed.AI.Tests.Fixtures;
 using StackExchange.Redis;
 
 namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedController
@@ -203,6 +204,7 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedController
                 sharedQueue,
                 new FakeSharedRunDispatcher(),
                 new NoopAiRuntimeScaleOutRequestPublisher(),
+                new StaticAiControlPlaneIdResolver("test-control-plane"),
                 Options.Create(new AiSharedRuntimeControllerOptions()),
                 new NoopAiControlPlaneObserver());
 
@@ -305,7 +307,8 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedController
                 {
                     KeyPrefix = _keyPrefix,
                     ListScanLimit = 100
-                }));
+                }), 
+                new StaticAiControlPlaneIdResolver("test-control-plane"));
 
             return new AiSharedRuntimeController(
                 new FakeRunAdmissionController(admissionDecision),
@@ -313,6 +316,7 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedController
                 new InMemoryAiSharedQueue(),
                 dispatcher ?? new FakeSharedRunDispatcher(),
                 scaleOutPublisher ?? new NoopAiRuntimeScaleOutRequestPublisher(),
+                new StaticAiControlPlaneIdResolver("test-control-plane"),
                 Options.Create(new AiSharedRuntimeControllerOptions()),
                 new NoopAiControlPlaneObserver());
         }

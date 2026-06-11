@@ -339,7 +339,8 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedQueue
                 {
                     KeyPrefix = _runKeyPrefix,
                     ListScanLimit = 100
-                }));
+                }), 
+                new StaticAiControlPlaneIdResolver("test-control-plane"));
         }
 
         private RedisAiSharedQueue CreateQueue()
@@ -355,7 +356,8 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedQueue
                 {
                     KeyPrefix = _queueKeyPrefix,
                     ListScanLimit = 100
-                }));
+                }),
+                new StaticAiControlPlaneIdResolver("test-control-plane"));
         }
 
         private static AiSharedRunRecord CreateSharedRun(
