@@ -14,6 +14,12 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution
         private readonly string _keyPrefix =
             $"test:ai:shared-runs:{Guid.NewGuid():N}";
 
+        private readonly string _controlPlaneId =
+            $"test-control-plane-{Guid.NewGuid():N}";
+
+        private readonly string _runIdPrefix =
+            $"test-shared-run-{Guid.NewGuid():N}";
+
         private IConnectionMultiplexer? _connection;
 
         public async Task InitializeAsync()
@@ -33,9 +39,19 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution
             var server = _connection
                 .GetServer(_connection.GetEndPoints().First());
 
-            var keys = server.Keys(
+            var keys = server
+                .Keys(
                     database: database.Database,
                     pattern: $"{_keyPrefix}*")
+                .Concat(
+                    server.Keys(
+                        database: database.Database,
+                        pattern: $"*control-plane:{_controlPlaneId}*"))
+                .Concat(
+                    server.Keys(
+                        database: database.Database,
+                        pattern: $"*{_runIdPrefix}*"))
+                .Distinct()
                 .ToArray();
 
             if (keys.Length > 0)
@@ -52,19 +68,24 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution
         {
             var store = CreateStore();
 
+            var sharedRunId =
+                RunId("shared-run-1");
+
             var record = CreateRecord(
-                "shared-run-1",
+                sharedRunId,
                 AiSharedRunStatus.AssignedToInstance);
 
             var created = await store.CreateAsync(record);
 
-            Assert.Equal("shared-run-1", created.SharedRunId);
+            Assert.Equal(sharedRunId, created.SharedRunId);
+            Assert.Equal(_controlPlaneId, created.ControlPlaneId);
             Assert.Equal(AiSharedRunStatus.AssignedToInstance, created.Status);
 
-            var loaded = await store.GetAsync("shared-run-1");
+            var loaded = await store.GetAsync(sharedRunId);
 
             Assert.NotNull(loaded);
-            Assert.Equal("shared-run-1", loaded!.SharedRunId);
+            Assert.Equal(sharedRunId, loaded!.SharedRunId);
+            Assert.Equal(_controlPlaneId, loaded.ControlPlaneId);
             Assert.Equal(AiSharedRunStatus.AssignedToInstance, loaded.Status);
             Assert.Equal("pipeline-1", loaded.RunRequest.PipelineName);
         }
@@ -74,8 +95,11 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution
         {
             var store = CreateStore();
 
+            var sharedRunId =
+                RunId("shared-run-1");
+
             var record = CreateRecord(
-                "shared-run-1",
+                sharedRunId,
                 AiSharedRunStatus.AssignedToInstance);
 
             await store.CreateAsync(record);
@@ -89,7 +113,8 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution
         {
             var store = CreateStore();
 
-            var loaded = await store.GetAsync("missing-run");
+            var loaded = await store.GetAsync(
+                RunId("missing-run"));
 
             Assert.Null(loaded);
         }
@@ -99,23 +124,34 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution
         {
             var store = CreateStore();
 
+            var sharedRunB =
+                RunId("shared-run-b");
+
+            var sharedRunA =
+                RunId("shared-run-a");
+
             await store.CreateAsync(
                 CreateRecord(
-                    "shared-run-b",
+                    sharedRunB,
                     AiSharedRunStatus.AssignedToInstance,
                     DateTimeOffset.UtcNow.AddMinutes(1)));
 
             await store.CreateAsync(
                 CreateRecord(
-                    "shared-run-a",
+                    sharedRunA,
                     AiSharedRunStatus.AssignedToInstance,
                     DateTimeOffset.UtcNow));
 
             var records = await store.ListAsync();
 
             Assert.Equal(2, records.Count);
-            Assert.Equal("shared-run-a", records[0].SharedRunId);
-            Assert.Equal("shared-run-b", records[1].SharedRunId);
+            Assert.Equal(sharedRunA, records[0].SharedRunId);
+            Assert.Equal(sharedRunB, records[1].SharedRunId);
+
+            Assert.All(records, record =>
+            {
+                Assert.Equal(_controlPlaneId, record.ControlPlaneId);
+            });
         }
 
         [Fact]
@@ -123,16 +159,23 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution
         {
             var store = CreateStore();
 
-            await store.CreateAsync(
-                CreateRecord("shared-run-1", AiSharedRunStatus.AssignedToInstance));
+            var activeRun =
+                RunId("shared-run-1");
+
+            var cancelledRun =
+                RunId("shared-run-2");
 
             await store.CreateAsync(
-                CreateRecord("shared-run-2", AiSharedRunStatus.Cancelled));
+                CreateRecord(activeRun, AiSharedRunStatus.AssignedToInstance));
+
+            await store.CreateAsync(
+                CreateRecord(cancelledRun, AiSharedRunStatus.Cancelled));
 
             var records = await store.ListAsync();
 
             Assert.Single(records);
-            Assert.Equal("shared-run-1", records[0].SharedRunId);
+            Assert.Equal(activeRun, records[0].SharedRunId);
+            Assert.Equal(_controlPlaneId, records[0].ControlPlaneId);
         }
 
         [Fact]
@@ -140,15 +183,26 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution
         {
             var store = CreateStore();
 
-            await store.CreateAsync(
-                CreateRecord("shared-run-1", AiSharedRunStatus.AssignedToInstance));
+            var activeRun =
+                RunId("shared-run-1");
+
+            var cancelledRun =
+                RunId("shared-run-2");
 
             await store.CreateAsync(
-                CreateRecord("shared-run-2", AiSharedRunStatus.Cancelled));
+                CreateRecord(activeRun, AiSharedRunStatus.AssignedToInstance));
+
+            await store.CreateAsync(
+                CreateRecord(cancelledRun, AiSharedRunStatus.Cancelled));
 
             var records = await store.ListAsync(includeCancelled: true);
 
             Assert.Equal(2, records.Count);
+
+            Assert.All(records, record =>
+            {
+                Assert.Equal(_controlPlaneId, record.ControlPlaneId);
+            });
         }
 
         [Fact]
@@ -156,26 +210,31 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution
         {
             var store = CreateStore();
 
+            var sharedRunId =
+                RunId("shared-run-1");
+
             await store.CreateAsync(
-                CreateRecord("shared-run-1", AiSharedRunStatus.QueuedGlobally));
+                CreateRecord(sharedRunId, AiSharedRunStatus.QueuedGlobally));
 
             var cancelled = await store.CancelAsync(
-                "shared-run-1",
+                sharedRunId,
                 reason: "operator cancel",
                 requestedBy: "tester",
                 source: "unit-test");
 
             Assert.NotNull(cancelled);
-            Assert.Equal(AiSharedRunStatus.Cancelled, cancelled!.Status);
+            Assert.Equal(_controlPlaneId, cancelled!.ControlPlaneId);
+            Assert.Equal(AiSharedRunStatus.Cancelled, cancelled.Status);
             Assert.Equal("operator cancel", cancelled.Reason);
             Assert.Equal("operator cancel", cancelled.FailureReason);
             Assert.Equal("tester", cancelled.RequestedBy);
             Assert.Equal("unit-test", cancelled.Source);
 
-            var loaded = await store.GetAsync("shared-run-1");
+            var loaded = await store.GetAsync(sharedRunId);
 
             Assert.NotNull(loaded);
-            Assert.Equal(AiSharedRunStatus.Cancelled, loaded!.Status);
+            Assert.Equal(_controlPlaneId, loaded!.ControlPlaneId);
+            Assert.Equal(AiSharedRunStatus.Cancelled, loaded.Status);
         }
 
         [Theory]
@@ -187,19 +246,23 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution
         {
             var store = CreateStore();
 
+            var sharedRunId =
+                RunId($"shared-run-{terminalStatus}");
+
             await store.CreateAsync(
                 CreateRecord(
-                    "shared-run-1",
+                    sharedRunId,
                     terminalStatus,
                     failureReason: "existing failure"));
 
             var result = await store.CancelAsync(
-                "shared-run-1",
+                sharedRunId,
                 reason: "new cancel",
                 requestedBy: "tester");
 
             Assert.NotNull(result);
-            Assert.Equal(terminalStatus, result!.Status);
+            Assert.Equal(_controlPlaneId, result!.ControlPlaneId);
+            Assert.Equal(terminalStatus, result.Status);
             Assert.Equal("existing failure", result.FailureReason);
         }
 
@@ -208,7 +271,8 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution
         {
             var store = CreateStore();
 
-            var cancelled = await store.CancelAsync("missing-run");
+            var cancelled = await store.CancelAsync(
+                RunId("missing-run"));
 
             Assert.Null(cancelled);
         }
@@ -218,8 +282,11 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution
         {
             var store = CreateStore();
 
+            var sharedRunId =
+                RunId("shared-run-1");
+
             var record = CreateRecord(
-                "shared-run-1",
+                sharedRunId,
                 AiSharedRunStatus.AssignedToInstance,
                 metadata: new Dictionary<string, string>
                 {
@@ -229,10 +296,12 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution
 
             await store.CreateAsync(record);
 
-            var loaded = await store.GetAsync("shared-run-1");
+            var loaded = await store.GetAsync(sharedRunId);
 
             Assert.NotNull(loaded);
-            Assert.Equal("tenant-1", loaded!.Metadata["tenant"]);
+            Assert.Equal(_controlPlaneId, loaded!.ControlPlaneId);
+            Assert.Equal(_controlPlaneId, loaded.Metadata["controlPlaneId"]);
+            Assert.Equal("tenant-1", loaded.Metadata["tenant"]);
             Assert.Equal("high", loaded.Metadata["priority"]);
         }
 
@@ -240,6 +309,9 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution
         public async Task CreateAsync_Should_Allow_Only_One_Concurrent_Create_For_Same_SharedRunId()
         {
             var store = CreateStore();
+
+            var sharedRunId =
+                RunId("shared-run-concurrent");
 
             var tasks = Enumerable.Range(0, 20)
                 .Select(index =>
@@ -249,7 +321,7 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution
                         {
                             var created = await store.CreateAsync(
                                 CreateRecord(
-                                    "shared-run-concurrent",
+                                    sharedRunId,
                                     AiSharedRunStatus.AssignedToInstance,
                                     metadata: new Dictionary<string, string>
                                     {
@@ -276,6 +348,7 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution
                 .ToArray();
 
             Assert.Single(successful);
+            Assert.Equal(_controlPlaneId, successful[0].Record!.ControlPlaneId);
             Assert.Equal(19, failed.Length);
 
             Assert.All(failed, result =>
@@ -284,10 +357,11 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution
                 Assert.Contains("already exists", result.Exception!.Message);
             });
 
-            var loaded = await store.GetAsync("shared-run-concurrent");
+            var loaded = await store.GetAsync(sharedRunId);
 
             Assert.NotNull(loaded);
-            Assert.Equal("shared-run-concurrent", loaded!.SharedRunId);
+            Assert.Equal(sharedRunId, loaded!.SharedRunId);
+            Assert.Equal(_controlPlaneId, loaded.ControlPlaneId);
         }
 
         [Fact]
@@ -295,16 +369,19 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution
         {
             var store = CreateStore();
 
+            var sharedRunId =
+                RunId("shared-run-cancel-concurrent");
+
             await store.CreateAsync(
                 CreateRecord(
-                    "shared-run-cancel-concurrent",
+                    sharedRunId,
                     AiSharedRunStatus.QueuedGlobally));
 
             var tasks = Enumerable.Range(0, 20)
                 .Select(index =>
                     Task.Run(() =>
                         store.CancelAsync(
-                            "shared-run-cancel-concurrent",
+                            sharedRunId,
                             reason: $"cancel-{index}",
                             requestedBy: $"tester-{index}",
                             source: "unit-test")))
@@ -315,13 +392,15 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution
             Assert.All(results, result =>
             {
                 Assert.NotNull(result);
-                Assert.Equal(AiSharedRunStatus.Cancelled, result!.Status);
+                Assert.Equal(_controlPlaneId, result!.ControlPlaneId);
+                Assert.Equal(AiSharedRunStatus.Cancelled, result.Status);
             });
 
-            var loaded = await store.GetAsync("shared-run-cancel-concurrent");
+            var loaded = await store.GetAsync(sharedRunId);
 
             Assert.NotNull(loaded);
-            Assert.Equal(AiSharedRunStatus.Cancelled, loaded!.Status);
+            Assert.Equal(_controlPlaneId, loaded!.ControlPlaneId);
+            Assert.Equal(AiSharedRunStatus.Cancelled, loaded.Status);
             Assert.False(string.IsNullOrWhiteSpace(loaded.FailureReason));
             Assert.StartsWith("cancel-", loaded.FailureReason);
         }
@@ -331,18 +410,22 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution
         {
             var store = CreateStore();
 
+            var sharedRunId =
+                RunId("shared-run-1");
+
             await store.CreateAsync(
-                CreateRecord("shared-run-1", AiSharedRunStatus.AssignedToInstance));
+                CreateRecord(sharedRunId, AiSharedRunStatus.AssignedToInstance));
 
             var updated = await store.MarkDispatchedAsync(
-                "shared-run-1",
+                sharedRunId,
                 runtimeInstanceId: "runtime-1",
                 localRunId: "local-run-1",
                 executionId: "execution-1",
                 reason: "dispatch succeeded");
 
             Assert.NotNull(updated);
-            Assert.Equal(AiSharedRunStatus.Dispatched, updated!.Status);
+            Assert.Equal(_controlPlaneId, updated!.ControlPlaneId);
+            Assert.Equal(AiSharedRunStatus.Dispatched, updated.Status);
             Assert.Equal("runtime-1", updated.AssignedRuntimeInstanceId);
             Assert.Equal("local-run-1", updated.LocalRunId);
             Assert.Equal("execution-1", updated.ExecutionId);
@@ -355,7 +438,7 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution
             var store = CreateStore();
 
             var updated = await store.MarkDispatchedAsync(
-                "missing-run",
+                RunId("missing-run"),
                 runtimeInstanceId: "runtime-1");
 
             Assert.Null(updated);
@@ -374,10 +457,11 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution
                 {
                     KeyPrefix = _keyPrefix,
                     ListScanLimit = 100
-                }), new StaticAiControlPlaneIdResolver("test-control-plane"));
+                }),
+                new StaticAiControlPlaneIdResolver(_controlPlaneId));
         }
 
-        private static AiSharedRunRecord CreateRecord(
+        private AiSharedRunRecord CreateRecord(
             string sharedRunId,
             AiSharedRunStatus status,
             DateTimeOffset? submittedAtUtc = null,
@@ -386,9 +470,18 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution
         {
             var now = submittedAtUtc ?? DateTimeOffset.UtcNow;
 
+            var effectiveMetadata =
+                new Dictionary<string, string>(
+                    metadata ?? new Dictionary<string, string>(),
+                    StringComparer.Ordinal)
+                {
+                    ["controlPlaneId"] = _controlPlaneId
+                };
+
             return new AiSharedRunRecord
             {
                 SharedRunId = sharedRunId,
+                ControlPlaneId = _controlPlaneId,
                 Status = status,
                 RunRequest = new AiRuntimePipelineRunRequest
                 {
@@ -397,8 +490,14 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution
                 FailureReason = failureReason,
                 SubmittedAtUtc = now,
                 UpdatedAtUtc = now,
-                Metadata = metadata ?? new Dictionary<string, string>()
+                Metadata = effectiveMetadata
             };
+        }
+
+        private string RunId(
+            string name)
+        {
+            return $"{_runIdPrefix}-{name}";
         }
     }
 }

@@ -25,6 +25,12 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedQueue
         private readonly string _queueKeyPrefix =
             $"test:ai:shared-queue:{Guid.NewGuid():N}";
 
+        private readonly string _controlPlaneId =
+            $"test-control-plane-{Guid.NewGuid():N}";
+
+        private readonly string _runIdPrefix =
+            $"test-shared-run-{Guid.NewGuid():N}";
+
         private IConnectionMultiplexer? _connection;
 
         public async Task InitializeAsync()
@@ -44,18 +50,23 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedQueue
             var server = _connection.GetServer(
                 _connection.GetEndPoints().First());
 
-            var runKeys = server.Keys(
+            var keys = server
+                .Keys(
                     database: database.Database,
                     pattern: $"{_runKeyPrefix}*")
-                .ToArray();
-
-            var queueKeys = server.Keys(
-                    database: database.Database,
-                    pattern: $"{_queueKeyPrefix}*")
-                .ToArray();
-
-            var keys = runKeys
-                .Concat(queueKeys)
+                .Concat(
+                    server.Keys(
+                        database: database.Database,
+                        pattern: $"{_queueKeyPrefix}*"))
+                .Concat(
+                    server.Keys(
+                        database: database.Database,
+                        pattern: $"*control-plane:{_controlPlaneId}*"))
+                .Concat(
+                    server.Keys(
+                        database: database.Database,
+                        pattern: $"*{_runIdPrefix}*"))
+                .Distinct()
                 .ToArray();
 
             if (keys.Length > 0)
@@ -73,13 +84,16 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedQueue
             var store = CreateRunStore();
             var queue = CreateQueue();
 
+            var sharedRunId =
+                RunId("shared-run-1");
+
             await store.CreateAsync(
                 CreateSharedRun(
-                    "shared-run-1",
+                    sharedRunId,
                     AiSharedRunStatus.QueuedGlobally));
 
             await queue.EnqueueAsync(
-                CreateQueueItem("shared-run-1"));
+                CreateQueueItem(sharedRunId));
 
             var runDispatcher = new FakeSharedRunDispatcher();
             var admissionController = new FakeRunAdmissionController();
@@ -88,7 +102,7 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedQueue
                 queue,
                 store,
                 runDispatcher,
-                admissionController, 
+                admissionController,
                 new InMemoryAiRuntimeAdmissionReservationStore(),
                 NullLogger<AiSharedQueueDispatcher>.Instance);
 
@@ -99,45 +113,55 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedQueue
                 CorrelationId = "correlation-1",
                 RequestedBy = "tester",
                 Source = "redis-integration-test",
-                Reason = "runtime instance has capacity"
+                Reason = "runtime instance has capacity",
+                Metadata = new Dictionary<string, string>
+                {
+                    ["controlPlaneId"] = _controlPlaneId
+                }
             });
 
             Assert.True(result.Success);
             Assert.False(result.NoItemAvailable);
-            Assert.Equal("shared-run-1", result.SharedRunId);
+            Assert.Equal(sharedRunId, result.SharedRunId);
             Assert.Equal("runtime-1", result.RuntimeInstanceId);
 
             Assert.NotNull(result.QueueItem);
             Assert.Equal(AiSharedQueueItemStatus.Dispatched, result.QueueItem!.Status);
+            Assert.Equal(_controlPlaneId, result.QueueItem.ControlPlaneId);
 
             Assert.NotNull(result.SharedRun);
             Assert.Equal(AiSharedRunStatus.Dispatched, result.SharedRun!.Status);
+            Assert.Equal(_controlPlaneId, result.SharedRun.ControlPlaneId);
             Assert.Equal("runtime-1", result.SharedRun.AssignedRuntimeInstanceId);
             Assert.Equal("local-run-1", result.SharedRun.LocalRunId);
             Assert.Equal("execution-1", result.SharedRun.ExecutionId);
 
-            var loadedQueueItem = await queue.GetAsync("shared-run-1");
+            var loadedQueueItem = await queue.GetAsync(sharedRunId);
 
             Assert.NotNull(loadedQueueItem);
             Assert.Equal(AiSharedQueueItemStatus.Dispatched, loadedQueueItem!.Status);
+            Assert.Equal(_controlPlaneId, loadedQueueItem.ControlPlaneId);
             Assert.Equal("runtime-1", loadedQueueItem.ClaimedByRuntimeInstanceId);
             Assert.Equal("worker-1", loadedQueueItem.ClaimedByWorkerId);
             Assert.False(string.IsNullOrWhiteSpace(loadedQueueItem.ClaimToken));
 
-            var loadedRun = await store.GetAsync("shared-run-1");
+            var loadedRun = await store.GetAsync(sharedRunId);
 
             Assert.NotNull(loadedRun);
             Assert.Equal(AiSharedRunStatus.Dispatched, loadedRun!.Status);
+            Assert.Equal(_controlPlaneId, loadedRun.ControlPlaneId);
             Assert.Equal("runtime-1", loadedRun.AssignedRuntimeInstanceId);
             Assert.Equal("local-run-1", loadedRun.LocalRunId);
             Assert.Equal("execution-1", loadedRun.ExecutionId);
 
             Assert.NotNull(runDispatcher.LastRequest);
-            Assert.Equal("shared-run-1", runDispatcher.LastRequest!.SharedRun.SharedRunId);
+            Assert.Equal(sharedRunId, runDispatcher.LastRequest!.SharedRun.SharedRunId);
+            Assert.Equal(_controlPlaneId, runDispatcher.LastRequest.SharedRun.ControlPlaneId);
             Assert.Equal("runtime-1", runDispatcher.LastRequest.RuntimeInstanceId);
             Assert.Equal("correlation-1", runDispatcher.LastRequest.CorrelationId);
             Assert.Equal("tester", runDispatcher.LastRequest.RequestedBy);
             Assert.Equal("redis-integration-test", runDispatcher.LastRequest.Source);
+            Assert.Equal(_controlPlaneId, runDispatcher.LastRequest.Metadata["controlPlaneId"]);
         }
 
         [Fact]
@@ -153,7 +177,11 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedQueue
 
             var result = await dispatcher.DispatchNextAsync(new AiSharedQueueDispatchRequest
             {
-                RuntimeInstanceId = "runtime-1"
+                RuntimeInstanceId = "runtime-1",
+                Metadata = new Dictionary<string, string>
+                {
+                    ["controlPlaneId"] = _controlPlaneId
+                }
             });
 
             Assert.False(result.Success);
@@ -167,30 +195,38 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedQueue
             var store = CreateRunStore();
             var queue = CreateQueue();
 
+            var sharedRunId =
+                RunId("shared-run-1");
+
             await queue.EnqueueAsync(
-                CreateQueueItem("shared-run-1"));
+                CreateQueueItem(sharedRunId));
 
             var dispatcher = new AiSharedQueueDispatcher(
                 queue,
                 store,
-                new FakeSharedRunDispatcher(), 
-                new FakeRunAdmissionController(), 
-                new InMemoryAiRuntimeAdmissionReservationStore(), 
+                new FakeSharedRunDispatcher(),
+                new FakeRunAdmissionController(),
+                new InMemoryAiRuntimeAdmissionReservationStore(),
                 NullLogger<AiSharedQueueDispatcher>.Instance);
 
             var result = await dispatcher.DispatchNextAsync(new AiSharedQueueDispatchRequest
             {
-                RuntimeInstanceId = "runtime-1"
+                RuntimeInstanceId = "runtime-1",
+                Metadata = new Dictionary<string, string>
+                {
+                    ["controlPlaneId"] = _controlPlaneId
+                }
             });
 
             Assert.False(result.Success);
-            Assert.Equal("shared-run-1", result.SharedRunId);
+            Assert.Equal(sharedRunId, result.SharedRunId);
             Assert.Equal("Shared run record was not found.", result.FailureReason);
 
-            var queueItem = await queue.GetAsync("shared-run-1");
+            var queueItem = await queue.GetAsync(sharedRunId);
 
             Assert.NotNull(queueItem);
             Assert.Equal(AiSharedQueueItemStatus.Pending, queueItem!.Status);
+            Assert.Equal(_controlPlaneId, queueItem.ControlPlaneId);
             Assert.Null(queueItem.ClaimToken);
             Assert.Null(queueItem.ClaimedByRuntimeInstanceId);
             Assert.Equal("Shared run record was not found.", queueItem.Reason);
@@ -202,19 +238,22 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedQueue
             var store = CreateRunStore();
             var queue = CreateQueue();
 
+            var sharedRunId =
+                RunId("shared-run-1");
+
             await store.CreateAsync(
                 CreateSharedRun(
-                    "shared-run-1",
+                    sharedRunId,
                     AiSharedRunStatus.QueuedGlobally));
 
             await queue.EnqueueAsync(
-                CreateQueueItem("shared-run-1"));
+                CreateQueueItem(sharedRunId));
 
             var runDispatcher = new FakeSharedRunDispatcher(
                 new AiSharedRunDispatchResult
                 {
                     Success = false,
-                    SharedRunId = "shared-run-1",
+                    SharedRunId = sharedRunId,
                     RuntimeInstanceId = "runtime-1",
                     Message = "Dispatch failed.",
                     FailureReason = "runtime queue rejected",
@@ -232,25 +271,31 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedQueue
 
             var result = await dispatcher.DispatchNextAsync(new AiSharedQueueDispatchRequest
             {
-                RuntimeInstanceId = "runtime-1"
+                RuntimeInstanceId = "runtime-1",
+                Metadata = new Dictionary<string, string>
+                {
+                    ["controlPlaneId"] = _controlPlaneId
+                }
             });
 
             Assert.False(result.Success);
-            Assert.Equal("shared-run-1", result.SharedRunId);
+            Assert.Equal(sharedRunId, result.SharedRunId);
             Assert.Equal("runtime queue rejected", result.FailureReason);
 
-            var queueItem = await queue.GetAsync("shared-run-1");
+            var queueItem = await queue.GetAsync(sharedRunId);
 
             Assert.NotNull(queueItem);
             Assert.Equal(AiSharedQueueItemStatus.Pending, queueItem!.Status);
+            Assert.Equal(_controlPlaneId, queueItem.ControlPlaneId);
             Assert.Null(queueItem.ClaimToken);
             Assert.Null(queueItem.ClaimedByRuntimeInstanceId);
             Assert.Equal("runtime queue rejected", queueItem.Reason);
 
-            var sharedRun = await store.GetAsync("shared-run-1");
+            var sharedRun = await store.GetAsync(sharedRunId);
 
             Assert.NotNull(sharedRun);
             Assert.Equal(AiSharedRunStatus.QueuedGlobally, sharedRun!.Status);
+            Assert.Equal(_controlPlaneId, sharedRun.ControlPlaneId);
             Assert.Null(sharedRun.LocalRunId);
             Assert.Null(sharedRun.ExecutionId);
         }
@@ -261,41 +306,48 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedQueue
             var store = CreateRunStore();
             var queue = CreateQueue();
 
+            var sharedRunId =
+                RunId("shared-run-1");
+
             await store.CreateAsync(
                 CreateSharedRun(
-                    "shared-run-1",
+                    sharedRunId,
                     AiSharedRunStatus.QueuedGlobally));
 
             await queue.EnqueueAsync(
-                CreateQueueItem("shared-run-1"));
+                CreateQueueItem(sharedRunId));
 
             var tasks = Enumerable.Range(0, 20)
                 .Select(index =>
                 {
                     var dispatcher = new AiSharedQueueDispatcher(
-                     queue,
-                     store,
-                     new FakeSharedRunDispatcher(
-                         new AiSharedRunDispatchResult
-                         {
-                             Success = true,
-                             SharedRunId = "shared-run-1",
-                             RuntimeInstanceId = $"runtime-{index}",
-                             LocalRunId = $"local-run-{index}",
-                             ExecutionId = $"execution-{index}",
-                             Message = "Dispatched.",
-                             StartedAtUtc = DateTimeOffset.UtcNow,
-                             CompletedAtUtc = DateTimeOffset.UtcNow
-                         }),
-                     new FakeRunAdmissionController(
-                         assignedRuntimeInstanceId: $"runtime-{index}"), 
-                     new InMemoryAiRuntimeAdmissionReservationStore(),
-                     NullLogger<AiSharedQueueDispatcher>.Instance);
+                        queue,
+                        store,
+                        new FakeSharedRunDispatcher(
+                            new AiSharedRunDispatchResult
+                            {
+                                Success = true,
+                                SharedRunId = sharedRunId,
+                                RuntimeInstanceId = $"runtime-{index}",
+                                LocalRunId = $"local-run-{index}",
+                                ExecutionId = $"execution-{index}",
+                                Message = "Dispatched.",
+                                StartedAtUtc = DateTimeOffset.UtcNow,
+                                CompletedAtUtc = DateTimeOffset.UtcNow
+                            }),
+                        new FakeRunAdmissionController(
+                            assignedRuntimeInstanceId: $"runtime-{index}"),
+                        new InMemoryAiRuntimeAdmissionReservationStore(),
+                        NullLogger<AiSharedQueueDispatcher>.Instance);
 
                     return dispatcher.DispatchNextAsync(new AiSharedQueueDispatchRequest
                     {
                         RuntimeInstanceId = $"runtime-{index}",
-                        WorkerId = $"worker-{index}"
+                        WorkerId = $"worker-{index}",
+                        Metadata = new Dictionary<string, string>
+                        {
+                            ["controlPlaneId"] = _controlPlaneId
+                        }
                     });
                 })
                 .ToArray();
@@ -313,15 +365,17 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedQueue
             Assert.Single(successes);
             Assert.Equal(19, noItems.Length);
 
-            var loadedQueueItem = await queue.GetAsync("shared-run-1");
+            var loadedQueueItem = await queue.GetAsync(sharedRunId);
 
             Assert.NotNull(loadedQueueItem);
             Assert.Equal(AiSharedQueueItemStatus.Dispatched, loadedQueueItem!.Status);
+            Assert.Equal(_controlPlaneId, loadedQueueItem.ControlPlaneId);
 
-            var loadedRun = await store.GetAsync("shared-run-1");
+            var loadedRun = await store.GetAsync(sharedRunId);
 
             Assert.NotNull(loadedRun);
             Assert.Equal(AiSharedRunStatus.Dispatched, loadedRun!.Status);
+            Assert.Equal(_controlPlaneId, loadedRun.ControlPlaneId);
             Assert.False(string.IsNullOrWhiteSpace(loadedRun.LocalRunId));
             Assert.False(string.IsNullOrWhiteSpace(loadedRun.ExecutionId));
         }
@@ -339,8 +393,8 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedQueue
                 {
                     KeyPrefix = _runKeyPrefix,
                     ListScanLimit = 100
-                }), 
-                new StaticAiControlPlaneIdResolver("test-control-plane"));
+                }),
+                new StaticAiControlPlaneIdResolver(_controlPlaneId));
         }
 
         private RedisAiSharedQueue CreateQueue()
@@ -357,10 +411,10 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedQueue
                     KeyPrefix = _queueKeyPrefix,
                     ListScanLimit = 100
                 }),
-                new StaticAiControlPlaneIdResolver("test-control-plane"));
+                new StaticAiControlPlaneIdResolver(_controlPlaneId));
         }
 
-        private static AiSharedRunRecord CreateSharedRun(
+        private AiSharedRunRecord CreateSharedRun(
             string sharedRunId,
             AiSharedRunStatus status,
             string? tenantId = null,
@@ -369,9 +423,18 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedQueue
         {
             var now = DateTimeOffset.UtcNow;
 
+            var effectiveMetadata =
+                new Dictionary<string, string>(
+                    metadata ?? new Dictionary<string, string>(),
+                    StringComparer.Ordinal)
+                {
+                    ["controlPlaneId"] = _controlPlaneId
+                };
+
             return new AiSharedRunRecord
             {
                 SharedRunId = sharedRunId,
+                ControlPlaneId = _controlPlaneId,
                 Status = status,
                 RunRequest = new AiRuntimePipelineRunRequest
                 {
@@ -382,11 +445,11 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedQueue
                 CorrelationId = sharedRunId,
                 SubmittedAtUtc = now,
                 UpdatedAtUtc = now,
-                Metadata = metadata ?? new Dictionary<string, string>()
+                Metadata = effectiveMetadata
             };
         }
 
-        private static AiSharedQueueItem CreateQueueItem(
+        private AiSharedQueueItem CreateQueueItem(
             string sharedRunId,
             string? tenantId = null,
             string? pipelineKey = null)
@@ -396,12 +459,23 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedQueue
             return new AiSharedQueueItem
             {
                 SharedRunId = sharedRunId,
+                ControlPlaneId = _controlPlaneId,
                 Status = AiSharedQueueItemStatus.Pending,
                 TenantId = tenantId,
                 PipelineKey = pipelineKey,
                 EnqueuedAtUtc = now,
-                UpdatedAtUtc = now
+                UpdatedAtUtc = now,
+                Metadata = new Dictionary<string, string>
+                {
+                    ["controlPlaneId"] = _controlPlaneId
+                }
             };
+        }
+
+        private string RunId(
+            string name)
+        {
+            return $"{_runIdPrefix}-{name}";
         }
 
         private sealed class FakeSharedRunDispatcher : IAiSharedRunDispatcher

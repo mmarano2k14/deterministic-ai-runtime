@@ -23,6 +23,12 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedController
         private readonly string _keyPrefix =
             $"test:ai:shared-controller:{Guid.NewGuid():N}";
 
+        private readonly string _controlPlaneId =
+            $"test-control-plane-{Guid.NewGuid():N}";
+
+        private readonly string _runIdPrefix =
+            $"test-shared-run-{Guid.NewGuid():N}";
+
         private IConnectionMultiplexer? _connection;
 
         public async Task InitializeAsync()
@@ -42,9 +48,19 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedController
             var server = _connection.GetServer(
                 _connection.GetEndPoints().First());
 
-            var keys = server.Keys(
+            var keys = server
+                .Keys(
                     database: database.Database,
                     pattern: $"{_keyPrefix}*")
+                .Concat(
+                    server.Keys(
+                        database: database.Database,
+                        pattern: $"*control-plane:{_controlPlaneId}*"))
+                .Concat(
+                    server.Keys(
+                        database: database.Database,
+                        pattern: $"*{_runIdPrefix}*"))
+                .Distinct()
                 .ToArray();
 
             if (keys.Length > 0)
@@ -59,6 +75,9 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedController
         [Fact]
         public async Task SubmitRunAsync_Should_Persist_Shared_Run_In_Redis()
         {
+            var sharedRunId =
+                RunId("shared-run-1");
+
             var controller = CreateController(
                 new AiRunAdmissionDecision
                 {
@@ -74,16 +93,18 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedController
             var submit = await controller.SubmitRunAsync(new AiSharedRuntimeControllerRequest
             {
                 Operation = AiSharedRuntimeControllerOperation.SubmitRun,
-                RequestedSharedRunId = "shared-run-1",
+                RequestedSharedRunId = sharedRunId,
                 RunRequest = CreateRunRequest(),
                 CorrelationId = "correlation-1",
                 RequestedBy = "tester",
-                Source = "unit-test"
+                Source = "unit-test",
+                Metadata = CreateMetadata()
             });
 
             Assert.True(submit.Success);
             Assert.NotNull(submit.Run);
-            Assert.Equal("shared-run-1", submit.SharedRunId);
+            Assert.Equal(sharedRunId, submit.SharedRunId);
+            Assert.Equal(_controlPlaneId, submit.Run.ControlPlaneId);
             Assert.Equal(AiSharedRunStatus.Dispatched, submit.Run.Status);
             Assert.Equal("runtime-1", submit.AssignedRuntimeInstanceId);
             Assert.Equal("local-run-1", submit.LocalRunId);
@@ -92,12 +113,14 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedController
             var get = await controller.GetRunAsync(new AiSharedRuntimeControllerRequest
             {
                 Operation = AiSharedRuntimeControllerOperation.GetRun,
-                SharedRunId = "shared-run-1"
+                SharedRunId = sharedRunId,
+                Metadata = CreateMetadata()
             });
 
             Assert.True(get.Success);
             Assert.NotNull(get.Run);
-            Assert.Equal("shared-run-1", get.Run.SharedRunId);
+            Assert.Equal(sharedRunId, get.Run.SharedRunId);
+            Assert.Equal(_controlPlaneId, get.Run.ControlPlaneId);
             Assert.Equal(AiSharedRunStatus.Dispatched, get.Run.Status);
             Assert.Equal("runtime-1", get.Run.AssignedRuntimeInstanceId);
             Assert.Equal("local-run-1", get.Run.LocalRunId);
@@ -108,6 +131,9 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedController
         [Fact]
         public async Task CancelRunAsync_Should_Cancel_Shared_Run_In_Redis()
         {
+            var sharedRunId =
+                RunId("shared-run-1");
+
             var controller = CreateController(
                 new AiRunAdmissionDecision
                 {
@@ -121,21 +147,24 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedController
             await controller.SubmitRunAsync(new AiSharedRuntimeControllerRequest
             {
                 Operation = AiSharedRuntimeControllerOperation.SubmitRun,
-                RequestedSharedRunId = "shared-run-1",
-                RunRequest = CreateRunRequest()
+                RequestedSharedRunId = sharedRunId,
+                RunRequest = CreateRunRequest(),
+                Metadata = CreateMetadata()
             });
 
             var cancel = await controller.CancelRunAsync(new AiSharedRuntimeControllerRequest
             {
                 Operation = AiSharedRuntimeControllerOperation.CancelRun,
-                SharedRunId = "shared-run-1",
+                SharedRunId = sharedRunId,
                 Reason = "operator cancel",
                 RequestedBy = "tester",
-                Source = "unit-test"
+                Source = "unit-test",
+                Metadata = CreateMetadata()
             });
 
             Assert.True(cancel.Success);
             Assert.NotNull(cancel.Run);
+            Assert.Equal(_controlPlaneId, cancel.Run.ControlPlaneId);
             Assert.Equal(AiSharedRunStatus.Cancelled, cancel.Run.Status);
             Assert.Equal("operator cancel", cancel.Run.FailureReason);
             Assert.Equal("tester", cancel.Run.RequestedBy);
@@ -144,17 +173,25 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedController
             var get = await controller.GetRunAsync(new AiSharedRuntimeControllerRequest
             {
                 Operation = AiSharedRuntimeControllerOperation.GetRun,
-                SharedRunId = "shared-run-1"
+                SharedRunId = sharedRunId,
+                Metadata = CreateMetadata()
             });
 
             Assert.True(get.Success);
             Assert.NotNull(get.Run);
+            Assert.Equal(_controlPlaneId, get.Run.ControlPlaneId);
             Assert.Equal(AiSharedRunStatus.Cancelled, get.Run.Status);
         }
 
         [Fact]
         public async Task ListRunsAsync_Should_Read_Shared_Runs_From_Redis()
         {
+            var firstRunId =
+                RunId("shared-run-1");
+
+            var secondRunId =
+                RunId("shared-run-2");
+
             var controller = CreateController(
                 new AiRunAdmissionDecision
                 {
@@ -164,31 +201,42 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedController
             await controller.SubmitRunAsync(new AiSharedRuntimeControllerRequest
             {
                 Operation = AiSharedRuntimeControllerOperation.SubmitRun,
-                RequestedSharedRunId = "shared-run-1",
-                RunRequest = CreateRunRequest()
+                RequestedSharedRunId = firstRunId,
+                RunRequest = CreateRunRequest(),
+                Metadata = CreateMetadata()
             });
 
             await controller.SubmitRunAsync(new AiSharedRuntimeControllerRequest
             {
                 Operation = AiSharedRuntimeControllerOperation.SubmitRun,
-                RequestedSharedRunId = "shared-run-2",
-                RunRequest = CreateRunRequest()
+                RequestedSharedRunId = secondRunId,
+                RunRequest = CreateRunRequest(),
+                Metadata = CreateMetadata()
             });
 
             var list = await controller.ListRunsAsync(new AiSharedRuntimeControllerRequest
             {
-                Operation = AiSharedRuntimeControllerOperation.ListRuns
+                Operation = AiSharedRuntimeControllerOperation.ListRuns,
+                Metadata = CreateMetadata()
             });
 
             Assert.True(list.Success);
             Assert.Equal(2, list.Runs.Count);
-            Assert.Contains(list.Runs, run => run.SharedRunId == "shared-run-1");
-            Assert.Contains(list.Runs, run => run.SharedRunId == "shared-run-2");
+            Assert.Contains(list.Runs, run => run.SharedRunId == firstRunId);
+            Assert.Contains(list.Runs, run => run.SharedRunId == secondRunId);
+
+            Assert.All(list.Runs, run =>
+            {
+                Assert.Equal(_controlPlaneId, run.ControlPlaneId);
+            });
         }
 
         [Fact]
         public async Task SubmitRunAsync_Should_Enqueue_SharedQueue_Item_When_Admission_Queues_Globally()
         {
+            var sharedRunId =
+                RunId("shared-run-1");
+
             var admission = new FakeRunAdmissionController(
                 new AiRunAdmissionDecision
                 {
@@ -204,27 +252,30 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedController
                 sharedQueue,
                 new FakeSharedRunDispatcher(),
                 new NoopAiRuntimeScaleOutRequestPublisher(),
-                new StaticAiControlPlaneIdResolver("test-control-plane"),
+                new StaticAiControlPlaneIdResolver(_controlPlaneId),
                 Options.Create(new AiSharedRuntimeControllerOptions()),
                 new NoopAiControlPlaneObserver());
 
             var result = await controller.SubmitRunAsync(new AiSharedRuntimeControllerRequest
             {
                 Operation = AiSharedRuntimeControllerOperation.SubmitRun,
-                RequestedSharedRunId = "shared-run-1",
+                RequestedSharedRunId = sharedRunId,
                 RunRequest = CreateRunRequest(),
                 TenantId = "tenant-1",
-                PipelineKey = "pipeline-1"
+                PipelineKey = "pipeline-1",
+                Metadata = CreateMetadata()
             });
 
             Assert.True(result.Success);
             Assert.NotNull(result.Run);
+            Assert.Equal(_controlPlaneId, result.Run.ControlPlaneId);
             Assert.Equal(AiSharedRunStatus.QueuedGlobally, result.Run.Status);
 
-            var queueItem = await sharedQueue.GetAsync("shared-run-1");
+            var queueItem = await sharedQueue.GetAsync(sharedRunId);
 
             Assert.NotNull(queueItem);
-            Assert.Equal("shared-run-1", queueItem!.SharedRunId);
+            Assert.Equal(sharedRunId, queueItem!.SharedRunId);
+            Assert.Equal(_controlPlaneId, queueItem.ControlPlaneId);
             Assert.Equal(AiSharedQueueItemStatus.Pending, queueItem.Status);
             Assert.Equal("tenant-1", queueItem.TenantId);
             Assert.Equal("pipeline-1", queueItem.PipelineKey);
@@ -234,6 +285,9 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedController
         [Fact]
         public async Task SubmitRunAsync_Should_Persist_And_Publish_ScaleOut_Request_In_Redis()
         {
+            var sharedRunId =
+                RunId("shared-run-scale-1");
+
             var publisher = new CapturingScaleOutPublisher();
 
             var controller = CreateController(
@@ -251,34 +305,38 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedController
             var submit = await controller.SubmitRunAsync(new AiSharedRuntimeControllerRequest
             {
                 Operation = AiSharedRuntimeControllerOperation.SubmitRun,
-                RequestedSharedRunId = "shared-run-scale-1",
+                RequestedSharedRunId = sharedRunId,
                 RunRequest = CreateRunRequest(),
                 TenantId = "tenant-1",
                 PipelineKey = "pipeline-1",
                 CorrelationId = "correlation-scale-1",
                 RequestedBy = "tester",
-                Source = "redis-integration-test"
+                Source = "redis-integration-test",
+                Metadata = CreateMetadata()
             });
 
             Assert.True(submit.Success);
             Assert.NotNull(submit.Run);
-            Assert.Equal("shared-run-scale-1", submit.SharedRunId);
+            Assert.Equal(sharedRunId, submit.SharedRunId);
+            Assert.Equal(_controlPlaneId, submit.Run.ControlPlaneId);
             Assert.Equal(AiSharedRunStatus.ScaleOutRequested, submit.Run.Status);
 
             var get = await controller.GetRunAsync(new AiSharedRuntimeControllerRequest
             {
                 Operation = AiSharedRuntimeControllerOperation.GetRun,
-                SharedRunId = "shared-run-scale-1"
+                SharedRunId = sharedRunId,
+                Metadata = CreateMetadata()
             });
 
             Assert.True(get.Success);
             Assert.NotNull(get.Run);
-            Assert.Equal("shared-run-scale-1", get.Run.SharedRunId);
+            Assert.Equal(sharedRunId, get.Run.SharedRunId);
+            Assert.Equal(_controlPlaneId, get.Run.ControlPlaneId);
             Assert.Equal(AiSharedRunStatus.ScaleOutRequested, get.Run.Status);
             Assert.Equal("pipeline-1", get.Run.RunRequest.PipelineName);
 
             Assert.NotNull(publisher.LastRequest);
-            Assert.Equal("shared-run-scale-1", publisher.LastRequest!.SharedRunId);
+            Assert.Equal(sharedRunId, publisher.LastRequest!.SharedRunId);
             Assert.Equal("tenant-1", publisher.LastRequest.TenantId);
             Assert.Equal("pipeline-1", publisher.LastRequest.PipelineKey);
             Assert.Equal(1, publisher.LastRequest.VisibleInstanceCount);
@@ -301,14 +359,17 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedController
                 throw new InvalidOperationException("Redis connection was not initialized.");
             }
 
+            var resolver =
+                new StaticAiControlPlaneIdResolver(_controlPlaneId);
+
             var store = new RedisAiSharedRunStore(
                 _connection,
                 Options.Create(new RedisAiSharedRunStoreOptions
                 {
                     KeyPrefix = _keyPrefix,
                     ListScanLimit = 100
-                }), 
-                new StaticAiControlPlaneIdResolver("test-control-plane"));
+                }),
+                resolver);
 
             return new AiSharedRuntimeController(
                 new FakeRunAdmissionController(admissionDecision),
@@ -316,7 +377,7 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedController
                 new InMemoryAiSharedQueue(),
                 dispatcher ?? new FakeSharedRunDispatcher(),
                 scaleOutPublisher ?? new NoopAiRuntimeScaleOutRequestPublisher(),
-                new StaticAiControlPlaneIdResolver("test-control-plane"),
+                resolver,
                 Options.Create(new AiSharedRuntimeControllerOptions()),
                 new NoopAiControlPlaneObserver());
         }
@@ -329,7 +390,7 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedController
             };
         }
 
-        private static AiRuntimeInstanceSnapshot CreateRuntimeInstance(
+        private AiRuntimeInstanceSnapshot CreateRuntimeInstance(
             string runtimeInstanceId)
         {
             var now = DateTimeOffset.UtcNow;
@@ -337,6 +398,7 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedController
             return new AiRuntimeInstanceSnapshot
             {
                 RuntimeInstanceId = runtimeInstanceId,
+                ControlPlaneId = _controlPlaneId,
                 Status = AiRuntimeInstanceStatus.Ready,
                 WorkerCount = 4,
                 QueuedRunCount = 0,
@@ -351,6 +413,20 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedController
                 LastHeartbeatAtUtc = now,
                 SnapshotAtUtc = now
             };
+        }
+
+        private IReadOnlyDictionary<string, string> CreateMetadata()
+        {
+            return new Dictionary<string, string>
+            {
+                ["controlPlaneId"] = _controlPlaneId
+            };
+        }
+
+        private string RunId(
+            string name)
+        {
+            return $"{_runIdPrefix}-{name}";
         }
 
         private sealed class FakeRunAdmissionController : IAiRunAdmissionController
@@ -383,7 +459,7 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedController
                 _result = result ?? new AiSharedRunDispatchResult
                 {
                     Success = true,
-                    SharedRunId = "shared-run-1",
+                    SharedRunId = "unused-test-shared-run",
                     RuntimeInstanceId = "runtime-1",
                     LocalRunId = "local-run-1",
                     ExecutionId = "execution-1",

@@ -1,6 +1,7 @@
 ﻿using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Multiplexed.Abstractions.AI.ControlPlane.Admission;
+using Multiplexed.Abstractions.AI.ControlPlane.Discovery;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Controller;
@@ -25,6 +26,7 @@ using Multiplexed.AI.Runtime.ControlPlane.DI;
 using Multiplexed.AI.Runtime.Execution.Instance.Worker;
 using Multiplexed.AI.Runtime.Observability.Ledger.DI;
 using Multiplexed.AI.Stores;
+using Multiplexed.AI.Tests.Fixtures;
 using Multiplexed.AI.Tests.Integration.Fixtures;
 using Multiplexed.AI.Tests.Integration.Infrastructure;
 using Multiplexed.AI.Tests.Integration.Runtime.Execution.Fixtures;
@@ -543,12 +545,17 @@ namespace Multiplexed.AI.Tests.Integration.ControlPlane.SharedController
         }
 
         private static async Task<AiDagExecutionEngineTestHost> CreateSharedControllerExecutionHostAsync(
-            SharedControllerExecutionScenario scenario)
+    SharedControllerExecutionScenario scenario)
         {
             ArgumentNullException.ThrowIfNull(scenario);
 
+            var controlPlaneId =
+                $"shared-controller-execution-{Guid.NewGuid():N}";
+
             return await AiDagExecutionEngineFixture.CreateAsync(
-                CreateOptions(scenario),
+                CreateOptions(
+                    scenario,
+                    controlPlaneId),
                 configureServices: services =>
                 {
                     var finalizedHook = new DistributedChaosRunFinalizedHook();
@@ -559,11 +566,16 @@ namespace Multiplexed.AI.Tests.Integration.ControlPlane.SharedController
 
                     services.AddInMemoryAiDecisionLedger();
 
+                    services.RemoveAll<IAiControlPlaneIdResolver>();
+                    services.AddSingleton<IAiControlPlaneIdResolver>(
+                        new StaticAiControlPlaneIdResolver(controlPlaneId));
+
                     services.AddAiControlPlane();
 
                     services.RemoveAll<IAiRunAdmissionController>();
                     services.AddSingleton<IAiRunAdmissionController>(
-                        new SharedControllerExecutionAdmissionController());
+                        new SharedControllerExecutionAdmissionController(
+                            controlPlaneId));
 
                     services.AddAiStepsFromAssemblies(
                         typeof(AiRuntimeAssemblyMarker).Assembly,
@@ -573,9 +585,11 @@ namespace Multiplexed.AI.Tests.Integration.ControlPlane.SharedController
         }
 
         private static AiEngineOptions CreateOptions(
-            SharedControllerExecutionScenario scenario)
+             SharedControllerExecutionScenario scenario,
+             string controlPlaneId)
         {
             ArgumentNullException.ThrowIfNull(scenario);
+            ArgumentException.ThrowIfNullOrWhiteSpace(controlPlaneId);
 
             var options = new AiEngineOptions
             {
@@ -586,7 +600,6 @@ namespace Multiplexed.AI.Tests.Integration.ControlPlane.SharedController
                     IdleDelay = scenario.WorkerIdleDelay,
                     MaxCycles = scenario.MaxWorkerCycles,
                     IgnoreConcurrencyConflicts = true
-
                 },
                 PipelineBackgroundController = new AiRuntimePipelineBackgroundControllerOptions
                 {
@@ -594,9 +607,6 @@ namespace Multiplexed.AI.Tests.Integration.ControlPlane.SharedController
                     QueueCapacity = 8,
                     RejectEnqueueWhenStopped = false,
                     StopOnFirstFailure = false,
-                    // Keep this scenario validating distributed worker participation.
-                    // Without this, the default MaxLocalWorkersPerExecution may cap participation
-                    // below scenario.MinimumExpectedParticipatingWorkers.
                     MaxLocalWorkersPerExecution = 5,
                     Distributed = new AiRuntimeDistributedExecutionOptions
                     {
@@ -607,6 +617,8 @@ namespace Multiplexed.AI.Tests.Integration.ControlPlane.SharedController
                     }
                 }
             };
+
+            options.ControlPlane.ControlPlaneId = controlPlaneId;
 
             options.Observability.EnableTracing = true;
             options.Observability.EnableInMemoryRecording = true;
@@ -1049,11 +1061,29 @@ namespace Multiplexed.AI.Tests.Integration.ControlPlane.SharedController
         {
             public const string RuntimeInstanceId = "runtime-chaos-1";
 
+            private readonly string _controlPlaneId;
+
+            public SharedControllerExecutionAdmissionController(
+                string controlPlaneId)
+            {
+                ArgumentException.ThrowIfNullOrWhiteSpace(controlPlaneId);
+
+                _controlPlaneId = controlPlaneId;
+            }
+
             public Task<AiRunAdmissionDecision> AdmitAsync(
                 AiRunAdmissionRequest request,
                 CancellationToken cancellationToken = default)
             {
                 ArgumentNullException.ThrowIfNull(request);
+
+                var metadata =
+                    new Dictionary<string, string>(
+                        request.Metadata,
+                        StringComparer.Ordinal)
+                    {
+                        ["controlPlaneId"] = _controlPlaneId
+                    };
 
                 return Task.FromResult(new AiRunAdmissionDecision
                 {
@@ -1064,7 +1094,7 @@ namespace Multiplexed.AI.Tests.Integration.ControlPlane.SharedController
                     AvailableInstanceCount = 1,
                     CurrentInstanceCount = 1,
                     MaxInstanceCount = 1,
-                    Metadata = request.Metadata
+                    Metadata = metadata
                 });
             }
         }

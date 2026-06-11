@@ -14,7 +14,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Store
     /// - executing by SHA when possible
     /// - falling back to SCRIPT LOAD when Redis returns NOSCRIPT
     /// </remarks>
-    internal sealed class RedisAiSharedRunStoreScriptCache
+    public sealed class RedisAiSharedRunStoreScriptCache
     {
         private readonly IConnectionMultiplexer _connection;
         private readonly SemaphoreSlim _loadLock = new(1, 1);
