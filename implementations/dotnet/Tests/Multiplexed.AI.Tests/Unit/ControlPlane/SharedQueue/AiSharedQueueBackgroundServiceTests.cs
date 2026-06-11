@@ -1,8 +1,10 @@
 ﻿using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Capacity;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Background;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Pump;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances;
 using Multiplexed.AI.Runtime.ControlPlane.SharedQueue;
 using Multiplexed.AI.Tests.Fixtures;
 
@@ -16,15 +18,17 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
             var pump = new FakeSharedQueuePump();
 
             var service = new AiSharedQueueBackgroundService(
-                pump,
-                Options.Create(new AiSharedQueueBackgroundServiceOptions
-                {
-                    Enabled = false,
-                    RuntimeInstanceId = "runtime-1",
-                    WorkerId = "worker-1"
-                }),
-                new StaticAiControlPlaneIdResolver("test-control-plane"),
-                NullLogger<AiSharedQueueBackgroundService>.Instance);
+             pump,
+             Options.Create(new AiSharedQueueBackgroundServiceOptions
+             {
+                 Enabled = false,
+                 RuntimeInstanceId = "runtime-1",
+                 WorkerId = "worker-1"
+             }),
+             new StaticAiControlPlaneIdResolver("test-control-plane"),
+             new InMemoryAiRuntimeInstanceRegistry(),
+             Array.Empty<IAiRuntimeInstanceCapacityStore>(),
+             NullLogger<AiSharedQueueBackgroundService>.Instance);
 
             await service.StartAsync(CancellationToken.None);
             await service.StopAsync(CancellationToken.None);
@@ -52,6 +56,8 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
                     ErrorDelay = TimeSpan.FromMilliseconds(1)
                 }),
                 new StaticAiControlPlaneIdResolver("test-control-plane"),
+                new InMemoryAiRuntimeInstanceRegistry(),
+                Array.Empty<IAiRuntimeInstanceCapacityStore>(),
                 NullLogger<AiSharedQueueBackgroundService>.Instance);
 
             await service.StartAsync(cts.Token);
@@ -98,6 +104,8 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
                     ErrorDelay = TimeSpan.FromMilliseconds(1)
                 }),
                 new StaticAiControlPlaneIdResolver("test-control-plane"),
+                new InMemoryAiRuntimeInstanceRegistry(),
+                Array.Empty<IAiRuntimeInstanceCapacityStore>(),
                 NullLogger<AiSharedQueueBackgroundService>.Instance);
 
             await service.StartAsync(cts.Token);
@@ -139,6 +147,8 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
                     ErrorDelay = TimeSpan.FromMilliseconds(1)
                 }),
                 new StaticAiControlPlaneIdResolver("test-control-plane"),
+                new InMemoryAiRuntimeInstanceRegistry(),
+                Array.Empty<IAiRuntimeInstanceCapacityStore>(),
                 NullLogger<AiSharedQueueBackgroundService>.Instance);
 
             await service.StartAsync(cts.Token);
@@ -184,6 +194,8 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
                     ErrorDelay = TimeSpan.FromMilliseconds(1)
                 }),
                 new StaticAiControlPlaneIdResolver("test-control-plane"),   
+                new InMemoryAiRuntimeInstanceRegistry(),
+                Array.Empty<IAiRuntimeInstanceCapacityStore>(),
                 NullLogger<AiSharedQueueBackgroundService>.Instance);
 
             await service.StartAsync(cts.Token);

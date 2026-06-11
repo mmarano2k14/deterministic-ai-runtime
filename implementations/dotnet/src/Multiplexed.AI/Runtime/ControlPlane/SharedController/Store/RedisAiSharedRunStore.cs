@@ -22,13 +22,23 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Store
     /// - Lua for atomic mark-dispatched updates
     ///
     /// Redis keys:
-    /// - ai:control-plane:{controlPlaneId}:shared-run:{sharedRunId}
-    /// - ai:control-plane:{controlPlaneId}:shared-runs:index
+    /// - {KeyPrefix}:control-plane:{controlPlaneId}:shared-run:{sharedRunId}
+    /// - {KeyPrefix}:control-plane:{controlPlaneId}:shared-runs:index
+    ///
+    /// IMPORTANT:
+    /// - Shared run visibility is scoped by logical control-plane identifier.
+    /// - Reads are defensively filtered by logical control-plane identifier to avoid returning
+    ///   stale, migrated, corrupted, or foreign shared run records.
+    /// - Listing self-heals the scoped index by removing missing or foreign records.
+    /// - Mutating operations validate the current scoped record before executing the mutation script.
     /// </remarks>
     public sealed class RedisAiSharedRunStore : IAiSharedRunStore
     {
-        private const string KeyPrefix =
-            "ai:control-plane";
+        private const string DefaultKeyPrefix =
+            "ai";
+
+        private const string ControlPlaneKeySegment =
+            "control-plane";
 
         private const string SharedRunKeySegment =
             "shared-run";
@@ -176,9 +186,12 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Store
                         cancellationToken)
                     .ConfigureAwait(false);
 
+            var indexKey =
+                BuildIndexKey(controlPlaneId);
+
             var ids = await _database
                 .SortedSetRangeByScoreAsync(
-                    BuildIndexKey(controlPlaneId),
+                    indexKey,
                     order: Order.Ascending,
                     take: _options.ListScanLimit)
                 .ConfigureAwait(false);
@@ -196,16 +209,38 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Store
                     continue;
                 }
 
-                var record = await GetAsync(
+                var rawRecord = await GetRawAsync(
                         controlPlaneId,
                         sharedRunId,
                         cancellationToken)
                     .ConfigureAwait(false);
 
-                if (record is null)
+                if (rawRecord is null)
                 {
+                    await RemoveFromIndexAsync(
+                            indexKey,
+                            sharedRunId)
+                        .ConfigureAwait(false);
+
                     continue;
                 }
+
+                if (!BelongsToControlPlane(
+                        rawRecord.ControlPlaneId,
+                        controlPlaneId))
+                {
+                    await RemoveFromIndexAsync(
+                            indexKey,
+                            sharedRunId)
+                        .ConfigureAwait(false);
+
+                    continue;
+                }
+
+                var record =
+                    EnsureControlPlaneId(
+                        rawRecord,
+                        controlPlaneId);
 
                 if (!includeCancelled &&
                     record.Status == AiSharedRunStatus.Cancelled)
@@ -252,12 +287,25 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Store
                         cancellationToken)
                     .ConfigureAwait(false);
 
+            var existing = await GetAsync(
+                    controlPlaneId,
+                    sharedRunId,
+                    cancellationToken)
+                .ConfigureAwait(false);
+
+            if (existing is null)
+            {
+                return null;
+            }
+
             var runKey =
                 BuildRunKey(
                     controlPlaneId,
                     sharedRunId);
 
-            var updatedAtUtc = DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture);
+            var updatedAtUtc =
+                DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture);
+
             var cancellationReason = string.IsNullOrWhiteSpace(reason)
                 ? "Shared run cancelled."
                 : reason;
@@ -319,12 +367,24 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Store
                         cancellationToken)
                     .ConfigureAwait(false);
 
+            var existing = await GetAsync(
+                    controlPlaneId,
+                    sharedRunId,
+                    cancellationToken)
+                .ConfigureAwait(false);
+
+            if (existing is null)
+            {
+                return null;
+            }
+
             var runKey =
                 BuildRunKey(
                     controlPlaneId,
                     sharedRunId);
 
-            var updatedAtUtc = DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture);
+            var updatedAtUtc =
+                DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture);
 
             var result = await _scripts
                 .ExecuteMarkDispatchedAsync(
@@ -365,17 +425,56 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Store
         }
 
         /// <summary>
-        /// Gets a shared run record from the scoped control-plane keyspace.
+        /// Gets a shared run record from the scoped control-plane keyspace and validates that it belongs
+        /// to the expected logical control-plane.
         /// </summary>
-        /// <param name="controlPlaneId">The logical control-plane identifier.</param>
+        /// <param name="controlPlaneId">The expected logical control-plane identifier.</param>
         /// <param name="sharedRunId">The shared run identifier.</param>
         /// <param name="cancellationToken">The cancellation token.</param>
-        /// <returns>The shared run record, or <c>null</c> when not found.</returns>
+        /// <returns>
+        /// The shared run record when found and scoped to the expected control-plane;
+        /// otherwise, <c>null</c>.
+        /// </returns>
         private async Task<AiSharedRunRecord?> GetAsync(
             string controlPlaneId,
             string sharedRunId,
             CancellationToken cancellationToken)
         {
+            var record =
+                await GetRawAsync(
+                        controlPlaneId,
+                        sharedRunId,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+            if (!BelongsToControlPlane(
+                    record?.ControlPlaneId,
+                    controlPlaneId))
+            {
+                return null;
+            }
+
+            return record is null
+                ? null
+                : EnsureControlPlaneId(
+                    record,
+                    controlPlaneId);
+        }
+
+        /// <summary>
+        /// Gets a shared run record from the scoped Redis key without applying control-plane validation.
+        /// </summary>
+        /// <param name="controlPlaneId">The logical control-plane identifier used to build the Redis key.</param>
+        /// <param name="sharedRunId">The shared run identifier.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <returns>The raw shared run record when found; otherwise, <c>null</c>.</returns>
+        private async Task<AiSharedRunRecord?> GetRawAsync(
+            string controlPlaneId,
+            string sharedRunId,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
             var runKey =
                 BuildRunKey(
                     controlPlaneId,
@@ -392,12 +491,21 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Store
                 return null;
             }
 
-            var record =
-                MapRecord(entries);
+            return MapRecord(entries);
+        }
 
-            return EnsureControlPlaneId(
-                record,
-                controlPlaneId);
+        /// <summary>
+        /// Removes a shared run identifier from a scoped shared run index.
+        /// </summary>
+        /// <param name="indexKey">The scoped Redis shared run index key.</param>
+        /// <param name="sharedRunId">The shared run identifier.</param>
+        private Task RemoveFromIndexAsync(
+            RedisKey indexKey,
+            string sharedRunId)
+        {
+            return _database.SortedSetRemoveAsync(
+                indexKey,
+                sharedRunId);
         }
 
         /// <summary>
@@ -587,16 +695,49 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Store
         }
 
         /// <summary>
+        /// Determines whether a stored shared run record belongs to the expected logical control-plane.
+        /// </summary>
+        /// <param name="recordControlPlaneId">The control-plane identifier stored on the record.</param>
+        /// <param name="expectedControlPlaneId">The expected logical control-plane identifier.</param>
+        /// <returns>
+        /// <c>true</c> when the record belongs to the expected control-plane, or when the
+        /// record has no control-plane identifier for backward compatibility; otherwise, <c>false</c>.
+        /// </returns>
+        private static bool BelongsToControlPlane(
+            string? recordControlPlaneId,
+            string expectedControlPlaneId)
+        {
+            if (string.IsNullOrWhiteSpace(recordControlPlaneId))
+            {
+                return true;
+            }
+
+            return string.Equals(
+                NormalizeKeySegment(recordControlPlaneId),
+                NormalizeKeySegment(expectedControlPlaneId),
+                StringComparison.Ordinal);
+        }
+
+        /// <summary>
         /// Builds the Redis hash key for a shared run inside one logical control-plane.
         /// </summary>
         /// <param name="controlPlaneId">The logical control-plane identifier.</param>
         /// <param name="sharedRunId">The shared run identifier.</param>
         /// <returns>The Redis shared run key.</returns>
-        private static RedisKey BuildRunKey(
+        private RedisKey BuildRunKey(
             string controlPlaneId,
             string sharedRunId)
         {
-            return $"{KeyPrefix}:{NormalizeKeySegment(controlPlaneId)}:{SharedRunKeySegment}:{NormalizeKeySegment(sharedRunId)}";
+            return string.Concat(
+                NormalizeBaseKeyPrefix(_options.KeyPrefix),
+                ":",
+                ControlPlaneKeySegment,
+                ":",
+                NormalizeKeySegment(controlPlaneId),
+                ":",
+                SharedRunKeySegment,
+                ":",
+                NormalizeKeySegment(sharedRunId));
         }
 
         /// <summary>
@@ -604,10 +745,49 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Store
         /// </summary>
         /// <param name="controlPlaneId">The logical control-plane identifier.</param>
         /// <returns>The Redis shared run index key.</returns>
-        private static RedisKey BuildIndexKey(
+        private RedisKey BuildIndexKey(
             string controlPlaneId)
         {
-            return $"{KeyPrefix}:{NormalizeKeySegment(controlPlaneId)}:{SharedRunIndexSegment}";
+            return string.Concat(
+                NormalizeBaseKeyPrefix(_options.KeyPrefix),
+                ":",
+                ControlPlaneKeySegment,
+                ":",
+                NormalizeKeySegment(controlPlaneId),
+                ":",
+                SharedRunIndexSegment);
+        }
+
+        /// <summary>
+        /// Normalizes the configured Redis key prefix into a base prefix.
+        /// </summary>
+        /// <param name="keyPrefix">The configured Redis key prefix.</param>
+        /// <returns>The normalized Redis base key prefix.</returns>
+        private static string NormalizeBaseKeyPrefix(
+            string keyPrefix)
+        {
+            if (string.IsNullOrWhiteSpace(keyPrefix))
+            {
+                return DefaultKeyPrefix;
+            }
+
+            var normalized =
+                keyPrefix
+                    .Trim()
+                    .TrimEnd(':');
+
+            const string sharedRunsSuffix = ":shared-runs";
+
+            if (normalized.EndsWith(
+                    sharedRunsSuffix,
+                    StringComparison.Ordinal))
+            {
+                normalized = normalized[..^sharedRunsSuffix.Length];
+            }
+
+            return string.IsNullOrWhiteSpace(normalized)
+                ? DefaultKeyPrefix
+                : normalized;
         }
 
         /// <summary>

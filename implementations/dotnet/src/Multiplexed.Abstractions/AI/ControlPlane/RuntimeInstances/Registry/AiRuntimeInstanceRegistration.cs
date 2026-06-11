@@ -96,5 +96,7 @@
         /// </summary>
         public IReadOnlyDictionary<string, string> Metadata { get; init; } =
             new Dictionary<string, string>();
+
+        public DateTimeOffset RegisteredAtUtc { get; init; }
     }
 }

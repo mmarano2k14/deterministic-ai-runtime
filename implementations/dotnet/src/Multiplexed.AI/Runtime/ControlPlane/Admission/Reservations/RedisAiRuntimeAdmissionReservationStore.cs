@@ -28,6 +28,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission.Reservations
     /// - Scripts are loaded once and then executed by SHA.
     /// - If Redis evicts scripts and returns NOSCRIPT, scripts are reloaded and retried once.
     /// - Reservation keys are scoped by logical control-plane identifier.
+    /// - Reservation members are also prefixed by logical control-plane and runtime instance identifiers.
+    /// - Count and release operations defensively remove expired or foreign members before returning results.
     /// </remarks>
     public sealed class RedisAiRuntimeAdmissionReservationStore :
         IAiRuntimeAdmissionReservationStore
@@ -45,6 +47,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission.Reservations
             local expiresAt = tonumber(ARGV[2])
             local keyTtlMs = tonumber(ARGV[3])
             local count = tonumber(ARGV[4])
+            local memberPrefix = ARGV[5]
 
             if now == nil then
                 return redis.error_reply('now must be provided')
@@ -62,13 +65,28 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission.Reservations
                 return redis.error_reply('count must be greater than zero')
             end
 
+            if memberPrefix == nil or memberPrefix == '' then
+                return redis.error_reply('memberPrefix must be provided')
+            end
+
             redis.call('ZREMRANGEBYSCORE', key, '-inf', now)
 
+            local existingMembers = redis.call('ZRANGE', key, 0, -1)
+            for _, member in ipairs(existingMembers) do
+                if string.sub(member, 1, string.len(memberPrefix)) ~= memberPrefix then
+                    redis.call('ZREM', key, member)
+                end
+            end
+
             for i = 1, count do
-                local member = ARGV[4 + i]
+                local member = ARGV[5 + i]
 
                 if member == nil or member == '' then
                     return redis.error_reply('reservation member must be provided')
+                end
+
+                if string.sub(member, 1, string.len(memberPrefix)) ~= memberPrefix then
+                    return redis.error_reply('reservation member does not match memberPrefix')
                 end
 
                 redis.call('ZADD', key, expiresAt, member)
@@ -85,6 +103,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission.Reservations
             local now = tonumber(ARGV[1])
             local count = tonumber(ARGV[2])
             local keyTtlMs = tonumber(ARGV[3])
+            local memberPrefix = ARGV[4]
 
             if now == nil then
                 return redis.error_reply('now must be provided')
@@ -98,7 +117,18 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission.Reservations
                 return redis.error_reply('keyTtlMs must be greater than zero')
             end
 
+            if memberPrefix == nil or memberPrefix == '' then
+                return redis.error_reply('memberPrefix must be provided')
+            end
+
             redis.call('ZREMRANGEBYSCORE', key, '-inf', now)
+
+            local existingMembers = redis.call('ZRANGE', key, 0, -1)
+            for _, member in ipairs(existingMembers) do
+                if string.sub(member, 1, string.len(memberPrefix)) ~= memberPrefix then
+                    redis.call('ZREM', key, member)
+                end
+            end
 
             local current = tonumber(redis.call('ZCARD', key))
 
@@ -130,6 +160,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission.Reservations
 
             local now = tonumber(ARGV[1])
             local keyTtlMs = tonumber(ARGV[2])
+            local memberPrefix = ARGV[3]
 
             if now == nil then
                 return redis.error_reply('now must be provided')
@@ -139,7 +170,18 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission.Reservations
                 return redis.error_reply('keyTtlMs must be greater than zero')
             end
 
+            if memberPrefix == nil or memberPrefix == '' then
+                return redis.error_reply('memberPrefix must be provided')
+            end
+
             redis.call('ZREMRANGEBYSCORE', key, '-inf', now)
+
+            local existingMembers = redis.call('ZRANGE', key, 0, -1)
+            for _, member in ipairs(existingMembers) do
+                if string.sub(member, 1, string.len(memberPrefix)) ~= memberPrefix then
+                    redis.call('ZREM', key, member)
+                end
+            end
 
             local remaining = tonumber(redis.call('ZCARD', key))
 
@@ -169,6 +211,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission.Reservations
         /// <param name="redis">The Redis connection multiplexer.</param>
         /// <param name="options">The Redis admission reservation options.</param>
         /// <param name="controlPlaneIdResolver">The control-plane identifier resolver.</param>
+        /// <exception cref="ArgumentNullException">
+        /// Thrown when <paramref name="redis"/>, <paramref name="options"/>,
+        /// or <paramref name="controlPlaneIdResolver"/> is null.
+        /// </exception>
         public RedisAiRuntimeAdmissionReservationStore(
             IConnectionMultiplexer redis,
             IOptions<AiRuntimeAdmissionReservationRedisOptions> options,
@@ -215,8 +261,13 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission.Reservations
             var expiresAt =
                 now.Add(options.ReservationTtl);
 
+            var memberPrefix =
+                CreateReservationMemberPrefix(
+                    controlPlaneId,
+                    runtimeInstanceId);
+
             var values =
-                new RedisValue[4 + runCount];
+                new RedisValue[5 + runCount];
 
             values[0] =
                 now.ToUnixTimeMilliseconds();
@@ -230,12 +281,14 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission.Reservations
             values[3] =
                 runCount;
 
+            values[4] =
+                memberPrefix;
+
             for (var index = 0; index < runCount; index++)
             {
-                values[4 + index] =
+                values[5 + index] =
                     CreateReservationMember(
-                        controlPlaneId,
-                        runtimeInstanceId);
+                        memberPrefix);
             }
 
             await EvaluateShaWithNoScriptRetryAsync(
@@ -286,7 +339,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission.Reservations
                     {
                         now.ToUnixTimeMilliseconds(),
                         runCount,
-                        GetKeyTtlMilliseconds()
+                        GetKeyTtlMilliseconds(),
+                        CreateReservationMemberPrefix(
+                            controlPlaneId,
+                            runtimeInstanceId)
                     },
                     cancellationToken)
                 .ConfigureAwait(false);
@@ -324,7 +380,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission.Reservations
                         new RedisValue[]
                         {
                             now.ToUnixTimeMilliseconds(),
-                            GetKeyTtlMilliseconds()
+                            GetKeyTtlMilliseconds(),
+                            CreateReservationMemberPrefix(
+                                controlPlaneId,
+                                runtimeInstanceId)
                         },
                         cancellationToken)
                     .ConfigureAwait(false);
@@ -350,6 +409,15 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission.Reservations
             return (int)count;
         }
 
+        /// <summary>
+        /// Executes a cached Lua script SHA and reloads scripts once when Redis reports NOSCRIPT.
+        /// </summary>
+        /// <param name="sha">The cached script SHA.</param>
+        /// <param name="script">The Lua script source.</param>
+        /// <param name="keys">The Redis keys passed to the script.</param>
+        /// <param name="values">The Redis values passed to the script.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <returns>The Redis script result.</returns>
         private async Task<RedisResult> EvaluateShaWithNoScriptRetryAsync(
             byte[] sha,
             string script,
@@ -389,6 +457,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission.Reservations
             }
         }
 
+        /// <summary>
+        /// Ensures that all Lua scripts are loaded into Redis.
+        /// </summary>
+        /// <param name="cancellationToken">The cancellation token.</param>
         private async Task EnsureScriptsLoadedAsync(
             CancellationToken cancellationToken)
         {
@@ -405,6 +477,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission.Reservations
                 .ConfigureAwait(false);
         }
 
+        /// <summary>
+        /// Reloads all Lua scripts into Redis.
+        /// </summary>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <param name="forceReload">A value indicating whether scripts should be force reloaded.</param>
         private async Task ReloadScriptsAsync(
             CancellationToken cancellationToken,
             bool forceReload)
@@ -449,6 +526,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission.Reservations
             }
         }
 
+        /// <summary>
+        /// Gets the cached SHA for a Lua script.
+        /// </summary>
+        /// <param name="script">The Lua script source.</param>
+        /// <returns>The cached script SHA.</returns>
         private byte[] GetShaForScript(
             string script)
         {
@@ -467,6 +549,13 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission.Reservations
             return countScriptSha!;
         }
 
+        /// <summary>
+        /// Gets a connected Redis server that can load Lua scripts.
+        /// </summary>
+        /// <returns>A Redis server instance.</returns>
+        /// <exception cref="InvalidOperationException">
+        /// Thrown when no Redis endpoint is available.
+        /// </exception>
         private IServer GetRedisServer()
         {
             var endpoints =
@@ -538,6 +627,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission.Reservations
                 NormalizeKeySegment(runtimeInstanceId));
         }
 
+        /// <summary>
+        /// Gets the Redis key TTL in milliseconds.
+        /// </summary>
+        /// <returns>The Redis key TTL in milliseconds.</returns>
         private long GetKeyTtlMilliseconds()
         {
             var keyTtl =
@@ -550,6 +643,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission.Reservations
                 (long)keyTtl.TotalMilliseconds);
         }
 
+        /// <summary>
+        /// Normalizes the configured Redis key prefix.
+        /// </summary>
+        /// <param name="keyPrefix">The configured Redis key prefix.</param>
+        /// <returns>The normalized Redis key prefix.</returns>
         private static string NormalizeKeyPrefix(
             string keyPrefix)
         {
@@ -579,7 +677,13 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission.Reservations
                 .Replace("\\", "/", StringComparison.Ordinal);
         }
 
-        private static string CreateReservationMember(
+        /// <summary>
+        /// Creates the deterministic reservation member prefix for one logical control-plane and runtime instance.
+        /// </summary>
+        /// <param name="controlPlaneId">The logical control-plane identifier.</param>
+        /// <param name="runtimeInstanceId">The runtime instance identifier.</param>
+        /// <returns>The reservation member prefix.</returns>
+        private static string CreateReservationMemberPrefix(
             string controlPlaneId,
             string runtimeInstanceId)
         {
@@ -587,7 +691,19 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission.Reservations
                 NormalizeKeySegment(controlPlaneId),
                 ":",
                 NormalizeKeySegment(runtimeInstanceId),
-                ":",
+                ":");
+        }
+
+        /// <summary>
+        /// Creates a unique reservation member inside the scoped control-plane/runtime prefix.
+        /// </summary>
+        /// <param name="memberPrefix">The deterministic reservation member prefix.</param>
+        /// <returns>The unique reservation member.</returns>
+        private static string CreateReservationMember(
+            string memberPrefix)
+        {
+            return string.Concat(
+                memberPrefix,
                 Environment.MachineName,
                 ":",
                 Environment.ProcessId.ToString(CultureInfo.InvariantCulture),
@@ -595,6 +711,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission.Reservations
                 Guid.NewGuid().ToString("N"));
         }
 
+        /// <summary>
+        /// Determines whether a Redis exception is caused by a missing cached Lua script.
+        /// </summary>
+        /// <param name="exception">The Redis server exception.</param>
+        /// <returns><c>true</c> when Redis reported NOSCRIPT; otherwise, <c>false</c>.</returns>
         private static bool IsNoScriptException(
             RedisServerException exception)
         {
