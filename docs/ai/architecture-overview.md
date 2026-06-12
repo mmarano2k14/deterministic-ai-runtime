@@ -1,14 +1,10 @@
 # Architecture Overview
 
-Status: Implemented architecture foundation / validated with shared controller, MCP, Redis coordination, local runtime pools, and HTTP pooled runtime provider scenarios.
+Status: Implemented architecture foundation / validated with shared controller, MCP, Redis coordination, Redis-backed scale-out request persistence, local runtime pools, local runtime scale-out, fulfilled-run requeue, HTTP pooled runtime provider scenarios, and end-to-end MCP scale-out execution.
 
 This document provides a high-level overview of the **Deterministic AI Runtime** architecture.
 
-It also reflects the current control-plane evolution: shared queue pump, queue-first submit mode, dispatch-time admission, runtime instance providers, MCP control-plane integration, Redis discovery/registry/capacity coordination, admission reservations, HTTP pooled runtime hosting, and worker-capacity visibility.
-
-The complete technical reference is currently preserved in:
-
-- [runtime-internals.md](../runtime-internals.md)
+It also reflects the current control-plane evolution: shared queue pump, queue-first submit mode, direct-dispatch scale-out mode, dispatch-time admission, runtime instance providers, MCP control-plane integration, Redis discovery/registry/capacity coordination, Redis-backed scale-out request coordination, admission reservations, local runtime scale-out, fulfilled-run requeue, HTTP pooled runtime hosting, and worker-capacity visibility.
 
 ---
 
@@ -37,7 +33,10 @@ It is an execution runtime responsible for:
 - publishing runtime capacity descriptors
 - reserving runtime capacity during dispatch
 - exposing runtime worker capacity
-- supporting provider-based local and HTTP pooled runtime dispatch
+- persisting and processing scale-out requests
+- creating local runtime capacity dynamically through provider-based scale-out
+- requeueing fulfilled scale-out runs for normal shared queue dispatch
+- supporting provider-based local, local scale-out, and HTTP pooled runtime dispatch
 
 The core idea is simple:
 
@@ -54,9 +53,11 @@ Client / API / MCP Layer
         ↓
 Control Plane and Shared Queue Layer
         ↓
+Scale-Out Request and Requeue Layer
+        ↓
 Discovery / Registry / Capacity Layer
         ↓
-Runtime Provider Dispatch Layer
+Runtime Provider Dispatch / Scale-Out Layer
         ↓
 Runtime Orchestration Layer
         ↓
@@ -172,6 +173,9 @@ It is responsible for:
 - Redis control-plane discovery
 - control-plane id resolution
 - admission reservations
+- Redis-backed scale-out requests
+- provider-based scale-out
+- fulfilled scale-out shared run requeue
 - provider-based local and HTTP dispatch
 - runtime queue control
 - execution control
@@ -204,6 +208,49 @@ Local Runtime Queue
 
 Queue-first mode uses this layer to persist a shared run and place it in the global queue before selecting a runtime instance.
 
+Direct-dispatch mode can preserve an admission `RequestScaleOut` decision when no runtime capacity is available.
+
+The validated scale-out control-plane path is:
+
+```text
+Shared Runtime Controller
+        ↓
+Run Admission = RequestScaleOut
+        ↓
+SharedRun.Status = ScaleOutRequested
+        ↓
+StoreBackedAiRuntimeScaleOutRequestPublisher
+        ↓
+RedisAiRuntimeScaleOutRequestStore
+        ↓
+AiRuntimeScaleOutRequestWatcherHostedService
+        ↓
+AiRuntimeScaleOutProviderSelector
+        ↓
+LocalAiRuntimeInstanceProvider
+        ↓
+AiLocalRuntimeInstanceScaler
+        ↓
+Runtime instance registered / capacity published
+        ↓
+AiScaleOutFulfilledRunRequeueService
+        ↓
+Shared Queue
+        ↓
+Shared Queue Pump
+        ↓
+Dispatch-Time Admission
+        ↓
+Provider Dispatch
+        ↓
+Local Runtime Queue
+```
+
+The watcher does not dispatch directly.
+
+It creates capacity and requeues the shared run.
+
+The pump remains responsible for claim ownership, dispatch-time admission, provider dispatch, and queue/run state updates.
 
 The current validated control-plane model also includes Redis-backed coordination components:
 
@@ -353,6 +400,35 @@ HTTP host identity != dispatch target
 runtime-http-* child instance == dispatch target
 ```
 
+The local runtime instance infrastructure also supports dynamic scale-out.
+
+A control-plane host can start with zero executable local runtime instances when the local pool startup is disabled.
+
+Admission can then request scale-out, and the local provider/scaler can create a runtime instance on demand.
+
+Validated local scale-out shape:
+
+```text
+MCP Control Plane
+    Runtime capacity at start = 0
+    ↓
+Submit shared run
+    ↓
+Admission = RequestScaleOut
+    ↓
+Redis scale-out request
+    ↓
+Local runtime scaler
+    ↓
+host-...:mcp-scaleout-runtime-1
+    ↓
+Shared run requeued
+    ↓
+Shared queue pump dispatches
+    ↓
+Runtime run completed
+```
+
 Important capacity fields include:
 
 ```text
@@ -405,6 +481,7 @@ Redis is used for:
 - runtime capacity store
 - control-plane discovery store
 - admission reservation store
+- scale-out request store
 
 Critical transitions are protected by Redis Lua scripts.
 
@@ -547,6 +624,9 @@ The runtime tracks:
 - worker capacity
 - max local workers per execution
 - effective worker count per execution
+- scale-out request lifecycle
+- fulfilled scale-out run requeue
+- scale-out dispatch and completion
 
 This allows the runtime to be inspected, tested, and eventually monitored through dashboards.
 
@@ -566,6 +646,12 @@ Runtime registry and capacity descriptors are visible
 Shared controller may create shared run
         ↓
 Queue-first mode may enqueue in shared queue
+        ↓
+Direct-dispatch admission may request scale-out
+        ↓
+Scale-out watcher/provider/scaler may create runtime capacity
+        ↓
+Fulfilled scale-out run may be requeued
         ↓
 Shared queue pump or manual drain may dispatch
         ↓
@@ -636,6 +722,8 @@ It manages:
 - dispatch-time admission
 - runtime capacity reservation
 - provider-based dispatch
+- scale-out request persistence
+- fulfilled scale-out run requeue
 - assigned runtime instance id
 - LocalRunId visibility after dispatch
 - ExecutionId visibility after local execution starts
@@ -792,15 +880,17 @@ Admission decides which runtime instance should receive work.
 
 Providers decide how to contact that runtime instance.
 
+When admission requests scale-out, the scale-out provider selector decides which provider can create or request capacity.
+
 ```text
 Admission
-    decides WHO
+    decides WHO or WHETHER SCALE-OUT IS NEEDED
 
 Provider Router
     decides HOW
 
 Provider
-    performs transport-specific dispatch/control/status operation
+    performs transport-specific dispatch/control/status/scale-out operation
 ```
 
 Current provider-oriented foundations include:
@@ -808,6 +898,10 @@ Current provider-oriented foundations include:
 - local runtime instance provider
 - HTTP runtime provider foundation
 - HTTP pooled runtime instance hosting
+- provider-based scale-out capability
+- local runtime instance scaler
+- Redis scale-out request store
+- fulfilled scale-out run requeue
 - runtime instance provider metadata
 - Redis runtime instance registry visibility
 - Redis capacity descriptor visibility
@@ -815,6 +909,34 @@ Current provider-oriented foundations include:
 - ControlPlaneIdResolver
 - Redis admission reservation store
 - MCP control-plane scenarios
+
+Validated local scale-out provider shape:
+
+```text
+MCP Control Plane
+    ↓
+Admission = RequestScaleOut
+    ↓
+Redis scale-out request
+    ↓
+Scale-out watcher
+    ↓
+AiRuntimeScaleOutProviderSelector
+    ↓
+LocalAiRuntimeInstanceProvider
+    ↓
+AiLocalRuntimeInstanceScaler
+    ↓
+host-...:mcp-scaleout-runtime-1
+    ↓
+Shared run requeued
+    ↓
+Shared queue pump
+    ↓
+Local runtime queue
+    ↓
+DAG execution completed
+```
 
 Validated HTTP pooled provider shape:
 
@@ -895,7 +1017,7 @@ Plugins remain responsible for domain-specific execution.
 | Queue-first submit mode | Implemented / validated |
 | Manual shared queue drain | Implemented / validated |
 | Dispatch-time admission | Implemented / validated |
-| Runtime instance provider hosting | Implemented foundations / validated local and HTTP pooled scenarios |
+| Runtime instance provider hosting | Implemented foundations / validated local, local scale-out, and HTTP pooled scenarios |
 | Local runtime instance provider | Implemented / validated |
 | HTTP runtime provider foundation | Implemented / validated with pooled runtime instances |
 | HTTP pooled runtime dispatch | Implemented / validated |
@@ -904,6 +1026,13 @@ Plugins remain responsible for domain-specific execution.
 | Redis runtime instance registry | Implemented / validated |
 | Redis runtime capacity store | Implemented / validated |
 | Redis admission reservation store | Implemented / validated |
+| Redis scale-out request store | Implemented / validated |
+| Store-backed scale-out request publisher | Implemented / validated |
+| Scale-out request watcher | Implemented / validated |
+| Scale-out provider selector | Implemented / validated |
+| Local runtime instance scaler | Implemented / validated |
+| Fulfilled scale-out run requeue | Implemented / validated |
+| MCP Redis local scale-out execution | Implemented / validated |
 | Shared queue pump readiness gate | Implemented / validated |
 | Runtime worker capacity visibility | Implemented / validated |
 | Max local workers per execution | Implemented / validated |
@@ -919,7 +1048,23 @@ Plugins remain responsible for domain-specific execution.
 
 ## Current Validated Evidence
 
-The current architecture has been validated through MCP, Redis, local runtime pool, and HTTP pooled runtime provider scenarios.
+The current architecture has been validated through MCP, Redis, local runtime pool, local scale-out, and HTTP pooled runtime provider scenarios.
+
+Redis local scale-out execution evidence:
+
+```text
+Initial ActiveLocalInstances = 0
+Admission = RequestScaleOut
+SharedRun.Status = ScaleOutRequested
+ScaleOutRequest.Status = Fulfilled
+ScaleOutRuntimeInstanceId = host-...:mcp-scaleout-runtime-1
+ActiveLocalInstances = 1
+SharedRun.Status = Dispatched
+QueueStatus = Dispatched
+LocalRunId = available
+ExecutionId = available
+RuntimeRunStatus = completed
+```
 
 Heavy HTTP dispatch evidence:
 
@@ -963,6 +1108,11 @@ These validations prove the current architecture can:
 - wait for runtime readiness before background dispatch
 - resolve MCP/control-plane identity through Redis discovery
 - dispatch through local and HTTP providers
+- request scale-out through the provider model
+- dynamically create local runtime capacity from zero executable instances
+- requeue fulfilled scale-out shared runs
+- dispatch scale-out requeued runs through the shared queue pump
+- execute scale-out-triggered runs to completion
 - assign runs to pooled child runtime instances
 - expose runtime run status and execution ids
 - replay completed executions
@@ -989,14 +1139,3 @@ These validations prove the current architecture can:
 - [Step Plugins](step-plugins.md)
 - [RAG Pipelines](rag-pipelines.md)
 
----
-
-## Documentation Rule
-
-This document is a focused extraction from the complete technical reference.
-
-The original technical depth remains preserved in:
-
-- [runtime-internals.md](../runtime-internals.md)
-
-Do not remove content from `runtime-internals.md` until the extracted documentation has been reviewed and validated.

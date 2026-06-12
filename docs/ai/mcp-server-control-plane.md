@@ -1,10 +1,10 @@
 # MCP Server as Runtime Control Plane
 
-Status: Active foundation validated for local and HTTP pooled runtime scenarios.
+Status: Active foundation validated for local runtime pools, HTTP pooled runtime scenarios, Redis-backed shared queue coordination, Redis scale-out request persistence, local runtime scale-out, fulfilled-run requeue, and end-to-end MCP scale-out execution.
 
 This document describes how the **MCP Server** acts as a concrete runtime control-plane adapter for the Deterministic AI Runtime.
 
-It also reflects the current shared queue pump, queue-first submit mode, dispatch-time admission, runtime instance provider hosting, Redis-backed discovery/registry/capacity coordination, HTTP pooled runtime hosting, and worker-capacity visibility work.
+It also reflects the current shared queue pump, queue-first submit mode, direct-dispatch admission scale-out mode, dispatch-time admission, runtime instance provider hosting, Redis-backed discovery/registry/capacity coordination, Redis-backed scale-out request coordination, HTTP pooled runtime hosting, local runtime scale-out, fulfilled-run requeue, and worker-capacity visibility work.
 
 The MCP server does not replace the runtime engine.
 
@@ -32,6 +32,9 @@ Its purpose is to expose operational runtime commands such as:
 - submit shared runs
 - inspect shared runs
 - submit queue-first runs
+- submit direct-dispatch runs that may request scale-out
+- observe Redis-backed scale-out requests
+- validate local runtime scale-out from zero runtime capacity
 - drain shared queues manually
 - run or disable the background shared queue pump
 - wait for runtime readiness before automatic dispatch
@@ -56,6 +59,7 @@ The MCP server is especially useful for:
 - future dashboard and operational automation
 - proving that the runtime can be controlled externally
 - validating provider-based dispatch before Kubernetes deployment
+- proving the scale-out lifecycle before Kubernetes pod scaling exists
 
 ---
 
@@ -446,7 +450,40 @@ Each runtime instance receives its own service provider and runtime identity des
 
 Each runtime instance keeps its own queue and worker lifecycle.
 
-The local pool is a simulation of what future Kubernetes runtime pods will provide as separate processes.
+The local runtime instance infrastructure can also be used dynamically by scale-out.
+
+When the local pool startup option is disabled, the MCP host may start with zero executable local runtime instances.
+
+A submitted run can then request scale-out through admission, persist a Redis scale-out request, and let the scale-out watcher create local runtime capacity on demand.
+
+Validated dynamic local scale-out shape:
+
+```text
+MCP Host
+    Role = ControlPlane
+    Local pool startup = disabled
+    Runtime capacity at start = 0
+
+Submit shared run
+    ↓
+Admission = RequestScaleOut
+    ↓
+Redis scale-out request
+    ↓
+Scale-out watcher
+    ↓
+Local runtime scaler
+    ↓
+mcp-scaleout-runtime-1 created/registered/started
+    ↓
+Shared run requeued
+    ↓
+Shared queue pump dispatches
+    ↓
+Local runtime executes DAG
+```
+
+This validates the scale-out control loop before replacing the local scaler with a Kubernetes deployment/pod scaler.
 
 ---
 
@@ -513,6 +550,38 @@ Queue-first mode is useful for:
 - MCP demo flows
 - validating pump disabled behavior
 - proving that shared queue persistence works independently from immediate dispatch
+
+Queue-first intentionally bypasses the initial admission outcome and persists the run as `QueuedGlobally`.
+
+For admission-driven scale-out tests and demos, use `DirectDispatch`.
+
+```text
+AiSharedRuntimeController:SubmitMode = DirectDispatch
+```
+
+Direct-dispatch mode allows the controller to preserve the real admission decision:
+
+```text
+AssignToInstance
+QueueGlobally
+RequestScaleOut
+Reject
+```
+
+This distinction is important.
+
+```text
+QueueFirst
+    -> SharedRun.Status = QueuedGlobally
+    -> run waits for pump/manual drain
+
+DirectDispatch + no runtime capacity + scale-out enabled
+    -> SharedRun.Status = ScaleOutRequested
+    -> Redis scale-out request is persisted
+    -> watcher/scaler creates runtime capacity
+    -> fulfilled run is requeued
+    -> pump dispatches to new runtime instance
+```
 
 ---
 
@@ -626,9 +695,67 @@ LocalRunId
 ExecutionId when execution starts
 ```
 
+Current Redis/local scale-out dispatch flow:
+
+```text
+MCP run.submit_many_runs
+    ↓
+IAiSharedRuntimeController.SubmitAsync
+    ↓
+SubmitMode = DirectDispatch
+    ↓
+IAiRunAdmissionController
+    ↓
+No runtime capacity available
+    ↓
+Decision = RequestScaleOut
+    ↓
+SharedRun.Status = ScaleOutRequested
+    ↓
+StoreBackedAiRuntimeScaleOutRequestPublisher
+    ↓
+RedisAiRuntimeScaleOutRequestStore
+    ↓
+AiRuntimeScaleOutRequestWatcherHostedService
+    ↓
+AiRuntimeScaleOutProviderSelector
+    ↓
+LocalAiRuntimeInstanceProvider
+    ↓
+AiLocalRuntimeInstanceScaler
+    ↓
+new local runtime instance is created/registered/started
+    ↓
+ScaleOutRequest.Status = Fulfilled
+    ↓
+AiScaleOutFulfilledRunRequeueService
+    ↓
+SharedQueueItem.Status = Pending
+    ↓
+background pump / shared queue pump
+    ↓
+dispatch-time admission sees new capacity
+    ↓
+AssignedRuntimeInstanceId = host-...:mcp-scaleout-runtime-1
+    ↓
+selected runtime instance local queue
+    ↓
+LocalRunId
+    ↓
+ExecutionId
+    ↓
+runtime run completed
+```
+
+The scale-out watcher does not dispatch directly.
+
+It marks the scale-out request as fulfilled and requeues the shared run.
+
+The normal shared queue pump remains responsible for claim ownership, dispatch-time admission, provider dispatch, and queue/run state transitions.
+
 The dispatch layer now supports provider-oriented local and HTTP pooled runtime instance scenarios.
 
-Provider-based dispatch remains the direction for Redis command queues, gRPC, and Kubernetes-native transports. The current Redis-backed shared run store, shared queue, registry, capacity store, discovery store, and admission reservation store validate the coordination layer used by this direction.
+Provider-based dispatch remains the direction for Redis command queues, gRPC, and Kubernetes-native transports. The current Redis-backed shared run store, shared queue, registry, capacity store, discovery store, admission reservation store, and scale-out request store validate the coordination layer used by this direction.
 
 ---
 
@@ -769,6 +896,38 @@ Typical responsibilities:
 - validate queue dispatch behavior
 
 Shared queue tools are useful for testing and operational visibility.
+
+---
+
+## Scale-Out Visibility
+
+Scale-out is now visible through the MCP integration test path and underlying control-plane stores.
+
+Current scale-out responsibilities are:
+
+- persist scale-out requests when admission returns `RequestScaleOut`
+- expose request status as pending, observed, fulfilled, or rejected
+- resolve a scale-out-capable provider through the existing runtime provider router
+- create local runtime capacity through the local runtime scaler
+- requeue the fulfilled shared run for normal shared queue dispatch
+- prove execution completion through runtime queue status and `ExecutionId`
+
+Validated local scale-out evidence:
+
+```text
+SharedRunStatus = Dispatched
+AssignedRuntimeInstanceId = host-...:mcp-scaleout-runtime-1
+LocalRunId = available
+ExecutionId = available
+RuntimeRunStatus = completed
+QueueStatus = Dispatched
+ScaleOutRequestStatus = Fulfilled
+ActiveLocalInstances = 1
+```
+
+Future MCP tools can expose scale-out request listing and diagnostics directly.
+
+Until then, tests and diagnostics validate the same control-plane path through Redis stores and MCP runtime status calls.
 
 ---
 
@@ -953,6 +1112,40 @@ Despite the name `RemoteAiSharedRunDispatcher`, in local pool mode the dispatch 
 
 This is expected for the current local control-plane demo.
 
+The current local scale-out dispatch flow is:
+
+```text
+run.submit_many_runs
+    ↓
+Shared Runtime Controller
+    ↓
+DirectDispatch admission
+    ↓
+No local runtime capacity
+    ↓
+SharedRun.Status = ScaleOutRequested
+    ↓
+Redis scale-out request
+    ↓
+Scale-out watcher
+    ↓
+Local provider scale-out capability
+    ↓
+Local runtime scaler creates mcp-scaleout-runtime-1
+    ↓
+Scale-out request fulfilled
+    ↓
+Shared run requeued
+    ↓
+Shared queue pump dispatches to mcp-scaleout-runtime-1
+    ↓
+Local queue starts execution
+    ↓
+ExecutionId created
+    ↓
+Runtime run completed
+```
+
 The current provider-based hosting work also validates HTTP pooled runtime instance scenarios.
 
 Current HTTP pooled dispatch flow:
@@ -1001,6 +1194,27 @@ The shared controller should not need to know whether a runtime instance is:
 The runtime instance descriptor should declare how it can be contacted.
 
 The provider router should resolve the correct provider.
+
+Scale-out uses the same provider model.
+
+`IAiRuntimeScaleOutProvider` extends `IAiRuntimeInstanceProvider`, which makes scale-out a provider capability rather than a separate routing system.
+
+The scale-out provider selector resolves provider name from:
+
+```text
+request.ProviderHint
+    -> AiRuntimeInstanceRegistrationOptions.ProviderName
+    -> local
+```
+
+The local provider currently supports:
+
+```text
+provider.name = local
+    -> LocalAiRuntimeInstanceProvider
+    -> AiLocalRuntimeInstanceScaler
+    -> local runtime instance created on demand
+```
 
 ```text
 Runtime descriptor
@@ -1102,6 +1316,13 @@ Current MCP integration tests validate:
 - shared queue background pump dispatch
 - shared queue pump readiness gate
 - manual queue drain with background pump disabled
+- Redis scale-out request persistence
+- scale-out watcher processing
+- scale-out provider selector resolution
+- local runtime scale-out from zero runtime capacity
+- fulfilled scale-out shared run requeue
+- scale-out requeued run dispatch through the shared queue pump
+- scale-out runtime execution completion
 - local queue enqueue
 - local run status polling
 - execution replay
@@ -1143,6 +1364,41 @@ mcp-runtime-3
     MaxLocalWorkersPerExecution = 4
     MaxRunSlots = 5
 ```
+
+---
+
+## Current Redis Local Scale-Out Validation Evidence
+
+The current MCP scale-out test suite validates a complete Redis-backed local scale-out flow.
+
+Validated scale-out evidence:
+
+```text
+Initial ActiveLocalInstances = 0
+Admission = RequestScaleOut
+SharedRun.Status = ScaleOutRequested
+ScaleOutRequest.Status = Fulfilled
+ScaleOutRuntimeInstanceId = host-...:mcp-scaleout-runtime-1
+ActiveLocalInstances = 1
+SharedRun.Status = Dispatched
+QueueStatus = Dispatched
+LocalRunId = available
+ExecutionId = available
+RuntimeRunStatus = completed
+```
+
+This proves that MCP can:
+
+- submit a run when no runtime capacity exists
+- trigger admission-driven scale-out
+- persist a Redis scale-out request
+- process the request through the watcher
+- resolve the local scale-out-capable provider
+- create a local runtime instance dynamically
+- requeue the fulfilled shared run
+- dispatch it through the normal shared queue pump
+- execute the DAG to completion
+- expose the final runtime status through MCP runtime queue tools.
 
 ---
 
@@ -1191,13 +1447,13 @@ The current MCP server/control-plane adapter does not yet provide:
 
 - cross-pod dispatch through Redis command queues
 - gRPC runtime dispatch
-- Kubernetes scale-out implementation
+- Kubernetes pod/deployment scale-out implementation
 - distributed shared controller leader election
 - production dashboard UI
 - OpenTelemetry exporter polish
 - production security model for MCP access
 - tenant-aware operational authorization
-- full provider capability negotiation
+- full provider capability negotiation beyond the current local scale-out provider
 - Redis/Lua slot reservation refinement for multi-control-plane dispatch safety
 - production-grade admission reservation hardening
 
@@ -1243,6 +1499,21 @@ Kubernetes metadata provider
 Kubernetes scaling provider
 ```
 
+The local scale-out provider is now validated as the first concrete scale-out capability.
+
+The next Kubernetes scaling provider should reuse the same lifecycle:
+
+```text
+RequestScaleOut
+  -> persist request
+  -> watcher observes request
+  -> provider selector resolves kubernetes provider
+  -> Kubernetes scaler creates/expands runtime capacity
+  -> request fulfilled
+  -> shared run requeued
+  -> pump dispatches to visible runtime capacity
+```
+
 Future providers should be added without changing the shared controller architecture.
 
 ---
@@ -1264,6 +1535,10 @@ Future providers should be added without changing the shared controller architec
 | Shared Queue Dispatcher | Re-admits queued runs, dispatches to selected runtime instances, and updates shared queue/run state. |
 | Provider Router | Resolves how to contact a selected runtime instance. |
 | Provider | Performs transport-specific operations such as dispatch, status, control, capacity, or scaling. |
+| Scale-Out Request Store | Persists scale-out requests and their pending/observed/fulfilled/rejected lifecycle. |
+| Scale-Out Watcher | Observes pending scale-out requests and delegates capacity creation to a scale-out-capable provider. |
+| Scale-Out Provider Selector | Resolves the provider capable of handling a scale-out request using the existing runtime provider router. |
+| Fulfilled Run Requeue Service | Requeues a shared run after scale-out has created capacity so the normal pump can dispatch it. |
 | Runtime Queue Control Plane | Exposes one runtime instance local queue. |
 | Runtime Instance Snapshot | Exposes role, heartbeat, queue pressure, run slots, and worker capacity. |
 | Local Runtime Queue | Owned by one runtime instance and unchanged by shared queue. |
@@ -1285,14 +1560,3 @@ Future providers should be added without changing the shared controller architec
 - [Runtime Metrics](runtime-metrics.md)
 - [Testing Strategy](testing-strategy.md)
 
----
-
-## Documentation Rule
-
-This document is a focused extraction for MCP server control-plane architecture.
-
-The original technical depth remains preserved in:
-
-- [runtime-internals.md](../runtime-internals.md)
-
-Do not remove content from `runtime-internals.md` until the extracted documentation has been reviewed and validated.

@@ -1,16 +1,15 @@
 # Runtime Instance Provider Model
 
-Status: Architecture direction, implemented foundation validated for local and HTTP pooled runtime scenarios.
+Status: Architecture direction, implemented foundation validated for local dispatch, HTTP pooled runtime scenarios, provider-based scale-out, Redis-backed scale-out request persistence, local runtime scale-out, fulfilled-run requeue, and end-to-end MCP scale-out execution.
 
 This document describes the **runtime instance provider model** for the Deterministic AI Runtime control plane.
 
-The first provider-based hosting layer is now implemented and validated through local and HTTP runtime instance providers, runtime instance visibility, shared queue dispatch, Redis-backed runtime coordination, and MCP control-plane integration.
+The first provider-based hosting layer is now implemented and validated through local and HTTP runtime instance providers, runtime instance visibility, shared queue dispatch, Redis-backed runtime coordination, provider-based scale-out, local runtime instance scaling, and MCP control-plane integration.
 
-The goal is to make runtime instance administration and dispatch provider-based, dynamically loadable, and extensible without changing the local runtime queue architecture.
+The goal is to make runtime instance administration, dispatch, status/control operations, and scale-out provider-based, dynamically loadable, and extensible without changing the local runtime queue architecture.
 
 The complete technical reference is currently preserved in:
 
-- [runtime-internals.md](../runtime-internals.md)
 - [runtime-control-plane.md](runtime-control-plane.md)
 - [mcp-server-control-plane.md](mcp-server-control-plane.md)
 
@@ -32,6 +31,11 @@ The runtime now has:
 - local runtime instance provider
 - HTTP runtime instance provider foundation
 - pooled HTTP runtime instance hosting
+- provider-based scale-out capability
+- local runtime instance scaler
+- Redis-backed scale-out request store
+- scale-out request watcher
+- fulfilled scale-out run requeue service
 - shared queue
 - shared runtime controller
 - queue-first submit mode
@@ -40,8 +44,9 @@ The runtime now has:
 - dispatch-time admission
 - Redis-backed admission reservation store
 - MCP control-plane adapter
+- end-to-end MCP Redis local scale-out execution validation
 
-The next step is to continue making the path between shared queue/admission and runtime instance transport generic.
+The next step is to continue hardening provider capabilities and remote transports while preserving the validated local and HTTP provider paths.
 
 Today, dispatch already flows through provider-style runtime instance resolution for local and HTTP pooled runtime scenarios.
 
@@ -132,16 +137,26 @@ Admission decides **which runtime instance** should receive a run.
 
 Providers decide **how to communicate** with that runtime instance.
 
+For scale-out, admission decides **that more capacity is needed**.
+
+The provider selector decides **which provider can create that capacity**.
+
 ```text
 Admission
-    decides WHO
+    decides WHO or WHETHER SCALE-OUT IS NEEDED
 
 Provider Router
-    decides HOW
+    decides HOW TO REACH OR SCALE THE TARGET ENVIRONMENT
 
 Provider
     performs the transport-specific operation
 ```
+
+Scale-out is now modeled as a provider capability.
+
+`IAiRuntimeScaleOutProvider` extends `IAiRuntimeInstanceProvider`.
+
+This means scale-out uses the same provider discovery/routing model as dispatch, status, and control.
 
 This separation protects the architecture.
 
@@ -465,6 +480,19 @@ A Redis command queue provider may support dispatch and control through commands
 
 A provider should only implement the capabilities it supports.
 
+A provider can support scale-out without being the dispatch transport for every runtime instance.
+
+For example, the local provider now supports:
+
+```text
+dispatch
+status
+control
+scale-out
+```
+
+Kubernetes will likely support scale-out before it becomes a direct dispatch provider.
+
 ---
 
 ## Dispatch Capability
@@ -567,27 +595,71 @@ A provider may implement capacity directly or delegate to a shared capacity stor
 
 ---
 
-## Scaling Capability
+## Scale-Out Capability
 
-Scaling providers request infrastructure changes.
+Scale-out providers request or create runtime capacity.
+
+Current implemented abstraction:
 
 ```csharp
-public interface IAiRuntimeInstanceScalingProvider :
+public interface IAiRuntimeScaleOutProvider :
     IAiRuntimeInstanceProvider
 {
-    Task<AiRuntimeScaleOutResult> RequestScaleOutAsync(
-        AiRuntimeScaleOutRequest request,
-        CancellationToken cancellationToken = default);
-
-    Task<AiRuntimeScaleInResult> RequestScaleInAsync(
-        AiRuntimeScaleInRequest request,
+    Task<AiRuntimeScaleOutProviderResult> RequestScaleOutAsync(
+        AiRuntimeScaleOutProviderRequest request,
         CancellationToken cancellationToken = default);
 }
 ```
 
-Kubernetes is most likely a scaling provider before it is a dispatch provider.
+Important rule:
 
-Scaling should remain separate from dispatch.
+```text
+IAiRuntimeScaleOutProvider extends IAiRuntimeInstanceProvider
+```
+
+This keeps scale-out inside the existing provider model.
+
+There is no separate scale-out router.
+
+There is no separate provider-name property on the scale-out provider.
+
+Provider identity still comes from:
+
+```text
+[AiRuntimeInstanceProvider("local")]
+[AiRuntimeInstanceProvider("http")]
+[AiRuntimeInstanceProvider("kubernetes")]
+```
+
+Scale-out provider selection is handled by `IAiRuntimeScaleOutProviderSelector`.
+
+The selector reuses `IAiRuntimeInstanceProviderRouter`.
+
+Provider name resolution uses:
+
+```text
+AiRuntimeScaleOutProviderRequest.ProviderHint
+    -> AiRuntimeInstanceRegistrationOptions.ProviderName
+    -> local
+```
+
+Current validated local scale-out capability:
+
+```text
+provider.name = local
+    ↓
+AiRuntimeScaleOutProviderSelector
+    ↓
+LocalAiRuntimeInstanceProvider
+    ↓
+AiLocalRuntimeInstanceScaler
+    ↓
+new local runtime instance created/registered/started
+```
+
+Kubernetes is most likely a scale-out provider before it is a direct dispatch provider.
+
+Scale-out should remain separate from dispatch, but it should reuse the same provider model.
 
 ---
 
@@ -602,6 +674,7 @@ Expected responsibilities:
 - verify requested capability is supported
 - throw or return structured failure when provider is missing
 - keep shared controller independent from transport details
+- allow selectors to request a specific provider capability such as dispatch, status, control, or scale-out
 
 Example usage:
 
@@ -673,6 +746,41 @@ HTTP host identity != dispatch target
 runtime-http-* child instance == dispatch target
 ```
 
+Current local scale-out provider resolution flow:
+
+```text
+Shared Runtime Controller
+    ↓
+Admission returns RequestScaleOut
+    ↓
+StoreBackedAiRuntimeScaleOutRequestPublisher
+    ↓
+RedisAiRuntimeScaleOutRequestStore
+    ↓
+AiRuntimeScaleOutRequestWatcherHostedService
+    ↓
+AiRuntimeScaleOutProviderSelector
+    ↓
+resolve provider.name:
+        request.ProviderHint
+        AiRuntimeInstanceRegistrationOptions.ProviderName
+        local
+    ↓
+IAiRuntimeInstanceProviderRouter.TryGetProvider<IAiRuntimeScaleOutProvider>(...)
+    ↓
+LocalAiRuntimeInstanceProvider
+    ↓
+AiLocalRuntimeInstanceScaler
+    ↓
+create local runtime instance
+    ↓
+register runtime instance / publish capacity
+    ↓
+mark scale-out request fulfilled
+    ↓
+requeue shared run for normal pump dispatch
+```
+
 Future Redis command queue flow:
 
 ```text
@@ -721,6 +829,7 @@ The local provider should support:
 - resume queue
 - cancel local run
 - drain queue if supported
+- local runtime scale-out when an `IAiLocalRuntimeInstanceScaler` is available
 
 It should not change local queue internals.
 
@@ -731,6 +840,85 @@ Current implementation direction:
 - dispatch still enters the target runtime instance local queue
 - DAG execution remains owned by the runtime engine and local workers
 - provider routing does not mutate DAG execution state directly
+- `LocalAiRuntimeInstanceProvider` implements `IAiRuntimeScaleOutProvider`
+- when scale-out is requested, it delegates capacity creation to `AiLocalRuntimeInstanceScaler`
+- when no scaler is registered, it returns a structured rejected provider result
+
+---
+
+## Scale-Out Request Lifecycle
+
+Scale-out is now implemented as a persisted request lifecycle.
+
+The shared controller does not create runtime instances directly.
+
+The watcher does not dispatch directly.
+
+The normal shared queue pump remains responsible for dispatch after capacity exists.
+
+Validated lifecycle:
+
+```text
+SubmitRun
+    ↓
+DirectDispatch mode
+    ↓
+Admission sees no runtime capacity
+    ↓
+Decision = RequestScaleOut
+    ↓
+SharedRun.Status = ScaleOutRequested
+    ↓
+StoreBackedAiRuntimeScaleOutRequestPublisher
+    ↓
+RedisAiRuntimeScaleOutRequestStore
+    ↓
+AiRuntimeScaleOutRequestWatcherHostedService
+    ↓
+AiRuntimeScaleOutProviderSelector
+    ↓
+IAiRuntimeScaleOutProvider
+    ↓
+LocalAiRuntimeInstanceProvider
+    ↓
+AiLocalRuntimeInstanceScaler
+    ↓
+runtime instance created/registered/started
+    ↓
+ScaleOutRequest.Status = Fulfilled
+    ↓
+AiScaleOutFulfilledRunRequeueService
+    ↓
+SharedQueueItem.Status = Pending
+    ↓
+AiSharedQueuePump
+    ↓
+dispatch-time admission sees new capacity
+    ↓
+Provider dispatch to selected runtime instance
+    ↓
+LocalRunId / ExecutionId
+    ↓
+runtime run completed
+```
+
+This validates the control loop required by Kubernetes scale-out before introducing Kubernetes pod creation.
+
+Future Kubernetes provider flow should preserve the same boundary:
+
+```text
+RequestScaleOut
+    ↓
+Kubernetes provider creates or expands runtime capacity
+    ↓
+runtime pod registers/publishes capacity
+    ↓
+scale-out request fulfilled
+    ↓
+shared run requeued
+    ↓
+pump dispatches normally
+```
 
 ---
 
@@ -841,6 +1029,7 @@ It should be responsible for:
 - mapping pod metadata to runtime descriptors
 - requesting scale-out
 - requesting scale-in
+- creating or expanding runtime capacity when handling scale-out requests
 - attaching Kubernetes metadata to descriptors
 
 Kubernetes should not be required to dispatch a run directly.
@@ -1005,6 +1194,7 @@ It should centralize runtime administration operations:
 - list capacity
 - request scale-out
 - request scale-in
+- requeue fulfilled scale-out shared runs through the normal shared queue lifecycle
 
 This prevents future architecture sprawl.
 
@@ -1027,6 +1217,9 @@ Recommended metadata keys:
 | `provider.serviceName` | Kubernetes service name. |
 | `provider.nodeName` | Kubernetes node name. |
 | `provider.region` | Region or deployment zone. |
+| `scaleout.request.id` | Scale-out request id when descriptor/request metadata is tied to a scale-out flow. |
+| `scaleout.sharedRunId` | Shared run id that requested scale-out. |
+| `scaleout.controlPlaneId` | Control-plane id associated with a scale-out request. |
 
 Initial local descriptors can use:
 
@@ -1170,6 +1363,14 @@ Current completed or validated pieces:
 19. Manual shared queue drain through MCP
 20. Background pump dispatch through MCP
 21. Replay/report/ledger/trace through MCP
+22. Redis scale-out request persistence
+23. Store-backed scale-out request publisher
+24. Scale-out request watcher
+25. Scale-out provider selector
+26. Local runtime scale-out provider capability
+27. Local runtime instance scaler
+28. Fulfilled scale-out shared run requeue
+29. MCP Redis local scale-out dispatch and execution completion
 ```
 
 The implementation must continue to preserve existing behavior.
@@ -1192,23 +1393,25 @@ After the local and HTTP pooled providers are stable:
 3. Add Redis command queue provider.
 4. Add command consumer in runtime-only host.
 5. Add Kubernetes metadata provider.
-6. Add Kubernetes scaling provider.
-7. Refine Redis/Lua slot reservation paths where stronger atomic coordination is required.
-8. Continue hardening admission to use capacity descriptors and reservations as primary scheduling inputs.
+6. Add Kubernetes scaling provider using the existing `IAiRuntimeScaleOutProvider` capability model.
+7. Add Kubernetes scale-out request handling that creates/expands runtime pods and waits for registration/capacity.
+8. Refine Redis/Lua slot reservation paths where stronger atomic coordination is required.
+9. Continue hardening admission to use capacity descriptors and reservations as primary scheduling inputs.
 ```
 
 ---
 
 ## Current Limitations
 
-The provider model is not fully implemented yet.
+The provider model is implemented for the validated local, HTTP dispatch, and local scale-out paths, but it is not complete for all future transports.
 
 Current limitations include:
 
-- provider routing is still evolving
+- provider routing still needs production hardening
 - Redis command queue provider is not implemented yet
 - gRPC provider is not implemented yet
 - Kubernetes provider is not implemented yet
+- Kubernetes pod/deployment scale-out is not implemented yet
 - capability negotiation is not complete yet
 - Lua-based slot reservation refinement is not implemented yet
 - admission uses Redis-backed reservation support in validated scenarios but still needs further production hardening for multi-control-plane scheduling
@@ -1243,6 +1446,15 @@ Validated behavior includes:
 - Replay, report, ledger, and trace retrieval through MCP for completed shared runs.
 - Runtime registry and capacity cleanup during shutdown.
 - Discovery-based control-plane id resolution for runtime-only hosts.
+- Redis scale-out request persistence.
+- Store-backed scale-out request publishing.
+- Scale-out watcher request processing.
+- Provider-based scale-out selector resolution.
+- Local runtime scale-out provider capability.
+- Dynamic local runtime instance creation from zero executable runtime capacity.
+- Fulfilled scale-out shared run requeue.
+- Shared queue pump dispatch after scale-out fulfillment.
+- Runtime execution completion after local scale-out.
 
 
 ## Related Documents
@@ -1255,15 +1467,3 @@ Validated behavior includes:
 - [Runtime Metrics](runtime-metrics.md)
 - [Testing Strategy](testing-strategy.md)
 - [Shared Queue Pump and Worker Capacity](shared-queue-pump-and-worker-capacity.md)
-
----
-
-## Documentation Rule
-
-This document defines the planned provider-based architecture direction.
-
-The original technical depth remains preserved in:
-
-- [runtime-internals.md](../runtime-internals.md)
-
-Do not remove content from `runtime-internals.md` until the extracted documentation has been reviewed and validated.

@@ -7,6 +7,9 @@ It covers:
 - In-memory shared controller mode
 - Redis shared run store
 - Redis shared queue
+- Redis scale-out request persistence
+- Local runtime scale-out
+- Fulfilled scale-out run requeue
 - Direct assigned-run dispatch
 - Global shared queue dispatch
 - Queue-first submit mode
@@ -48,7 +51,7 @@ services.AddAiControlPlane(
         // Optional:
         // DirectDispatch keeps the classic behavior.
         // QueueFirst always creates the shared run and queues it globally first.
-        options.SubmitMode = AiSharedRuntimeControllerSubmitMode.DirectDispatch;
+        options.SubmitMode = AiSharedRuntimeSubmitMode.DirectDispatch;
     },
     configureSharedQueue: options =>
     {
@@ -81,6 +84,10 @@ IAiSharedRunDispatcher     -> LocalAiSharedRunDispatcher
 IAiSharedQueueDispatcher   -> AiSharedQueueDispatcher
 IAiSharedQueuePump         -> AiSharedQueuePump
 IAiSharedRuntimeController -> AiSharedRuntimeController
+IAiRuntimeScaleOutRequestStore -> InMemoryAiRuntimeScaleOutRequestStore
+IAiRuntimeScaleOutRequestPublisher -> StoreBackedAiRuntimeScaleOutRequestPublisher
+IAiRuntimeScaleOutProviderSelector -> AiRuntimeScaleOutProviderSelector
+IAiScaleOutFulfilledRunRequeueService -> AiScaleOutFulfilledRunRequeueService
 ```
 
 ---
@@ -115,7 +122,7 @@ services.AddAiControlPlane(
         options.EnableCancelRun = true;
         options.ReturnFailureResultInsteadOfThrowing = true;
         options.MeasureDuration = true;
-        options.SubmitMode = AiSharedRuntimeControllerSubmitMode.QueueFirst;
+        options.SubmitMode = AiSharedRuntimeSubmitMode.QueueFirst;
     },
     configureSharedQueuePump: options =>
     {
@@ -148,6 +155,23 @@ services.Configure<RedisAiSharedQueueOptions>(options =>
     options.ListScanLimit = 500;
 });
 
+// Replace in-memory scale-out request store with Redis.
+services.RemoveAll<IAiRuntimeScaleOutRequestStore>();
+services.AddSingleton<IAiRuntimeScaleOutRequestStore, RedisAiRuntimeScaleOutRequestStore>();
+
+services.Configure<RedisAiRuntimeScaleOutRequestStoreOptions>(options =>
+{
+    options.KeyPrefix = "ai:runtime-scaleout";
+    options.ListScanLimit = 500;
+});
+
+// The store-backed publisher persists scale-out requests into the configured store.
+services.RemoveAll<IAiRuntimeScaleOutRequestPublisher>();
+services.AddSingleton<IAiRuntimeScaleOutRequestPublisher, StoreBackedAiRuntimeScaleOutRequestPublisher>();
+
+// The watcher observes pending scale-out requests and delegates to scale-out-capable providers.
+services.AddHostedService<AiRuntimeScaleOutRequestWatcherHostedService>();
+
 var provider = services.BuildServiceProvider();
 ```
 
@@ -172,6 +196,13 @@ RedisAiSharedQueue
   - Lua atomic requeue
   - Lua atomic cancel
   - concurrent claim safety
+
+RedisAiRuntimeScaleOutRequestStore
+  - hash storage per scale-out request
+  - pending request index
+  - lifecycle transitions: Pending, Observed, Fulfilled, Rejected
+  - watcher-friendly query support
+  - Redis-backed coordination for local and future Kubernetes scale-out adapters
 ```
 
 ---
@@ -237,7 +268,12 @@ QueueGlobally
 
 RequestScaleOut
   -> SharedRunStore.CreateAsync(...)
+  -> IAiRuntimeScaleOutRequestPublisher.PublishAsync(...)
+  -> Redis scale-out request is persisted
   -> SharedRun.Status = ScaleOutRequested
+  -> watcher/provider/scaler create capacity
+  -> fulfilled run is requeued
+  -> shared queue pump dispatches normally
 
 Reject
   -> SharedRunStore.CreateAsync(...)
@@ -253,7 +289,7 @@ Queue-first mode is useful when the control plane should always persist the shar
 ```csharp
 services.Configure<AiSharedRuntimeControllerOptions>(options =>
 {
-    options.SubmitMode = AiSharedRuntimeControllerSubmitMode.QueueFirst;
+    options.SubmitMode = AiSharedRuntimeSubmitMode.QueueFirst;
 });
 ```
 
@@ -269,6 +305,15 @@ SubmitRunAsync
 
 Queue-first is different from forcing admission globally. It is a controller submit mode, not an admission override.
 
+Important:
+
+```txt
+QueueFirst bypasses submit-time DirectDispatch admission outcomes.
+It always creates the shared run and queues it globally first.
+Therefore QueueFirst does not produce ScaleOutRequested at submit time.
+Use DirectDispatch when the submit path must evaluate admission immediately and request scale-out.
+```
+
 Use queue-first when:
 
 - shared runs must always enter the global queue first
@@ -279,7 +324,64 @@ Use queue-first when:
 
 ---
 
-## 5. List shared runs
+
+## 5. DirectDispatch scale-out submit mode
+
+DirectDispatch is the mode used when the submit path should immediately ask admission what to do.
+
+```csharp
+services.Configure<AiSharedRuntimeControllerOptions>(options =>
+{
+    options.SubmitMode = AiSharedRuntimeSubmitMode.DirectDispatch;
+});
+```
+
+DirectDispatch scale-out flow:
+
+```txt
+SubmitRunAsync
+  -> IAiRunAdmissionController
+  -> no eligible runtime capacity
+  -> Decision = RequestScaleOut
+  -> IAiSharedRunStore.CreateAsync(...)
+  -> SharedRun.Status = ScaleOutRequested
+  -> IAiRuntimeScaleOutRequestPublisher.PublishAsync(...)
+  -> Redis scale-out request is persisted
+  -> AiRuntimeScaleOutRequestWatcherHostedService observes the pending request
+  -> AiRuntimeScaleOutProviderSelector resolves a provider-capable scaler
+  -> LocalAiRuntimeInstanceProvider delegates to AiLocalRuntimeInstanceScaler
+  -> local runtime instance is created, registered, started, and publishes capacity
+  -> scale-out request is marked Fulfilled
+  -> IAiScaleOutFulfilledRunRequeueService requeues the shared run
+  -> IAiSharedQueuePump claims the requeued run
+  -> dispatch-time admission sees the new runtime capacity
+  -> run is dispatched to the created runtime instance
+  -> local run receives an ExecutionId
+  -> runtime run reaches a terminal status
+```
+
+Use DirectDispatch when:
+
+- the first submission should request scale-out when no capacity exists
+- local runtime scale-out needs to be validated end-to-end
+- Redis scale-out request persistence should be exercised
+- the fulfilled run should be requeued and consumed by the normal pump
+- tests need to prove that a new runtime instance executed the original run
+
+Validated MCP evidence:
+
+```txt
+SharedRunStatus = Dispatched
+AssignedRuntimeInstanceId = host-...:mcp-scaleout-runtime-1
+LocalRunId = created
+ExecutionId = created
+RuntimeRunStatus = completed
+QueueStatus = Dispatched
+ScaleOutRequestStatus = Fulfilled
+ActiveLocalInstances = 1
+```
+
+## 6. List shared runs
 
 ```csharp
 var list = await controller.ListRunsAsync(
@@ -299,7 +401,7 @@ foreach (var run in list.Runs)
 
 ---
 
-## 6. Get one shared run
+## 7. Get one shared run
 
 ```csharp
 var get = await controller.GetRunAsync(
@@ -320,7 +422,7 @@ if (get.Run is not null)
 
 ---
 
-## 7. Cancel a shared run
+## 8. Cancel a shared run
 
 ```csharp
 var cancel = await controller.CancelRunAsync(
@@ -339,7 +441,7 @@ Console.WriteLine($"Status: {cancel.Run?.Status}");
 
 ---
 
-## 8. Manually pump the shared queue
+## 9. Manually pump the shared queue
 
 A runtime instance can manually ask to claim and dispatch pending shared queue items.
 
@@ -405,7 +507,7 @@ The pump identity and assigned runtime identity are intentionally separate.
 
 ---
 
-## 9. Manual drain while background pump is disabled
+## 10. Manual drain while background pump is disabled
 
 Manual drain can be enabled without enabling the hosted background pump.
 
@@ -439,7 +541,7 @@ This is useful for tests, MCP demos, controlled operator dispatch, and proving t
 
 ---
 
-## 10. Enable the background shared queue service
+## 11. Enable the background shared queue service
 
 The background service runs the pump continuously.
 
@@ -499,7 +601,7 @@ AiSharedQueueDispatcher
 
 ---
 
-## 11. Dispatch-time admission
+## 12. Dispatch-time admission
 
 Shared queue dispatch now performs admission at drain time.
 
@@ -526,11 +628,12 @@ Benefits:
 - runtime target can be selected using current visibility
 - local, HTTP, and future Kubernetes runtime providers can share the same queue model
 
-Current limitation:
+Current behavior:
 
-- admission uses visible capacity
-- target capacity is not yet atomically reserved during admission
-- if many dispatches happen faster than heartbeat/capacity updates, a deterministic admission strategy can hotspot on the same instance
+- admission uses visible capacity descriptors
+- Redis-backed admission reservations protect selected runtime capacity during heavy dispatch scenarios
+- heartbeat and capacity publication still remain the source of runtime visibility
+- further Lua refinement can harden multi-control-plane slot reservation semantics
 
 Future improvement:
 
@@ -538,12 +641,64 @@ Future improvement:
 admission selects runtime instance
   -> atomically reserve run slot / worker capacity
   -> dispatch
-  -> release reservation when run completes or fails
+  -> release reservation when run completes, fails, or reservation expires
 ```
 
 ---
 
-## 12. Runtime worker capacity visibility
+
+## 13. Scale-out fulfilled requeue and dispatch
+
+When a submit-time admission decision requests scale-out, the shared controller does not dispatch the run directly.
+
+The validated scale-out lifecycle is:
+
+```txt
+SharedRun.Status = ScaleOutRequested
+  -> scale-out request persisted in Redis
+  -> watcher observes pending request
+  -> provider selector resolves a scale-out-capable provider
+  -> local provider creates runtime capacity through AiLocalRuntimeInstanceScaler
+  -> scale-out request is marked Fulfilled
+  -> IAiScaleOutFulfilledRunRequeueService enqueues the shared run into IAiSharedQueue
+  -> shared queue pump claims the requeued item
+  -> dispatch-time admission sees the newly registered runtime instance
+  -> dispatcher sends the run to the selected runtime instance
+  -> shared run and queue item are marked Dispatched
+```
+
+The watcher intentionally does not dispatch the run itself.
+
+This keeps responsibilities separated:
+
+```txt
+AiRuntimeScaleOutRequestWatcherHostedService
+  -> observes and fulfills scale-out requests
+
+IAiScaleOutFulfilledRunRequeueService
+  -> requeues the shared run after capacity exists
+
+IAiSharedQueuePump / IAiSharedQueueDispatcher
+  -> owns claim, admission, dispatch, and queue item lifecycle
+```
+
+This design is important for Kubernetes because the same lifecycle can later be used when the scale-out provider creates pods instead of local runtime instances.
+
+Current validated local scale-out result:
+
+```txt
+0 runtime capacity
+  -> submit run
+  -> scale-out requested
+  -> local runtime instance created
+  -> scale-out request fulfilled
+  -> shared run requeued
+  -> pump dispatches
+  -> local runtime executes
+  -> runtime status completed
+```
+
+## 14. Runtime worker capacity visibility
 
 Runtime instances now expose worker capacity through queue state and instance snapshots.
 
@@ -591,7 +746,7 @@ This is important for dashboards, MCP tools, Kubernetes demos, admission visibil
 
 ---
 
-## 13. Local worker capacity per execution
+## 15. Local worker capacity per execution
 
 `MaxLocalWorkersPerExecution` controls how many workers from one runtime instance may work on one execution.
 
@@ -634,7 +789,7 @@ This option is local to the runtime instance. It is not the same as cross-instan
 
 ---
 
-## 14. Execution assistance vs local worker capacity
+## 16. Execution assistance vs local worker capacity
 
 `MaxLocalWorkersPerExecution` is a local runtime instance policy.
 
@@ -658,7 +813,7 @@ The execution assistance candidate now uses the effective worker count per execu
 
 ---
 
-## 15. Full distributed host example
+## 17. Full distributed host example
 
 ```csharp
 using Microsoft.Extensions.DependencyInjection;
@@ -685,7 +840,7 @@ builder.Services.AddAiControlPlane(
         options.EnableCancelRun = true;
         options.ReturnFailureResultInsteadOfThrowing = true;
         options.MeasureDuration = true;
-        options.SubmitMode = AiSharedRuntimeControllerSubmitMode.QueueFirst;
+        options.SubmitMode = AiSharedRuntimeSubmitMode.QueueFirst;
     },
     configureSharedQueuePump: options =>
     {
@@ -737,7 +892,7 @@ await app.RunAsync();
 
 ---
 
-## 16. Current architecture summary
+## 18. Current architecture summary
 
 ```txt
 Submit path:
@@ -778,11 +933,25 @@ IAiRuntimePipelineBackgroundController
   -> AiRuntimeInstanceRegistrationHostedService
   -> IAiRuntimeInstanceRegistry
   -> AiRuntimeInstanceSnapshot
+
+
+Scale-out request path:
+
+IAiSharedRuntimeController
+  -> IAiRunAdmissionController
+  -> IAiRuntimeScaleOutRequestPublisher
+  -> IAiRuntimeScaleOutRequestStore
+  -> AiRuntimeScaleOutRequestWatcherHostedService
+  -> IAiRuntimeScaleOutProviderSelector
+  -> IAiRuntimeScaleOutProvider
+  -> IAiLocalRuntimeInstanceScaler
+  -> IAiScaleOutFulfilledRunRequeueService
+  -> IAiSharedQueue
 ```
 
 ---
 
-## 17. Current limitations
+## 19. Current limitations
 
 Implemented:
 
@@ -802,6 +971,15 @@ Implemented:
 - runtime worker capacity visibility
 - max local workers per execution
 - worker-aware CanAcceptRun
+- Redis-backed scale-out request persistence
+- store-backed scale-out request publisher
+- scale-out request watcher
+- provider-based scale-out selector
+- local runtime scale-out provider
+- local runtime instance scaler
+- fulfilled scale-out run requeue
+- MCP Redis local scale-out fulfillment
+- MCP Redis local scale-out requeue, dispatch, execution, and completion
 ```
 
 Not implemented yet:
@@ -809,15 +987,17 @@ Not implemented yet:
 ```txt
 - Kubernetes pod creation
 - distributed runtime instance API dispatch
-- automatic scaling
-- production admission capacity reservation
-- scale-out request publisher
+- Kubernetes pod creation / deployment scaler adapter
+- automatic Kubernetes scaling
+- production multi-control-plane leader election
+- Redis command queue runtime dispatch
+- gRPC runtime dispatch
 - dashboard UI
 ```
 
 ---
 
-## 18. Future Kubernetes direction
+## 20. Future Kubernetes direction
 
 The next layer should not change the core shared controller design.
 
@@ -830,12 +1010,16 @@ IAiSharedRunDispatcher
   -> KubernetesRuntimeInstanceDispatcher
 
 IAiRuntimeScaleOutRequestPublisher
-  -> NoopScaleOutPublisher
-  -> RedisScaleOutPublisher
-  -> KubernetesScaleOutPublisher
+  -> StoreBackedAiRuntimeScaleOutRequestPublisher
+  -> Redis-backed scale-out request store
+  -> future KubernetesScaleOutPublisher / scaler adapter
+
+IAiRuntimeScaleOutProvider
+  -> LocalAiRuntimeInstanceProvider
+  -> future Kubernetes scale-out provider
 ```
 
-The current system is ready for Kubernetes-style coordination because Redis already coordinates:
+The current system is ready for Kubernetes-style coordination because Redis already coordinates shared work and now also persists scale-out requests:
 
 ```txt
 shared run state
@@ -844,6 +1028,7 @@ atomic claim
 dispatch ownership
 requeue on failure
 concurrent dispatcher safety
+scale-out request lifecycle
 ```
 
 Runtime instance capacity visibility prepares the control plane for Kubernetes dashboards and autoscaling decisions:
@@ -866,5 +1051,9 @@ IAiRuntimeInstanceRegistry
 IAiRuntimeInstanceCapacityStore
 IAiRunAdmissionController
 IAiRuntimeScaleOutRequestPublisher
+IAiRuntimeScaleOutRequestStore
+IAiRuntimeScaleOutProviderSelector
+IAiRuntimeScaleOutProvider
+IAiScaleOutFulfilledRunRequeueService
 IAiSharedRunDispatcher
 ```

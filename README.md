@@ -2,11 +2,11 @@
 
 A deterministic AI execution runtime for production-grade AI workloads.
 
-This repository provides a reference implementation of a distributed, state-driven runtime for executing AI workflows with deterministic DAG orchestration, context resolution, Redis Lua coordination, retry/recovery, retention/compaction, distributed concurrency control, execution control state, replay validation, correlated metrics and tracing, execution-correlated decision ledger, shared runtime control-plane orchestration, Redis-backed shared queue coordination, queue-first submission, shared queue pumping/manual drain, dispatch-time admission, runtime instance provider hosting, Redis control-plane discovery, runtime instance registry and capacity stores, admission reservations, HTTP pooled runtime dispatch, runtime worker-capacity visibility, scale-out request publication, and executable enterprise demo scenarios.
+This repository provides a reference implementation of a distributed, state-driven runtime for executing AI workflows with deterministic DAG orchestration, context resolution, Redis Lua coordination, retry/recovery, retention/compaction, distributed concurrency control, execution control state, replay validation, correlated metrics and tracing, execution-correlated decision ledger, shared runtime control-plane orchestration, Redis-backed shared queue coordination, queue-first submission, shared queue pumping/manual drain, dispatch-time admission, runtime instance provider hosting, Redis control-plane discovery, runtime instance registry and capacity stores, admission reservations, HTTP pooled runtime dispatch, runtime worker-capacity visibility, Redis-backed scale-out request lifecycle, local runtime scale-out, fulfilled-run requeue, and executable enterprise demo scenarios.
 
 The current runtime foundations are intentionally designed as the base for a broader product platform for deterministic AI execution, runtime control, replay, audit, governance, observability, dashboarding, pipeline building, managed hosting, and enterprise-oriented AI operations.
 
-[![Version](https://img.shields.io/badge/Version-1.0.6.1-blue)](./CHANGELOG.md)
+[![Version](https://img.shields.io/badge/Version-1.0.6.2-blue)](./CHANGELOG.md)
 [![Changelog](https://img.shields.io/badge/Changelog-view-lightgrey)](./CHANGELOG.md)
 ![AI Runtime](https://img.shields.io/badge/AI-Deterministic%20Execution-purple)
 ![Runtime](https://img.shields.io/badge/Runtime-distributed-brightgreen)
@@ -18,29 +18,15 @@ The current runtime foundations are intentionally designed as the base for a bro
 
 ## Latest Updates
 
-The latest major updates focused on turning the runtime from a DAG executor into a controllable, observable, distributed execution platform.
+The latest major updates focused on the last validated scale-out and provider-hosting work.
 
 | Area | Summary |
 |---|---|
-| Distributed multi-runtime-instance execution | Added foundations for multiple runtime instances and workers to coordinate through shared Redis-backed execution state. |
-| Runtime control plane foundation | Added adapter-neutral control-plane foundations for replay, execution control, local runtime queue control, runtime instance registry/control, run admission decisions, Shared Runtime Controller V1, shared queue dispatch, queue pump/background service, and scale-out request publication. |
-| Shared Runtime Controller V1 | Added shared run persistence, Redis-backed shared run store, Redis-backed shared queue, assigned-run dispatch, global shared queue dispatch, queue pump, hosted background queue consumption, queue-first submit mode, dispatch-time admission, and scale-out request publication. |
-| Shared queue pump and manual drain | Added queue-first submission, manual shared queue drain, background pump validation, pump readiness gating, pump identity separation, and local/HTTP runtime provider dispatch validation. |
-| HTTP pooled runtime provider validation | Validated `ControlPlaneWithHttpRuntimeInstances`, HTTP runtime provider, `RuntimeInstanceOnly` HTTP host, internal local runtime instance pool, and dispatchable `runtime-http-*` child runtime instances through MCP scenarios and heavy dispatch tests. |
-| Redis-backed coordination validation | Validated Redis shared run store, Redis shared queue, Redis runtime admission reservation store, Redis runtime instance registry, Redis runtime capacity store, Redis discovery store, and cleanup paths under provider-hosted runtime scenarios. |
-| Runtime discovery, registry, and capacity | Added Redis-backed control-plane discovery, `ControlPlaneIdResolver`, Redis runtime instance registry, Redis runtime capacity store, runtime capacity publication, worker identity propagation, active/free worker visibility, worker-aware `CanAcceptRun`, readiness gating, and shutdown cleanup without late rediscovery dependency. |
-| MCP Server as control plane | Added MCP server documentation as a concrete runtime control-plane adapter with ControlPlaneOnly, ControlPlaneWithLocalRuntimeInstances, ControlPlaneWithHttpRuntimeInstances, and RuntimeInstanceOnly host modes. |
-| Runtime instance provider model | Added provider-based runtime instance administration direction and foundations for local and HTTP runtime instance providers, including validated HTTP pooled runtime dispatch through `RuntimeInstanceOnly` hosts and `runtime-http-*` child runtime instances, with future Redis command queue, gRPC, and Kubernetes providers. |
-| Runtime worker capacity control | Added `MaxLocalWorkersPerExecution`, effective worker reservation, worker saturation visibility, and runtime instance snapshots exposing active/free worker capacity. |
-| Distributed concurrency and throttling demo | Added an executable `throttling-100` enterprise demo scenario with provider-level concurrency control, realtime throttling visibility, Redis lease-based admission control, randomized provider distribution, and bounded provider capacity under worker pressure. |
-| Execution control state | Added durable `ExecutionId`-level pause, resume, cancel, waiting-for-input, and human input submission. |
-| Runtime queue control | Added `RunId`-level queue pause/resume, queued cancellation, running cancellation bridge, and hot enqueue support. |
-| Execution replay validation | Added Replay API foundations that load persisted snapshots by `ExecutionId`, validate deterministic fingerprints, validate dependency graph and step state, optionally restore runtime state, and expose replay metadata, ledger events, and timeline events. |
-| Execution-correlated decision ledger | Added durable execution-correlated ledger events for execution lifecycle, run lifecycle, queue control, claim acquisition, retry, recovery, concurrency, policy evaluation, snapshot persistence, replay lifecycle, and runtime control observability. |
-| Correlated metrics and tracing storage modes | Added runtime correlation for metrics and traces with configurable `Disabled`, `Memory`, `Mongo`, and `MemoryAndMongo` storage modes. |
-| Context resolution and helpers | Added a dedicated helper layer for input bindings, previous step outputs, payload rehydration, provider/model/operation context, policy context, RAG context, and replay-safe helpers. |
-| Documentation restructure | Completed Phase 0 V1 with a shorter README, preserved runtime internals, documentation index, roadmap, enterprise readiness matrix, ecosystem comparison, and focused runtime documentation under `docs/ai/`. |
-| Product roadmap direction | Added a dedicated product roadmap documentation track describing how the runtime foundations evolve toward a complete deterministic AI execution platform with dashboard, pipeline builder, MCP control interface, managed hosting direction, memory/context lifecycle, security hardening, testing strategy, observability, and enterprise readiness. |
+| Redis-backed scale-out request lifecycle | Added persisted scale-out requests, request observation, fulfilled/rejected lifecycle handling, provider hint propagation, and Redis-backed scale-out coordination. |
+| Provider-based scale-out capability | Added scale-out as a runtime instance provider capability through `IAiRuntimeScaleOutProvider`, resolved by the existing provider router through `AiRuntimeScaleOutProviderSelector`. |
+| Local runtime scale-out | Added local runtime instance scaling through `LocalAiRuntimeInstanceProvider` and `AiLocalRuntimeInstanceScaler`, allowing runtime capacity to be created dynamically from zero executable local instances. |
+| Fulfilled-run requeue and pump dispatch | Added fulfilled scale-out shared-run requeue so the watcher creates capacity but the normal shared queue pump still owns claim, dispatch-time admission, provider dispatch, and queue/run state transitions. |
+| MCP Redis local scale-out validation | Validated the full MCP flow: submit with no runtime capacity, request scale-out, fulfill the request, create/register runtime capacity, requeue the run, dispatch through the pump, expose `LocalRunId` and `ExecutionId`, and complete the runtime run. |
 
 For detailed changes, see [`CHANGELOG.md`](./CHANGELOG.md), [`docs/index.md`](docs/index.md), and the product roadmap documentation under [`docs/product-roadmap/index.md`](docs/product-roadmap/index.md).
 
@@ -210,13 +196,15 @@ This project explores what an AI execution runtime should look like when reliabi
 | Policy-driven execution | Implemented | Retry, retention, and concurrency use configurable policy definitions. |
 | Execution control state | Implemented | ExecutionId-level pause, resume, cancel, waiting-for-input, and human input submission. |
 | Runtime queue control | Implemented | RunId-level queue pause/resume, queued cancellation, running cancellation bridge, and hot enqueue. |
-| Runtime control plane foundation | Implemented | Adapter-neutral facades expose replay, execution control, local queue control, runtime instance control, admission, shared runtime controller, shared queue dispatch, queue pump/manual drain, background service, and scale-out publication for API/MCP/CLI/dashboard/Kubernetes adapters. |
+| Runtime control plane foundation | Implemented | Adapter-neutral facades expose replay, execution control, local queue control, runtime instance control, admission, shared runtime controller, shared queue dispatch, queue pump/manual drain, background service, Redis-backed scale-out request lifecycle, and scale-out publication for API/MCP/CLI/dashboard/Kubernetes adapters. |
 | Runtime instance registry and control | Implemented / validated | Runtime instances can register, heartbeat, expose queue capacity, expose worker capacity, be listed, marked draining, or unregistered through in-memory and Redis-backed registry foundations. |
 | Redis control-plane discovery | Implemented / validated | MCP/control-plane hosts can publish a logical control-plane discovery descriptor and runtime-only hosts can resolve it before registration. |
 | Redis admission reservations | Implemented / validated | Redis-backed admission reservations protect selected runtime capacity during provider dispatch scenarios. |
 | HTTP pooled runtime dispatch | Implemented / validated | `ControlPlaneWithHttpRuntimeInstances` dispatches through the HTTP provider into `RuntimeInstanceOnly` hosts with pooled `runtime-http-*` child runtime instances. |
-| Run admission / slot decisions | Implemented | Admission can assign runs to an available runtime instance, request scale-out, queue globally, or reject according to policy. |
-| Shared Runtime Controller V1 | Implemented | Shared controller handles assigned dispatch, queue-first submission, global queue enqueue, Redis-backed shared queue dispatch, dispatch-time admission, queue pump/background consumption, scale-out request publication, and shared run visibility. |
+| Run admission / slot decisions | Implemented | Admission can assign runs to an available runtime instance, request scale-out, queue globally, or reject according to policy. Direct-dispatch mode preserves `RequestScaleOut`; queue-first mode intentionally queues globally first. |
+| Redis-backed scale-out request lifecycle | Implemented / validated | Scale-out requests are persisted in Redis, observed by a watcher, resolved through provider selection, fulfilled or rejected, and linked back to the original shared run. |
+| Local runtime scale-out and fulfilled-run requeue | Implemented / validated | The local provider/scaler can create runtime capacity dynamically; fulfilled requests requeue the shared run so the normal pump performs dispatch and execution proceeds through the local queue. |
+| Shared Runtime Controller V1 | Implemented | Shared controller handles assigned dispatch, queue-first submission, global queue enqueue, Redis-backed shared queue dispatch, dispatch-time admission, queue pump/background consumption, Redis-backed scale-out request publication, fulfilled-run requeue, and shared run visibility. |
 | Shared queue pump and manual drain | Implemented / validated | Queue-first runs can remain globally queued, be dispatched by a background pump after readiness, or be manually drained later through MCP/control-plane tools. |
 | Redis runtime capacity descriptors | Implemented / validated | Runtime instances publish Redis-backed capacity descriptors for worker count, active/free workers, max workers per execution, run slots, queue pressure, heartbeat, provider metadata, and capacity-aware admission. |
 | Runtime worker capacity visibility | Implemented / validated | Runtime snapshots expose `WorkerCount`, `ActiveWorkerCount`, `AvailableWorkerCount`, `MaxLocalWorkersPerExecution`, and worker-aware `CanAcceptRun`. |
@@ -245,17 +233,20 @@ Runtime Orchestration / Shared Control Plane Layer
         +--> Queue Pump / Manual Drain
         +--> Dispatch-Time Admission
         +--> Runtime Readiness Gate
+        +--> Scale-Out Request Publication
+        +--> Fulfilled-Run Requeue
         |
         v
-Redis Discovery / Registry / Capacity / Reservation Layer
+Redis Discovery / Registry / Capacity / Reservation / Scale-Out Request Layer
         |
         +--> Control-plane discovery
         +--> Runtime instance registry
         +--> Runtime capacity descriptors
         +--> Admission reservations
+        +--> Scale-out requests
         |
         v
-Runtime Instance Provider / Local Queue Layer
+Runtime Instance Provider / Scale-Out / Local Queue Layer
         |
         v
 Pipeline Definition + DAG Resolution
@@ -349,6 +340,8 @@ The project is designed around production questions that enterprise AI systems m
 | How do you coordinate multiple runtime instances? | Shared Redis state, Lua coordination, leases, shared run records, Redis-backed shared queue claims, Redis discovery, Redis registry/capacity stores, admission reservations, queue pump/background consumption, dispatch-time admission, provider-hosting foundations, and deterministic convergence enable coordination. |
 | How do you prevent one execution from consuming all workers? | `MaxLocalWorkersPerExecution`, active/free worker tracking, effective worker reservation, and worker-aware runtime capacity snapshots. |
 | How do you dispatch queued work without an automatic background pump? | Queue-first submit mode plus manual shared queue drain through MCP/control-plane tooling. |
+| How do you submit work when no runtime capacity exists? | Direct-dispatch admission can return `RequestScaleOut`, persist a Redis-backed scale-out request, and let the scale-out watcher/provider path create runtime capacity. |
+| How do you execute the run after scale-out succeeds? | The fulfilled scale-out request requeues the original shared run; the normal shared queue pump then performs claim, dispatch-time admission, provider dispatch, and local runtime execution. |
 | How do runtime-only hosts join the correct MCP/control-plane scope? | Redis control-plane discovery and `ControlPlaneIdResolver` allow runtime-only hosts to resolve the MCP-published logical identity before registration. |
 | How do you validate remote-style HTTP runtime dispatch before Kubernetes? | HTTP pooled provider scenarios validate `RuntimeInstanceOnly` HTTP hosts with internal `runtime-http-*` child runtime instances. |
 | How do you prove deterministic convergence? | Integration tests and enterprise demo scenarios validate completion, replay fingerprints, distributed execution, throttling, recovery behavior, atomic retention, compaction consistency, ledger visibility, and trace timeline visibility. |
@@ -393,7 +386,9 @@ The control plane currently exposes foundations for:
 - hosted shared queue background consumption
 - runtime worker-capacity visibility
 - HTTP pooled runtime provider dispatch
-- scale-out request publication
+- Redis-backed scale-out request publication
+- scale-out watcher/provider selector lifecycle
+- fulfilled scale-out shared-run requeue
 - Redis discovery/registry/capacity foundations
 - future API, MCP, CLI, dashboard, and Kubernetes adapters
 
@@ -561,7 +556,11 @@ SubmitRun
   -> RequestScaleOut
       -> IAiSharedRunStore.CreateAsync(...)
       -> IAiRuntimeScaleOutRequestPublisher.PublishAsync(...)
+      -> Redis scale-out request persisted
       -> SharedRun.Status = ScaleOutRequested
+      -> watcher/provider/scaler creates capacity
+      -> fulfilled run is requeued
+      -> shared queue pump dispatches normally
 
   -> Reject
       -> IAiSharedRunStore.CreateAsync(...)
@@ -642,7 +641,9 @@ The runtime includes foundations for production visibility and replayability:
 - queue-first and manual drain visibility
 - dispatch-time admission visibility
 - runtime worker capacity visibility
-- scale-out request publication
+- Redis-backed scale-out request publication
+- scale-out watcher/provider selector lifecycle
+- fulfilled scale-out shared-run requeue
 - Redis discovery/registry/capacity foundations
 - snapshot persistence audit events
 - replay lifecycle ledger events
@@ -709,7 +710,9 @@ The strongest areas today are:
 - dispatch-time admission
 - runtime worker capacity visibility
 - local and HTTP pooled runtime provider hosting foundations
-- scale-out request publication
+- Redis-backed scale-out request publication
+- scale-out watcher/provider selector lifecycle
+- fulfilled scale-out shared-run requeue
 - Redis discovery/registry/capacity foundations
 - runtime instance registry and control
 - run admission / slot decisioning
@@ -775,7 +778,9 @@ It currently includes:
 - queue-first and manual drain visibility
 - dispatch-time admission visibility
 - runtime worker capacity visibility
-- scale-out request publication
+- Redis-backed scale-out request publication
+- scale-out watcher/provider selector lifecycle
+- fulfilled scale-out shared-run requeue
 - Redis discovery/registry/capacity foundations
 
 The current executable console scenarios are:
@@ -813,7 +818,7 @@ The roadmap is organized into phases.
 | Phase 1 | Enterprise demo | Completed (V1) - controller demo, distributed workers, runtime controls, chaos scenarios, retention/replay, and throttling scenario validated |
 | Phase 2 | Real enterprise sample | Planned |
 | Phase 3 | Correlated observability, tracing, and metrics | Foundations available / active polish |
-| Phase 4 | Kubernetes deployment demo | Planned - shared controller V1, Redis shared queue, Redis discovery/registry/capacity, and HTTP pooled runtime provider foundations completed |
+| Phase 4 | Kubernetes deployment demo | Planned - shared controller V1, Redis shared queue, Redis discovery/registry/capacity, Redis/local scale-out lifecycle, fulfilled-run requeue, and HTTP pooled runtime provider foundations completed |
 | Phase 5 | Public API / SDK polish | Planned |
 | Phase 6 | Deterministic Replay Engine and Audit Foundations | Completed (V1) |
 | Phase 7 | Replay Controller, HTTP APIs, Dashboard, and Operational Tooling | Planned |
@@ -874,11 +879,11 @@ The full documentation map is available here:
 - [`docs/product-roadmap/improvement-backlog.md`](docs/product-roadmap/improvement-backlog.md) — Planned improvements required to productize the existing runtime foundation.
 - [`docs/product-roadmap/roadmap-6-months.md`](docs/product-roadmap/roadmap-6-months.md) — Short-term productization direction for a single-developer project.
 - [`docs/product-roadmap/roadmap-12-24-months.md`](docs/product-roadmap/roadmap-12-24-months.md) — Longer-term product maturity, enterprise readiness, and commercial scale direction.
-- [`docs/ai/runtime-control-plane.md`](docs/ai/runtime-control-plane.md) — Runtime control-plane foundation for replay, execution control, runtime queue control, runtime instance visibility/control, discovery, capacity, run admission, Shared Runtime Controller V1, Redis shared queue coordination, queue pump/background service, and scale-out request publication.
-- [`docs/ai/runtime-discovery-registry-capacity.md`](docs/ai/runtime-discovery-registry-capacity.md) — Runtime discovery, Redis registry, Redis capacity descriptors, ControlPlaneIdResolver, pump readiness, cleanup lifecycle, and HTTP pooled runtime identity model.
-- [`docs/ai/mcp-server-control-plane.md`](docs/ai/mcp-server-control-plane.md) — MCP server as a runtime control-plane adapter, including host modes, tool groups, runtime role separation, local runtime pool behavior, shared queue dispatch flow, and Kubernetes direction.
-- [`docs/ai/runtime-instance-provider-model.md`](docs/ai/runtime-instance-provider-model.md) — Provider-based runtime instance administration model for local, Redis command queue, HTTP, gRPC, and Kubernetes providers.
-- [`docs/ai/shared-queue-pump-and-worker-capacity.md`](docs/ai/shared-queue-pump-and-worker-capacity.md) — Shared queue pump, queue-first submit mode, manual drain, dispatch-time admission, pump identity separation, runtime worker capacity visibility, and `MaxLocalWorkersPerExecution`.
+- [`docs/ai/runtime-control-plane.md`](docs/ai/runtime-control-plane.md) — Runtime control-plane foundation for replay, execution control, runtime queue control, runtime instance visibility/control, discovery, capacity, run admission, Shared Runtime Controller V1, Redis shared queue coordination, queue pump/background service, Redis-backed scale-out lifecycle, and fulfilled-run requeue.
+- [`docs/ai/runtime-discovery-registry-capacity.md`](docs/ai/runtime-discovery-registry-capacity.md) — Runtime discovery, Redis registry, Redis capacity descriptors, ControlPlaneIdResolver, pump readiness, local scale-out capacity visibility, cleanup lifecycle, and HTTP pooled runtime identity model.
+- [`docs/ai/mcp-server-control-plane.md`](docs/ai/mcp-server-control-plane.md) — MCP server as a runtime control-plane adapter, including host modes, tool groups, runtime role separation, local runtime pool behavior, Redis/local scale-out execution, shared queue dispatch flow, and Kubernetes direction.
+- [`docs/ai/runtime-instance-provider-model.md`](docs/ai/runtime-instance-provider-model.md) — Provider-based runtime instance administration, dispatch, status/control, and scale-out model for local, Redis command queue, HTTP, gRPC, and Kubernetes providers.
+- [`docs/ai/shared-queue-pump-and-worker-capacity.md`](docs/ai/shared-queue-pump-and-worker-capacity.md) — Shared queue pump, queue-first submit mode, direct-dispatch scale-out path, fulfilled-run requeue, manual drain, dispatch-time admission, pump identity separation, runtime worker capacity visibility, and `MaxLocalWorkersPerExecution`.
 - [`demo/enterprise-runtime/README.md`](demo/enterprise-runtime/README.md) — Local enterprise runtime demo using Docker Compose, Redis, MongoDB, external demo steps, controller execution, distributed workers, and scenario documentation.
 - [`demo/enterprise-runtime/scenarios/06-distributed-throttling.md`](demo/enterprise-runtime/scenarios/06-distributed-throttling.md) — Executable distributed throttling scenario documentation.
 - [`demo/enterprise-runtime/scenarios/08-deterministic-convergence.md`](demo/enterprise-runtime/scenarios/08-deterministic-convergence.md) — Deterministic convergence scenario documentation.

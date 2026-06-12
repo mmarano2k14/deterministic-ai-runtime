@@ -1,6 +1,6 @@
 # Runtime Control Plane
 
-Status: Implemented foundation / validated with shared controller, MCP, Redis stores, local runtime pools, and HTTP pooled runtime scenarios.
+Status: Implemented foundation / validated with shared controller, MCP, Redis stores, Redis scale-out request persistence, local runtime pools, local runtime scale-out, fulfilled-run requeue, HTTP pooled runtime scenarios, and end-to-end MCP scale-out execution.
 
 This document describes the **Runtime Control Plane foundation** used by the Deterministic AI Runtime, including replay, execution control, runtime queues, runtime instance registry/capacity, Redis discovery, shared queue orchestration, provider-based dispatch, and MCP integration.
 
@@ -122,6 +122,7 @@ The current control-plane foundation includes these areas:
 | Shared Queue | Store pending global work and protect dispatch claim ownership. |
 | Provider Dispatch | Deliver assigned shared runs to local or remote runtime instance queues. |
 | Admission | Decide whether a run should be assigned, queued globally, scaled out, or rejected. |
+| Scale-Out Lifecycle | Persist scale-out requests, observe pending requests, resolve scale-out-capable providers, create local runtime capacity, mark requests fulfilled/rejected, and requeue fulfilled shared runs for normal pump dispatch. |
 | Observability | Record started, completed, and failed control-plane operations. |
 
 ---
@@ -831,7 +832,11 @@ This work prepares Kubernetes support by introducing:
 - local queue visibility
 - run capacity visibility
 - admission decisions
-- scale-out decision placeholder
+- Redis-backed scale-out request persistence
+- scale-out request watcher
+- provider-based scale-out selection
+- local runtime scale-out through the existing provider model
+- fulfilled scale-out run requeue
 - local queue control
 - instance draining
 - stopped/unregistered instances
@@ -848,6 +853,8 @@ The next Kubernetes-related pieces can now be built on top:
 - Control-Plane Id Resolver
 - Redis-backed admission reservation logic
 - Scale-out requested events
+- Redis scale-out request lifecycle
+- Local runtime scale-out execution flow
 - Kubernetes deployment scaler adapter
 - MCP/API control-plane endpoints
 - Live observability export to Kibana / Grafana / OpenSearch
@@ -1100,6 +1107,10 @@ SubmitRun
       -> IAiSharedRunStore.CreateAsync(...)
       -> IAiRuntimeScaleOutRequestPublisher.PublishAsync(...)
       -> SharedRun.Status = ScaleOutRequested
+      -> Redis scale-out request persisted
+      -> watcher/provider/scaler fulfill capacity
+      -> fulfilled shared run is requeued
+      -> shared queue pump later dispatches it normally
 
   -> Reject
       -> IAiSharedRunStore.CreateAsync(...)
@@ -1270,44 +1281,82 @@ Background service startup
 
 ---
 
-## Runtime Scale-Out Request Publisher
+## Runtime Scale-Out Lifecycle
 
-When admission returns `RequestScaleOut`, the shared controller now publishes a scale-out request.
+When admission returns `RequestScaleOut`, the shared controller now persists a scale-out request instead of only acknowledging it.
 
-Scale-out abstraction:
+Scale-out abstractions:
 
 - `IAiRuntimeScaleOutRequestPublisher`
+- `IAiRuntimeScaleOutRequestStore`
+- `IAiRuntimeScaleOutProviderSelector`
+- `IAiRuntimeScaleOutProvider`
+- `IAiScaleOutFulfilledRunRequeueService`
 
 Request/result models:
 
 - `AiRuntimeScaleOutRequest`
 - `AiRuntimeScaleOutRequestResult`
+- `AiRuntimeScaleOutRequestRecord`
+- `AiRuntimeScaleOutProviderRequest`
+- `AiRuntimeScaleOutProviderResult`
 
-Default implementation:
+Current validated implementations include:
 
-- `NoopAiRuntimeScaleOutRequestPublisher`
+- `StoreBackedAiRuntimeScaleOutRequestPublisher`
+- `RedisAiRuntimeScaleOutRequestStore`
+- `AiRuntimeScaleOutRequestWatcherHostedService`
+- `AiRuntimeScaleOutProviderSelector`
+- `LocalAiRuntimeInstanceProvider`
+- `AiLocalRuntimeInstanceScaler`
+- `AiScaleOutFulfilledRunRequeueService`
 
-The no-op publisher acknowledges scale-out requests without creating infrastructure.
+The scale-out provider model reuses the existing runtime instance provider router.
 
-This allows local mode, tests, and demos to run safely while keeping the architecture ready for future scale-out adapters.
+`IAiRuntimeScaleOutProvider` extends `IAiRuntimeInstanceProvider`.
 
-Future implementations can include:
+This means scale-out is a provider capability, not a separate routing system.
 
-- Redis scale-out publisher
-- message bus publisher
-- Kubernetes scaler adapter
-- external control-plane publisher
-
-Current scale-out flow:
+Provider resolution uses:
 
 ```text
-RequestScaleOut
-  -> IAiSharedRunStore.CreateAsync(...)
-  -> IAiRuntimeScaleOutRequestPublisher.PublishAsync(...)
-  -> SharedRun.Status = ScaleOutRequested
+request.ProviderHint
+    -> AiRuntimeInstanceRegistrationOptions.ProviderName
+    -> local
 ```
 
----
+The validated Redis/local scale-out flow is:
+
+```text
+SubmitRun
+  -> IAiRunAdmissionController
+  -> no runtime capacity available
+  -> Decision = RequestScaleOut
+  -> IAiSharedRunStore.CreateAsync(...)
+  -> SharedRun.Status = ScaleOutRequested
+  -> StoreBackedAiRuntimeScaleOutRequestPublisher.PublishAsync(...)
+  -> RedisAiRuntimeScaleOutRequestStore creates pending request
+  -> AiRuntimeScaleOutRequestWatcherHostedService observes pending request
+  -> AiRuntimeScaleOutProviderSelector resolves local provider
+  -> LocalAiRuntimeInstanceProvider requests local scale-out
+  -> AiLocalRuntimeInstanceScaler creates local runtime instance
+  -> runtime instance starts/registers/publishes capacity
+  -> scale-out request is marked Fulfilled
+  -> IAiScaleOutFulfilledRunRequeueService requeues the shared run
+  -> IAiSharedQueuePump claims the requeued run
+  -> dispatch-time admission sees new runtime capacity
+  -> run is dispatched to the newly created local runtime instance
+  -> local runtime creates ExecutionId
+  -> runtime run completes
+```
+
+The watcher intentionally does not dispatch directly.
+
+It only processes the scale-out request and requeues the shared run after fulfillment.
+
+The normal shared queue pump remains responsible for claim, admission, dispatch ownership, and queue item lifecycle.
+
+This keeps scale-out and dispatch responsibilities separated.
 
 ## Shared Controller Capabilities
 
@@ -1326,6 +1375,10 @@ The runtime can now expose or support:
 - mark shared run dispatched
 - mark shared queue item dispatched
 - publish scale-out request
+- persist Redis-backed scale-out request
+- observe pending scale-out requests
+- fulfill scale-out through provider-capable local runtime scaler
+- requeue fulfilled scale-out shared runs
 - pump shared queue manually
 - consume shared queue through hosted background service
 - coordinate shared queue dispatch through Redis
@@ -1343,6 +1396,11 @@ The control-plane service registration now also includes:
 - `IAiSharedQueueDispatcher`
 - `IAiSharedQueuePump`
 - `IAiRuntimeScaleOutRequestPublisher`
+- `IAiRuntimeScaleOutRequestStore`
+- `IAiRuntimeScaleOutProviderSelector`
+- `IAiRuntimeScaleOutProvider`
+- `IAiScaleOutFulfilledRunRequeueService`
+- `IAiLocalRuntimeInstanceScaler`
 - `IAiSharedRuntimeController`
 - `IAiRuntimeInstanceCapacityStore`
 - `IAiControlPlaneDiscoveryStore`
@@ -1357,6 +1415,12 @@ Default implementations:
 - `AiSharedQueueDispatcher`
 - `AiSharedQueuePump`
 - `NoopAiRuntimeScaleOutRequestPublisher`
+- `StoreBackedAiRuntimeScaleOutRequestPublisher`
+- `AiRuntimeScaleOutRequestWatcherHostedService`
+- `AiRuntimeScaleOutProviderSelector`
+- `LocalAiRuntimeInstanceProvider`
+- `AiLocalRuntimeInstanceScaler`
+- `AiScaleOutFulfilledRunRequeueService`
 - `AiSharedRuntimeController`
 
 Redis-backed validated implementations include:
@@ -1366,6 +1430,7 @@ Redis-backed validated implementations include:
 - `RedisAiRuntimeInstanceRegistry`
 - `RedisAiRuntimeInstanceCapacityStore`
 - `RedisAiRuntimeAdmissionReservationStore`
+- `RedisAiRuntimeScaleOutRequestStore`
 
 The hosted background service is opt-in through:
 
@@ -1394,6 +1459,15 @@ The implementation is now validated by unit and integration tests covering:
 - shared queue pump behavior
 - shared queue background service lifecycle
 - scale-out request publisher behavior
+- Redis scale-out request store behavior
+- store-backed scale-out request publisher behavior
+- scale-out request watcher behavior
+- scale-out provider selector behavior
+- local runtime scale-out provider behavior
+- local runtime instance scaler behavior
+- fulfilled scale-out shared run requeue behavior
+- MCP Redis local scale-out request fulfillment
+- MCP Redis local scale-out requeue, dispatch, execution, and completion
 - DI registrations
 - Redis runtime instance registry cleanup
 - Redis runtime capacity cleanup
@@ -1417,9 +1491,30 @@ This work extends Kubernetes preparation by introducing:
 - queue pump
 - background queue consumption
 - scale-out request publisher abstraction
+- Redis-backed scale-out request persistence
+- scale-out request watcher
+- provider-based scale-out selection
+- local runtime scale-out provider capability
+- local runtime instance scaler
+- fulfilled scale-out shared run requeue
 - runtime instance compatible dispatch path
 - metadata propagation
 - source / requestedBy / reason / correlation propagation
+
+The local scale-out lifecycle is now validated end-to-end.
+
+This is not Kubernetes pod scaling yet, but it proves the full control-plane shape required by a future Kubernetes scaler:
+
+```text
+0 visible runtime capacity
+  -> RequestScaleOut
+  -> persisted scale-out request
+  -> watcher fulfills capacity
+  -> shared run requeued
+  -> pump dispatches
+  -> runtime executes
+  -> completed
+```
 
 The next Kubernetes-related pieces can now be built on top:
 
@@ -1428,7 +1523,6 @@ The next Kubernetes-related pieces can now be built on top:
 - remote runtime dispatcher
 - HTTP runtime dispatch adapter hardening
 - gRPC runtime dispatch adapter
-- Redis scale-out request publisher
 - Kubernetes scale-out adapter
 - Kubernetes pod / deployment scaler
 - dashboard / API / MCP control-plane endpoints
@@ -1443,7 +1537,7 @@ The current foundation still does not yet provide:
 - Kubernetes pod creation
 - Redis command queue runtime dispatch
 - gRPC runtime dispatch
-- automatic Kubernetes scaling
+- Kubernetes pod/deployment scaling
 - dashboard UI
 - HTTP API controller implementation
 - distributed shared controller election
@@ -1455,9 +1549,16 @@ These remain intentionally left for the next phases.
 
 ## Updated Next Step
 
-The Shared Runtime Controller V1 is now complete.
+The Shared Runtime Controller V1 and Redis/local scale-out execution flow are now complete.
 
-The distributed runtime instance layer now has a validated foundation.
+The distributed runtime instance layer now has a validated foundation for:
+
+- shared admission
+- Redis-backed queue coordination
+- provider-based dispatch
+- provider-based local scale-out
+- fulfilled scale-out run requeue
+- end-to-end execution after dynamic capacity creation
 
 Expected next work:
 
@@ -1466,8 +1567,8 @@ Expected next work:
 - Redis command queue provider
 - gRPC dispatch adapter
 - provider status/control capabilities
-- scale-out event publisher hardening
 - Kubernetes scaler adapter
+- Kubernetes pod/deployment scaler
 - control-plane API endpoints
 - Kibana / Grafana / OpenSearch observability export
 - Kubernetes production demo
@@ -1510,6 +1611,29 @@ Shutdown cleanup without late rediscovery dependency = validated
 ```
 
 
+Redis/local scale-out evidence:
+
+```text
+MCP submit = validated
+Initial runtime capacity = 0
+Admission decision = RequestScaleOut
+SharedRunStatus = ScaleOutRequested -> Dispatched
+ScaleOutRequestStatus = Fulfilled
+ScaleOutRuntimeInstanceId = host-*:mcp-scaleout-runtime-1
+QueueStatus = Dispatched
+LocalRunId = available
+ExecutionId = available
+RuntimeRunStatus = completed
+ActiveLocalInstances = 1
+```
+
+Validated scenario:
+
+```text
+ControlPlaneWithLocalRuntimeInstances_With_No_Runtime_Capacity_Should_ScaleOut_Requeue_Dispatch_And_Execute_Run
+```
+
+
 ## Related Documents
 
 - [Architecture Overview](architecture-overview.md)
@@ -1524,13 +1648,3 @@ Shutdown cleanup without late rediscovery dependency = validated
 - [Testing Strategy](testing-strategy.md)
 
 ---
-
-## Documentation Rule
-
-This document is a focused extraction from the complete technical reference.
-
-The original technical depth remains preserved in:
-
-- [runtime-internals.md](../runtime-internals.md)
-
-Do not remove content from `runtime-internals.md` until the extracted documentation has been reviewed and validated.

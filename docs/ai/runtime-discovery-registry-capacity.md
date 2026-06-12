@@ -1,10 +1,10 @@
 # Runtime Discovery, Registry, and Capacity
 
-Status: Implemented foundation / validated for MCP, Redis, local runtime pools, and HTTP pooled runtime scenarios.
+Status: Implemented foundation / validated for MCP, Redis, local runtime pools, Redis-backed scale-out request lifecycle, local runtime scale-out, fulfilled-run requeue, and HTTP pooled runtime scenarios.
 
 This document describes the runtime discovery, registry, and capacity model used by the Deterministic AI Runtime control plane.
 
-It explains how MCP control-plane hosts, runtime-only hosts, runtime instance registration, runtime capacity publication, shared queue pump readiness, provider dispatch, and shutdown cleanup work together.
+It explains how MCP control-plane hosts, runtime-only hosts, runtime instance registration, runtime capacity publication, shared queue pump readiness, provider dispatch, provider-based scale-out, fulfilled-run requeue, and shutdown cleanup work together.
 
 This document complements:
 
@@ -34,6 +34,8 @@ They answer operational questions such as:
 - How many run slots are available?
 - Which provider should be used to contact a runtime instance?
 - Can the shared queue pump safely start dispatching?
+- Can scale-out create new runtime capacity when no runtime instance is available?
+- Can a fulfilled scale-out request make the original shared run dispatchable again?
 - Can shutdown cleanup happen without rediscovering a control-plane id?
 
 This layer is required for:
@@ -45,6 +47,8 @@ This layer is required for:
 - shared queue pump readiness
 - dispatch-time admission
 - provider routing
+- provider-based scale-out
+- fulfilled scale-out run requeue
 - future Kubernetes runtime pods
 - future autoscaling and dashboards.
 
@@ -69,7 +73,7 @@ Runtime Capacity Store
     ↓
 Shared Queue Pump Readiness Gate
     ↓
-Admission / Provider Dispatch
+Admission / Provider Dispatch / Provider Scale-Out
     ↓
 Runtime Instance Local Queue
 ```
@@ -83,6 +87,28 @@ The registry tracks runtime lifecycle and identity.
 The capacity store tracks scheduling visibility.
 
 Admission and the shared queue pump use registry and capacity data before dispatching work.
+
+When admission cannot find capacity and scale-out is enabled, the same visibility model supports the scale-out lifecycle:
+
+```text
+Admission = RequestScaleOut
+    ↓
+Redis scale-out request persisted
+    ↓
+Scale-out watcher
+    ↓
+Provider-based scale-out selector
+    ↓
+Local runtime scaler or future Kubernetes scaler
+    ↓
+Runtime instance registration
+    ↓
+Runtime capacity publication
+    ↓
+Fulfilled shared run requeue
+    ↓
+Shared queue pump dispatch
+```
 
 ---
 
@@ -135,6 +161,16 @@ runtime-http-3
 ```
 
 The dispatchable identities are the child runtime instances.
+
+The same rule applies to dynamically created local runtime instances.
+
+For local scale-out, the new dispatchable identity is the child runtime instance created by the scaler, for example:
+
+```text
+host-abc123:mcp-scaleout-runtime-1
+```
+
+That dynamically created runtime instance must register and publish capacity before admission can dispatch the requeued run to it.
 
 ---
 
@@ -257,6 +293,8 @@ Role
 Status
 ProviderName
 ProviderEndpoint
+ScaleOutRequestId when relevant
+ScaleOutSourceRuntimeInstanceId when relevant
 WorkerCount
 ActiveWorkerCount
 AvailableWorkerCount
@@ -280,7 +318,8 @@ Capacity descriptors are used by:
 - MCP runtime instance tools
 - runtime provider dispatch
 - dashboard/API visibility
-- future autoscaling decisions.
+- future autoscaling decisions
+- deciding whether a fulfilled scale-out run can be dispatched.
 
 A runtime instance should only be eligible for dispatch when capacity indicates that it can accept work.
 
@@ -334,6 +373,20 @@ The provider tells the control plane how to contact the runtime instance.
 
 The capacity descriptor tells the control plane whether the runtime instance should receive work.
 
+Scale-out provider selection also uses provider identity.
+
+For scale-out requests, the provider name can be resolved from:
+
+```text
+AiRuntimeScaleOutProviderRequest.ProviderHint
+    -> AiRuntimeInstanceRegistrationOptions.ProviderName
+    -> local
+```
+
+The scale-out provider itself remains part of the same provider model.
+
+`IAiRuntimeScaleOutProvider` extends `IAiRuntimeInstanceProvider`.
+
 ---
 
 ## Registration Flow
@@ -376,6 +429,28 @@ The parent HTTP host is not the dispatch target.
 
 The child runtime instances are the dispatch targets.
 
+For dynamically created local runtime instances, the scale-out registration flow is:
+
+```text
+Scale-out request fulfilled by local provider
+    ↓
+AiLocalRuntimeInstanceScaler creates child runtime host
+    ↓
+child runtime starts
+    ↓
+child runtime registers runtime instance
+    ↓
+child runtime publishes capacity
+    ↓
+shared run is requeued
+    ↓
+pump can dispatch to the new runtime instance
+```
+
+The fulfilled scale-out request is not enough by itself.
+
+The new runtime instance must become visible through registry and capacity before dispatch-time admission can select it.
+
 ---
 
 ## Heartbeat Flow
@@ -407,6 +482,8 @@ Heartbeat should reflect:
 
 This keeps admission and MCP visibility current.
 
+For scale-out-created runtime instances, the first registration/capacity publication acts as the readiness signal that allows the requeued run to be dispatched.
+
 ---
 
 ## Shared Queue Pump Readiness
@@ -432,6 +509,20 @@ This prevents queued work from being drained before runtime-only hosts have regi
 Readiness should use runtime capacity rather than only process startup.
 
 A process can be started but still not dispatchable.
+
+This is also important after scale-out fulfillment.
+
+The scale-out watcher can create a runtime instance, but the pump should still dispatch based on visible capacity, not on the provider result alone.
+
+```text
+Scale-out provider result = success
+    ↓
+request marked Fulfilled
+    ↓
+shared run requeued
+    ↓
+pump waits/dispatches based on registry + capacity visibility
+```
 
 ---
 
@@ -462,6 +553,102 @@ If dispatch fails:
 The Redis admission reservation store is validated in heavy HTTP dispatch scenarios.
 
 Lua-based slot reservation can still be added later for stronger atomic coordination in production multi-control-plane deployments.
+
+When admission cannot find an eligible runtime instance and scale-out is enabled, admission can return `RequestScaleOut`.
+
+In that case, the shared run is not dispatched immediately.
+
+```text
+No eligible runtime capacity
+    ↓
+Admission = RequestScaleOut
+    ↓
+SharedRun.Status = ScaleOutRequested
+    ↓
+Scale-out request persisted
+```
+
+After the request is fulfilled and the run is requeued, dispatch-time admission runs again and can select the newly visible runtime capacity.
+
+---
+
+## Scale-Out and Capacity Visibility
+
+Scale-out depends on discovery, registry, and capacity visibility.
+
+The current validated local scale-out flow is:
+
+```text
+MCP run submitted
+    ↓
+DirectDispatch admission
+    ↓
+No executable runtime capacity visible
+    ↓
+Admission = RequestScaleOut
+    ↓
+Redis scale-out request created
+    ↓
+AiRuntimeScaleOutRequestWatcherHostedService observes request
+    ↓
+AiRuntimeScaleOutProviderSelector resolves local provider
+    ↓
+LocalAiRuntimeInstanceProvider delegates to AiLocalRuntimeInstanceScaler
+    ↓
+new local runtime instance starts
+    ↓
+runtime instance registers
+    ↓
+capacity descriptor is published
+    ↓
+scale-out request is marked Fulfilled
+    ↓
+shared run is requeued
+    ↓
+shared queue pump dispatches after capacity is visible
+```
+
+The important architectural point is that scale-out fulfillment and dispatch remain separate.
+
+```text
+Scale-out fulfillment
+    = capacity creation succeeded
+
+Dispatch
+    = pump/admission/provider selected and delivered the run
+```
+
+This protects the same shared queue ownership guarantees used by normal queue-first dispatch.
+
+Validated local scale-out evidence:
+
+```text
+Initial ActiveLocalInstances = 0
+ScaleOutRequest.Status = Fulfilled
+ScaleOutRuntimeInstanceId = host-...:mcp-scaleout-runtime-1
+ActiveLocalInstances = 1
+SharedRun.Status = Dispatched
+QueueStatus = Dispatched
+LocalRunId = available
+ExecutionId = available
+RuntimeRunStatus = completed
+```
+
+Future Kubernetes scale-out should reuse the same visibility flow.
+
+```text
+Kubernetes scaler creates or expands runtime pods
+    ↓
+runtime pod registers
+    ↓
+runtime pod publishes capacity
+    ↓
+scale-out request fulfilled
+    ↓
+shared run requeued
+    ↓
+pump dispatches normally
+```
 
 ---
 
@@ -510,6 +697,10 @@ Recommended production hardening:
 Heartbeat should publish capacity before a runtime instance becomes dispatchable.
 
 The pump should start only after readiness is observed.
+
+Scale-out-created instances follow the same rule.
+
+The provider may create capacity, but dispatch should depend on the runtime instance becoming visible through registry and capacity stores.
 
 ---
 
@@ -575,6 +766,8 @@ CanAcceptRun
 LastHeartbeatAtUtc
 ProviderName
 ProviderEndpoint
+ScaleOutRequestId when relevant
+ScaleOutSourceRuntimeInstanceId when relevant
 ```
 
 This gives MCP enough operational visibility to act as a temporary dashboard before a full UI exists.
@@ -583,7 +776,23 @@ This gives MCP enough operational visibility to act as a temporary dashboard bef
 
 ## Validated Evidence
 
-The current implementation has been validated through MCP, Redis, local runtime pool, and HTTP pooled runtime provider scenarios.
+The current implementation has been validated through MCP, Redis, local runtime pool, local scale-out, and HTTP pooled runtime provider scenarios.
+
+Redis local scale-out evidence:
+
+```text
+Initial ActiveLocalInstances = 0
+Admission = RequestScaleOut
+SharedRun.Status = ScaleOutRequested
+ScaleOutRequest.Status = Fulfilled
+ScaleOutRuntimeInstanceId = host-...:mcp-scaleout-runtime-1
+ActiveLocalInstances = 1
+SharedRun.Status = Dispatched
+QueueStatus = Dispatched
+LocalRunId = available
+ExecutionId = available
+RuntimeRunStatus = completed
+```
 
 Heavy HTTP dispatch evidence:
 
@@ -647,6 +856,13 @@ Repeated StopAsync / DisposeAsync safety = validated
 | MCP runtime visibility | Implemented / validated |
 | Shared queue pump readiness gate | Implemented / validated |
 | Redis admission reservation store | Implemented / validated |
+| Redis scale-out request store | Implemented / validated |
+| Store-backed scale-out request publisher | Implemented / validated |
+| Scale-out request watcher | Implemented / validated |
+| Provider-based scale-out selector | Implemented / validated |
+| Local runtime scale-out capacity publication | Implemented / validated |
+| Fulfilled scale-out run requeue | Implemented / validated |
+| MCP Redis local scale-out execution | Implemented / validated |
 | HTTP pooled runtime identity | Implemented / validated |
 | Shutdown cleanup without late rediscovery | Implemented / validated |
 | Registry/capacity TTL hardening | Planned |
@@ -662,6 +878,7 @@ The current implementation does not yet provide:
 
 - Kubernetes pod metadata provider
 - Kubernetes autoscaling adapter
+- Kubernetes pod/deployment scale-out implementation
 - Redis command queue provider
 - gRPC runtime provider
 - production multi-control-plane leader election
@@ -685,6 +902,10 @@ These are intentionally separate from the current validated discovery, registry,
 | Runtime Capacity Store | Tracks live run/worker capacity descriptors used by admission and readiness. |
 | Admission Controller | Selects runtime targets based on visible capacity and policy. |
 | Admission Reservation Store | Protects selected runtime capacity during dispatch in Redis-backed scenarios. |
+| Scale-Out Request Store | Persists scale-out requests and tracks pending, observed, fulfilled, and rejected lifecycle. |
+| Scale-Out Watcher | Observes pending scale-out requests and delegates capacity creation to a scale-out-capable provider. |
+| Scale-Out Provider Selector | Resolves the provider used to create capacity using the existing runtime provider model. |
+| Fulfilled Run Requeue Service | Requeues a shared run after scale-out fulfillment so dispatch stays owned by the pump. |
 | Shared Queue Pump | Waits for readiness and dispatches queued shared runs. |
 | Runtime Provider | Contacts the selected runtime instance through local, HTTP, or future transport. |
 | Local Runtime Queue | Owns `RunId` lifecycle and execution start. |

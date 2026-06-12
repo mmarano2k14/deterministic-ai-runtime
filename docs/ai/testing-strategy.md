@@ -1,12 +1,8 @@
 # Testing Strategy
 
-Status: Actively validated by a large unit and integration test suite, including MCP, Redis, local runtime pools, and HTTP pooled runtime provider scenarios.
+Status: Actively validated by a large unit and integration test suite, including MCP, Redis, local runtime pools, Redis-backed scale-out request lifecycle, local runtime scale-out, fulfilled-run requeue, and HTTP pooled runtime provider scenarios.
 
 This document describes the testing strategy used to validate the Deterministic AI Runtime.
-
-The complete technical reference is currently preserved in:
-
-- [runtime-internals.md](../runtime-internals.md)
 
 ---
 
@@ -41,6 +37,12 @@ The runtime must prove that it behaves correctly under:
 - Redis control-plane discovery and id resolution
 - Redis registry and capacity cleanup
 - Redis admission reservation behavior
+- Redis scale-out request persistence
+- scale-out watcher behavior
+- provider-based scale-out selector behavior
+- local runtime instance scaler behavior
+- fulfilled scale-out shared run requeue behavior
+- scale-out dispatch and execution completion
 - worker-capacity saturation
 
 The purpose of the testing strategy is to validate that the runtime behaves like reliable execution infrastructure, not only like isolated application code.
@@ -93,6 +95,9 @@ The test suite is used as proof that the runtime can survive:
 - HTTP pooled runtime dispatch
 - Redis discovery/registry/capacity lifecycle
 - Redis admission reservations
+- Redis scale-out request lifecycle
+- local runtime scale-out from zero executable capacity
+- fulfilled-run requeue and pump dispatch
 - worker capacity visibility
 - MCP tool execution
 - shutdown and lifecycle races
@@ -175,6 +180,12 @@ Main categories include:
 - Redis discovery and control-plane id resolver tests
 - Redis runtime registry and capacity cleanup tests
 - Redis admission reservation tests
+- Redis scale-out request store tests
+- scale-out watcher tests
+- scale-out provider selector tests
+- local runtime scaler tests
+- fulfilled scale-out run requeue tests
+- MCP Redis local scale-out execution tests
 - runtime worker capacity tests
 
 ---
@@ -244,6 +255,11 @@ They should cover:
 - shared queue coordination
 - queue pump behavior
 - scale-out request publication
+- Redis scale-out request persistence
+- scale-out watcher processing
+- scale-out provider selector resolution
+- local runtime scale-out provider behavior
+- fulfilled scale-out shared run requeue
 - provider model preparation
 - control-plane observability
 
@@ -428,6 +444,91 @@ A failed dispatch must requeue the shared queue item and preserve the shared run
 
 ---
 
+## Scale-Out Request Lifecycle Tests
+
+Scale-out tests validate the path from admission requesting capacity to the original shared run being executed after capacity is created.
+
+They should cover:
+
+- scale-out request publication when admission returns `RequestScaleOut`
+- store-backed scale-out request publisher behavior
+- Redis-backed scale-out request persistence
+- pending request listing by control-plane id
+- request observed transition
+- request fulfilled transition
+- request rejected transition
+- provider failure handling
+- provider rejection handling
+- provider hint propagation
+- control-plane id propagation
+- shared run id propagation
+- metadata propagation
+- watcher id propagation
+- idempotent request observation
+- scale-out provider selector resolution
+- local provider scale-out capability
+- local runtime instance scaler behavior
+- fulfilled scale-out shared run requeue
+- shared queue pump dispatch after scale-out fulfillment
+- runtime execution completion after dynamic capacity creation
+
+Important assertions:
+
+```text
+A run submitted with DirectDispatch and no runtime capacity should become ScaleOutRequested when scale-out is enabled.
+
+A Redis scale-out request should be persisted with the expected RequestId, SharedRunId, ControlPlaneId, ProviderHint, and metadata.
+
+The watcher should mark a request observed before calling the provider.
+
+The selector should resolve the provider using:
+    request.ProviderHint
+    -> AiRuntimeInstanceRegistrationOptions.ProviderName
+    -> local
+
+Local scale-out should create/register/start a runtime instance.
+
+A fulfilled scale-out request should not dispatch directly from the watcher.
+
+A fulfilled scale-out request should requeue the original shared run.
+
+The shared queue pump should claim the requeued item and perform dispatch-time admission.
+
+After the new runtime instance publishes capacity, admission should select it.
+
+The runtime provider should dispatch into the new instance local queue.
+
+The local run should expose a LocalRunId and eventually an ExecutionId.
+
+The runtime run should reach a terminal completed status.
+```
+
+Validated end-to-end evidence:
+
+```text
+Initial ActiveLocalInstances = 0
+Admission = RequestScaleOut
+SharedRun.Status = ScaleOutRequested
+ScaleOutRequest.Status = Fulfilled
+ScaleOutRuntimeInstanceId = host-...:mcp-scaleout-runtime-1
+ActiveLocalInstances = 1
+SharedRun.Status = Dispatched
+QueueStatus = Dispatched
+LocalRunId = available
+ExecutionId = available
+RuntimeRunStatus = completed
+```
+
+Primary MCP integration scenario:
+
+```text
+ControlPlaneWithLocalRuntimeInstances_With_No_Runtime_Capacity_Should_ScaleOut_Requeue_Dispatch_And_Execute_Run
+```
+
+This scenario proves that the local scale-out control loop works before replacing the local scaler with a Kubernetes scaler.
+
+---
+
 ## Dispatch-Time Admission Tests
 
 Shared queue dispatch now re-evaluates admission at drain time.
@@ -474,6 +575,10 @@ They should cover:
 - queue-first run completion through local provider
 - queue-first run completion through HTTP provider
 - pump disabled / manual drain behavior with provider-hosted runtime instances
+- local provider scale-out capability
+- local runtime scaler creation path
+- provider-based scale-out selector behavior
+- scale-out request fulfilled/rejected behavior
 
 Important assertions:
 
@@ -813,6 +918,11 @@ MCP tests should validate:
 - Redis control-plane discovery descriptor publication
 - control-plane id resolver behavior
 - Redis admission reservation usage
+- Redis scale-out request persistence
+- scale-out watcher behavior
+- provider-based scale-out selector resolution
+- local runtime scaler behavior
+- fulfilled scale-out run requeue
 - shared run submission through MCP tools
 - shared run listing through MCP tools
 - shared queue drain through MCP tools
@@ -821,6 +931,8 @@ MCP tests should validate:
 - local provider queue-first dispatch through MCP
 - HTTP provider queue-first dispatch through MCP
 - HTTP pooled runtime dispatch to `runtime-http-*` child instances through MCP
+- local scale-out dispatch to `mcp-scaleout-runtime-*` runtime instances through MCP
+- runtime execution completion after scale-out
 - runtime worker capacity visibility through MCP
 - runtime queue run-status polling through MCP tools
 - replay execution through MCP tools
@@ -880,6 +992,12 @@ Repeated StopAsync or host disposal must be idempotent.
 The MCP server should publish discovery before runtime-only hosts that require discovery are started.
 
 Runtime-only hosts should resolve the MCP-published control-plane id before registering child runtime instances or publishing capacity.
+
+A direct-dispatch run with no runtime capacity should become ScaleOutRequested when scale-out is enabled.
+
+A fulfilled scale-out request should requeue the shared run and let the shared queue pump dispatch it normally.
+
+A dynamically created local runtime instance should expose LocalRunId, ExecutionId, and completed runtime status.
 ```
 
 Example validated local MCP topology:
@@ -946,6 +1064,10 @@ They should cover:
 - background queue service lifecycle
 - background queue readiness gate
 - scale-out request publication
+- Redis-backed scale-out request store behavior
+- scale-out watcher behavior
+- provider-based scale-out selector behavior
+- fulfilled scale-out requeue behavior
 - Redis-backed shared run store behavior
 - Redis-backed shared queue behavior
 - Redis admission reservation behavior
@@ -972,6 +1094,10 @@ Dispatch failures must requeue when policy requires it.
 A shared run must not be marked dispatched unless dispatch succeeded.
 
 When admission reservations are enabled, selected runtime capacity should be reserved before provider dispatch and released or expired safely if dispatch fails.
+
+When admission returns RequestScaleOut, the shared run should be persisted as ScaleOutRequested and a scale-out request should be published.
+
+Scale-out fulfillment should requeue the shared run rather than dispatching directly from the watcher.
 ```
 
 ---
@@ -1141,6 +1267,8 @@ They may include:
 - queue-first shared dispatch under pressure
 - shared queue pump/manual drain under pressure
 - worker capacity saturation scenarios
+- scale-out from zero runtime capacity scenarios
+- fulfilled scale-out requeue scenarios
 - heavy HTTP pooled runtime dispatch scenarios
 - Redis-backed shared queue dispatch under pressure
 - shutdown lifecycle races under Redis discovery/registry/capacity
@@ -1269,6 +1397,14 @@ Runtime-only hosts resolve the MCP-published control-plane id before registratio
 Registry and capacity cleanup do not depend on late rediscovery during shutdown.
 
 Heavy HTTP QueueFirst dispatch validates Redis shared run store, Redis shared queue, and Redis admission reservations.
+
+DirectDispatch with no runtime capacity can request scale-out.
+
+A fulfilled scale-out request requeues the shared run.
+
+The shared queue pump dispatches the requeued run after new capacity appears.
+
+A local scale-out-created runtime instance executes the run to completed.
 ```
 
 ---
@@ -1307,6 +1443,14 @@ Heavy HTTP QueueFirst dispatch validates Redis shared run store, Redis shared qu
 | Heavy HTTP dispatch tests | Implemented / validated |
 | Redis control-plane discovery tests | Implemented / validated |
 | Redis admission reservation tests | Implemented / validated |
+| Redis scale-out request store tests | Implemented / validated |
+| Store-backed scale-out request publisher tests | Implemented / validated |
+| Scale-out watcher tests | Implemented / validated |
+| Scale-out provider selector tests | Implemented / validated |
+| Local runtime scaler tests | Implemented / validated |
+| Local provider scale-out tests | Implemented / validated |
+| Fulfilled scale-out run requeue tests | Implemented / validated |
+| MCP Redis local scale-out execution tests | Implemented / validated |
 | Kubernetes scenario tests | Planned |
 | Full enterprise demo scenario | Planned |
 | Durable decision ledger tests | Implemented foundations / validated through replay ledger scenarios |
@@ -1347,6 +1491,10 @@ It proves that:
 - HTTP pooled runtime provider flows are validated
 - Redis discovery, registry, capacity, and admission reservation flows are validated
 - heavy HTTP dispatch validates Redis-backed shared coordination under pressure
+- Redis-backed scale-out request lifecycle is validated
+- local runtime scale-out from zero executable capacity is validated
+- fulfilled scale-out shared runs are requeued and dispatched through the normal pump
+- scale-out-created runtime instances execute runs to completion
 - runtime worker capacity is visible and enforceable
 
 The goal is not only to test features.
@@ -1375,14 +1523,3 @@ The goal is to prove runtime guarantees.
 - [Config-Driven Runtime](config-driven-runtime.md)
 - [RAG Pipelines](rag-pipelines.md)
 
----
-
-## Documentation Rule
-
-This document is a focused extraction from the complete technical reference.
-
-The original technical depth remains preserved in:
-
-- [runtime-internals.md](../runtime-internals.md)
-
-Do not remove content from `runtime-internals.md` until the extracted documentation has been reviewed and validated.

@@ -1,8 +1,8 @@
 # Shared Queue Pump and Worker Capacity
 
-Status: Implemented foundation / validated for local and HTTP pooled runtime scenarios.
+Status: Implemented foundation / validated for local runtime pools, HTTP pooled runtime scenarios, Redis-backed shared queue coordination, Redis scale-out request persistence, fulfilled-run requeue, and end-to-end MCP local scale-out execution.
 
-This document describes the shared queue pump, queue-first submit mode, dispatch-time admission, pump identity separation, runtime worker-capacity visibility, `MaxLocalWorkersPerExecution`, Redis-backed coordination, and the validated HTTP pooled runtime provider model.
+This document describes the shared queue pump, queue-first submit mode, direct-dispatch scale-out mode, dispatch-time admission, pump identity separation, runtime worker-capacity visibility, `MaxLocalWorkersPerExecution`, Redis-backed coordination, Redis-backed scale-out request lifecycle, fulfilled-run requeue, and the validated local/HTTP pooled runtime provider model.
 
 It complements:
 
@@ -30,8 +30,10 @@ It allows the runtime control plane to:
 - expose runtime instance capacity and worker pressure
 - wait for runtime readiness before background dispatch
 - use Redis-backed shared queue and shared run stores
+- use Redis-backed scale-out request persistence
+- requeue fulfilled scale-out shared runs for normal pump dispatch
 - use Redis-backed admission reservations during heavy dispatch scenarios
-- support local, HTTP pooled, and future Kubernetes-style runtime instance hosting
+- support local, dynamically scaled local, HTTP pooled, and future Kubernetes-style runtime instance hosting
 
 The core principle is:
 
@@ -234,6 +236,16 @@ Configuration:
 AiSharedRuntimeController:SubmitMode = QueueFirst
 ```
 
+Queue-first intentionally forces the shared run into `QueuedGlobally`.
+
+It is the correct mode for queue-first demos and shared queue validation.
+
+It is not the correct mode for admission-driven scale-out at submit time.
+
+For a submitted run to become `ScaleOutRequested`, the controller must run admission directly.
+
+Use direct dispatch mode for that path.
+
 ---
 
 ## Direct Dispatch Mode
@@ -260,6 +272,26 @@ Use direct dispatch when:
 - the runtime instance is available at submit time
 - the caller does not need to observe a globally queued phase
 - a single local runtime process is enough
+- admission should be allowed to return `RequestScaleOut`
+- the system should create runtime capacity on demand before requeueing and dispatching the run
+
+Direct dispatch does not mean every run is immediately dispatched.
+
+It means the controller preserves the real admission decision.
+
+When no runtime capacity is available and scale-out is enabled, direct dispatch can produce:
+
+```text
+SubmitRunAsync
+    ↓
+Admission
+    ↓
+RequestScaleOut
+    ↓
+SharedRun.Status = ScaleOutRequested
+    ↓
+Redis scale-out request persisted
+```
 
 ---
 
@@ -323,6 +355,69 @@ Mark queue item dispatched
     ↓
 Mark shared run dispatched
 ```
+
+---
+
+## Scale-Out Fulfilled Requeue
+
+Scale-out fulfillment now feeds back into the shared queue pump instead of dispatching directly from the watcher.
+
+This preserves the shared queue as the dispatch ownership boundary.
+
+Validated flow:
+
+```text
+SubmitRunAsync
+    ↓
+DirectDispatch mode
+    ↓
+Admission returns RequestScaleOut
+    ↓
+SharedRun.Status = ScaleOutRequested
+    ↓
+Redis scale-out request is created
+    ↓
+AiRuntimeScaleOutRequestWatcherHostedService observes pending request
+    ↓
+Provider selector resolves scale-out-capable provider
+    ↓
+Local provider delegates to AiLocalRuntimeInstanceScaler
+    ↓
+New local runtime instance starts and publishes capacity
+    ↓
+Scale-out request is marked Fulfilled
+    ↓
+AiScaleOutFulfilledRunRequeueService enqueues the shared run
+    ↓
+SharedQueueItem.Status = Pending
+    ↓
+Shared queue pump claims the item
+    ↓
+Dispatch-time admission sees the new runtime capacity
+    ↓
+Run is dispatched to the newly created runtime instance
+    ↓
+LocalRunId and ExecutionId become visible
+    ↓
+Runtime run completes
+```
+
+Important responsibility split:
+
+```text
+Scale-out watcher
+    = observes request and creates capacity
+
+Fulfilled run requeue service
+    = places the shared run back into the shared queue
+
+Shared queue pump
+    = owns claim, dispatch-time admission, provider dispatch, and state updates
+```
+
+The watcher must not bypass the shared queue.
+
+This keeps the same dispatch guarantees for scale-out runs as for queue-first runs.
 
 ---
 
@@ -496,6 +591,7 @@ Benefits:
 - pump identity is decoupled from dispatch target
 - local and HTTP provider paths use the same shared queue model
 - future Kubernetes control-plane/runtime-pod split is supported
+- scale-out fulfilled runs can be requeued and dispatched using the same logic as normal queued runs
 
 ---
 
@@ -596,6 +692,38 @@ Providers must not execute DAG steps directly.
 Providers must not mutate DAG state.
 
 Providers must not bypass local runtime queues.
+
+### Local Scale-Out Dispatch After Requeue
+
+The local scale-out path validates that newly created runtime capacity can be consumed by the normal pump.
+
+```text
+Initial state
+    ActiveLocalInstances = 0
+    No executable runtime capacity visible
+
+Submit shared run
+    ↓
+Admission = RequestScaleOut
+    ↓
+Scale-out watcher creates mcp-scaleout-runtime-1
+    ↓
+Run is requeued
+    ↓
+Pump claims requeued item
+    ↓
+Admission selects host-...:mcp-scaleout-runtime-1
+    ↓
+Local provider dispatches into that runtime local queue
+    ↓
+RunId is created
+    ↓
+ExecutionId is created
+    ↓
+Runtime run completes
+```
+
+This proves that scale-out creates capacity and that the shared queue pump can consume the original run afterward.
 
 ### HTTP Pooled Runtime Dispatch
 
@@ -869,6 +997,36 @@ No automatic background dispatch occurs.
 Manual drain can still dispatch.
 ```
 
+### Scale-Out Requeue and Execute
+
+Tests should prove:
+
+```text
+DirectDispatch + no runtime capacity + scale-out enabled
+    -> SharedRun.Status = ScaleOutRequested
+    -> Redis scale-out request is created
+    -> scale-out watcher marks request Fulfilled
+    -> local runtime instance is created dynamically
+    -> shared run is requeued into the shared queue
+    -> pump dispatches the run to the new runtime instance
+    -> LocalRunId exists
+    -> ExecutionId exists
+    -> runtime run reaches completed
+```
+
+Validated final evidence:
+
+```text
+SharedRunStatus = Dispatched
+AssignedRuntimeInstanceId = host-...:mcp-scaleout-runtime-1
+LocalRunId = available
+ExecutionId = available
+RuntimeRunStatus = completed
+QueueStatus = Dispatched
+ScaleOutRequestStatus = Fulfilled
+ActiveLocalInstances = 1
+```
+
 ### Local and HTTP Runtime Providers
 
 Tests should prove:
@@ -989,6 +1147,13 @@ Redis runtime instance registry
 Redis runtime instance capacity store
 Redis control-plane discovery store
 control-plane id resolver
+Redis scale-out request store
+scale-out request watcher
+provider-based scale-out selector
+local runtime instance scaler
+fulfilled scale-out shared run requeue
+scale-out dispatch through shared queue pump
+scale-out runtime execution completion
 runtime worker capacity visibility
 MaxLocalWorkersPerExecution
 worker-aware CanAcceptRun
@@ -1004,7 +1169,7 @@ Redis/Lua runtime slot reservation refinement
 Redis command queue provider
 gRPC runtime provider
 Kubernetes provider
-production autoscaling
+Kubernetes pod/deployment autoscaling
 production dashboard UI
 full provider capability negotiation
 production multi-control-plane scheduling hardening
@@ -1107,6 +1272,28 @@ Kubernetes should provide:
 - readiness/liveness
 - scaling
 
+The validated local scale-out path should map directly to a Kubernetes provider later:
+
+```text
+RequestScaleOut
+    ↓
+Redis scale-out request
+    ↓
+Scale-out watcher
+    ↓
+Kubernetes scale-out provider
+    ↓
+runtime pod created or deployment scaled
+    ↓
+runtime pod registers and publishes capacity
+    ↓
+scale-out request fulfilled
+    ↓
+shared run requeued
+    ↓
+pump dispatches normally
+```
+
 Kubernetes should not replace runtime queues or DAG execution ownership.
 
 ---
@@ -1123,6 +1310,9 @@ Kubernetes should not replace runtime queues or DAG execution ownership.
 | Runtime Capacity Store | Publishes worker/run capacity descriptors used by admission and pump readiness. |
 | Shared Queue Pump | Executes one or more dispatch cycles. |
 | Shared Queue Dispatcher | Claims shared queue items, re-admits runs, dispatches selected targets, updates queue/run state. |
+| Scale-Out Request Store | Persists requested scale-out work and tracks pending, observed, fulfilled, or rejected status. |
+| Scale-Out Watcher | Observes pending scale-out requests and delegates capacity creation to a scale-out-capable provider. |
+| Fulfilled Run Requeue Service | Requeues a shared run after scale-out fulfillment so the pump can dispatch normally. |
 | Admission Controller | Selects whether to assign, queue globally, request scale-out, or reject. |
 | Runtime Provider | Delivers dispatched work to the selected runtime instance local queue. |
 | Runtime Queue Control Plane | Exposes one runtime instance local queue. |
@@ -1136,6 +1326,21 @@ Kubernetes should not replace runtime queues or DAG execution ownership.
 ## Validated Evidence
 
 The current implementation has been validated with the following evidence:
+
+```text
+Redis local scale-out execution:
+    Initial ActiveLocalInstances = 0
+    Admission = RequestScaleOut
+    SharedRun.Status = ScaleOutRequested
+    ScaleOutRequest.Status = Fulfilled
+    ScaleOutRuntimeInstanceId = host-...:mcp-scaleout-runtime-1
+    ActiveLocalInstances = 1
+    SharedRun.Status = Dispatched
+    QueueStatus = Dispatched
+    LocalRunId = available
+    ExecutionId = available
+    RuntimeRunStatus = completed
+```
 
 ```text
 HTTP pooled QueueFirst dispatch:
@@ -1157,6 +1362,10 @@ Validated outcomes:
 - runtime registry and capacity cleanup no longer block shutdown
 - discovery-based control-plane id resolution works for runtime-only hosts
 - runtime identity assertions target child runtime instances instead of parent HTTP hosts
+- Redis local scale-out request fulfillment works
+- fulfilled scale-out runs are requeued
+- pump dispatches scale-out requeued runs
+- dynamically created local runtime instances execute the run to completion
 
 
 ## Summary
@@ -1172,6 +1381,8 @@ It provides:
 - pump identity separation
 - provider-friendly runtime dispatch
 - Redis-backed shared queue coordination
+- Redis-backed scale-out request lifecycle
+- fulfilled scale-out run requeue
 - Redis-backed admission reservation foundation
 - control-plane discovery and runtime readiness
 - no-double-dispatch shared queue behavior

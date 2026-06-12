@@ -6,7 +6,560 @@ This project follows a deterministic runtime and observability model designed fo
 
 ---
 
-## [1.0.6.1] - 2026-06-11 HTTP Provider Scenario Alignment, Redis Runtime Visibility, and Shutdown Stability
+## ## [1.0.6.2] - 2026-06-12 — Redis-backed Local Runtime Scale-Out Flow
+
+## Summary
+
+This milestone validates the full Redis-backed local runtime scale-out execution flow for the MCP control plane.
+
+The system can now start with **zero local runtime capacity**, accept a shared MCP run, detect that no runtime instance is available, create a Redis-backed scale-out request, dynamically create a local runtime instance, requeue the original shared run, dispatch it through the normal shared queue pump, and execute it successfully to completion.
+
+Final validated flow:
+
+```text
+MCP submit
+  -> admission detects no available runtime capacity
+  -> shared run becomes ScaleOutRequested
+  -> Redis scale-out request is created
+  -> scale-out watcher observes the pending request
+  -> provider selector resolves the local scale-out provider
+  -> LocalAiRuntimeInstanceProvider delegates to AiLocalRuntimeInstanceScaler
+  -> local runtime instance is created, registered, and started
+  -> scale-out request is marked Fulfilled
+  -> original shared run is requeued
+  -> shared queue pump claims the requeued run
+  -> run is dispatched to the newly created local runtime instance
+  -> local runtime consumes the run
+  -> ExecutionId is created
+  -> runtime run completes successfully
+```
+
+Validated final test output:
+
+```text
+FINAL SCALE-OUT EXECUTION STATUS:
+SharedRunStatus='Dispatched'
+AssignedRuntimeInstanceId='host-...:mcp-scaleout-runtime-1'
+LocalRunId='...'
+ExecutionId='...'
+RuntimeRunStatus='completed'
+QueueStatus='Dispatched'
+ScaleOutRequestStatus='Fulfilled'
+ActiveLocalInstances='1'
+```
+
+All MCP integration tests pass after the changes.
+
+---
+
+## Added
+
+### Runtime scale-out provider capability
+
+- Added `IAiRuntimeScaleOutProvider` as a capability on top of the existing runtime instance provider system.
+- `IAiRuntimeScaleOutProvider` now extends `IAiRuntimeInstanceProvider`.
+- This allows scale-out providers to be resolved by the existing `IAiRuntimeInstanceProviderRouter`.
+- No separate scale-out router was introduced.
+- No separate `ProviderName` property was added to the scale-out provider abstraction.
+
+Key design decision:
+
+```text
+Scale-out is a provider capability, not a new provider-routing model.
+```
+
+---
+
+### Scale-out provider selector
+
+- Added `IAiRuntimeScaleOutProviderSelector`.
+- Added `AiRuntimeScaleOutProviderSelector`.
+- The selector resolves the scale-out provider through the existing runtime instance provider router.
+- Provider name resolution order:
+  1. `AiRuntimeScaleOutProviderRequest.ProviderHint`
+  2. `AiRuntimeInstanceRegistrationOptions.ProviderName`
+  3. fallback to `local`
+- The selector creates a synthetic `AiRuntimeInstanceCapacityDescriptor` for provider routing.
+- The descriptor includes provider metadata and scale-out request metadata.
+- Missing providers return a rejected result with reason `scale-out-provider-not-found`.
+
+---
+
+### Store-backed scale-out request publisher provider hint
+
+- Updated `StoreBackedAiRuntimeScaleOutRequestPublisher`.
+- Injected `IOptions<AiRuntimeInstanceRegistrationOptions>`.
+- The publisher now persists the provider hint with each scale-out request.
+- Default provider hint is `local` when no provider is configured.
+- Metadata now includes `providerHint`.
+
+This makes scale-out requests provider-aware while still using the existing provider registration system.
+
+---
+
+### Local runtime instance scale-out support
+
+- Updated `LocalAiRuntimeInstanceProvider` to implement `IAiRuntimeScaleOutProvider`.
+- The provider delegates dynamic local capacity creation to `IAiLocalRuntimeInstanceScaler`.
+- Added rejection behavior when the local scaler is not registered:
+
+```text
+FailureReason = local-runtime-instance-scaler-not-registered
+```
+
+---
+
+### Local runtime instance scaler abstraction
+
+- Added/updated `IAiLocalRuntimeInstanceScaler`.
+- The scaler exposes:
+  - `ActiveInstanceCount`
+  - `EnsureCapacityAsync(...)`
+  - `StopAsync(...)`
+  - `IAsyncDisposable`
+
+Purpose:
+
+```text
+Create local runtime instances dynamically when scale-out is requested.
+```
+
+---
+
+### Local runtime instance scaler implementation
+
+- Added `AiLocalRuntimeInstanceScaler`.
+- The scaler can dynamically create local runtime instance hosts using `IAiLocalRuntimeInstanceHostFactory`.
+- It registers each local runtime instance in `IAiSharedRuntimeInstanceRegistry`.
+- It starts created runtime instance hosts.
+- It supports safe stop and async dispose.
+- It is protected by an async gate to avoid concurrent scale-out races.
+- It validates pool options before creating runtime instances.
+
+Important behavior:
+
+```text
+AiLocalRuntimeInstancePoolOptions.Enabled = false disables startup pool creation only.
+It does not disable dynamic scale-out on demand.
+```
+
+This is required for the zero-capacity scale-out test.
+
+---
+
+### Local runtime instance pool hosted service delegation
+
+- Updated `AiLocalRuntimeInstancePoolHostedService` to delegate runtime instance lifecycle management to `IAiLocalRuntimeInstanceScaler`.
+- The hosted service is now responsible for startup orchestration only.
+- The scaler owns dynamic instance creation and cleanup.
+- Disposal was adjusted to avoid double-disposing singleton scaler instances.
+
+---
+
+### Scale-out fulfilled run requeue service
+
+- Added `IAiScaleOutFulfilledRunRequeueService`.
+- Added `AiScaleOutFulfilledRunRequeueService`.
+- Responsibility:
+
+```text
+When a scale-out request is fulfilled:
+  -> load the shared run
+  -> verify it is still ScaleOutRequested
+  -> enqueue it into the shared queue
+  -> let the normal shared queue pump dispatch it
+```
+
+This keeps the watcher focused on scale-out request processing and avoids direct dispatch from the watcher.
+
+---
+
+### Scale-out watcher requeue integration
+
+- Updated `AiRuntimeScaleOutRequestWatcherHostedService`.
+- The watcher now injects `IAiScaleOutFulfilledRunRequeueService`.
+- After a provider successfully fulfills a scale-out request, the watcher:
+  1. marks the request as fulfilled
+  2. requeues the linked shared run
+
+New behavior:
+
+```text
+Pending scale-out request
+  -> provider fulfilled
+  -> request marked Fulfilled
+  -> linked shared run requeued
+  -> pump dispatches the run normally
+```
+
+---
+
+### Dependency injection registrations
+
+- Added DI registration for:
+
+```csharp
+services.TryAddSingleton<IAiRuntimeScaleOutProviderSelector, AiRuntimeScaleOutProviderSelector>();
+services.TryAddSingleton<IAiScaleOutFulfilledRunRequeueService, AiScaleOutFulfilledRunRequeueService>();
+services.TryAddSingleton<IAiLocalRuntimeInstanceScaler, AiLocalRuntimeInstanceScaler>();
+```
+
+- Local runtime scale-out is now available in `ControlPlaneWithLocalRuntimeInstances` mode.
+
+---
+
+## Changed
+
+### Submit mode for scale-out scenarios
+
+- Updated local scale-out test settings to use:
+
+```text
+AiSharedRuntimeController:SubmitMode = DirectDispatch
+```
+
+Reason:
+
+```text
+QueueFirst bypasses admission results and directly puts the run into QueuedGlobally.
+DirectDispatch allows admission to return RequestScaleOut.
+```
+
+This was required for the controller to produce:
+
+```text
+AiSharedRunStatus.ScaleOutRequested
+```
+
+instead of:
+
+```text
+AiSharedRunStatus.QueuedGlobally
+```
+
+---
+
+### Admission options handling
+
+- Updated configuration binding so explicit test settings are not overwritten by defaults.
+- Relevant scale-out admission settings:
+
+```text
+AiRunAdmission:Enabled = true
+AiRunAdmission:MaxInstanceCount = 3
+AiRunAdmission:EnableScaleOutRequest = true
+AiRunAdmission:EnableGlobalQueueFallback = false
+AiRunAdmission:RejectWhenNoCapacity = false
+```
+
+This allows admission to request scale-out instead of queueing or rejecting the run.
+
+---
+
+### Watcher constructor
+
+- Updated `AiRuntimeScaleOutRequestWatcherHostedService` constructor to include:
+
+```csharp
+IAiScaleOutFulfilledRunRequeueService fulfilledRunRequeueService
+```
+
+- Updated related unit and integration tests with a fake requeue service where required.
+
+---
+
+### Test helpers usage
+
+- Reused existing `McpTestWaitHelpers` instead of adding duplicate wait helpers.
+- Existing helper methods used:
+
+```text
+WaitForDispatchedRunsAsync
+WaitForRuntimeRunExecutionIdAsync
+WaitForTerminalRuntimeRunStatusesAsync
+```
+
+These helpers validate dispatch, runtime execution id creation, and terminal runtime status.
+
+---
+
+## Tests Added / Updated
+
+### Scale-out provider selector tests
+
+Validated:
+
+- provider hint routing
+- fallback to registration provider name
+- fallback to `local`
+- provider not found rejection
+- provider routing through existing provider attributes
+
+---
+
+### Store-backed scale-out request publisher tests
+
+Validated:
+
+- provider hint is persisted from `AiRuntimeInstanceRegistrationOptions.ProviderName`
+- provider hint defaults to `local`
+- provider hint is stored both on the request and in metadata
+
+---
+
+### Local runtime instance provider scale-out tests
+
+Validated:
+
+- `LocalAiRuntimeInstanceProvider` delegates to `IAiLocalRuntimeInstanceScaler`
+- missing scaler returns a rejected provider result
+- runtime scale-out metadata is preserved
+
+---
+
+### Local runtime instance scaler tests
+
+Validated:
+
+- scaler creates local runtime instance hosts
+- created hosts are registered in `IAiSharedRuntimeInstanceRegistry`
+- created hosts are started
+- scaler does not create extra instances when target capacity is already reached
+- scaler stops and unregisters runtime instances
+- scaler disposes local runtime instance hosts safely
+
+---
+
+### Local scale-out flow unit test
+
+Validated full in-memory/local flow:
+
+```text
+scale-out request
+  -> watcher
+  -> selector
+  -> local provider
+  -> local scaler
+  -> local runtime instance created
+  -> request fulfilled
+```
+
+---
+
+### Redis-backed MCP local scale-out fulfillment test
+
+Validated:
+
+```text
+MCP submit
+  -> Redis shared run store
+  -> Redis scale-out request store
+  -> admission RequestScaleOut
+  -> watcher fulfilled request
+  -> local scaler created runtime instance
+```
+
+---
+
+### Redis-backed MCP local scale-out execution test
+
+Added final end-to-end test:
+
+```text
+ControlPlaneWithLocalRuntimeInstances_With_No_Runtime_Capacity_Should_ScaleOut_Requeue_Dispatch_And_Execute_Run
+```
+
+Validated:
+
+```text
+0 active local runtime instances
+  -> submit MCP run
+  -> scale-out request fulfilled
+  -> local runtime instance created
+  -> shared run requeued
+  -> pump dispatches the run
+  -> runtime run receives ExecutionId
+  -> runtime run reaches completed
+```
+
+Final validated output:
+
+```text
+FINAL SCALE-OUT EXECUTION STATUS:
+SharedRunStatus='Dispatched'
+AssignedRuntimeInstanceId='host-...:mcp-scaleout-runtime-1'
+LocalRunId='...'
+ExecutionId='...'
+RuntimeRunStatus='completed'
+QueueStatus='Dispatched'
+ScaleOutRequestStatus='Fulfilled'
+ScaleOutRuntimeInstanceId='host-...:mcp-scaleout-runtime-1'
+ActiveLocalInstances='1'
+```
+
+---
+
+## Fixed
+
+### Fixed QueueFirst blocking scale-out
+
+Problem:
+
+```text
+AiSharedRuntimeController SubmitMode = QueueFirst
+```
+
+forced every run into:
+
+```text
+QueuedGlobally
+```
+
+This bypassed the admission decision and prevented `RequestScaleOut` from being published.
+
+Fix:
+
+```text
+Use DirectDispatch for scale-out tests.
+```
+
+Result:
+
+```text
+Admission can return RequestScaleOut.
+Shared run becomes ScaleOutRequested.
+Scale-out request is created.
+```
+
+---
+
+### Fixed dynamic local scale-out when pool startup is disabled
+
+Problem:
+
+```text
+AiLocalRuntimeInstancePoolOptions.Enabled = false
+```
+
+was initially treated as disabling all local runtime instance creation.
+
+Fix:
+
+```text
+Enabled=false disables startup pool only.
+Dynamic scale-out remains available through AiLocalRuntimeInstanceScaler.
+```
+
+This enables zero-capacity startup followed by demand-based local runtime creation.
+
+---
+
+### Fixed watcher fulfilling requests without re-dispatch path
+
+Problem:
+
+```text
+Scale-out request Fulfilled
+Shared run remained ScaleOutRequested
+No automatic consumption of original run
+```
+
+Fix:
+
+```text
+After fulfillment, watcher calls IAiScaleOutFulfilledRunRequeueService.
+The shared run is inserted into the shared queue.
+The normal pump dispatches it.
+```
+
+---
+
+### Fixed double-disposal risk around local runtime scaler
+
+- Adjusted scaler disposal to be idempotent.
+- Avoided unsafe lifecycle ownership assumptions between hosted service and DI container.
+
+---
+
+## Architecture Notes
+
+### Why the watcher does not dispatch directly
+
+The watcher only handles scale-out request lifecycle:
+
+```text
+Pending -> Observed -> Fulfilled / Rejected
+```
+
+It does not dispatch DAG runs directly.
+
+After scale-out fulfillment, the run is requeued and consumed by the normal shared queue pump.
+
+This preserves the architecture:
+
+```text
+Scale-out creates capacity.
+Shared queue coordinates work.
+Pump dispatches work.
+Runtime instance executes work.
+```
+
+---
+
+### Why this is Kubernetes-ready
+
+The final flow mirrors a Kubernetes autoscaling-style behavior:
+
+```text
+No capacity
+  -> request accepted as scale-out required
+  -> capacity created
+  -> original work requeued
+  -> available runtime consumes the work
+```
+
+The same architecture can later map local scaler behavior to:
+
+```text
+Kubernetes pod creation
+HTTP runtime provider scale-out
+Remote runtime provider scale-out
+Cloud/container orchestration
+```
+
+---
+
+### Why Redis matters here
+
+Redis-backed components were validated for the integration flow:
+
+```text
+IAiSharedRunStore = RedisAiSharedRunStore
+IAiSharedQueue = RedisAiSharedQueue
+IAiRuntimeAdmissionReservationStore = RedisAiRuntimeAdmissionReservationStore
+IAiRuntimeScaleOutRequestStore = RedisAiRuntimeScaleOutRequestStore
+IAiRuntimeScaleOutRequestPublisher = StoreBackedAiRuntimeScaleOutRequestPublisher
+```
+
+This proves the flow is not just in-memory or test-only.
+
+---
+
+## Final Validation
+
+All MCP integration tests pass.
+
+Final confirmed capability:
+
+```text
+A run submitted to the MCP control plane with zero runtime capacity can trigger local runtime scale-out, create a new runtime instance, get requeued, be dispatched by the pump, execute locally, produce an ExecutionId, and complete successfully.
+```
+
+This is a major milestone for the deterministic AI runtime control plane and the Kubernetes/demo scale-out roadmap.
+
+---
+
+## [1.0.6.1] - 2026-06-11 - HTTP Provider Scenario Alignment, Redis Runtime Visibility, and Shutdown Stability
 
 ### Changed
 
