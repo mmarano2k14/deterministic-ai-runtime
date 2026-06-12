@@ -6,6 +6,7 @@ using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Pool;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Controller;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Dispatch;
+using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Scaling;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Background;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Pump;
 using Multiplexed.AI.Configuration;
@@ -18,6 +19,7 @@ using Multiplexed.AI.Runtime.ControlPlane.Admission.Reservations;
 using Multiplexed.AI.Runtime.ControlPlane.DI;
 using Multiplexed.AI.Runtime.ControlPlane.Discovery;
 using Multiplexed.AI.Runtime.ControlPlane.SharedController.Dispatch;
+using Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling;
 using Multiplexed.AI.Runtime.Execution.Instance.Worker;
 using Multiplexed.Sample.External.Plugins.Steps.Steps;
 using StackExchange.Redis;
@@ -119,8 +121,6 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
             LogHostedServiceRegistrations(
                 services,
                 "[SERVICE REGISTRATION][AFTER AiRuntimeServiceRegistration.Register]");
-
-            
 
             switch (hostOptions.Mode)
             {
@@ -241,6 +241,11 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
                 options.Role = AiRuntimeInstanceRole.ControlPlane;
             });
 
+            ConfigureScaleOutRequestWatcher(
+                services,
+                configuration,
+                hostOptions);
+
             LogHostedServiceRegistrations(
                 services,
                 "[CONTROL PLANE ONLY][AFTER REGISTRATION]");
@@ -319,6 +324,11 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
                 options.RuntimeInstanceId = "mcp-control-plane";
                 options.Role = AiRuntimeInstanceRole.ControlPlane;
             });
+
+            ConfigureScaleOutRequestWatcher(
+                services,
+                configuration,
+                hostOptions);
 
             LogHostedServiceRegistrations(
                 services,
@@ -440,6 +450,15 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
                 services,
                 "[CONTROL PLANE HTTP][AFTER AddAiRuntimeInstanceRegistrationHostedService]");
 
+            ConfigureScaleOutRequestWatcher(
+                services,
+                configuration,
+                hostOptions);
+
+            LogHostedServiceRegistrations(
+                services,
+                "[CONTROL PLANE HTTP][AFTER ConfigureScaleOutRequestWatcher]");
+
             LogPoolConfiguration(
                 configuration,
                 "[CONTROL PLANE HTTP][AFTER REGISTRATION]");
@@ -471,7 +490,8 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
             ArgumentNullException.ThrowIfNull(configuration);
             ArgumentNullException.ThrowIfNull(hostOptions);
 
-            Console.WriteLine("[RUNTIME INSTANCE ONLY] ConfigureRuntimeInstanceOnly executed.");
+            Console.WriteLine(
+                "[RUNTIME INSTANCE ONLY] ConfigureRuntimeInstanceOnly executed.");
 
             LogPoolConfiguration(
                 configuration,
@@ -838,6 +858,7 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
                     aiEngineOptions.ControlPlane.PublishDiscovery = true;
                     aiEngineOptions.ControlPlane.RequireDiscovery = false;
                     break;
+
                 case AiMcpHostMode.ControlPlaneWithLocalRuntimeInstances:
                 case AiMcpHostMode.ControlPlaneWithHttpRuntimeInstances:
                     aiEngineOptions.ControlPlane.EnableDiscovery = true;
@@ -855,6 +876,46 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
                     throw new InvalidOperationException(
                         $"Unsupported MCP host mode '{hostOptions.Mode}'.");
             }
+        }
+
+        /// <summary>
+        /// Configures the runtime scale-out request watcher hosted service.
+        /// </summary>
+        /// <remarks>
+        /// The watcher is registered only for control-plane capable host modes.
+        /// It remains inactive unless <c>AiRuntimeScaleOutRequestWatcher:Enabled</c>
+        /// is set to <see langword="true" />.
+        /// </remarks>
+        /// <param name="services">The service collection.</param>
+        /// <param name="configuration">The application configuration.</param>
+        /// <param name="hostOptions">The MCP host options.</param>
+        private static void ConfigureScaleOutRequestWatcher(
+            IServiceCollection services,
+            IConfiguration configuration,
+            AiMcpHostOptions hostOptions)
+        {
+            ArgumentNullException.ThrowIfNull(services);
+            ArgumentNullException.ThrowIfNull(configuration);
+            ArgumentNullException.ThrowIfNull(hostOptions);
+
+            if (hostOptions.Mode == AiMcpHostMode.RuntimeInstanceOnly)
+            {
+                return;
+            }
+
+            services.AddAiRuntimeScaleOutRequestWatcher(options =>
+            {
+                configuration
+                    .GetSection("AiRuntimeScaleOutRequestWatcher")
+                    .Bind(options);
+            });
+
+            services.Configure<SimulatedAiRuntimeScaleOutProviderOptions>(options =>
+            {
+                configuration
+                    .GetSection("SimulatedAiRuntimeScaleOutProvider")
+                    .Bind(options);
+            });
         }
     }
 }

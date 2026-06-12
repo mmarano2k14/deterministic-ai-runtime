@@ -1,6 +1,7 @@
 ﻿using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.ControlPlane.Admission;
 using Multiplexed.Abstractions.AI.ControlPlane.Observability;
 using Multiplexed.Abstractions.AI.ControlPlane.Replay;
@@ -378,6 +379,132 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.DI
             Assert.Equal(
                 typeof(RedisAiRuntimeScaleOutRequestStore),
                 descriptors[0].ImplementationType);
+        }
+
+        /// <summary>
+        /// Verifies that the default control-plane registration provides a simulated scale-out provider.
+        /// </summary>
+        [Fact]
+        public void AddAiControlPlane_Should_Register_Simulated_ScaleOut_Provider_By_Default()
+        {
+            var services = new ServiceCollection();
+
+            services.AddLogging();
+            services.AddAiControlPlane();
+
+            var descriptor = services.SingleOrDefault(service =>
+                service.ServiceType == typeof(IAiRuntimeScaleOutProvider));
+
+            Assert.NotNull(descriptor);
+            Assert.Equal(ServiceLifetime.Singleton, descriptor.Lifetime);
+            Assert.Equal(
+                typeof(SimulatedAiRuntimeScaleOutProvider),
+                descriptor.ImplementationType);
+        }
+
+        /// <summary>
+        /// Verifies that the default control-plane registration provides scale-out watcher options.
+        /// </summary>
+        [Fact]
+        public void AddAiControlPlane_Should_Register_ScaleOut_Watcher_Options_By_Default()
+        {
+            var services = new ServiceCollection();
+
+            services.AddLogging();
+            services.AddAiControlPlane();
+
+            using var provider = services.BuildServiceProvider();
+
+            var options =
+                provider.GetRequiredService<IOptions<AiRuntimeScaleOutRequestWatcherOptions>>().Value;
+
+            Assert.NotNull(options);
+            Assert.False(options.Enabled);
+            Assert.Equal("scale-out-request-watcher", options.WatcherId);
+            Assert.Equal(TimeSpan.FromSeconds(5), options.Interval);
+            Assert.Equal(10, options.MaxRequestsPerCycle);
+            Assert.True(options.RejectOnProviderFailure);
+        }
+
+        /// <summary>
+        /// Verifies that the default control-plane registration provides simulated scale-out provider options.
+        /// </summary>
+        [Fact]
+        public void AddAiControlPlane_Should_Register_Simulated_ScaleOut_Provider_Options_By_Default()
+        {
+            var services = new ServiceCollection();
+
+            services.AddLogging();
+            services.AddAiControlPlane();
+
+            using var provider = services.BuildServiceProvider();
+
+            var options =
+                provider.GetRequiredService<IOptions<SimulatedAiRuntimeScaleOutProviderOptions>>().Value;
+
+            Assert.NotNull(options);
+            Assert.True(options.Succeed);
+            Assert.Equal("simulated-runtime", options.RuntimeInstanceIdPrefix);
+            Assert.Equal(TimeSpan.Zero, options.Delay);
+            Assert.Equal(
+                "Simulated scale-out provider failure.",
+                options.FailureReason);
+        }
+
+        /// <summary>
+        /// Verifies that registering the scale-out request watcher adds the hosted service.
+        /// </summary>
+        [Fact]
+        public void AddAiRuntimeScaleOutRequestWatcher_Should_Register_Hosted_Service()
+        {
+            var services = new ServiceCollection();
+
+            services.AddLogging();
+            services.AddAiControlPlane();
+            services.AddAiRuntimeScaleOutRequestWatcher();
+
+            var descriptors = services
+                .Where(service => service.ServiceType == typeof(IHostedService))
+                .ToArray();
+
+            Assert.Contains(
+                descriptors,
+                descriptor => descriptor.ImplementationType == typeof(AiRuntimeScaleOutRequestWatcherHostedService));
+        }
+
+        /// <summary>
+        /// Verifies that registering the scale-out request watcher applies configured options.
+        /// </summary>
+        [Fact]
+        public void AddAiRuntimeScaleOutRequestWatcher_Should_Configure_Options()
+        {
+            var services = new ServiceCollection();
+
+            services.AddLogging();
+            services.AddAiControlPlane();
+            services.AddAiRuntimeScaleOutRequestWatcher(options =>
+            {
+                options.Enabled = true;
+                options.ControlPlaneId = "cp-test";
+                options.WatcherId = "watcher-test";
+                options.Interval = TimeSpan.FromSeconds(1);
+                options.MaxRequestsPerCycle = 5;
+                options.RejectOnProviderFailure = false;
+                options.IgnoreWhenControlPlaneIdMissing = false;
+            });
+
+            using var provider = services.BuildServiceProvider();
+
+            var options =
+                provider.GetRequiredService<IOptions<AiRuntimeScaleOutRequestWatcherOptions>>().Value;
+
+            Assert.True(options.Enabled);
+            Assert.Equal("cp-test", options.ControlPlaneId);
+            Assert.Equal("watcher-test", options.WatcherId);
+            Assert.Equal(TimeSpan.FromSeconds(1), options.Interval);
+            Assert.Equal(5, options.MaxRequestsPerCycle);
+            Assert.False(options.RejectOnProviderFailure);
+            Assert.False(options.IgnoreWhenControlPlaneIdMissing);
         }
     }
 }

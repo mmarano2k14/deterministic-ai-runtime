@@ -1,0 +1,307 @@
+﻿using Microsoft.Extensions.Options;
+using Multiplexed.Abstractions.AI.ControlPlane.Discovery;
+using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Scaling;
+using Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling;
+
+namespace Multiplexed.AI.Tests.Unit.Runtime.ControlPlane.SharedController.Scaling
+{
+    /// <summary>
+    /// Provides unit tests for <see cref="AiRuntimeScaleOutRequestWatcherHostedService" />.
+    /// </summary>
+    public sealed class AiRuntimeScaleOutRequestWatcherHostedServiceTests
+    {
+        /// <summary>
+        /// Verifies that a pending scale-out request is observed and fulfilled by the watcher.
+        /// </summary>
+        [Fact]
+        public async Task ProcessCycleAsync_Should_Fulfill_Pending_Request_When_Provider_Succeeds()
+        {
+            var store =
+                CreateStore();
+
+            await store
+                .CreateAsync(
+                    CreateRequest("request-1"))
+                .ConfigureAwait(false);
+
+            var watcher =
+                new AiRuntimeScaleOutRequestWatcherHostedService(
+                    store,
+                    new SimulatedAiRuntimeScaleOutProvider(
+                        Options.Create(new SimulatedAiRuntimeScaleOutProviderOptions
+                        {
+                            Succeed = true,
+                            RuntimeInstanceIdPrefix = "simulated-runtime"
+                        })),
+                    new TestControlPlaneIdResolver("cp-test"),
+                    Options.Create(new AiRuntimeScaleOutRequestWatcherOptions
+                    {
+                        Enabled = true,
+                        ControlPlaneId = "cp-test",
+                        WatcherId = "watcher-test",
+                        Interval = TimeSpan.FromSeconds(1),
+                        MaxRequestsPerCycle = 10,
+                        RejectOnProviderFailure = true
+                    }));
+
+            await watcher
+                .ProcessCycleAsync()
+                .ConfigureAwait(false);
+
+            var loaded =
+                await store
+                    .GetAsync("request-1")
+                    .ConfigureAwait(false);
+
+            Assert.NotNull(loaded);
+            Assert.Equal(AiRuntimeScaleOutRequestStatus.Fulfilled, loaded.Status);
+            Assert.Equal("watcher-test", loaded.ObservedBy);
+            Assert.Equal("watcher-test", loaded.FulfilledBy);
+            Assert.False(string.IsNullOrWhiteSpace(loaded.FulfilledRuntimeInstanceId));
+            Assert.StartsWith("simulated-runtime-", loaded.FulfilledRuntimeInstanceId, StringComparison.Ordinal);
+
+            var pending =
+                await store
+                    .ListPendingAsync(
+                        new AiRuntimeScaleOutRequestQuery
+                        {
+                            ControlPlaneId = "cp-test"
+                        })
+                    .ConfigureAwait(false);
+
+            Assert.Empty(pending);
+        }
+
+        /// <summary>
+        /// Verifies that a pending scale-out request is rejected when the provider rejects it.
+        /// </summary>
+        [Fact]
+        public async Task ProcessCycleAsync_Should_Reject_Pending_Request_When_Provider_Fails()
+        {
+            var store =
+                CreateStore();
+
+            await store
+                .CreateAsync(
+                    CreateRequest("request-1"))
+                .ConfigureAwait(false);
+
+            var watcher =
+                new AiRuntimeScaleOutRequestWatcherHostedService(
+                    store,
+                    new SimulatedAiRuntimeScaleOutProvider(
+                        Options.Create(new SimulatedAiRuntimeScaleOutProviderOptions
+                        {
+                            Succeed = false,
+                            FailureReason = "simulated failure"
+                        })),
+                    new TestControlPlaneIdResolver("cp-test"),
+                    Options.Create(new AiRuntimeScaleOutRequestWatcherOptions
+                    {
+                        Enabled = true,
+                        ControlPlaneId = "cp-test",
+                        WatcherId = "watcher-test",
+                        Interval = TimeSpan.FromSeconds(1),
+                        MaxRequestsPerCycle = 10,
+                        RejectOnProviderFailure = true
+                    }));
+
+            await watcher
+                .ProcessCycleAsync()
+                .ConfigureAwait(false);
+
+            var loaded =
+                await store
+                    .GetAsync("request-1")
+                    .ConfigureAwait(false);
+
+            Assert.NotNull(loaded);
+            Assert.Equal(AiRuntimeScaleOutRequestStatus.Rejected, loaded.Status);
+            Assert.Equal("watcher-test", loaded.ObservedBy);
+            Assert.Equal("watcher-test", loaded.RejectedBy);
+            Assert.Equal("simulated failure", loaded.RejectionReason);
+        }
+
+        /// <summary>
+        /// Verifies that the watcher respects the maximum number of requests processed per cycle.
+        /// </summary>
+        [Fact]
+        public async Task ProcessCycleAsync_Should_Respect_MaxRequestsPerCycle()
+        {
+            var store =
+                CreateStore();
+
+            await store.CreateAsync(CreateRequest("request-1")).ConfigureAwait(false);
+
+            var second =
+                CreateRequest("request-2");
+
+            second.SharedRunId = "shared-run-2";
+            second.PipelineKey = "pipeline-2";
+
+            await store.CreateAsync(second).ConfigureAwait(false);
+
+            var watcher =
+                new AiRuntimeScaleOutRequestWatcherHostedService(
+                    store,
+                    new SimulatedAiRuntimeScaleOutProvider(),
+                    new TestControlPlaneIdResolver("cp-test"),
+                    Options.Create(new AiRuntimeScaleOutRequestWatcherOptions
+                    {
+                        Enabled = true,
+                        ControlPlaneId = "cp-test",
+                        WatcherId = "watcher-test",
+                        Interval = TimeSpan.FromSeconds(1),
+                        MaxRequestsPerCycle = 1,
+                        RejectOnProviderFailure = true
+                    }));
+
+            await watcher
+                .ProcessCycleAsync()
+                .ConfigureAwait(false);
+
+            var all =
+                await store
+                    .ListAsync(
+                        new AiRuntimeScaleOutRequestQuery
+                        {
+                            ControlPlaneId = "cp-test",
+                            IncludeExpired = true,
+                            MaxResults = 10
+                        })
+                    .ConfigureAwait(false);
+
+            Assert.Single(
+                all,
+                request => request.Status == AiRuntimeScaleOutRequestStatus.Fulfilled);
+
+            Assert.Single(
+                all,
+                request => request.Status == AiRuntimeScaleOutRequestStatus.Pending);
+        }
+
+        /// <summary>
+        /// Verifies that the watcher can resolve the control-plane id from the resolver.
+        /// </summary>
+        [Fact]
+        public async Task ProcessCycleAsync_Should_Use_ControlPlaneId_Resolver_When_Option_Is_Missing()
+        {
+            var store =
+                CreateStore();
+
+            await store
+                .CreateAsync(
+                    CreateRequest("request-1"))
+                .ConfigureAwait(false);
+
+            var watcher =
+                new AiRuntimeScaleOutRequestWatcherHostedService(
+                    store,
+                    new SimulatedAiRuntimeScaleOutProvider(),
+                    new TestControlPlaneIdResolver("cp-test"),
+                    Options.Create(new AiRuntimeScaleOutRequestWatcherOptions
+                    {
+                        Enabled = true,
+                        ControlPlaneId = null,
+                        WatcherId = "watcher-test",
+                        Interval = TimeSpan.FromSeconds(1),
+                        MaxRequestsPerCycle = 10,
+                        RejectOnProviderFailure = true
+                    }));
+
+            await watcher
+                .ProcessCycleAsync()
+                .ConfigureAwait(false);
+
+            var loaded =
+                await store
+                    .GetAsync("request-1")
+                    .ConfigureAwait(false);
+
+            Assert.NotNull(loaded);
+            Assert.Equal(AiRuntimeScaleOutRequestStatus.Fulfilled, loaded.Status);
+        }
+
+        /// <summary>
+        /// Creates an in-memory scale-out request store.
+        /// </summary>
+        /// <returns>The created store.</returns>
+        private static InMemoryAiRuntimeScaleOutRequestStore CreateStore()
+        {
+            return new InMemoryAiRuntimeScaleOutRequestStore(
+                Options.Create(new AiRuntimeScaleOutRequestStoreOptions
+                {
+                    DefaultTtl = TimeSpan.FromMinutes(5),
+                    DeduplicationWindow = TimeSpan.FromSeconds(30),
+                    EnableDeduplication = true,
+                    MaxListResults = 100
+                }));
+        }
+
+        /// <summary>
+        /// Creates a valid scale-out request record for tests.
+        /// </summary>
+        /// <param name="requestId">The request identifier.</param>
+        /// <returns>The created request record.</returns>
+        private static AiRuntimeScaleOutRequestRecord CreateRequest(
+            string requestId)
+        {
+            return new AiRuntimeScaleOutRequestRecord
+            {
+                RequestId = requestId,
+                ControlPlaneId = "cp-test",
+                SharedRunId = "shared-run-1",
+                TenantId = "tenant-test",
+                PipelineKey = "pipeline-test",
+                Status = AiRuntimeScaleOutRequestStatus.Pending,
+                Reason = "No runtime capacity was available for admission.",
+                VisibleInstanceCount = 0,
+                AvailableInstanceCount = 0,
+                CurrentInstanceCount = 0,
+                MaxInstanceCount = 3,
+                RequestedTargetInstanceCount = 1,
+                ProviderHint = "simulated",
+                RequestedBy = "unit-test",
+                Source = "unit-test",
+                CorrelationId = "correlation-test",
+                CreatedAtUtc = DateTimeOffset.UtcNow,
+                Metadata = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["test"] = "true"
+                }
+            };
+        }
+
+        /// <summary>
+        /// Provides a fixed control-plane id resolver for tests.
+        /// </summary>
+        private sealed class TestControlPlaneIdResolver : IAiControlPlaneIdResolver
+        {
+            /// <summary>
+            /// The control-plane identifier returned by the resolver.
+            /// </summary>
+            private readonly string? controlPlaneId;
+
+            /// <summary>
+            /// Initializes a new instance of the <see cref="TestControlPlaneIdResolver" /> class.
+            /// </summary>
+            /// <param name="controlPlaneId">The control-plane identifier to return.</param>
+            public TestControlPlaneIdResolver(
+                string? controlPlaneId)
+            {
+                this.controlPlaneId =
+                    controlPlaneId;
+            }
+
+            /// <inheritdoc />
+            public Task<string?> ResolveAsync(
+                CancellationToken cancellationToken = default)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                return Task.FromResult(
+                    this.controlPlaneId);
+            }
+        }
+    }
+}

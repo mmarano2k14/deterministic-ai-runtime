@@ -161,6 +161,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
             }
 
             services.AddOptions<AiRuntimeScaleOutRequestStoreOptions>();
+            services.AddOptions<AiRuntimeScaleOutRequestWatcherOptions>();
+            services.AddOptions<SimulatedAiRuntimeScaleOutProviderOptions>();
 
             services.TryAddSingleton<IAiControlPlaneObserver, NoopAiControlPlaneObserver>();
 
@@ -192,6 +194,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
 
             services.TryAddSingleton<IAiRuntimeScaleOutRequestStore, InMemoryAiRuntimeScaleOutRequestStore>();
             services.TryAddSingleton<IAiRuntimeScaleOutRequestPublisher, StoreBackedAiRuntimeScaleOutRequestPublisher>();
+            services.TryAddSingleton<IAiRuntimeScaleOutProvider, SimulatedAiRuntimeScaleOutProvider>();
 
             services.TryAddSingleton<IAiSharedRuntimeController, AiSharedRuntimeController>();
 
@@ -278,6 +281,53 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
 
             services.TryAddEnumerable(
                 ServiceDescriptor.Singleton<IHostedService, AiSharedQueueBackgroundService>());
+
+            return services;
+        }
+
+        /// <summary>
+        /// Registers the runtime scale-out request watcher hosted service.
+        /// </summary>
+        /// <param name="services">The service collection.</param>
+        /// <param name="configure">Optional watcher options configuration.</param>
+        /// <returns>The same service collection for chaining.</returns>
+        /// <remarks>
+        /// This method only registers the watcher hosted service.
+        /// The watcher remains inactive unless <see cref="AiRuntimeScaleOutRequestWatcherOptions.Enabled" />
+        /// is set to <see langword="true" />.
+        /// </remarks>
+        public static IServiceCollection AddAiRuntimeScaleOutRequestWatcher(
+            this IServiceCollection services,
+            Action<AiRuntimeScaleOutRequestWatcherOptions>? configure = null)
+        {
+            ArgumentNullException.ThrowIfNull(services);
+
+            if (configure is null)
+            {
+                services
+                    .AddOptions<AiRuntimeScaleOutRequestWatcherOptions>()
+                    .Validate(
+                        options => options.Interval > TimeSpan.Zero,
+                        "Scale-out request watcher interval must be positive.")
+                    .Validate(
+                        options => options.MaxRequestsPerCycle > 0,
+                        "Scale-out request watcher max requests per cycle must be positive.");
+            }
+            else
+            {
+                services
+                    .AddOptions<AiRuntimeScaleOutRequestWatcherOptions>()
+                    .Configure(configure)
+                    .Validate(
+                        options => options.Interval > TimeSpan.Zero,
+                        "Scale-out request watcher interval must be positive.")
+                    .Validate(
+                        options => options.MaxRequestsPerCycle > 0,
+                        "Scale-out request watcher max requests per cycle must be positive.");
+            }
+
+            services.TryAddEnumerable(
+                ServiceDescriptor.Singleton<IHostedService, AiRuntimeScaleOutRequestWatcherHostedService>());
 
             return services;
         }

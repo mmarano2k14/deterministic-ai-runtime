@@ -268,6 +268,7 @@
 
                     ["AiSharedQueueBackgroundService:Enabled"] = "false",
                     ["AiSharedQueuePump:Enabled"] = "false",
+
                     ["AiSharedRuntimeController:SubmitMode"] = "DirectDispatch",
                     ["AiSharedRuntimeController:EnableScaleOutRequest"] = "true",
 
@@ -276,6 +277,18 @@
                     ["AiRunAdmission:EnableGlobalQueueFallback"] = "false",
                     ["AiRunAdmission:RejectWhenNoCapacity"] = "false",
                     ["AiRunAdmission:MaxInstanceCount"] = "3",
+
+                    ["AiRuntimeScaleOutRequestWatcher:Enabled"] = "true",
+                    ["AiRuntimeScaleOutRequestWatcher:ControlPlaneId"] = controlPlaneId,
+                    ["AiRuntimeScaleOutRequestWatcher:WatcherId"] = "mcp-scaleout-watcher",
+                    ["AiRuntimeScaleOutRequestWatcher:Interval"] = "00:00:00.200",
+                    ["AiRuntimeScaleOutRequestWatcher:MaxRequestsPerCycle"] = "10",
+                    ["AiRuntimeScaleOutRequestWatcher:RejectOnProviderFailure"] = "true",
+                    ["AiRuntimeScaleOutRequestWatcher:IgnoreWhenControlPlaneIdMissing"] = "true",
+
+                    ["SimulatedAiRuntimeScaleOutProvider:Succeed"] = "true",
+                    ["SimulatedAiRuntimeScaleOutProvider:RuntimeInstanceIdPrefix"] = "simulated-mcp-runtime",
+                    ["SimulatedAiRuntimeScaleOutProvider:Delay"] = "00:00:00",
 
                     ["AiRuntimeInstanceRegistration:ControlPlaneId"] = controlPlaneId,
                     ["AiRuntimeInstanceRegistration:ProviderName"] = "http",
