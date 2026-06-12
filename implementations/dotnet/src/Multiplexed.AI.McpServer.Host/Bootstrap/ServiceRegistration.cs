@@ -563,6 +563,7 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
         /// - shared run store
         /// - shared queue
         /// - admission reservation store
+        /// - scale-out request store
         /// </remarks>
         /// <param name="services">The service collection.</param>
         /// <param name="configuration">The application configuration.</param>
@@ -619,6 +620,16 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
                 options.KeyPrefix = keyPrefix;
                 options.ReservationTtl = TimeSpan.FromMinutes(2);
                 options.KeyTtl = TimeSpan.FromMinutes(10);
+            });
+
+            services.AddRedisAiRuntimeScaleOutRequestStore(options =>
+            {
+                options.KeyPrefix = keyPrefix;
+                options.DefaultTtl = TimeSpan.FromMinutes(30);
+                options.DeduplicationWindow = TimeSpan.FromSeconds(30);
+                options.MaxListResults = 500;
+                options.DefaultIndexScanLimit = 1_000;
+                options.EnableDeduplication = true;
             });
         }
 

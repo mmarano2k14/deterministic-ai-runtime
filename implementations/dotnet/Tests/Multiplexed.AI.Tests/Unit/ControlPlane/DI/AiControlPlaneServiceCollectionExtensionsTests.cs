@@ -339,5 +339,45 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.DI
                 typeof(StoreBackedAiRuntimeScaleOutRequestPublisher),
                 descriptor.ImplementationType);
         }
+
+        [Fact]
+        public void AddRedisAiRuntimeScaleOutRequestStore_Should_Replace_InMemory_ScaleOut_Request_Store()
+        {
+            var services = new ServiceCollection();
+
+            services.AddLogging();
+            services.AddAiControlPlane();
+            services.AddRedisAiRuntimeScaleOutRequestStore();
+
+            var descriptors = services
+                .Where(service => service.ServiceType == typeof(IAiRuntimeScaleOutRequestStore))
+                .ToArray();
+
+            Assert.Single(descriptors);
+
+            Assert.Equal(
+                typeof(RedisAiRuntimeScaleOutRequestStore),
+                descriptors[0].ImplementationType);
+        }
+
+        [Fact]
+        public void AddRedisAiControlPlaneStores_Should_Replace_InMemory_ScaleOut_Request_Store()
+        {
+            var services = new ServiceCollection();
+
+            services.AddLogging();
+            services.AddAiControlPlane();
+            services.AddRedisAiControlPlaneStores();
+
+            var descriptors = services
+                .Where(service => service.ServiceType == typeof(IAiRuntimeScaleOutRequestStore))
+                .ToArray();
+
+            Assert.Single(descriptors);
+
+            Assert.Equal(
+                typeof(RedisAiRuntimeScaleOutRequestStore),
+                descriptors[0].ImplementationType);
+        }
     }
 }

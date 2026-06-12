@@ -245,6 +245,58 @@
         }
 
         /// <summary>
+        /// Creates control-plane settings that force admission into scale-out request mode
+        /// when no dispatchable runtime capacity is available.
+        /// </summary>
+        /// <param name="controlPlaneId">The logical control-plane identifier shared by the scenario.</param>
+        /// <returns>The control-plane scale-out request settings.</returns>
+        public static Dictionary<string, string?> CreateScaleOutOnlyControlPlaneSettings(
+            string controlPlaneId)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(
+                controlPlaneId);
+
+            var controlPlaneRuntimeInstanceId =
+                $"mcp-control-plane-scaleout-{Guid.NewGuid():N}";
+
+            return GenericMcpServerTestSettings.CreateMcpSettings(
+                controlPlaneId,
+                new Dictionary<string, string?>
+                {
+                    ["AiMcpHost:Mode"] = "ControlPlaneWithHttpRuntimeInstances",
+                    ["AiMcpHost:EnableSharedQueuePump"] = "false",
+
+                    ["AiSharedQueueBackgroundService:Enabled"] = "false",
+                    ["AiSharedQueuePump:Enabled"] = "false",
+                    ["AiSharedRuntimeController:SubmitMode"] = "DirectDispatch",
+                    ["AiSharedRuntimeController:EnableScaleOutRequest"] = "true",
+
+                    ["AiRunAdmission:Enabled"] = "true",
+                    ["AiRunAdmission:EnableScaleOutRequest"] = "true",
+                    ["AiRunAdmission:EnableGlobalQueueFallback"] = "false",
+                    ["AiRunAdmission:RejectWhenNoCapacity"] = "false",
+                    ["AiRunAdmission:MaxInstanceCount"] = "3",
+
+                    ["AiRuntimeInstanceRegistration:ControlPlaneId"] = controlPlaneId,
+                    ["AiRuntimeInstanceRegistration:ProviderName"] = "http",
+                    ["AiRuntimeInstanceRegistration:ProviderMetadata:controlPlaneId"] = controlPlaneId,
+                    ["AiRuntimeInstanceRegistration:ProviderMetadata:provider.name"] = "http",
+                    ["AiRuntimeInstanceRegistration:ProviderMetadata:transport.name"] = "http",
+                    ["AiRuntimeInstanceRegistration:Metadata:controlPlaneId"] = controlPlaneId,
+                    ["AiRuntimeInstanceRegistration:Metadata:provider.name"] = "http",
+                    ["AiRuntimeInstanceRegistration:Metadata:transport.name"] = "http",
+                    ["AiRuntimeInstanceRegistration:RuntimeInstanceId"] = controlPlaneRuntimeInstanceId,
+                    ["AiRuntimeInstanceRegistration:Metadata:hostType"] = "control-plane-with-http-runtime-scaleout-test",
+                    ["AiRuntimeInstanceRegistration:Metadata:deployment"] = "test-http-scaleout-request",
+
+                    ["AiEngine:ControlPlane:ControlPlaneId"] = controlPlaneId,
+                    ["AiEngine:RuntimeInstanceId"] = controlPlaneRuntimeInstanceId,
+                    ["AiEngine:PipelineBackgroundController:RuntimeInstanceId"] = controlPlaneRuntimeInstanceId,
+                    ["AiEngine:RuntimeInstanceWorker:RuntimeInstanceId"] = controlPlaneRuntimeInstanceId
+                });
+        }
+
+        /// <summary>
         /// Applies configuration overrides to a settings dictionary.
         /// </summary>
         /// <param name="settings">The target settings dictionary.</param>

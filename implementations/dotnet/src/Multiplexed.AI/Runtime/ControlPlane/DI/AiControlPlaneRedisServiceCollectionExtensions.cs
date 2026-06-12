@@ -1,10 +1,13 @@
 ﻿using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Multiplexed.Abstractions.AI.ControlPlane.Admission.Reservations;
+using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Scaling;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Store;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Queue;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Redis;
 using Multiplexed.AI.Runtime.ControlPlane.Admission.Reservations;
+using Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling;
+using Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling.Redis;
 using Multiplexed.AI.Runtime.ControlPlane.SharedController.Store;
 using Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis;
 using StackExchange.Redis;
@@ -243,12 +246,91 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
         }
 
         /// <summary>
+        /// Replaces the default in-memory runtime scale-out request store
+        /// with the Redis-backed runtime scale-out request store.
+        /// </summary>
+        /// <param name="services">The service collection.</param>
+        /// <param name="configure">Optional Redis scale-out request store options configuration.</param>
+        /// <returns>The same service collection for chaining.</returns>
+        /// <remarks>
+        /// This method does not register the Redis connection itself.
+        /// The application must already register <see cref="IConnectionMultiplexer"/>.
+        ///
+        /// Expected usage:
+        ///
+        /// services.AddSingleton&lt;IConnectionMultiplexer&gt;(
+        ///     _ =&gt; ConnectionMultiplexer.Connect("localhost:6379"));
+        ///
+        /// services.AddAiControlPlane();
+        /// services.AddRedisAiRuntimeScaleOutRequestStore();
+        ///
+        /// The default <see cref="IAiRuntimeScaleOutRequestStore"/> registered by AddAiControlPlane
+        /// is replaced by <see cref="RedisAiRuntimeScaleOutRequestStore"/>.
+        /// </remarks>
+        public static IServiceCollection AddRedisAiRuntimeScaleOutRequestStore(
+            this IServiceCollection services,
+            Action<RedisAiRuntimeScaleOutRequestStoreOptions>? configure = null)
+        {
+            ArgumentNullException.ThrowIfNull(services);
+
+            if (configure is null)
+            {
+                services.AddOptions<RedisAiRuntimeScaleOutRequestStoreOptions>();
+            }
+            else
+            {
+                services.Configure(configure);
+            }
+
+            services.TryAddSingleton<RedisAiRuntimeScaleOutRequestStoreScriptCache>();
+
+            services.RemoveAll<IAiRuntimeScaleOutRequestStore>();
+            services.TryAddSingleton<IAiRuntimeScaleOutRequestStore, RedisAiRuntimeScaleOutRequestStore>();
+
+            return services;
+        }
+
+        /// <summary>
+        /// Registers a Redis connection multiplexer and replaces the default in-memory
+        /// runtime scale-out request store with the Redis-backed runtime scale-out request store.
+        /// </summary>
+        /// <param name="services">The service collection.</param>
+        /// <param name="connectionString">The Redis connection string.</param>
+        /// <param name="configure">Optional Redis scale-out request store options configuration.</param>
+        /// <returns>The same service collection for chaining.</returns>
+        /// <remarks>
+        /// This overload is convenient for demos, tests, and simple host setups.
+        /// Larger applications may prefer to register <see cref="IConnectionMultiplexer"/>
+        /// themselves and call <see cref="AddRedisAiRuntimeScaleOutRequestStore(IServiceCollection, Action{RedisAiRuntimeScaleOutRequestStoreOptions}?)"/>.
+        /// </remarks>
+        public static IServiceCollection AddRedisAiRuntimeScaleOutRequestStore(
+            this IServiceCollection services,
+            string connectionString,
+            Action<RedisAiRuntimeScaleOutRequestStoreOptions>? configure = null)
+        {
+            ArgumentNullException.ThrowIfNull(services);
+
+            if (string.IsNullOrWhiteSpace(connectionString))
+            {
+                throw new ArgumentException(
+                    "Redis connection string cannot be null or empty.",
+                    nameof(connectionString));
+            }
+
+            services.TryAddSingleton<IConnectionMultiplexer>(
+                _ => ConnectionMultiplexer.Connect(connectionString));
+
+            return services.AddRedisAiRuntimeScaleOutRequestStore(configure);
+        }
+
+        /// <summary>
         /// Replaces all default in-memory Redis-capable control-plane stores with Redis-backed implementations.
         /// </summary>
         /// <param name="services">The service collection.</param>
         /// <param name="configureSharedRunStore">Optional Redis shared run store options configuration.</param>
         /// <param name="configureSharedQueue">Optional Redis shared queue options configuration.</param>
         /// <param name="configureAdmissionReservations">Optional Redis admission reservation options configuration.</param>
+        /// <param name="configureScaleOutRequests">Optional Redis scale-out request store options configuration.</param>
         /// <returns>The same service collection for chaining.</returns>
         /// <remarks>
         /// This method does not register the Redis connection itself.
@@ -258,18 +340,21 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
         /// - <see cref="IAiSharedRunStore"/>
         /// - <see cref="IAiSharedQueue"/>
         /// - <see cref="IAiRuntimeAdmissionReservationStore"/>
+        /// - <see cref="IAiRuntimeScaleOutRequestStore"/>
         /// </remarks>
         public static IServiceCollection AddRedisAiControlPlaneStores(
             this IServiceCollection services,
             Action<RedisAiSharedRunStoreOptions>? configureSharedRunStore = null,
             Action<RedisAiSharedQueueOptions>? configureSharedQueue = null,
-            Action<AiRuntimeAdmissionReservationRedisOptions>? configureAdmissionReservations = null)
+            Action<AiRuntimeAdmissionReservationRedisOptions>? configureAdmissionReservations = null,
+            Action<RedisAiRuntimeScaleOutRequestStoreOptions>? configureScaleOutRequests = null)
         {
             ArgumentNullException.ThrowIfNull(services);
 
             services.AddRedisAiSharedRunStore(configureSharedRunStore);
             services.AddRedisAiSharedQueue(configureSharedQueue);
             services.AddRedisAiRuntimeAdmissionReservationStore(configureAdmissionReservations);
+            services.AddRedisAiRuntimeScaleOutRequestStore(configureScaleOutRequests);
 
             return services;
         }
@@ -283,13 +368,15 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
         /// <param name="configureSharedRunStore">Optional Redis shared run store options configuration.</param>
         /// <param name="configureSharedQueue">Optional Redis shared queue options configuration.</param>
         /// <param name="configureAdmissionReservations">Optional Redis admission reservation options configuration.</param>
+        /// <param name="configureScaleOutRequests">Optional Redis scale-out request store options configuration.</param>
         /// <returns>The same service collection for chaining.</returns>
         public static IServiceCollection AddRedisAiControlPlaneStores(
             this IServiceCollection services,
             string connectionString,
             Action<RedisAiSharedRunStoreOptions>? configureSharedRunStore = null,
             Action<RedisAiSharedQueueOptions>? configureSharedQueue = null,
-            Action<AiRuntimeAdmissionReservationRedisOptions>? configureAdmissionReservations = null)
+            Action<AiRuntimeAdmissionReservationRedisOptions>? configureAdmissionReservations = null,
+            Action<RedisAiRuntimeScaleOutRequestStoreOptions>? configureScaleOutRequests = null)
         {
             ArgumentNullException.ThrowIfNull(services);
 
@@ -306,7 +393,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
             return services.AddRedisAiControlPlaneStores(
                 configureSharedRunStore,
                 configureSharedQueue,
-                configureAdmissionReservations);
+                configureAdmissionReservations,
+                configureScaleOutRequests);
         }
     }
 }

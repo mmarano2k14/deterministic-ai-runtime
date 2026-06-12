@@ -1,15 +1,17 @@
-﻿using System.Text.RegularExpressions;
-using Microsoft.Extensions.DependencyInjection;
+﻿using Microsoft.Extensions.DependencyInjection;
 using Multiplexed.Abstractions.AI.ControlPlane.Admission.Reservations;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Controller;
+using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Scaling;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Store;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Queue;
 using Multiplexed.AI.McpServer.Tests.Integration.Fixtures;
 using Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic;
 using Multiplexed.AI.McpServer.Tests.Integration.Helpers;
 using Multiplexed.AI.Runtime.ControlPlane.Admission.Reservations;
+using Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling;
 using Multiplexed.AI.Runtime.ControlPlane.SharedController.Store;
 using Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis;
+using System.Text.RegularExpressions;
 using Xunit.Abstractions;
 
 namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
@@ -249,6 +251,135 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
         }
 
         /// <summary>
+        /// Verifies that a real MCP control-plane host creates a Redis-backed scale-out request
+        /// when admission requests additional runtime capacity.
+        /// </summary>
+        [Fact]
+        public async Task ControlPlaneWithHttpRuntimeInstances_With_No_Runtime_Capacity_Should_Create_Redis_ScaleOut_Request()
+        {
+            var controlPlaneId =
+                GenericMcpServerTestSettings.CreateControlPlaneId(
+                    "heavy-scaleout-request");
+
+            var controlPlaneSettings =
+                GenericMcpServerTestSettings.CreateScaleOutOnlyControlPlaneSettings(
+                    controlPlaneId);
+
+            await using var host =
+                new GenericMcpServerTestHost(
+                    controlPlaneSettings);
+
+            using var client =
+                host.CreateClient();
+
+            AssertRedisStores(
+                host.Services);
+
+            var mcp =
+                new McpTestClient(
+                    client);
+
+            var scaleOutRequestStore =
+                host.Services.GetRequiredService<IAiRuntimeScaleOutRequestStore>();
+
+            var pipelineName =
+                $"mcp-heavy-scaleout-request-{Guid.NewGuid():N}";
+
+            var expectedSharedRunIds =
+                await SubmitRunsAsync(
+                        mcp,
+                        pipelineName,
+                        count: 1,
+                        stepCount: 3,
+                        flakyStepInterval: 0)
+                    .ConfigureAwait(false);
+
+            var sharedRunId =
+                Assert.Single(expectedSharedRunIds);
+
+            var sharedRunStore =
+                host.Services.GetRequiredService<IAiSharedRunStore>();
+
+            var sharedRun =
+                await sharedRunStore
+                    .GetAsync(
+                        sharedRunId)
+                    .ConfigureAwait(false);
+
+            Assert.NotNull(
+                sharedRun);
+
+            Assert.Equal(
+                AiSharedRunStatus.ScaleOutRequested,
+                sharedRun.Status);
+
+            Assert.Equal(
+                controlPlaneId,
+                sharedRun.ControlPlaneId);
+
+            Assert.Equal(
+                pipelineName,
+                sharedRun.PipelineKey);
+
+            var pendingScaleOutRequests =
+                await scaleOutRequestStore
+                    .ListPendingAsync(
+                        new AiRuntimeScaleOutRequestQuery
+                        {
+                            ControlPlaneId = controlPlaneId,
+                            SharedRunId = sharedRunId
+                        })
+                    .ConfigureAwait(false);
+
+            var scaleOutRequest =
+                Assert.Single(
+                    pendingScaleOutRequests);
+
+            Assert.Equal(
+                $"scale-out-{sharedRunId}",
+                scaleOutRequest.RequestId);
+
+            Assert.Equal(
+                sharedRunId,
+                scaleOutRequest.SharedRunId);
+
+            Assert.Equal(
+                controlPlaneId,
+                scaleOutRequest.ControlPlaneId);
+
+            Assert.Equal(
+                TenantId,
+                scaleOutRequest.TenantId);
+
+            Assert.Equal(
+                pipelineName,
+                scaleOutRequest.PipelineKey);
+
+            Assert.Equal(
+                AiRuntimeScaleOutRequestStatus.Pending,
+                scaleOutRequest.Status);
+
+            Assert.Equal(
+                0,
+                scaleOutRequest.AvailableInstanceCount);
+
+            Assert.Equal(
+                0,
+                scaleOutRequest.CurrentInstanceCount);
+
+            Assert.Equal(
+                3,
+                scaleOutRequest.MaxInstanceCount);
+
+            Assert.Equal(
+                1,
+                scaleOutRequest.RequestedTargetInstanceCount);
+
+            output.WriteLine(
+                $"Redis scale-out request created. ControlPlaneId='{controlPlaneId}', SharedRunId='{sharedRunId}', RequestId='{scaleOutRequest.RequestId}', PipelineKey='{pipelineName}'.");
+        }
+
+        /// <summary>
         /// Verifies that Redis-backed control-plane stores replaced the default in-memory stores.
         /// </summary>
         /// <param name="services">The service provider to inspect.</param>
@@ -266,6 +397,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
             var reservationStore =
                 services.GetRequiredService<IAiRuntimeAdmissionReservationStore>();
 
+            var scaleOutRequestStore =
+                services.GetRequiredService<IAiRuntimeScaleOutRequestStore>();
+
             output.WriteLine(
                 $"Redis store assert: IAiSharedRunStore='{sharedRunStore.GetType().FullName}'.");
 
@@ -275,6 +409,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
             output.WriteLine(
                 $"Redis store assert: IAiRuntimeAdmissionReservationStore='{reservationStore.GetType().FullName}'.");
 
+            output.WriteLine(
+                $"Redis store assert: IAiRuntimeScaleOutRequestStore='{scaleOutRequestStore.GetType().FullName}'.");
+
             Assert.IsType<RedisAiSharedRunStore>(
                 sharedRunStore);
 
@@ -283,6 +420,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
 
             Assert.IsType<RedisAiRuntimeAdmissionReservationStore>(
                 reservationStore);
+
+            Assert.IsType<RedisAiRuntimeScaleOutRequestStore>(
+                scaleOutRequestStore);
         }
 
         /// <summary>

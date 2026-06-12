@@ -3,7 +3,7 @@
     /// <summary>
     /// Defines common configuration options for runtime scale-out request stores.
     /// </summary>
-    public sealed class AiRuntimeScaleOutRequestStoreOptions
+    public  class AiRuntimeScaleOutRequestStoreOptions
     {
         /// <summary>
         /// Gets or sets the default time-to-live applied to scale-out request records.
