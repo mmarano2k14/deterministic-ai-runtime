@@ -36,6 +36,7 @@ using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.SharedInstance;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue;
 using Multiplexed.AI.Runtime.ControlPlane.SharedController;
+using Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling;
 using Multiplexed.AI.Runtime.ControlPlane.SharedController.Store;
 using Multiplexed.AI.Runtime.ControlPlane.SharedQueue;
 using Multiplexed.AI.Runtime.Observability.Logging;
@@ -159,6 +160,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
                 services.Configure(configureExecutionAssistance);
             }
 
+            services.AddOptions<AiRuntimeScaleOutRequestStoreOptions>();
+
             services.TryAddSingleton<IAiControlPlaneObserver, NoopAiControlPlaneObserver>();
 
             services.TryAddSingleton<IAiReplayControlPlane, AiReplayControlPlane>();
@@ -186,7 +189,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
             services.TryAddSingleton<IAiSharedRunDispatcher, LocalAiSharedRunDispatcher>();
             services.TryAddSingleton<IAiSharedQueueDispatcher, AiSharedQueueDispatcher>();
             services.TryAddSingleton<IAiSharedQueuePump, AiSharedQueuePump>();
-            services.TryAddSingleton<IAiRuntimeScaleOutRequestPublisher, NoopAiRuntimeScaleOutRequestPublisher>();
+
+            services.TryAddSingleton<IAiRuntimeScaleOutRequestStore, InMemoryAiRuntimeScaleOutRequestStore>();
+            services.TryAddSingleton<IAiRuntimeScaleOutRequestPublisher, StoreBackedAiRuntimeScaleOutRequestPublisher>();
+
             services.TryAddSingleton<IAiSharedRuntimeController, AiSharedRuntimeController>();
 
             services.TryAddEnumerable(

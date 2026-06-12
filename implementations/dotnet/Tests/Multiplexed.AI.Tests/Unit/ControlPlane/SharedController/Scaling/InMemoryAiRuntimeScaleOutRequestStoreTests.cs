@@ -1,0 +1,449 @@
+﻿using Microsoft.Extensions.Options;
+using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Scaling;
+using Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling;
+
+namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController.Scaling
+{
+    /// <summary>
+    /// Provides unit tests for <see cref="InMemoryAiRuntimeScaleOutRequestStore" />.
+    /// </summary>
+    public sealed class InMemoryAiRuntimeScaleOutRequestStoreTests
+    {
+        /// <summary>
+        /// Verifies that creating a scale-out request stores it as pending and makes it retrievable.
+        /// </summary>
+        [Fact]
+        public async Task CreateAsync_Should_Create_Pending_Request()
+        {
+            var store = CreateStore();
+
+            var created = await store.CreateAsync(CreateRequest("request-1"));
+
+            Assert.Equal("request-1", created.RequestId);
+            Assert.Equal("cp-test", created.ControlPlaneId);
+            Assert.Equal("shared-run-1", created.SharedRunId);
+            Assert.Equal(AiRuntimeScaleOutRequestStatus.Pending, created.Status);
+            Assert.NotNull(created.ExpiresAtUtc);
+
+            var loaded = await store.GetAsync("request-1");
+
+            Assert.NotNull(loaded);
+            Assert.Equal("request-1", loaded.RequestId);
+            Assert.Equal(AiRuntimeScaleOutRequestStatus.Pending, loaded.Status);
+        }
+
+        /// <summary>
+        /// Verifies that creating a request without an identifier generates one.
+        /// </summary>
+        [Fact]
+        public async Task CreateAsync_Should_Generate_RequestId_When_Missing()
+        {
+            var store = CreateStore();
+
+            var created = await store.CreateAsync(CreateRequest(string.Empty));
+
+            Assert.False(string.IsNullOrWhiteSpace(created.RequestId));
+            Assert.Equal(AiRuntimeScaleOutRequestStatus.Pending, created.Status);
+        }
+
+        /// <summary>
+        /// Verifies that creating a request without a control-plane identifier fails.
+        /// </summary>
+        [Fact]
+        public async Task CreateAsync_Should_Throw_When_ControlPlaneId_Is_Missing()
+        {
+            var store = CreateStore();
+            var request = CreateRequest("request-1");
+            request.ControlPlaneId = string.Empty;
+
+            await Assert.ThrowsAsync<ArgumentException>(() => store.CreateAsync(request));
+        }
+
+        /// <summary>
+        /// Verifies that creating a request without a shared run identifier fails.
+        /// </summary>
+        [Fact]
+        public async Task CreateAsync_Should_Throw_When_SharedRunId_Is_Missing()
+        {
+            var store = CreateStore();
+            var request = CreateRequest("request-1");
+            request.SharedRunId = string.Empty;
+
+            await Assert.ThrowsAsync<ArgumentException>(() => store.CreateAsync(request));
+        }
+
+        /// <summary>
+        /// Verifies that duplicate pending requests are deduplicated inside the configured deduplication window.
+        /// </summary>
+        [Fact]
+        public async Task CreateAsync_Should_Deduplicate_Pending_Request()
+        {
+            var store = CreateStore();
+
+            var first = await store.CreateAsync(CreateRequest("request-1"));
+            var second = await store.CreateAsync(CreateRequest("request-2"));
+
+            Assert.Equal(first.RequestId, second.RequestId);
+
+            var pending = await store.ListPendingAsync(new AiRuntimeScaleOutRequestQuery
+            {
+                ControlPlaneId = "cp-test"
+            });
+
+            Assert.Single(pending);
+        }
+
+        /// <summary>
+        /// Verifies that deduplication can be disabled.
+        /// </summary>
+        [Fact]
+        public async Task CreateAsync_Should_Create_Duplicate_When_Deduplication_Disabled()
+        {
+            var store = CreateStore(new AiRuntimeScaleOutRequestStoreOptions
+            {
+                EnableDeduplication = false,
+                DefaultTtl = TimeSpan.FromMinutes(30),
+                DeduplicationWindow = TimeSpan.FromSeconds(30),
+                MaxListResults = 100
+            });
+
+            await store.CreateAsync(CreateRequest("request-1"));
+            await store.CreateAsync(CreateRequest("request-2"));
+
+            var pending = await store.ListPendingAsync(new AiRuntimeScaleOutRequestQuery
+            {
+                ControlPlaneId = "cp-test"
+            });
+
+            Assert.Equal(2, pending.Count);
+        }
+
+        /// <summary>
+        /// Verifies that pending requests can be listed by control-plane identifier.
+        /// </summary>
+        [Fact]
+        public async Task ListPendingAsync_Should_Filter_By_ControlPlaneId()
+        {
+            var store = CreateStore();
+
+            await store.CreateAsync(CreateRequest("request-1"));
+
+            var other = CreateRequest("request-2");
+            other.ControlPlaneId = "cp-other";
+            await store.CreateAsync(other);
+
+            var pending = await store.ListPendingAsync(new AiRuntimeScaleOutRequestQuery
+            {
+                ControlPlaneId = "cp-test"
+            });
+
+            Assert.Single(pending);
+            Assert.Equal("request-1", pending.First().RequestId);
+        }
+
+        /// <summary>
+        /// Verifies that requests can be listed by tenant and pipeline key.
+        /// </summary>
+        [Fact]
+        public async Task ListAsync_Should_Filter_By_Tenant_And_Pipeline()
+        {
+            var store = CreateStore(new AiRuntimeScaleOutRequestStoreOptions
+            {
+                EnableDeduplication = false,
+                DefaultTtl = TimeSpan.FromMinutes(30),
+                DeduplicationWindow = TimeSpan.FromSeconds(30),
+                MaxListResults = 100
+            });
+
+            await store.CreateAsync(CreateRequest("request-1"));
+
+            var other = CreateRequest("request-2");
+            other.TenantId = "tenant-other";
+            other.PipelineKey = "pipeline-other";
+            await store.CreateAsync(other);
+
+            var results = await store.ListAsync(new AiRuntimeScaleOutRequestQuery
+            {
+                TenantId = "tenant-test",
+                PipelineKey = "pipeline-test"
+            });
+
+            Assert.Single(results);
+            Assert.Equal("request-1", results.First().RequestId);
+        }
+
+        /// <summary>
+        /// Verifies that a pending request can be marked as observed.
+        /// </summary>
+        [Fact]
+        public async Task MarkObservedAsync_Should_Transition_Pending_To_Observed()
+        {
+            var store = CreateStore();
+
+            await store.CreateAsync(CreateRequest("request-1"));
+
+            var changed = await store.MarkObservedAsync("request-1", "scaler-test");
+
+            Assert.True(changed);
+
+            var loaded = await store.GetAsync("request-1");
+
+            Assert.NotNull(loaded);
+            Assert.Equal(AiRuntimeScaleOutRequestStatus.Observed, loaded.Status);
+            Assert.Equal("scaler-test", loaded.ObservedBy);
+            Assert.NotNull(loaded.ObservedAtUtc);
+        }
+
+        /// <summary>
+        /// Verifies that an observed request can be marked as fulfilled.
+        /// </summary>
+        [Fact]
+        public async Task MarkFulfilledAsync_Should_Transition_Observed_To_Fulfilled()
+        {
+            var store = CreateStore();
+
+            await store.CreateAsync(CreateRequest("request-1"));
+            await store.MarkObservedAsync("request-1", "scaler-test");
+
+            var changed = await store.MarkFulfilledAsync("request-1", "scaler-test", "runtime-1");
+
+            Assert.True(changed);
+
+            var loaded = await store.GetAsync("request-1");
+
+            Assert.NotNull(loaded);
+            Assert.Equal(AiRuntimeScaleOutRequestStatus.Fulfilled, loaded.Status);
+            Assert.Equal("scaler-test", loaded.FulfilledBy);
+            Assert.Equal("runtime-1", loaded.FulfilledRuntimeInstanceId);
+            Assert.NotNull(loaded.FulfilledAtUtc);
+        }
+
+        /// <summary>
+        /// Verifies that a pending request can be marked as rejected.
+        /// </summary>
+        [Fact]
+        public async Task MarkRejectedAsync_Should_Transition_Pending_To_Rejected()
+        {
+            var store = CreateStore();
+
+            await store.CreateAsync(CreateRequest("request-1"));
+
+            var changed = await store.MarkRejectedAsync("request-1", "scaler-test", "max capacity reached");
+
+            Assert.True(changed);
+
+            var loaded = await store.GetAsync("request-1");
+
+            Assert.NotNull(loaded);
+            Assert.Equal(AiRuntimeScaleOutRequestStatus.Rejected, loaded.Status);
+            Assert.Equal("scaler-test", loaded.RejectedBy);
+            Assert.Equal("max capacity reached", loaded.RejectionReason);
+            Assert.NotNull(loaded.RejectedAtUtc);
+        }
+
+        /// <summary>
+        /// Verifies that a pending request can be marked as expired.
+        /// </summary>
+        [Fact]
+        public async Task MarkExpiredAsync_Should_Transition_Pending_To_Expired()
+        {
+            var store = CreateStore();
+
+            await store.CreateAsync(CreateRequest("request-1"));
+
+            var changed = await store.MarkExpiredAsync("request-1");
+
+            Assert.True(changed);
+
+            var loaded = await store.GetAsync("request-1");
+
+            Assert.NotNull(loaded);
+            Assert.Equal(AiRuntimeScaleOutRequestStatus.Expired, loaded.Status);
+            Assert.NotNull(loaded.ExpiredAtUtc);
+        }
+
+        /// <summary>
+        /// Verifies that a pending request can be marked as cancelled.
+        /// </summary>
+        [Fact]
+        public async Task MarkCancelledAsync_Should_Transition_Pending_To_Cancelled()
+        {
+            var store = CreateStore();
+
+            await store.CreateAsync(CreateRequest("request-1"));
+
+            var changed = await store.MarkCancelledAsync("request-1", "controller-test");
+
+            Assert.True(changed);
+
+            var loaded = await store.GetAsync("request-1");
+
+            Assert.NotNull(loaded);
+            Assert.Equal(AiRuntimeScaleOutRequestStatus.Cancelled, loaded.Status);
+            Assert.NotNull(loaded.CancelledAtUtc);
+            Assert.Equal("controller-test", loaded.Metadata["cancelledBy"]);
+        }
+
+        /// <summary>
+        /// Verifies that terminal requests cannot transition to another status.
+        /// </summary>
+        [Fact]
+        public async Task MarkObservedAsync_Should_Return_False_For_Terminal_Request()
+        {
+            var store = CreateStore();
+
+            await store.CreateAsync(CreateRequest("request-1"));
+            await store.MarkFulfilledAsync("request-1", "scaler-test", "runtime-1");
+
+            var changed = await store.MarkObservedAsync("request-1", "scaler-test");
+
+            Assert.False(changed);
+
+            var loaded = await store.GetAsync("request-1");
+
+            Assert.NotNull(loaded);
+            Assert.Equal(AiRuntimeScaleOutRequestStatus.Fulfilled, loaded.Status);
+        }
+
+        /// <summary>
+        /// Verifies that expired requests are not returned by default list queries.
+        /// </summary>
+        [Fact]
+        public async Task ListAsync_Should_Exclude_Expired_By_Default()
+        {
+            var store = CreateStore();
+
+            await store.CreateAsync(CreateRequest("request-1"));
+            await store.MarkExpiredAsync("request-1");
+
+            var results = await store.ListAsync(new AiRuntimeScaleOutRequestQuery
+            {
+                ControlPlaneId = "cp-test"
+            });
+
+            Assert.Empty(results);
+        }
+
+        /// <summary>
+        /// Verifies that expired requests can be included explicitly.
+        /// </summary>
+        [Fact]
+        public async Task ListAsync_Should_Include_Expired_When_Requested()
+        {
+            var store = CreateStore();
+
+            await store.CreateAsync(CreateRequest("request-1"));
+            await store.MarkExpiredAsync("request-1");
+
+            var results = await store.ListAsync(new AiRuntimeScaleOutRequestQuery
+            {
+                ControlPlaneId = "cp-test",
+                IncludeExpired = true
+            });
+
+            Assert.Single(results);
+            Assert.Equal(AiRuntimeScaleOutRequestStatus.Expired, results.First().Status);
+        }
+
+        /// <summary>
+        /// Verifies that automatic expiration marks pending requests as expired.
+        /// </summary>
+        [Fact]
+        public async Task GetAsync_Should_Automatically_Expire_Request()
+        {
+            var store = CreateStore();
+
+            var request = CreateRequest("request-1");
+            request.ExpiresAtUtc = DateTimeOffset.UtcNow.AddMilliseconds(-1);
+
+            await store.CreateAsync(request);
+
+            var loaded = await store.GetAsync("request-1");
+
+            Assert.NotNull(loaded);
+            Assert.Equal(AiRuntimeScaleOutRequestStatus.Expired, loaded.Status);
+            Assert.NotNull(loaded.ExpiredAtUtc);
+        }
+
+        /// <summary>
+        /// Verifies that stored records are protected from external mutation.
+        /// </summary>
+        [Fact]
+        public async Task CreateAsync_Should_Defensively_Copy_Request()
+        {
+            var store = CreateStore();
+            var request = CreateRequest("request-1");
+
+            var created = await store.CreateAsync(request);
+
+            created.Metadata["mutated"] = "true";
+            request.Metadata["external"] = "true";
+
+            var loaded = await store.GetAsync("request-1");
+
+            Assert.NotNull(loaded);
+            Assert.False(loaded.Metadata.ContainsKey("mutated"));
+            Assert.False(loaded.Metadata.ContainsKey("external"));
+        }
+
+        /// <summary>
+        /// Creates an in-memory scale-out request store using default options.
+        /// </summary>
+        /// <returns>The created store.</returns>
+        private static InMemoryAiRuntimeScaleOutRequestStore CreateStore()
+        {
+            return CreateStore(new AiRuntimeScaleOutRequestStoreOptions
+            {
+                EnableDeduplication = true,
+                DefaultTtl = TimeSpan.FromMinutes(30),
+                DeduplicationWindow = TimeSpan.FromSeconds(30),
+                MaxListResults = 100
+            });
+        }
+
+        /// <summary>
+        /// Creates an in-memory scale-out request store using supplied options.
+        /// </summary>
+        /// <param name="options">The scale-out request store options.</param>
+        /// <returns>The created store.</returns>
+        private static InMemoryAiRuntimeScaleOutRequestStore CreateStore(
+            AiRuntimeScaleOutRequestStoreOptions options)
+        {
+            return new InMemoryAiRuntimeScaleOutRequestStore(
+                Options.Create(options));
+        }
+
+        /// <summary>
+        /// Creates a valid scale-out request record for tests.
+        /// </summary>
+        /// <param name="requestId">The request identifier.</param>
+        /// <returns>The created request record.</returns>
+        private static AiRuntimeScaleOutRequestRecord CreateRequest(string requestId)
+        {
+            return new AiRuntimeScaleOutRequestRecord
+            {
+                RequestId = requestId,
+                ControlPlaneId = "cp-test",
+                SharedRunId = "shared-run-1",
+                TenantId = "tenant-test",
+                PipelineKey = "pipeline-test",
+                Status = AiRuntimeScaleOutRequestStatus.Pending,
+                Reason = "No runtime capacity was available for admission.",
+                VisibleInstanceCount = 0,
+                AvailableInstanceCount = 0,
+                CurrentInstanceCount = 0,
+                MaxInstanceCount = 3,
+                RequestedTargetInstanceCount = 1,
+                ProviderHint = "test",
+                RequestedBy = "unit-test",
+                Source = "unit-test",
+                CorrelationId = "correlation-test",
+                CreatedAtUtc = DateTimeOffset.UtcNow,
+                Metadata = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["test"] = "true"
+                }
+            };
+        }
+    }
+}

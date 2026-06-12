@@ -1,0 +1,199 @@
+﻿using Multiplexed.Abstractions.AI.ControlPlane.Discovery;
+using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Scaling;
+using Multiplexed.AI.Runtime.ControlPlane.Discovery;
+using System.Globalization;
+
+namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
+{
+    /// <summary>
+    /// Publishes runtime scale-out requests by persisting them into an <see cref="IAiRuntimeScaleOutRequestStore" />.
+    /// </summary>
+    /// <remarks>
+    /// This publisher turns an admission-level scale-out decision into observable control-plane state.
+    /// It does not create infrastructure directly and does not depend on Kubernetes or any scaler adapter.
+    /// </remarks>
+    public sealed class StoreBackedAiRuntimeScaleOutRequestPublisher : IAiRuntimeScaleOutRequestPublisher
+    {
+        /// <summary>
+        /// Persists scale-out requests created by this publisher.
+        /// </summary>
+        private readonly IAiRuntimeScaleOutRequestStore store;
+
+        /// <summary>
+        /// Resolves the logical control-plane identifier when the shared run record does not already contain one.
+        /// </summary>
+        private readonly IAiControlPlaneIdResolver controlPlaneIdResolver;
+
+        /// <summary>
+        /// Initializes a new instance of the <see cref="StoreBackedAiRuntimeScaleOutRequestPublisher" /> class.
+        /// </summary>
+        /// <param name="store">The scale-out request store.</param>
+        /// <param name="controlPlaneIdResolver">The logical control-plane identifier resolver.</param>
+        public StoreBackedAiRuntimeScaleOutRequestPublisher(
+            IAiRuntimeScaleOutRequestStore store,
+            IAiControlPlaneIdResolver controlPlaneIdResolver)
+        {
+            this.store = store ?? throw new ArgumentNullException(nameof(store));
+            this.controlPlaneIdResolver = controlPlaneIdResolver ?? throw new ArgumentNullException(nameof(controlPlaneIdResolver));
+        }
+
+        /// <inheritdoc />
+        public async Task<AiRuntimeScaleOutRequestResult> PublishAsync(
+            AiRuntimeScaleOutRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentNullException.ThrowIfNull(request);
+            ArgumentNullException.ThrowIfNull(request.SharedRun);
+            ArgumentException.ThrowIfNullOrWhiteSpace(request.SharedRunId);
+
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var controlPlaneId = await this.ResolveControlPlaneIdAsync(request, cancellationToken).ConfigureAwait(false);
+            var targetInstanceCount = GetRequestedTargetInstanceCount(request);
+
+            var record = new AiRuntimeScaleOutRequestRecord
+            {
+                RequestId = CreateRequestId(request),
+                ControlPlaneId = controlPlaneId,
+                SharedRunId = request.SharedRunId,
+                TenantId = request.TenantId,
+                PipelineKey = request.PipelineKey,
+                Status = AiRuntimeScaleOutRequestStatus.Pending,
+                Reason = GetReason(request),
+                VisibleInstanceCount = request.VisibleInstanceCount,
+                AvailableInstanceCount = request.AvailableInstanceCount,
+                CurrentInstanceCount = request.CurrentInstanceCount,
+                MaxInstanceCount = request.MaxInstanceCount,
+                RequestedTargetInstanceCount = targetInstanceCount,
+                RequestedBy = request.RequestedBy,
+                Source = request.Source,
+                CorrelationId = request.CorrelationId,
+                CreatedAtUtc = DateTimeOffset.UtcNow,
+                Metadata = CreateMetadata(request, controlPlaneId)
+            };
+
+            var created = await this.store.CreateAsync(record, cancellationToken).ConfigureAwait(false);
+
+            return new AiRuntimeScaleOutRequestResult
+            {
+                Success = true,
+                SharedRunId = request.SharedRunId,
+                ScaleOutRequestId = created.RequestId,
+                RequestedTargetInstanceCount = created.RequestedTargetInstanceCount,
+                Message = string.Equals(created.RequestId, record.RequestId, StringComparison.Ordinal)
+                    ? "Scale-out request persisted."
+                    : "Scale-out request deduplicated against an existing pending request.",
+                PublishedAtUtc = DateTimeOffset.UtcNow
+            };
+        }
+
+        /// <summary>
+        /// Resolves the logical control-plane identifier for a scale-out request.
+        /// </summary>
+        /// <param name="request">The scale-out request.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <returns>The resolved logical control-plane identifier.</returns>
+        /// <exception cref="InvalidOperationException">
+        /// Thrown when no logical control-plane identifier can be resolved.
+        /// </exception>
+        private async Task<string> ResolveControlPlaneIdAsync(
+            AiRuntimeScaleOutRequest request,
+            CancellationToken cancellationToken)
+        {
+            if (!string.IsNullOrWhiteSpace(request.SharedRun.ControlPlaneId))
+            {
+                return request.SharedRun.ControlPlaneId;
+            }
+
+            var resolved = await this.controlPlaneIdResolver.ResolveAsync(cancellationToken).ConfigureAwait(false);
+
+            if (!string.IsNullOrWhiteSpace(resolved))
+            {
+                return resolved;
+            }
+
+            throw new InvalidOperationException("Scale-out request control-plane id could not be resolved.");
+        }
+
+        /// <summary>
+        /// Creates a deterministic request identifier from the shared run id.
+        /// </summary>
+        /// <param name="request">The scale-out request.</param>
+        /// <returns>The generated scale-out request identifier.</returns>
+        private static string CreateRequestId(AiRuntimeScaleOutRequest request)
+        {
+            return $"scale-out-{request.SharedRunId}";
+        }
+
+        /// <summary>
+        /// Gets the reason associated with the scale-out request.
+        /// </summary>
+        /// <param name="request">The scale-out request.</param>
+        /// <returns>The scale-out reason.</returns>
+        private static string GetReason(AiRuntimeScaleOutRequest request)
+        {
+            if (!string.IsNullOrWhiteSpace(request.Reason))
+            {
+                return request.Reason;
+            }
+
+            return "No runtime capacity was available for admission.";
+        }
+
+        /// <summary>
+        /// Computes the requested target runtime instance count.
+        /// </summary>
+        /// <param name="request">The scale-out request.</param>
+        /// <returns>The requested target runtime instance count.</returns>
+        private static int GetRequestedTargetInstanceCount(AiRuntimeScaleOutRequest request)
+        {
+            var requested = Math.Max(request.CurrentInstanceCount + 1, 1);
+
+            if (request.MaxInstanceCount.HasValue)
+            {
+                requested = Math.Min(requested, request.MaxInstanceCount.Value);
+            }
+
+            return requested;
+        }
+
+        /// <summary>
+        /// Creates metadata for the persisted scale-out request record.
+        /// </summary>
+        /// <param name="request">The scale-out request.</param>
+        /// <param name="controlPlaneId">The resolved logical control-plane identifier.</param>
+        /// <returns>The metadata dictionary.</returns>
+        private static IDictionary<string, string> CreateMetadata(
+            AiRuntimeScaleOutRequest request,
+            string controlPlaneId)
+        {
+            var metadata = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var pair in request.Metadata)
+            {
+                if (!string.IsNullOrWhiteSpace(pair.Key))
+                {
+                    metadata[pair.Key] = pair.Value ?? string.Empty;
+                }
+            }
+
+            metadata["controlPlaneId"] = controlPlaneId;
+            metadata["sharedRunId"] = request.SharedRunId;
+            metadata["visibleInstanceCount"] = request.VisibleInstanceCount.ToString(CultureInfo.InvariantCulture);
+            metadata["availableInstanceCount"] = request.AvailableInstanceCount.ToString(CultureInfo.InvariantCulture);
+            metadata["currentInstanceCount"] = request.CurrentInstanceCount.ToString(CultureInfo.InvariantCulture);
+
+            if (request.MaxInstanceCount.HasValue)
+            {
+                metadata["maxInstanceCount"] = request.MaxInstanceCount.Value.ToString(CultureInfo.InvariantCulture);
+            }
+
+            if (!string.IsNullOrWhiteSpace(request.CorrelationId))
+            {
+                metadata["correlationId"] = request.CorrelationId;
+            }
+
+            return metadata;
+        }
+    }
+}

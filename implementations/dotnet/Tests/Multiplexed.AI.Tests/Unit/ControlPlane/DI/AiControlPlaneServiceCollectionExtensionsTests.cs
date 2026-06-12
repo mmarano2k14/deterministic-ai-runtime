@@ -17,6 +17,7 @@ using Multiplexed.AI.Runtime.ControlPlane.DI;
 using Multiplexed.AI.Runtime.ControlPlane.Observability;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances;
 using Multiplexed.AI.Runtime.ControlPlane.SharedController;
+using Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling;
 using Multiplexed.AI.Runtime.ControlPlane.SharedController.Store;
 using Multiplexed.AI.Runtime.ControlPlane.SharedQueue;
 using Multiplexed.AI.Runtime.Observability.Logging;
@@ -304,7 +305,25 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.DI
         }
 
         [Fact]
-        public void AddAiControlPlane_Should_Register_Noop_ScaleOut_Publisher_By_Default()
+        public void AddAiControlPlane_Should_Register_InMemory_ScaleOut_Request_Store_By_Default()
+        {
+            var services = new ServiceCollection();
+
+            services.AddLogging();
+            services.AddAiControlPlane();
+
+            var descriptor = services.SingleOrDefault(service =>
+                service.ServiceType == typeof(IAiRuntimeScaleOutRequestStore));
+
+            Assert.NotNull(descriptor);
+            Assert.Equal(ServiceLifetime.Singleton, descriptor.Lifetime);
+            Assert.Equal(
+                typeof(InMemoryAiRuntimeScaleOutRequestStore),
+                descriptor.ImplementationType);
+        }
+
+        [Fact]
+        public void AddAiControlPlane_Should_Register_StoreBacked_ScaleOut_Publisher_By_Default()
         {
             var services = new ServiceCollection();
 
@@ -317,7 +336,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.DI
             Assert.NotNull(descriptor);
             Assert.Equal(ServiceLifetime.Singleton, descriptor.Lifetime);
             Assert.Equal(
-                typeof(NoopAiRuntimeScaleOutRequestPublisher),
+                typeof(StoreBackedAiRuntimeScaleOutRequestPublisher),
                 descriptor.ImplementationType);
         }
     }
