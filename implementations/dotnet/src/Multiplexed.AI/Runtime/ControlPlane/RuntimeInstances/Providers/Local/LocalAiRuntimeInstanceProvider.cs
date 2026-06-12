@@ -1,8 +1,10 @@
 ﻿using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Capacity;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Identity;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Pool;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.SharedInstance;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue;
+using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Scaling;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Local
 {
@@ -33,6 +35,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Local
         IAiRuntimeInstanceDispatchProvider,
         IAiRuntimeInstanceStatusProvider,
         IAiRuntimeInstanceControlProvider,
+        IAiRuntimeScaleOutProvider,
         IAiRuntimeInstanceControlPlaneContext
     {
         /// <summary>
@@ -45,6 +48,14 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Local
         /// </summary>
         private readonly IAiSharedRuntimeInstanceRegistry registry;
 
+        /// <summary>
+        /// The optional local runtime instance scaler.
+        /// </summary>
+        private readonly IAiLocalRuntimeInstanceScaler? scaler;
+
+        /// <summary>
+        /// Gets the control-plane host identity associated with this provider.
+        /// </summary>
         public IAiControlPlaneHostIdentity? Identity { get; private set; }
 
         /// <summary>
@@ -53,12 +64,19 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Local
         /// <param name="registry">
         /// The shared runtime instance registry used to resolve local runtime instances.
         /// </param>
+        /// <param name="scaler">
+        /// The optional local runtime instance scaler used to fulfill scale-out requests.
+        /// </param>
         public LocalAiRuntimeInstanceProvider(
-            IAiSharedRuntimeInstanceRegistry registry)
+            IAiSharedRuntimeInstanceRegistry registry,
+            IAiLocalRuntimeInstanceScaler? scaler = null)
         {
             this.registry =
                 registry
                 ?? throw new ArgumentNullException(nameof(registry));
+
+            this.scaler =
+                scaler;
         }
 
         /// <inheritdoc />
@@ -80,6 +98,41 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Local
             }
 
             return true;
+        }
+
+        /// <inheritdoc />
+        public Task<AiRuntimeScaleOutProviderResult> RequestScaleOutAsync(
+            AiRuntimeScaleOutProviderRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentNullException.ThrowIfNull(request);
+
+            cancellationToken.ThrowIfCancellationRequested();
+
+            if (this.scaler is null)
+            {
+                return Task.FromResult(
+                    new AiRuntimeScaleOutProviderResult
+                    {
+                        Success = false,
+                        Rejected = true,
+                        FailureReason = "local-runtime-instance-scaler-not-registered",
+                        Message = "The local runtime instance provider cannot fulfill scale-out because no local runtime instance scaler is registered.",
+                        ProviderOperationId = $"local-scaleout-rejected-{request.RequestId}",
+                        Metadata = new Dictionary<string, string>(
+                            StringComparer.OrdinalIgnoreCase)
+                        {
+                            [AiRuntimeInstanceProviderMetadataKeys.ProviderName] = ProviderName,
+                            ["scaleOutRequestId"] = request.RequestId,
+                            ["sharedRunId"] = request.SharedRunId,
+                            ["controlPlaneId"] = request.ControlPlaneId
+                        }
+                    });
+            }
+
+            return this.scaler.EnsureCapacityAsync(
+                request,
+                cancellationToken);
         }
 
         /// <inheritdoc />
@@ -495,6 +548,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Local
             };
         }
 
+        /// <inheritdoc />
         public void SetControlPlaneIdentity(
             IAiControlPlaneHostIdentity identity)
         {

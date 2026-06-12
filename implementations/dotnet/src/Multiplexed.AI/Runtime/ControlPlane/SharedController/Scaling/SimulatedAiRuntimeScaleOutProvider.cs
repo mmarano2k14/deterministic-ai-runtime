@@ -1,4 +1,6 @@
 ﻿using Microsoft.Extensions.Options;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Capacity;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Scaling;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
@@ -14,6 +16,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
     public sealed class SimulatedAiRuntimeScaleOutProvider : IAiRuntimeScaleOutProvider
     {
         /// <summary>
+        /// The provider name used by the simulated scale-out provider.
+        /// </summary>
+        private const string ProviderName = "simulated";
+
+        /// <summary>
         /// Simulated provider options.
         /// </summary>
         private readonly SimulatedAiRuntimeScaleOutProviderOptions options;
@@ -27,6 +34,27 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
         {
             this.options =
                 options?.Value ?? new SimulatedAiRuntimeScaleOutProviderOptions();
+        }
+
+        /// <inheritdoc />
+        public bool CanHandle(
+            AiRuntimeInstanceCapacityDescriptor descriptor)
+        {
+            ArgumentNullException.ThrowIfNull(descriptor);
+
+            if (descriptor.Metadata is not null &&
+                descriptor.Metadata.TryGetValue(
+                    AiRuntimeInstanceProviderMetadataKeys.ProviderName,
+                    out var providerName) &&
+                !string.IsNullOrWhiteSpace(providerName))
+            {
+                return string.Equals(
+                    providerName.Trim(),
+                    ProviderName,
+                    StringComparison.OrdinalIgnoreCase);
+            }
+
+            return false;
         }
 
         /// <inheritdoc />
@@ -89,7 +117,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
                     request.Metadata ?? new Dictionary<string, string>(),
                     StringComparer.OrdinalIgnoreCase)
                 {
-                    ["provider"] = "simulated",
+                    [AiRuntimeInstanceProviderMetadataKeys.ProviderName] = ProviderName,
+                    ["provider"] = ProviderName,
                     ["providerStatus"] = status,
                     ["scaleOutRequestId"] = request.RequestId,
                     ["sharedRunId"] = request.SharedRunId,

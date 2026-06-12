@@ -1,15 +1,20 @@
 ﻿using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
+using Multiplexed.Abstractions.AI.ControlPlane.Admission;
 using Multiplexed.Abstractions.AI.ControlPlane.Admission.Reservations;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Pool;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Controller;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Scaling;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Store;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Queue;
+using Multiplexed.AI.ControlPlane.RuntimeInstances.Pool;
 using Multiplexed.AI.McpServer.Tests.Integration.Fixtures;
 using Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic;
 using Multiplexed.AI.McpServer.Tests.Integration.Helpers;
 using Multiplexed.AI.Runtime.ControlPlane.Admission.Reservations;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Local;
 using Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling;
 using Multiplexed.AI.Runtime.ControlPlane.SharedController.Store;
 using Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis;
@@ -21,7 +26,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
     /// Contains MCP integration tests for runtime scale-out request orchestration.
     /// </summary>
     /// <remarks>
-    /// These scenarios validate the flow:
+    /// These scenarios validate the real local scale-out flow:
     ///
     /// <list type="number">
     /// <item><description>MCP submits a shared run.</description></item>
@@ -29,11 +34,11 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
     /// <item><description>The shared run is marked as <see cref="AiSharedRunStatus.ScaleOutRequested" />.</description></item>
     /// <item><description>A Redis-backed scale-out request is created.</description></item>
     /// <item><description>The scale-out watcher observes the request.</description></item>
-    /// <item><description>The simulated provider fulfills the request.</description></item>
+    /// <item><description>The selector resolves the local runtime instance provider.</description></item>
+    /// <item><description>The local provider delegates scale-out to the local runtime instance scaler.</description></item>
+    /// <item><description>The scaler creates and starts a real local runtime instance host.</description></item>
+    /// <item><description>The Redis-backed scale-out request is fulfilled.</description></item>
     /// </list>
-    ///
-    /// This does not create a real Kubernetes pod yet.
-    /// Kubernetes will be plugged in later through <see cref="IAiRuntimeScaleOutProvider" />.
     /// </remarks>
     public sealed class SharedRunScaleOutScenarioTests
     {
@@ -53,6 +58,11 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
         private const string TenantId = "test-tenant";
 
         /// <summary>
+        /// Runtime id prefix used by the local scaler in this scenario.
+        /// </summary>
+        private const string LocalRuntimeInstanceIdPrefix = "mcp-scaleout-runtime";
+
+        /// <summary>
         /// The test output helper.
         /// </summary>
         private readonly ITestOutputHelper output;
@@ -70,17 +80,17 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
 
         /// <summary>
         /// Verifies that a real MCP control-plane host creates and fulfills a Redis-backed
-        /// scale-out request when admission requests additional runtime capacity.
+        /// scale-out request using the local provider and local runtime instance scaler.
         /// </summary>
         [Fact]
-        public async Task ControlPlaneWithHttpRuntimeInstances_With_No_Runtime_Capacity_Should_Fulfill_Redis_ScaleOut_Request()
+        public async Task ControlPlaneWithLocalRuntimeInstances_With_No_Runtime_Capacity_Should_Fulfill_Redis_ScaleOut_Request_Using_Local_Scaler()
         {
             var controlPlaneId =
                 GenericMcpServerTestSettings.CreateControlPlaneId(
-                    "scaleout-request");
+                    "local-scaleout-request");
 
             var controlPlaneSettings =
-                GenericMcpServerTestSettings.CreateScaleOutOnlyControlPlaneSettings(
+                GenericMcpServerTestSettings.CreateLocalScaleOutOnlyControlPlaneSettings(
                     controlPlaneId);
 
             await using var host =
@@ -90,7 +100,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
             using var client =
                 host.CreateClient();
 
-            AssertRedisStoresAndPublisher(
+            AssertRedisStoresPublisherWatcherAndLocalScaler(
                 host.Services);
 
             var mcp =
@@ -100,8 +110,15 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
             var scaleOutRequestStore =
                 host.Services.GetRequiredService<IAiRuntimeScaleOutRequestStore>();
 
+            var scaler =
+                host.Services.GetRequiredService<IAiLocalRuntimeInstanceScaler>();
+
+            Assert.Equal(
+                0,
+                scaler.ActiveInstanceCount);
+
             var pipelineName =
-                $"mcp-scaleout-request-{Guid.NewGuid():N}";
+                $"mcp-local-scaleout-request-{Guid.NewGuid():N}";
 
             var expectedSharedRunIds =
                 await SubmitRunsAsync(
@@ -128,6 +145,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
             Assert.NotNull(
                 sharedRun);
 
+            output.WriteLine(
+                $"Shared run after submit. SharedRunId='{sharedRun.SharedRunId}', Status='{sharedRun.Status}', ControlPlaneId='{sharedRun.ControlPlaneId}', PipelineKey='{sharedRun.PipelineKey}'.");
+
             Assert.Equal(
                 AiSharedRunStatus.ScaleOutRequested,
                 sharedRun.Status);
@@ -148,7 +168,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
                         scaleOutRequestStore,
                         expectedScaleOutRequestId,
                         AiRuntimeScaleOutRequestStatus.Fulfilled,
-                        TimeSpan.FromSeconds(10))
+                        TimeSpan.FromSeconds(15))
                     .ConfigureAwait(false);
 
             Assert.Equal(
@@ -174,6 +194,14 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
             Assert.Equal(
                 AiRuntimeScaleOutRequestStatus.Fulfilled,
                 scaleOutRequest.Status);
+
+            Assert.Equal(
+                "local",
+                scaleOutRequest.ProviderHint);
+
+            Assert.Equal(
+                "local",
+                scaleOutRequest.Metadata["providerHint"]);
 
             Assert.Equal(
                 0,
@@ -203,21 +231,227 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
                 string.IsNullOrWhiteSpace(
                     scaleOutRequest.FulfilledRuntimeInstanceId));
 
-            Assert.StartsWith(
-                "simulated-mcp-runtime-",
+            Assert.Contains(
+                $":{LocalRuntimeInstanceIdPrefix}-1",
                 scaleOutRequest.FulfilledRuntimeInstanceId,
                 StringComparison.Ordinal);
 
+            await WaitUntilAsync(
+                    () => scaler.ActiveInstanceCount >= 1,
+                    TimeSpan.FromSeconds(5))
+                .ConfigureAwait(false);
+
+            Assert.True(
+                scaler.ActiveInstanceCount >= 1,
+                $"Expected the local scaler to create at least one runtime instance. ActiveInstanceCount='{scaler.ActiveInstanceCount}'.");
+
             output.WriteLine(
-                $"Redis scale-out request fulfilled by watcher. ControlPlaneId='{controlPlaneId}', SharedRunId='{sharedRunId}', RequestId='{scaleOutRequest.RequestId}', RuntimeInstanceId='{scaleOutRequest.FulfilledRuntimeInstanceId}', PipelineKey='{pipelineName}'.");
+                $"Redis local scale-out request fulfilled by watcher. ControlPlaneId='{controlPlaneId}', SharedRunId='{sharedRunId}', RequestId='{scaleOutRequest.RequestId}', RuntimeInstanceId='{scaleOutRequest.FulfilledRuntimeInstanceId}', PipelineKey='{pipelineName}', ActiveLocalInstances='{scaler.ActiveInstanceCount}'.");
+        }
+
+        /// <summary>
+        /// Verifies that a shared run which triggered scale-out is requeued,
+        /// consumed by the shared queue pump, dispatched to the newly created local runtime instance,
+        /// and reaches a terminal runtime execution status.
+        /// </summary>
+        [Fact]
+        public async Task ControlPlaneWithLocalRuntimeInstances_With_No_Runtime_Capacity_Should_ScaleOut_Requeue_Dispatch_And_Execute_Run()
+        {
+            var controlPlaneId =
+                GenericMcpServerTestSettings.CreateControlPlaneId(
+                    "local-scaleout-execute");
+
+            var controlPlaneSettings =
+                GenericMcpServerTestSettings.CreateLocalScaleOutOnlyControlPlaneSettings(
+                    controlPlaneId);
+
+            await using var host =
+                new GenericMcpServerTestHost(
+                    controlPlaneSettings);
+
+            using var client =
+                host.CreateClient();
+
+            AssertRedisStoresPublisherWatcherAndLocalScaler(
+                host.Services);
+
+            var mcp =
+                new McpTestClient(
+                    client);
+
+            var sharedQueue =
+                host.Services.GetRequiredService<IAiSharedQueue>();
+
+            var scaleOutRequestStore =
+                host.Services.GetRequiredService<IAiRuntimeScaleOutRequestStore>();
+
+            var scaler =
+                host.Services.GetRequiredService<IAiLocalRuntimeInstanceScaler>();
+
+            Assert.Equal(
+                0,
+                scaler.ActiveInstanceCount);
+
+            var pipelineName =
+                $"mcp-local-scaleout-execute-{Guid.NewGuid():N}";
+
+            var expectedSharedRunIds =
+                await SubmitRunsAsync(
+                        mcp,
+                        pipelineName,
+                        count: 1,
+                        stepCount: 3,
+                        flakyStepInterval: 0)
+                    .ConfigureAwait(false);
+
+            var sharedRunId =
+                Assert.Single(
+                    expectedSharedRunIds);
+
+            var expectedScaleOutRequestId =
+                $"scale-out-{sharedRunId}";
+
+            var scaleOutRequest =
+                await WaitForScaleOutRequestStatusAsync(
+                        scaleOutRequestStore,
+                        expectedScaleOutRequestId,
+                        AiRuntimeScaleOutRequestStatus.Fulfilled,
+                        TimeSpan.FromSeconds(15))
+                    .ConfigureAwait(false);
+
+            Assert.Equal(
+                expectedScaleOutRequestId,
+                scaleOutRequest.RequestId);
+
+            Assert.Equal(
+                sharedRunId,
+                scaleOutRequest.SharedRunId);
+
+            Assert.Equal(
+                controlPlaneId,
+                scaleOutRequest.ControlPlaneId);
+
+            Assert.Equal(
+                AiRuntimeScaleOutRequestStatus.Fulfilled,
+                scaleOutRequest.Status);
+
+            Assert.Equal(
+                "local",
+                scaleOutRequest.ProviderHint);
+
+            Assert.False(
+                string.IsNullOrWhiteSpace(
+                    scaleOutRequest.FulfilledRuntimeInstanceId));
+
+            Assert.Contains(
+                $":{LocalRuntimeInstanceIdPrefix}-1",
+                scaleOutRequest.FulfilledRuntimeInstanceId,
+                StringComparison.Ordinal);
+
+            await WaitUntilAsync(
+                    () => scaler.ActiveInstanceCount >= 1,
+                    TimeSpan.FromSeconds(5))
+                .ConfigureAwait(false);
+
+            var dispatchedRuns =
+                await McpTestWaitHelpers
+                    .WaitForDispatchedRunsAsync(
+                        mcp,
+                        pipelineName,
+                        expectedSharedRunIds,
+                        expectedCount: 1,
+                        timeout: TimeSpan.FromSeconds(30))
+                    .ConfigureAwait(false);
+
+            var dispatchedRun =
+                Assert.Single(
+                    dispatchedRuns);
+
+            Assert.Equal(
+                sharedRunId,
+                dispatchedRun.SharedRunId);
+
+            Assert.Equal(
+                controlPlaneId,
+                dispatchedRun.ControlPlaneId);
+
+            Assert.Equal(
+                pipelineName,
+                dispatchedRun.PipelineKey);
+
+            Assert.False(
+                string.IsNullOrWhiteSpace(
+                    dispatchedRun.AssignedRuntimeInstanceId));
+
+            Assert.Contains(
+                $":{LocalRuntimeInstanceIdPrefix}-1",
+                dispatchedRun.AssignedRuntimeInstanceId,
+                StringComparison.Ordinal);
+
+            Assert.False(
+                string.IsNullOrWhiteSpace(
+                    dispatchedRun.LocalRunId));
+
+            var executionStatus =
+                await McpTestWaitHelpers
+                    .WaitForRuntimeRunExecutionIdAsync(
+                        mcp,
+                        dispatchedRun,
+                        TimeSpan.FromSeconds(30))
+                    .ConfigureAwait(false);
+
+            var executionId =
+                executionStatus.ExecutionId ??
+                executionStatus.RunState?.ExecutionId;
+
+            Assert.False(
+                string.IsNullOrWhiteSpace(
+                    executionId));
+
+            var terminalStatuses =
+                await McpTestWaitHelpers
+                    .WaitForTerminalRuntimeRunStatusesAsync(
+                        mcp,
+                        dispatchedRuns,
+                        TimeSpan.FromSeconds(60))
+                    .ConfigureAwait(false);
+
+            var finalRuntimeStatus =
+                Assert.Single(
+                    terminalStatuses);
+
+            var queueItem =
+                await sharedQueue
+                    .GetAsync(
+                        sharedRunId)
+                    .ConfigureAwait(false);
+
+            Assert.NotNull(
+                queueItem);
+
+            Assert.Equal(
+                AiSharedQueueItemStatus.Dispatched,
+                queueItem.Status);
+
+            output.WriteLine(
+                $"FINAL SCALE-OUT EXECUTION STATUS: SharedRunId='{dispatchedRun.SharedRunId}', " +
+                $"SharedRunStatus='{dispatchedRun.Status}', " +
+                $"AssignedRuntimeInstanceId='{dispatchedRun.AssignedRuntimeInstanceId}', " +
+                $"LocalRunId='{dispatchedRun.LocalRunId}', " +
+                $"ExecutionId='{executionId}', " +
+                $"RuntimeRunStatus='{finalRuntimeStatus.RunState?.Status}', " +
+                $"QueueStatus='{queueItem.Status}', " +
+                $"ScaleOutRequestStatus='{scaleOutRequest.Status}', " +
+                $"ScaleOutRuntimeInstanceId='{scaleOutRequest.FulfilledRuntimeInstanceId}', " +
+                $"ActiveLocalInstances='{scaler.ActiveInstanceCount}'.");
         }
 
         /// <summary>
         /// Verifies that Redis-backed control-plane stores, the store-backed scale-out publisher,
-        /// the scale-out provider, and the watcher hosted service are registered correctly.
+        /// the selector, local provider, local scaler, admission policy, and watcher hosted service are registered correctly.
         /// </summary>
         /// <param name="services">The service provider to inspect.</param>
-        private void AssertRedisStoresAndPublisher(
+        private void AssertRedisStoresPublisherWatcherAndLocalScaler(
             IServiceProvider services)
         {
             ArgumentNullException.ThrowIfNull(
@@ -238,38 +472,69 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
             var scaleOutPublisher =
                 services.GetRequiredService<IAiRuntimeScaleOutRequestPublisher>();
 
-            var scaleOutProvider =
-                services.GetRequiredService<IAiRuntimeScaleOutProvider>();
+            var scaleOutSelector =
+                services.GetRequiredService<IAiRuntimeScaleOutProviderSelector>();
+
+            var localScaler =
+                services.GetRequiredService<IAiLocalRuntimeInstanceScaler>();
+
+            var admissionOptions =
+                services.GetRequiredService<IOptions<AiRunAdmissionOptions>>().Value;
+
+            var providers =
+                services.GetServices<IAiRuntimeInstanceProvider>().ToArray();
 
             var watcherOptions =
                 services.GetRequiredService<IOptions<AiRuntimeScaleOutRequestWatcherOptions>>().Value;
+
+            var localPoolOptions =
+                services.GetRequiredService<IOptions<AiLocalRuntimeInstancePoolOptions>>().Value;
 
             var hostedServices =
                 services.GetServices<IHostedService>().ToArray();
 
             output.WriteLine(
-                $"Redis scale-out assert: IAiSharedRunStore='{sharedRunStore.GetType().FullName}'.");
+                $"Redis local scale-out assert: IAiSharedRunStore='{sharedRunStore.GetType().FullName}'.");
 
             output.WriteLine(
-                $"Redis scale-out assert: IAiSharedQueue='{sharedQueue.GetType().FullName}'.");
+                $"Redis local scale-out assert: IAiSharedQueue='{sharedQueue.GetType().FullName}'.");
 
             output.WriteLine(
-                $"Redis scale-out assert: IAiRuntimeAdmissionReservationStore='{reservationStore.GetType().FullName}'.");
+                $"Redis local scale-out assert: IAiRuntimeAdmissionReservationStore='{reservationStore.GetType().FullName}'.");
 
             output.WriteLine(
-                $"Redis scale-out assert: IAiRuntimeScaleOutRequestStore='{scaleOutRequestStore.GetType().FullName}'.");
+                $"Redis local scale-out assert: IAiRuntimeScaleOutRequestStore='{scaleOutRequestStore.GetType().FullName}'.");
 
             output.WriteLine(
-                $"Redis scale-out assert: IAiRuntimeScaleOutRequestPublisher='{scaleOutPublisher.GetType().FullName}'.");
+                $"Redis local scale-out assert: IAiRuntimeScaleOutRequestPublisher='{scaleOutPublisher.GetType().FullName}'.");
 
             output.WriteLine(
-                $"Redis scale-out assert: IAiRuntimeScaleOutProvider='{scaleOutProvider.GetType().FullName}'.");
+                $"Redis local scale-out assert: IAiRuntimeScaleOutProviderSelector='{scaleOutSelector.GetType().FullName}'.");
 
             output.WriteLine(
-                $"Redis scale-out assert: Watcher.Enabled='{watcherOptions.Enabled}', WatcherId='{watcherOptions.WatcherId}', ControlPlaneId='{watcherOptions.ControlPlaneId}', Interval='{watcherOptions.Interval}', MaxRequestsPerCycle='{watcherOptions.MaxRequestsPerCycle}'.");
+                $"Redis local scale-out assert: IAiLocalRuntimeInstanceScaler='{localScaler.GetType().FullName}', ActiveInstanceCount='{localScaler.ActiveInstanceCount}'.");
 
             output.WriteLine(
-                "Redis scale-out assert: IHostedService registrations: " +
+                $"Redis local scale-out assert: Admission.Enabled='{admissionOptions.Enabled}', " +
+                $"MaxInstanceCount='{admissionOptions.MaxInstanceCount?.ToString() ?? "null"}', " +
+                $"EnableScaleOutRequest='{admissionOptions.EnableScaleOutRequest}', " +
+                $"EnableGlobalQueueFallback='{admissionOptions.EnableGlobalQueueFallback}', " +
+                $"RejectWhenNoCapacity='{admissionOptions.RejectWhenNoCapacity}'.");
+
+            output.WriteLine(
+                $"Redis local scale-out assert: LocalPool.Enabled='{localPoolOptions.Enabled}', InstanceCount='{localPoolOptions.InstanceCount}', RuntimeInstanceIdPrefix='{localPoolOptions.RuntimeInstanceIdPrefix}'.");
+
+            output.WriteLine(
+                $"Redis local scale-out assert: Watcher.Enabled='{watcherOptions.Enabled}', WatcherId='{watcherOptions.WatcherId}', ControlPlaneId='{watcherOptions.ControlPlaneId}', Interval='{watcherOptions.Interval}', MaxRequestsPerCycle='{watcherOptions.MaxRequestsPerCycle}'.");
+
+            output.WriteLine(
+                "Redis local scale-out assert: Runtime providers: " +
+                string.Join(
+                    " | ",
+                    providers.Select(provider => provider.GetType().FullName)));
+
+            output.WriteLine(
+                "Redis local scale-out assert: IHostedService registrations: " +
                 string.Join(
                     " | ",
                     hostedServices.Select(service => service.GetType().FullName)));
@@ -289,8 +554,35 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
             Assert.IsType<StoreBackedAiRuntimeScaleOutRequestPublisher>(
                 scaleOutPublisher);
 
-            Assert.IsType<SimulatedAiRuntimeScaleOutProvider>(
-                scaleOutProvider);
+            Assert.IsType<AiRuntimeScaleOutProviderSelector>(
+                scaleOutSelector);
+
+            Assert.IsType<AiLocalRuntimeInstanceScaler>(
+                localScaler);
+
+            Assert.Contains(
+                providers,
+                provider => provider.GetType() == typeof(LocalAiRuntimeInstanceProvider));
+
+            Assert.True(
+                admissionOptions.Enabled,
+                "Admission must be enabled for this scenario.");
+
+            Assert.True(
+                admissionOptions.EnableScaleOutRequest,
+                "Scale-out request must be enabled for this scenario.");
+
+            Assert.False(
+                admissionOptions.EnableGlobalQueueFallback,
+                "Global queue fallback must be disabled for this scenario, otherwise admission returns QueuedGlobally.");
+
+            Assert.False(
+                admissionOptions.RejectWhenNoCapacity,
+                "RejectWhenNoCapacity must be false so admission can request scale-out instead of rejecting.");
+
+            Assert.Equal(
+                3,
+                admissionOptions.MaxInstanceCount);
 
             Assert.True(
                 watcherOptions.Enabled,
@@ -299,6 +591,14 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
             Assert.Equal(
                 "mcp-scaleout-watcher",
                 watcherOptions.WatcherId);
+
+            Assert.False(
+                localPoolOptions.Enabled,
+                "The local pool startup must be disabled in this scenario so admission sees no initial runtime capacity.");
+
+            Assert.Equal(
+                LocalRuntimeInstanceIdPrefix,
+                localPoolOptions.RuntimeInstanceIdPrefix);
 
             Assert.Contains(
                 hostedServices,
@@ -354,6 +654,40 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
 
             throw new TimeoutException(
                 $"Scale-out request '{requestId}' did not reach status '{expectedStatus}' within '{timeout}'. LastStatus='{last?.Status.ToString() ?? "missing"}'.");
+        }
+
+        /// <summary>
+        /// Waits until a condition becomes true.
+        /// </summary>
+        /// <param name="condition">The condition to evaluate.</param>
+        /// <param name="timeout">The maximum wait duration.</param>
+        /// <returns>A task representing the asynchronous operation.</returns>
+        private static async Task WaitUntilAsync(
+            Func<bool> condition,
+            TimeSpan timeout)
+        {
+            ArgumentNullException.ThrowIfNull(
+                condition);
+
+            var deadline =
+                DateTimeOffset.UtcNow.Add(
+                    timeout);
+
+            while (DateTimeOffset.UtcNow < deadline)
+            {
+                if (condition())
+                {
+                    return;
+                }
+
+                await Task
+                    .Delay(
+                        TimeSpan.FromMilliseconds(100))
+                    .ConfigureAwait(false);
+            }
+
+            throw new TimeoutException(
+                $"Condition was not reached within '{timeout}'.");
         }
 
         /// <summary>

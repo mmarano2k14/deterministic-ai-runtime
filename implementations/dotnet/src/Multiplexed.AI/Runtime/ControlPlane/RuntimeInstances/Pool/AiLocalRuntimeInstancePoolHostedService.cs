@@ -4,7 +4,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Identity;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Pool;
-using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.SharedInstance;
+using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Scaling;
 
 namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
 {
@@ -36,44 +36,48 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
         private const string UnknownHostMode = "(unknown)";
         private const string UnknownEnableSharedQueuePump = "(unknown)";
 
-        private readonly IAiLocalRuntimeInstanceHostFactory hostFactory;
-        private readonly IAiSharedRuntimeInstanceRegistry sharedRuntimeInstanceRegistry;
+        private readonly IAiLocalRuntimeInstanceScaler scaler;
         private readonly IAiRuntimeHostIdentity runtimeHostIdentity;
         private readonly AiLocalRuntimeInstancePoolOptions options;
         private readonly IConfiguration configuration;
         private readonly ILogger<AiLocalRuntimeInstancePoolHostedService> logger;
 
-        private readonly List<IAiLocalRuntimeInstanceHost> hosts = new();
         private int stopRequested;
 
         /// <summary>
         /// Initializes a new instance of the
         /// <see cref="AiLocalRuntimeInstancePoolHostedService"/> class.
         /// </summary>
+        /// <param name="scaler">The local runtime instance scaler.</param>
+        /// <param name="runtimeHostIdentity">The runtime host identity.</param>
+        /// <param name="options">The local runtime instance pool options.</param>
+        /// <param name="configuration">The application configuration.</param>
+        /// <param name="logger">The logger.</param>
         public AiLocalRuntimeInstancePoolHostedService(
-            IAiLocalRuntimeInstanceHostFactory hostFactory,
-            IAiSharedRuntimeInstanceRegistry sharedRuntimeInstanceRegistry,
+            IAiLocalRuntimeInstanceScaler scaler,
             IAiRuntimeHostIdentity runtimeHostIdentity,
             IOptions<AiLocalRuntimeInstancePoolOptions> options,
             IConfiguration configuration,
             ILogger<AiLocalRuntimeInstancePoolHostedService> logger)
         {
-            this.hostFactory = hostFactory
-                ?? throw new ArgumentNullException(nameof(hostFactory));
+            this.scaler =
+                scaler
+                ?? throw new ArgumentNullException(nameof(scaler));
 
-            this.sharedRuntimeInstanceRegistry = sharedRuntimeInstanceRegistry
-                ?? throw new ArgumentNullException(nameof(sharedRuntimeInstanceRegistry));
-
-            this.runtimeHostIdentity = runtimeHostIdentity
+            this.runtimeHostIdentity =
+                runtimeHostIdentity
                 ?? throw new ArgumentNullException(nameof(runtimeHostIdentity));
 
-            this.options = options?.Value
+            this.options =
+                options?.Value
                 ?? throw new ArgumentNullException(nameof(options));
 
-            this.configuration = configuration
+            this.configuration =
+                configuration
                 ?? throw new ArgumentNullException(nameof(configuration));
 
-            this.logger = logger
+            this.logger =
+                logger
                 ?? throw new ArgumentNullException(nameof(logger));
         }
 
@@ -87,27 +91,27 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
             var enableSharedQueuePump =
                 GetEnableSharedQueuePump();
 
-            logger.LogInformation(
+            this.logger.LogInformation(
                 "Evaluating local runtime instance pool startup. HostMode={HostMode}, EnableSharedQueuePump={EnableSharedQueuePump}, HostId={HostId}, Enabled={Enabled}, InstanceCount={InstanceCount}, WorkerCountPerInstance={WorkerCountPerInstance}, MaxConcurrentRunsPerInstance={MaxConcurrentRunsPerInstance}, LocalQueueCapacity={LocalQueueCapacity}, RuntimeInstanceIdPrefix={RuntimeInstanceIdPrefix}",
                 hostMode,
                 enableSharedQueuePump,
-                runtimeHostIdentity.HostId,
-                options.Enabled,
-                options.InstanceCount,
-                options.WorkerCountPerInstance,
-                options.MaxConcurrentRunsPerInstance,
-                options.LocalQueueCapacity?.ToString() ?? "unlimited",
-                options.RuntimeInstanceIdPrefix);
+                this.runtimeHostIdentity.HostId,
+                this.options.Enabled,
+                this.options.InstanceCount,
+                this.options.WorkerCountPerInstance,
+                this.options.MaxConcurrentRunsPerInstance,
+                this.options.LocalQueueCapacity?.ToString() ?? "unlimited",
+                this.options.RuntimeInstanceIdPrefix);
 
-            if (!options.Enabled)
+            if (!this.options.Enabled)
             {
-                logger.LogInformation(
+                this.logger.LogInformation(
                     "Local runtime instance pool skipped because it is disabled by options. HostMode={HostMode}, EnableSharedQueuePump={EnableSharedQueuePump}, HostId={HostId}, Enabled={Enabled}, RuntimeInstanceIdPrefix={RuntimeInstanceIdPrefix}",
                     hostMode,
                     enableSharedQueuePump,
-                    runtimeHostIdentity.HostId,
-                    options.Enabled,
-                    options.RuntimeInstanceIdPrefix);
+                    this.runtimeHostIdentity.HostId,
+                    this.options.Enabled,
+                    this.options.RuntimeInstanceIdPrefix);
 
                 return;
             }
@@ -116,101 +120,60 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
                 hostMode,
                 enableSharedQueuePump);
 
-            logger.LogInformation(
-                "Starting local runtime instance pool. HostMode={HostMode}, EnableSharedQueuePump={EnableSharedQueuePump}, HostId={HostId}, Enabled={Enabled}, InstanceCount={InstanceCount}, WorkerCountPerInstance={WorkerCountPerInstance}, MaxConcurrentRunsPerInstance={MaxConcurrentRunsPerInstance}, LocalQueueCapacity={LocalQueueCapacity}, RuntimeInstanceIdPrefix={RuntimeInstanceIdPrefix}",
+            this.logger.LogInformation(
+                "Starting local runtime instance pool through scaler. HostMode={HostMode}, EnableSharedQueuePump={EnableSharedQueuePump}, HostId={HostId}, Enabled={Enabled}, TargetInstanceCount={TargetInstanceCount}, WorkerCountPerInstance={WorkerCountPerInstance}, MaxConcurrentRunsPerInstance={MaxConcurrentRunsPerInstance}, LocalQueueCapacity={LocalQueueCapacity}, RuntimeInstanceIdPrefix={RuntimeInstanceIdPrefix}",
                 hostMode,
                 enableSharedQueuePump,
-                runtimeHostIdentity.HostId,
-                options.Enabled,
-                options.InstanceCount,
-                options.WorkerCountPerInstance,
-                options.MaxConcurrentRunsPerInstance,
-                options.LocalQueueCapacity?.ToString() ?? "unlimited",
-                options.RuntimeInstanceIdPrefix);
+                this.runtimeHostIdentity.HostId,
+                this.options.Enabled,
+                this.options.InstanceCount,
+                this.options.WorkerCountPerInstance,
+                this.options.MaxConcurrentRunsPerInstance,
+                this.options.LocalQueueCapacity?.ToString() ?? "unlimited",
+                this.options.RuntimeInstanceIdPrefix);
 
-            for (var index = 1; index <= options.InstanceCount; index++)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-
-                var runtimeId =
-                    $"{options.RuntimeInstanceIdPrefix}-{index}";
-
-                var runtimeInstanceId =
-                    CreateRuntimeInstanceId(
-                        runtimeHostIdentity.HostId,
-                        runtimeId);
-
-                logger.LogInformation(
-                    "Creating local runtime instance host. HostMode={HostMode}, EnableSharedQueuePump={EnableSharedQueuePump}, HostId={HostId}, RuntimeId={RuntimeId}, RuntimeInstanceId={RuntimeInstanceId}, Index={Index}, InstanceCount={InstanceCount}, WorkerCountPerInstance={WorkerCountPerInstance}, MaxConcurrentRunsPerInstance={MaxConcurrentRunsPerInstance}, LocalQueueCapacity={LocalQueueCapacity}",
-                    hostMode,
-                    enableSharedQueuePump,
-                    runtimeHostIdentity.HostId,
-                    runtimeId,
-                    runtimeInstanceId,
-                    index,
-                    options.InstanceCount,
-                    options.WorkerCountPerInstance,
-                    options.MaxConcurrentRunsPerInstance,
-                    options.LocalQueueCapacity?.ToString() ?? "unlimited");
-
-                var host =
-                    await hostFactory
-                        .CreateAsync(
-                            runtimeInstanceId,
-                            options.WorkerCountPerInstance,
-                            options.MaxConcurrentRunsPerInstance,
-                            options.LocalQueueCapacity,
-                            cancellationToken)
-                        .ConfigureAwait(false);
-
-                logger.LogInformation(
-                    "Registering local runtime instance in shared runtime registry. HostMode={HostMode}, EnableSharedQueuePump={EnableSharedQueuePump}, HostId={HostId}, RuntimeId={RuntimeId}, RuntimeInstanceId={RuntimeInstanceId}, WorkerCount={WorkerCount}",
-                    hostMode,
-                    enableSharedQueuePump,
-                    runtimeHostIdentity.HostId,
-                    runtimeId,
-                    host.RuntimeInstanceId,
-                    host.WorkerCount);
-
-                await sharedRuntimeInstanceRegistry
-                    .RegisterAsync(
-                        host.SharedRuntimeInstance,
+            var result =
+                await this.scaler
+                    .EnsureCapacityAsync(
+                        new AiRuntimeScaleOutProviderRequest
+                        {
+                            RequestId = $"local-pool-startup-{Guid.NewGuid():N}",
+                            ControlPlaneId = this.runtimeHostIdentity.HostId,
+                            SharedRunId = "local-pool-startup",
+                            CurrentInstanceCount = 0,
+                            RequestedTargetInstanceCount = this.options.InstanceCount,
+                            MaxInstanceCount = this.options.InstanceCount,
+                            ProviderHint = "local",
+                            RequestedBy = "local-runtime-instance-pool",
+                            Source = nameof(AiLocalRuntimeInstancePoolHostedService),
+                            Reason = "Initial local runtime instance pool startup.",
+                            Metadata = new Dictionary<string, string>(
+                                StringComparer.OrdinalIgnoreCase)
+                            {
+                                ["hostMode"] = hostMode,
+                                ["enableSharedQueuePump"] = enableSharedQueuePump,
+                                ["runtimeHostId"] = this.runtimeHostIdentity.HostId,
+                                ["runtimeInstanceIdPrefix"] = this.options.RuntimeInstanceIdPrefix
+                            }
+                        },
                         cancellationToken)
                     .ConfigureAwait(false);
 
-                logger.LogInformation(
-                    "Starting local runtime instance host. HostMode={HostMode}, EnableSharedQueuePump={EnableSharedQueuePump}, HostId={HostId}, RuntimeId={RuntimeId}, RuntimeInstanceId={RuntimeInstanceId}, WorkerCount={WorkerCount}",
-                    hostMode,
-                    enableSharedQueuePump,
-                    runtimeHostIdentity.HostId,
-                    runtimeId,
-                    host.RuntimeInstanceId,
-                    host.WorkerCount);
-
-                await host
-                    .StartAsync(cancellationToken)
-                    .ConfigureAwait(false);
-
-                hosts.Add(host);
-
-                logger.LogInformation(
-                    "Local runtime instance started. HostMode={HostMode}, EnableSharedQueuePump={EnableSharedQueuePump}, HostId={HostId}, RuntimeId={RuntimeId}, RuntimeInstanceId={RuntimeInstanceId}, WorkerCount={WorkerCount}, ActiveInstanceCount={ActiveInstanceCount}",
-                    hostMode,
-                    enableSharedQueuePump,
-                    runtimeHostIdentity.HostId,
-                    runtimeId,
-                    host.RuntimeInstanceId,
-                    host.WorkerCount,
-                    hosts.Count);
+            if (!result.Success)
+            {
+                throw new InvalidOperationException(
+                    result.Message ??
+                    result.FailureReason ??
+                    "Local runtime instance pool startup failed.");
             }
 
-            logger.LogInformation(
-                "Local runtime instance pool started. HostMode={HostMode}, EnableSharedQueuePump={EnableSharedQueuePump}, HostId={HostId}, ActiveInstanceCount={ActiveInstanceCount}, RuntimeInstanceIdPrefix={RuntimeInstanceIdPrefix}",
+            this.logger.LogInformation(
+                "Local runtime instance pool started through scaler. HostMode={HostMode}, EnableSharedQueuePump={EnableSharedQueuePump}, HostId={HostId}, ActiveInstanceCount={ActiveInstanceCount}, RuntimeInstanceIdPrefix={RuntimeInstanceIdPrefix}",
                 hostMode,
                 enableSharedQueuePump,
-                runtimeHostIdentity.HostId,
-                hosts.Count,
-                options.RuntimeInstanceIdPrefix);
+                this.runtimeHostIdentity.HostId,
+                this.scaler.ActiveInstanceCount,
+                this.options.RuntimeInstanceIdPrefix);
         }
 
         /// <inheritdoc />
@@ -223,138 +186,43 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
             var enableSharedQueuePump =
                 GetEnableSharedQueuePump();
 
-            if (Interlocked.Exchange(ref stopRequested, 1) == 1)
+            if (Interlocked.Exchange(ref this.stopRequested, 1) == 1)
             {
-                logger.LogInformation(
+                this.logger.LogInformation(
                     "Local runtime instance pool stop skipped because stop is already requested. HostMode={HostMode}, EnableSharedQueuePump={EnableSharedQueuePump}, HostId={HostId}, ActiveInstanceCount={ActiveInstanceCount}, RuntimeInstanceIdPrefix={RuntimeInstanceIdPrefix}",
                     hostMode,
                     enableSharedQueuePump,
-                    runtimeHostIdentity.HostId,
-                    hosts.Count,
-                    options.RuntimeInstanceIdPrefix);
+                    this.runtimeHostIdentity.HostId,
+                    this.scaler.ActiveInstanceCount,
+                    this.options.RuntimeInstanceIdPrefix);
 
                 return;
             }
 
-            logger.LogInformation(
-                "Evaluating local runtime instance pool stop. HostMode={HostMode}, EnableSharedQueuePump={EnableSharedQueuePump}, HostId={HostId}, ActiveInstanceCount={ActiveInstanceCount}, Enabled={Enabled}, RuntimeInstanceIdPrefix={RuntimeInstanceIdPrefix}",
+            this.logger.LogInformation(
+                "Stopping local runtime instance pool through scaler. HostMode={HostMode}, EnableSharedQueuePump={EnableSharedQueuePump}, HostId={HostId}, ActiveInstanceCount={ActiveInstanceCount}, RuntimeInstanceIdPrefix={RuntimeInstanceIdPrefix}",
                 hostMode,
                 enableSharedQueuePump,
-                runtimeHostIdentity.HostId,
-                hosts.Count,
-                options.Enabled,
-                options.RuntimeInstanceIdPrefix);
+                this.runtimeHostIdentity.HostId,
+                this.scaler.ActiveInstanceCount,
+                this.options.RuntimeInstanceIdPrefix);
 
-            if (hosts.Count == 0)
-            {
-                logger.LogInformation(
-                    "Local runtime instance pool stop completed without active hosts. HostMode={HostMode}, EnableSharedQueuePump={EnableSharedQueuePump}, HostId={HostId}, RuntimeInstanceIdPrefix={RuntimeInstanceIdPrefix}",
-                    hostMode,
-                    enableSharedQueuePump,
-                    runtimeHostIdentity.HostId,
-                    options.RuntimeInstanceIdPrefix);
+            await this.scaler
+                .StopAsync(
+                    cancellationToken)
+                .ConfigureAwait(false);
 
-                return;
-            }
-
-            logger.LogInformation(
-                "Stopping local runtime instance pool. HostMode={HostMode}, EnableSharedQueuePump={EnableSharedQueuePump}, HostId={HostId}, ActiveInstanceCount={ActiveInstanceCount}, RuntimeInstanceIdPrefix={RuntimeInstanceIdPrefix}",
+            this.logger.LogInformation(
+                "Local runtime instance pool stopped through scaler. HostMode={HostMode}, EnableSharedQueuePump={EnableSharedQueuePump}, HostId={HostId}, ActiveInstanceCount={ActiveInstanceCount}, RuntimeInstanceIdPrefix={RuntimeInstanceIdPrefix}",
                 hostMode,
                 enableSharedQueuePump,
-                runtimeHostIdentity.HostId,
-                hosts.Count,
-                options.RuntimeInstanceIdPrefix);
-
-            foreach (var host in hosts.AsEnumerable().Reverse())
-            {
-                logger.LogInformation(
-                    "Stopping local runtime instance. HostMode={HostMode}, EnableSharedQueuePump={EnableSharedQueuePump}, HostId={HostId}, RuntimeInstanceId={RuntimeInstanceId}",
-                    hostMode,
-                    enableSharedQueuePump,
-                    runtimeHostIdentity.HostId,
-                    host.RuntimeInstanceId);
-
-                try
-                {
-                    await host
-                        .StopAsync(CancellationToken.None)
-                        .ConfigureAwait(false);
-                }
-                catch (OperationCanceledException exception)
-                {
-                    logger.LogWarning(
-                        exception,
-                        "Local runtime instance stop cancelled during host shutdown. Continuing cleanup best-effort. HostMode={HostMode}, EnableSharedQueuePump={EnableSharedQueuePump}, HostId={HostId}, RuntimeInstanceId={RuntimeInstanceId}",
-                        hostMode,
-                        enableSharedQueuePump,
-                        runtimeHostIdentity.HostId,
-                        host.RuntimeInstanceId);
-                }
-                catch (Exception exception)
-                {
-                    logger.LogWarning(
-                        exception,
-                        "Local runtime instance stop failed during host shutdown. Continuing cleanup best-effort. HostMode={HostMode}, EnableSharedQueuePump={EnableSharedQueuePump}, HostId={HostId}, RuntimeInstanceId={RuntimeInstanceId}",
-                        hostMode,
-                        enableSharedQueuePump,
-                        runtimeHostIdentity.HostId,
-                        host.RuntimeInstanceId);
-                }
-
-                logger.LogInformation(
-                    "Unregistering local runtime instance from shared runtime registry. HostMode={HostMode}, EnableSharedQueuePump={EnableSharedQueuePump}, HostId={HostId}, RuntimeInstanceId={RuntimeInstanceId}",
-                    hostMode,
-                    enableSharedQueuePump,
-                    runtimeHostIdentity.HostId,
-                    host.RuntimeInstanceId);
-
-                try
-                {
-                    await sharedRuntimeInstanceRegistry
-                        .UnregisterAsync(
-                            host.RuntimeInstanceId,
-                            CancellationToken.None)
-                        .ConfigureAwait(false);
-
-                    logger.LogInformation(
-                        "Local runtime instance stopped and unregistered from shared runtime registry. HostMode={HostMode}, EnableSharedQueuePump={EnableSharedQueuePump}, HostId={HostId}, RuntimeInstanceId={RuntimeInstanceId}",
-                        hostMode,
-                        enableSharedQueuePump,
-                        runtimeHostIdentity.HostId,
-                        host.RuntimeInstanceId);
-                }
-                catch (OperationCanceledException exception)
-                {
-                    logger.LogWarning(
-                        exception,
-                        "Local runtime instance shared registry unregister cancelled during shutdown. HostMode={HostMode}, EnableSharedQueuePump={EnableSharedQueuePump}, HostId={HostId}, RuntimeInstanceId={RuntimeInstanceId}",
-                        hostMode,
-                        enableSharedQueuePump,
-                        runtimeHostIdentity.HostId,
-                        host.RuntimeInstanceId);
-                }
-                catch (Exception exception)
-                {
-                    logger.LogWarning(
-                        exception,
-                        "Local runtime instance shared registry unregister failed during shutdown. HostMode={HostMode}, EnableSharedQueuePump={EnableSharedQueuePump}, HostId={HostId}, RuntimeInstanceId={RuntimeInstanceId}",
-                        hostMode,
-                        enableSharedQueuePump,
-                        runtimeHostIdentity.HostId,
-                        host.RuntimeInstanceId);
-                }
-            }
-
-            logger.LogInformation(
-                "Local runtime instance pool stopped. HostMode={HostMode}, EnableSharedQueuePump={EnableSharedQueuePump}, HostId={HostId}, RuntimeInstanceIdPrefix={RuntimeInstanceIdPrefix}",
-                hostMode,
-                enableSharedQueuePump,
-                runtimeHostIdentity.HostId,
-                options.RuntimeInstanceIdPrefix);
+                this.runtimeHostIdentity.HostId,
+                this.scaler.ActiveInstanceCount,
+                this.options.RuntimeInstanceIdPrefix);
         }
 
         /// <inheritdoc />
-        public async ValueTask DisposeAsync()
+        public ValueTask DisposeAsync()
         {
             var hostMode =
                 GetHostMode();
@@ -362,60 +230,23 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
             var enableSharedQueuePump =
                 GetEnableSharedQueuePump();
 
-            logger.LogInformation(
+            this.logger.LogInformation(
                 "Disposing local runtime instance pool hosted service. HostMode={HostMode}, EnableSharedQueuePump={EnableSharedQueuePump}, HostId={HostId}, ActiveInstanceCount={ActiveInstanceCount}, StopRequested={StopRequested}, RuntimeInstanceIdPrefix={RuntimeInstanceIdPrefix}",
                 hostMode,
                 enableSharedQueuePump,
-                runtimeHostIdentity.HostId,
-                hosts.Count,
-                stopRequested,
-                options.RuntimeInstanceIdPrefix);
+                this.runtimeHostIdentity.HostId,
+                this.scaler.ActiveInstanceCount,
+                this.stopRequested,
+                this.options.RuntimeInstanceIdPrefix);
 
-            foreach (var host in hosts.AsEnumerable().Reverse())
-            {
-                logger.LogInformation(
-                    "Disposing local runtime instance host. HostMode={HostMode}, EnableSharedQueuePump={EnableSharedQueuePump}, HostId={HostId}, RuntimeInstanceId={RuntimeInstanceId}",
-                    hostMode,
-                    enableSharedQueuePump,
-                    runtimeHostIdentity.HostId,
-                    host.RuntimeInstanceId);
-
-                try
-                {
-                    await host
-                        .DisposeAsync()
-                        .ConfigureAwait(false);
-                }
-                catch (OperationCanceledException exception)
-                {
-                    logger.LogWarning(
-                        exception,
-                        "Local runtime instance dispose cancelled during shutdown. HostMode={HostMode}, EnableSharedQueuePump={EnableSharedQueuePump}, HostId={HostId}, RuntimeInstanceId={RuntimeInstanceId}",
-                        hostMode,
-                        enableSharedQueuePump,
-                        runtimeHostIdentity.HostId,
-                        host.RuntimeInstanceId);
-                }
-                catch (Exception exception)
-                {
-                    logger.LogWarning(
-                        exception,
-                        "Local runtime instance dispose failed during shutdown. HostMode={HostMode}, EnableSharedQueuePump={EnableSharedQueuePump}, HostId={HostId}, RuntimeInstanceId={RuntimeInstanceId}",
-                        hostMode,
-                        enableSharedQueuePump,
-                        runtimeHostIdentity.HostId,
-                        host.RuntimeInstanceId);
-                }
-            }
-
-            hosts.Clear();
-
-            logger.LogInformation(
+            this.logger.LogInformation(
                 "Local runtime instance pool hosted service disposed. HostMode={HostMode}, EnableSharedQueuePump={EnableSharedQueuePump}, HostId={HostId}, RuntimeInstanceIdPrefix={RuntimeInstanceIdPrefix}",
                 hostMode,
                 enableSharedQueuePump,
-                runtimeHostIdentity.HostId,
-                options.RuntimeInstanceIdPrefix);
+                this.runtimeHostIdentity.HostId,
+                this.options.RuntimeInstanceIdPrefix);
+
+            return ValueTask.CompletedTask;
         }
 
         /// <summary>
@@ -424,7 +255,7 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
         /// <returns>The configured host mode, or an unknown marker.</returns>
         private string GetHostMode()
         {
-            return configuration["AiMcpHost:Mode"]
+            return this.configuration["AiMcpHost:Mode"]
                 ?? UnknownHostMode;
         }
 
@@ -434,33 +265,8 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
         /// <returns>The configured shared queue pump flag, or an unknown marker.</returns>
         private string GetEnableSharedQueuePump()
         {
-            return configuration["AiMcpHost:EnableSharedQueuePump"]
+            return this.configuration["AiMcpHost:EnableSharedQueuePump"]
                 ?? UnknownEnableSharedQueuePump;
-        }
-
-        /// <summary>
-        /// Creates the globally unique runtime instance id for the current host.
-        /// </summary>
-        /// <param name="hostId">The current runtime host id.</param>
-        /// <param name="runtimeId">The logical runtime id inside the host.</param>
-        /// <returns>The globally unique runtime instance id.</returns>
-        private static string CreateRuntimeInstanceId(
-            string hostId,
-            string runtimeId)
-        {
-            if (string.IsNullOrWhiteSpace(hostId))
-            {
-                throw new InvalidOperationException(
-                    "Runtime host identity HostId must be provided.");
-            }
-
-            if (string.IsNullOrWhiteSpace(runtimeId))
-            {
-                throw new InvalidOperationException(
-                    "RuntimeId must be provided.");
-            }
-
-            return $"{hostId}:{runtimeId}";
         }
 
         /// <summary>
@@ -472,55 +278,55 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
             string hostMode,
             string enableSharedQueuePump)
         {
-            logger.LogInformation(
+            this.logger.LogInformation(
                 "Validating local runtime instance pool options. HostMode={HostMode}, EnableSharedQueuePump={EnableSharedQueuePump}, HostId={HostId}, Enabled={Enabled}, InstanceCount={InstanceCount}, WorkerCountPerInstance={WorkerCountPerInstance}, MaxConcurrentRunsPerInstance={MaxConcurrentRunsPerInstance}, LocalQueueCapacity={LocalQueueCapacity}, RuntimeInstanceIdPrefix={RuntimeInstanceIdPrefix}",
                 hostMode,
                 enableSharedQueuePump,
-                runtimeHostIdentity.HostId,
-                options.Enabled,
-                options.InstanceCount,
-                options.WorkerCountPerInstance,
-                options.MaxConcurrentRunsPerInstance,
-                options.LocalQueueCapacity?.ToString() ?? "unlimited",
-                options.RuntimeInstanceIdPrefix);
+                this.runtimeHostIdentity.HostId,
+                this.options.Enabled,
+                this.options.InstanceCount,
+                this.options.WorkerCountPerInstance,
+                this.options.MaxConcurrentRunsPerInstance,
+                this.options.LocalQueueCapacity?.ToString() ?? "unlimited",
+                this.options.RuntimeInstanceIdPrefix);
 
-            if (options.InstanceCount <= 0)
+            if (this.options.InstanceCount <= 0)
             {
                 throw new InvalidOperationException(
                     "Local runtime instance pool InstanceCount must be greater than zero.");
             }
 
-            if (options.WorkerCountPerInstance <= 0)
+            if (this.options.WorkerCountPerInstance <= 0)
             {
                 throw new InvalidOperationException(
                     "Local runtime instance pool WorkerCountPerInstance must be greater than zero.");
             }
 
-            if (options.MaxConcurrentRunsPerInstance <= 0)
+            if (this.options.MaxConcurrentRunsPerInstance <= 0)
             {
                 throw new InvalidOperationException(
                     "Local runtime instance pool MaxConcurrentRunsPerInstance must be greater than zero.");
             }
 
-            if (options.LocalQueueCapacity.HasValue &&
-                options.LocalQueueCapacity.Value < 0)
+            if (this.options.LocalQueueCapacity.HasValue &&
+                this.options.LocalQueueCapacity.Value < 0)
             {
                 throw new InvalidOperationException(
                     "Local runtime instance pool LocalQueueCapacity must be null, zero, or greater than zero.");
             }
 
-            if (string.IsNullOrWhiteSpace(options.RuntimeInstanceIdPrefix))
+            if (string.IsNullOrWhiteSpace(this.options.RuntimeInstanceIdPrefix))
             {
                 throw new InvalidOperationException(
                     "Local runtime instance pool RuntimeInstanceIdPrefix must be provided.");
             }
 
-            logger.LogInformation(
+            this.logger.LogInformation(
                 "Local runtime instance pool options validated. HostMode={HostMode}, EnableSharedQueuePump={EnableSharedQueuePump}, HostId={HostId}, RuntimeInstanceIdPrefix={RuntimeInstanceIdPrefix}",
                 hostMode,
                 enableSharedQueuePump,
-                runtimeHostIdentity.HostId,
-                options.RuntimeInstanceIdPrefix);
+                this.runtimeHostIdentity.HostId,
+                this.options.RuntimeInstanceIdPrefix);
         }
     }
 }

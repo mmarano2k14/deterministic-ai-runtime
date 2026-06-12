@@ -1,12 +1,13 @@
-﻿using Multiplexed.Abstractions.AI.ControlPlane.Discovery;
+﻿using Microsoft.Extensions.Options;
+using Multiplexed.Abstractions.AI.ControlPlane.Discovery;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Scaling;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Store;
 using Multiplexed.Abstractions.AI.Execution.Instance.Worker;
 using Multiplexed.Abstractions.AI.Runtime.Execution.Instance.Worker;
-using Multiplexed.AI.Runtime.ControlPlane.Discovery;
 using Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling;
 
-namespace Multiplexed.AI.Tests.Unit.Runtime.ControlPlane.SharedController.Scaling
+namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController.Scaling
 {
     /// <summary>
     /// Provides unit tests for <see cref="StoreBackedAiRuntimeScaleOutRequestPublisher" />.
@@ -21,7 +22,7 @@ namespace Multiplexed.AI.Tests.Unit.Runtime.ControlPlane.SharedController.Scalin
         {
             var store = new InMemoryAiRuntimeScaleOutRequestStore();
             var resolver = new TestControlPlaneIdResolver("cp-resolved");
-            var publisher = new StoreBackedAiRuntimeScaleOutRequestPublisher(store, resolver);
+            var publisher = CreatePublisher(store, resolver);
 
             var request = CreateRequest(controlPlaneId: "cp-shared-run");
 
@@ -45,12 +46,67 @@ namespace Multiplexed.AI.Tests.Unit.Runtime.ControlPlane.SharedController.Scalin
             Assert.Equal(1, record.CurrentInstanceCount);
             Assert.Equal(5, record.MaxInstanceCount);
             Assert.Equal(2, record.RequestedTargetInstanceCount);
+            Assert.Equal("local", record.ProviderHint);
             Assert.Equal("correlation-test", record.CorrelationId);
             Assert.Equal("unit-test", record.RequestedBy);
             Assert.Equal("unit-test", record.Source);
             Assert.Equal("No runtime capacity was available for admission.", record.Reason);
             Assert.Equal("cp-shared-run", record.Metadata["controlPlaneId"]);
             Assert.Equal("shared-run-1", record.Metadata["sharedRunId"]);
+            Assert.Equal("local", record.Metadata["providerHint"]);
+        }
+
+        /// <summary>
+        /// Verifies that the publisher persists the configured runtime provider name as provider hint.
+        /// </summary>
+        [Theory]
+        [InlineData("local")]
+        [InlineData("http")]
+        public async Task PublishAsync_Should_Set_ProviderHint_From_RuntimeInstanceRegistration_ProviderName(
+            string providerName)
+        {
+            var store = new InMemoryAiRuntimeScaleOutRequestStore();
+            var resolver = new TestControlPlaneIdResolver("cp-resolved");
+            var publisher = CreatePublisher(store, resolver, providerName);
+
+            var request = CreateRequest(controlPlaneId: "cp-shared-run");
+
+            var result = await publisher.PublishAsync(request);
+
+            Assert.True(result.Success);
+
+            var record = await store.GetAsync("scale-out-shared-run-1");
+
+            Assert.NotNull(record);
+            Assert.Equal(providerName, record.ProviderHint);
+            Assert.Equal(providerName, record.Metadata["providerHint"]);
+        }
+
+        /// <summary>
+        /// Verifies that the publisher falls back to local provider when no provider name is configured.
+        /// </summary>
+        [Theory]
+        [InlineData(null)]
+        [InlineData("")]
+        [InlineData("   ")]
+        public async Task PublishAsync_Should_Default_ProviderHint_To_Local_When_ProviderName_Is_Missing(
+            string? providerName)
+        {
+            var store = new InMemoryAiRuntimeScaleOutRequestStore();
+            var resolver = new TestControlPlaneIdResolver("cp-resolved");
+            var publisher = CreatePublisher(store, resolver, providerName);
+
+            var request = CreateRequest(controlPlaneId: "cp-shared-run");
+
+            var result = await publisher.PublishAsync(request);
+
+            Assert.True(result.Success);
+
+            var record = await store.GetAsync("scale-out-shared-run-1");
+
+            Assert.NotNull(record);
+            Assert.Equal("local", record.ProviderHint);
+            Assert.Equal("local", record.Metadata["providerHint"]);
         }
 
         /// <summary>
@@ -61,7 +117,7 @@ namespace Multiplexed.AI.Tests.Unit.Runtime.ControlPlane.SharedController.Scalin
         {
             var store = new InMemoryAiRuntimeScaleOutRequestStore();
             var resolver = new TestControlPlaneIdResolver("cp-resolved");
-            var publisher = new StoreBackedAiRuntimeScaleOutRequestPublisher(store, resolver);
+            var publisher = CreatePublisher(store, resolver);
 
             var request = CreateRequest(controlPlaneId: null);
 
@@ -74,6 +130,7 @@ namespace Multiplexed.AI.Tests.Unit.Runtime.ControlPlane.SharedController.Scalin
             Assert.NotNull(record);
             Assert.Equal("cp-resolved", record.ControlPlaneId);
             Assert.Equal("cp-resolved", record.Metadata["controlPlaneId"]);
+            Assert.Equal("local", record.ProviderHint);
         }
 
         /// <summary>
@@ -84,7 +141,7 @@ namespace Multiplexed.AI.Tests.Unit.Runtime.ControlPlane.SharedController.Scalin
         {
             var store = new InMemoryAiRuntimeScaleOutRequestStore();
             var resolver = new TestControlPlaneIdResolver(null);
-            var publisher = new StoreBackedAiRuntimeScaleOutRequestPublisher(store, resolver);
+            var publisher = CreatePublisher(store, resolver);
 
             var request = CreateRequest(controlPlaneId: null);
 
@@ -100,7 +157,7 @@ namespace Multiplexed.AI.Tests.Unit.Runtime.ControlPlane.SharedController.Scalin
         {
             var store = new InMemoryAiRuntimeScaleOutRequestStore();
             var resolver = new TestControlPlaneIdResolver("cp-resolved");
-            var publisher = new StoreBackedAiRuntimeScaleOutRequestPublisher(store, resolver);
+            var publisher = CreatePublisher(store, resolver);
 
             var request = CreateRequest(
                 controlPlaneId: "cp-shared-run",
@@ -116,6 +173,7 @@ namespace Multiplexed.AI.Tests.Unit.Runtime.ControlPlane.SharedController.Scalin
 
             Assert.NotNull(record);
             Assert.Equal(5, record.RequestedTargetInstanceCount);
+            Assert.Equal("local", record.ProviderHint);
         }
 
         /// <summary>
@@ -126,7 +184,7 @@ namespace Multiplexed.AI.Tests.Unit.Runtime.ControlPlane.SharedController.Scalin
         {
             var store = new InMemoryAiRuntimeScaleOutRequestStore();
             var resolver = new TestControlPlaneIdResolver("cp-resolved");
-            var publisher = new StoreBackedAiRuntimeScaleOutRequestPublisher(store, resolver);
+            var publisher = CreatePublisher(store, resolver);
 
             var request = CreateRequest(controlPlaneId: "cp-shared-run");
 
@@ -143,6 +201,27 @@ namespace Multiplexed.AI.Tests.Unit.Runtime.ControlPlane.SharedController.Scalin
             });
 
             Assert.Single(pending);
+        }
+
+        /// <summary>
+        /// Creates a scale-out request publisher for tests.
+        /// </summary>
+        /// <param name="store">The scale-out request store.</param>
+        /// <param name="resolver">The control-plane id resolver.</param>
+        /// <param name="providerName">The optional runtime provider name.</param>
+        /// <returns>The created publisher.</returns>
+        private static StoreBackedAiRuntimeScaleOutRequestPublisher CreatePublisher(
+            IAiRuntimeScaleOutRequestStore store,
+            IAiControlPlaneIdResolver resolver,
+            string? providerName = "local")
+        {
+            return new StoreBackedAiRuntimeScaleOutRequestPublisher(
+                store,
+                resolver,
+                Options.Create(new AiRuntimeInstanceRegistrationOptions
+                {
+                    ProviderName = providerName
+                }));
         }
 
         /// <summary>
@@ -199,10 +278,6 @@ namespace Multiplexed.AI.Tests.Unit.Runtime.ControlPlane.SharedController.Scalin
         /// Creates a minimal runtime pipeline run request for tests.
         /// </summary>
         /// <returns>The created run request.</returns>
-        /// <summary>
-        /// Creates a minimal runtime pipeline run request for tests.
-        /// </summary>
-        /// <returns>The created run request.</returns>
         private static AiRuntimePipelineRunRequest CreateRunRequest()
         {
             return new AiRuntimePipelineRunRequest
@@ -229,13 +304,15 @@ namespace Multiplexed.AI.Tests.Unit.Runtime.ControlPlane.SharedController.Scalin
             /// Initializes a new instance of the <see cref="TestControlPlaneIdResolver" /> class.
             /// </summary>
             /// <param name="controlPlaneId">The control-plane identifier to return.</param>
-            public TestControlPlaneIdResolver(string? controlPlaneId)
+            public TestControlPlaneIdResolver(
+                string? controlPlaneId)
             {
                 this.controlPlaneId = controlPlaneId;
             }
 
             /// <inheritdoc />
-            public Task<string?> ResolveAsync(CancellationToken cancellationToken = default)
+            public Task<string?> ResolveAsync(
+                CancellationToken cancellationToken = default)
             {
                 cancellationToken.ThrowIfCancellationRequested();
 

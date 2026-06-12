@@ -194,6 +194,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
 
             services.TryAddSingleton<IAiRuntimeScaleOutRequestStore, InMemoryAiRuntimeScaleOutRequestStore>();
             services.TryAddSingleton<IAiRuntimeScaleOutRequestPublisher, StoreBackedAiRuntimeScaleOutRequestPublisher>();
+            services.TryAddSingleton<IAiRuntimeScaleOutProviderSelector, AiRuntimeScaleOutProviderSelector>();
+            services.TryAddSingleton<IAiScaleOutFulfilledRunRequeueService, AiScaleOutFulfilledRunRequeueService>();
             services.TryAddSingleton<IAiRuntimeScaleOutProvider, SimulatedAiRuntimeScaleOutProvider>();
 
             services.TryAddSingleton<IAiSharedRuntimeController, AiSharedRuntimeController>();

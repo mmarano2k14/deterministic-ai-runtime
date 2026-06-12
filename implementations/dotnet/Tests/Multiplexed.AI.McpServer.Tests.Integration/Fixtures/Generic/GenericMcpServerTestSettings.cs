@@ -310,6 +310,98 @@
         }
 
         /// <summary>
+        /// Creates local scale-out-only control-plane settings for a single isolated scenario.
+        /// </summary>
+        /// <remarks>
+        /// PURPOSE:
+        /// - Starts an MCP control-plane host in local runtime-instance mode.
+        /// - Keeps the local runtime instance pool startup disabled.
+        /// - Allows admission to see no initial runtime capacity.
+        /// - Allows the scale-out watcher to fulfill the Redis-backed scale-out request
+        ///   through the local provider and local runtime instance scaler.
+        ///
+        /// IMPORTANT:
+        /// - AiLocalRuntimeInstancePool:Enabled is intentionally false.
+        /// - The pool service/scaler is still registered by the local MCP host mode.
+        /// - Runtime instances are created on demand by the scale-out watcher.
+        /// </remarks>
+        /// <param name="controlPlaneId">The logical control-plane identifier shared by the scenario.</param>
+        /// <returns>The local scale-out-only control-plane settings.</returns>
+        public static Dictionary<string, string?> CreateLocalScaleOutOnlyControlPlaneSettings(
+            string controlPlaneId)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(
+                controlPlaneId);
+
+            var controlPlaneRuntimeInstanceId =
+                $"mcp-control-plane-local-scaleout-{Guid.NewGuid():N}";
+
+            var deployment =
+                $"test-local-scaleout-{Guid.NewGuid():N}";
+
+            const string runtimeInstanceIdPrefix = "mcp-scaleout-runtime";
+
+            return CreateMcpSettings(
+                controlPlaneId,
+                new Dictionary<string, string?>
+                {
+                    ["AiMcpHost:Mode"] = "ControlPlaneWithLocalRuntimeInstances",
+                    ["AiMcpHost:EnableSharedQueuePump"] = "true",
+
+                    ["AiSharedQueueBackgroundService:Enabled"] = "true",
+                    ["AiSharedQueueBackgroundService:WaitForRuntimeReadiness"] = "false",
+                    ["AiSharedQueueBackgroundService:RuntimeReadinessPollInterval"] = "00:00:00.100",
+                    ["AiSharedQueueBackgroundService:RuntimeReadinessTimeout"] = "00:01:00",
+
+                    ["AiSharedQueuePump:Enabled"] = "true",
+                    ["AiSharedRuntimeController:SubmitMode"] = "DirectDispatch",
+
+                    ["AiRuntimeInstanceRegistration:ControlPlaneId"] = controlPlaneId,
+                    ["AiRuntimeInstanceRegistration:ProviderName"] = "local",
+                    ["AiRuntimeInstanceRegistration:ProviderMetadata:controlPlaneId"] = controlPlaneId,
+                    ["AiRuntimeInstanceRegistration:ProviderMetadata:provider.name"] = "local",
+                    ["AiRuntimeInstanceRegistration:Metadata:controlPlaneId"] = controlPlaneId,
+                    ["AiRuntimeInstanceRegistration:Metadata:provider.name"] = "local",
+                    ["AiRuntimeInstanceRegistration:Metadata:hostType"] = "control-plane-with-local-scaleout",
+                    ["AiRuntimeInstanceRegistration:Metadata:deployment"] = deployment,
+                    ["AiRuntimeInstanceRegistration:RuntimeInstanceId"] = controlPlaneRuntimeInstanceId,
+                    ["AiRuntimeInstanceRegistration:Role"] = "ControlPlane",
+                    ["AiRuntimeInstanceRegistration:HeartbeatInterval"] = "00:00:02",
+                    ["AiRuntimeInstanceRegistration:RegistryTtl"] = "00:00:30",
+                    ["AiRuntimeInstanceRegistration:CapacityTtl"] = "00:00:30",
+
+                    ["AiLocalRuntimeInstancePool:Enabled"] = "false",
+                    ["AiLocalRuntimeInstancePool:InstanceCount"] = "1",
+                    ["AiLocalRuntimeInstancePool:WorkerCountPerInstance"] = "10",
+                    ["AiLocalRuntimeInstancePool:MaxConcurrentRunsPerInstance"] = "3",
+                    ["AiLocalRuntimeInstancePool:LocalQueueCapacity"] = "100",
+                    ["AiLocalRuntimeInstancePool:RuntimeInstanceIdPrefix"] = runtimeInstanceIdPrefix,
+
+                    ["AiRunAdmission:MaxInstanceCount"] = "3",
+                    ["AiRunAdmission:EnableScaleOutRequest"] = "true",
+                    ["AiRunAdmission:EnableGlobalQueueFallback"] = "false",
+                    ["AiRunAdmission:RejectWhenNoCapacity"] = "false",
+
+                    ["AiRuntimeScaleOutRequestWatcher:Enabled"] = "true",
+                    ["AiRuntimeScaleOutRequestWatcher:ControlPlaneId"] = controlPlaneId,
+                    ["AiRuntimeScaleOutRequestWatcher:WatcherId"] = "mcp-scaleout-watcher",
+                    ["AiRuntimeScaleOutRequestWatcher:Interval"] = "00:00:00.200",
+                    ["AiRuntimeScaleOutRequestWatcher:MaxRequestsPerCycle"] = "10",
+                    ["AiRuntimeScaleOutRequestWatcher:RejectOnProviderFailure"] = "true",
+
+                    ["AiEngine:ControlPlane:ControlPlaneId"] = controlPlaneId,
+                    ["AiEngine:RuntimeInstanceId"] = controlPlaneRuntimeInstanceId,
+                    ["AiEngine:PipelineBackgroundController:RuntimeInstanceId"] = controlPlaneRuntimeInstanceId,
+                    ["AiEngine:PipelineBackgroundController:MaxConcurrentRuns"] = "3",
+                    ["AiEngine:PipelineBackgroundController:QueueCapacity"] = "100",
+                    ["AiEngine:PipelineBackgroundController:Distributed:Enabled"] = "true",
+                    ["AiEngine:PipelineBackgroundController:Distributed:WorkerCount"] = "10",
+                    ["AiEngine:PipelineBackgroundController:MaxLocalWorkersPerExecution"] = "3",
+                    ["AiEngine:RuntimeInstanceWorker:RuntimeInstanceId"] = controlPlaneRuntimeInstanceId
+                });
+        }
+
+        /// <summary>
         /// Applies configuration overrides to a settings dictionary.
         /// </summary>
         /// <param name="settings">The target settings dictionary.</param>

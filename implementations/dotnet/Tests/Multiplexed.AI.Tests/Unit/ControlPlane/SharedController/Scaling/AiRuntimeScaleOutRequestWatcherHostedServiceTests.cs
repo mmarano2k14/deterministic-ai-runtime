@@ -2,8 +2,9 @@
 using Multiplexed.Abstractions.AI.ControlPlane.Discovery;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Scaling;
 using Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling;
+using Multiplexed.AI.Tests.Fixtures;
 
-namespace Multiplexed.AI.Tests.Unit.Runtime.ControlPlane.SharedController.Scaling
+namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController.Scaling
 {
     /// <summary>
     /// Provides unit tests for <see cref="AiRuntimeScaleOutRequestWatcherHostedService" />.
@@ -27,12 +28,14 @@ namespace Multiplexed.AI.Tests.Unit.Runtime.ControlPlane.SharedController.Scalin
             var watcher =
                 new AiRuntimeScaleOutRequestWatcherHostedService(
                     store,
-                    new SimulatedAiRuntimeScaleOutProvider(
-                        Options.Create(new SimulatedAiRuntimeScaleOutProviderOptions
-                        {
-                            Succeed = true,
-                            RuntimeInstanceIdPrefix = "simulated-runtime"
-                        })),
+                    new TestScaleOutProviderSelector(
+                        new SimulatedAiRuntimeScaleOutProvider(
+                            Options.Create(new SimulatedAiRuntimeScaleOutProviderOptions
+                            {
+                                Succeed = true,
+                                RuntimeInstanceIdPrefix = "simulated-runtime"
+                            }))),
+                    new TestScaleOutFulfilledRunRequeueService(),
                     new TestControlPlaneIdResolver("cp-test"),
                     Options.Create(new AiRuntimeScaleOutRequestWatcherOptions
                     {
@@ -89,12 +92,14 @@ namespace Multiplexed.AI.Tests.Unit.Runtime.ControlPlane.SharedController.Scalin
             var watcher =
                 new AiRuntimeScaleOutRequestWatcherHostedService(
                     store,
-                    new SimulatedAiRuntimeScaleOutProvider(
-                        Options.Create(new SimulatedAiRuntimeScaleOutProviderOptions
-                        {
-                            Succeed = false,
-                            FailureReason = "simulated failure"
-                        })),
+                    new TestScaleOutProviderSelector(
+                        new SimulatedAiRuntimeScaleOutProvider(
+                            Options.Create(new SimulatedAiRuntimeScaleOutProviderOptions
+                            {
+                                Succeed = false,
+                                FailureReason = "simulated failure"
+                            }))),
+                    new TestScaleOutFulfilledRunRequeueService(),
                     new TestControlPlaneIdResolver("cp-test"),
                     Options.Create(new AiRuntimeScaleOutRequestWatcherOptions
                     {
@@ -131,7 +136,10 @@ namespace Multiplexed.AI.Tests.Unit.Runtime.ControlPlane.SharedController.Scalin
             var store =
                 CreateStore();
 
-            await store.CreateAsync(CreateRequest("request-1")).ConfigureAwait(false);
+            await store
+                .CreateAsync(
+                    CreateRequest("request-1"))
+                .ConfigureAwait(false);
 
             var second =
                 CreateRequest("request-2");
@@ -139,12 +147,17 @@ namespace Multiplexed.AI.Tests.Unit.Runtime.ControlPlane.SharedController.Scalin
             second.SharedRunId = "shared-run-2";
             second.PipelineKey = "pipeline-2";
 
-            await store.CreateAsync(second).ConfigureAwait(false);
+            await store
+                .CreateAsync(
+                    second)
+                .ConfigureAwait(false);
 
             var watcher =
                 new AiRuntimeScaleOutRequestWatcherHostedService(
                     store,
-                    new SimulatedAiRuntimeScaleOutProvider(),
+                    new TestScaleOutProviderSelector(
+                        new SimulatedAiRuntimeScaleOutProvider()),
+                    new TestScaleOutFulfilledRunRequeueService(),
                     new TestControlPlaneIdResolver("cp-test"),
                     Options.Create(new AiRuntimeScaleOutRequestWatcherOptions
                     {
@@ -197,7 +210,9 @@ namespace Multiplexed.AI.Tests.Unit.Runtime.ControlPlane.SharedController.Scalin
             var watcher =
                 new AiRuntimeScaleOutRequestWatcherHostedService(
                     store,
-                    new SimulatedAiRuntimeScaleOutProvider(),
+                    new TestScaleOutProviderSelector(
+                        new SimulatedAiRuntimeScaleOutProvider()),
+                    new TestScaleOutFulfilledRunRequeueService(),
                     new TestControlPlaneIdResolver("cp-test"),
                     Options.Create(new AiRuntimeScaleOutRequestWatcherOptions
                     {
@@ -270,6 +285,40 @@ namespace Multiplexed.AI.Tests.Unit.Runtime.ControlPlane.SharedController.Scalin
                     ["test"] = "true"
                 }
             };
+        }
+
+        /// <summary>
+        /// Provides a fixed scale-out provider selector for watcher tests.
+        /// </summary>
+        private sealed class TestScaleOutProviderSelector : IAiRuntimeScaleOutProviderSelector
+        {
+            /// <summary>
+            /// The provider invoked by the selector.
+            /// </summary>
+            private readonly IAiRuntimeScaleOutProvider provider;
+
+            /// <summary>
+            /// Initializes a new instance of the <see cref="TestScaleOutProviderSelector" /> class.
+            /// </summary>
+            /// <param name="provider">The provider to invoke.</param>
+            public TestScaleOutProviderSelector(
+                IAiRuntimeScaleOutProvider provider)
+            {
+                this.provider =
+                    provider
+                    ?? throw new ArgumentNullException(nameof(provider));
+            }
+
+            /// <inheritdoc />
+            public Task<AiRuntimeScaleOutProviderResult> RequestScaleOutAsync(
+                AiRuntimeScaleOutProviderRequest request,
+                CancellationToken cancellationToken = default)
+            {
+                return this.provider
+                    .RequestScaleOutAsync(
+                        request,
+                        cancellationToken);
+            }
         }
 
         /// <summary>

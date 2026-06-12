@@ -6,7 +6,7 @@ using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Scaling;
 namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
 {
     /// <summary>
-    /// Observes pending runtime scale-out requests and forwards them to a scale-out provider.
+    /// Observes pending runtime scale-out requests and forwards them to a scale-out provider selector.
     /// </summary>
     /// <remarks>
     /// This hosted service does not decide admission and does not create scale-out
@@ -14,7 +14,13 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
     /// <see cref="IAiRuntimeScaleOutRequestStore" />.
     ///
     /// The actual scale-out implementation is delegated to
+    /// <see cref="IAiRuntimeScaleOutProviderSelector" />, which reuses the existing
+    /// runtime instance provider system to resolve a provider supporting
     /// <see cref="IAiRuntimeScaleOutProvider" />.
+    ///
+    /// When a scale-out request is fulfilled, the linked shared run is requeued
+    /// through <see cref="IAiScaleOutFulfilledRunRequeueService" /> so the normal
+    /// shared queue pump can dispatch it to the newly available runtime capacity.
     /// </remarks>
     public sealed class AiRuntimeScaleOutRequestWatcherHostedService : BackgroundService
     {
@@ -24,9 +30,14 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
         private readonly IAiRuntimeScaleOutRequestStore store;
 
         /// <summary>
-        /// The scale-out provider.
+        /// The scale-out provider selector.
         /// </summary>
-        private readonly IAiRuntimeScaleOutProvider provider;
+        private readonly IAiRuntimeScaleOutProviderSelector providerSelector;
+
+        /// <summary>
+        /// The service used to requeue shared runs after scale-out fulfillment.
+        /// </summary>
+        private readonly IAiScaleOutFulfilledRunRequeueService fulfilledRunRequeueService;
 
         /// <summary>
         /// The control-plane id resolver.
@@ -42,19 +53,36 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
         /// Initializes a new instance of the <see cref="AiRuntimeScaleOutRequestWatcherHostedService" /> class.
         /// </summary>
         /// <param name="store">The scale-out request store.</param>
-        /// <param name="provider">The scale-out provider.</param>
+        /// <param name="providerSelector">The scale-out provider selector.</param>
+        /// <param name="fulfilledRunRequeueService">The service used to requeue shared runs after scale-out fulfillment.</param>
         /// <param name="controlPlaneIdResolver">The control-plane id resolver.</param>
         /// <param name="options">The watcher options.</param>
         public AiRuntimeScaleOutRequestWatcherHostedService(
             IAiRuntimeScaleOutRequestStore store,
-            IAiRuntimeScaleOutProvider provider,
+            IAiRuntimeScaleOutProviderSelector providerSelector,
+            IAiScaleOutFulfilledRunRequeueService fulfilledRunRequeueService,
             IAiControlPlaneIdResolver controlPlaneIdResolver,
             IOptions<AiRuntimeScaleOutRequestWatcherOptions> options)
         {
-            this.store = store ?? throw new ArgumentNullException(nameof(store));
-            this.provider = provider ?? throw new ArgumentNullException(nameof(provider));
-            this.controlPlaneIdResolver = controlPlaneIdResolver ?? throw new ArgumentNullException(nameof(controlPlaneIdResolver));
-            this.options = options?.Value ?? throw new ArgumentNullException(nameof(options));
+            this.store =
+                store
+                ?? throw new ArgumentNullException(nameof(store));
+
+            this.providerSelector =
+                providerSelector
+                ?? throw new ArgumentNullException(nameof(providerSelector));
+
+            this.fulfilledRunRequeueService =
+                fulfilledRunRequeueService
+                ?? throw new ArgumentNullException(nameof(fulfilledRunRequeueService));
+
+            this.controlPlaneIdResolver =
+                controlPlaneIdResolver
+                ?? throw new ArgumentNullException(nameof(controlPlaneIdResolver));
+
+            this.options =
+                options?.Value
+                ?? throw new ArgumentNullException(nameof(options));
         }
 
         /// <inheritdoc />
@@ -154,7 +182,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
             try
             {
                 var providerResult =
-                    await this.provider
+                    await this.providerSelector
                         .RequestScaleOutAsync(
                             CreateProviderRequest(request),
                             cancellationToken)
@@ -166,6 +194,13 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
                         .MarkFulfilledAsync(
                             request.RequestId,
                             this.options.WatcherId,
+                            providerResult.RuntimeInstanceId,
+                            cancellationToken)
+                        .ConfigureAwait(false);
+
+                    await this.fulfilledRunRequeueService
+                        .RequeueAsync(
+                            request,
                             providerResult.RuntimeInstanceId,
                             cancellationToken)
                         .ConfigureAwait(false);

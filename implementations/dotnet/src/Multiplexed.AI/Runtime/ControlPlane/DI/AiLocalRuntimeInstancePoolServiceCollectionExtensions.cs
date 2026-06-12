@@ -39,6 +39,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
                 IAiLocalRuntimeInstanceHostFactory,
                 AiLocalRuntimeInstanceHostFactory>();
 
+            services.TryAddSingleton<
+                IAiLocalRuntimeInstanceScaler,
+                AiLocalRuntimeInstanceScaler>();
+
             services.TryAddEnumerable(
                 ServiceDescriptor.Singleton<
                     IHostedService,

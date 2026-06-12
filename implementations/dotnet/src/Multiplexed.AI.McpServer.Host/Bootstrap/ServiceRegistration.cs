@@ -813,9 +813,12 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
         /// Configures run admission options for MCP control-plane modes.
         /// </summary>
         /// <remarks>
-        /// Configuration values from the <c>AiRunAdmission</c> section are applied
-        /// first, then MCP-safe defaults are applied only when they are part of the
-        /// MCP host policy.
+        /// Configuration values from the <c>AiRunAdmission</c> section are applied first.
+        ///
+        /// IMPORTANT:
+        /// - Defaults are only applied when the corresponding configuration key is missing.
+        /// - Tests and deployment configuration must be able to force scale-out behavior,
+        ///   global queue fallback behavior, or rejection behavior explicitly.
         /// </remarks>
         /// <param name="configuration">The application configuration.</param>
         /// <param name="options">The run admission options.</param>
@@ -826,12 +829,20 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
             ArgumentNullException.ThrowIfNull(configuration);
             ArgumentNullException.ThrowIfNull(options);
 
-            configuration
-                .GetSection("AiRunAdmission")
-                .Bind(options);
+            var section =
+                configuration.GetSection("AiRunAdmission");
 
-            options.EnableGlobalQueueFallback = true;
-            options.RejectWhenNoCapacity = false;
+            section.Bind(options);
+
+            if (section["EnableGlobalQueueFallback"] is null)
+            {
+                options.EnableGlobalQueueFallback = true;
+            }
+
+            if (section["RejectWhenNoCapacity"] is null)
+            {
+                options.RejectWhenNoCapacity = false;
+            }
         }
 
         /// <summary>

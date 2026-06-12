@@ -1,6 +1,7 @@
-﻿using Multiplexed.Abstractions.AI.ControlPlane.Discovery;
+﻿using Microsoft.Extensions.Options;
+using Multiplexed.Abstractions.AI.ControlPlane.Discovery;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Scaling;
-using Multiplexed.AI.Runtime.ControlPlane.Discovery;
 using System.Globalization;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
@@ -15,6 +16,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
     public sealed class StoreBackedAiRuntimeScaleOutRequestPublisher : IAiRuntimeScaleOutRequestPublisher
     {
         /// <summary>
+        /// The default runtime provider name used when no provider name is configured.
+        /// </summary>
+        private const string DefaultProviderName = "local";
+
+        /// <summary>
         /// Persists scale-out requests created by this publisher.
         /// </summary>
         private readonly IAiRuntimeScaleOutRequestStore store;
@@ -25,16 +31,32 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
         private readonly IAiControlPlaneIdResolver controlPlaneIdResolver;
 
         /// <summary>
+        /// The runtime instance registration options used to resolve the provider hint.
+        /// </summary>
+        private readonly AiRuntimeInstanceRegistrationOptions registrationOptions;
+
+        /// <summary>
         /// Initializes a new instance of the <see cref="StoreBackedAiRuntimeScaleOutRequestPublisher" /> class.
         /// </summary>
         /// <param name="store">The scale-out request store.</param>
         /// <param name="controlPlaneIdResolver">The logical control-plane identifier resolver.</param>
+        /// <param name="registrationOptions">The runtime instance registration options.</param>
         public StoreBackedAiRuntimeScaleOutRequestPublisher(
             IAiRuntimeScaleOutRequestStore store,
-            IAiControlPlaneIdResolver controlPlaneIdResolver)
+            IAiControlPlaneIdResolver controlPlaneIdResolver,
+            IOptions<AiRuntimeInstanceRegistrationOptions>? registrationOptions = null)
         {
-            this.store = store ?? throw new ArgumentNullException(nameof(store));
-            this.controlPlaneIdResolver = controlPlaneIdResolver ?? throw new ArgumentNullException(nameof(controlPlaneIdResolver));
+            this.store =
+                store
+                ?? throw new ArgumentNullException(nameof(store));
+
+            this.controlPlaneIdResolver =
+                controlPlaneIdResolver
+                ?? throw new ArgumentNullException(nameof(controlPlaneIdResolver));
+
+            this.registrationOptions =
+                registrationOptions?.Value
+                ?? new AiRuntimeInstanceRegistrationOptions();
         }
 
         /// <inheritdoc />
@@ -48,8 +70,18 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
 
             cancellationToken.ThrowIfCancellationRequested();
 
-            var controlPlaneId = await this.ResolveControlPlaneIdAsync(request, cancellationToken).ConfigureAwait(false);
-            var targetInstanceCount = GetRequestedTargetInstanceCount(request);
+            var controlPlaneId =
+                await this.ResolveControlPlaneIdAsync(
+                        request,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+            var targetInstanceCount =
+                GetRequestedTargetInstanceCount(
+                    request);
+
+            var providerHint =
+                this.ResolveProviderHint();
 
             var record = new AiRuntimeScaleOutRequestRecord
             {
@@ -65,14 +97,23 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
                 CurrentInstanceCount = request.CurrentInstanceCount,
                 MaxInstanceCount = request.MaxInstanceCount,
                 RequestedTargetInstanceCount = targetInstanceCount,
+                ProviderHint = providerHint,
                 RequestedBy = request.RequestedBy,
                 Source = request.Source,
                 CorrelationId = request.CorrelationId,
                 CreatedAtUtc = DateTimeOffset.UtcNow,
-                Metadata = CreateMetadata(request, controlPlaneId)
+                Metadata = CreateMetadata(
+                    request,
+                    controlPlaneId,
+                    providerHint)
             };
 
-            var created = await this.store.CreateAsync(record, cancellationToken).ConfigureAwait(false);
+            var created =
+                await this.store
+                    .CreateAsync(
+                        record,
+                        cancellationToken)
+                    .ConfigureAwait(false);
 
             return new AiRuntimeScaleOutRequestResult
             {
@@ -105,14 +146,33 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
                 return request.SharedRun.ControlPlaneId;
             }
 
-            var resolved = await this.controlPlaneIdResolver.ResolveAsync(cancellationToken).ConfigureAwait(false);
+            var resolved =
+                await this.controlPlaneIdResolver
+                    .ResolveAsync(
+                        cancellationToken)
+                    .ConfigureAwait(false);
 
             if (!string.IsNullOrWhiteSpace(resolved))
             {
                 return resolved;
             }
 
-            throw new InvalidOperationException("Scale-out request control-plane id could not be resolved.");
+            throw new InvalidOperationException(
+                "Scale-out request control-plane id could not be resolved.");
+        }
+
+        /// <summary>
+        /// Resolves the provider hint used by the scale-out watcher to select a runtime instance provider.
+        /// </summary>
+        /// <returns>The resolved provider hint.</returns>
+        private string ResolveProviderHint()
+        {
+            if (!string.IsNullOrWhiteSpace(this.registrationOptions.ProviderName))
+            {
+                return this.registrationOptions.ProviderName.Trim();
+            }
+
+            return DefaultProviderName;
         }
 
         /// <summary>
@@ -120,7 +180,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
         /// </summary>
         /// <param name="request">The scale-out request.</param>
         /// <returns>The generated scale-out request identifier.</returns>
-        private static string CreateRequestId(AiRuntimeScaleOutRequest request)
+        private static string CreateRequestId(
+            AiRuntimeScaleOutRequest request)
         {
             return $"scale-out-{request.SharedRunId}";
         }
@@ -130,7 +191,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
         /// </summary>
         /// <param name="request">The scale-out request.</param>
         /// <returns>The scale-out reason.</returns>
-        private static string GetReason(AiRuntimeScaleOutRequest request)
+        private static string GetReason(
+            AiRuntimeScaleOutRequest request)
         {
             if (!string.IsNullOrWhiteSpace(request.Reason))
             {
@@ -145,13 +207,20 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
         /// </summary>
         /// <param name="request">The scale-out request.</param>
         /// <returns>The requested target runtime instance count.</returns>
-        private static int GetRequestedTargetInstanceCount(AiRuntimeScaleOutRequest request)
+        private static int GetRequestedTargetInstanceCount(
+            AiRuntimeScaleOutRequest request)
         {
-            var requested = Math.Max(request.CurrentInstanceCount + 1, 1);
+            var requested =
+                Math.Max(
+                    request.CurrentInstanceCount + 1,
+                    1);
 
             if (request.MaxInstanceCount.HasValue)
             {
-                requested = Math.Min(requested, request.MaxInstanceCount.Value);
+                requested =
+                    Math.Min(
+                        requested,
+                        request.MaxInstanceCount.Value);
             }
 
             return requested;
@@ -162,12 +231,16 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
         /// </summary>
         /// <param name="request">The scale-out request.</param>
         /// <param name="controlPlaneId">The resolved logical control-plane identifier.</param>
+        /// <param name="providerHint">The resolved provider hint.</param>
         /// <returns>The metadata dictionary.</returns>
         private static IDictionary<string, string> CreateMetadata(
             AiRuntimeScaleOutRequest request,
-            string controlPlaneId)
+            string controlPlaneId,
+            string providerHint)
         {
-            var metadata = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            var metadata =
+                new Dictionary<string, string>(
+                    StringComparer.OrdinalIgnoreCase);
 
             foreach (var pair in request.Metadata)
             {
@@ -179,13 +252,15 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
 
             metadata["controlPlaneId"] = controlPlaneId;
             metadata["sharedRunId"] = request.SharedRunId;
+            metadata["providerHint"] = providerHint;
             metadata["visibleInstanceCount"] = request.VisibleInstanceCount.ToString(CultureInfo.InvariantCulture);
             metadata["availableInstanceCount"] = request.AvailableInstanceCount.ToString(CultureInfo.InvariantCulture);
             metadata["currentInstanceCount"] = request.CurrentInstanceCount.ToString(CultureInfo.InvariantCulture);
 
             if (request.MaxInstanceCount.HasValue)
             {
-                metadata["maxInstanceCount"] = request.MaxInstanceCount.Value.ToString(CultureInfo.InvariantCulture);
+                metadata["maxInstanceCount"] =
+                    request.MaxInstanceCount.Value.ToString(CultureInfo.InvariantCulture);
             }
 
             if (!string.IsNullOrWhiteSpace(request.CorrelationId))
