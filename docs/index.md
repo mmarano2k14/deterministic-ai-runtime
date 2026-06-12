@@ -24,7 +24,8 @@ Focused AI runtime documentation is organized under:
 | [`ai/observability-tracing.md`](ai/observability-tracing.md) | Runtime tracing, trace timelines, correlation, trace storage modes, Mongo trace persistence, MemoryAndMongo mode, and tracing improvements. |
 | [`ai/runtime-metrics.md`](ai/runtime-metrics.md) | Runtime metric domains, metric storage modes, worker/retention/storage/resolver/hot-state/policy metrics, and metrics improvements. |
 | [`ai/replay-and-audit.md`](ai/replay-and-audit.md) | Deterministic Replay Engine V1, snapshot restore, fingerprint validation, replay metadata, ledger/timeline diagnostics, and replay TODO/improvements. |
-| [`ai/runtime-control-plane.md`](ai/runtime-control-plane.md) | Runtime control-plane foundation covering replay control, execution control, runtime queue control, runtime instance registry/control, admission decisions, and Kubernetes-oriented orchestration foundations. |
+| [`ai/runtime-control-plane.md`](ai/runtime-control-plane.md) | Runtime control-plane foundation covering replay control, execution control, runtime queue control, runtime instance registry/control, discovery, capacity, admission decisions, and Kubernetes-oriented orchestration foundations. |
+| [`ai/runtime-discovery-registry-capacity.md`](ai/runtime-discovery-registry-capacity.md) | Runtime discovery, registry, and capacity foundation covering Redis control-plane discovery, ControlPlaneIdResolver, runtime registration, capacity descriptors, pump readiness, cleanup, and HTTP pooled runtime identity. |
 | [`ai/mcp-server-control-plane.md`](ai/mcp-server-control-plane.md) | MCP server as a runtime control-plane adapter, including host modes, MCP tool groups, runtime role separation, local runtime instance pool behavior, shared queue dispatch flow, and Kubernetes direction. |
 | [`ai/runtime-instance-provider-model.md`](ai/runtime-instance-provider-model.md) | Provider-based runtime instance administration model for local, Redis command queue, HTTP, gRPC, and Kubernetes providers, including provider capabilities, descriptor metadata, provider routing, and future slot reservations. |
 | [`ai/shared-queue-pump-and-worker-capacity.md`](ai/shared-queue-pump-and-worker-capacity.md) | Shared queue pump, queue-first submit mode, manual drain, dispatch-time admission, pump identity separation, runtime worker capacity visibility, and `MaxLocalWorkersPerExecution`. |
@@ -59,10 +60,11 @@ Start with:
 7. [`ai/runtime-metrics.md`](ai/runtime-metrics.md)
 8. [`ai/replay-and-audit.md`](ai/replay-and-audit.md)
 9. [`ai/runtime-control-plane.md`](ai/runtime-control-plane.md)
-10. [`ai/mcp-server-control-plane.md`](ai/mcp-server-control-plane.md)
-11. [`ai/runtime-instance-provider-model.md`](ai/runtime-instance-provider-model.md)
-12. [`ai/shared-queue-pump-and-worker-capacity.md`](ai/shared-queue-pump-and-worker-capacity.md)
-13. [`runtime-internals.md`](runtime-internals.md)
+10. [`ai/runtime-discovery-registry-capacity.md`](ai/runtime-discovery-registry-capacity.md)
+11. [`ai/mcp-server-control-plane.md`](ai/mcp-server-control-plane.md)
+12. [`ai/runtime-instance-provider-model.md`](ai/runtime-instance-provider-model.md)
+13. [`ai/shared-queue-pump-and-worker-capacity.md`](ai/shared-queue-pump-and-worker-capacity.md)
+14. [`runtime-internals.md`](runtime-internals.md)
 
 This path gives both the strategic positioning and the complete technical depth.
 
@@ -80,11 +82,12 @@ Start with:
 8. [`ai/runtime-metrics.md`](ai/runtime-metrics.md)
 9. [`ai/replay-and-audit.md`](ai/replay-and-audit.md)
 10. [`ai/runtime-control-plane.md`](ai/runtime-control-plane.md)
-11. [`ai/mcp-server-control-plane.md`](ai/mcp-server-control-plane.md)
-12. [`ai/runtime-instance-provider-model.md`](ai/runtime-instance-provider-model.md)
-13. [`ai/shared-queue-pump-and-worker-capacity.md`](ai/shared-queue-pump-and-worker-capacity.md)
-14. [`runtime-internals.md`](runtime-internals.md)
-15. [`roadmap.md`](roadmap.md)
+11. [`ai/runtime-discovery-registry-capacity.md`](ai/runtime-discovery-registry-capacity.md)
+12. [`ai/mcp-server-control-plane.md`](ai/mcp-server-control-plane.md)
+13. [`ai/runtime-instance-provider-model.md`](ai/runtime-instance-provider-model.md)
+14. [`ai/shared-queue-pump-and-worker-capacity.md`](ai/shared-queue-pump-and-worker-capacity.md)
+15. [`runtime-internals.md`](runtime-internals.md)
+16. [`roadmap.md`](roadmap.md)
 
 This path gives the current architecture, configuration model, context resolution layer, extension model, technical reference, and next planned improvements.
 
@@ -228,13 +231,38 @@ This document explains:
 - execution control-plane facade
 - local runtime queue control-plane facade
 - runtime instance registry
+- runtime instance capacity store
+- control-plane discovery store
+- control-plane id resolver
 - runtime instance control-plane facade
 - run admission and slot decisioning
+- admission reservations
 - RunId versus ExecutionId separation at the control-plane level
 - queue pause/resume ledger correlation behavior
 - Kubernetes-oriented runtime instance visibility
-- future shared runtime controller direction
+- shared runtime controller foundations
 
+
+### [`ai/runtime-discovery-registry-capacity.md`](ai/runtime-discovery-registry-capacity.md)
+
+Runtime discovery, registry, and capacity foundations.
+
+This document explains:
+
+- Redis control-plane discovery store
+- MCP-published logical control-plane identity
+- ControlPlaneIdResolver
+- runtime-only host discovery resolution
+- runtime instance registration
+- runtime heartbeat
+- runtime capacity descriptor publication
+- worker and run-slot capacity visibility
+- shared queue pump readiness gate
+- provider metadata for local and HTTP dispatch
+- HTTP pooled runtime identity model
+- registry and capacity shutdown cleanup
+- TTL and self-healing direction
+- validated Redis registry, capacity, discovery, and admission reservation behavior
 
 ### [`ai/mcp-server-control-plane.md`](ai/mcp-server-control-plane.md)
 
@@ -247,7 +275,10 @@ This document explains:
 - `ControlPlaneWithLocalRuntimeInstances` mode
 - `RuntimeInstanceOnly` mode
 - runtime role separation between control-plane hosts and executable runtime instances
+- control-plane discovery publication
+- runtime-only host identity resolution
 - local runtime instance pool behavior
+- HTTP pooled runtime provider behavior
 - shared queue dispatch flow
 - MCP tool groups
 - RunId versus ExecutionId behavior in MCP tools
@@ -269,7 +300,8 @@ This document explains:
 - HTTP and gRPC provider direction
 - Kubernetes provider responsibilities
 - admission and provider separation
-- future Redis/Lua slot reservations
+- Redis admission reservation foundation
+- HTTP pooled runtime provider validation
 - descriptor metadata keys for provider routing
 
 ### [`ai/shared-queue-pump-and-worker-capacity.md`](ai/shared-queue-pump-and-worker-capacity.md)
@@ -286,6 +318,9 @@ This document explains:
 - local runtime queue preservation
 - shared queue no-double-dispatch behavior
 - local and HTTP provider dispatch foundations
+- HTTP pooled runtime dispatch validation
+- Redis admission reservation foundation
+- shared queue pump readiness gate
 - runtime worker capacity visibility
 - worker-aware `CanAcceptRun`
 - `MaxLocalWorkersPerExecution`
@@ -331,7 +366,8 @@ The project roadmap organized into phases:
 | [`ai/distributed-execution.md`](ai/distributed-execution.md) | Distributed workers, Redis coordination, claims, leases, and deterministic convergence. |
 | [`ai/execution-control-state.md`](ai/execution-control-state.md) | ExecutionId-level pause, resume, cancel, waiting-for-input, and control-state behavior. |
 | [`ai/runtime-queue-control.md`](ai/runtime-queue-control.md) | RunId-level background controller queue control, hot enqueue, and RunId versus ExecutionId separation. |
-| [`ai/runtime-control-plane.md`](ai/runtime-control-plane.md) | Runtime control-plane foundation for replay, execution control, runtime queue control, runtime instance registry/control, admission, and future shared orchestration. |
+| [`ai/runtime-control-plane.md`](ai/runtime-control-plane.md) | Runtime control-plane foundation for replay, execution control, runtime queue control, runtime instance registry/control, discovery, capacity, admission, and shared orchestration. |
+| [`ai/runtime-discovery-registry-capacity.md`](ai/runtime-discovery-registry-capacity.md) | Runtime discovery, Redis registry, Redis capacity descriptors, ControlPlaneIdResolver, pump readiness, cleanup, and HTTP pooled runtime identity. |
 | [`ai/mcp-server-control-plane.md`](ai/mcp-server-control-plane.md) | MCP server adapter over runtime control-plane foundations, including host modes, tool groups, role separation, local runtime pool behavior, and Kubernetes direction. |
 | [`ai/runtime-instance-provider-model.md`](ai/runtime-instance-provider-model.md) | Provider-based runtime instance administration and dispatch model for local, Redis command queue, HTTP, gRPC, and Kubernetes providers. |
 | [`ai/shared-queue-pump-and-worker-capacity.md`](ai/shared-queue-pump-and-worker-capacity.md) | Shared queue pump, queue-first submit mode, manual drain, dispatch-time admission, worker capacity visibility, and local worker caps per execution. |
@@ -368,10 +404,11 @@ The project roadmap organized into phases:
 
 | Document | Purpose |
 |---|---|
-| [`ai/runtime-control-plane.md`](ai/runtime-control-plane.md) | Runtime control-plane foundation, replay/execution/queue/instance facades, run admission, and shared controller preparation. |
-| [`ai/mcp-server-control-plane.md`](ai/mcp-server-control-plane.md) | MCP server as control-plane adapter, including host modes, MCP tool groups, shared queue dispatch, local runtime pool behavior, and runtime role separation. |
-| [`ai/runtime-instance-provider-model.md`](ai/runtime-instance-provider-model.md) | Runtime instance provider model for provider-based dispatch, status, control, capacity, scaling, descriptor metadata, and provider routing. |
-| [`ai/shared-queue-pump-and-worker-capacity.md`](ai/shared-queue-pump-and-worker-capacity.md) | Shared queue pump/manual drain, queue-first dispatch, dispatch-time admission, pump identity separation, runtime worker capacity visibility, and `MaxLocalWorkersPerExecution`. |
+| [`ai/runtime-control-plane.md`](ai/runtime-control-plane.md) | Runtime control-plane foundation, replay/execution/queue/instance facades, discovery, capacity, admission, and shared controller orchestration. |
+| [`ai/runtime-discovery-registry-capacity.md`](ai/runtime-discovery-registry-capacity.md) | Redis discovery, ControlPlaneIdResolver, runtime registry, capacity descriptors, readiness gate, cleanup lifecycle, and HTTP pooled identity model. |
+| [`ai/mcp-server-control-plane.md`](ai/mcp-server-control-plane.md) | MCP server as control-plane adapter, including host modes, discovery publication, MCP tool groups, shared queue dispatch, local/HTTP pooled runtime behavior, and runtime role separation. |
+| [`ai/runtime-instance-provider-model.md`](ai/runtime-instance-provider-model.md) | Runtime instance provider model for provider-based dispatch, HTTP pooled runtime hosting, status, control, capacity, scaling, descriptor metadata, and provider routing. |
+| [`ai/shared-queue-pump-and-worker-capacity.md`](ai/shared-queue-pump-and-worker-capacity.md) | Shared queue pump/manual drain, queue-first dispatch, readiness gate, dispatch-time admission, pump identity separation, runtime worker capacity visibility, and `MaxLocalWorkersPerExecution`. |
 | [`ai/runtime-queue-control.md`](ai/runtime-queue-control.md) | RunId-level local runtime queue control, hot enqueue, queue pause/resume, and queued/running cancellation behavior. |
 | [`ai/execution-control-state.md`](ai/execution-control-state.md) | ExecutionId-level durable pause, resume, cancel, waiting-for-input, and human-input control state. |
 | [`ai/execution-correlated-ledger.md`](ai/execution-correlated-ledger.md) | Execution-correlated runtime decision ledger and audit visibility used by control-plane operations. |
@@ -393,7 +430,7 @@ The project roadmap organized into phases:
 
 ## Documentation Status
 
-Many focused documents started as documentation split placeholders, but several core runtime areas are now fully documented, including execution control state, runtime queue control, runtime control-plane foundations, MCP server control-plane usage, runtime instance provider architecture direction, shared queue pump and worker capacity, distributed concurrency, retention/compaction, deterministic replay and audit foundations, execution-correlated decision ledger foundations, observability/tracing foundations, and runtime metrics foundations.
+Many focused documents started as documentation split placeholders, but several core runtime areas are now fully documented, including execution control state, runtime queue control, runtime control-plane foundations, MCP server control-plane usage, runtime instance provider architecture direction, runtime discovery/registry/capacity, shared queue pump and worker capacity, distributed concurrency, retention/compaction, deterministic replay and audit foundations, execution-correlated decision ledger foundations, observability/tracing foundations, and runtime metrics foundations.
 
 The complete technical reference remains preserved in:
 
@@ -423,4 +460,5 @@ When adding new documentation:
 8. Keep observability overview, tracing, runtime metrics, and replay/audit linked together because they describe different layers of the same runtime visibility model.
 9. Keep runtime control-plane documentation linked with runtime queue control, execution control state, instance visibility, admission, and future Kubernetes/shared-controller documentation.
 10. Keep MCP server control-plane and runtime instance provider documentation linked with runtime control-plane, shared controller, admission, local runtime queues, runtime capacity descriptors, and Kubernetes preparation.
-11. Keep shared queue pump and worker capacity documentation linked with shared controller usage, runtime queue control, MCP control-plane, runtime instance provider model, and testing strategy.
+11. Keep shared queue pump and worker capacity documentation linked with shared controller usage, runtime queue control, MCP control-plane, runtime instance provider model, runtime discovery/registry/capacity, and testing strategy.
+12. Keep runtime discovery, registry, and capacity documentation linked with runtime control-plane, MCP control-plane, runtime instance provider model, shared queue pump readiness, and testing strategy.

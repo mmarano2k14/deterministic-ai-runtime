@@ -1,4 +1,5 @@
-﻿using System.Text.Json;
+﻿using System.Collections.Concurrent;
+using System.Text.Json;
 using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.ControlPlane.Discovery;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
@@ -33,6 +34,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances
         private readonly IDatabase database;
         private readonly AiRuntimeInstanceRegistrationOptions registrationOptions;
         private readonly IAiControlPlaneIdResolver controlPlaneIdResolver;
+        private readonly ConcurrentDictionary<string, string> controlPlaneIdsByRuntimeInstanceId =
+            new(StringComparer.Ordinal);
 
         /// <summary>
         /// Initializes a new instance of the <see cref="RedisAiRuntimeInstanceRegistry"/> class.
@@ -73,6 +76,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances
                         registration.ControlPlaneId,
                         cancellationToken)
                     .ConfigureAwait(false);
+
+            controlPlaneIdsByRuntimeInstanceId[registration.RuntimeInstanceId] =
+                controlPlaneId;
 
             var now = DateTimeOffset.UtcNow;
             var effectiveRegistration =
@@ -125,8 +131,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances
             cancellationToken.ThrowIfCancellationRequested();
 
             var controlPlaneId =
-                await ResolveControlPlaneIdAsync(
-                        requestedControlPlaneId: null,
+                await ResolveControlPlaneIdForRuntimeInstanceAsync(
+                        runtimeInstanceId,
                         cancellationToken)
                     .ConfigureAwait(false);
 
@@ -201,8 +207,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances
             cancellationToken.ThrowIfCancellationRequested();
 
             var controlPlaneId =
-                await ResolveControlPlaneIdAsync(
-                        requestedControlPlaneId: null,
+                await ResolveControlPlaneIdForRuntimeInstanceAsync(
+                        runtimeInstanceId,
                         cancellationToken)
                     .ConfigureAwait(false);
 
@@ -305,8 +311,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances
             cancellationToken.ThrowIfCancellationRequested();
 
             var controlPlaneId =
-                await ResolveControlPlaneIdAsync(
-                        requestedControlPlaneId: null,
+                await ResolveControlPlaneIdForRuntimeInstanceAsync(
+                        runtimeInstanceId,
                         cancellationToken)
                     .ConfigureAwait(false);
 
@@ -345,8 +351,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances
             cancellationToken.ThrowIfCancellationRequested();
 
             var controlPlaneId =
-                await ResolveControlPlaneIdAsync(
-                        requestedControlPlaneId: null,
+                await ResolveControlPlaneIdForRuntimeInstanceAsync(
+                        runtimeInstanceId,
                         cancellationToken)
                     .ConfigureAwait(false);
 
@@ -364,6 +370,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances
                         instanceSetKey,
                         runtimeInstanceId)
                     .ConfigureAwait(false);
+
+                controlPlaneIdsByRuntimeInstanceId.TryRemove(
+                    runtimeInstanceId,
+                    out _);
 
                 return null;
             }
@@ -388,6 +398,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances
 
             await removeFromIndexTask.ConfigureAwait(false);
             await deleteEntryTask.ConfigureAwait(false);
+
+            controlPlaneIdsByRuntimeInstanceId.TryRemove(
+                runtimeInstanceId,
+                out _);
 
             return snapshot;
         }
@@ -639,6 +653,32 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances
                 .Trim()
                 .Replace(" ", "-", StringComparison.Ordinal)
                 .Replace("\\", "/", StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Resolves the logical control-plane identifier for an already known runtime instance.
+        /// </summary>
+        /// <param name="runtimeInstanceId">The runtime instance identifier.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <returns>The logical control-plane identifier.</returns>
+        private async Task<string> ResolveControlPlaneIdForRuntimeInstanceAsync(
+            string runtimeInstanceId,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            if (controlPlaneIdsByRuntimeInstanceId.TryGetValue(
+                    runtimeInstanceId,
+                    out var knownControlPlaneId) &&
+                !string.IsNullOrWhiteSpace(knownControlPlaneId))
+            {
+                return knownControlPlaneId;
+            }
+
+            return await ResolveControlPlaneIdAsync(
+                    requestedControlPlaneId: null,
+                    cancellationToken)
+                .ConfigureAwait(false);
         }
     }
 }

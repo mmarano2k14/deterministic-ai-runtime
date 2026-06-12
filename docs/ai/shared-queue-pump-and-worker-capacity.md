@@ -1,8 +1,8 @@
 # Shared Queue Pump and Worker Capacity
 
-Status: Implemented foundation / actively validated.
+Status: Implemented foundation / validated for local and HTTP pooled runtime scenarios.
 
-This document describes the shared queue pump, queue-first submit mode, dispatch-time admission, pump identity separation, runtime worker-capacity visibility, and `MaxLocalWorkersPerExecution`.
+This document describes the shared queue pump, queue-first submit mode, dispatch-time admission, pump identity separation, runtime worker-capacity visibility, `MaxLocalWorkersPerExecution`, Redis-backed coordination, and the validated HTTP pooled runtime provider model.
 
 It complements:
 
@@ -28,7 +28,10 @@ It allows the runtime control plane to:
 - preserve no-double-dispatch guarantees
 - keep local runtime queues unchanged
 - expose runtime instance capacity and worker pressure
-- support local, HTTP, and future Kubernetes-style runtime instance hosting
+- wait for runtime readiness before background dispatch
+- use Redis-backed shared queue and shared run stores
+- use Redis-backed admission reservations during heavy dispatch scenarios
+- support local, HTTP pooled, and future Kubernetes-style runtime instance hosting
 
 The core principle is:
 
@@ -47,6 +50,48 @@ It must not mutate DAG state directly.
 It only claims shared queue items and dispatches shared runs into selected runtime instance local queues.
 
 ---
+
+## Runtime Readiness and Control-Plane Discovery
+
+The shared queue pump depends on runtime visibility.
+
+A background pump should not start dispatching until at least one runtime instance is visible, ready, and able to accept work.
+
+In the current validated model, the MCP control plane can publish its logical control-plane identity through the Redis control-plane discovery store.
+
+Runtime-only hosts that require discovery resolve that identity before registering their child runtime instances or publishing capacity.
+
+```text
+MCP Control Plane
+    ↓
+Redis Control-Plane Discovery Store
+    ↓
+ControlPlaneIdResolver
+    ↓
+RuntimeInstanceOnly Host
+    ↓
+Runtime Instance Registration
+    ↓
+Runtime Capacity Publication
+    ↓
+Shared Queue Pump Readiness Gate
+```
+
+This prevents the pump from draining queued work before runtime capacity is visible.
+
+Important rules:
+
+```text
+Discovery resolves the logical control-plane id.
+Registry exposes runtime instance identity and status.
+Capacity descriptors expose dispatch readiness.
+The pump waits for ready capacity before dispatching.
+```
+
+Shutdown cleanup should reuse the already resolved control-plane identity for known runtime instances.
+
+Registry unregister and capacity descriptor removal should not depend on rediscovery during shutdown, because the discovery descriptor or Redis dependencies may already be disposed.
+
 
 ## Core Concepts
 
@@ -109,6 +154,7 @@ Shared / global queue
     - stores shared queue items
     - coordinates dispatch ownership
     - consumed by pump/manual drain
+    - backed by Redis in validated multi-runtime scenarios
 
 Local runtime queue
     - owned by one runtime instance
@@ -177,6 +223,9 @@ Use queue-first mode for:
 - background pump validation
 - queue persistence validation
 - HTTP/runtime-provider dispatch tests
+- HTTP pooled runtime dispatch tests
+- Redis shared queue validation
+- heavy dispatch validation
 - no-double-dispatch shared queue tests
 
 Configuration:
@@ -236,6 +285,24 @@ It can be called by:
 - runtime instance loop
 - integration test
 - future Kubernetes control-plane process
+
+Before the background pump starts automatic dispatch, it should pass a readiness gate.
+
+The readiness gate ensures that runtime capacity has been published and at least one target runtime instance can accept work.
+
+```text
+Background Pump Startup
+    ↓
+Resolve control-plane identity
+    ↓
+Wait for runtime registry/capacity visibility
+    ↓
+Find at least one ready runtime instance
+    ↓
+Start pump loop
+```
+
+This avoids dispatch attempts against an empty or not-yet-discovered runtime pool.
 
 Cycle shape:
 
@@ -335,6 +402,21 @@ Dispatcher
 ```
 
 This separation keeps the pump usable outside hosted service scenarios.
+
+The MCP host can use the same pump in two modes:
+
+```text
+Manual drain
+    AiMcpHost:EnableSharedQueuePump = false
+    AiSharedQueueBackgroundService:Enabled = false
+
+Background dispatch
+    AiMcpHost:EnableSharedQueuePump = true
+    AiSharedQueueBackgroundService:Enabled = true
+```
+
+When background dispatch is enabled, the hosted service must wait for runtime readiness before the first dispatch cycle.
+
 
 ---
 
@@ -495,9 +577,11 @@ Current provider-oriented foundations include:
 
 - local runtime instance provider
 - HTTP runtime provider foundation
+- pooled HTTP runtime instance hosting
 - runtime instance provider metadata
-- runtime instance registry visibility
-- runtime capacity descriptors
+- Redis runtime instance registry visibility
+- Redis runtime capacity descriptors
+- Redis admission reservation store
 
 Provider principle:
 
@@ -512,6 +596,35 @@ Providers must not execute DAG steps directly.
 Providers must not mutate DAG state.
 
 Providers must not bypass local runtime queues.
+
+### HTTP Pooled Runtime Dispatch
+
+The HTTP provider has been validated with a pooled runtime model.
+
+```text
+MCP Control Plane
+    ↓
+HTTP Runtime Provider
+    ↓
+RuntimeInstanceOnly HTTP Host
+    ↓
+Local Runtime Instance Pool
+    ↓
+runtime-http-1
+runtime-http-2
+runtime-http-3
+```
+
+The HTTP host is transport and hosting infrastructure.
+
+The dispatchable runtime identities are the child runtime instances created by the local runtime instance pool.
+
+```text
+HTTP host identity != dispatch target
+runtime-http-* child instance == dispatch target
+```
+
+Shared queue dispatch should assert the assigned child runtime instance, not the parent HTTP host identity.
 
 Correct flow:
 
@@ -547,6 +660,8 @@ AiRuntimePipelineQueueState
 AiRuntimeInstanceRegistrationHostedService
     ↓
 AiRuntimeInstanceCapacityDescriptor
+    ↓
+IAiRuntimeInstanceCapacityStore
     ↓
 IAiRuntimeInstanceRegistry
     ↓
@@ -764,7 +879,12 @@ Queue-first + manual drain + local provider
     -> completion
 
 Queue-first + manual drain + HTTP provider
-    -> dispatch
+    -> dispatch to runtime-http-* child instance
+    -> completion
+
+Queue-first + background pump + HTTP provider
+    -> readiness gate passes
+    -> dispatch to runtime-http-* child instance
     -> completion
 ```
 
@@ -804,6 +924,34 @@ AssignedRuntimeInstanceId comes from admission.
 Tests expecting pump-local dispatch explicitly inject admission target.
 ```
 
+### Heavy HTTP Queue-First Dispatch
+
+Tests should prove:
+
+```text
+Queue-first + Redis shared queue + Redis shared run store
+    -> 50 shared runs submitted
+    -> 100 steps per run
+    -> 3 pooled HTTP child runtime instances
+    -> runs distributed across runtime-http-* instances
+    -> no duplicate dispatch
+    -> Redis admission reservation store is used
+```
+
+The expected evidence is not perfect round-robin distribution.
+
+The expected evidence is that the dispatch target is selected from the pooled child runtime instances and that all submitted runs receive assigned runtime identities.
+
+### Runtime Readiness Gate
+
+Tests should prove:
+
+```text
+Background pump enabled
+    -> waits for runtime registry/capacity visibility
+    -> starts dispatch only after at least one runtime can accept work
+```
+
 ### Worker Capacity
 
 Tests should prove:
@@ -821,46 +969,56 @@ MaxLocalWorkersPerExecution caps worker participation.
 
 ## Current Limitations
 
-Implemented:
+Implemented / validated:
 
 ```text
 queue-first submit mode
 shared queue pump
 manual drain
 background pump
+background pump readiness gate
 dispatch-time admission
 pump identity / assigned runtime identity separation
 local provider foundation
 HTTP provider foundation
+HTTP pooled runtime dispatch
+Redis shared run store
+Redis shared queue
+Redis admission reservation store
+Redis runtime instance registry
+Redis runtime instance capacity store
+Redis control-plane discovery store
+control-plane id resolver
 runtime worker capacity visibility
 MaxLocalWorkersPerExecution
 worker-aware CanAcceptRun
 dispatch failure requeue
 no-double-dispatch shared queue behavior
+MCP replay/report/ledger/trace for completed shared runs
 ```
 
 Not implemented yet:
 
 ```text
-atomic admission capacity reservation
-Redis/Lua runtime slot reservation
+Redis/Lua runtime slot reservation refinement
 Redis command queue provider
 gRPC runtime provider
 Kubernetes provider
 production autoscaling
 production dashboard UI
 full provider capability negotiation
+production multi-control-plane scheduling hardening
 ```
 
 ---
 
 ## Admission Reservation Future Work
 
-Current admission uses visible capacity snapshots.
+Current admission uses visible capacity snapshots together with Redis-backed admission reservations in validated heavy dispatch scenarios.
 
-That is enough for controlled tests and basic runtime dispatch.
+That is enough for controlled tests and current HTTP pooled runtime dispatch validation.
 
-It is not enough for perfect production scheduling under multiple fast control-plane dispatchers.
+Further hardening is still needed for perfect production scheduling under multiple fast control-plane dispatchers.
 
 Problem:
 
@@ -887,7 +1045,7 @@ If reservation expires:
         capacity becomes available again
 ```
 
-This should likely be implemented with Redis Lua.
+The current Redis admission reservation store provides the validated foundation. Redis Lua can still be added later for stronger atomic slot and worker reservation semantics.
 
 Reservation should protect:
 
@@ -960,6 +1118,9 @@ Kubernetes should not replace runtime queues or DAG execution ownership.
 | Shared Runtime Controller | Creates shared runs, applies submit mode, queues globally, dispatches directly when admitted. |
 | Shared Run Store | Persists shared run records and shared run status. |
 | Shared Queue | Stores pending global queue items and protects claim ownership. |
+| Control-Plane Discovery Store | Publishes and reads the MCP logical control-plane identity used by runtime-only hosts. |
+| Runtime Instance Registry | Tracks runtime identities, roles, readiness, heartbeat, and lifecycle state. |
+| Runtime Capacity Store | Publishes worker/run capacity descriptors used by admission and pump readiness. |
 | Shared Queue Pump | Executes one or more dispatch cycles. |
 | Shared Queue Dispatcher | Claims shared queue items, re-admits runs, dispatches selected targets, updates queue/run state. |
 | Admission Controller | Selects whether to assign, queue globally, request scale-out, or reject. |
@@ -971,6 +1132,32 @@ Kubernetes should not replace runtime queues or DAG execution ownership.
 | MCP Server | Exposes shared queue, runtime instance, replay, control, and observability operations through tools. |
 
 ---
+
+## Validated Evidence
+
+The current implementation has been validated with the following evidence:
+
+```text
+HTTP pooled QueueFirst dispatch:
+    Runs = 50
+    StepsPerRun = 100
+    RuntimeInstances = runtime-http-1, runtime-http-2, runtime-http-3
+    RedisAiSharedRunStore = validated
+    RedisAiSharedQueue = validated
+    RedisAiRuntimeAdmissionReservationStore = validated
+```
+
+Validated outcomes:
+
+- all heavy HTTP dispatch tests pass
+- HTTP provider scenarios pass against pooled child runtime instances
+- background pump dispatch works after runtime readiness
+- manual drain works through MCP
+- replay/report/ledger/trace works for completed shared runs
+- runtime registry and capacity cleanup no longer block shutdown
+- discovery-based control-plane id resolution works for runtime-only hosts
+- runtime identity assertions target child runtime instances instead of parent HTTP hosts
+
 
 ## Summary
 
@@ -984,6 +1171,9 @@ It provides:
 - dispatch-time admission
 - pump identity separation
 - provider-friendly runtime dispatch
+- Redis-backed shared queue coordination
+- Redis-backed admission reservation foundation
+- control-plane discovery and runtime readiness
 - no-double-dispatch shared queue behavior
 - runtime worker capacity visibility
 - worker-aware `CanAcceptRun`

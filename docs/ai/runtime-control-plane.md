@@ -1,8 +1,8 @@
 # Runtime Control Plane
 
-Status: Documentation split in progress.
+Status: Implemented foundation / validated with shared controller, MCP, Redis stores, local runtime pools, and HTTP pooled runtime scenarios.
 
-This document describes the **Runtime Control Plane foundation** used by the Deterministic AI Runtime.
+This document describes the **Runtime Control Plane foundation** used by the Deterministic AI Runtime, including replay, execution control, runtime queues, runtime instance registry/capacity, Redis discovery, shared queue orchestration, provider-based dispatch, and MCP integration.
 
 The complete technical reference is currently preserved in:
 
@@ -32,7 +32,9 @@ They need to answer operational questions such as:
 - can a local runtime queue be paused or resumed?
 - can queued work be cancelled before execution starts?
 - can runtime instances register themselves?
+- can runtime instances resolve the active MCP/control-plane identity before registration?
 - can runtime instances publish heartbeat and capacity?
+- can runtime capacity be removed cleanly during shutdown?
 - can a run be assigned to a runtime instance?
 - should a run be globally queued?
 - should scale-out be requested?
@@ -82,7 +84,12 @@ Runtime Control Plane
     Execution Control
     Runtime Queue Control
     Runtime Instance Registry
+    Runtime Instance Capacity
+    Control-Plane Discovery
     Runtime Instance Control
+    Shared Runtime Controller
+    Shared Queue
+    Provider Dispatch
     Run Admission
             ↓
 Runtime Internals
@@ -109,6 +116,11 @@ The current control-plane foundation includes these areas:
 | Execution Control | Pause, resume, cancel, human input, and control-state visibility. |
 | Runtime Queue | Control the local runtime queue of one runtime instance. |
 | Runtime Instances | Register, heartbeat, list, drain, and unregister runtime instances. |
+| Runtime Capacity | Publish, list, and remove runtime capacity descriptors. |
+| Control-Plane Discovery | Publish and resolve the logical MCP/control-plane identity used by runtime-only hosts. |
+| Shared Runtime Controller | Create shared runs, queue globally, dispatch directly, request scale-out, and reject. |
+| Shared Queue | Store pending global work and protect dispatch claim ownership. |
+| Provider Dispatch | Deliver assigned shared runs to local or remote runtime instance queues. |
 | Admission | Decide whether a run should be assigned, queued globally, scaled out, or rejected. |
 | Observability | Record started, completed, and failed control-plane operations. |
 
@@ -271,6 +283,10 @@ The runtime now exposes immutable snapshots for local queue visibility.
 - `MaxConcurrentRuns`
 - `AvailableRunSlots`
 - `CanAcceptRun`
+- `WorkerCount`
+- `ActiveWorkerCount`
+- `AvailableWorkerCount`
+- `MaxLocalWorkersPerExecution`
 - `SnapshotAtUtc`
 
 These snapshots are intended for:
@@ -349,6 +365,100 @@ It also avoids relying on `AsyncLocal` context where no execution scope exists.
 
 ---
 
+## Control-Plane Discovery
+
+The runtime control plane now includes Redis-backed control-plane discovery.
+
+The purpose of discovery is to let runtime-only hosts resolve the active logical MCP/control-plane identity before registering runtime instances or publishing capacity.
+
+```text
+MCP Control Plane
+    ↓
+Redis Control-Plane Discovery Store
+    ↓
+ControlPlaneIdResolver
+    ↓
+RuntimeInstanceOnly Host
+    ↓
+Runtime Instance Registration
+    ↓
+Runtime Capacity Publication
+```
+
+This prevents runtime hosts from accidentally registering under a different logical control-plane id than the MCP server.
+
+Important identities:
+
+```text
+ControlPlaneId
+    logical shared Redis/control-plane scope
+
+ControlPlaneHostId
+    control-plane host or process publishing discovery
+
+RuntimeInstanceId
+    dispatchable runtime identity, often host-scoped
+
+RuntimeId
+    local runtime id inside a host or pool
+```
+
+Discovery is used during startup and registration.
+
+Shutdown cleanup should not depend on rediscovery.
+
+Once a runtime instance has registered or published capacity, cleanup should reuse the known resolved control-plane id for that runtime instance.
+
+This is important because discovery descriptors, Redis dependencies, or logging providers may already be disposed during shutdown.
+
+---
+
+## Runtime Instance Capacity Store
+
+Runtime capacity descriptors expose live scheduling and visibility information for runtime instances.
+
+The runtime capacity store supports:
+
+- publish capacity descriptor
+- get capacity descriptor
+- list capacity descriptors
+- remove capacity descriptor on shutdown
+
+Capacity descriptors include:
+
+- runtime instance id
+- role
+- provider metadata
+- worker count
+- active worker count
+- available worker count
+- max local workers per execution
+- queued run count
+- running run count
+- active run count
+- queue capacity
+- max concurrent runs
+- available run slots
+- queue paused state
+- can accept run
+- heartbeat / snapshot timestamp
+
+Redis-backed capacity storage is part of the validated runtime control-plane foundation.
+
+The capacity store is used by:
+
+- admission
+- shared queue pump readiness
+- MCP runtime instance tools
+- dashboard/API visibility
+- provider routing
+- future autoscaling decisions.
+
+During shutdown, the capacity descriptor should be removed using the known control-plane id for the runtime instance.
+
+It should not attempt to rediscover the control-plane id after discovery may have already been removed.
+
+
 ## Runtime Instance Registry
 
 The runtime instance registry tracks visible runtime instances.
@@ -365,6 +475,16 @@ The registry supports:
 - list runtime instances
 - mark draining
 - unregister / mark stopped
+
+Runtime instance ids may be host-scoped in pooled provider scenarios.
+
+Example:
+
+```text
+host-7ab6d623500844f88a6a2972d8c5a2e2:runtime-http-1
+```
+
+Registry cleanup should be idempotent and best-effort during shutdown.
 
 The registry stores visibility data such as:
 
@@ -388,15 +508,20 @@ The registry stores visibility data such as:
 - registered timestamp
 - last heartbeat timestamp
 
-The current implementation is in-memory.
+Current implementations include:
 
-This is suitable for:
+- in-memory runtime instance registry
+- Redis-backed runtime instance registry
+
+The in-memory implementation remains useful for:
 
 - local development
 - unit tests
 - single-process demos
 
-A Redis-backed implementation will be required later for real multi-instance Kubernetes coordination.
+The Redis-backed implementation is validated for shared-controller and pooled runtime scenarios.
+
+It supports real multi-instance visibility across MCP/control-plane hosts and runtime-only hosts.
 
 ---
 
@@ -422,8 +547,12 @@ The runtime instance control plane exposes registry operations through an adapte
 
 It supports:
 
+- publish control-plane discovery descriptor
+- resolve control-plane id from discovery
 - register runtime instance
 - heartbeat runtime instance
+- publish runtime capacity descriptor
+- remove runtime capacity descriptor
 - get runtime instance
 - list runtime instances
 - mark runtime instance as draining
@@ -470,6 +599,39 @@ Admission does not create Kubernetes replicas.
 Admission only produces a decision.
 
 ---
+
+## Admission Reservations
+
+The runtime control plane now includes a Redis-backed admission reservation foundation.
+
+Admission capacity is based on visible runtime capacity descriptors.
+
+In heavy dispatch scenarios, Redis-backed reservations protect selected runtime capacity during dispatch.
+
+This reduces the risk of multiple dispatchers selecting the same visible capacity before heartbeat/capacity snapshots update.
+
+Conceptual flow:
+
+```text
+Admission lists runtime capacity
+    ↓
+Select candidate runtime instance
+    ↓
+Reserve selected capacity
+    ↓
+Dispatch through provider
+    ↓
+If dispatch succeeds:
+        local queue / heartbeat reflects real usage
+    ↓
+If dispatch fails:
+        release or expire reservation
+```
+
+The current Redis admission reservation store is validated in heavy HTTP dispatch scenarios.
+
+Lua-based reservation refinement can still be added later for stronger atomic slot and worker reservation semantics in production multi-control-plane scheduling.
+
 
 ## Admission Decision Flow
 
@@ -572,8 +734,12 @@ The control-plane service registration now includes:
 - `IAiExecutionControlPlane`
 - `IAiRuntimeQueueControlPlane`
 - `IAiRuntimeInstanceRegistry`
+- `IAiRuntimeInstanceCapacityStore`
+- `IAiControlPlaneDiscoveryStore`
+- `IAiControlPlaneIdResolver`
 - `IAiRuntimeInstanceControlPlane`
 - `IAiRunAdmissionController`
+- `IAiRuntimeAdmissionReservationStore`
 - `IAiControlPlaneObserver`
 
 Options are registered for:
@@ -596,12 +762,25 @@ The implementation is validated by unit and integration tests covering:
 - execution control-plane behavior
 - runtime queue control-plane behavior
 - runtime instance registry behavior
+- Redis runtime instance registry behavior
+- runtime instance capacity store behavior
+- Redis runtime instance capacity store behavior
+- control-plane discovery store behavior
+- control-plane id resolver behavior
 - runtime instance control-plane behavior
 - run admission decisions
+- Redis admission reservation behavior
 - DI registration
 - queue pause/resume ledger correlation
 - execution-correlated queue ledger visibility
 - run-id correlated queue ledger visibility
+- shared runtime controller behavior
+- Redis shared run store behavior
+- Redis shared queue behavior
+- HTTP pooled runtime provider dispatch
+- MCP manual drain and background pump dispatch
+- replay/report/ledger/trace through MCP
+- shutdown cleanup without late rediscovery dependency
 
 ---
 
@@ -623,14 +802,19 @@ The runtime can now expose or support:
 - resume local queue
 - get local run status
 - get local queue status
+- publish control-plane discovery descriptor
+- resolve control-plane id from discovery
 - register runtime instance
 - heartbeat runtime instance
+- publish runtime capacity descriptor
+- remove runtime capacity descriptor
 - get runtime instance
 - list runtime instances
 - mark runtime instance draining
 - unregister runtime instance
 - admit run
 - assign run to runtime instance
+- reserve selected runtime capacity
 - queue globally
 - request scale-out
 - reject run
@@ -659,7 +843,10 @@ The next Kubernetes-related pieces can now be built on top:
 - Shared Runtime Controller
 - Shared Run Queue
 - Redis-backed Runtime Instance Registry
-- Redis-backed admission / claim logic
+- Redis-backed Runtime Instance Capacity Store
+- Redis-backed Control-Plane Discovery Store
+- Control-Plane Id Resolver
+- Redis-backed admission reservation logic
 - Scale-out requested events
 - Kubernetes deployment scaler adapter
 - MCP/API control-plane endpoints
@@ -687,14 +874,13 @@ The next Kubernetes-related pieces can now be built on top:
 
 The current foundation does not yet provide:
 
-- Redis-backed runtime instance registry
 - Kubernetes pod scaling adapter
 - actual Kubernetes scale-out execution
-- cross-pod run dispatch
+- Redis command queue dispatch
+- gRPC runtime dispatch
 - distributed shared controller election
-- MCP endpoint implementation
-- HTTP API controller implementation
-- dashboard UI
+- production dashboard UI
+- production security model for external adapters
 
 These are intentionally left for the next phases.
 
@@ -702,31 +888,31 @@ These are intentionally left for the next phases.
 
 ## Next Step
 
-The next step is the Shared Runtime Controller skeleton.
+The Shared Runtime Controller skeleton is now implemented.
 
-Expected V1 behavior:
+The next step is to continue hardening provider-based runtime instance administration and production multi-process coordination.
+
+Expected next work:
 
 ```text
-SharedRuntimeController
-    receives a run request
-    asks IAiRunAdmissionController
-    if AssignToInstance -> dispatch later to selected runtime queue
-    if QueueGlobally -> store pending run later
-    if RequestScaleOut -> emit scale-out request later
-    if Reject -> reject run
+Provider router hardening
+Status provider capability
+Control provider capability
+Redis command queue provider
+gRPC runtime provider
+Kubernetes metadata provider
+Kubernetes scaling provider
+Production multi-control-plane reservation hardening
+Dashboard/API/MCP operational polish
 ```
 
-V1 can remain in-memory and adapter-neutral.
+Future work should preserve the same control-plane boundaries:
 
-Future V2 should add:
-
-- Redis-backed shared queue
-- atomic Lua admission
-- multi-instance safe pending run claim
-- runtime instance heartbeat TTL
-- scale-out decision events
-- Kubernetes scaler adapter
-- dashboard / MCP / API integration
+- external adapters call control-plane facades
+- shared queue coordinates global work
+- providers deliver work to runtime instances
+- local runtime queues own `RunId`
+- DAG engine owns durable `ExecutionId`.
 
 ---
 
@@ -841,6 +1027,58 @@ The Redis implementation prevents double dispatch by ensuring only one dispatche
 
 ---
 
+## Runtime Provider Dispatch
+
+The runtime control plane now supports provider-oriented dispatch.
+
+Admission decides which runtime instance should receive a run.
+
+The provider layer decides how to contact that runtime instance.
+
+```text
+Admission
+    ↓
+AssignedRuntimeInstanceId
+    ↓
+Capacity descriptor / provider metadata
+    ↓
+Runtime provider
+    ↓
+Target runtime local queue
+```
+
+Validated provider paths include:
+
+- local runtime provider foundation
+- HTTP runtime provider foundation
+- pooled HTTP runtime hosting
+
+The validated HTTP pooled model is:
+
+```text
+MCP Control Plane
+    ↓
+HTTP Runtime Provider
+    ↓
+RuntimeInstanceOnly HTTP Host
+    ↓
+Local Runtime Instance Pool
+    ↓
+runtime-http-1
+runtime-http-2
+runtime-http-3
+```
+
+The HTTP host identity is transport and hosting infrastructure.
+
+The dispatchable runtime identities are the child runtime instances created by the runtime instance pool.
+
+```text
+HTTP host identity != dispatch target
+runtime-http-* child instance == dispatch target
+```
+
+
 ## Shared Runtime Controller Flow
 
 ```text
@@ -880,13 +1118,13 @@ The dispatch abstraction is:
 
 - `IAiSharedRunDispatcher`
 
-Current implementation:
-
-- `LocalAiSharedRunDispatcher`
+Current implementation direction includes provider-capable dispatch for local and HTTP runtime scenarios.
 
 The local dispatcher bridges the shared controller to the local runtime queue through:
 
 - `IAiRuntimeQueueControlPlane`
+
+The HTTP provider dispatches through a runtime HTTP command endpoint and ultimately enqueues into a selected child runtime local queue.
 
 The assigned run dispatch flow is:
 
@@ -924,6 +1162,8 @@ The queue dispatch flow is:
 IAiSharedQueueDispatcher
   -> IAiSharedQueue.ClaimNextAsync(...)
   -> IAiSharedRunStore.GetAsync(...)
+  -> Dispatch-time admission
+  -> Reserve selected capacity when required
   -> IAiSharedRunDispatcher.DispatchAsync(...)
   -> IAiSharedQueue.MarkDispatchedAsync(...)
   -> IAiSharedRunStore.MarkDispatchedAsync(...)
@@ -999,6 +1239,7 @@ It handles:
 - start / stop lifecycle
 - runtime instance id resolution
 - worker id resolution
+- runtime readiness gate before dispatch
 - pump cycle execution
 - idle delay
 - active delay
@@ -1016,7 +1257,16 @@ IAiSharedQueuePump
   -> IAiSharedQueueDispatcher.DispatchNextAsync(...)
 ```
 
-This allows runtime instances to automatically consume globally queued work.
+This allows runtime instances or MCP/control-plane hosts to automatically consume globally queued work.
+
+The background service should wait for visible runtime capacity before dispatching.
+
+```text
+Background service startup
+  -> resolve control-plane identity
+  -> wait for registry/capacity visibility
+  -> start pump cycles
+```
 
 ---
 
@@ -1094,6 +1344,10 @@ The control-plane service registration now also includes:
 - `IAiSharedQueuePump`
 - `IAiRuntimeScaleOutRequestPublisher`
 - `IAiSharedRuntimeController`
+- `IAiRuntimeInstanceCapacityStore`
+- `IAiControlPlaneDiscoveryStore`
+- `IAiControlPlaneIdResolver`
+- `IAiRuntimeAdmissionReservationStore`
 
 Default implementations:
 
@@ -1104,6 +1358,14 @@ Default implementations:
 - `AiSharedQueuePump`
 - `NoopAiRuntimeScaleOutRequestPublisher`
 - `AiSharedRuntimeController`
+
+Redis-backed validated implementations include:
+
+- `RedisAiSharedRunStore`
+- `RedisAiSharedQueue`
+- `RedisAiRuntimeInstanceRegistry`
+- `RedisAiRuntimeInstanceCapacityStore`
+- `RedisAiRuntimeAdmissionReservationStore`
 
 The hosted background service is opt-in through:
 
@@ -1133,6 +1395,12 @@ The implementation is now validated by unit and integration tests covering:
 - shared queue background service lifecycle
 - scale-out request publisher behavior
 - DI registrations
+- Redis runtime instance registry cleanup
+- Redis runtime capacity cleanup
+- control-plane discovery resolution
+- HTTP pooled runtime dispatch
+- heavy HTTP dispatch across pooled child runtime instances
+- MCP replay/report/ledger/trace scenarios
 
 ---
 
@@ -1155,11 +1423,11 @@ This work extends Kubernetes preparation by introducing:
 
 The next Kubernetes-related pieces can now be built on top:
 
-- Redis-backed runtime instance registry
 - runtime instance heartbeat TTL / expiration
 - runtime instance health visibility
 - remote runtime dispatcher
-- HTTP or gRPC runtime dispatch adapter
+- HTTP runtime dispatch adapter hardening
+- gRPC runtime dispatch adapter
 - Redis scale-out request publisher
 - Kubernetes scale-out adapter
 - Kubernetes pod / deployment scaler
@@ -1173,13 +1441,13 @@ The next Kubernetes-related pieces can now be built on top:
 The current foundation still does not yet provide:
 
 - Kubernetes pod creation
-- remote runtime instance dispatch
-- Redis-backed runtime instance registry
-- automatic scaling
+- Redis command queue runtime dispatch
+- gRPC runtime dispatch
+- automatic Kubernetes scaling
 - dashboard UI
-- MCP endpoint implementation
 - HTTP API controller implementation
 - distributed shared controller election
+- production multi-control-plane leader election
 
 These remain intentionally left for the next phases.
 
@@ -1189,30 +1457,66 @@ These remain intentionally left for the next phases.
 
 The Shared Runtime Controller V1 is now complete.
 
-The next step is the distributed runtime instance layer.
+The distributed runtime instance layer now has a validated foundation.
 
 Expected next work:
 
-- Redis-backed runtime instance registry
-- heartbeat TTL / expiration
-- runtime instance health visibility
-- remote runtime dispatcher
-- HTTP or gRPC dispatch adapter
-- scale-out event publisher
+- heartbeat TTL / expiration hardening
+- runtime instance health self-healing
+- Redis command queue provider
+- gRPC dispatch adapter
+- provider status/control capabilities
+- scale-out event publisher hardening
 - Kubernetes scaler adapter
-
-After that:
-
-- MCP server commands
 - control-plane API endpoints
 - Kibana / Grafana / OpenSearch observability export
 - Kubernetes production demo
+
+
+## Current Validated Evidence
+
+The current runtime control-plane foundation has been validated with:
+
+```text
+HTTP pooled QueueFirst dispatch:
+    Runs = 50
+    StepsPerRun = 100
+    RuntimeInstances = runtime-http-1, runtime-http-2, runtime-http-3
+    RedisAiSharedRunStore = validated
+    RedisAiSharedQueue = validated
+    RedisAiRuntimeAdmissionReservationStore = validated
+```
+
+Replay/control-plane evidence:
+
+```text
+Replay = Success
+Replay report = Success
+Ledger = Success
+Trace = Available
+ReplayValid = True
+FingerprintMatches = True
+IssueCount = 0
+```
+
+Runtime lifecycle evidence:
+
+```text
+Redis runtime registry = validated
+Redis runtime capacity store = validated
+Control-plane discovery = validated
+Runtime-only host identity resolution = validated
+Shutdown cleanup without late rediscovery dependency = validated
+```
 
 
 ## Related Documents
 
 - [Architecture Overview](architecture-overview.md)
 - [Runtime Queue Control](runtime-queue-control.md)
+- [Runtime Instance Provider Model](runtime-instance-provider-model.md)
+- [Shared Queue Pump and Worker Capacity](shared-queue-pump-and-worker-capacity.md)
+- [MCP Server as Runtime Control Plane](mcp-server-control-plane.md)
 - [Execution Control State](execution-control-state.md)
 - [Distributed Execution](distributed-execution.md)
 - [Replay and Audit](replay-and-audit.md)

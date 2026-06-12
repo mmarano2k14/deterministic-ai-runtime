@@ -1,10 +1,10 @@
 # Runtime Instance Provider Model
 
-Status: Architecture direction, partially implemented.
+Status: Architecture direction, implemented foundation validated for local and HTTP pooled runtime scenarios.
 
 This document describes the **runtime instance provider model** for the Deterministic AI Runtime control plane.
 
-The first provider-based hosting layer is now partially implemented through local and HTTP runtime instance providers, runtime instance visibility, shared queue dispatch, and MCP control-plane integration.
+The first provider-based hosting layer is now implemented and validated through local and HTTP runtime instance providers, runtime instance visibility, shared queue dispatch, Redis-backed runtime coordination, and MCP control-plane integration.
 
 The goal is to make runtime instance administration and dispatch provider-based, dynamically loadable, and extensible without changing the local runtime queue architecture.
 
@@ -23,21 +23,27 @@ The runtime now has:
 - runtime instance registration
 - runtime roles
 - Redis-backed runtime registry
+- Redis-backed runtime capacity store
+- Redis-backed control-plane discovery store
+- control-plane id resolver
 - runtime capacity descriptors
 - runtime worker capacity visibility
 - local runtime instance pool
 - local runtime instance provider
 - HTTP runtime instance provider foundation
+- pooled HTTP runtime instance hosting
 - shared queue
 - shared runtime controller
 - queue-first submit mode
 - shared queue pump and manual drain
+- shared queue pump readiness gate
 - dispatch-time admission
+- Redis-backed admission reservation store
 - MCP control-plane adapter
 
 The next step is to continue making the path between shared queue/admission and runtime instance transport generic.
 
-Today, dispatch can already flow through provider-style runtime instance resolution for local and HTTP-oriented test scenarios.
+Today, dispatch already flows through provider-style runtime instance resolution for local and HTTP pooled runtime scenarios.
 
 Tomorrow, runtime instances may live behind:
 
@@ -66,6 +72,59 @@ AssignedRuntimeInstanceId
 These two identities are intentionally separate.
 
 ---
+
+## Control-Plane Discovery and Runtime Identity
+
+The provider model relies on a shared logical control-plane identity.
+
+The MCP server can publish the active control-plane discovery descriptor through the Redis control-plane discovery store.
+
+Runtime-only hosts that require discovery can then resolve the MCP-published logical control-plane identity through the control-plane id resolver before registering runtime instances or publishing capacity.
+
+```text
+MCP Control Plane
+    ↓
+Redis Control-Plane Discovery Store
+    ↓
+ControlPlaneIdResolver
+    ↓
+RuntimeInstanceOnly Host
+    ↓
+Runtime Instance Registration
+    ↓
+Runtime Capacity Publication
+```
+
+The important identities are:
+
+```text
+ControlPlaneId
+    logical shared control-plane scope used by Redis stores
+
+ControlPlaneHostId
+    physical/logical host publishing or owning the control-plane descriptor
+
+RuntimeInstanceId
+    dispatchable runtime instance identity, often host-scoped
+
+RuntimeId
+    local runtime id inside a host or pool
+```
+
+Runtime hosts must not guess the control-plane id when discovery is required.
+
+They should resolve it from the discovery store and reuse the resolved identity consistently for:
+
+- runtime registry entries
+- runtime capacity descriptors
+- heartbeat updates
+- provider routing metadata
+- cleanup paths.
+
+Cleanup must not depend on rediscovery after the runtime instance has already been registered or published.
+
+During shutdown, registry unregister and capacity descriptor removal should reuse the known control-plane id for the runtime instance.
+
 
 ## Core Principle
 
@@ -580,6 +639,40 @@ DispatchRunAsync
 Local runtime queue
 ```
 
+Current HTTP pooled provider flow:
+
+```text
+MCP Control Plane
+    ↓
+Shared Queue Pump / Manual Drain
+    ↓
+Admission returns AssignedRuntimeInstanceId
+    ↓
+Load capacity descriptor
+    ↓
+provider.name = http
+provider.endpoint = RuntimeInstanceOnly HTTP host endpoint
+    ↓
+HTTP Runtime Provider
+    ↓
+RuntimeInstanceOnly HTTP Host
+    ↓
+Local Runtime Instance Pool
+    ↓
+runtime-http-* child runtime instance
+    ↓
+Target runtime local queue
+```
+
+In this model, the parent HTTP host is transport and hosting infrastructure.
+
+The dispatchable runtime identities are the child runtime instances created by the local runtime instance pool.
+
+```text
+HTTP host identity != dispatch target
+runtime-http-* child instance == dispatch target
+```
+
 Future Redis command queue flow:
 
 ```text
@@ -678,7 +771,7 @@ This keeps cross-pod communication simple and resilient.
 
 The HTTP provider can dispatch or control runtime instances through HTTP endpoints.
 
-The current provider-based runtime hosting work includes an HTTP runtime provider foundation for runtime-instance-only and control-plane-with-HTTP-runtime-instances scenarios.
+The current provider-based runtime hosting work includes an HTTP runtime provider foundation validated for `RuntimeInstanceOnly` and `ControlPlaneWithHttpRuntimeInstances` scenarios.
 
 Example metadata:
 
@@ -694,6 +787,28 @@ HTTP provider responsibilities may include:
 - pause/resume queue
 - cancel run
 - get queue state
+
+HTTP pooled runtime hosting currently validates this shape:
+
+```text
+ControlPlaneWithHttpRuntimeInstances
+    ↓
+HTTP Runtime Provider
+    ↓
+RuntimeInstanceOnly HTTP Host
+    ↓
+Local Runtime Instance Pool
+    ↓
+runtime-http-1
+runtime-http-2
+runtime-http-3
+```
+
+The HTTP runtime host exposes transport endpoints.
+
+The child runtime instances created by the pool expose the real execution capacity and are used as dispatch targets.
+
+
 
 This provider is useful when runtime pods expose an HTTP control endpoint.
 
@@ -845,13 +960,15 @@ Recommended ordering:
 
 Capacity descriptors are snapshots.
 
-The current implementation exposes the required capacity visibility, but admission capacity is not yet atomically reserved.
+The current implementation exposes the required capacity visibility and includes a Redis-backed admission reservation store used by heavy dispatch scenarios.
 
-In multi-control-plane setups, snapshots are not enough.
+In multi-control-plane setups, snapshots alone are not enough.
 
 Two control-plane processes may read the same available slot at the same time.
 
-Future admission should use Redis/Lua slot reservations.
+Admission should use Redis-backed reservations to protect selected capacity during dispatch.
+
+Lua-based reservation refinement may still be added later for stronger atomic coordination across more advanced scheduling paths.
 
 Expected reservation flow:
 
@@ -1029,7 +1146,7 @@ This is not fully implemented yet but should be considered in provider design.
 
 The implementation has moved beyond pure design.
 
-Current completed or partially completed pieces:
+Current completed or validated pieces:
 
 ```text
 1. Runtime instance registration
@@ -1038,12 +1155,21 @@ Current completed or partially completed pieces:
 4. Runtime worker capacity visibility
 5. In-memory runtime instance registry
 6. Redis runtime instance registry
-7. Local runtime instance provider foundation
-8. HTTP runtime instance provider foundation
-9. Shared queue pump
-10. Queue-first submit mode
-11. Dispatch-time admission
-12. MCP control-plane integration
+7. Redis runtime instance capacity store
+8. Redis control-plane discovery store
+9. Control-plane id resolver
+10. Local runtime instance provider foundation
+11. HTTP runtime instance provider foundation
+12. Pooled HTTP runtime instance hosting
+13. Shared queue pump
+14. Shared queue pump readiness gate
+15. Queue-first submit mode
+16. Dispatch-time admission
+17. Redis admission reservation store
+18. MCP control-plane integration
+19. Manual shared queue drain through MCP
+20. Background pump dispatch through MCP
+21. Replay/report/ledger/trace through MCP
 ```
 
 The implementation must continue to preserve existing behavior.
@@ -1058,17 +1184,17 @@ Shared controller behavior should remain stable and delegate transport-specific 
 
 ## Future Implementation Targets
 
-After the local provider is stable:
+After the local and HTTP pooled providers are stable:
 
 ```text
-1. Add status provider capability.
-2. Add control provider capability.
+1. Complete status provider capability.
+2. Complete control provider capability.
 3. Add Redis command queue provider.
 4. Add command consumer in runtime-only host.
 5. Add Kubernetes metadata provider.
 6. Add Kubernetes scaling provider.
-7. Add Redis/Lua slot reservation store.
-8. Update admission to use capacity descriptors as primary source of truth.
+7. Refine Redis/Lua slot reservation paths where stronger atomic coordination is required.
+8. Continue hardening admission to use capacity descriptors and reservations as primary scheduling inputs.
 ```
 
 ---
@@ -1084,11 +1210,40 @@ Current limitations include:
 - gRPC provider is not implemented yet
 - Kubernetes provider is not implemented yet
 - capability negotiation is not complete yet
-- Redis/Lua slot reservation is not implemented yet
-- admission uses visible capacity but does not yet atomically reserve selected capacity
+- Lua-based slot reservation refinement is not implemented yet
+- admission uses Redis-backed reservation support in validated scenarios but still needs further production hardening for multi-control-plane scheduling
 - admission still needs to become fully descriptor/capacity-first for production multi-control-plane scheduling
 
 ---
+
+## Validated Test Evidence
+
+The provider model has been validated through MCP integration scenarios and heavy HTTP dispatch scenarios.
+
+Validated behavior includes:
+
+- HTTP provider dispatch through pooled `RuntimeInstanceOnly` runtime hosts.
+- Assignment to `runtime-http-*` child runtime instances.
+- Manual shared queue draining through MCP.
+- Background shared queue pump dispatch through MCP.
+- Queue-first submission.
+- Runtime run status visibility after dispatch.
+- Execution id visibility once execution starts.
+- Normal HTTP-provider run completion.
+- Larger HTTP-provider pipeline completion.
+- Long-running HTTP-provider pause, resume, and cancellation routing.
+- Runtime queue cancellation against the assigned child runtime instance.
+- Heavy HTTP dispatch with:
+  - 50 shared runs
+  - 100 steps per run
+  - 3 pooled HTTP runtime instances
+  - Redis shared run store
+  - Redis shared queue
+  - Redis admission reservation store.
+- Replay, report, ledger, and trace retrieval through MCP for completed shared runs.
+- Runtime registry and capacity cleanup during shutdown.
+- Discovery-based control-plane id resolution for runtime-only hosts.
+
 
 ## Related Documents
 

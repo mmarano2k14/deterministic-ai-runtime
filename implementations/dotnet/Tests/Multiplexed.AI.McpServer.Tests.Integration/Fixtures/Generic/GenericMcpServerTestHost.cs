@@ -8,12 +8,48 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic
 {
     /// <summary>
     /// Provides a generic MCP server host for startup-bound integration tests.
-    /// All configuration is supplied explicitly by the test through
-    /// <see cref="IWebHostBuilder.UseSetting(string, string?)"/>.
     /// </summary>
+    /// <remarks>
+    /// PURPOSE:
+    /// - Starts an MCP host in control-plane mode for integration tests.
+    /// - Applies all test-provided configuration before application startup.
+    /// - Injects one or more runtime HTTP clients into the control-plane host when the
+    ///   scenario uses HTTP runtime instances.
+    ///
+    /// IMPORTANT:
+    /// - This host does not generate configuration values itself.
+    /// - The caller must provide a logical control-plane identifier.
+    /// - The same logical control-plane identifier must be used by all runtime-instance
+    ///   hosts participating in the same scenario.
+    /// - Local runtime-instance scenarios do not need runtime HTTP clients.
+    /// - HTTP runtime-instance clients are optional at MCP startup time. This allows
+    ///   tests to start the MCP control-plane host first, then start runtime hosts later
+    ///   and populate the shared mutable client dictionary.
+    /// </remarks>
     public sealed class GenericMcpServerTestHost
         : WebApplicationFactory<Program>
     {
+        private const string ControlPlaneIdSettingKey =
+            "AiEngine:ControlPlane:ControlPlaneId";
+
+        private const string RegistrationControlPlaneIdSettingKey =
+            "AiRuntimeInstanceRegistration:ControlPlaneId";
+
+        private const string RuntimeInstanceIdSettingKey =
+            "AiRuntimeInstanceRegistration:RuntimeInstanceId";
+
+        private const string EngineRuntimeInstanceIdSettingKey =
+            "AiEngine:RuntimeInstanceId";
+
+        private const string HostModeSettingKey =
+            "AiMcpHost:Mode";
+
+        private const string HttpControlPlaneMode =
+            "ControlPlaneWithHttpRuntimeInstances";
+
+        private const string LocalControlPlaneMode =
+            "ControlPlaneWithLocalRuntimeInstances";
+
         private readonly IReadOnlyDictionary<string, string?> settings;
         private readonly HttpClient? runtimeClient;
         private readonly IReadOnlyDictionary<string, HttpClient> runtimeClientsByRuntimeInstanceId;
@@ -23,6 +59,12 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic
         /// </summary>
         /// <param name="settings">The test host settings.</param>
         /// <param name="runtimeClient">The optional runtime HTTP client used by single-runtime HTTP provider tests.</param>
+        /// <exception cref="ArgumentNullException">
+        /// Thrown when <paramref name="settings"/> is null.
+        /// </exception>
+        /// <exception cref="ArgumentException">
+        /// Thrown when required MCP control-plane settings are missing or inconsistent.
+        /// </exception>
         public GenericMcpServerTestHost(
             IReadOnlyDictionary<string, string?> settings,
             HttpClient? runtimeClient = null)
@@ -30,6 +72,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic
             this.settings =
                 settings
                 ?? throw new ArgumentNullException(nameof(settings));
+
+            ValidateSettings(
+                this.settings);
 
             this.runtimeClient =
                 runtimeClient;
@@ -51,11 +96,18 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic
         /// This overload is useful when a test only needs multiple clients available but
         /// does not require deterministic routing by runtime instance id.
         ///
-        /// For provider dispatch tests that must route to a specific runtime instance,
-        /// prefer the overload that receives a dictionary keyed by runtime instance id.
+        /// The list may be empty when the MCP control-plane host must start before runtime
+        /// hosts. In that case the injected HTTP client factory will throw only if a runtime
+        /// client is requested before one has been registered.
         /// </remarks>
         /// <param name="settings">The test host settings.</param>
         /// <param name="runtimeClients">The runtime HTTP clients.</param>
+        /// <exception cref="ArgumentNullException">
+        /// Thrown when <paramref name="settings"/> or <paramref name="runtimeClients"/> is null.
+        /// </exception>
+        /// <exception cref="ArgumentException">
+        /// Thrown when required MCP settings are missing.
+        /// </exception>
         public GenericMcpServerTestHost(
             IReadOnlyDictionary<string, string?> settings,
             IReadOnlyList<HttpClient> runtimeClients)
@@ -64,19 +116,17 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic
                 settings
                 ?? throw new ArgumentNullException(nameof(settings));
 
+            ValidateSettings(
+                this.settings);
+
             ArgumentNullException.ThrowIfNull(runtimeClients);
 
-            if (runtimeClients.Count == 0)
-            {
-                throw new ArgumentException(
-                    "At least one runtime HTTP client is required.",
-                    nameof(runtimeClients));
-            }
-
             runtimeClient =
-                runtimeClients[0];
+                runtimeClients.Count == 0
+                    ? null
+                    : runtimeClients[0];
 
-            runtimeClientsByRuntimeInstanceId =
+            var clients =
                 runtimeClients
                     .Select(
                         (client, index) => new
@@ -88,6 +138,15 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic
                         item => item.RuntimeInstanceId,
                         item => item.Client,
                         StringComparer.Ordinal);
+
+            if (runtimeClient is not null)
+            {
+                clients["default"] =
+                    runtimeClient;
+            }
+
+            runtimeClientsByRuntimeInstanceId =
+                clients;
         }
 
         /// <summary>
@@ -98,9 +157,20 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic
         /// This overload is the preferred mode for HTTP multi-runtime provider tests.
         /// It allows the injected <see cref="IHttpClientFactory"/> to return the correct
         /// runtime host client based on the requested client name.
+        ///
+        /// The dictionary may be empty at MCP startup time when tests intentionally start
+        /// the MCP control-plane before runtime hosts. The dictionary is kept by reference,
+        /// so callers may populate it after runtime hosts are created.
         /// </remarks>
         /// <param name="settings">The test host settings.</param>
         /// <param name="runtimeClientsByRuntimeInstanceId">The runtime HTTP clients keyed by runtime instance id.</param>
+        /// <exception cref="ArgumentNullException">
+        /// Thrown when <paramref name="settings"/> or
+        /// <paramref name="runtimeClientsByRuntimeInstanceId"/> is null.
+        /// </exception>
+        /// <exception cref="ArgumentException">
+        /// Thrown when required MCP settings are missing or when a runtime client key is empty.
+        /// </exception>
         public GenericMcpServerTestHost(
             IReadOnlyDictionary<string, string?> settings,
             IReadOnlyDictionary<string, HttpClient> runtimeClientsByRuntimeInstanceId)
@@ -109,19 +179,27 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic
                 settings
                 ?? throw new ArgumentNullException(nameof(settings));
 
+            ValidateSettings(
+                this.settings);
+
             this.runtimeClientsByRuntimeInstanceId =
                 runtimeClientsByRuntimeInstanceId
                 ?? throw new ArgumentNullException(nameof(runtimeClientsByRuntimeInstanceId));
 
-            if (runtimeClientsByRuntimeInstanceId.Count == 0)
+            foreach (var pair in runtimeClientsByRuntimeInstanceId)
             {
-                throw new ArgumentException(
-                    "At least one runtime HTTP client is required.",
-                    nameof(runtimeClientsByRuntimeInstanceId));
+                if (string.IsNullOrWhiteSpace(pair.Key))
+                {
+                    throw new ArgumentException(
+                        "Runtime HTTP client dictionary keys must be non-empty runtime instance identifiers.",
+                        nameof(runtimeClientsByRuntimeInstanceId));
+                }
+
+                ArgumentNullException.ThrowIfNull(pair.Value);
             }
 
             runtimeClient =
-                runtimeClientsByRuntimeInstanceId.Values.First();
+                runtimeClientsByRuntimeInstanceId.Values.FirstOrDefault();
         }
 
         /// <summary>
@@ -142,11 +220,6 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic
 
             builder.ConfigureServices(services =>
             {
-                if (runtimeClientsByRuntimeInstanceId.Count == 0)
-                {
-                    return;
-                }
-
                 if (runtimeClientsByRuntimeInstanceId.Count == 1 &&
                     runtimeClient is not null)
                 {
@@ -163,6 +236,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic
                     return;
                 }
 
+                services.AddSingleton(
+                    runtimeClientsByRuntimeInstanceId);
+
                 services.AddSingleton<IReadOnlyDictionary<string, HttpClient>>(
                     runtimeClientsByRuntimeInstanceId);
 
@@ -171,8 +247,132 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic
                         runtimeClientsByRuntimeInstanceId));
 
                 Console.WriteLine(
-                    $"[TEST MCP HOST] Multi-runtime HTTP clients injected into control-plane host. RuntimeInstances='{string.Join(", ", runtimeClientsByRuntimeInstanceId.Keys)}'.");
+                    $"[TEST MCP HOST] Runtime HTTP client factory injected into control-plane host. RuntimeClientCount='{runtimeClientsByRuntimeInstanceId.Count}', RuntimeInstances='{string.Join(", ", runtimeClientsByRuntimeInstanceId.Keys)}'.");
             });
+        }
+
+        /// <summary>
+        /// Validates required MCP control-plane settings before the test host starts.
+        /// </summary>
+        /// <param name="settings">The MCP host settings.</param>
+        /// <exception cref="ArgumentException">
+        /// Thrown when required settings are missing or inconsistent.
+        /// </exception>
+        private static void ValidateSettings(
+            IReadOnlyDictionary<string, string?> settings)
+        {
+            var mode =
+                GetRequiredSetting(
+                    settings,
+                    HostModeSettingKey);
+
+            if (!IsSupportedControlPlaneMode(mode))
+            {
+                throw new ArgumentException(
+                    $"Generic MCP server test host requires '{HostModeSettingKey}' to be either " +
+                    $"'{HttpControlPlaneMode}' or '{LocalControlPlaneMode}', but found '{mode}'.",
+                    nameof(settings));
+            }
+
+            var controlPlaneId =
+                GetRequiredSetting(
+                    settings,
+                    ControlPlaneIdSettingKey);
+
+            var registrationControlPlaneId =
+                GetRequiredSetting(
+                    settings,
+                    RegistrationControlPlaneIdSettingKey);
+
+            if (!string.Equals(
+                    NormalizeKeySegment(controlPlaneId),
+                    NormalizeKeySegment(registrationControlPlaneId),
+                    StringComparison.Ordinal))
+            {
+                throw new ArgumentException(
+                    $"Control-plane id mismatch. Setting '{ControlPlaneIdSettingKey}' is '{controlPlaneId}', " +
+                    $"but '{RegistrationControlPlaneIdSettingKey}' is '{registrationControlPlaneId}'.",
+                    nameof(settings));
+            }
+
+            var registrationRuntimeInstanceId =
+                GetRequiredSetting(
+                    settings,
+                    RuntimeInstanceIdSettingKey);
+
+            var engineRuntimeInstanceId =
+                GetRequiredSetting(
+                    settings,
+                    EngineRuntimeInstanceIdSettingKey);
+
+            if (!string.Equals(
+                    NormalizeKeySegment(registrationRuntimeInstanceId),
+                    NormalizeKeySegment(engineRuntimeInstanceId),
+                    StringComparison.Ordinal))
+            {
+                throw new ArgumentException(
+                    $"Runtime instance id mismatch. Setting '{RuntimeInstanceIdSettingKey}' is '{registrationRuntimeInstanceId}', " +
+                    $"but '{EngineRuntimeInstanceIdSettingKey}' is '{engineRuntimeInstanceId}'.",
+                    nameof(settings));
+            }
+        }
+
+        /// <summary>
+        /// Determines whether the configured MCP host mode is a supported control-plane mode.
+        /// </summary>
+        /// <param name="mode">The configured MCP host mode.</param>
+        /// <returns><c>true</c> when the mode is supported; otherwise, <c>false</c>.</returns>
+        private static bool IsSupportedControlPlaneMode(
+            string mode)
+        {
+            return string.Equals(
+                    mode,
+                    HttpControlPlaneMode,
+                    StringComparison.Ordinal)
+                || string.Equals(
+                    mode,
+                    LocalControlPlaneMode,
+                    StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Gets a required setting value from a settings dictionary.
+        /// </summary>
+        /// <param name="settings">The settings dictionary.</param>
+        /// <param name="key">The required setting key.</param>
+        /// <returns>The required setting value.</returns>
+        /// <exception cref="ArgumentException">
+        /// Thrown when the setting is missing or empty.
+        /// </exception>
+        private static string GetRequiredSetting(
+            IReadOnlyDictionary<string, string?> settings,
+            string key)
+        {
+            if (!settings.TryGetValue(key, out var value) ||
+                string.IsNullOrWhiteSpace(value))
+            {
+                throw new ArgumentException(
+                    $"Required MCP control-plane host setting '{key}' is missing.",
+                    nameof(settings));
+            }
+
+            return value;
+        }
+
+        /// <summary>
+        /// Normalizes a value for stable test-host comparisons.
+        /// </summary>
+        /// <param name="value">The value to normalize.</param>
+        /// <returns>The normalized value.</returns>
+        private static string NormalizeKeySegment(
+            string value)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(value);
+
+            return value
+                .Trim()
+                .Replace(" ", "-", StringComparison.Ordinal)
+                .Replace("\\", "/", StringComparison.Ordinal);
         }
 
         /// <summary>
@@ -182,20 +382,15 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic
         /// The HTTP runtime provider should request a client by runtime instance id when
         /// dispatching to a selected runtime instance.
         ///
-        /// If the provider requests an unnamed client and only one runtime client exists,
-        /// the default client is returned. If multiple clients exist and the requested
-        /// name is empty, the first registered client is returned for backward compatibility,
-        /// but true multi-runtime routing requires a runtime-instance-specific client name.
+        /// The factory intentionally supports an initially empty dictionary so the MCP
+        /// control-plane host can start before runtime hosts. The dictionary is read at
+        /// request time, not captured as a fixed fallback at construction time.
         /// </remarks>
         private sealed class MultiRuntimeHttpClientFactory : IHttpClientFactory
         {
             private readonly IReadOnlyDictionary<string, HttpClient> clientsByRuntimeInstanceId;
-            private readonly HttpClient fallbackClient;
+            private readonly HttpClient startupRoutingClient;
 
-            /// <summary>
-            /// Initializes a new instance of the <see cref="MultiRuntimeHttpClientFactory"/> class.
-            /// </summary>
-            /// <param name="clientsByRuntimeInstanceId">The HTTP clients keyed by runtime instance id.</param>
             public MultiRuntimeHttpClientFactory(
                 IReadOnlyDictionary<string, HttpClient> clientsByRuntimeInstanceId)
             {
@@ -203,22 +398,15 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic
                     clientsByRuntimeInstanceId
                     ?? throw new ArgumentNullException(nameof(clientsByRuntimeInstanceId));
 
-                if (clientsByRuntimeInstanceId.Count == 0)
-                {
-                    throw new ArgumentException(
-                        "At least one runtime HTTP client is required.",
-                        nameof(clientsByRuntimeInstanceId));
-                }
-
-                fallbackClient =
-                    clientsByRuntimeInstanceId.Values.First();
+                startupRoutingClient =
+                    new HttpClient(
+                        new RuntimeClientRoutingHandler(
+                            clientsByRuntimeInstanceId))
+                    {
+                        BaseAddress = new Uri("http://localhost")
+                    };
             }
 
-            /// <summary>
-            /// Creates or returns an HTTP client for the requested runtime instance.
-            /// </summary>
-            /// <param name="name">The requested client name. For multi-runtime tests this should be the runtime instance id.</param>
-            /// <returns>The matching HTTP client.</returns>
             public HttpClient CreateClient(
                 string name)
             {
@@ -245,7 +433,133 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic
                     }
                 }
 
-                return fallbackClient;
+                if (clientsByRuntimeInstanceId.TryGetValue(
+                        "default",
+                        out var defaultClient))
+                {
+                    return defaultClient;
+                }
+
+                var fallbackClient =
+                    clientsByRuntimeInstanceId.Values.FirstOrDefault();
+
+                if (fallbackClient is not null)
+                {
+                    return fallbackClient;
+                }
+
+                return startupRoutingClient;
+            }
+
+            private sealed class RuntimeClientRoutingHandler : HttpMessageHandler
+            {
+                private readonly IReadOnlyDictionary<string, HttpClient> clientsByRuntimeInstanceId;
+
+                public RuntimeClientRoutingHandler(
+                    IReadOnlyDictionary<string, HttpClient> clientsByRuntimeInstanceId)
+                {
+                    this.clientsByRuntimeInstanceId =
+                        clientsByRuntimeInstanceId
+                        ?? throw new ArgumentNullException(nameof(clientsByRuntimeInstanceId));
+                }
+
+                protected override async Task<HttpResponseMessage> SendAsync(
+                    HttpRequestMessage request,
+                    CancellationToken cancellationToken)
+                {
+                    var client =
+                        ResolveClient();
+
+                    var forwardedRequest =
+                        await CloneRequestAsync(
+                                request,
+                                cancellationToken)
+                            .ConfigureAwait(false);
+
+                    if (forwardedRequest.RequestUri is not null &&
+                        forwardedRequest.RequestUri.IsAbsoluteUri &&
+                        string.Equals(
+                            forwardedRequest.RequestUri.Host,
+                            "localhost",
+                            StringComparison.OrdinalIgnoreCase))
+                    {
+                        forwardedRequest.RequestUri =
+                            new Uri(
+                                forwardedRequest.RequestUri.PathAndQuery,
+                                UriKind.Relative);
+                    }
+
+                    return await client
+                        .SendAsync(
+                            forwardedRequest,
+                            cancellationToken)
+                        .ConfigureAwait(false);
+                }
+
+                private HttpClient ResolveClient()
+                {
+                    if (clientsByRuntimeInstanceId.TryGetValue(
+                            "default",
+                            out var defaultClient))
+                    {
+                        return defaultClient;
+                    }
+
+                    var fallbackClient =
+                        clientsByRuntimeInstanceId.Values.FirstOrDefault();
+
+                    if (fallbackClient is not null)
+                    {
+                        return fallbackClient;
+                    }
+
+                    throw new InvalidOperationException(
+                        "No runtime HTTP client is available yet. The MCP control-plane was started before runtime hosts, but a runtime HTTP request was sent before any runtime client was registered.");
+                }
+
+                private static async Task<HttpRequestMessage> CloneRequestAsync(
+                    HttpRequestMessage request,
+                    CancellationToken cancellationToken)
+                {
+                    var clone =
+                        new HttpRequestMessage(
+                            request.Method,
+                            request.RequestUri);
+
+                    foreach (var header in request.Headers)
+                    {
+                        clone.Headers.TryAddWithoutValidation(
+                            header.Key,
+                            header.Value);
+                    }
+
+                    foreach (var option in request.Options)
+                    {
+                        clone.Options.TryAdd(
+                            option.Key,
+                            option.Value);
+                    }
+
+                    if (request.Content is not null)
+                    {
+                        var contentBytes =
+                            await request.Content
+                                .ReadAsByteArrayAsync(cancellationToken)
+                                .ConfigureAwait(false);
+
+                        clone.Content =
+                            new ByteArrayContent(contentBytes);
+
+                        foreach (var header in request.Content.Headers)
+                        {
+                            clone.Content.Headers.TryAddWithoutValidation(
+                                header.Key,
+                                header.Value);
+                        }
+                    }
+
+                    return clone;
+                }
             }
         }
     }

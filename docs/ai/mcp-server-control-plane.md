@@ -1,10 +1,10 @@
 # MCP Server as Runtime Control Plane
 
-Status: Active foundation.
+Status: Active foundation validated for local and HTTP pooled runtime scenarios.
 
 This document describes how the **MCP Server** acts as a concrete runtime control-plane adapter for the Deterministic AI Runtime.
 
-It also reflects the current shared queue pump, queue-first submit mode, dispatch-time admission, runtime instance provider hosting, and worker-capacity visibility work.
+It also reflects the current shared queue pump, queue-first submit mode, dispatch-time admission, runtime instance provider hosting, Redis-backed discovery/registry/capacity coordination, HTTP pooled runtime hosting, and worker-capacity visibility work.
 
 The MCP server does not replace the runtime engine.
 
@@ -34,6 +34,9 @@ Its purpose is to expose operational runtime commands such as:
 - submit queue-first runs
 - drain shared queues manually
 - run or disable the background shared queue pump
+- wait for runtime readiness before automatic dispatch
+- publish control-plane discovery
+- resolve runtime-only hosts against the MCP control-plane identity
 - list runtime instances
 - inspect runtime capacity
 - inspect worker capacity
@@ -52,8 +55,52 @@ The MCP server is especially useful for:
 - AI-assisted runtime operations
 - future dashboard and operational automation
 - proving that the runtime can be controlled externally
+- validating provider-based dispatch before Kubernetes deployment
 
 ---
+
+## MCP Control-Plane Discovery
+
+The MCP server can act as the publisher of the active logical control-plane identity.
+
+This identity is published through the Redis control-plane discovery store and resolved by runtime-only hosts through the control-plane id resolver.
+
+```text
+MCP Server / Control Plane Host
+    ↓
+Redis Control-Plane Discovery Store
+    ↓
+ControlPlaneIdResolver
+    ↓
+RuntimeInstanceOnly Host
+    ↓
+Runtime Instance Registration
+    ↓
+Runtime Capacity Publication
+```
+
+This allows runtime-only hosts to join the same logical control-plane scope without hardcoding the MCP control-plane id.
+
+The MCP server identity is important for:
+
+- shared Redis store scoping
+- runtime instance registration
+- runtime capacity publication
+- shared queue pump readiness
+- provider dispatch target discovery
+- shutdown cleanup ownership.
+
+The key rule is:
+
+```text
+MCP publishes the logical control-plane identity.
+Runtime-only hosts resolve it before registration.
+Registry and capacity descriptors use the resolved identity.
+Shutdown cleanup reuses the known resolved identity.
+```
+
+This prevents runtime hosts from registering under a different control-plane id than the MCP server.
+
 
 ## What the MCP Server Is
 
@@ -141,7 +188,7 @@ runtime pod 2
 runtime pod 3
 ```
 
-The control-plane host can submit runs, list instances, request dispatch, and inspect replay/observability, but it should not be selected as a runtime execution target.
+The control-plane host can submit runs, list instances, request dispatch, publish discovery, and inspect replay/observability, but it should not be selected as a runtime execution target.
 
 ---
 
@@ -206,13 +253,14 @@ MCP Host
     Dispatches through HTTP runtime provider metadata = true
 
 HTTP Runtime Instance Host
-    Role = Runtime
-    Owns local queue = true
-    Owns workers = true
+    Role = Runtime host / transport host
+    Owns local runtime instance pool = true
+    Owns child runtime queues = true
+    Owns child runtime workers = true
     Receives dispatch through HTTP provider path
 ```
 
-This mode validates the provider-based hosting direction without requiring Kubernetes.
+This mode validates the provider-based hosting direction without requiring Kubernetes and is now validated through pooled child runtime instances.
 
 It is useful for proving:
 
@@ -226,9 +274,34 @@ Example provider metadata:
 
 ```text
 provider.name = http
-transport.name = http
-transport.endpoint = http://localhost
+provider.transport = http
+provider.endpoint = http://localhost
 runtime.instance.id = runtime-http-1
+```
+
+Current validated shape:
+
+```text
+MCP Control Plane
+    ↓
+HTTP Runtime Provider
+    ↓
+RuntimeInstanceOnly HTTP Host
+    ↓
+Local Runtime Instance Pool
+    ↓
+runtime-http-1
+runtime-http-2
+runtime-http-3
+```
+
+The HTTP host identity is transport and hosting infrastructure.
+
+The dispatchable runtime identities are the child runtime instances created by the runtime instance pool.
+
+```text
+HTTP host identity != dispatch target
+runtime-http-* child instance == dispatch target
 ```
 
 ---
@@ -250,6 +323,7 @@ This mode is intended for future multi-process or Kubernetes setups.
 
 A runtime-only pod can:
 
+- resolve the MCP-published control-plane identity when discovery is required
 - register itself
 - publish heartbeat
 - publish capacity
@@ -328,6 +402,17 @@ MSI:mcp-runtime-1:worker:default
 Execution events should use numbered worker identities when distributed workers are active.
 
 Controller-level events may still use controller or background service identity where appropriate.
+
+In pooled runtime scenarios, runtime instance ids may be host-scoped.
+
+Example:
+
+```text
+host-7ab6d623500844f88a6a2972d8c5a2e2:runtime-http-1
+```
+
+Tests and tools should validate the dispatchable child runtime identity rather than assuming a fixed parent host identity.
+
 
 ---
 
@@ -453,6 +538,20 @@ Automatic background pump does not run.
 Queued shared runs remain queued until manually drained.
 ```
 
+When the background pump is enabled, the MCP host should wait for runtime readiness before automatic dispatch.
+
+The readiness gate should ensure that at least one runtime instance is visible, ready, and able to accept work.
+
+```text
+MCP background pump startup
+    ↓
+resolve control-plane identity
+    ↓
+wait for runtime registry/capacity visibility
+    ↓
+start pump loop
+```
+
 This is important for tests and demos because it proves:
 
 - queue-first submit persists work
@@ -527,9 +626,9 @@ LocalRunId
 ExecutionId when execution starts
 ```
 
-The dispatch layer now supports provider-oriented local and HTTP runtime instance scenarios.
+The dispatch layer now supports provider-oriented local and HTTP pooled runtime instance scenarios.
 
-Provider-based dispatch remains the direction for Redis command queues, gRPC, and Kubernetes-native transports.
+Provider-based dispatch remains the direction for Redis command queues, gRPC, and Kubernetes-native transports. The current Redis-backed shared run store, shared queue, registry, capacity store, discovery store, and admission reservation store validate the coordination layer used by this direction.
 
 ---
 
@@ -571,7 +670,7 @@ Production code should not assume `PumpRuntimeInstanceId == AssignedRuntimeInsta
 
 ## Runtime Capacity Descriptors
 
-Runtime instances publish capacity descriptors.
+Runtime instances publish capacity descriptors, backed by the runtime capacity store in Redis-enabled scenarios.
 
 Capacity descriptors allow the control plane to know:
 
@@ -600,7 +699,11 @@ mcp-runtime-1
     CanAcceptRun = true
 ```
 
-Capacity descriptors are the foundation for capacity-aware admission, MCP visibility, dashboard visibility, future autoscaling, and provider-based dispatch.
+Capacity descriptors are the foundation for capacity-aware admission, MCP visibility, dashboard visibility, future autoscaling, provider-based dispatch, and pump readiness.
+
+During shutdown, capacity descriptor cleanup should reuse the already resolved control-plane identity for the runtime instance.
+
+Cleanup should not depend on rediscovery after the descriptor has already been published.
 
 ---
 
@@ -611,6 +714,28 @@ The MCP server exposes runtime operations through focused tool groups.
 Tool group names may evolve, but the current intent is stable.
 
 ---
+
+## Discovery and Readiness Responsibilities
+
+The MCP host is responsible for publishing the active discovery descriptor when configured as the control-plane owner.
+
+Runtime-only hosts are responsible for resolving that descriptor before registering runtime instances.
+
+The MCP server should make discovery and readiness visible through diagnostics and logs, even if discovery is not exposed as a public operator tool yet.
+
+Useful diagnostics include:
+
+```text
+ControlPlaneId
+ControlPlaneHostId
+DiscoveryKey
+Discovery owner
+Discovery published
+Runtime instances discovered
+Runtime capacity visible
+Pump readiness completed
+```
+
 
 ## Shared Run Tools
 
@@ -828,7 +953,33 @@ Despite the name `RemoteAiSharedRunDispatcher`, in local pool mode the dispatch 
 
 This is expected for the current local control-plane demo.
 
-The current provider-based hosting work also validates HTTP runtime instance scenarios.
+The current provider-based hosting work also validates HTTP pooled runtime instance scenarios.
+
+Current HTTP pooled dispatch flow:
+
+```text
+run.submit_many_runs / run.submit
+    ↓
+Shared Runtime Controller
+    ↓
+QueueFirst shared run
+    ↓
+Manual drain or background pump
+    ↓
+Dispatch-time admission
+    ↓
+AssignedRuntimeInstanceId = host-...:runtime-http-*
+    ↓
+HTTP Runtime Provider
+    ↓
+RuntimeInstanceOnly HTTP Host
+    ↓
+Local Runtime Instance Pool
+    ↓
+Selected runtime-http-* local queue
+    ↓
+Workers execute DAG
+```
 
 The next step is to continue hardening provider routing, provider capabilities, and remote transports.
 
@@ -936,15 +1087,20 @@ Current MCP integration tests validate:
 - control-plane role registration
 - local runtime instance pool startup
 - HTTP runtime instance provider flow
+- HTTP pooled runtime child instance dispatch
 - runtime instance role separation
 - runtime capacity descriptor publication
 - runtime worker capacity visibility
 - Redis registry usage
 - Redis capacity store usage
+- Redis control-plane discovery store usage
+- control-plane id resolver usage
+- Redis admission reservation store usage
 - shared run submission
 - queue-first shared run submission
 - assigned runtime dispatch
 - shared queue background pump dispatch
+- shared queue pump readiness gate
 - manual queue drain with background pump disabled
 - local queue enqueue
 - local run status polling
@@ -953,7 +1109,9 @@ Current MCP integration tests validate:
 - observability ledger retrieval
 - observability trace retrieval
 - idempotent runtime unregister
+- idempotent capacity descriptor cleanup
 - idempotent local pool shutdown
+- cleanup without late rediscovery dependency
 
 Validated example:
 
@@ -988,6 +1146,45 @@ mcp-runtime-3
 
 ---
 
+## Current HTTP Pooled Validation Evidence
+
+The current MCP/provider test suite validates the production-oriented HTTP provider shape.
+
+Validated heavy dispatch evidence:
+
+```text
+Runs = 50
+StepsPerRun = 100
+RuntimeInstances = runtime-http-1, runtime-http-2, runtime-http-3
+RedisAiSharedRunStore = validated
+RedisAiSharedQueue = validated
+RedisAiRuntimeAdmissionReservationStore = validated
+```
+
+Validated replay evidence:
+
+```text
+Replay = Success
+Report = Success
+Ledger = Success
+Trace = Available
+ReplayValid = True
+FingerprintMatches = True
+IssueCount = 0
+```
+
+This proves that MCP can:
+
+- submit shared runs
+- queue them globally
+- drain them manually or through the background pump
+- dispatch through the HTTP runtime provider
+- assign work to pooled child runtime instances
+- observe runtime status and execution ids
+- replay completed executions
+- inspect ledger and trace output.
+
+
 ## Current Limitations
 
 The current MCP server/control-plane adapter does not yet provide:
@@ -1001,8 +1198,8 @@ The current MCP server/control-plane adapter does not yet provide:
 - production security model for MCP access
 - tenant-aware operational authorization
 - full provider capability negotiation
-- Redis/Lua slot reservation for multi-control-plane dispatch safety
-- atomic admission capacity reservation
+- Redis/Lua slot reservation refinement for multi-control-plane dispatch safety
+- production-grade admission reservation hardening
 
 ---
 
@@ -1020,6 +1217,12 @@ IAiRuntimeInstanceControlProvider
 IAiRuntimeInstanceProviderRouter
 LocalAiRuntimeInstanceProvider
 HTTP runtime instance provider foundation
+HTTP pooled runtime instance hosting
+Redis control-plane discovery store
+ControlPlaneIdResolver
+Redis runtime instance registry
+Redis runtime instance capacity store
+Redis admission reservation store
 ```
 
 The local provider preserves existing behavior:
@@ -1054,6 +1257,9 @@ Future providers should be added without changing the shared controller architec
 | Admission Controller | Decides what should happen to a submitted run. |
 | Runtime Instance Registry | Tracks visible runtime instances and roles. |
 | Runtime Capacity Store | Tracks real runtime capacity descriptors. |
+| Control-Plane Discovery Store | Publishes and reads the MCP logical control-plane identity used by runtime-only hosts. |
+| Control-Plane Id Resolver | Resolves the active logical control-plane id for runtime registration and capacity publication. |
+| Admission Reservation Store | Protects selected runtime capacity during dispatch in Redis-backed scenarios. |
 | Shared Queue Pump | Claims shared queue work and triggers dispatch-time admission. |
 | Shared Queue Dispatcher | Re-admits queued runs, dispatches to selected runtime instances, and updates shared queue/run state. |
 | Provider Router | Resolves how to contact a selected runtime instance. |

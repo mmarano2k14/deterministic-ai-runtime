@@ -267,8 +267,6 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
 
             foreach (var host in hosts.AsEnumerable().Reverse())
             {
-                cancellationToken.ThrowIfCancellationRequested();
-
                 logger.LogInformation(
                     "Stopping local runtime instance. HostMode={HostMode}, EnableSharedQueuePump={EnableSharedQueuePump}, HostId={HostId}, RuntimeInstanceId={RuntimeInstanceId}",
                     hostMode,
@@ -276,9 +274,32 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
                     runtimeHostIdentity.HostId,
                     host.RuntimeInstanceId);
 
-                await host
-                    .StopAsync(cancellationToken)
-                    .ConfigureAwait(false);
+                try
+                {
+                    await host
+                        .StopAsync(CancellationToken.None)
+                        .ConfigureAwait(false);
+                }
+                catch (OperationCanceledException exception)
+                {
+                    logger.LogWarning(
+                        exception,
+                        "Local runtime instance stop cancelled during host shutdown. Continuing cleanup best-effort. HostMode={HostMode}, EnableSharedQueuePump={EnableSharedQueuePump}, HostId={HostId}, RuntimeInstanceId={RuntimeInstanceId}",
+                        hostMode,
+                        enableSharedQueuePump,
+                        runtimeHostIdentity.HostId,
+                        host.RuntimeInstanceId);
+                }
+                catch (Exception exception)
+                {
+                    logger.LogWarning(
+                        exception,
+                        "Local runtime instance stop failed during host shutdown. Continuing cleanup best-effort. HostMode={HostMode}, EnableSharedQueuePump={EnableSharedQueuePump}, HostId={HostId}, RuntimeInstanceId={RuntimeInstanceId}",
+                        hostMode,
+                        enableSharedQueuePump,
+                        runtimeHostIdentity.HostId,
+                        host.RuntimeInstanceId);
+                }
 
                 logger.LogInformation(
                     "Unregistering local runtime instance from shared runtime registry. HostMode={HostMode}, EnableSharedQueuePump={EnableSharedQueuePump}, HostId={HostId}, RuntimeInstanceId={RuntimeInstanceId}",
@@ -287,18 +308,41 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
                     runtimeHostIdentity.HostId,
                     host.RuntimeInstanceId);
 
-                await sharedRuntimeInstanceRegistry
-                    .UnregisterAsync(
-                        host.RuntimeInstanceId,
-                        cancellationToken)
-                    .ConfigureAwait(false);
+                try
+                {
+                    await sharedRuntimeInstanceRegistry
+                        .UnregisterAsync(
+                            host.RuntimeInstanceId,
+                            CancellationToken.None)
+                        .ConfigureAwait(false);
 
-                logger.LogInformation(
-                    "Local runtime instance stopped and unregistered from shared runtime registry. HostMode={HostMode}, EnableSharedQueuePump={EnableSharedQueuePump}, HostId={HostId}, RuntimeInstanceId={RuntimeInstanceId}",
-                    hostMode,
-                    enableSharedQueuePump,
-                    runtimeHostIdentity.HostId,
-                    host.RuntimeInstanceId);
+                    logger.LogInformation(
+                        "Local runtime instance stopped and unregistered from shared runtime registry. HostMode={HostMode}, EnableSharedQueuePump={EnableSharedQueuePump}, HostId={HostId}, RuntimeInstanceId={RuntimeInstanceId}",
+                        hostMode,
+                        enableSharedQueuePump,
+                        runtimeHostIdentity.HostId,
+                        host.RuntimeInstanceId);
+                }
+                catch (OperationCanceledException exception)
+                {
+                    logger.LogWarning(
+                        exception,
+                        "Local runtime instance shared registry unregister cancelled during shutdown. HostMode={HostMode}, EnableSharedQueuePump={EnableSharedQueuePump}, HostId={HostId}, RuntimeInstanceId={RuntimeInstanceId}",
+                        hostMode,
+                        enableSharedQueuePump,
+                        runtimeHostIdentity.HostId,
+                        host.RuntimeInstanceId);
+                }
+                catch (Exception exception)
+                {
+                    logger.LogWarning(
+                        exception,
+                        "Local runtime instance shared registry unregister failed during shutdown. HostMode={HostMode}, EnableSharedQueuePump={EnableSharedQueuePump}, HostId={HostId}, RuntimeInstanceId={RuntimeInstanceId}",
+                        hostMode,
+                        enableSharedQueuePump,
+                        runtimeHostIdentity.HostId,
+                        host.RuntimeInstanceId);
+                }
             }
 
             logger.LogInformation(
@@ -336,9 +380,32 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
                     runtimeHostIdentity.HostId,
                     host.RuntimeInstanceId);
 
-                await host
-                    .DisposeAsync()
-                    .ConfigureAwait(false);
+                try
+                {
+                    await host
+                        .DisposeAsync()
+                        .ConfigureAwait(false);
+                }
+                catch (OperationCanceledException exception)
+                {
+                    logger.LogWarning(
+                        exception,
+                        "Local runtime instance dispose cancelled during shutdown. HostMode={HostMode}, EnableSharedQueuePump={EnableSharedQueuePump}, HostId={HostId}, RuntimeInstanceId={RuntimeInstanceId}",
+                        hostMode,
+                        enableSharedQueuePump,
+                        runtimeHostIdentity.HostId,
+                        host.RuntimeInstanceId);
+                }
+                catch (Exception exception)
+                {
+                    logger.LogWarning(
+                        exception,
+                        "Local runtime instance dispose failed during shutdown. HostMode={HostMode}, EnableSharedQueuePump={EnableSharedQueuePump}, HostId={HostId}, RuntimeInstanceId={RuntimeInstanceId}",
+                        hostMode,
+                        enableSharedQueuePump,
+                        runtimeHostIdentity.HostId,
+                        host.RuntimeInstanceId);
+                }
             }
 
             hosts.Clear();

@@ -1,10 +1,10 @@
 # Architecture Overview
 
-Status: Documentation split in progress.
+Status: Implemented architecture foundation / validated with shared controller, MCP, Redis coordination, local runtime pools, and HTTP pooled runtime provider scenarios.
 
 This document provides a high-level overview of the **Deterministic AI Runtime** architecture.
 
-It also reflects the current control-plane evolution: shared queue pump, queue-first submit mode, dispatch-time admission, runtime instance providers, MCP control-plane integration, and worker-capacity visibility.
+It also reflects the current control-plane evolution: shared queue pump, queue-first submit mode, dispatch-time admission, runtime instance providers, MCP control-plane integration, Redis discovery/registry/capacity coordination, admission reservations, HTTP pooled runtime hosting, and worker-capacity visibility.
 
 The complete technical reference is currently preserved in:
 
@@ -33,7 +33,11 @@ It is an execution runtime responsible for:
 - coordinating shared queue dispatch
 - supporting queue-first shared run submission
 - managing runtime instance visibility
+- publishing and resolving control-plane discovery
+- publishing runtime capacity descriptors
+- reserving runtime capacity during dispatch
 - exposing runtime worker capacity
+- supporting provider-based local and HTTP pooled runtime dispatch
 
 The core idea is simple:
 
@@ -49,6 +53,10 @@ At a high level, the runtime is composed of the following layers:
 Client / API / MCP Layer
         ↓
 Control Plane and Shared Queue Layer
+        ↓
+Discovery / Registry / Capacity Layer
+        ↓
+Runtime Provider Dispatch Layer
         ↓
 Runtime Orchestration Layer
         ↓
@@ -161,6 +169,10 @@ It is responsible for:
 - dispatch-time admission
 - runtime instance registry visibility
 - runtime capacity descriptors
+- Redis control-plane discovery
+- control-plane id resolution
+- admission reservations
+- provider-based local and HTTP dispatch
 - runtime queue control
 - execution control
 - replay and observability adapters
@@ -183,12 +195,42 @@ Shared Queue Pump / Manual Drain
         ↓
 Dispatch-Time Admission
         ↓
+Capacity Reservation / Provider Selection
+        ↓
 Runtime Instance Dispatch
         ↓
 Local Runtime Queue
 ```
 
 Queue-first mode uses this layer to persist a shared run and place it in the global queue before selecting a runtime instance.
+
+
+The current validated control-plane model also includes Redis-backed coordination components:
+
+```text
+MCP Control Plane
+        ↓
+Redis Control-Plane Discovery Store
+        ↓
+ControlPlaneIdResolver
+        ↓
+RuntimeInstanceOnly Host
+        ↓
+Runtime Instance Registry
+        ↓
+Runtime Capacity Store
+        ↓
+Shared Queue Pump Readiness
+        ↓
+Provider Dispatch
+```
+
+The MCP control plane publishes the logical control-plane identity.
+
+Runtime-only hosts resolve that identity before registration and capacity publication.
+
+This ensures that MCP, shared queues, runtime registry entries, and capacity descriptors all use the same logical Redis/control-plane scope.
+
 
 ---
 
@@ -288,9 +330,28 @@ Context-building logic belongs in context helpers.
 
 Runtime instances are the execution participants that own local queues and workers.
 
-A runtime instance may be local, HTTP-backed, or later connected through Redis command queues, gRPC, or Kubernetes provider transports.
+A runtime instance may be local, HTTP-backed through a pooled runtime host, or later connected through Redis command queues, gRPC, or Kubernetes provider transports.
 
 Each runtime instance publishes visibility and capacity.
+
+In the current HTTP pooled model, the parent HTTP host is transport and hosting infrastructure.
+
+The dispatchable runtime identities are child runtime instances created by the local runtime instance pool:
+
+```text
+RuntimeInstanceOnly HTTP Host
+    ↓
+Local Runtime Instance Pool
+    ↓
+runtime-http-1
+runtime-http-2
+runtime-http-3
+```
+
+```text
+HTTP host identity != dispatch target
+runtime-http-* child instance == dispatch target
+```
 
 Important capacity fields include:
 
@@ -338,6 +399,12 @@ Redis is used for:
 - recovery coordination
 - distributed concurrency leases
 - execution control state
+- shared run store
+- shared queue
+- runtime instance registry
+- runtime capacity store
+- control-plane discovery store
+- admission reservation store
 
 Critical transitions are protected by Redis Lua scripts.
 
@@ -492,11 +559,19 @@ A simplified runtime data flow is:
 ```text
 Client / API / MCP submits pipeline run
         ↓
+Control-plane identity is resolved / published when required
+        ↓
+Runtime registry and capacity descriptors are visible
+        ↓
 Shared controller may create shared run
         ↓
 Queue-first mode may enqueue in shared queue
         ↓
 Shared queue pump or manual drain may dispatch
+        ↓
+Admission selects a runtime instance
+        ↓
+Reservation/provider dispatch path is used
         ↓
 Runtime instance local queue receives run
         ↓
@@ -559,6 +634,8 @@ It manages:
 - shared queue item lifecycle
 - shared queue pump/manual drain
 - dispatch-time admission
+- runtime capacity reservation
+- provider-based dispatch
 - assigned runtime instance id
 - LocalRunId visibility after dispatch
 - ExecutionId visibility after local execution starts
@@ -730,10 +807,32 @@ Current provider-oriented foundations include:
 
 - local runtime instance provider
 - HTTP runtime provider foundation
+- HTTP pooled runtime instance hosting
 - runtime instance provider metadata
-- runtime instance registry visibility
-- capacity descriptor visibility
+- Redis runtime instance registry visibility
+- Redis capacity descriptor visibility
+- Redis control-plane discovery
+- ControlPlaneIdResolver
+- Redis admission reservation store
 - MCP control-plane scenarios
+
+Validated HTTP pooled provider shape:
+
+```text
+MCP Control Plane
+    ↓
+HTTP Runtime Provider
+    ↓
+RuntimeInstanceOnly HTTP Host
+    ↓
+Local Runtime Instance Pool
+    ↓
+runtime-http-1
+runtime-http-2
+runtime-http-3
+```
+
+Shared queue dispatch should validate assignment to the pooled child runtime instance, not the parent HTTP host identity.
 
 Future providers may include:
 
@@ -796,20 +895,79 @@ Plugins remain responsible for domain-specific execution.
 | Queue-first submit mode | Implemented / validated |
 | Manual shared queue drain | Implemented / validated |
 | Dispatch-time admission | Implemented / validated |
-| Runtime instance provider hosting | Implemented foundations |
+| Runtime instance provider hosting | Implemented foundations / validated local and HTTP pooled scenarios |
 | Local runtime instance provider | Implemented / validated |
-| HTTP runtime provider foundation | Implemented / validated |
+| HTTP runtime provider foundation | Implemented / validated with pooled runtime instances |
+| HTTP pooled runtime dispatch | Implemented / validated |
+| Redis control-plane discovery store | Implemented / validated |
+| Control-plane id resolver | Implemented / validated |
+| Redis runtime instance registry | Implemented / validated |
+| Redis runtime capacity store | Implemented / validated |
+| Redis admission reservation store | Implemented / validated |
+| Shared queue pump readiness gate | Implemented / validated |
 | Runtime worker capacity visibility | Implemented / validated |
 | Max local workers per execution | Implemented / validated |
 | Human-in-the-loop foundations | Implemented |
 | Replay and snapshot foundations | Implemented / validated foundations |
-| Decision ledger foundation | Implemented foundations |
+| Decision ledger foundation | Implemented foundations / validated through replay ledger scenarios |
 | Durable decision ledger hardening | Planned |
 | Observability dashboard | Planned |
 | Kubernetes deployment | Planned |
 | Public SDK polish | Planned |
 
 ---
+
+## Current Validated Evidence
+
+The current architecture has been validated through MCP, Redis, local runtime pool, and HTTP pooled runtime provider scenarios.
+
+Heavy HTTP dispatch evidence:
+
+```text
+Runs = 50
+StepsPerRun = 100
+RuntimeInstances = runtime-http-1, runtime-http-2, runtime-http-3
+RedisAiSharedRunStore = validated
+RedisAiSharedQueue = validated
+RedisAiRuntimeAdmissionReservationStore = validated
+```
+
+Replay/control-plane evidence:
+
+```text
+Replay = Success
+Replay report = Success
+Ledger = Success
+Trace = Available
+ReplayValid = True
+FingerprintMatches = True
+IssueCount = 0
+```
+
+Runtime lifecycle evidence:
+
+```text
+Redis runtime registry = validated
+Redis runtime capacity store = validated
+Redis control-plane discovery = validated
+ControlPlaneIdResolver = validated
+Runtime-only host identity resolution = validated
+Shutdown cleanup without late rediscovery dependency = validated
+```
+
+These validations prove the current architecture can:
+
+- submit shared runs through MCP
+- queue work globally
+- drain work manually or through the background pump
+- wait for runtime readiness before background dispatch
+- resolve MCP/control-plane identity through Redis discovery
+- dispatch through local and HTTP providers
+- assign runs to pooled child runtime instances
+- expose runtime run status and execution ids
+- replay completed executions
+- inspect ledger and trace output.
+
 
 ## Related Documents
 
@@ -818,6 +976,7 @@ Plugins remain responsible for domain-specific execution.
 - [Execution Control State](execution-control-state.md)
 - [Runtime Queue Control](runtime-queue-control.md)
 - [Shared Runtime Controller / Shared Queue Usage](shared-controller-usage.md)
+- [Shared Queue Pump and Worker Capacity](shared-queue-pump-and-worker-capacity.md)
 - [Runtime Instance Provider Model](runtime-instance-provider-model.md)
 - [MCP Server as Runtime Control Plane](mcp-server-control-plane.md)
 - [Retry and Recovery](retry-and-recovery.md)

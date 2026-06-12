@@ -1,6 +1,6 @@
 # Testing Strategy
 
-Status: Documentation split in progress / actively validated by a large unit and integration test suite.
+Status: Actively validated by a large unit and integration test suite, including MCP, Redis, local runtime pools, and HTTP pooled runtime provider scenarios.
 
 This document describes the testing strategy used to validate the Deterministic AI Runtime.
 
@@ -35,7 +35,12 @@ The runtime must prove that it behaves correctly under:
 - deterministic convergence under pressure
 - queue-first dispatch behavior
 - shared queue pump/manual drain behavior
+- shared queue pump readiness behavior
 - runtime instance provider dispatch behavior
+- HTTP pooled runtime provider behavior
+- Redis control-plane discovery and id resolution
+- Redis registry and capacity cleanup
+- Redis admission reservation behavior
 - worker-capacity saturation
 
 The purpose of the testing strategy is to validate that the runtime behaves like reliable execution infrastructure, not only like isolated application code.
@@ -85,6 +90,9 @@ The test suite is used as proof that the runtime can survive:
 - background shared queue pump behavior
 - dispatch-time admission
 - runtime provider-hosting scenarios
+- HTTP pooled runtime dispatch
+- Redis discovery/registry/capacity lifecycle
+- Redis admission reservations
 - worker capacity visibility
 - MCP tool execution
 - shutdown and lifecycle races
@@ -163,6 +171,10 @@ Main categories include:
 - MCP control-plane integration tests
 - shared queue pump/manual drain tests
 - provider-based runtime hosting tests
+- HTTP pooled runtime provider tests
+- Redis discovery and control-plane id resolver tests
+- Redis runtime registry and capacity cleanup tests
+- Redis admission reservation tests
 - runtime worker capacity tests
 
 ---
@@ -221,8 +233,12 @@ They should cover:
 - execution control-plane operations
 - runtime queue control-plane operations
 - runtime instance registry operations
+- runtime instance capacity store operations
+- control-plane discovery store operations
+- control-plane id resolver operations
 - runtime instance control-plane operations
 - run admission decisions
+- admission reservation behavior
 - shared runtime controller behavior
 - shared run persistence
 - shared queue coordination
@@ -332,9 +348,14 @@ They should cover:
 - control-plane role visibility
 - runtime role eligibility
 - Redis-backed runtime instance registry behavior
+- Redis-backed runtime instance registry cleanup
+- control-plane discovery descriptor publication
+- control-plane id resolver behavior
 - runtime capacity descriptor publication
 - runtime capacity descriptor heartbeat updates
 - runtime capacity descriptor removal on unregister
+- runtime capacity descriptor removal during shutdown
+- cleanup without late rediscovery dependency
 - worker count publication
 - active worker count publication
 - available worker count publication
@@ -357,7 +378,9 @@ CapacityStore resolution must not register duplicate stores.
 
 Unregister must remove or stop the corresponding capacity descriptor.
 
-Admission should eventually use capacity descriptors as the primary scheduling source of truth.
+Admission should use capacity descriptors and reservation state as primary scheduling inputs in provider-based dispatch scenarios.
+
+Runtime unregister and capacity removal should not depend on rediscovery after the runtime instance has already registered or published capacity.
 ```
 
 ---
@@ -373,10 +396,13 @@ They should cover:
 - shared run remains `QueuedGlobally` before dispatch
 - shared queue item remains `Pending` before dispatch
 - background pump dispatch
+- background pump readiness gate
 - manual drain dispatch
 - manual drain while background pump is disabled
 - local runtime dispatch after manual drain
 - HTTP runtime dispatch after manual drain
+- HTTP pooled runtime dispatch after manual drain
+- HTTP pooled runtime dispatch through background pump
 - no automatic dispatch when the hosted pump is disabled
 - queue item marked `Dispatched` only after successful dispatch
 - shared run marked `Dispatched` only after successful dispatch
@@ -384,6 +410,7 @@ They should cover:
 - missing shared run requeues correctly
 - pump stops when no item is available
 - pump respects max dispatches per cycle
+- pump waits for visible runtime capacity before automatic dispatch
 
 Important assertions:
 
@@ -393,6 +420,8 @@ QueueFirst submit must create a shared run and queue item without creating a loc
 Manual drain must work when AiSharedQueuePump is enabled even if the background hosted pump is disabled.
 
 A shared queue item must not become Dispatched unless runtime dispatch succeeds.
+
+The background pump must not dispatch before at least one runtime instance is visible, ready, and capacity-published.
 
 A failed dispatch must requeue the shared queue item and preserve the shared run as QueuedGlobally.
 ```
@@ -433,12 +462,15 @@ They should cover:
 
 - local runtime instance provider flow
 - HTTP runtime provider flow
+- HTTP pooled runtime provider flow
 - `RuntimeInstanceOnly` host mode
 - `ControlPlaneWithLocalRuntimeInstances` host mode
 - `ControlPlaneWithHttpRuntimeInstances` host mode
 - runtime instance registration with provider metadata
+- control-plane discovery resolution before runtime-only registration
 - provider metadata propagation
 - dispatch through selected runtime instance provider path
+- dispatch to pooled `runtime-http-*` child runtime instances
 - queue-first run completion through local provider
 - queue-first run completion through HTTP provider
 - pump disabled / manual drain behavior with provider-hosted runtime instances
@@ -451,9 +483,113 @@ The selected runtime provider must deliver the run into the target runtime insta
 The control-plane host must not execute DAG steps directly when operating as a control-plane-only participant.
 
 Provider-hosted runtime instances must expose local RunId and ExecutionId after dispatch.
+
+For HTTP pooled runtime scenarios, assertions should target the assigned child runtime instance, such as `runtime-http-1`, `runtime-http-2`, or `runtime-http-3`, not the parent HTTP transport host identity.
 ```
 
 ---
+
+## HTTP Pooled Runtime Provider Tests
+
+HTTP pooled runtime provider tests validate the current production-oriented provider hosting model.
+
+They should cover:
+
+- `ControlPlaneWithHttpRuntimeInstances`
+- `RuntimeInstanceOnly` HTTP host
+- internal local runtime instance pool
+- child runtime identities using the `runtime-http-*` prefix
+- provider metadata for HTTP transport
+- dispatch to assigned child runtime instance
+- local run status through HTTP provider
+- execution id visibility after execution starts
+- queue-first submit with manual drain
+- queue-first submit with background pump
+- long-running execution pause/resume through HTTP provider
+- long-running execution cancellation through HTTP provider
+- runtime queue cancellation routing to the assigned child runtime instance
+- larger pipelines through HTTP provider
+- multiple submitted runs distributed across pooled child runtimes
+
+Important assertions:
+
+```text
+The HTTP host is transport and hosting infrastructure.
+
+The child runtime instances are the dispatch targets.
+
+AssignedRuntimeInstanceId should point to a pooled runtime-http-* child instance.
+
+The provider must route status, queue control, and cancellation to the assigned child runtime instance.
+```
+
+## Heavy HTTP Dispatch Tests
+
+Heavy HTTP dispatch tests validate Redis-backed shared coordination under pressure.
+
+They should cover:
+
+- Redis shared run store usage
+- Redis shared queue usage
+- Redis admission reservation store usage
+- queue-first submit mode
+- manual or background queue drain
+- 50 shared runs
+- 100 steps per run
+- 3 pooled HTTP runtime child instances
+- multi-runtime distribution
+- assigned runtime identity visibility
+- no duplicate dispatch
+- completion or dispatch success depending on scenario scope
+
+Important evidence:
+
+```text
+Runs = 50
+StepsPerRun = 100
+RuntimeInstances = runtime-http-1, runtime-http-2, runtime-http-3
+RedisAiSharedRunStore = validated
+RedisAiSharedQueue = validated
+RedisAiRuntimeAdmissionReservationStore = validated
+```
+
+The distribution does not need to be perfectly even.
+
+The important guarantee is that work is distributed across valid child runtime instances and does not collapse onto a deprecated single-runtime fixture model.
+
+## Redis Discovery, Registry, Capacity, and Reservation Tests
+
+Redis lifecycle tests validate the runtime visibility and shutdown safety layer.
+
+They should cover:
+
+- Redis control-plane discovery descriptor publication
+- control-plane id resolver behavior
+- runtime-only hosts resolving MCP/control-plane identity before registration
+- Redis runtime instance registry registration
+- Redis runtime instance heartbeat
+- Redis runtime instance listing
+- Redis runtime instance draining
+- Redis runtime instance unregister
+- Redis runtime capacity descriptor publication
+- Redis runtime capacity descriptor listing
+- Redis runtime capacity descriptor cleanup
+- Redis admission reservation create/check/release/expiry behavior
+- cleanup using known resolved control-plane id
+- cleanup without late rediscovery dependency
+
+Important assertions:
+
+```text
+Runtime-only hosts must register under the MCP-published control-plane id.
+
+Registry unregister must not require rediscovery during shutdown.
+
+Capacity descriptor removal must not require rediscovery during shutdown.
+
+Disposed logging, Redis, or discovery dependencies must not fail otherwise successful tests during teardown.
+```
+
 
 ## Runtime Worker Capacity Tests
 
@@ -476,13 +612,15 @@ They should cover:
 Important assertions:
 
 ```text
-A runtime instance with no available workers should report CanAcceptRun = false.
+A runtime instance with no available workers should report CanAcceptRun = false when the published queue/capacity snapshot represents true worker saturation.
 
 MaxLocalWorkersPerExecution should cap the number of local workers used by one execution.
 
 Worker capacity values should flow from local queue state to runtime instance snapshots.
 
 Distributed worker participation tests must explicitly configure MaxLocalWorkersPerExecution when they expect all configured workers to participate.
+
+Tests that assert worker saturation must keep the execution active long enough for capacity publication and MCP/runtime instance listing to observe the saturated state.
 ```
 
 ---
@@ -665,12 +803,16 @@ MCP tests should validate:
 - `ControlPlaneWithLocalRuntimeInstances` behavior
 - `RuntimeInstanceOnly` preparation
 - `ControlPlaneWithHttpRuntimeInstances` behavior
+- HTTP pooled runtime child instance dispatch
 - runtime role separation
 - control-plane host not selected as executable runtime
 - local runtime instance pool startup
 - runtime instance registration and heartbeat
 - Redis-backed runtime registry visibility
 - Redis-backed runtime capacity descriptor publication
+- Redis control-plane discovery descriptor publication
+- control-plane id resolver behavior
+- Redis admission reservation usage
 - shared run submission through MCP tools
 - shared run listing through MCP tools
 - shared queue drain through MCP tools
@@ -678,6 +820,7 @@ MCP tests should validate:
 - manual queue drain while background pump is disabled
 - local provider queue-first dispatch through MCP
 - HTTP provider queue-first dispatch through MCP
+- HTTP pooled runtime dispatch to `runtime-http-*` child instances through MCP
 - runtime worker capacity visibility through MCP
 - runtime queue run-status polling through MCP tools
 - replay execution through MCP tools
@@ -687,7 +830,9 @@ MCP tests should validate:
 - execution control operations through MCP tools
 - local runtime queue control through MCP tools
 - idempotent runtime unregister during MCP host shutdown
+- idempotent capacity descriptor cleanup during MCP/runtime host shutdown
 - idempotent local runtime pool shutdown during MCP host shutdown
+- shutdown cleanup without late rediscovery dependency
 
 The MCP test suite validates the control-plane path:
 
@@ -731,6 +876,10 @@ Observability tools must be able to return ledger and trace data for the Executi
 MCP host shutdown must unregister runtime instances once.
 
 Repeated StopAsync or host disposal must be idempotent.
+
+The MCP server should publish discovery before runtime-only hosts that require discovery are started.
+
+Runtime-only hosts should resolve the MCP-published control-plane id before registering child runtime instances or publishing capacity.
 ```
 
 Example validated local MCP topology:
@@ -795,9 +944,11 @@ They should cover:
 - dispatch-time admission
 - pump identity vs assigned runtime identity separation
 - background queue service lifecycle
+- background queue readiness gate
 - scale-out request publication
 - Redis-backed shared run store behavior
 - Redis-backed shared queue behavior
+- Redis admission reservation behavior
 - Redis atomic queue claim safety
 - concurrent dispatch safety
 
@@ -819,6 +970,8 @@ Pump identity must remain separate from assigned runtime identity.
 Dispatch failures must requeue when policy requires it.
 
 A shared run must not be marked dispatched unless dispatch succeeded.
+
+When admission reservations are enabled, selected runtime capacity should be reserved before provider dispatch and released or expired safely if dispatch fails.
 ```
 
 ---
@@ -988,6 +1141,9 @@ They may include:
 - queue-first shared dispatch under pressure
 - shared queue pump/manual drain under pressure
 - worker capacity saturation scenarios
+- heavy HTTP pooled runtime dispatch scenarios
+- Redis-backed shared queue dispatch under pressure
+- shutdown lifecycle races under Redis discovery/registry/capacity
 
 These tests help prove that the runtime model survives more than simple happy paths.
 
@@ -1105,6 +1261,14 @@ Manual drain can dispatch queued work while the background pump is disabled.
 MaxLocalWorkersPerExecution caps local worker participation.
 
 Runtime instance snapshots expose active and available worker capacity.
+
+HTTP pooled runtime dispatch assigns runs to runtime-http-* child instances.
+
+Runtime-only hosts resolve the MCP-published control-plane id before registration.
+
+Registry and capacity cleanup do not depend on late rediscovery during shutdown.
+
+Heavy HTTP QueueFirst dispatch validates Redis shared run store, Redis shared queue, and Redis admission reservations.
 ```
 
 ---
@@ -1120,10 +1284,10 @@ Runtime instance snapshots expose active and available worker capacity.
 | Dispatch-time admission tests | Implemented / validated |
 | Redis shared run store tests | Implemented / ongoing |
 | Redis shared queue tests | Implemented / ongoing |
-| Runtime registry and capacity descriptor tests | Implemented / ongoing |
+| Runtime registry and capacity descriptor tests | Implemented / validated |
 | Runtime worker capacity visibility tests | Implemented / validated |
-| Runtime shutdown lifecycle tests | Implemented / ongoing |
-| Runtime provider model tests | Implemented foundations / ongoing |
+| Runtime shutdown lifecycle tests | Implemented / validated |
+| Runtime provider model tests | Implemented foundations / validated for local and HTTP pooled providers |
 | DAG execution tests | Implemented / ongoing |
 | Redis Lua claim tests | Implemented / ongoing |
 | Distributed worker tests | Implemented / ongoing |
@@ -1139,9 +1303,13 @@ Runtime instance snapshots expose active and available worker capacity.
 | RAG pipeline tests | Implemented / ongoing |
 | Provider-based local runtime hosting tests | Implemented / validated |
 | Provider-based HTTP runtime hosting tests | Implemented / validated |
+| HTTP pooled runtime provider tests | Implemented / validated |
+| Heavy HTTP dispatch tests | Implemented / validated |
+| Redis control-plane discovery tests | Implemented / validated |
+| Redis admission reservation tests | Implemented / validated |
 | Kubernetes scenario tests | Planned |
 | Full enterprise demo scenario | Planned |
-| Durable decision ledger tests | Planned |
+| Durable decision ledger tests | Implemented foundations / validated through replay ledger scenarios |
 
 ---
 
@@ -1176,6 +1344,9 @@ It proves that:
 - deterministic convergence holds under distributed execution
 - queue-first and manual drain behavior are validated
 - provider-hosted runtime instance flows are validated
+- HTTP pooled runtime provider flows are validated
+- Redis discovery, registry, capacity, and admission reservation flows are validated
+- heavy HTTP dispatch validates Redis-backed shared coordination under pressure
 - runtime worker capacity is visible and enforceable
 
 The goal is not only to test features.
@@ -1197,6 +1368,7 @@ The goal is to prove runtime guarantees.
 - [Runtime Control Plane](runtime-control-plane.md)
 - [MCP Server as Runtime Control Plane](mcp-server-control-plane.md)
 - [Runtime Instance Provider Model](runtime-instance-provider-model.md)
+- [Shared Queue Pump and Worker Capacity](shared-queue-pump-and-worker-capacity.md)
 - [Replay and Audit](replay-and-audit.md)
 - [Observability](observability.md)
 - [Policy-Driven Execution](policy-driven-execution.md)

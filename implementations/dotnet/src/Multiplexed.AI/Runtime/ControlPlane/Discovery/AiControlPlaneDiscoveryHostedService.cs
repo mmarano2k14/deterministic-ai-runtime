@@ -47,18 +47,40 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Discovery
         {
             var options = engineOptions.Value.ControlPlane;
 
+            var effectiveControlPlaneId =
+                ResolvePublishedControlPlaneId(
+                    options);
+
+            SafeLogInformation(
+                "Control-plane discovery publisher configuration resolved. EnableDiscovery={EnableDiscovery}, PublishDiscovery={PublishDiscovery}, RequireDiscovery={RequireDiscovery}, RedisDiscoveryKey={RedisDiscoveryKey}, ConfiguredControlPlaneId={ConfiguredControlPlaneId}, ControlPlaneHostId={ControlPlaneHostId}, PublishedControlPlaneId={PublishedControlPlaneId}",
+                options.EnableDiscovery,
+                options.PublishDiscovery,
+                options.RequireDiscovery,
+                options.RedisDiscoveryKey,
+                options.ControlPlaneId,
+                controlPlaneHostIdentity.ControlPlaneHostId,
+                effectiveControlPlaneId);
+
             if (!options.EnableDiscovery)
             {
-                logger.LogInformation(
-                    "Control-plane discovery publisher disabled because discovery is disabled.");
+                SafeLogInformation(
+                    "Control-plane discovery publisher disabled because discovery is disabled. RedisDiscoveryKey={RedisDiscoveryKey}, ConfiguredControlPlaneId={ConfiguredControlPlaneId}, ControlPlaneHostId={ControlPlaneHostId}, PublishedControlPlaneId={PublishedControlPlaneId}",
+                    options.RedisDiscoveryKey,
+                    options.ControlPlaneId,
+                    controlPlaneHostIdentity.ControlPlaneHostId,
+                    effectiveControlPlaneId);
 
                 return;
             }
 
             if (!options.PublishDiscovery)
             {
-                logger.LogInformation(
-                    "Control-plane discovery publisher disabled because this host is not configured as publisher.");
+                SafeLogInformation(
+                    "Control-plane discovery publisher disabled because this host is not configured as publisher. RedisDiscoveryKey={RedisDiscoveryKey}, ConfiguredControlPlaneId={ConfiguredControlPlaneId}, ControlPlaneHostId={ControlPlaneHostId}, PublishedControlPlaneId={PublishedControlPlaneId}",
+                    options.RedisDiscoveryKey,
+                    options.ControlPlaneId,
+                    controlPlaneHostIdentity.ControlPlaneHostId,
+                    effectiveControlPlaneId);
 
                 return;
             }
@@ -76,10 +98,12 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Discovery
 
             var refreshInterval = ResolveRefreshInterval(options);
 
-            logger.LogInformation(
-                "Control-plane discovery publisher started. RedisDiscoveryKey={RedisDiscoveryKey}, ControlPlaneId={ControlPlaneId}, EnableTtl={EnableTtl}, Ttl={Ttl}, RefreshInterval={RefreshInterval}",
+            SafeLogInformation(
+                "Control-plane discovery publisher started. RedisDiscoveryKey={RedisDiscoveryKey}, ConfiguredControlPlaneId={ConfiguredControlPlaneId}, ControlPlaneHostId={ControlPlaneHostId}, PublishedControlPlaneId={PublishedControlPlaneId}, EnableTtl={EnableTtl}, Ttl={Ttl}, RefreshInterval={RefreshInterval}",
                 options.RedisDiscoveryKey,
+                options.ControlPlaneId,
                 controlPlaneHostIdentity.ControlPlaneHostId,
+                effectiveControlPlaneId,
                 options.EnableDiscoveryTtl,
                 ttl,
                 refreshInterval);
@@ -95,17 +119,41 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Discovery
                                 stoppingToken)
                             .ConfigureAwait(false);
 
+                    if (existingDescriptor is null)
+                    {
+                        SafeLogInformation(
+                            "No existing control-plane discovery descriptor found. RedisDiscoveryKey={RedisDiscoveryKey}, PublishedControlPlaneId={PublishedControlPlaneId}, ControlPlaneHostId={ControlPlaneHostId}",
+                            options.RedisDiscoveryKey,
+                            effectiveControlPlaneId,
+                            controlPlaneHostIdentity.ControlPlaneHostId);
+                    }
+                    else
+                    {
+                        SafeLogInformation(
+                            "Existing control-plane discovery descriptor loaded. RedisDiscoveryKey={RedisDiscoveryKey}, ExistingControlPlaneId={ExistingControlPlaneId}, ExistingHostId={ExistingHostId}, ExistingRuntimeInstanceId={ExistingRuntimeInstanceId}, ExistingProviderName={ExistingProviderName}, ExistingHeartbeatAtUtc={ExistingHeartbeatAtUtc}, PublishedControlPlaneId={PublishedControlPlaneId}, ControlPlaneHostId={ControlPlaneHostId}",
+                            options.RedisDiscoveryKey,
+                            existingDescriptor.ControlPlaneId,
+                            existingDescriptor.HostId,
+                            existingDescriptor.RuntimeInstanceId,
+                            existingDescriptor.ProviderName,
+                            existingDescriptor.HeartbeatAtUtc,
+                            effectiveControlPlaneId,
+                            controlPlaneHostIdentity.ControlPlaneHostId);
+                    }
+
                     if (existingDescriptor is not null &&
                         !string.IsNullOrWhiteSpace(existingDescriptor.ControlPlaneId) &&
                         !string.Equals(
                             existingDescriptor.ControlPlaneId,
-                            controlPlaneHostIdentity.ControlPlaneHostId,
+                            effectiveControlPlaneId,
                             StringComparison.Ordinal))
                     {
-                        logger.LogInformation(
-                            "Control-plane discovery entry already exists for another control-plane host. RedisDiscoveryKey={RedisDiscoveryKey}, ExistingControlPlaneId={ExistingControlPlaneId}, CurrentControlPlaneId={CurrentControlPlaneId}",
+                        SafeLogWarning(
+                            "Control-plane discovery entry already exists for another logical control-plane. RedisDiscoveryKey={RedisDiscoveryKey}, ExistingControlPlaneId={ExistingControlPlaneId}, ConfiguredControlPlaneId={ConfiguredControlPlaneId}, PublishedControlPlaneId={PublishedControlPlaneId}, ControlPlaneHostId={ControlPlaneHostId}",
                             options.RedisDiscoveryKey,
                             existingDescriptor.ControlPlaneId,
+                            options.ControlPlaneId,
+                            effectiveControlPlaneId,
                             controlPlaneHostIdentity.ControlPlaneHostId);
 
                         await Task
@@ -121,7 +169,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Discovery
                         existingDescriptor ?? new AiControlPlaneDiscoveryDescriptor
                         {
                             RedisDiscoveryKey = options.RedisDiscoveryKey,
-                            ControlPlaneId = controlPlaneHostIdentity.ControlPlaneHostId,
+                            ControlPlaneId = effectiveControlPlaneId,
                             HostId = controlPlaneHostIdentity.ControlPlaneHostId,
                             RuntimeInstanceId = "mcp-control-plane",
                             ProviderName = "control-plane",
@@ -129,7 +177,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Discovery
                         };
 
                     descriptor.RedisDiscoveryKey = options.RedisDiscoveryKey;
-                    descriptor.ControlPlaneId = controlPlaneHostIdentity.ControlPlaneHostId;
+                    descriptor.ControlPlaneId = effectiveControlPlaneId;
                     descriptor.HostId = controlPlaneHostIdentity.ControlPlaneHostId;
                     descriptor.HeartbeatAtUtc = nowUtc;
 
@@ -140,10 +188,12 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Discovery
                             stoppingToken)
                         .ConfigureAwait(false);
 
-                    logger.LogDebug(
-                        "Control-plane discovery descriptor published. RedisDiscoveryKey={RedisDiscoveryKey}, ControlPlaneId={ControlPlaneId}, HeartbeatAtUtc={HeartbeatAtUtc}",
+                    SafeLogInformation(
+                        "Control-plane discovery descriptor published. RedisDiscoveryKey={RedisDiscoveryKey}, PublishedControlPlaneId={PublishedControlPlaneId}, ControlPlaneHostId={ControlPlaneHostId}, RuntimeInstanceId={RuntimeInstanceId}, HeartbeatAtUtc={HeartbeatAtUtc}",
                         descriptor.RedisDiscoveryKey,
                         descriptor.ControlPlaneId,
+                        descriptor.HostId,
+                        descriptor.RuntimeInstanceId,
                         descriptor.HeartbeatAtUtc);
                 }
                 catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
@@ -152,10 +202,12 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Discovery
                 }
                 catch (Exception exception)
                 {
-                    logger.LogError(
+                    SafeLogError(
                         exception,
-                        "Failed to publish control-plane discovery descriptor. RedisDiscoveryKey={RedisDiscoveryKey}, ControlPlaneId={ControlPlaneId}",
+                        "Failed to publish control-plane discovery descriptor. RedisDiscoveryKey={RedisDiscoveryKey}, ConfiguredControlPlaneId={ConfiguredControlPlaneId}, PublishedControlPlaneId={PublishedControlPlaneId}, ControlPlaneHostId={ControlPlaneHostId}",
                         options.RedisDiscoveryKey,
+                        options.ControlPlaneId,
+                        effectiveControlPlaneId,
                         controlPlaneHostIdentity.ControlPlaneHostId);
                 }
 
@@ -169,6 +221,19 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Discovery
         public override async Task StopAsync(CancellationToken cancellationToken)
         {
             var options = engineOptions.Value.ControlPlane;
+
+            var effectiveControlPlaneId =
+                ResolvePublishedControlPlaneId(
+                    options);
+
+            SafeLogInformation(
+                "Control-plane discovery publisher stopping. EnableDiscovery={EnableDiscovery}, PublishDiscovery={PublishDiscovery}, RedisDiscoveryKey={RedisDiscoveryKey}, ConfiguredControlPlaneId={ConfiguredControlPlaneId}, PublishedControlPlaneId={PublishedControlPlaneId}, ControlPlaneHostId={ControlPlaneHostId}",
+                options.EnableDiscovery,
+                options.PublishDiscovery,
+                options.RedisDiscoveryKey,
+                options.ControlPlaneId,
+                effectiveControlPlaneId,
+                controlPlaneHostIdentity.ControlPlaneHostId);
 
             if (options.EnableDiscovery &&
                 options.PublishDiscovery &&
@@ -186,7 +251,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Discovery
                     if (descriptor is not null &&
                         string.Equals(
                             descriptor.ControlPlaneId,
-                            controlPlaneHostIdentity.ControlPlaneHostId,
+                            effectiveControlPlaneId,
                             StringComparison.Ordinal))
                     {
                         await discoveryStore
@@ -195,29 +260,185 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Discovery
                                 cancellationToken)
                             .ConfigureAwait(false);
 
-                        logger.LogInformation(
-                            "Control-plane discovery descriptor deleted on stop. RedisDiscoveryKey={RedisDiscoveryKey}, ControlPlaneId={ControlPlaneId}",
+                        SafeLogInformation(
+                            "Control-plane discovery descriptor deleted on stop. RedisDiscoveryKey={RedisDiscoveryKey}, PublishedControlPlaneId={PublishedControlPlaneId}, ControlPlaneHostId={ControlPlaneHostId}",
                             options.RedisDiscoveryKey,
+                            effectiveControlPlaneId,
+                            controlPlaneHostIdentity.ControlPlaneHostId);
+                    }
+                    else
+                    {
+                        SafeLogInformation(
+                            "Control-plane discovery descriptor not deleted on stop because it does not belong to this logical control-plane. RedisDiscoveryKey={RedisDiscoveryKey}, ExistingControlPlaneId={ExistingControlPlaneId}, PublishedControlPlaneId={PublishedControlPlaneId}, ControlPlaneHostId={ControlPlaneHostId}",
+                            options.RedisDiscoveryKey,
+                            descriptor?.ControlPlaneId,
+                            effectiveControlPlaneId,
                             controlPlaneHostIdentity.ControlPlaneHostId);
                     }
                 }
-                catch (OperationCanceledException)
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
                 {
-                    throw;
+                    SafeLogWarning(
+                        "Control-plane discovery descriptor delete cancelled on stop. RedisDiscoveryKey={RedisDiscoveryKey}, PublishedControlPlaneId={PublishedControlPlaneId}, ControlPlaneHostId={ControlPlaneHostId}",
+                        options.RedisDiscoveryKey,
+                        effectiveControlPlaneId,
+                        controlPlaneHostIdentity.ControlPlaneHostId);
                 }
                 catch (Exception exception)
                 {
-                    logger.LogWarning(
+                    SafeLogWarning(
                         exception,
-                        "Failed to delete control-plane discovery descriptor on stop. RedisDiscoveryKey={RedisDiscoveryKey}, ControlPlaneId={ControlPlaneId}",
+                        "Failed to delete control-plane discovery descriptor on stop. RedisDiscoveryKey={RedisDiscoveryKey}, PublishedControlPlaneId={PublishedControlPlaneId}, ControlPlaneHostId={ControlPlaneHostId}",
                         options.RedisDiscoveryKey,
+                        effectiveControlPlaneId,
                         controlPlaneHostIdentity.ControlPlaneHostId);
                 }
             }
 
-            await base
-                .StopAsync(cancellationToken)
-                .ConfigureAwait(false);
+            try
+            {
+                await base
+                    .StopAsync(cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                SafeLogWarning(
+                    "Control-plane discovery base stop cancelled. RedisDiscoveryKey={RedisDiscoveryKey}, PublishedControlPlaneId={PublishedControlPlaneId}, ControlPlaneHostId={ControlPlaneHostId}",
+                    options.RedisDiscoveryKey,
+                    effectiveControlPlaneId,
+                    controlPlaneHostIdentity.ControlPlaneHostId);
+            }
+            catch (ObjectDisposedException exception)
+            {
+                SafeLogWarning(
+                    exception,
+                    "Control-plane discovery base stop ignored because dependencies were already disposed. RedisDiscoveryKey={RedisDiscoveryKey}, PublishedControlPlaneId={PublishedControlPlaneId}, ControlPlaneHostId={ControlPlaneHostId}",
+                    options.RedisDiscoveryKey,
+                    effectiveControlPlaneId,
+                    controlPlaneHostIdentity.ControlPlaneHostId);
+            }
+        }
+
+        private void SafeLogInformation(
+            string message,
+            params object?[] args)
+        {
+            try
+            {
+                logger.LogInformation(
+                    message,
+                    args);
+            }
+            catch
+            {
+                // Never allow logging failures to break shutdown.
+            }
+        }
+
+        private void SafeLogWarning(
+            string message,
+            params object?[] args)
+        {
+            try
+            {
+                logger.LogWarning(
+                    message,
+                    args);
+            }
+            catch (AggregateException aggregateException)
+                when (aggregateException.InnerExceptions.Any(inner =>
+                    inner is ObjectDisposedException or InvalidOperationException))
+            {
+                // Logger provider was already disposed during host shutdown.
+            }
+            catch (ObjectDisposedException)
+            {
+                // Logger provider was already disposed during host shutdown.
+            }
+            catch (InvalidOperationException)
+            {
+                // Logger infrastructure may already be unavailable during shutdown.
+            }
+            catch
+            {
+                // Never allow logging failures to break shutdown.
+            }
+        }
+
+        private void SafeLogWarning(
+            Exception exception,
+            string message,
+            params object?[] args)
+        {
+            try
+            {
+                logger.LogWarning(
+                    exception,
+                    message,
+                    args);
+            }
+            catch (AggregateException aggregateException)
+                when (aggregateException.InnerExceptions.Any(inner =>
+                    inner is ObjectDisposedException or InvalidOperationException))
+            {
+                // Logger provider was already disposed during host shutdown.
+            }
+            catch (ObjectDisposedException)
+            {
+                // Logger provider was already disposed during host shutdown.
+            }
+            catch (InvalidOperationException)
+            {
+                // Logger infrastructure may already be unavailable during shutdown.
+            }
+            catch
+            {
+                // Never allow logging failures to break shutdown.
+            }
+        }
+
+        private void SafeLogError(
+            Exception exception,
+            string message,
+            params object?[] args)
+        {
+            try
+            {
+                logger.LogError(
+                    exception,
+                    message,
+                    args);
+            }
+            catch (AggregateException aggregateException)
+                when (aggregateException.InnerExceptions.Any(inner =>
+                    inner is ObjectDisposedException or InvalidOperationException))
+            {
+                // Logger provider was already disposed during host shutdown.
+            }
+            catch (ObjectDisposedException)
+            {
+                // Logger provider was already disposed during host shutdown.
+            }
+            catch (InvalidOperationException)
+            {
+                // Logger infrastructure may already be unavailable during shutdown.
+            }
+            catch
+            {
+                // Never allow logging failures to break shutdown.
+            }
+        }
+
+        private static string ResolvePublishedControlPlaneId(
+            AiControlPlaneOptions options)
+        {
+            if (!string.IsNullOrWhiteSpace(options.ControlPlaneId))
+            {
+                return options.ControlPlaneId;
+            }
+
+            return AiControlPlaneOptions.DefaultControlPlaneId;
         }
 
         private static TimeSpan ResolveRefreshInterval(AiControlPlaneOptions options)

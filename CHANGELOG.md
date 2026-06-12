@@ -6,6 +6,196 @@ This project follows a deterministic runtime and observability model designed fo
 
 ---
 
+## [1.0.6.1] - 2026-06-11 HTTP Provider Scenario Alignment, Redis Runtime Visibility, and Shutdown Stability
+
+### Changed
+
+- Updated HTTP provider MCP integration scenarios to align with the current pooled runtime architecture.
+- Reworked `HttpRuntimeProviderScenarioTests` to use the same runtime model validated by the heavy HTTP dispatch tests:
+  - `ControlPlaneWithHttpRuntimeInstances`
+  - HTTP runtime provider
+  - `RuntimeInstanceOnly` HTTP host
+  - internal local runtime instance pool
+  - dispatchable child runtime instances using the `runtime-http-*` prefix.
+- Removed the legacy single-runtime HTTP test assumption based on `RuntimeInstanceHttpTestHost.RuntimeInstanceId`.
+- Updated HTTP scenario assertions to validate assignment to pooled child runtime instances:
+  - `runtime-http-1`
+  - `runtime-http-2`
+  - `runtime-http-3`
+- Updated queue drain behavior in HTTP scenarios to target the shared pump model instead of a fixed single runtime instance.
+- Updated runtime instance assertions to accept host-scoped runtime instance identifiers.
+- Preserved the original HTTP provider scenario coverage while adapting it to the current architecture.
+- Aligned MCP control-plane startup with runtime discovery requirements so the control plane can publish discovery before dependent runtime hosts require it.
+- Updated the generic MCP/runtime test fixture startup order:
+  - MCP control-plane host starts first.
+  - Runtime HTTP hosts start after discovery is available.
+  - Runtime HTTP clients are resolved dynamically after runtime hosts are created.
+- Updated the HTTP runtime client factory used in tests to support runtime clients being added after MCP host startup.
+- Updated shared queue pump readiness behavior to wait for runtime capacity before dispatching.
+- Improved shared queue dispatch validation so tests assert the real assigned runtime instance instead of a deprecated parent HTTP host identity.
+
+### Added
+
+- Added Redis-backed runtime instance registry coverage for runtime registration, heartbeat, listing, draining, and unregister flows.
+- Added Redis-backed runtime capacity visibility coverage for runtime capacity publication, listing, and cleanup.
+- Added runtime instance capacity descriptor cleanup on runtime shutdown.
+- Added runtime instance unregister cleanup on runtime shutdown.
+- Added control-plane discovery readiness validation for runtime hosts that require discovery.
+- Added Redis control-plane discovery store support for publishing and reading the active MCP control-plane discovery descriptor.
+- Added control-plane id resolver support so runtime hosts can resolve the logical MCP control-plane identity from the Redis discovery key.
+- Added discovery-based MCP control-plane identity propagation for `RuntimeInstanceOnly` hosts that require discovery before registration.
+- Added readiness gate validation before starting the MCP shared queue background pump.
+- Added runtime identity and host-scoped runtime instance validation for pooled runtime hosts.
+- Added test coverage for dynamic HTTP runtime client resolution in the generic MCP test host.
+- Added stronger wait helper diagnostics for dispatched shared runs and runtime visibility assertions.
+- Added heavy HTTP dispatch validation against Redis shared stores and the pooled HTTP runtime provider model.
+
+### Validated
+
+- Validated HTTP provider dispatch through the pooled `RuntimeInstanceOnly` model.
+- Validated shared run submission using `QueueFirst` mode.
+- Validated manual shared queue draining through MCP.
+- Validated dispatched shared runs receive:
+  - `AssignedRuntimeInstanceId`
+  - `LocalRunId`
+  - runtime run status
+  - execution id once execution starts.
+- Validated completion of normal HTTP-provider runs.
+- Validated completion of larger HTTP-provider pipelines.
+- Validated shared queue activity visibility for HTTP-provider runs.
+- Validated automatic dispatch through the HTTP provider when the shared queue background pump is enabled.
+- Validated pause and resume behavior for long-running HTTP-provider executions.
+- Validated cancellation request behavior for long-running HTTP-provider executions.
+- Validated runtime queue cancellation routing against the assigned child runtime instance.
+- Validated Redis shared run store usage in heavy dispatch scenarios.
+- Validated Redis shared queue usage in heavy dispatch scenarios.
+- Validated Redis runtime admission reservation store usage in heavy dispatch scenarios.
+- Validated heavy HTTP dispatch with:
+  - 50 shared runs
+  - 100 steps per run
+  - 3 pooled HTTP runtime instances
+  - Redis shared queue
+  - Redis shared run store
+  - Redis admission reservations.
+- Validated multi-runtime HTTP distribution across pooled child runtime instances.
+- Validated replay, report, ledger, and trace output for completed shared runs.
+- Validated replay report integrity:
+  - execution found
+  - snapshot found
+  - fingerprint found
+  - fingerprint matches
+  - dependency graph valid
+  - step state valid
+  - payload references valid
+  - zero replay issues.
+
+### Fixed
+
+- Fixed incompatible HTTP provider tests that were still targeting the old single-runtime HTTP fixture model.
+- Fixed incorrect assumptions that all HTTP-provider runs must be assigned to one fixed runtime instance.
+- Fixed HTTP provider scenario timeouts caused by waiting for dispatch to the removed single-runtime model.
+- Fixed test model mismatch where the control plane was using the new pooled HTTP architecture but the assertions still expected the old runtime identity.
+- Fixed queue drain expectations so tests now validate dispatch against the active pooled runtime instance model.
+- Fixed MCP/runtime discovery startup ordering when runtime hosts require Redis discovery to resolve the logical control-plane identifier.
+- Fixed control-plane id resolution so runtime registry and capacity publication use the MCP-published logical control-plane identity.
+- Fixed runtime host discovery dependency so `RuntimeInstanceOnly` hosts can resolve the MCP control-plane identity before registering runtime instances.
+- Fixed generic MCP test host startup when no runtime HTTP clients are available at MCP startup time.
+- Fixed HTTP runtime client factory behavior so runtime HTTP clients can be resolved after the runtime hosts are created.
+- Fixed host-scoped runtime instance id assertions for pooled runtime instances.
+- Fixed Redis runtime registry unregister cleanup so shutdown no longer depends on Redis discovery resolution after discovery descriptors may already be removed.
+- Fixed Redis runtime capacity cleanup so capacity descriptor removal no longer depends on Redis discovery resolution during shutdown.
+- Fixed runtime capacity descriptor cleanup for stopped runtime instances.
+- Fixed shutdown cleanup race conditions where runtime unregister/capacity removal could execute after discovery or Redis dependencies were already disposed.
+- Fixed control-plane discovery shutdown logging so disposed logging providers cannot fail otherwise successful tests.
+- Fixed `StopAsync` cleanup paths to be best-effort and cancellation-safe.
+- Fixed shutdown timeout behavior caused by late Redis discovery resolution during unregister/capacity removal.
+- Fixed shared queue pump readiness timing so the pump waits for at least one ready runtime instance before dispatching.
+- Fixed flaky dispatch checks by separating dispatch validation from full execution completion validation where appropriate.
+- Fixed heavy HTTP dispatch validation to assert Redis-backed store usage instead of relying on in-memory assumptions.
+
+### Architecture Notes
+
+- The current validated HTTP runtime model is now:
+
+```text
+MCP Control Plane
+  -> HTTP Runtime Provider
+     -> RuntimeInstanceOnly HTTP Host
+        -> Local Runtime Instance Pool
+           -> runtime-http-1
+           -> runtime-http-2
+           -> runtime-http-3
+```
+
+- The HTTP host identity is transport and hosting infrastructure.
+- The dispatchable runtime identities are the child runtime instances created by the runtime instance pool.
+- Tests now validate the real runtime execution capacity rather than the parent HTTP host identity.
+- Runtime instance ids are host-scoped in pooled runtime scenarios.
+- Redis discovery is used to resolve the shared logical control-plane id during startup.
+- The MCP server publishes the active discovery descriptor through the Redis discovery store.
+- Runtime hosts that require discovery resolve the MCP-published control-plane identity through the control-plane id resolver.
+- The resolved MCP control-plane identity is reused by runtime registration, registry entries, and capacity descriptors.
+- Runtime registry and runtime capacity cleanup no longer rely on discovery during shutdown once the runtime instance has already been registered or published.
+- Runtime instance registration and capacity publication now use the resolved logical control-plane id consistently.
+- Shutdown cleanup is intentionally best-effort:
+  - unregister runtime instance
+  - remove capacity descriptor
+  - stop local runtime hosts
+  - delete discovery descriptor when owned by the current control-plane.
+- Test cleanup remains a safety layer, not the primary lifecycle mechanism.
+
+### Redis / Store Notes
+
+- Existing Redis shared controller stores remain part of the validated architecture.
+- This version strengthens validation around Redis-backed shared runtime coordination rather than replacing all stores.
+- Redis discovery validation now explicitly covers:
+  - publishing the MCP control-plane discovery descriptor
+  - resolving the logical MCP control-plane identity
+  - sharing that identity with runtime-only hosts before registration.
+- Validated Redis-backed components include:
+  - `RedisAiSharedRunStore`
+  - `RedisAiSharedQueue`
+  - `RedisAiRuntimeAdmissionReservationStore`
+  - `RedisAiRuntimeInstanceRegistry`
+  - `RedisAiRuntimeInstanceCapacityStore`
+  - Redis control-plane discovery store.
+- Runtime registry and capacity store behavior now includes safe control-plane id reuse for known runtime instances during cleanup.
+- Redis store cleanup no longer depends on late discovery resolution during host shutdown.
+
+### Test Coverage Preserved
+
+The following scenario coverage was preserved and adapted:
+
+- Submit one run, drain, and dispatch through HTTP provider.
+- Submit four runs, drain, and dispatch through HTTP provider.
+- Submit one run, drain, and expose runtime run status.
+- Submit one 100-step pipeline and complete through HTTP provider.
+- Submit five runs and validate shared queue activity.
+- Submit one run without manual drain and complete through background pump.
+- Submit three runs and complete all through HTTP provider.
+- Submit one run, complete, and verify it remains listed with assigned HTTP runtime.
+- Submit two runs, complete, and validate shared queue activity.
+- Submit long-running HTTP execution, pause, resume, and complete.
+- Submit HTTP run and validate runtime queue cancellation routing.
+- Submit long-running HTTP execution and request cancellation.
+- Submit one run with a 100-step pipeline and replay it through MCP.
+- Validate replay report, ledger, and trace output.
+- Validate heavy HTTP QueueFirst dispatch across pooled HTTP runtime instances.
+- Validate Redis-backed shared queue and shared run store usage.
+- Validate Redis-backed admission reservation usage during heavy dispatch.
+- Validate runtime instance registry and capacity visibility during pooled execution.
+
+### Result
+
+- HTTP provider MCP scenarios now pass against the current pooled runtime architecture.
+- Heavy HTTP dispatch scenarios now pass against Redis-backed shared stores and pooled HTTP runtime instances.
+- Replay/report/ledger/trace scenarios now pass for completed shared runs.
+- Runtime registry and capacity cleanup no longer block test shutdown.
+- Discovery, registry, capacity, pump readiness, and HTTP provider tests are aligned with the production-oriented pooled runtime model.
+- The test suite now correctly validates the current shared controller architecture instead of the deprecated single-runtime fixture model.
+
+---
+
 ## [1.0.6.1] - 2026-06-09 HTTP Provider Scenario Alignment with Pooled Runtime Model
 
 ### Changed

@@ -823,11 +823,15 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
             switch (hostOptions.Mode)
             {
                 case AiMcpHostMode.ControlPlaneOnly:
+                    aiEngineOptions.ControlPlane.EnableDiscovery = true;
+                    aiEngineOptions.ControlPlane.PublishDiscovery = true;
+                    aiEngineOptions.ControlPlane.RequireDiscovery = false;
+                    break;
                 case AiMcpHostMode.ControlPlaneWithLocalRuntimeInstances:
                 case AiMcpHostMode.ControlPlaneWithHttpRuntimeInstances:
                     aiEngineOptions.ControlPlane.EnableDiscovery = true;
                     aiEngineOptions.ControlPlane.PublishDiscovery = true;
-                    aiEngineOptions.ControlPlane.RequireDiscovery = false;
+                    aiEngineOptions.ControlPlane.RequireDiscovery = true;
                     break;
 
                 case AiMcpHostMode.RuntimeInstanceOnly:

@@ -1,4 +1,5 @@
-﻿using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Controller;
+﻿using System.Text.RegularExpressions;
+using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Controller;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Store;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Pump;
 using Multiplexed.AI.McpServer.Tests.Integration.Fixtures;
@@ -11,6 +12,15 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
     /// <summary>
     /// Contains integration tests for shared queue submission and background pumping.
     /// </summary>
+    /// <remarks>
+    /// These scenarios validate queue-first submission with both automatic background
+    /// pumping and explicit manual drain.
+    ///
+    /// Each test creates a unique logical control-plane identifier and passes it to
+    /// every host participating in that test. This prevents Redis-backed registry,
+    /// capacity, shared run, shared queue, and admission reservation state from leaking
+    /// across test executions.
+    /// </remarks>
     public sealed class SharedRunBackgroundPumpScenarioTests
     {
         private const string RequestedBy = "mcp-background-pump-integration-test";
@@ -37,8 +47,13 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
         [Fact]
         public async Task Submit_Local_Run_With_Queue_First_And_Pump_Disabled_Should_Add_Run_To_Shared_Queue()
         {
+            var controlPlaneId =
+                GenericMcpServerTestSettings.CreateControlPlaneId(
+                    "background-pump-local-disabled");
+
             var controlPlaneSettings =
                 CreateLocalControlPlaneSettings(
+                    controlPlaneId,
                     enablePump: false,
                     queueFirst: true);
 
@@ -75,13 +90,20 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
         [Fact]
         public async Task Submit_Http_Run_With_Queue_First_And_Pump_Disabled_Should_Add_Run_To_Shared_Queue()
         {
+            var controlPlaneId =
+                GenericMcpServerTestSettings.CreateControlPlaneId(
+                    "background-pump-http-disabled");
+
             var controlPlaneSettings =
                 CreateHttpControlPlaneSettings(
+                    controlPlaneId,
                     enablePump: false,
                     queueFirst: true);
 
             var runtimeInstanceSettings =
-                CreateHttpRuntimeInstanceSettings();
+                CreateHttpRuntimeInstanceSettings(
+                    controlPlaneId,
+                    deployment: "test-http-pump-disabled");
 
             await using var fixture =
                 new GenericMcpRuntimeFixture(
@@ -114,8 +136,13 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
         [Fact]
         public async Task Submit_One_Local_Run_With_Queue_First_Should_Dispatch_And_Complete_Through_Background_Pump()
         {
+            var controlPlaneId =
+                GenericMcpServerTestSettings.CreateControlPlaneId(
+                    "background-pump-local-one");
+
             var controlPlaneSettings =
                 CreateLocalControlPlaneSettings(
+                    controlPlaneId,
                     enablePump: true,
                     queueFirst: true);
 
@@ -158,7 +185,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
                 .ConfigureAwait(false);
 
             output.WriteLine(
-                $"Local shared queue pump dispatched and completed one run. PipelineKey='{pipelineName}'.");
+                $"Local shared queue pump dispatched and completed one run. ControlPlaneId='{controlPlaneId}', PipelineKey='{pipelineName}'.");
         }
 
         /// <summary>
@@ -168,13 +195,20 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
         [Fact]
         public async Task Submit_One_Http_Run_With_Queue_First_Should_Dispatch_And_Complete_Through_Background_Pump()
         {
+            var controlPlaneId =
+                GenericMcpServerTestSettings.CreateControlPlaneId(
+                    "background-pump-http-one");
+
             var controlPlaneSettings =
                 CreateHttpControlPlaneSettings(
+                    controlPlaneId,
                     enablePump: true,
                     queueFirst: true);
 
             var runtimeInstanceSettings =
-                CreateHttpRuntimeInstanceSettings();
+                CreateHttpRuntimeInstanceSettings(
+                    controlPlaneId,
+                    deployment: "test-http-pump-one");
 
             await using var fixture =
                 new GenericMcpRuntimeFixture(
@@ -213,7 +247,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
                 .ConfigureAwait(false);
 
             output.WriteLine(
-                $"HTTP shared queue pump dispatched and completed one run. PipelineKey='{pipelineName}'.");
+                $"HTTP shared queue pump dispatched and completed one run. ControlPlaneId='{controlPlaneId}', PipelineKey='{pipelineName}'.");
         }
 
         /// <summary>
@@ -223,8 +257,13 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
         [Fact]
         public async Task Submit_Multiple_Local_Runs_With_Queue_First_Should_Dispatch_And_Complete_Through_Background_Pump()
         {
+            var controlPlaneId =
+                GenericMcpServerTestSettings.CreateControlPlaneId(
+                    "background-pump-local-many");
+
             var controlPlaneSettings =
                 CreateLocalControlPlaneSettings(
+                    controlPlaneId,
                     enablePump: true,
                     queueFirst: true);
 
@@ -248,21 +287,26 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
                     count: 4)
                 .ConfigureAwait(false);
 
-            var queueItems = await mcp.ListSharedQueueAsync(includeTerminal: true);
+            var queueItems =
+                await mcp.ListSharedQueueAsync(
+                        includeTerminal: true)
+                    .ConfigureAwait(false);
 
             output.WriteLine(
                 $"QueueItems='{queueItems.Count}', Matching='{queueItems.Count(x => x.PipelineKey == pipelineName)}'");
 
-            var runs = await mcp.ListSharedRunsAsync(
-                new AiSharedRuntimeControllerRequest
-                {
-                    Operation = AiSharedRuntimeControllerOperation.ListRuns,
-                    IncludeCompleted = true,
-                    IncludeFailed = true,
-                    IncludeCancelled = true,
-                    RequestedBy = RequestedBy,
-                    Source = Source
-                });
+            var runs =
+                await mcp.ListSharedRunsAsync(
+                        new AiSharedRuntimeControllerRequest
+                        {
+                            Operation = AiSharedRuntimeControllerOperation.ListRuns,
+                            IncludeCompleted = true,
+                            IncludeFailed = true,
+                            IncludeCancelled = true,
+                            RequestedBy = RequestedBy,
+                            Source = Source
+                        })
+                    .ConfigureAwait(false);
 
             foreach (var run in runs.Runs.Where(x => x.PipelineKey == pipelineName))
             {
@@ -289,7 +333,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
                 .ConfigureAwait(false);
 
             output.WriteLine(
-                $"Local shared queue pump dispatched and completed multiple runs. PipelineKey='{pipelineName}', Count='{dispatchedRuns.Count}'.");
+                $"Local shared queue pump dispatched and completed multiple runs. ControlPlaneId='{controlPlaneId}', PipelineKey='{pipelineName}', Count='{dispatchedRuns.Count}'.");
         }
 
         /// <summary>
@@ -299,13 +343,20 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
         [Fact]
         public async Task Submit_Multiple_Http_Runs_With_Queue_First_Should_Dispatch_And_Complete_Through_Background_Pump()
         {
+            var controlPlaneId =
+                GenericMcpServerTestSettings.CreateControlPlaneId(
+                    "background-pump-http-many");
+
             var controlPlaneSettings =
                 CreateHttpControlPlaneSettings(
+                    controlPlaneId,
                     enablePump: true,
                     queueFirst: true);
 
             var runtimeInstanceSettings =
-                CreateHttpRuntimeInstanceSettings();
+                CreateHttpRuntimeInstanceSettings(
+                    controlPlaneId,
+                    deployment: "test-http-pump-many");
 
             await using var fixture =
                 new GenericMcpRuntimeFixture(
@@ -344,88 +395,378 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
                 .ConfigureAwait(false);
 
             output.WriteLine(
-                $"HTTP shared queue pump dispatched and completed multiple runs. PipelineKey='{pipelineName}', RuntimeInstanceId='runtime-http-1', Count='{dispatchedRuns.Count}'.");
+                $"HTTP shared queue pump dispatched and completed multiple runs. ControlPlaneId='{controlPlaneId}', PipelineKey='{pipelineName}', Count='{dispatchedRuns.Count}'.");
         }
 
         /// <summary>
+        /// Verifies that a local queue-first run remains queued while the background
+        /// pump is disabled, then dispatches and completes after manual drain.
+        /// </summary>
+        [Fact]
+        public async Task Submit_Local_Run_With_Queue_First_And_Pump_Disabled_Should_Dispatch_After_Manual_Drain()
+        {
+            var controlPlaneId =
+                GenericMcpServerTestSettings.CreateControlPlaneId(
+                    "background-pump-local-manual-drain");
+
+            var controlPlaneSettings =
+                CreateLocalControlPlaneSettings(
+                    controlPlaneId,
+                    enablePump: false,
+                    queueFirst: true,
+                    enableManualDrainPump: true,
+                    deployment: "test-local-manual-drain");
+
+            await using var host =
+                new GenericMcpServerTestHost(
+                    controlPlaneSettings);
+
+            using var client =
+                host.CreateClient();
+
+            var mcp =
+                new McpTestClient(
+                    client);
+
+            var pipelineName =
+                $"mcp-queue-first-local-manual-drain-{Guid.NewGuid():N}";
+
+            await SubmitRunsAsync(
+                    mcp,
+                    pipelineName,
+                    count: 1)
+                .ConfigureAwait(false);
+
+            await AssertSharedQueueContainsPipelineAsync(
+                    mcp,
+                    pipelineName)
+                .ConfigureAwait(false);
+
+            await Task.Delay(
+                    TimeSpan.FromSeconds(10))
+                .ConfigureAwait(false);
+
+            await AssertSharedQueueContainsPipelineAsync(
+                    mcp,
+                    pipelineName)
+                .ConfigureAwait(false);
+
+            var drainResult =
+                await mcp.DrainQueueAsync(
+                        new AiSharedQueuePumpRequest
+                        {
+                            PumpRuntimeInstanceId = "mcp-manual-drain-pump",
+                            PumpWorkerId = "manual-test-drain",
+                            MaxDispatches = 10,
+                            RequestedBy = RequestedBy,
+                            Source = Source,
+                            Reason = "Manual test drain."
+                        })
+                    .ConfigureAwait(false);
+
+            Assert.True(
+                drainResult.Success,
+                drainResult.FailureReason ?? "Drain queue failed.");
+
+            var dispatchedRuns =
+                await McpTestWaitHelpers.WaitForDispatchedRunsAsync(
+                        mcp,
+                        pipelineName,
+                        expectedCount: 1,
+                        timeout: TimeSpan.FromMinutes(1))
+                    .ConfigureAwait(false);
+
+            AssertLocalDispatchedRuns(
+                dispatchedRuns,
+                expectedCount: 1);
+
+            await AssertRunsCompleteAsync(
+                    mcp,
+                    dispatchedRuns,
+                    expectedCount: 1)
+                .ConfigureAwait(false);
+        }
+
+        /// <summary>
+        /// Verifies that an HTTP queue-first run remains queued while the background
+        /// pump is disabled, then dispatches and completes after manual drain.
+        /// </summary>
+        [Fact]
+        public async Task Submit_Http_Run_With_Queue_First_And_Pump_Disabled_Should_Dispatch_After_Manual_Drain()
+        {
+            var controlPlaneId =
+                GenericMcpServerTestSettings.CreateControlPlaneId(
+                    "background-pump-http-manual-drain");
+
+            var controlPlaneSettings =
+                CreateHttpControlPlaneSettings(
+                    controlPlaneId,
+                    enablePump: false,
+                    queueFirst: true,
+                    enableManualDrainPump: true,
+                    deployment: "test-http-manual-drain");
+
+            var runtimeInstanceSettings =
+                CreateHttpRuntimeInstanceSettings(
+                    controlPlaneId,
+                    deployment: "test-http-manual-drain-runtime");
+
+            await using var fixture =
+                new GenericMcpRuntimeFixture(
+                    controlPlaneSettings,
+                    runtimeInstanceSettings);
+
+            await fixture
+                .InitializeAsync()
+                .ConfigureAwait(false);
+
+            var pipelineName =
+                $"mcp-queue-first-http-manual-drain-{Guid.NewGuid():N}";
+
+            await SubmitRunsAsync(
+                    fixture.Mcp,
+                    pipelineName,
+                    count: 1)
+                .ConfigureAwait(false);
+
+            await AssertSharedQueueContainsPipelineAsync(
+                    fixture.Mcp,
+                    pipelineName)
+                .ConfigureAwait(false);
+
+            await Task.Delay(
+                    TimeSpan.FromSeconds(10))
+                .ConfigureAwait(false);
+
+            await AssertSharedQueueContainsPipelineAsync(
+                    fixture.Mcp,
+                    pipelineName)
+                .ConfigureAwait(false);
+
+            var drainResult =
+                await fixture.Mcp.DrainQueueAsync(
+                        new AiSharedQueuePumpRequest
+                        {
+                            PumpRuntimeInstanceId = "mcp-http-manual-drain-pump",
+                            PumpWorkerId = "manual-test-drain",
+                            MaxDispatches = 10,
+                            RequestedBy = RequestedBy,
+                            Source = Source,
+                            Reason = "Manual HTTP provider test drain."
+                        })
+                    .ConfigureAwait(false);
+
+            Assert.True(
+                drainResult.Success,
+                drainResult.FailureReason ?? "Drain queue failed.");
+
+            var dispatchedRuns =
+                await McpTestWaitHelpers.WaitForDispatchedRunsAsync(
+                        fixture.Mcp,
+                        pipelineName,
+                        expectedCount: 1,
+                        timeout: TimeSpan.FromMinutes(1))
+                    .ConfigureAwait(false);
+
+            AssertHttpDispatchedRuns(
+                dispatchedRuns,
+                expectedCount: 1);
+
+            await AssertRunsCompleteAsync(
+                    fixture.Mcp,
+                    dispatchedRuns,
+                    expectedCount: 1)
+                .ConfigureAwait(false);
+        }
+
+        
+        /// <summary>
         /// Creates local control-plane settings for shared queue pump scenarios.
         /// </summary>
+        /// <param name="controlPlaneId">The logical control-plane identifier shared by the scenario.</param>
         /// <param name="enablePump">Whether the shared queue background pump should be enabled.</param>
         /// <param name="queueFirst">Whether submitted runs should be enqueued into the shared queue before dispatch.</param>
+        /// <param name="enableManualDrainPump">Whether the manual drain pump tool should remain enabled while the background service is disabled.</param>
+        /// <param name="instanceCount">The number of local runtime instances.</param>
+        /// <param name="workerCountPerInstance">The number of workers per local runtime instance.</param>
+        /// <param name="maxConcurrentRunsPerInstance">The maximum concurrent runs per local runtime instance.</param>
+        /// <param name="maxConcurrentRuns">The control-plane background controller maximum concurrent runs.</param>
+        /// <param name="queueCapacity">The control-plane background controller queue capacity.</param>
+        /// <param name="distributedWorkerCount">The distributed worker count.</param>
+        /// <param name="maxLocalWorkersPerExecution">The maximum local workers per execution.</param>
+        /// <param name="deployment">The deployment metadata value.</param>
         /// <returns>The control-plane settings.</returns>
         private static Dictionary<string, string?> CreateLocalControlPlaneSettings(
+            string controlPlaneId,
             bool enablePump,
-            bool queueFirst)
+            bool queueFirst,
+            bool enableManualDrainPump = false,
+            int instanceCount = 3,
+            int workerCountPerInstance = 10,
+            int maxConcurrentRunsPerInstance = 5,
+            int maxConcurrentRuns = 5,
+            int queueCapacity = 500,
+            int distributedWorkerCount = 10,
+            int maxLocalWorkersPerExecution = 5,
+            string deployment = "test-local")
         {
+            ArgumentException.ThrowIfNullOrWhiteSpace(
+                controlPlaneId);
+
+            var controlPlaneRuntimeInstanceId =
+                $"mcp-control-plane-local-{Guid.NewGuid():N}";
+
             return GenericMcpServerTestSettings.CreateMcpSettings(
+                controlPlaneId,
                 new Dictionary<string, string?>
                 {
                     ["AiMcpHost:Mode"] = "ControlPlaneWithLocalRuntimeInstances",
                     ["AiMcpHost:EnableSharedQueuePump"] = enablePump.ToString(),
+
                     ["AiSharedQueueBackgroundService:Enabled"] = enablePump.ToString(),
-                    ["AiSharedQueuePump:Enabled"] = enablePump.ToString(),
+                    ["AiSharedQueueBackgroundService:WaitForRuntimeReadiness"] = enablePump.ToString(),
+                    ["AiSharedQueueBackgroundService:RuntimeReadinessPollInterval"] = "00:00:00.100",
+                    ["AiSharedQueueBackgroundService:RuntimeReadinessTimeout"] = "00:01:00",
+
+                    ["AiSharedQueuePump:Enabled"] = (enablePump || enableManualDrainPump).ToString(),
+
                     ["AiSharedRuntimeController:SubmitMode"] = queueFirst
                         ? "QueueFirst"
                         : "DirectDispatch",
+
+                    ["AiRuntimeInstanceRegistration:ControlPlaneId"] = controlPlaneId,
                     ["AiRuntimeInstanceRegistration:ProviderName"] = "local",
+                    ["AiRuntimeInstanceRegistration:ProviderMetadata:controlPlaneId"] = controlPlaneId,
                     ["AiRuntimeInstanceRegistration:ProviderMetadata:provider.name"] = "local",
+                    ["AiRuntimeInstanceRegistration:Metadata:controlPlaneId"] = controlPlaneId,
                     ["AiRuntimeInstanceRegistration:Metadata:provider.name"] = "local",
-                    ["AiRuntimeInstanceRegistration:RuntimeInstanceId"] = "mcp-control-plane-local",
+                    ["AiRuntimeInstanceRegistration:RuntimeInstanceId"] = controlPlaneRuntimeInstanceId,
                     ["AiRuntimeInstanceRegistration:Metadata:hostType"] = "control-plane-with-local-runtime",
-                    ["AiRuntimeInstanceRegistration:Metadata:deployment"] = "test-local",
+                    ["AiRuntimeInstanceRegistration:Metadata:deployment"] = deployment,
+
                     ["AiLocalRuntimeInstancePool:Enabled"] = "true",
-                    ["AiLocalRuntimeInstancePool:InstanceCount"] = "3",
-                    ["AiLocalRuntimeInstancePool:WorkerCountPerInstance"] = "10",
-                    ["AiLocalRuntimeInstancePool:MaxConcurrentRunsPerInstance"] = "5",
+                    ["AiLocalRuntimeInstancePool:InstanceCount"] = instanceCount.ToString(),
+                    ["AiLocalRuntimeInstancePool:WorkerCountPerInstance"] = workerCountPerInstance.ToString(),
+                    ["AiLocalRuntimeInstancePool:MaxConcurrentRunsPerInstance"] = maxConcurrentRunsPerInstance.ToString(),
                     ["AiLocalRuntimeInstancePool:RuntimeInstanceIdPrefix"] = "mcp-runtime",
-                    ["AiEngine:RuntimeInstanceId"] = "mcp-control-plane-local"
+
+                    ["AiEngine:ControlPlane:ControlPlaneId"] = controlPlaneId,
+                    ["AiEngine:RuntimeInstanceId"] = controlPlaneRuntimeInstanceId,
+                    ["AiEngine:PipelineBackgroundController:RuntimeInstanceId"] = controlPlaneRuntimeInstanceId,
+                    ["AiEngine:PipelineBackgroundController:MaxConcurrentRuns"] = maxConcurrentRuns.ToString(),
+                    ["AiEngine:PipelineBackgroundController:QueueCapacity"] = queueCapacity.ToString(),
+                    ["AiEngine:PipelineBackgroundController:Distributed:Enabled"] = "true",
+                    ["AiEngine:PipelineBackgroundController:Distributed:WorkerCount"] = distributedWorkerCount.ToString(),
+                    ["AiEngine:PipelineBackgroundController:MaxLocalWorkersPerExecution"] = maxLocalWorkersPerExecution.ToString(),
+                    ["AiEngine:RuntimeInstanceWorker:RuntimeInstanceId"] = controlPlaneRuntimeInstanceId,
+
+                    ["AiRuntimeInstanceRegistration:HeartbeatInterval"] = "00:00:02",
+                    ["AiRuntimeInstanceRegistration:RegistryTtl"] = "00:00:30",
+                    ["AiRuntimeInstanceRegistration:CapacityTtl"] = "00:00:30"
                 });
         }
 
         /// <summary>
         /// Creates HTTP control-plane settings for shared queue pump scenarios.
         /// </summary>
+        /// <param name="controlPlaneId">The logical control-plane identifier shared by the scenario.</param>
         /// <param name="enablePump">Whether the shared queue background pump should be enabled.</param>
         /// <param name="queueFirst">Whether submitted runs should be enqueued into the shared queue before dispatch.</param>
+        /// <param name="enableManualDrainPump">Whether the manual drain pump tool should remain enabled while the background service is disabled.</param>
+        /// <param name="deployment">The deployment metadata value.</param>
         /// <returns>The control-plane settings.</returns>
         private static Dictionary<string, string?> CreateHttpControlPlaneSettings(
+            string controlPlaneId,
             bool enablePump,
-            bool queueFirst)
+            bool queueFirst,
+            bool enableManualDrainPump = false,
+            string deployment = "test-http")
         {
+            ArgumentException.ThrowIfNullOrWhiteSpace(
+                controlPlaneId);
+
+            var controlPlaneRuntimeInstanceId =
+                $"mcp-control-plane-http-{Guid.NewGuid():N}";
+
             return GenericMcpServerTestSettings.CreateMcpSettings(
+                controlPlaneId,
                 new Dictionary<string, string?>
                 {
                     ["AiMcpHost:Mode"] = "ControlPlaneWithHttpRuntimeInstances",
                     ["AiMcpHost:EnableSharedQueuePump"] = enablePump.ToString(),
+
                     ["AiSharedQueueBackgroundService:Enabled"] = enablePump.ToString(),
-                    ["AiSharedQueuePump:Enabled"] = enablePump.ToString(),
+                    ["AiSharedQueueBackgroundService:WaitForRuntimeReadiness"] = enablePump.ToString(),
+                    ["AiSharedQueueBackgroundService:RuntimeReadinessPollInterval"] = "00:00:00.100",
+                    ["AiSharedQueueBackgroundService:RuntimeReadinessTimeout"] = "00:01:00",
+
+                    ["AiSharedQueuePump:Enabled"] = (enablePump || enableManualDrainPump).ToString(),
+
                     ["AiSharedRuntimeController:SubmitMode"] = queueFirst
                         ? "QueueFirst"
-                        : "DirectDispatch"
+                        : "DirectDispatch",
+
+                    ["AiRuntimeInstanceRegistration:ControlPlaneId"] = controlPlaneId,
+                    ["AiRuntimeInstanceRegistration:ProviderName"] = "http",
+                    ["AiRuntimeInstanceRegistration:ProviderMetadata:controlPlaneId"] = controlPlaneId,
+                    ["AiRuntimeInstanceRegistration:ProviderMetadata:provider.name"] = "http",
+                    ["AiRuntimeInstanceRegistration:ProviderMetadata:transport.name"] = "http",
+                    ["AiRuntimeInstanceRegistration:Metadata:controlPlaneId"] = controlPlaneId,
+                    ["AiRuntimeInstanceRegistration:Metadata:provider.name"] = "http",
+                    ["AiRuntimeInstanceRegistration:Metadata:transport.name"] = "http",
+                    ["AiRuntimeInstanceRegistration:RuntimeInstanceId"] = controlPlaneRuntimeInstanceId,
+                    ["AiRuntimeInstanceRegistration:Metadata:hostType"] = "control-plane-with-http-runtime",
+                    ["AiRuntimeInstanceRegistration:Metadata:deployment"] = deployment,
+
+                    ["AiEngine:ControlPlane:ControlPlaneId"] = controlPlaneId,
+                    ["AiEngine:RuntimeInstanceId"] = controlPlaneRuntimeInstanceId,
+                    ["AiEngine:PipelineBackgroundController:RuntimeInstanceId"] = controlPlaneRuntimeInstanceId,
+                    ["AiEngine:RuntimeInstanceWorker:RuntimeInstanceId"] = controlPlaneRuntimeInstanceId
                 });
         }
 
         /// <summary>
         /// Creates HTTP runtime-instance settings for shared queue pump scenarios.
         /// </summary>
+        /// <param name="controlPlaneId">The logical control-plane identifier shared by the scenario.</param>
+        /// <param name="deployment">The deployment metadata value.</param>
         /// <returns>The HTTP runtime-instance settings.</returns>
-        private static Dictionary<string, string?> CreateHttpRuntimeInstanceSettings()
+        private static Dictionary<string, string?> CreateHttpRuntimeInstanceSettings(
+            string controlPlaneId,
+            string deployment)
         {
+            ArgumentException.ThrowIfNullOrWhiteSpace(
+                controlPlaneId);
+
+            var runtimeInstanceHostId =
+                $"runtime-http-host-{Guid.NewGuid():N}";
+
+            const int runtimePort = 5002;
+            const string runtimeEndpoint = "http://localhost:5002";
+
             return GenericMcpServerTestSettings.CreateRuntimeInstanceSettings(
+                controlPlaneId,
+                runtimeInstanceHostId,
+                runtimePort,
                 new Dictionary<string, string?>
                 {
-                    ["AiRuntimeInstanceRegistration:RuntimeInstanceId"] = "runtime-http-host",
+                    ["AiRuntimeInstanceRegistration:ControlPlaneId"] = controlPlaneId,
+                    ["AiRuntimeInstanceRegistration:RuntimeInstanceId"] = runtimeInstanceHostId,
                     ["AiRuntimeInstanceRegistration:ProviderName"] = "http",
+
+                    ["AiRuntimeInstanceRegistration:ProviderMetadata:controlPlaneId"] = controlPlaneId,
                     ["AiRuntimeInstanceRegistration:ProviderMetadata:provider.name"] = "http",
                     ["AiRuntimeInstanceRegistration:ProviderMetadata:transport.name"] = "http",
-                    ["AiRuntimeInstanceRegistration:ProviderMetadata:transport.endpoint"] = "http://localhost",
-                    ["AiRuntimeInstanceRegistration:ProviderMetadata:runtime.instance.id"] = "runtime-http-host",
+                    ["AiRuntimeInstanceRegistration:ProviderMetadata:transport.endpoint"] = runtimeEndpoint,
+                    ["AiRuntimeInstanceRegistration:ProviderMetadata:runtime.instance.id"] = runtimeInstanceHostId,
+
+                    ["AiRuntimeInstanceRegistration:Metadata:controlPlaneId"] = controlPlaneId,
                     ["AiRuntimeInstanceRegistration:Metadata:provider.name"] = "http",
                     ["AiRuntimeInstanceRegistration:Metadata:transport.name"] = "http",
-                    ["AiRuntimeInstanceRegistration:Metadata:transport.endpoint"] = "http://localhost",
-                    ["AiRuntimeInstanceRegistration:Metadata:runtime.instance.id"] = "runtime-http-host",
+                    ["AiRuntimeInstanceRegistration:Metadata:transport.endpoint"] = runtimeEndpoint,
+                    ["AiRuntimeInstanceRegistration:Metadata:runtime.instance.id"] = runtimeInstanceHostId,
                     ["AiRuntimeInstanceRegistration:Metadata:hostType"] = "runtime-instance-only",
-                    ["AiRuntimeInstanceRegistration:Metadata:deployment"] = "test-http",
+                    ["AiRuntimeInstanceRegistration:Metadata:deployment"] = deployment,
 
                     ["AiLocalRuntimeInstancePool:Enabled"] = "true",
                     ["AiLocalRuntimeInstancePool:InstanceCount"] = "1",
@@ -433,14 +774,15 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
                     ["AiLocalRuntimeInstancePool:MaxConcurrentRunsPerInstance"] = "5",
                     ["AiLocalRuntimeInstancePool:RuntimeInstanceIdPrefix"] = "runtime-http",
 
-                    ["AiEngine:RuntimeInstanceId"] = "runtime-http-host",
-                    ["AiEngine:PipelineBackgroundController:RuntimeInstanceId"] = "runtime-http-host",
+                    ["AiEngine:ControlPlane:ControlPlaneId"] = controlPlaneId,
+                    ["AiEngine:RuntimeInstanceId"] = runtimeInstanceHostId,
+                    ["AiEngine:PipelineBackgroundController:RuntimeInstanceId"] = runtimeInstanceHostId,
                     ["AiEngine:PipelineBackgroundController:MaxConcurrentRuns"] = "5",
                     ["AiEngine:PipelineBackgroundController:QueueCapacity"] = "500",
                     ["AiEngine:PipelineBackgroundController:Distributed:Enabled"] = "true",
                     ["AiEngine:PipelineBackgroundController:Distributed:WorkerCount"] = "10",
                     ["AiEngine:PipelineBackgroundController:MaxLocalWorkersPerExecution"] = "5",
-                    ["AiEngine:RuntimeInstanceWorker:RuntimeInstanceId"] = "runtime-http-host"
+                    ["AiEngine:RuntimeInstanceWorker:RuntimeInstanceId"] = runtimeInstanceHostId
                 });
         }
 
@@ -576,6 +918,12 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
                     .Count());
         }
 
+        /// <summary>
+        /// Verifies that a runtime instance id matches either the current host-scoped
+        /// format or the legacy logical runtime instance format.
+        /// </summary>
+        /// <param name="runtimeInstanceId">The runtime instance id.</param>
+        /// <param name="expectedRuntimeIdPrefix">The expected logical runtime id prefix.</param>
         private static void AssertRuntimeInstanceIdMatchesLogicalRuntimePrefix(
             string? runtimeInstanceId,
             string expectedRuntimeIdPrefix)
@@ -583,24 +931,22 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
             Assert.False(
                 string.IsNullOrWhiteSpace(runtimeInstanceId));
 
-            var parts =
-                runtimeInstanceId.Split(
-                    ':',
-                    StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            if (runtimeInstanceId.StartsWith(
+                    expectedRuntimeIdPrefix,
+                    StringComparison.Ordinal))
+            {
+                return;
+            }
 
-            Assert.Equal(
-                2,
-                parts.Length);
+            var hostScopedPattern =
+                $"^host-[a-f0-9]+:{Regex.Escape(expectedRuntimeIdPrefix)}";
 
-            Assert.StartsWith(
-                "host-",
-                parts[0],
-                StringComparison.Ordinal);
-
-            Assert.StartsWith(
-                expectedRuntimeIdPrefix,
-                parts[1],
-                StringComparison.Ordinal);
+            Assert.True(
+                Regex.IsMatch(
+                    runtimeInstanceId,
+                    hostScopedPattern,
+                    RegexOptions.CultureInvariant),
+                $"Runtime instance id '{runtimeInstanceId}' does not match expected logical prefix '{expectedRuntimeIdPrefix}' or host-scoped runtime id pattern '{hostScopedPattern}'.");
         }
 
         /// <summary>
@@ -641,323 +987,6 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
                         string.IsNullOrWhiteSpace(
                             status.ExecutionId ?? status.RunState?.ExecutionId));
                 });
-        }
-
-        /// <summary>
-        /// Verifies that a local queue-first run remains queued while the background
-        /// pump is disabled, then dispatches and completes after manual drain.
-        /// </summary>
-        [Fact]
-        public async Task Submit_Local_Run_With_Queue_First_And_Pump_Disabled_Should_Dispatch_After_Manual_Drain()
-        {
-            var controlPlaneSettings =
-               GenericMcpServerTestSettings.CreateMcpSettings(
-                   new Dictionary<string, string?>
-                   {
-                       ["AiMcpHost:Mode"] = "ControlPlaneWithLocalRuntimeInstances",
-                       ["AiSharedQueuePump:Enabled"] = "true",
-                       ["AiMcpHost:EnableSharedQueuePump"] = "false",
-                       ["AiSharedQueueBackgroundService:Enabled"] = "false",
-                       ["AiSharedRuntimeController:SubmitMode"] = "QueueFirst",
-
-                       ["AiRuntimeInstanceRegistration:ProviderName"] = "local",
-                       ["AiRuntimeInstanceRegistration:ProviderMetadata:provider.name"] = "local",
-                       ["AiRuntimeInstanceRegistration:Metadata:provider.name"] = "local",
-                       ["AiRuntimeInstanceRegistration:RuntimeInstanceId"] = "mcp-control-plane-local",
-                       ["AiRuntimeInstanceRegistration:Metadata:hostType"] = "control-plane-with-local-runtime",
-                       ["AiRuntimeInstanceRegistration:Metadata:deployment"] = "test-local",
-
-                       ["AiLocalRuntimeInstancePool:Enabled"] = "true",
-                       ["AiLocalRuntimeInstancePool:InstanceCount"] = "3",
-                       ["AiLocalRuntimeInstancePool:WorkerCountPerInstance"] = "10",
-                       ["AiLocalRuntimeInstancePool:MaxConcurrentRunsPerInstance"] = "5",
-                       ["AiLocalRuntimeInstancePool:RuntimeInstanceIdPrefix"] = "mcp-runtime",
-
-                       ["AiEngine:RuntimeInstanceId"] = "mcp-control-plane-local"
-                   });
-
-            await using var host =
-                new GenericMcpServerTestHost(
-                    controlPlaneSettings);
-
-            using var client =
-                host.CreateClient();
-
-            var mcp =
-                new McpTestClient(
-                    client);
-
-            var pipelineName =
-                $"mcp-queue-first-local-manual-drain-{Guid.NewGuid():N}";
-
-            await SubmitRunsAsync(
-                    mcp,
-                    pipelineName,
-                    count: 1)
-                .ConfigureAwait(false);
-
-            await AssertSharedQueueContainsPipelineAsync(
-                    mcp,
-                    pipelineName)
-                .ConfigureAwait(false);
-
-            await Task.Delay(
-                    TimeSpan.FromSeconds(10))
-                .ConfigureAwait(false);
-
-            await AssertSharedQueueContainsPipelineAsync(
-                    mcp,
-                    pipelineName)
-                .ConfigureAwait(false);
-
-            var drainResult =
-                 await mcp.DrainQueueAsync(
-                         new AiSharedQueuePumpRequest
-                         {
-                             PumpRuntimeInstanceId = "mcp-runtime-1",
-                             PumpWorkerId = "manual-test-drain",
-                             MaxDispatches = 10,
-                             RequestedBy = RequestedBy,
-                             Source = Source,
-                             Reason = "Manual test drain."
-                         })
-                     .ConfigureAwait(false);
-
-            Assert.True(
-                drainResult.Success,
-                drainResult.FailureReason ?? "Drain queue failed.");
-
-            var dispatchedRuns =
-                await McpTestWaitHelpers.WaitForDispatchedRunsAsync(
-                        mcp,
-                        pipelineName,
-                        expectedCount: 1,
-                        timeout: TimeSpan.FromMinutes(1))
-                    .ConfigureAwait(false);
-
-            AssertLocalDispatchedRuns(
-                dispatchedRuns,
-                expectedCount: 1);
-
-            await AssertRunsCompleteAsync(
-                    mcp,
-                    dispatchedRuns,
-                    expectedCount: 1)
-                .ConfigureAwait(false);
-        }
-
-        /// <summary>
-        /// Verifies that an HTTP queue-first run remains queued while the background
-        /// pump is disabled, then dispatches and completes after manual drain.
-        /// </summary>
-        [Fact]
-        public async Task Submit_Http_Run_With_Queue_First_And_Pump_Disabled_Should_Dispatch_After_Manual_Drain()
-        {
-            var controlPlaneSettings =
-                GenericMcpServerTestSettings.CreateMcpSettings(
-                    new Dictionary<string, string?>
-                    {
-                        ["AiMcpHost:Mode"] = "ControlPlaneWithHttpRuntimeInstances",
-
-                        // The background service must stay disabled for this scenario.
-                        ["AiMcpHost:EnableSharedQueuePump"] = "false",
-                        ["AiSharedQueueBackgroundService:Enabled"] = "false",
-
-                        // Keep the pump enabled so the MCP manual drain tool can execute it.
-                        ["AiSharedQueuePump:Enabled"] = "true",
-
-                        ["AiSharedRuntimeController:SubmitMode"] = "QueueFirst",
-
-                        // IMPORTANT:
-                        // This is an HTTP control-plane scenario, not local.
-                        ["AiRuntimeInstanceRegistration:ProviderName"] = "http",
-                        ["AiRuntimeInstanceRegistration:ProviderMetadata:provider.name"] = "http",
-                        ["AiRuntimeInstanceRegistration:ProviderMetadata:transport.name"] = "http",
-                        ["AiRuntimeInstanceRegistration:Metadata:provider.name"] = "http",
-                        ["AiRuntimeInstanceRegistration:Metadata:transport.name"] = "http",
-                        ["AiRuntimeInstanceRegistration:RuntimeInstanceId"] = "mcp-control-plane-http",
-                        ["AiRuntimeInstanceRegistration:Metadata:hostType"] = "control-plane-with-http-runtime",
-                        ["AiRuntimeInstanceRegistration:Metadata:deployment"] = "test-http-manual-drain",
-
-                        ["AiEngine:RuntimeInstanceId"] = "mcp-control-plane-http"
-                    });
-
-            var runtimeInstanceSettings =
-                CreateHttpRuntimeInstanceSettings();
-
-            await using var fixture =
-                new GenericMcpRuntimeFixture(
-                    controlPlaneSettings,
-                    runtimeInstanceSettings);
-
-            await fixture
-                .InitializeAsync()
-                .ConfigureAwait(false);
-
-            var pipelineName =
-                $"mcp-queue-first-http-manual-drain-{Guid.NewGuid():N}";
-
-            await SubmitRunsAsync(
-                    fixture.Mcp,
-                    pipelineName,
-                    count: 1)
-                .ConfigureAwait(false);
-
-            await AssertSharedQueueContainsPipelineAsync(
-                    fixture.Mcp,
-                    pipelineName)
-                .ConfigureAwait(false);
-
-            await Task.Delay(
-                    TimeSpan.FromSeconds(10))
-                .ConfigureAwait(false);
-
-            await AssertSharedQueueContainsPipelineAsync(
-                    fixture.Mcp,
-                    pipelineName)
-                .ConfigureAwait(false);
-
-            var drainResult =
-                await fixture.Mcp.DrainQueueAsync(
-                        new AiSharedQueuePumpRequest
-                        {
-                            // This is the pump identity, not the target runtime instance.
-                            // Do not use "runtime-http-1" anymore because runtime ids are now host-scoped.
-                            PumpRuntimeInstanceId = "mcp-http-manual-drain-pump",
-                            PumpWorkerId = "manual-test-drain",
-                            MaxDispatches = 10,
-                            RequestedBy = RequestedBy,
-                            Source = Source,
-                            Reason = "Manual HTTP provider test drain."
-                        })
-                    .ConfigureAwait(false);
-
-            Assert.True(
-                drainResult.Success,
-                drainResult.FailureReason ?? "Drain queue failed.");
-
-            var dispatchedRuns =
-                await McpTestWaitHelpers.WaitForDispatchedRunsAsync(
-                        fixture.Mcp,
-                        pipelineName,
-                        expectedCount: 1,
-                        timeout: TimeSpan.FromMinutes(1))
-                    .ConfigureAwait(false);
-
-            AssertHttpDispatchedRuns(
-                dispatchedRuns,
-                expectedCount: 1);
-
-            await AssertRunsCompleteAsync(
-                    fixture.Mcp,
-                    dispatchedRuns,
-                    expectedCount: 1)
-                .ConfigureAwait(false);
-        }
-
-        /// <summary>
-        /// Verifies that MCP local runtime instance visibility exposes worker capacity
-        /// and admission availability when all local workers are reserved by one execution.
-        /// </summary>
-        [Fact]
-        public async Task Local_Runtime_Instance_Should_Report_No_Available_Workers_When_Execution_Uses_All_Workers()
-        {
-            var settings =
-                GenericMcpServerTestSettings.CreateMcpSettings(
-                    new Dictionary<string, string?>
-                    {
-                        ["AiMcpHost:Mode"] = "ControlPlaneWithLocalRuntimeInstances",
-                        ["AiMcpHost:EnableSharedQueuePump"] = "true",
-
-                        ["AiSharedQueueBackgroundService:Enabled"] = "true",
-                        ["AiSharedQueuePump:Enabled"] = "true",
-                        ["AiSharedRuntimeController:SubmitMode"] = "QueueFirst",
-
-                        ["AiRuntimeInstanceRegistration:ProviderName"] = "local",
-                        ["AiRuntimeInstanceRegistration:ProviderMetadata:provider.name"] = "local",
-                        ["AiRuntimeInstanceRegistration:Metadata:provider.name"] = "local",
-                        ["AiRuntimeInstanceRegistration:RuntimeInstanceId"] = "mcp-control-plane-local",
-                        ["AiRuntimeInstanceRegistration:Metadata:hostType"] = "control-plane-with-local-runtime",
-                        ["AiRuntimeInstanceRegistration:Metadata:deployment"] = "test-local-worker-capacity",
-
-                        ["AiLocalRuntimeInstancePool:Enabled"] = "true",
-                        ["AiLocalRuntimeInstancePool:InstanceCount"] = "1",
-                        ["AiLocalRuntimeInstancePool:WorkerCountPerInstance"] = "2",
-                        ["AiLocalRuntimeInstancePool:MaxConcurrentRunsPerInstance"] = "2",
-                        ["AiLocalRuntimeInstancePool:RuntimeInstanceIdPrefix"] = "mcp-runtime",
-
-                        ["AiEngine:RuntimeInstanceId"] = "mcp-control-plane-local",
-                        ["AiEngine:PipelineBackgroundController:MaxConcurrentRuns"] = "2",
-                        ["AiEngine:PipelineBackgroundController:QueueCapacity"] = "100",
-                        ["AiEngine:PipelineBackgroundController:Distributed:Enabled"] = "true",
-                        ["AiEngine:PipelineBackgroundController:Distributed:WorkerCount"] = "2",
-                        ["AiEngine:PipelineBackgroundController:MaxLocalWorkersPerExecution"] = "2"
-                    });
-
-            await using var host =
-                new GenericMcpServerTestHost(
-                    settings);
-
-            using var client =
-                host.CreateClient();
-
-            var mcp =
-                new McpTestClient(
-                    client);
-
-            var pipelineName =
-                $"mcp-local-worker-capacity-{Guid.NewGuid():N}";
-
-            await SubmitRunsAsync(
-                    mcp,
-                    pipelineName,
-                    count: 1)
-                .ConfigureAwait(false);
-
-            var dispatchedRuns =
-                await McpTestWaitHelpers.WaitForDispatchedRunsAsync(
-                        mcp,
-                        pipelineName,
-                        expectedCount: 1,
-                        timeout: TimeSpan.FromMinutes(1))
-                    .ConfigureAwait(false);
-
-            Assert.Single(
-                dispatchedRuns);
-
-            var dispatchedRun =
-                dispatchedRuns.Single();
-
-            Assert.False(
-                string.IsNullOrWhiteSpace(dispatchedRun.AssignedRuntimeInstanceId));
-
-            AssertRuntimeInstanceIdMatchesLogicalRuntimePrefix(
-                dispatchedRun.AssignedRuntimeInstanceId,
-                "mcp-runtime-");
-
-            var saturatedInstance =
-                await McpTestWaitHelpers.WaitForRuntimeInstanceWorkerSaturationAsync(
-                        mcp,
-                        runtimeInstanceId: dispatchedRun.AssignedRuntimeInstanceId!,
-                        expectedWorkerCount: 2,
-                        expectedMaxLocalWorkersPerExecution: 2,
-                        timeout: TimeSpan.FromMinutes(1))
-                    .ConfigureAwait(false);
-
-            Assert.Equal(
-                2,
-                saturatedInstance.WorkerCount);
-
-            Assert.Equal(
-                2,
-                saturatedInstance.ActiveWorkerCount);
-
-            Assert.Equal(
-                0,
-                saturatedInstance.AvailableWorkerCount);
-
-            Assert.False(
-                saturatedInstance.CanAcceptRun);
         }
 
         /// <summary>
