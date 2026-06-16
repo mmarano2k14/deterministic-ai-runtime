@@ -1,27 +1,16 @@
-﻿using Multiplexed.AI.McpServer.Tests.Integration.Fixtures;
+﻿using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
+using Multiplexed.Abstractions.Core.ExecutionContext;
+using Multiplexed.AI.McpServer.Tests.Integration.Auth;
+using Multiplexed.AI.McpServer.Tests.Integration.Fixtures;
+using Multiplexed.Rbac.Core.ExecutionContext;
+using Multiplexed.Rbac.Core.Runtime;
 
 namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic
 {
     /// <summary>
     /// Provides a generic multi-host integration fixture for runtime provider scenarios.
     /// </summary>
-    /// <remarks>
-    /// PURPOSE:
-    /// - Starts one MCP control-plane host.
-    /// - Starts one or more runtime-instance-only HTTP hosts.
-    /// - Ensures all hosts participating in the same scenario share the same logical
-    ///   control-plane identifier.
-    ///
-    /// IMPORTANT:
-    /// - The single-runtime constructor is preserved for existing tests.
-    /// - The multi-runtime constructor is used by provider-based dispatch tests.
-    /// - The MCP control-plane host is started before runtime-instance hosts so that
-    ///   discovery can be published before runtime instances require discovery.
-    /// - Runtime HTTP clients are stored in a mutable dictionary injected into the
-    ///   MCP control-plane host. The dictionary is populated after runtime hosts start.
-    /// - All hosts in one fixture must use the same
-    ///   <c>AiEngine:ControlPlane:ControlPlaneId</c>.
-    /// </remarks>
     public sealed class GenericMcpRuntimeFixture : IAsyncLifetime
     {
         private const string ControlPlaneIdSettingKey =
@@ -48,10 +37,6 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic
         /// <summary>
         /// Gets the first runtime-instance host.
         /// </summary>
-        /// <remarks>
-        /// This property is kept for backward compatibility with tests that were written
-        /// before multi-runtime fixture support.
-        /// </remarks>
         public GenericRuntimeInstanceHttpTestHost? RuntimeHost { get; private set; }
 
         /// <summary>
@@ -68,10 +53,6 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic
         /// <summary>
         /// Gets the HTTP client connected to the first runtime-instance host.
         /// </summary>
-        /// <remarks>
-        /// This property is kept for backward compatibility with tests that were written
-        /// before multi-runtime fixture support.
-        /// </remarks>
         public HttpClient? RuntimeClient { get; private set; }
 
         /// <summary>
@@ -88,11 +69,6 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic
         /// <summary>
         /// Gets the initialized service provider for the MCP control-plane host.
         /// </summary>
-        /// <remarks>
-        /// This is mainly used by integration tests that need to verify the final
-        /// dependency injection graph after host startup, for example whether Redis-backed
-        /// control-plane stores replaced the default in-memory stores.
-        /// </remarks>
         public IServiceProvider Services =>
             ControlPlaneHost?.Services
             ?? throw new InvalidOperationException(
@@ -102,8 +78,6 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic
         /// Initializes a new instance of the <see cref="GenericMcpRuntimeFixture"/> class
         /// with one runtime-instance host.
         /// </summary>
-        /// <param name="controlPlaneSettings">The MCP control-plane host settings.</param>
-        /// <param name="runtimeInstanceSettings">The runtime-instance host settings.</param>
         public GenericMcpRuntimeFixture(
             IReadOnlyDictionary<string, string?> controlPlaneSettings,
             IReadOnlyDictionary<string, string?> runtimeInstanceSettings)
@@ -117,17 +91,6 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic
         /// Initializes a new instance of the <see cref="GenericMcpRuntimeFixture"/> class
         /// with multiple runtime-instance hosts.
         /// </summary>
-        /// <param name="controlPlaneSettings">The MCP control-plane host settings.</param>
-        /// <param name="runtimeInstanceSettings">The runtime-instance host settings collection.</param>
-        /// <exception cref="ArgumentNullException">
-        /// Thrown when <paramref name="controlPlaneSettings"/> or
-        /// <paramref name="runtimeInstanceSettings"/> is null.
-        /// </exception>
-        /// <exception cref="ArgumentException">
-        /// Thrown when no runtime-instance settings are provided, when the control-plane
-        /// identifier is missing, or when one runtime host uses a different control-plane
-        /// identifier from the MCP control-plane host.
-        /// </exception>
         public GenericMcpRuntimeFixture(
             IReadOnlyDictionary<string, string?> controlPlaneSettings,
             IReadOnlyCollection<IReadOnlyDictionary<string, string?>> runtimeInstanceSettings)
@@ -162,8 +125,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic
         /// <summary>
         /// Starts the MCP control-plane host first, then starts the runtime-instance hosts.
         /// </summary>
-        /// <returns>A task representing the asynchronous initialization operation.</returns>
-        public Task InitializeAsync()
+        public async Task InitializeAsync()
         {
             ControlPlaneHost =
                 new GenericMcpServerTestHost(
@@ -173,9 +135,48 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic
             ControlPlaneClient =
                 ControlPlaneHost.CreateClient();
 
+            var contextStore =
+                ControlPlaneHost.Services.GetRequiredService<IContextStore>();
+
+            var contextRuntimeOptions =
+                ControlPlaneHost.Services
+                    .GetRequiredService<IOptions<ContextRuntimeOptions>>()
+                    .Value;
+
+            var executionContext =
+                McpRbacTestContextFactory.CreateDefaultContext(
+                    McpRbacTestContextFactory.DefaultUserId);
+
+            var contextKey =
+                await contextStore
+                    .StoreAsync(executionContext)
+                    .ConfigureAwait(false);
+
+            ControlPlaneClient.DefaultRequestHeaders.Remove(
+                contextRuntimeOptions.AccessContextHeader);
+
+            ControlPlaneClient.DefaultRequestHeaders.Add(
+                contextRuntimeOptions.AccessContextHeader,
+                contextKey);
+
+            ControlPlaneClient.DefaultRequestHeaders.Remove(
+                McpRbacTestContextFactory.DemoUserIdHeaderName);
+
+            ControlPlaneClient.DefaultRequestHeaders.Add(
+                McpRbacTestContextFactory.DemoUserIdHeaderName,
+                McpRbacTestContextFactory.DefaultUserId);
+
             Mcp =
                 new McpTestClient(
                     ControlPlaneClient);
+
+            Console.WriteLine(
+                $"[GENERIC MCP FIXTURE] Configuring MCP RBAC headers. Header='{contextRuntimeOptions.AccessContextHeader}', ContextKey='{contextKey}', UserId='{McpRbacTestContextFactory.DefaultUserId}'.");
+
+            Mcp.SetRbacHeaders(
+                contextRuntimeOptions.AccessContextHeader,
+                contextKey,
+                McpRbacTestContextFactory.DefaultUserId);
 
             var runtimeHosts =
                 new List<GenericRuntimeInstanceHttpTestHost>(
@@ -236,14 +237,11 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic
 
             RuntimeClient =
                 RuntimeClients[0];
-
-            return Task.CompletedTask;
         }
 
         /// <summary>
         /// Disposes the MCP control-plane host, runtime-instance hosts, and all associated clients.
         /// </summary>
-        /// <returns>A task representing the asynchronous dispose operation.</returns>
         public async Task DisposeAsync()
         {
             ControlPlaneClient?.Dispose();
@@ -274,12 +272,6 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic
         /// Validates that every runtime-instance host uses the same logical control-plane
         /// identifier as the MCP control-plane host.
         /// </summary>
-        /// <param name="expectedControlPlaneId">The expected logical control-plane identifier.</param>
-        /// <param name="runtimeSettings">The runtime-instance settings collection.</param>
-        /// <exception cref="ArgumentException">
-        /// Thrown when a runtime-instance settings dictionary is missing a control-plane
-        /// identifier or uses a different one.
-        /// </exception>
         private static void ValidateRuntimeInstanceControlPlaneIds(
             string expectedControlPlaneId,
             IReadOnlyList<IReadOnlyDictionary<string, string?>> runtimeSettings)
@@ -309,13 +301,6 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic
         /// <summary>
         /// Gets a required setting value from a settings dictionary.
         /// </summary>
-        /// <param name="settings">The settings dictionary.</param>
-        /// <param name="key">The setting key.</param>
-        /// <param name="sourceName">The source name used for diagnostics.</param>
-        /// <returns>The required setting value.</returns>
-        /// <exception cref="ArgumentException">
-        /// Thrown when the setting is missing or empty.
-        /// </exception>
         private static string GetRequiredSetting(
             IReadOnlyDictionary<string, string?> settings,
             string key,
@@ -335,8 +320,6 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic
         /// <summary>
         /// Normalizes a logical control-plane identifier for fixture-level comparisons.
         /// </summary>
-        /// <param name="controlPlaneId">The logical control-plane identifier.</param>
-        /// <returns>The normalized control-plane identifier.</returns>
         private static string NormalizeControlPlaneId(
             string controlPlaneId)
         {

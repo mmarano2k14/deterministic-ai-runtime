@@ -7,6 +7,7 @@ using Multiplexed.AI.DI.AI;
 using Multiplexed.AI.DI.Cleanup;
 using Multiplexed.AI.DI.Engine;
 using Multiplexed.AI.DI.Persistence;
+using Multiplexed.AI.McpServer.Tools;
 using Multiplexed.AI.Observability.Ledger;
 using Multiplexed.AI.Runtime;
 using Multiplexed.AI.Runtime.AI.Providers.Llm.OpenAI.DI;
@@ -102,12 +103,15 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
                     })
                 .AddMultiplexedRbacHttp()
                 .AddMultiplexedRbacNServiceBus()
+                .AddMultiplexedRbacAuthorizedServices(typeof(ReplayMcpTools).Assembly)
                 .AddAiPromptRuntime(typeof(AiRuntimeAssemblyMarker).Assembly)
                 .AddOpenAiPromptProvider(openAiOptions =>
                 {
                     openAiOptions.ApiKey = Environment.GetEnvironmentVariable("OPENAI_API_KEY")
                         ?? throw new InvalidOperationException("OPENAI_API_KEY is required.");
                 });
+
+            services.Replace(ServiceDescriptor.Singleton<IExecutionContextAccessor, McpRuntimeExecutionContextAccessor>());
 
             services.AddSingleton<TestStepAttemptTracker>();
 

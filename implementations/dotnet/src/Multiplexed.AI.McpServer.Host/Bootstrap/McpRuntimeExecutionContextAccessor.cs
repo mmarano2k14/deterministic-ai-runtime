@@ -32,23 +32,32 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
 
         private static ExecutionContext CreateDefaultContext()
         {
+            const string project = "distributed-deterministic-ai-runtime";
+
             return new ExecutionContext
             {
-                ContextKey = string.Empty,
-                Project = "Project",
+                ContextKey = "mcp-runtime-system",
+                Project = project,
                 TenantId = "tenant-id-xxxx",
                 TenantGroupId = "tenant-group-id-xxx",
-                CurrentNamespace = "Namespace",
+                CurrentNamespace = "mcp-ai-runtime",
                 UserId = "mcp-runtime",
                 Namespaces = new List<NamespaceEntry>
                 {
                     new()
                     {
-                        Name = "Namespace",
+                        Name = "mcp-ai-runtime",
                         Trns = new HashSet<string>
                         {
-                            "trn:Project:crm:billing:invoice:read",
-                            "trn:Project:crm:billing:invoice:refund"
+                            $"trn:{project}:replay:execution:run",
+                            $"trn:{project}:replay:audit:run",
+                            $"trn:{project}:replay:report:read",
+                            $"trn:{project}:observability:ledger:read",
+                            $"trn:{project}:observability:trace:read",
+
+                            $"trn:{project}:execution-control:pause-execution:execute",
+                            $"trn:{project}:execution-control:resume-execution:execute",
+                            $"trn:{project}:execution-control:cancel-execution:execute"
                         }
                     }
                 },

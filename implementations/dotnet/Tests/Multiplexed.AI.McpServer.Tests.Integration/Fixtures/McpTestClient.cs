@@ -26,9 +26,30 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures
 
         private readonly HttpClient httpClient;
 
+        private string? accessContextHeaderName;
+        private string? accessContextKey;
+        private string? userId;
+
         public McpTestClient(HttpClient httpClient)
         {
             this.httpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
+        }
+
+        public void SetRbacHeaders(
+            string accessContextHeaderName,
+            string accessContextKey,
+            string userId)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(accessContextHeaderName);
+            ArgumentException.ThrowIfNullOrWhiteSpace(accessContextKey);
+            ArgumentException.ThrowIfNullOrWhiteSpace(userId);
+
+            this.accessContextHeaderName = accessContextHeaderName;
+            this.accessContextKey = accessContextKey;
+            this.userId = userId;
+
+            Console.WriteLine(
+                $"[MCP TEST CLIENT] RBAC headers configured. Header='{accessContextHeaderName}', ContextKey='{accessContextKey}', UserId='{userId}'.");
         }
 
         public Task<string> ListToolsAsync(CancellationToken cancellationToken = default)
@@ -294,7 +315,6 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures
                 cancellationToken);
         }
 
-
         public Task<AiReplayControlResult> GetReplayLedgerAsync(
             AiReplayControlRequest request,
             CancellationToken cancellationToken = default)
@@ -370,8 +390,6 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures
                 cancellationToken);
         }
 
-
-
         private async Task<T> CallToolAsync<T>(
             string toolName,
             object arguments,
@@ -423,12 +441,53 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures
             request.Headers.Accept.ParseAdd("application/json");
             request.Headers.Accept.ParseAdd("text/event-stream");
 
+            AddRbacHeaders(request);
+
             var response = await httpClient.SendAsync(request, cancellationToken);
             var content = await response.Content.ReadAsStringAsync(cancellationToken);
 
             response.EnsureSuccessStatusCode();
 
             return content;
+        }
+
+        private void AddRbacHeaders(
+    HttpRequestMessage request)
+        {
+            ArgumentNullException.ThrowIfNull(request);
+
+            Console.WriteLine(
+                $"[MCP TEST CLIENT] AddRbacHeaders called. Header='{accessContextHeaderName}', ContextKeySet='{!string.IsNullOrWhiteSpace(accessContextKey)}', UserId='{userId}'.");
+
+            if (!string.IsNullOrWhiteSpace(accessContextHeaderName) &&
+                !string.IsNullOrWhiteSpace(accessContextKey))
+            {
+                request.Headers.TryAddWithoutValidation(
+                    accessContextHeaderName,
+                    accessContextKey);
+            }
+
+            if (!string.IsNullOrWhiteSpace(userId))
+            {
+                request.Headers.TryAddWithoutValidation(
+                    "X-Demo-UserId",
+                    userId);
+            }
+
+            request.Headers.TryAddWithoutValidation(
+                "X-Demo-Max-InFlight",
+                "100000");
+
+            request.Headers.TryAddWithoutValidation(
+                "X-Demo-Rotation-Overlap-Ms",
+                "1000000");
+
+            Console.WriteLine("[MCP TEST CLIENT] Outgoing request headers:");
+            foreach (var header in request.Headers)
+            {
+                Console.WriteLine(
+                    $"[MCP TEST CLIENT] Header '{header.Key}' = '{string.Join(",", header.Value)}'");
+            }
         }
 
         private static object ToJsonRpcPayload(
@@ -484,7 +543,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures
         {
             var content = result.GetProperty("content");
 
-            if (content.ValueKind != JsonValueKind.Array || content.GetArrayLength() == 0)
+            if (content.ValueKind != JsonValueKind.Array ||
+                content.GetArrayLength() == 0)
             {
                 throw new InvalidOperationException(
                     "MCP tool result does not contain content.");
