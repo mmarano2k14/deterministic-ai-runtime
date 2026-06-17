@@ -370,16 +370,15 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution.MultipleInstance.Wo
             try
             {
                 handle = await controller.EnqueueAsync(
-                    new AiRuntimePipelineRunRequest
-                    {
-                        PipelineName = pipelineName,
-                        PipelineDefinition = pipeline,
-                        Input = new
+                    CreateRunRequest(
+                        pipelineName,
+                        pipeline,
+                        new
                         {
                             candidateId = "cand-001",
                             source = "background-controller-test"
-                        }
-                    });
+                        },
+                        source: "background-controller-test"));
 
                 Assert.NotNull(handle);
                 Assert.False(string.IsNullOrWhiteSpace(handle.RunId));
@@ -444,17 +443,16 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution.MultipleInstance.Wo
                 for (var index = 0; index < 5; index++)
                 {
                     var handle = await controller.EnqueueAsync(
-                        new AiRuntimePipelineRunRequest
-                        {
-                            PipelineName = pipelineName,
-                            PipelineDefinition = pipeline,
-                            Input = new
+                        CreateRunRequest(
+                            pipelineName,
+                            pipeline,
+                            new
                             {
                                 candidateId = $"cand-{index:000}",
                                 source = "background-controller-multi-test",
                                 runIndex = index
-                            }
-                        });
+                            },
+                            source: "background-controller-multi-test"));
 
                     Assert.NotNull(handle);
                     Assert.False(string.IsNullOrWhiteSpace(handle.RunId));
@@ -593,17 +591,16 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution.MultipleInstance.Wo
                 for (var index = 0; index < 2; index++)
                 {
                     var handle = await controller.EnqueueAsync(
-                        new AiRuntimePipelineRunRequest
-                        {
-                            PipelineName = pipelineName,
-                            PipelineDefinition = pipeline,
-                            Input = new
+                        CreateRunRequest(
+                            pipelineName,
+                            pipeline,
+                            new
                             {
                                 candidateId = $"cand-resilience-{index:000}",
                                 source = "background-controller-resilience-test",
                                 runIndex = index
-                            }
-                        });
+                            },
+                            source: "background-controller-resilience-test"));
 
                     Assert.NotNull(handle);
                     Assert.False(string.IsNullOrWhiteSpace(handle.RunId));
@@ -778,6 +775,31 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution.MultipleInstance.Wo
                     }
                 }
             }
+        }
+
+        /// <summary>
+        /// Creates a runtime pipeline run request with a deterministic execution context snapshot.
+        /// </summary>
+        /// <param name="pipelineName">The pipeline name.</param>
+        /// <param name="pipelineDefinition">The pipeline definition.</param>
+        /// <param name="input">The input payload.</param>
+        /// <param name="source">The optional source value used for diagnostics.</param>
+        /// <returns>The runtime pipeline run request.</returns>
+        private static AiRuntimePipelineRunRequest CreateRunRequest(
+            string pipelineName,
+            AiPipelineDefinition pipelineDefinition,
+            object input,
+            string? source = null)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(pipelineName);
+            ArgumentNullException.ThrowIfNull(pipelineDefinition);
+            ArgumentNullException.ThrowIfNull(input);
+
+            return AiRuntimeExecutionContextSnapshotTestFixture.CreateRunRequest(
+                pipelineName: pipelineName,
+                pipelineDefinition: pipelineDefinition,
+                input: input,
+                source: source);
         }
 
         /// <summary>

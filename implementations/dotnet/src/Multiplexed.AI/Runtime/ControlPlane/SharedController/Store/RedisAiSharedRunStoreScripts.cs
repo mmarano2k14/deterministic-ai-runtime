@@ -11,7 +11,8 @@
         /// <remarks>
         /// Expected keys:
         /// - KEYS[1]: Redis hash key for the shared run record.
-        /// - KEYS[2]: Redis sorted-set index key for shared runs.
+        /// - KEYS[2]: Redis sorted-set index key for shared runs scoped by control-plane.
+        /// - KEYS[3]: Optional Redis sorted-set index key for shared runs scoped by control-plane and tenant.
         ///
         /// Expected arguments:
         /// - ARGV[1]: shared run id.
@@ -28,6 +29,11 @@
         public const string Create = """
             local runKey = KEYS[1]
             local indexKey = KEYS[2]
+            local tenantIndexKey = nil
+
+            if #KEYS >= 3 then
+                tenantIndexKey = KEYS[3]
+            end
 
             local sharedRunId = ARGV[1]
             local submittedAtScore = tonumber(ARGV[2])
@@ -47,8 +53,16 @@
 
             redis.call('ZADD', indexKey, submittedAtScore, sharedRunId)
 
+            if tenantIndexKey ~= nil and tenantIndexKey ~= '' then
+                redis.call('ZADD', tenantIndexKey, submittedAtScore, sharedRunId)
+            end
+
             if expireSeconds ~= nil and expireSeconds > 0 then
                 redis.call('EXPIRE', runKey, expireSeconds)
+
+                if tenantIndexKey ~= nil and tenantIndexKey ~= '' then
+                    redis.call('EXPIRE', tenantIndexKey, expireSeconds)
+                end
             end
 
             return 'created'

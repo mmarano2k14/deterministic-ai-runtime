@@ -142,19 +142,16 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution.MultipleInstance.Wo
             try
             {
                 handle = await controller.EnqueueAsync(
-                    new AiRuntimePipelineRunRequest
-                    {
-                        PipelineName = scenario.PipelineName,
-                        PipelineDefinition = scenario.PipelineDefinition,
-                        Input = new
+                    CreateRunRequest(
+                        scenario,
+                        new
                         {
                             candidateId = scenario.CandidateId,
                             source = scenario.Name,
                             stepCount = scenario.StepCount,
                             workerCount = scenario.WorkerCount,
                             chaos = true
-                        }
-                    });
+                        }));
 
                 Assert.NotNull(handle);
 
@@ -309,11 +306,9 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution.MultipleInstance.Wo
             try
             {
                 handle = await controller.EnqueueAsync(
-                    new AiRuntimePipelineRunRequest
-                    {
-                        PipelineName = scenario.PipelineName,
-                        PipelineDefinition = scenario.PipelineDefinition,
-                        Input = new
+                    CreateRunRequest(
+                        scenario,
+                        new
                         {
                             candidateId = scenario.CandidateId,
                             source = scenario.Name,
@@ -321,8 +316,7 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution.MultipleInstance.Wo
                             workerCount = scenario.WorkerCount,
                             chaos = true,
                             ledger = true
-                        }
-                    });
+                        }));
 
                 Assert.NotNull(handle);
                 Assert.False(string.IsNullOrWhiteSpace(handle.RunId));
@@ -436,11 +430,9 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution.MultipleInstance.Wo
             try
             {
                 handle = await controller.EnqueueAsync(
-                    new AiRuntimePipelineRunRequest
-                    {
-                        PipelineName = scenario.PipelineName,
-                        PipelineDefinition = scenario.PipelineDefinition,
-                        Input = new
+                    CreateRunRequest(
+                        scenario,
+                        new
                         {
                             candidateId = scenario.CandidateId,
                             source = scenario.Name,
@@ -448,8 +440,7 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution.MultipleInstance.Wo
                             workerCount = scenario.WorkerCount,
                             chaos = true,
                             ledger = true
-                        }
-                    });
+                        }));
 
                 Assert.NotNull(handle);
 
@@ -594,11 +585,9 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution.MultipleInstance.Wo
             try
             {
                 handle = await controller.EnqueueAsync(
-                    new AiRuntimePipelineRunRequest
-                    {
-                        PipelineName = scenario.PipelineName,
-                        PipelineDefinition = scenario.PipelineDefinition,
-                        Input = new
+                    CreateRunRequest(
+                        scenario,
+                        new
                         {
                             candidateId = scenario.CandidateId,
                             source = scenario.Name,
@@ -606,8 +595,7 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution.MultipleInstance.Wo
                             workerCount = scenario.WorkerCount,
                             chaos = true,
                             audit = true
-                        }
-                    });
+                        }));
 
                 Assert.NotNull(handle);
 
@@ -787,11 +775,9 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution.MultipleInstance.Wo
             try
             {
                 handle = await controller.EnqueueAsync(
-                    new AiRuntimePipelineRunRequest
-                    {
-                        PipelineName = scenario.PipelineName,
-                        PipelineDefinition = scenario.PipelineDefinition,
-                        Input = new
+                    CreateRunRequest(
+                        scenario,
+                        new
                         {
                             candidateId = scenario.CandidateId,
                             source = scenario.Name,
@@ -799,8 +785,7 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution.MultipleInstance.Wo
                             workerCount = scenario.WorkerCount,
                             chaos = true,
                             compactionOnly = true
-                        }
-                    });
+                        }));
 
                 Assert.NotNull(handle);
 
@@ -1041,11 +1026,9 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution.MultipleInstance.Wo
             try
             {
                 handle = await controller.EnqueueAsync(
-                    new AiRuntimePipelineRunRequest
-                    {
-                        PipelineName = scenario.PipelineName,
-                        PipelineDefinition = scenario.PipelineDefinition,
-                        Input = new
+                    CreateRunRequest(
+                        scenario,
+                        new
                         {
                             candidateId = scenario.CandidateId,
                             source = scenario.Name,
@@ -1053,8 +1036,7 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution.MultipleInstance.Wo
                             workerCount = scenario.WorkerCount,
                             chaos = true,
                             evictionOnly = true
-                        }
-                    });
+                        }));
 
                 Assert.NotNull(handle);
 
@@ -1231,11 +1213,9 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution.MultipleInstance.Wo
             try
             {
                 handle = await controller.EnqueueAsync(
-                    new AiRuntimePipelineRunRequest
-                    {
-                        PipelineName = scenario.PipelineName,
-                        PipelineDefinition = scenario.PipelineDefinition,
-                        Input = new
+                    CreateRunRequest(
+                        scenario,
+                        new
                         {
                             candidateId = scenario.CandidateId,
                             source = scenario.Name,
@@ -1243,8 +1223,7 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution.MultipleInstance.Wo
                             workerCount = scenario.WorkerCount,
                             chaos = true,
                             hybridRetention = true
-                        }
-                    });
+                        }));
 
                 Assert.NotNull(handle);
 
@@ -1466,19 +1445,16 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution.MultipleInstance.Wo
             try
             {
                 handle = await controller.EnqueueAsync(
-                    new AiRuntimePipelineRunRequest
-                    {
-                        PipelineName = scenario.PipelineName,
-                        PipelineDefinition = scenario.PipelineDefinition,
-                        Input = new
+                    CreateRunRequest(
+                        scenario,
+                        new
                         {
                             candidateId = scenario.CandidateId,
                             source = scenario.Name,
                             stepCount = scenario.StepCount,
                             workerCount = scenario.WorkerCount,
                             chaos = true
-                        }
-                    });
+                        }));
 
                 Assert.NotNull(handle);
 
@@ -1885,11 +1861,9 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution.MultipleInstance.Wo
             try
             {
                 handle = await controller.EnqueueAsync(
-                    new AiRuntimePipelineRunRequest
-                    {
-                        PipelineName = scenario.PipelineName,
-                        PipelineDefinition = scenario.PipelineDefinition,
-                        Input = new
+                    CreateRunRequest(
+                        scenario,
+                        new
                         {
                             candidateId = scenario.CandidateId,
                             source = scenario.Name,
@@ -1898,8 +1872,7 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution.MultipleInstance.Wo
                             chaos = true,
                             tracing = true,
                             tracingMode = "MemoryAndMongo"
-                        }
-                    });
+                        }));
 
                 Assert.NotNull(handle);
 
@@ -2054,11 +2027,9 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution.MultipleInstance.Wo
             try
             {
                 handle = await controller.EnqueueAsync(
-                    new AiRuntimePipelineRunRequest
-                    {
-                        PipelineName = scenario.PipelineName,
-                        PipelineDefinition = scenario.PipelineDefinition,
-                        Input = new
+                    CreateRunRequest(
+                        scenario,
+                        new
                         {
                             candidateId = scenario.CandidateId,
                             source = scenario.Name,
@@ -2067,8 +2038,7 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution.MultipleInstance.Wo
                             chaos = true,
                             metrics = true,
                             metricsMode = "MemoryAndMongo"
-                        }
-                    });
+                        }));
 
                 Assert.NotNull(handle);
 
@@ -2143,6 +2113,27 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution.MultipleInstance.Wo
                         handle.ExecutionId);
                 }
             }
+        }
+
+
+        /// <summary>
+        /// Creates a runtime pipeline run request with a deterministic execution-context snapshot.
+        /// </summary>
+        /// <param name="scenario">The distributed chaos scenario.</param>
+        /// <param name="input">The run input payload.</param>
+        /// <returns>The runtime pipeline run request.</returns>
+        private static AiRuntimePipelineRunRequest CreateRunRequest(
+            DistributedChaosScenario scenario,
+            object input)
+        {
+            ArgumentNullException.ThrowIfNull(scenario);
+            ArgumentNullException.ThrowIfNull(input);
+
+            return AiRuntimeExecutionContextSnapshotTestFixture.CreateRunRequest(
+                pipelineName: scenario.PipelineName,
+                pipelineDefinition: scenario.PipelineDefinition,
+                input: input,
+                source: scenario.Name);
         }
 
         /// <summary>
