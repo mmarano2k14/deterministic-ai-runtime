@@ -185,7 +185,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                     "Shared run record loaded. SharedRunId={SharedRunId}, ControlPlaneId={ControlPlaneId}, TenantId={TenantId}, PipelineKey={PipelineKey}, AssignedRuntimeInstanceId={AssignedRuntimeInstanceId}, Status={Status}",
                     sharedRun.SharedRunId,
                     controlPlaneId,
-                    sharedRun.TenantId,
+                    sharedRun.ExecutionContextSnapshot.TenantId,
                     sharedRun.PipelineKey,
                     sharedRun.AssignedRuntimeInstanceId,
                     sharedRun.Status);
@@ -196,7 +196,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                         {
                             RunRequest = sharedRun.RunRequest,
                             RunId = sharedRun.SharedRunId,
-                            TenantId = sharedRun.TenantId,
+                            TenantId = sharedRun.ExecutionContextSnapshot.TenantId,
                             PipelineKey = sharedRun.PipelineKey,
                             PreferredRuntimeInstanceId = sharedRun.AssignedRuntimeInstanceId,
                             CorrelationId = request.CorrelationId ?? sharedRun.CorrelationId,

@@ -14,6 +14,7 @@ using Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling;
 using Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling.Redis;
 using Multiplexed.AI.Runtime.ControlPlane.SharedController.Store;
 using Multiplexed.AI.Runtime.ControlPlane.SharedQueue;
+using Multiplexed.AI.Tests.Fixtures;
 using StackExchange.Redis;
 
 namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedController.Scaling
@@ -101,7 +102,10 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedController
                     EnableScaleOutRequest = true,
                     SubmitMode = AiSharedRuntimeSubmitMode.DirectDispatch
                 }),
-                new NoopAiControlPlaneObserver());
+                new NoopAiControlPlaneObserver(),
+                new FakeExecutionContextSnapshotProvider(
+                        AiExecutionContextSnapshotTestFactory.Create(
+                        tenantId: "tenant-test")));
 
             var result = await controller.SubmitRunAsync(
                 new AiSharedRuntimeControllerRequest

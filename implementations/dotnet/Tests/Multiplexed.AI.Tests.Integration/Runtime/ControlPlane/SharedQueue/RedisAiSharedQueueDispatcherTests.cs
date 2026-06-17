@@ -440,7 +440,7 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedQueue
                 {
                     PipelineName = pipelineKey ?? "pipeline-1"
                 },
-                TenantId = tenantId,
+                ExecutionContextSnapshot = AiExecutionContextSnapshotTestFactory.Create(tenantId: tenantId),
                 PipelineKey = pipelineKey,
                 CorrelationId = sharedRunId,
                 SubmittedAtUtc = now,
@@ -461,7 +461,7 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedQueue
                 SharedRunId = sharedRunId,
                 ControlPlaneId = _controlPlaneId,
                 Status = AiSharedQueueItemStatus.Pending,
-                TenantId = tenantId,
+                ExecutionContextSnapshot = AiExecutionContextSnapshotTestFactory.Create(tenantId: tenantId),
                 PipelineKey = pipelineKey,
                 EnqueuedAtUtc = now,
                 UpdatedAtUtc = now,

@@ -99,7 +99,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
                         SharedRunId = sharedRun.SharedRunId,
                         ControlPlaneId = sharedRun.ControlPlaneId,
                         Status = AiSharedQueueItemStatus.Pending,
-                        TenantId = sharedRun.TenantId,
+                        ExecutionContextSnapshot = sharedRun.ExecutionContextSnapshot,
                         PipelineKey = sharedRun.PipelineKey,
                         Priority = 0,
                         EnqueuedAtUtc = now,

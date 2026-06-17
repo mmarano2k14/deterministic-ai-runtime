@@ -8,6 +8,21 @@
         /// <summary>
         /// Atomically enqueues a shared queue item if it does not already exist.
         /// </summary>
+        /// <remarks>
+        /// Expected keys:
+        /// - KEYS[1]: queue item hash key.
+        /// - KEYS[2]: pending sorted-set index key.
+        /// - KEYS[3]: all-items sorted-set index key.
+        ///
+        /// Expected arguments:
+        /// - ARGV[1]: shared run id.
+        /// - ARGV[2]: queue score.
+        /// - ARGV[3]: expiration in seconds, or 0 when expiration is disabled.
+        /// - ARGV[4..n]: Redis hash field/value pairs.
+        ///
+        /// The script is field-agnostic. The C# store layer provides fields such as
+        /// executionContextSnapshotJson.
+        /// </remarks>
         public const string Enqueue = """
             local itemKey = KEYS[1]
             local pendingIndexKey = KEYS[2]
@@ -19,6 +34,10 @@
 
             if redis.call('EXISTS', itemKey) == 1 then
                 return 'duplicate'
+            end
+
+            if ((#ARGV - 3) % 2) ~= 0 then
+                return 'invalid-field-pairs'
             end
 
             for i = 4, #ARGV, 2 do
@@ -36,8 +55,12 @@
             """;
 
         /// <summary>
-        /// Atomically claims the first pending shared queue item.
+        /// Atomically claims the first pending shared queue item matching the optional tenant and pipeline filters.
         /// </summary>
+        /// <remarks>
+        /// Tenant filtering reads executionContextSnapshotJson and uses TenantId from the snapshot.
+        /// The script accepts both PascalCase and camelCase JSON property names.
+        /// </remarks>
         public const string ClaimNext = """
             local pendingIndexKey = KEYS[1]
 
@@ -46,11 +69,15 @@
             local claimToken = ARGV[3]
             local nowUtc = ARGV[4]
             local claimExpiresAtUtc = ARGV[5]
-            local tenantId = ARGV[6]
-            local pipelineKey = ARGV[7]
+            local requestedTenantId = ARGV[6]
+            local requestedPipelineKey = ARGV[7]
             local reason = ARGV[8]
             local keyPrefix = ARGV[9]
             local scanLimit = tonumber(ARGV[10])
+
+            if scanLimit == nil or scanLimit <= 0 then
+                scanLimit = 100
+            end
 
             local ids = redis.call('ZRANGE', pendingIndexKey, 0, scanLimit - 1)
 
@@ -60,25 +87,45 @@
 
                 if redis.call('EXISTS', itemKey) == 1 then
                     local status = redis.call('HGET', itemKey, 'status')
-                    local itemTenantId = redis.call('HGET', itemKey, 'tenantId')
-                    local itemPipelineKey = redis.call('HGET', itemKey, 'pipelineKey')
 
-                    local tenantMatches = tenantId == '' or itemTenantId == tenantId
-                    local pipelineMatches = pipelineKey == '' or itemPipelineKey == pipelineKey
-
-                    if status == 'Pending' and tenantMatches and pipelineMatches then
+                    if status ~= 'Pending' then
                         redis.call('ZREM', pendingIndexKey, sharedRunId)
+                    else
+                        local itemPipelineKey = redis.call('HGET', itemKey, 'pipelineKey') or ''
+                        local snapshotJson = redis.call('HGET', itemKey, 'executionContextSnapshotJson')
 
-                        redis.call('HSET', itemKey, 'status', 'Claimed')
-                        redis.call('HSET', itemKey, 'claimedByRuntimeInstanceId', runtimeInstanceId)
-                        redis.call('HSET', itemKey, 'claimedByWorkerId', workerId)
-                        redis.call('HSET', itemKey, 'claimToken', claimToken)
-                        redis.call('HSET', itemKey, 'claimedAtUtc', nowUtc)
-                        redis.call('HSET', itemKey, 'claimExpiresAtUtc', claimExpiresAtUtc)
-                        redis.call('HSET', itemKey, 'updatedAtUtc', nowUtc)
-                        redis.call('HSET', itemKey, 'reason', reason)
+                        if snapshotJson == false or snapshotJson == nil or snapshotJson == '' then
+                            redis.call('ZREM', pendingIndexKey, sharedRunId)
+                        else
+                            local ok, snapshot = pcall(cjson.decode, snapshotJson)
 
-                        return sharedRunId
+                            if not ok or snapshot == nil then
+                                redis.call('ZREM', pendingIndexKey, sharedRunId)
+                            else
+                                local itemTenantId = snapshot['TenantId'] or snapshot['tenantId'] or ''
+
+                                local tenantMatches =
+                                    requestedTenantId == '' or itemTenantId == requestedTenantId
+
+                                local pipelineMatches =
+                                    requestedPipelineKey == '' or itemPipelineKey == requestedPipelineKey
+
+                                if tenantMatches and pipelineMatches then
+                                    redis.call('ZREM', pendingIndexKey, sharedRunId)
+
+                                    redis.call('HSET', itemKey, 'status', 'Claimed')
+                                    redis.call('HSET', itemKey, 'claimedByRuntimeInstanceId', runtimeInstanceId)
+                                    redis.call('HSET', itemKey, 'claimedByWorkerId', workerId)
+                                    redis.call('HSET', itemKey, 'claimToken', claimToken)
+                                    redis.call('HSET', itemKey, 'claimedAtUtc', nowUtc)
+                                    redis.call('HSET', itemKey, 'claimExpiresAtUtc', claimExpiresAtUtc)
+                                    redis.call('HSET', itemKey, 'updatedAtUtc', nowUtc)
+                                    redis.call('HSET', itemKey, 'reason', reason)
+
+                                    return sharedRunId
+                                end
+                            end
+                        end
                     end
                 else
                     redis.call('ZREM', pendingIndexKey, sharedRunId)

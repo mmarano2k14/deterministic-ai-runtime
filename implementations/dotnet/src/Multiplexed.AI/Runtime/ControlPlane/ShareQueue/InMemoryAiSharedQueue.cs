@@ -102,7 +102,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                 {
                     SharedRunId = candidate.SharedRunId,
                     Status = AiSharedQueueItemStatus.Claimed,
-                    TenantId = candidate.TenantId,
+                    ExecutionContextSnapshot = candidate.ExecutionContextSnapshot,
                     PipelineKey = candidate.PipelineKey,
                     Priority = candidate.Priority,
                     ClaimedByRuntimeInstanceId = request.RuntimeInstanceId,
@@ -175,7 +175,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                 {
                     SharedRunId = existing.SharedRunId,
                     Status = AiSharedQueueItemStatus.Pending,
-                    TenantId = existing.TenantId,
+                    ExecutionContextSnapshot = existing.ExecutionContextSnapshot,
                     PipelineKey = existing.PipelineKey,
                     Priority = existing.Priority,
                     EnqueuedAtUtc = existing.EnqueuedAtUtc,
@@ -217,7 +217,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                 {
                     SharedRunId = existing.SharedRunId,
                     Status = AiSharedQueueItemStatus.Cancelled,
-                    TenantId = existing.TenantId,
+                    ExecutionContextSnapshot = existing.ExecutionContextSnapshot,
                     PipelineKey = existing.PipelineKey,
                     Priority = existing.Priority,
                     ClaimedByRuntimeInstanceId = existing.ClaimedByRuntimeInstanceId,
@@ -277,7 +277,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                 {
                     SharedRunId = existing.SharedRunId,
                     Status = status,
-                    TenantId = existing.TenantId,
+                    ExecutionContextSnapshot = existing.ExecutionContextSnapshot,
                     PipelineKey = existing.PipelineKey,
                     Priority = existing.Priority,
                     ClaimedByRuntimeInstanceId = clearClaim ? null : existing.ClaimedByRuntimeInstanceId,
@@ -324,7 +324,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
             string? tenantId)
         {
             return string.IsNullOrWhiteSpace(tenantId) ||
-                   string.Equals(item.TenantId, tenantId, StringComparison.Ordinal);
+                   string.Equals(item.ExecutionContextSnapshot.TenantId, tenantId, StringComparison.Ordinal);
         }
 
         /// <summary>

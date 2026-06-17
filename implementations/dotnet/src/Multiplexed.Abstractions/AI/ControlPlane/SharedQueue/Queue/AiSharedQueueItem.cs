@@ -1,4 +1,6 @@
-﻿namespace Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Queue
+﻿using Multiplexed.Abstractions.Core.ExecutionContext;
+
+namespace Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Queue
 {
     /// <summary>
     /// Represents a pending or claimed shared queue item.
@@ -8,6 +10,13 @@
     /// It references the run by <see cref="SharedRunId"/>.
     ///
     /// Full shared run state is owned by IAiSharedRunStore.
+    ///
+    /// Tenant model:
+    /// - ExecutionContextSnapshot.TenantId is the persistent tenant boundary used
+    ///   for queue filtering, routing, dashboard visibility, and tenant isolation.
+    /// - ExecutionContextSnapshot.ContextKey is volatile and is stored only for
+    ///   traceability/debugging. It must not be used as a durable queue key,
+    ///   execution key, or tenant partition key.
     /// </remarks>
     public sealed class AiSharedQueueItem
     {
@@ -27,9 +36,16 @@
         public required AiSharedQueueItemStatus Status { get; init; }
 
         /// <summary>
-        /// Optional tenant id used for future tenant-aware queue partitioning.
+        /// Snapshot of the RBAC execution context associated with this queue item.
         /// </summary>
-        public string? TenantId { get; init; }
+        /// <remarks>
+        /// Tenant filtering must use <see cref="ExecutionContextSnapshot.TenantId"/>.
+        /// Tenant group filtering must use <see cref="ExecutionContextSnapshot.TenantGroupId"/>.
+        ///
+        /// The snapshot context key is volatile and must not be used as a durable
+        /// tenant partition key or queue identifier.
+        /// </remarks>
+        public required ExecutionContextSnapshot ExecutionContextSnapshot { get; init; }
 
         /// <summary>
         /// Optional pipeline key used for future routing and policy decisions.

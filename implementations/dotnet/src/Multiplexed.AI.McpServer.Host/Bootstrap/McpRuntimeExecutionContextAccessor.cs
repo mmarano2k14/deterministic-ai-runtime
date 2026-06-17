@@ -1,67 +1,76 @@
 ﻿using Multiplexed.Abstractions.Core.ExecutionContext;
 using Multiplexed.Rbac.Core.ExecutionContext;
-using ExecutionContext = Multiplexed.Rbac.Core.ExecutionContext.ExecutionContext;
+using RbacExecutionContext = Multiplexed.Rbac.Core.ExecutionContext.ExecutionContext;
 
 namespace Multiplexed.AI.McpServer.Host.Bootstrap
 {
     /// <summary>
-    /// Provides a system RBAC execution context for MCP runtime/background execution.
+    /// Provides the current RBAC execution context for MCP runtime/background execution.
     /// </summary>
-    public sealed class McpRuntimeExecutionContextAccessor : IExecutionContextAccessor
+    /// <remarks>
+    /// The current context is stored in an async-local scope so concurrent MCP requests
+    /// do not overwrite each other.
+    ///
+    /// This accessor does not create a default context. A context must be provided by
+    /// the RBAC middleware, test setup, or an explicit system/background execution flow.
+    /// </remarks>
+    public sealed class McpRuntimeExecutionContextAccessor :
+        IExecutionContextAccessor,
+        IExecutionContextSnapshotProvider
     {
-        private ExecutionContext? context;
+        private static readonly AsyncLocal<RbacExecutionContext?> CurrentContext =
+            new();
 
-        public McpRuntimeExecutionContextAccessor()
-        {
-            context = CreateDefaultContext();
-        }
+        /// <inheritdoc />
+        public RbacExecutionContext? Current => CurrentContext.Value;
 
-        public ExecutionContext? Current => context;
-
+        /// <inheritdoc />
         public void Set(
-            ExecutionContext context)
+            RbacExecutionContext context)
         {
-            this.context = context
+            CurrentContext.Value = context
                 ?? throw new ArgumentNullException(nameof(context));
         }
 
+        /// <inheritdoc />
         public void Clear()
         {
-            context = null;
+            CurrentContext.Value = null;
         }
 
-        private static ExecutionContext CreateDefaultContext()
+        /// <inheritdoc />
+        public ExecutionContextSnapshot MapToSnapshot()
         {
-            const string project = "distributed-deterministic-ai-runtime";
+            var current = Current;
 
-            return new ExecutionContext
+            if (current is null)
             {
-                ContextKey = "mcp-runtime-system",
-                Project = project,
-                TenantId = "tenant-id-xxxx",
-                TenantGroupId = "tenant-group-id-xxx",
-                CurrentNamespace = "mcp-ai-runtime",
-                UserId = "mcp-runtime",
-                Namespaces = new List<NamespaceEntry>
-                {
-                    new()
-                    {
-                        Name = "mcp-ai-runtime",
-                        Trns = new HashSet<string>
-                        {
-                            $"trn:{project}:replay:execution:run",
-                            $"trn:{project}:replay:audit:run",
-                            $"trn:{project}:replay:report:read",
-                            $"trn:{project}:observability:ledger:read",
-                            $"trn:{project}:observability:trace:read",
+                throw new InvalidOperationException(
+                    "Cannot map execution context to snapshot because no current execution context is available. " +
+                    "The operation must run inside an RBAC execution context provided by the MCP middleware, " +
+                    "a test RBAC context, or an explicit system/background context.");
+            }
 
-                            $"trn:{project}:execution-control:pause-execution:execute",
-                            $"trn:{project}:execution-control:resume-execution:execute",
-                            $"trn:{project}:execution-control:cancel-execution:execute"
-                        }
-                    }
-                },
-                TtlSeconds = 300
+            return new ExecutionContextSnapshot
+            {
+                ContextKey = current.ContextKey,
+                Project = current.Project,
+                UserId = current.UserId,
+                TenantId = current.TenantId,
+                TenantGroupId = current.TenantGroupId,
+                CurrentNamespace = current.CurrentNamespace,
+                Namespaces = current.Namespaces
+                    .Select(namespaceEntry => new NamespaceEntry
+                    {
+                        Name = namespaceEntry.Name,
+                        Trns = new HashSet<string>(
+                            namespaceEntry.Trns,
+                            StringComparer.Ordinal)
+                    })
+                    .ToList(),
+                InFlightCount = current.InFlightCount,
+                TtlSeconds = current.TtlSeconds,
+                CreatedAtUtc = DateTime.UtcNow
             };
         }
     }

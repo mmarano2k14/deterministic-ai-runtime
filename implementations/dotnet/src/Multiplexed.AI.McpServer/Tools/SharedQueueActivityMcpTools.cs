@@ -99,7 +99,7 @@ namespace Multiplexed.AI.McpServer.Tools
                 filteredRuns =
                     filteredRuns.Where(run =>
                         string.Equals(
-                            run.TenantId,
+                            run.ExecutionContextSnapshot.TenantId,
                             request.TenantId,
                             StringComparison.Ordinal));
             }

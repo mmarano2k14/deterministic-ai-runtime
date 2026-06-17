@@ -18,20 +18,38 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Auth
         public const string DefaultUserId =
             "mcp-integration-test";
 
+        public const string DefaultTenantId =
+            "tenant-id-xxxx";
+
+        public const string DefaultTenantGroupId =
+            "tenant-group-id-xxx";
+
         public static ExecutionContext CreateDefaultContext(
-            string? userId = null)
+            string? userId = null,
+            string? tenantId = null,
+            string? tenantGroupId = null)
         {
             var effectiveUserId =
                 string.IsNullOrWhiteSpace(userId)
                     ? DefaultUserId
                     : userId;
 
+            var effectiveTenantId =
+                string.IsNullOrWhiteSpace(tenantId)
+                    ? DefaultTenantId
+                    : tenantId;
+
+            var effectiveTenantGroupId =
+                string.IsNullOrWhiteSpace(tenantGroupId)
+                    ? DefaultTenantGroupId
+                    : tenantGroupId;
+
             return new ExecutionContext
             {
                 ContextKey = Guid.NewGuid().ToString("D"),
                 Project = Project,
-                TenantId = "tenant-id-xxxx",
-                TenantGroupId = "tenant-group-id-xxx",
+                TenantId = effectiveTenantId,
+                TenantGroupId = effectiveTenantGroupId,
                 CurrentNamespace = Namespace,
                 UserId = effectiveUserId,
                 Namespaces = new List<NamespaceEntry>
@@ -72,9 +90,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Auth
                             $"trn:{Project}:observability:ledger:read",
                             $"trn:{Project}:observability:ledger:query",
                             $"trn:{Project}:observability:trace:read",
-                            $"trn:{Project}:observability:metrics:read",
-
-
+                            $"trn:{Project}:observability:metrics:read"
                         }
                     }
                 },

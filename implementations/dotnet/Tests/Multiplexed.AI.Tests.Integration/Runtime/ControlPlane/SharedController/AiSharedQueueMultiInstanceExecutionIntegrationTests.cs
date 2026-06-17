@@ -180,7 +180,10 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedController
                 new NoopAiRuntimeScaleOutRequestPublisher(),
                 new StaticAiControlPlaneIdResolver("test-control-plane"),
                 Options.Create(new AiSharedRuntimeControllerOptions()),
-                new NoopAiControlPlaneObserver());
+                new NoopAiControlPlaneObserver(),
+                new FakeExecutionContextSnapshotProvider(
+                    AiExecutionContextSnapshotTestFactory.Create(
+                        tenantId: "tenant-1")));
 
             var scenarioId = string.IsNullOrWhiteSpace(scenarioSuffix)
                 ? Guid.NewGuid().ToString("N")

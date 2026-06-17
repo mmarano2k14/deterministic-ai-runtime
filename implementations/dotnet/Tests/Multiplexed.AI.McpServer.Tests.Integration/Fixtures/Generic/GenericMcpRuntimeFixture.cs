@@ -1,10 +1,7 @@
-﻿using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Options;
-using Multiplexed.Abstractions.Core.ExecutionContext;
-using Multiplexed.AI.McpServer.Tests.Integration.Auth;
+﻿using Multiplexed.AI.McpServer.Tests.Integration.Auth;
 using Multiplexed.AI.McpServer.Tests.Integration.Fixtures;
-using Multiplexed.Rbac.Core.ExecutionContext;
-using Multiplexed.Rbac.Core.Runtime;
+using Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic;
+using Multiplexed.AI.McpServer.Tests.Integration.Helpers;
 
 namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic
 {
@@ -21,6 +18,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic
 
         private readonly IReadOnlyDictionary<string, string?> controlPlaneSettings;
         private readonly IReadOnlyList<IReadOnlyDictionary<string, string?>> runtimeInstanceSettings;
+        private readonly string? rbacTenantId;
+        private readonly string? rbacTenantGroupId;
+
         private readonly Dictionary<string, HttpClient> runtimeClientsByRuntimeInstanceId =
             new(StringComparer.Ordinal);
 
@@ -83,7 +83,26 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic
             IReadOnlyDictionary<string, string?> runtimeInstanceSettings)
             : this(
                 controlPlaneSettings,
-                new[] { runtimeInstanceSettings })
+                new[] { runtimeInstanceSettings },
+                rbacTenantId: null,
+                rbacTenantGroupId: null)
+        {
+        }
+
+        /// <summary>
+        /// Initializes a new instance of the <see cref="GenericMcpRuntimeFixture"/> class
+        /// with one runtime-instance host and an explicit RBAC tenant context.
+        /// </summary>
+        public GenericMcpRuntimeFixture(
+            IReadOnlyDictionary<string, string?> controlPlaneSettings,
+            IReadOnlyDictionary<string, string?> runtimeInstanceSettings,
+            string? rbacTenantId,
+            string? rbacTenantGroupId = null)
+            : this(
+                controlPlaneSettings,
+                new[] { runtimeInstanceSettings },
+                rbacTenantId,
+                rbacTenantGroupId)
         {
         }
 
@@ -94,6 +113,23 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic
         public GenericMcpRuntimeFixture(
             IReadOnlyDictionary<string, string?> controlPlaneSettings,
             IReadOnlyCollection<IReadOnlyDictionary<string, string?>> runtimeInstanceSettings)
+            : this(
+                controlPlaneSettings,
+                runtimeInstanceSettings,
+                rbacTenantId: null,
+                rbacTenantGroupId: null)
+        {
+        }
+
+        /// <summary>
+        /// Initializes a new instance of the <see cref="GenericMcpRuntimeFixture"/> class
+        /// with multiple runtime-instance hosts and an explicit RBAC tenant context.
+        /// </summary>
+        public GenericMcpRuntimeFixture(
+            IReadOnlyDictionary<string, string?> controlPlaneSettings,
+            IReadOnlyCollection<IReadOnlyDictionary<string, string?>> runtimeInstanceSettings,
+            string? rbacTenantId,
+            string? rbacTenantGroupId = null)
         {
             this.controlPlaneSettings =
                 controlPlaneSettings
@@ -107,6 +143,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic
                     "At least one runtime-instance settings dictionary is required.",
                     nameof(runtimeInstanceSettings));
             }
+
+            this.rbacTenantId = rbacTenantId;
+            this.rbacTenantGroupId = rbacTenantGroupId;
 
             ControlPlaneId =
                 GetRequiredSetting(
@@ -135,48 +174,18 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic
             ControlPlaneClient =
                 ControlPlaneHost.CreateClient();
 
-            var contextStore =
-                ControlPlaneHost.Services.GetRequiredService<IContextStore>();
-
-            var contextRuntimeOptions =
-                ControlPlaneHost.Services
-                    .GetRequiredService<IOptions<ContextRuntimeOptions>>()
-                    .Value;
-
-            var executionContext =
-                McpRbacTestContextFactory.CreateDefaultContext(
-                    McpRbacTestContextFactory.DefaultUserId);
-
-            var contextKey =
-                await contextStore
-                    .StoreAsync(executionContext)
+            Mcp =
+                await McpRbacTestClientHelper
+                    .CreateConfiguredClientAsync(
+                        ControlPlaneHost,
+                        ControlPlaneClient,
+                        McpRbacTestContextFactory.DefaultUserId,
+                        rbacTenantId,
+                        rbacTenantGroupId)
                     .ConfigureAwait(false);
 
-            ControlPlaneClient.DefaultRequestHeaders.Remove(
-                contextRuntimeOptions.AccessContextHeader);
-
-            ControlPlaneClient.DefaultRequestHeaders.Add(
-                contextRuntimeOptions.AccessContextHeader,
-                contextKey);
-
-            ControlPlaneClient.DefaultRequestHeaders.Remove(
-                McpRbacTestContextFactory.DemoUserIdHeaderName);
-
-            ControlPlaneClient.DefaultRequestHeaders.Add(
-                McpRbacTestContextFactory.DemoUserIdHeaderName,
-                McpRbacTestContextFactory.DefaultUserId);
-
-            Mcp =
-                new McpTestClient(
-                    ControlPlaneClient);
-
             Console.WriteLine(
-                $"[GENERIC MCP FIXTURE] Configuring MCP RBAC headers. Header='{contextRuntimeOptions.AccessContextHeader}', ContextKey='{contextKey}', UserId='{McpRbacTestContextFactory.DefaultUserId}'.");
-
-            Mcp.SetRbacHeaders(
-                contextRuntimeOptions.AccessContextHeader,
-                contextKey,
-                McpRbacTestContextFactory.DefaultUserId);
+                $"[GENERIC MCP FIXTURE] Configured MCP RBAC headers. UserId='{McpRbacTestContextFactory.DefaultUserId}', TenantId='{rbacTenantId ?? McpRbacTestContextFactory.DefaultTenantId}'.");
 
             var runtimeHosts =
                 new List<GenericRuntimeInstanceHttpTestHost>(

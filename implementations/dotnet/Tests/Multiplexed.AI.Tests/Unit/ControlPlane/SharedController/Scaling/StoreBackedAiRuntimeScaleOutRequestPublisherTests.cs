@@ -6,6 +6,7 @@ using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Store;
 using Multiplexed.Abstractions.AI.Execution.Instance.Worker;
 using Multiplexed.Abstractions.AI.Runtime.Execution.Instance.Worker;
 using Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling;
+using Multiplexed.AI.Tests.Fixtures;
 
 namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController.Scaling
 {
@@ -241,7 +242,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController.Scaling
                 SharedRunId = "shared-run-1",
                 Status = AiSharedRunStatus.ScaleOutRequested,
                 RunRequest = CreateRunRequest(),
-                TenantId = "tenant-test",
+                ExecutionContextSnapshot = AiExecutionContextSnapshotTestFactory.Create(tenantId: "tenant-test"),
                 PipelineKey = "pipeline-test",
                 CorrelationId = "correlation-test",
                 RequestedBy = "unit-test",
@@ -260,7 +261,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController.Scaling
             {
                 SharedRun = sharedRun,
                 SharedRunId = sharedRun.SharedRunId,
-                TenantId = sharedRun.TenantId,
+                TenantId = sharedRun.ExecutionContextSnapshot.TenantId,
                 PipelineKey = sharedRun.PipelineKey,
                 VisibleInstanceCount = 3,
                 AvailableInstanceCount = 0,

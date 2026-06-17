@@ -4,6 +4,7 @@ using Multiplexed.Abstractions.AI.ControlPlane.Discovery;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Store;
 using Multiplexed.Abstractions.AI.Execution.Instance.Worker;
 using Multiplexed.Abstractions.AI.Runtime.Execution.Instance.Worker;
+using Multiplexed.Abstractions.Core.ExecutionContext;
 using StackExchange.Redis;
 using System.Globalization;
 using System.Text.Json;
@@ -24,6 +25,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Store
     /// Redis keys:
     /// - {KeyPrefix}:control-plane:{controlPlaneId}:shared-run:{sharedRunId}
     /// - {KeyPrefix}:control-plane:{controlPlaneId}:shared-runs:index
+    ///
+    /// Redis hash fields:
+    /// - executionContextSnapshotJson stores the durable audit/context snapshot.
+    /// - ExecutionContextSnapshot.TenantId is the tenant boundary.
+    /// - ExecutionContextSnapshot.ContextKey is volatile and must not be used as a durable key.
     ///
     /// IMPORTANT:
     /// - Shared run visibility is scoped by logical control-plane identifier.
@@ -87,6 +93,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Store
         {
             ArgumentNullException.ThrowIfNull(record);
             ArgumentException.ThrowIfNullOrWhiteSpace(record.SharedRunId);
+            ArgumentException.ThrowIfNullOrWhiteSpace(record.ExecutionContextSnapshot.TenantId);
 
             cancellationToken.ThrowIfCancellationRequested();
 
@@ -531,11 +538,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Store
             AddField(values, "controlPlaneId", record.ControlPlaneId);
             AddField(values, "status", record.Status.ToString());
             AddField(values, "runRequestJson", Serialize(record.RunRequest));
+            AddField(values, "executionContextSnapshotJson", Serialize(record.ExecutionContextSnapshot));
             AddField(values, "localRunId", record.LocalRunId);
             AddField(values, "executionId", record.ExecutionId);
             AddField(values, "assignedRuntimeInstanceId", record.AssignedRuntimeInstanceId);
             AddField(values, "admissionDecisionJson", Serialize(record.AdmissionDecision));
-            AddField(values, "tenantId", record.TenantId);
             AddField(values, "pipelineKey", record.PipelineKey);
             AddField(values, "correlationId", record.CorrelationId);
             AddField(values, "requestedBy", record.RequestedBy);
@@ -584,6 +591,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Store
                 GetRequired(fields, "runRequestJson"),
                 "runRequestJson");
 
+            var executionContextSnapshot = DeserializeRequired<ExecutionContextSnapshot>(
+                GetRequired(fields, "executionContextSnapshotJson"),
+                "executionContextSnapshotJson");
+
             var admissionDecision = DeserializeOptional<AiRunAdmissionDecision>(
                 GetOptional(fields, "admissionDecisionJson"));
 
@@ -597,11 +608,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Store
                 ControlPlaneId = GetOptional(fields, "controlPlaneId"),
                 Status = status,
                 RunRequest = runRequest,
+                ExecutionContextSnapshot = executionContextSnapshot,
                 LocalRunId = GetOptional(fields, "localRunId"),
                 ExecutionId = GetOptional(fields, "executionId"),
                 AssignedRuntimeInstanceId = GetOptional(fields, "assignedRuntimeInstanceId"),
                 AdmissionDecision = admissionDecision,
-                TenantId = GetOptional(fields, "tenantId"),
                 PipelineKey = GetOptional(fields, "pipelineKey"),
                 CorrelationId = GetOptional(fields, "correlationId"),
                 RequestedBy = GetOptional(fields, "requestedBy"),
@@ -677,11 +688,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Store
                 ControlPlaneId = controlPlaneId,
                 Status = record.Status,
                 RunRequest = record.RunRequest,
+                ExecutionContextSnapshot = record.ExecutionContextSnapshot,
                 LocalRunId = record.LocalRunId,
                 ExecutionId = record.ExecutionId,
                 AssignedRuntimeInstanceId = record.AssignedRuntimeInstanceId,
                 AdmissionDecision = record.AdmissionDecision,
-                TenantId = record.TenantId,
                 PipelineKey = record.PipelineKey,
                 CorrelationId = record.CorrelationId,
                 RequestedBy = record.RequestedBy,

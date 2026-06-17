@@ -3,6 +3,7 @@ using Multiplexed.Abstractions.AI.ControlPlane.Discovery;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Claiming;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Queue;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Redis;
+using Multiplexed.Abstractions.Core.ExecutionContext;
 using StackExchange.Redis;
 using System.Globalization;
 using System.Text.Json;
@@ -23,6 +24,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
     /// - {KeyPrefix}:control-plane:{controlPlaneId}:shared-queue:item:{sharedRunId}
     /// - {KeyPrefix}:control-plane:{controlPlaneId}:shared-queue:pending
     /// - {KeyPrefix}:control-plane:{controlPlaneId}:shared-queue:all
+    ///
+    /// Redis hash fields:
+    /// - executionContextSnapshotJson stores the durable audit/context snapshot.
+    /// - ExecutionContextSnapshot.TenantId is the tenant boundary used by claim filtering.
+    /// - ExecutionContextSnapshot.ContextKey is volatile and must not be used as a durable key.
     ///
     /// IMPORTANT:
     /// - Shared queue visibility is scoped by logical control-plane identifier.
@@ -93,6 +99,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
         {
             ArgumentNullException.ThrowIfNull(item);
             ArgumentException.ThrowIfNullOrWhiteSpace(item.SharedRunId);
+            ArgumentException.ThrowIfNullOrWhiteSpace(item.ExecutionContextSnapshot.TenantId);
 
             cancellationToken.ThrowIfCancellationRequested();
 
@@ -145,6 +152,12 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
             {
                 throw new InvalidOperationException(
                     $"Shared queue item '{effectiveItem.SharedRunId}' already exists.");
+            }
+
+            if (string.Equals(status, "invalid-field-pairs", StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    $"Invalid Redis enqueue arguments for shared queue item '{effectiveItem.SharedRunId}': field/value pairs are not balanced.");
             }
 
             if (!string.Equals(status, "enqueued", StringComparison.Ordinal))
@@ -559,17 +572,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
                 $"Unexpected Redis cancel result for shared queue item '{sharedRunId}': '{status}'.");
         }
 
-        /// <summary>
-        /// Gets a shared queue item from the scoped control-plane keyspace and validates that it
-        /// belongs to the expected logical control-plane.
-        /// </summary>
-        /// <param name="controlPlaneId">The expected logical control-plane identifier.</param>
-        /// <param name="sharedRunId">The shared run identifier.</param>
-        /// <param name="cancellationToken">The cancellation token.</param>
-        /// <returns>
-        /// The shared queue item when found and scoped to the expected control-plane;
-        /// otherwise, <c>null</c>.
-        /// </returns>
         private async Task<AiSharedQueueItem?> GetAsync(
             string controlPlaneId,
             string sharedRunId,
@@ -595,13 +597,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
                     controlPlaneId);
         }
 
-        /// <summary>
-        /// Gets a shared queue item from the scoped Redis key without applying control-plane validation.
-        /// </summary>
-        /// <param name="controlPlaneId">The logical control-plane identifier used to build the Redis key.</param>
-        /// <param name="sharedRunId">The shared run identifier.</param>
-        /// <param name="cancellationToken">The cancellation token.</param>
-        /// <returns>The raw shared queue item when found; otherwise, <c>null</c>.</returns>
         private async Task<AiSharedQueueItem?> GetRawAsync(
             string controlPlaneId,
             string sharedRunId,
@@ -626,12 +621,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
             return MapItem(entries);
         }
 
-        /// <summary>
-        /// Removes a shared queue item from the scoped indexes and optionally deletes its item hash.
-        /// </summary>
-        /// <param name="controlPlaneId">The logical control-plane identifier.</param>
-        /// <param name="sharedRunId">The shared run identifier.</param>
-        /// <param name="deleteItem">A value indicating whether the item hash should also be deleted.</param>
         private async Task CleanupItemAsync(
             string controlPlaneId,
             string sharedRunId,
@@ -668,13 +657,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
             }
         }
 
-        /// <summary>
-        /// Builds Redis script values for enqueue.
-        /// </summary>
-        /// <param name="item">The shared queue item.</param>
-        /// <param name="score">The queue ordering score.</param>
-        /// <param name="expireSeconds">The optional expiration in seconds.</param>
-        /// <returns>The Redis script values.</returns>
         private static RedisValue[] BuildEnqueueValues(
             AiSharedQueueItem item,
             double score,
@@ -690,7 +672,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
             AddField(values, "sharedRunId", item.SharedRunId);
             AddField(values, "controlPlaneId", item.ControlPlaneId);
             AddField(values, "status", item.Status.ToString());
-            AddField(values, "tenantId", item.TenantId);
+            AddField(values, "executionContextSnapshotJson", Serialize(item.ExecutionContextSnapshot));
             AddField(values, "pipelineKey", item.PipelineKey);
             AddField(values, "priority", item.Priority.ToString(CultureInfo.InvariantCulture));
             AddField(values, "claimedByRuntimeInstanceId", item.ClaimedByRuntimeInstanceId);
@@ -706,12 +688,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
             return values.ToArray();
         }
 
-        /// <summary>
-        /// Adds a Redis hash field pair to a script argument list.
-        /// </summary>
-        /// <param name="values">The script argument list.</param>
-        /// <param name="name">The hash field name.</param>
-        /// <param name="value">The hash field value.</param>
         private static void AddField(
             ICollection<RedisValue> values,
             string name,
@@ -721,11 +697,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
             values.Add(value ?? string.Empty);
         }
 
-        /// <summary>
-        /// Maps Redis hash entries to a shared queue item.
-        /// </summary>
-        /// <param name="entries">The Redis hash entries.</param>
-        /// <returns>The shared queue item.</returns>
         private static AiSharedQueueItem MapItem(
             IReadOnlyCollection<HashEntry> entries)
         {
@@ -738,12 +709,17 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
                     GetOptional(fields, "metadataJson"))
                 ?? new Dictionary<string, string>();
 
+            var executionContextSnapshot =
+                DeserializeRequired<ExecutionContextSnapshot>(
+                    GetRequired(fields, "executionContextSnapshotJson"),
+                    "executionContextSnapshotJson");
+
             return new AiSharedQueueItem
             {
                 SharedRunId = GetRequired(fields, "sharedRunId"),
                 ControlPlaneId = GetOptional(fields, "controlPlaneId"),
                 Status = ParseStatus(GetRequired(fields, "status")),
-                TenantId = GetOptional(fields, "tenantId"),
+                ExecutionContextSnapshot = executionContextSnapshot,
                 PipelineKey = GetOptional(fields, "pipelineKey"),
                 Priority = ParseInt(GetOptional(fields, "priority")),
                 ClaimedByRuntimeInstanceId = GetOptional(fields, "claimedByRuntimeInstanceId"),
@@ -758,12 +734,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
             };
         }
 
-        /// <summary>
-        /// Resolves the logical control-plane identifier used to scope shared queue keys.
-        /// </summary>
-        /// <param name="requestedControlPlaneId">The preferred control-plane identifier when already known.</param>
-        /// <param name="cancellationToken">The cancellation token.</param>
-        /// <returns>The resolved logical control-plane identifier.</returns>
         private async Task<string> ResolveControlPlaneIdAsync(
             string? requestedControlPlaneId,
             CancellationToken cancellationToken)
@@ -789,12 +759,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
             return resolvedControlPlaneId;
         }
 
-        /// <summary>
-        /// Ensures a shared queue item carries the logical control-plane identifier.
-        /// </summary>
-        /// <param name="item">The shared queue item.</param>
-        /// <param name="controlPlaneId">The logical control-plane identifier.</param>
-        /// <returns>The shared queue item with a control-plane identifier.</returns>
         private static AiSharedQueueItem EnsureControlPlaneId(
             AiSharedQueueItem item,
             string controlPlaneId)
@@ -820,7 +784,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
                 SharedRunId = item.SharedRunId,
                 ControlPlaneId = controlPlaneId,
                 Status = item.Status,
-                TenantId = item.TenantId,
+                ExecutionContextSnapshot = item.ExecutionContextSnapshot,
                 PipelineKey = item.PipelineKey,
                 Priority = item.Priority,
                 ClaimedByRuntimeInstanceId = item.ClaimedByRuntimeInstanceId,
@@ -835,15 +799,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
             };
         }
 
-        /// <summary>
-        /// Determines whether a stored shared queue item belongs to the expected logical control-plane.
-        /// </summary>
-        /// <param name="itemControlPlaneId">The control-plane identifier stored on the queue item.</param>
-        /// <param name="expectedControlPlaneId">The expected logical control-plane identifier.</param>
-        /// <returns>
-        /// <c>true</c> when the item belongs to the expected control-plane, or when the
-        /// item has no control-plane identifier for backward compatibility; otherwise, <c>false</c>.
-        /// </returns>
         private static bool BelongsToControlPlane(
             string? itemControlPlaneId,
             string expectedControlPlaneId)
@@ -859,11 +814,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
                 StringComparison.Ordinal);
         }
 
-        /// <summary>
-        /// Builds the Redis key prefix for one logical control-plane shared queue.
-        /// </summary>
-        /// <param name="controlPlaneId">The logical control-plane identifier.</param>
-        /// <returns>The Redis shared queue key prefix.</returns>
         private string BuildQueueKeyPrefix(
             string controlPlaneId)
         {
@@ -877,12 +827,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
                 SharedQueueKeySegment);
         }
 
-        /// <summary>
-        /// Builds the Redis hash key for a shared queue item inside one logical control-plane.
-        /// </summary>
-        /// <param name="controlPlaneId">The logical control-plane identifier.</param>
-        /// <param name="sharedRunId">The shared run identifier.</param>
-        /// <returns>The Redis shared queue item key.</returns>
         private RedisKey BuildItemKey(
             string controlPlaneId,
             string sharedRunId)
@@ -895,11 +839,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
                 NormalizeKeySegment(sharedRunId));
         }
 
-        /// <summary>
-        /// Builds the Redis pending sorted-set key for one logical control-plane shared queue.
-        /// </summary>
-        /// <param name="controlPlaneId">The logical control-plane identifier.</param>
-        /// <returns>The Redis pending index key.</returns>
         private RedisKey BuildPendingIndexKey(
             string controlPlaneId)
         {
@@ -909,11 +848,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
                 PendingIndexKeySegment);
         }
 
-        /// <summary>
-        /// Builds the Redis all-items sorted-set key for one logical control-plane shared queue.
-        /// </summary>
-        /// <param name="controlPlaneId">The logical control-plane identifier.</param>
-        /// <returns>The Redis all-items index key.</returns>
         private RedisKey BuildAllIndexKey(
             string controlPlaneId)
         {
@@ -923,11 +857,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
                 AllIndexKeySegment);
         }
 
-        /// <summary>
-        /// Normalizes the configured Redis key prefix into a base prefix.
-        /// </summary>
-        /// <param name="keyPrefix">The configured Redis key prefix.</param>
-        /// <returns>The normalized Redis base key prefix.</returns>
         private static string NormalizeBaseKeyPrefix(
             string keyPrefix)
         {
@@ -955,11 +884,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
                 : normalized;
         }
 
-        /// <summary>
-        /// Normalizes a value so it can be used as a stable Redis key segment.
-        /// </summary>
-        /// <param name="value">The value to normalize.</param>
-        /// <returns>The normalized Redis key segment.</returns>
         private static string NormalizeKeySegment(
             string value)
         {
@@ -971,12 +895,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
                 .Replace("\\", "/", StringComparison.Ordinal);
         }
 
-        /// <summary>
-        /// Gets an optional field value.
-        /// </summary>
-        /// <param name="fields">The field dictionary.</param>
-        /// <param name="name">The field name.</param>
-        /// <returns>The field value, or <c>null</c> when empty or missing.</returns>
         private static string? GetOptional(
             IReadOnlyDictionary<string, string> fields,
             string name)
@@ -990,12 +908,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
             return value;
         }
 
-        /// <summary>
-        /// Gets a required field value.
-        /// </summary>
-        /// <param name="fields">The field dictionary.</param>
-        /// <param name="name">The field name.</param>
-        /// <returns>The required field value.</returns>
         private static string GetRequired(
             IReadOnlyDictionary<string, string> fields,
             string name)
@@ -1010,11 +922,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
             return value;
         }
 
-        /// <summary>
-        /// Parses a shared queue item status.
-        /// </summary>
-        /// <param name="value">The status value.</param>
-        /// <returns>The parsed queue item status.</returns>
         private static AiSharedQueueItemStatus ParseStatus(
             string value)
         {
@@ -1029,11 +936,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
             return AiSharedQueueItemStatus.Unknown;
         }
 
-        /// <summary>
-        /// Parses an integer value.
-        /// </summary>
-        /// <param name="value">The raw integer value.</param>
-        /// <returns>The parsed integer value, or <c>0</c> when missing or invalid.</returns>
         private static int ParseInt(
             string? value)
         {
@@ -1051,33 +953,18 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
                     : 0;
         }
 
-        /// <summary>
-        /// Formats a timestamp as round-trip ISO-8601.
-        /// </summary>
-        /// <param name="value">The timestamp value.</param>
-        /// <returns>The formatted timestamp.</returns>
         private static string FormatDate(
             DateTimeOffset value)
         {
             return value.ToString("O", CultureInfo.InvariantCulture);
         }
 
-        /// <summary>
-        /// Formats an optional timestamp as round-trip ISO-8601.
-        /// </summary>
-        /// <param name="value">The optional timestamp value.</param>
-        /// <returns>The formatted timestamp, or <c>null</c>.</returns>
         private static string? FormatOptionalDate(
             DateTimeOffset? value)
         {
             return value?.ToString("O", CultureInfo.InvariantCulture);
         }
 
-        /// <summary>
-        /// Parses an ISO-8601 timestamp.
-        /// </summary>
-        /// <param name="value">The timestamp value.</param>
-        /// <returns>The parsed timestamp.</returns>
         private static DateTimeOffset ParseDateTimeOffset(
             string value)
         {
@@ -1087,11 +974,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
                 DateTimeStyles.RoundtripKind);
         }
 
-        /// <summary>
-        /// Parses an optional ISO-8601 timestamp.
-        /// </summary>
-        /// <param name="value">The optional timestamp value.</param>
-        /// <returns>The parsed timestamp, or <c>null</c>.</returns>
         private static DateTimeOffset? ParseOptionalDateTimeOffset(
             string? value)
         {
@@ -1103,12 +985,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
             return ParseDateTimeOffset(value);
         }
 
-        /// <summary>
-        /// Serializes a value to JSON.
-        /// </summary>
-        /// <typeparam name="T">The value type.</typeparam>
-        /// <param name="value">The value.</param>
-        /// <returns>The serialized JSON, or an empty string when value is null.</returns>
         private static string Serialize<T>(
             T? value)
         {
@@ -1117,12 +993,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
                 : JsonSerializer.Serialize(value, JsonOptions);
         }
 
-        /// <summary>
-        /// Deserializes an optional JSON value.
-        /// </summary>
-        /// <typeparam name="T">The value type.</typeparam>
-        /// <param name="json">The JSON value.</param>
-        /// <returns>The deserialized value, or <c>null</c>.</returns>
         private static T? DeserializeOptional<T>(
             string? json)
         {
@@ -1136,11 +1006,23 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
                 JsonOptions);
         }
 
-        /// <summary>
-        /// Determines whether a queue item status is terminal.
-        /// </summary>
-        /// <param name="status">The queue item status.</param>
-        /// <returns><c>true</c> when the status is terminal; otherwise, <c>false</c>.</returns>
+        private static T DeserializeRequired<T>(
+            string json,
+            string fieldName)
+        {
+            var value = JsonSerializer.Deserialize<T>(
+                json,
+                JsonOptions);
+
+            if (value is null)
+            {
+                throw new InvalidOperationException(
+                    $"Redis shared queue item field '{fieldName}' could not be deserialized.");
+            }
+
+            return value;
+        }
+
         private static bool IsTerminal(
             AiSharedQueueItemStatus status)
         {
@@ -1151,11 +1033,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
                 AiSharedQueueItemStatus.Dispatched;
         }
 
-        /// <summary>
-        /// Builds a Redis sorted set score for queue ordering.
-        /// </summary>
-        /// <param name="item">The shared queue item.</param>
-        /// <returns>The queue ordering score.</returns>
         private static double BuildQueueScore(
             AiSharedQueueItem item)
         {
@@ -1164,12 +1041,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
                 item.EnqueuedAtUtc);
         }
 
-        /// <summary>
-        /// Builds a Redis sorted set score from priority and enqueue timestamp.
-        /// </summary>
-        /// <param name="priority">The item priority.</param>
-        /// <param name="enqueuedAtUtc">The enqueue timestamp.</param>
-        /// <returns>The queue ordering score.</returns>
         private static double BuildQueueScoreFromParts(
             int priority,
             DateTimeOffset enqueuedAtUtc)
@@ -1179,10 +1050,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
             return (priority * 1_000_000_000_000d) + timestamp;
         }
 
-        /// <summary>
-        /// Gets record expiration in seconds.
-        /// </summary>
-        /// <returns>The expiration in seconds, or <c>0</c> when disabled.</returns>
         private long GetExpireSeconds()
         {
             if (!_options.EnableRecordExpiration ||

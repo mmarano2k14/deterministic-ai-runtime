@@ -599,8 +599,15 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
 
                             if (completed.Exception is not null)
                             {
+                                var exception =
+                                    completed.Exception.GetBaseException();
+
                                 _logger.Engine.LogError(
-                                    $"[AI PIPELINE CONTROLLER] Run task faulted unexpectedly. RunId='{queuedRun.Handle.RunId}', Error='{completed.Exception.GetBaseException().Message}'.");
+                                    CreateRunFailureLogMessage(
+                                        "Run task faulted unexpectedly after background processing escaped the guarded execution path.",
+                                        queuedRun,
+                                        exception,
+                                        executionId: queuedRun.Handle.ExecutionId));
                             }
                         },
                         CancellationToken.None,
@@ -694,19 +701,35 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
             }
             catch (Exception ex)
             {
+                var phase =
+                    ResolveExceptionPhase(
+                        ex);
+
+                var failureReason =
+                    CreateRunFailureReason(
+                        phase,
+                        queuedRun,
+                        ex,
+                        executionId: handle.ExecutionId);
+
                 handle.MarkFailed();
 
                 await _runExecutionIndex
                     .MarkFailedAsync(
                         handle.RunId,
                         handle.ExecutionId,
-                        ex.Message,
+                        failureReason,
                         CancellationToken.None)
                     .ConfigureAwait(false);
 
                 queuedRun.CompletionSource.TrySetException(ex);
 
-                _logger.Engine.LogError($"[AI PIPELINE CONTROLLER] Run failed. RunId='{handle.RunId}', Pipeline='{request.PipelineName}', Error='{ex}'.");
+                _logger.Engine.LogError(
+                    CreateRunFailureLogMessage(
+                        "Run failed during background execution.",
+                        queuedRun,
+                        ex,
+                        executionId: handle.ExecutionId));
 
                 await RecordRunLedgerAsync(
                         handle.RunId,
@@ -714,14 +737,12 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
                         AiDecisionLedgerEvents.Run.Failed,
                         AiDecisionLedgerOutcome.Failed,
                         handle.ExecutionId,
-                        ex.Message,
-                        new Dictionary<string, string>
-                        {
-                            ["run.id"] = handle.RunId,
-                            ["pipeline.name"] = request.PipelineName,
-                            ["run.status"] = AiRuntimeWorkerRunStatus.Failed.ToString(),
-                            ["exception.type"] = ex.GetType().Name
-                        },
+                        failureReason,
+                        CreateRunFailureMetadata(
+                            phase,
+                            queuedRun,
+                            ex,
+                            executionId: handle.ExecutionId),
                         CancellationToken.None)
                     .ConfigureAwait(false);
             }
@@ -873,149 +894,229 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
             AiRuntimeQueuedPipelineRun queuedRun,
             CancellationToken cancellationToken)
         {
-            var handle = queuedRun.Handle;
-            var request = queuedRun.Request;
+            ArgumentNullException.ThrowIfNull(queuedRun);
 
-            handle.MarkCreatingExecution();
+            var handle =
+                queuedRun.Handle;
 
-            _logger.Engine.LogInformation(
-                $"[AI PIPELINE CONTROLLER] Creating execution. RunId='{handle.RunId}', Pipeline='{request.PipelineName}'.");
+            var request =
+                queuedRun.Request;
 
-            var definition = await _definitionResolver.ResolveAsync(
-                request,
-                cancellationToken).ConfigureAwait(false);
+            var diagnosticPhase =
+                "initializing";
 
-            _logger.Engine.LogInformation(
-                $"[AI PIPELINE CONTROLLER] Definition resolved. RunId='{handle.RunId}', Pipeline='{request.PipelineName}'.");
+            AiExecutionRecord? created =
+                null;
 
-            await _definitionPublisher.PublishAsync(
-                definition,
-                cancellationToken).ConfigureAwait(false);
-
-            _logger.Engine.LogInformation(
-                $"[AI PIPELINE CONTROLLER] Definition published. RunId='{handle.RunId}', Pipeline='{request.PipelineName}'.");
-
-            var created = await CreateExecutionAsync(
-                request,
-                cancellationToken).ConfigureAwait(false);
-
-            _logger.Engine.LogInformation(
-                $"[AI PIPELINE CONTROLLER] Execution created. RunId='{handle.RunId}', ExecutionId='{created.ExecutionId}'.");
-
-            queuedRun.Correlation.ExecutionId = created.ExecutionId;
-            queuedRun.Correlation.PipelineKey = created.PipelineName;
-            queuedRun.Correlation.RunId = handle.RunId;
-
-            handle.MarkRunning(
-                created.ExecutionId);
-
-            await _runExecutionIndex
-                .MarkStartedAsync(
-                    handle.RunId,
-                    created.ExecutionId,
-                    cancellationToken)
-                .ConfigureAwait(false);
-
-            await RegisterExecutionAssistanceCandidateAsync(
-                    handle.RunId,
-                    request,
-                    created,
-                    definition,
-                    cancellationToken)
-                .ConfigureAwait(false);
-
-            await RecordRunLedgerAsync(
-                    handle.RunId,
-                    request.PipelineName,
-                    AiDecisionLedgerEvents.Run.Started,
-                    AiDecisionLedgerOutcome.Started,
-                    created.ExecutionId,
-                    "Pipeline run started execution processing.",
-                    new Dictionary<string, string>
-                    {
-                        ["run.id"] = handle.RunId,
-                        ["execution.id"] = created.ExecutionId,
-                        ["pipeline.name"] = request.PipelineName,
-                        ["distributed.enabled"] = _options.Distributed.Enabled.ToString(),
-                        ["distributed.worker.count"] = _options.Distributed.WorkerCount.ToString(),
-                        ["max.local.workers.per.execution"] = _options.MaxLocalWorkersPerExecution.ToString(),
-                        ["effective.worker.count.per.execution"] = ResolveMaxWorkerCountForExecution().ToString()
-                    },
-                    cancellationToken)
-                .ConfigureAwait(false);
-
-            _logger.Engine.LogInformation(
-                $"[AI PIPELINE CONTROLLER] Execution created. RunId='{handle.RunId}', ExecutionId='{created.ExecutionId}', Pipeline='{created.PipelineName}'.");
-
-            AiExecutionRecord? final = null;
+            AiPipelineDefinition? definition =
+                null;
 
             try
             {
-                final = await RunCreatedExecutionAsync(
-                    created.ExecutionId,
+                diagnosticPhase =
+                    "mark-creating-execution";
+
+                handle.MarkCreatingExecution();
+
+                _logger.Engine.LogInformation(
+                    $"[AI PIPELINE CONTROLLER] Creating execution. RunId='{handle.RunId}', Pipeline='{request.PipelineName}', RuntimeInstanceId='{_runtimeInstanceIdentity.RuntimeInstanceId}', InputType='{ResolveInputTypeName(request.Input)}'.");
+
+                diagnosticPhase =
+                    "resolve-definition";
+
+                definition = await _definitionResolver.ResolveAsync(
+                    request,
                     cancellationToken).ConfigureAwait(false);
 
-                if (final.Status == AiExecutionStatus.Completed)
-                {
-                    handle.MarkCompleted();
+                _logger.Engine.LogInformation(
+                    $"[AI PIPELINE CONTROLLER] Definition resolved. RunId='{handle.RunId}', Pipeline='{request.PipelineName}', StepCount='{definition.Steps.Count}'.");
 
-                    await _runExecutionIndex
-                        .MarkCompletedAsync(
-                            handle.RunId,
-                            created.ExecutionId,
-                            cancellationToken)
-                        .ConfigureAwait(false);
-                }
-                else if (final.Status == AiExecutionStatus.Cancelled)
-                {
-                    handle.MarkCancelled();
+                diagnosticPhase =
+                    "publish-definition";
 
-                    await _runExecutionIndex
-                        .MarkFailedAsync(
-                            handle.RunId,
-                            created.ExecutionId,
-                            "Pipeline run was cancelled.",
-                            cancellationToken)
-                        .ConfigureAwait(false);
-                }
-                else
-                {
-                    handle.MarkFailed();
+                await _definitionPublisher.PublishAsync(
+                    definition,
+                    cancellationToken).ConfigureAwait(false);
 
-                    await _runExecutionIndex
-                        .MarkFailedAsync(
-                            handle.RunId,
-                            created.ExecutionId,
-                            $"Pipeline run reached terminal status '{final.Status}'.",
-                            cancellationToken)
-                        .ConfigureAwait(false);
-                }
+                _logger.Engine.LogInformation(
+                    $"[AI PIPELINE CONTROLLER] Definition published. RunId='{handle.RunId}', Pipeline='{request.PipelineName}'.");
 
-                await RecordRunTerminalLedgerAsync(
+                diagnosticPhase =
+                    "create-execution";
+
+                created = await CreateExecutionAsync(
+                    request,
+                    cancellationToken).ConfigureAwait(false);
+
+                _logger.Engine.LogInformation(
+                    $"[AI PIPELINE CONTROLLER] Execution created. RunId='{handle.RunId}', ExecutionId='{created.ExecutionId}', Pipeline='{created.PipelineName}'.");
+
+                queuedRun.Correlation.ExecutionId =
+                    created.ExecutionId;
+
+                queuedRun.Correlation.PipelineKey =
+                    created.PipelineName;
+
+                queuedRun.Correlation.RunId =
+                    handle.RunId;
+
+                diagnosticPhase =
+                    "mark-running";
+
+                handle.MarkRunning(
+                    created.ExecutionId);
+
+                diagnosticPhase =
+                    "mark-run-execution-index-started";
+
+                await _runExecutionIndex
+                    .MarkStartedAsync(
                         handle.RunId,
-                        request.PipelineName,
                         created.ExecutionId,
-                        final,
                         cancellationToken)
                     .ConfigureAwait(false);
 
-                await InvokeRunFinalizedAsync(
-                    queuedRun,
-                    final,
-                    cancellationToken).ConfigureAwait(false);
+                diagnosticPhase =
+                    "register-execution-assistance-candidate";
 
-                queuedRun.CompletionSource.TrySetResult(final);
-
-                _logger.Engine.LogInformation(
-                    $"[AI PIPELINE CONTROLLER] Run terminal. RunId='{handle.RunId}', ExecutionId='{created.ExecutionId}', Status='{final.Status}'.");
-            }
-            finally
-            {
-                await MarkExecutionAssistanceCandidateCompletedAsync(
-                        created.ExecutionId,
-                        final?.Status.ToString() ?? "unknown",
-                        CancellationToken.None)
+                await RegisterExecutionAssistanceCandidateAsync(
+                        handle.RunId,
+                        request,
+                        created,
+                        definition,
+                        cancellationToken)
                     .ConfigureAwait(false);
+
+                diagnosticPhase =
+                    "record-run-started-ledger";
+
+                await RecordRunLedgerAsync(
+                        handle.RunId,
+                        request.PipelineName,
+                        AiDecisionLedgerEvents.Run.Started,
+                        AiDecisionLedgerOutcome.Started,
+                        created.ExecutionId,
+                        "Pipeline run started execution processing.",
+                        new Dictionary<string, string>
+                        {
+                            ["run.id"] = handle.RunId,
+                            ["execution.id"] = created.ExecutionId,
+                            ["pipeline.name"] = request.PipelineName,
+                            ["distributed.enabled"] = _options.Distributed.Enabled.ToString(),
+                            ["distributed.worker.count"] = _options.Distributed.WorkerCount.ToString(),
+                            ["max.local.workers.per.execution"] = _options.MaxLocalWorkersPerExecution.ToString(),
+                            ["effective.worker.count.per.execution"] = ResolveMaxWorkerCountForExecution().ToString()
+                        },
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+                AiExecutionRecord? final =
+                    null;
+
+                try
+                {
+                    diagnosticPhase =
+                        "run-created-execution";
+
+                    final = await RunCreatedExecutionAsync(
+                        created.ExecutionId,
+                        cancellationToken).ConfigureAwait(false);
+
+                    diagnosticPhase =
+                        "apply-terminal-status";
+
+                    if (final.Status == AiExecutionStatus.Completed)
+                    {
+                        handle.MarkCompleted();
+
+                        await _runExecutionIndex
+                            .MarkCompletedAsync(
+                                handle.RunId,
+                                created.ExecutionId,
+                                cancellationToken)
+                            .ConfigureAwait(false);
+                    }
+                    else if (final.Status == AiExecutionStatus.Cancelled)
+                    {
+                        handle.MarkCancelled();
+
+                        await _runExecutionIndex
+                            .MarkFailedAsync(
+                                handle.RunId,
+                                created.ExecutionId,
+                                "Pipeline run was cancelled.",
+                                cancellationToken)
+                            .ConfigureAwait(false);
+                    }
+                    else
+                    {
+                        handle.MarkFailed();
+
+                        await _runExecutionIndex
+                            .MarkFailedAsync(
+                                handle.RunId,
+                                created.ExecutionId,
+                                $"Pipeline run reached terminal status '{final.Status}'.",
+                                cancellationToken)
+                            .ConfigureAwait(false);
+                    }
+
+                    diagnosticPhase =
+                        "record-terminal-ledger";
+
+                    await RecordRunTerminalLedgerAsync(
+                            handle.RunId,
+                            request.PipelineName,
+                            created.ExecutionId,
+                            final,
+                            cancellationToken)
+                        .ConfigureAwait(false);
+
+                    diagnosticPhase =
+                        "invoke-run-finalized-hook";
+
+                    await InvokeRunFinalizedAsync(
+                        queuedRun,
+                        final,
+                        cancellationToken).ConfigureAwait(false);
+
+                    queuedRun.CompletionSource.TrySetResult(final);
+
+                    _logger.Engine.LogInformation(
+                        $"[AI PIPELINE CONTROLLER] Run terminal. RunId='{handle.RunId}', ExecutionId='{created.ExecutionId}', Status='{final.Status}'.");
+                }
+                catch (Exception ex)
+                {
+                    AttachRunExceptionData(
+                        ex,
+                        diagnosticPhase,
+                        queuedRun,
+                        executionId: created.ExecutionId);
+
+                    throw;
+                }
+                finally
+                {
+                    diagnosticPhase =
+                        "mark-execution-assistance-candidate-completed";
+
+                    await MarkExecutionAssistanceCandidateCompletedAsync(
+                            created.ExecutionId,
+                            final?.Status.ToString() ?? "unknown",
+                            CancellationToken.None)
+                        .ConfigureAwait(false);
+                }
+            }
+            catch (Exception ex)
+            {
+                AttachRunExceptionData(
+                    ex,
+                    diagnosticPhase,
+                    queuedRun,
+                    executionId: created?.ExecutionId,
+                    definitionStepCount: definition?.Steps.Count);
+
+                throw;
             }
         }
 
@@ -1660,7 +1761,8 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
                     ? DateTimeOffset.UtcNow
                     : null,
                 FailureReason = handle.Completion.IsFaulted
-                    ? handle.Completion.Exception?.GetBaseException().Message
+                    ? CreateCompletionFailureReason(
+                        handle.Completion.Exception)
                     : null
             };
         }
@@ -1687,6 +1789,234 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
 
                 _ => "unknown"
             };
+        }
+
+        /// <summary>
+        /// Attaches runtime run diagnostics to an exception without changing the original exception type.
+        /// </summary>
+        private static void AttachRunExceptionData(
+            Exception exception,
+            string phase,
+            AiRuntimeQueuedPipelineRun queuedRun,
+            string? executionId = null,
+            int? definitionStepCount = null)
+        {
+            ArgumentNullException.ThrowIfNull(exception);
+            ArgumentNullException.ThrowIfNull(queuedRun);
+
+            TrySetExceptionData(
+                exception,
+                "ai.runtime.phase",
+                phase);
+
+            TrySetExceptionData(
+                exception,
+                "ai.runtime.run.id",
+                queuedRun.Handle.RunId);
+
+            TrySetExceptionData(
+                exception,
+                "ai.runtime.execution.id",
+                executionId ?? queuedRun.Handle.ExecutionId ?? string.Empty);
+
+            TrySetExceptionData(
+                exception,
+                "ai.runtime.pipeline.name",
+                queuedRun.Request.PipelineName);
+
+            TrySetExceptionData(
+                exception,
+                "ai.runtime.input.type",
+                ResolveInputTypeName(queuedRun.Request.Input));
+
+            if (definitionStepCount.HasValue)
+            {
+                TrySetExceptionData(
+                    exception,
+                    "ai.runtime.definition.step.count",
+                    definitionStepCount.Value.ToString());
+            }
+        }
+
+        /// <summary>
+        /// Builds a stable failure reason that can be stored in runtime queue status and run indexes.
+        /// </summary>
+        private static string CreateRunFailureReason(
+            string phase,
+            AiRuntimeQueuedPipelineRun queuedRun,
+            Exception exception,
+            string? executionId = null)
+        {
+            ArgumentNullException.ThrowIfNull(queuedRun);
+            ArgumentNullException.ThrowIfNull(exception);
+
+            var root =
+                exception.GetBaseException();
+
+            return Truncate(
+                $"Runtime pipeline run failed. " +
+                $"Phase='{phase}', " +
+                $"RunId='{queuedRun.Handle.RunId}', " +
+                $"ExecutionId='{executionId ?? queuedRun.Handle.ExecutionId ?? string.Empty}', " +
+                $"Pipeline='{queuedRun.Request.PipelineName}', " +
+                $"RuntimeStatus='{queuedRun.Handle.Status}', " +
+                $"ExceptionType='{exception.GetType().FullName}', " +
+                $"RootExceptionType='{root.GetType().FullName}', " +
+                $"Message='{exception.Message}', " +
+                $"RootMessage='{root.Message}'. " +
+                $"StackTrace='{exception.StackTrace ?? string.Empty}'.",
+                12000);
+        }
+
+        /// <summary>
+        /// Builds a verbose log message for failed background runs.
+        /// </summary>
+        private string CreateRunFailureLogMessage(
+            string title,
+            AiRuntimeQueuedPipelineRun queuedRun,
+            Exception exception,
+            string? executionId = null)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(title);
+            ArgumentNullException.ThrowIfNull(queuedRun);
+            ArgumentNullException.ThrowIfNull(exception);
+
+            var phase =
+                ResolveExceptionPhase(
+                    exception);
+
+            var root =
+                exception.GetBaseException();
+
+            return
+                $"[AI PIPELINE CONTROLLER] {title} " +
+                $"Phase='{phase}', " +
+                $"RunId='{queuedRun.Handle.RunId}', " +
+                $"ExecutionId='{executionId ?? queuedRun.Handle.ExecutionId ?? string.Empty}', " +
+                $"Pipeline='{queuedRun.Request.PipelineName}', " +
+                $"RuntimeInstanceId='{_runtimeInstanceIdentity.RuntimeInstanceId}', " +
+                $"InputType='{ResolveInputTypeName(queuedRun.Request.Input)}', " +
+                $"RunStatus='{queuedRun.Handle.Status}', " +
+                $"ExceptionType='{exception.GetType().FullName}', " +
+                $"RootExceptionType='{root.GetType().FullName}', " +
+                $"Message='{exception.Message}', " +
+                $"RootMessage='{root.Message}', " +
+                $"Exception='{exception}'.";
+        }
+
+        /// <summary>
+        /// Builds failure metadata for the decision ledger.
+        /// </summary>
+        private static IReadOnlyDictionary<string, string> CreateRunFailureMetadata(
+            string phase,
+            AiRuntimeQueuedPipelineRun queuedRun,
+            Exception exception,
+            string? executionId = null)
+        {
+            ArgumentNullException.ThrowIfNull(queuedRun);
+            ArgumentNullException.ThrowIfNull(exception);
+
+            var root =
+                exception.GetBaseException();
+
+            return new Dictionary<string, string>
+            {
+                ["run.id"] = queuedRun.Handle.RunId,
+                ["execution.id"] = executionId ?? queuedRun.Handle.ExecutionId ?? string.Empty,
+                ["pipeline.name"] = queuedRun.Request.PipelineName,
+                ["runtime.status"] = queuedRun.Handle.Status.ToString(),
+                ["failure.phase"] = phase,
+                ["input.type"] = ResolveInputTypeName(queuedRun.Request.Input),
+                ["exception.type"] = exception.GetType().FullName ?? exception.GetType().Name,
+                ["exception.message"] = Truncate(exception.Message, 2000),
+                ["exception.stack"] = Truncate(exception.StackTrace, 6000),
+                ["root.exception.type"] = root.GetType().FullName ?? root.GetType().Name,
+                ["root.exception.message"] = Truncate(root.Message, 2000),
+                ["root.exception.stack"] = Truncate(root.StackTrace, 6000)
+            };
+        }
+
+        /// <summary>
+        /// Resolves the best known runtime phase from exception diagnostic data.
+        /// </summary>
+        private static string ResolveExceptionPhase(
+            Exception exception)
+        {
+            ArgumentNullException.ThrowIfNull(exception);
+
+            if (exception.Data.Contains("ai.runtime.phase"))
+            {
+                return exception.Data["ai.runtime.phase"]?.ToString()
+                    ?? "unknown";
+            }
+
+            return "unknown";
+        }
+
+        /// <summary>
+        /// Builds a completion failure reason for public run state visibility.
+        /// </summary>
+        private static string? CreateCompletionFailureReason(
+            AggregateException? exception)
+        {
+            if (exception is null)
+            {
+                return null;
+            }
+
+            var baseException =
+                exception.GetBaseException();
+
+            return Truncate(
+                baseException.ToString(),
+                12000);
+        }
+
+        /// <summary>
+        /// Resolves a safe input type name for diagnostics.
+        /// </summary>
+        private static string ResolveInputTypeName(
+            object? input)
+        {
+            return input?.GetType().FullName
+                ?? "(null)";
+        }
+
+        /// <summary>
+        /// Adds exception diagnostic data without overwriting an existing value.
+        /// </summary>
+        private static void TrySetExceptionData(
+            Exception exception,
+            string key,
+            string value)
+        {
+            if (exception.Data.Contains(key))
+            {
+                return;
+            }
+
+            exception.Data[key] =
+                value;
+        }
+
+        /// <summary>
+        /// Truncates long diagnostic strings so they can be safely stored in status records and metadata.
+        /// </summary>
+        private static string Truncate(
+            string? value,
+            int maxLength)
+        {
+            if (string.IsNullOrEmpty(value))
+            {
+                return string.Empty;
+            }
+
+            if (value.Length <= maxLength)
+            {
+                return value;
+            }
+
+            return value[..maxLength] + "...[truncated]";
         }
 
         /// <summary>

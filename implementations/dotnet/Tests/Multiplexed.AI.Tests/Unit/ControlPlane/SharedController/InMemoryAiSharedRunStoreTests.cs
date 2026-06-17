@@ -3,6 +3,7 @@ using Multiplexed.Abstractions.AI.Execution.Instance.Worker;
 using Multiplexed.Abstractions.AI.Runtime.Execution.Instance.Worker;
 using Multiplexed.AI.Runtime.ControlPlane.SharedController;
 using Multiplexed.AI.Runtime.ControlPlane.SharedController.Store;
+using Multiplexed.AI.Tests.Fixtures;
 
 namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController
 {
@@ -286,6 +287,9 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController
                 {
                     PipelineName = "pipeline-1"
                 },
+                ExecutionContextSnapshot = AiExecutionContextSnapshotTestFactory.Create(
+                    tenantId: "tenant-1"),
+                PipelineKey = "pipeline-1",
                 FailureReason = failureReason,
                 SubmittedAtUtc = now,
                 UpdatedAtUtc = now

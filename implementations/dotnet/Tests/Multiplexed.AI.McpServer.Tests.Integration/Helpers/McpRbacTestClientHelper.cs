@@ -1,6 +1,5 @@
 ﻿using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
-using Multiplexed.Abstractions.Core.ExecutionContext;
 using Multiplexed.AI.McpServer.Tests.Integration.Auth;
 using Multiplexed.AI.McpServer.Tests.Integration.Fixtures;
 using Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic;
@@ -20,11 +19,15 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Helpers
         /// <param name="host">The generic MCP server test host.</param>
         /// <param name="client">The HTTP client created from the host.</param>
         /// <param name="requestedBy">The test actor/user id.</param>
+        /// <param name="tenantId">Optional tenant id to store in the RBAC execution context.</param>
+        /// <param name="tenantGroupId">Optional tenant group id to store in the RBAC execution context.</param>
         /// <returns>The configured MCP test client.</returns>
         public static async Task<McpTestClient> CreateConfiguredClientAsync(
             GenericMcpServerTestHost host,
             HttpClient client,
-            string requestedBy)
+            string requestedBy,
+            string? tenantId = null,
+            string? tenantGroupId = null)
         {
             ArgumentNullException.ThrowIfNull(host);
             ArgumentNullException.ThrowIfNull(client);
@@ -40,7 +43,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Helpers
 
             var executionContext =
                 McpRbacTestContextFactory.CreateDefaultContext(
-                    requestedBy);
+                    requestedBy,
+                    tenantId,
+                    tenantGroupId);
 
             var contextKey =
                 await contextStore

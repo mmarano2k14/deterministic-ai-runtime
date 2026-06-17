@@ -184,7 +184,7 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedQueue
 
             Assert.NotNull(claimed);
             Assert.Equal("shared-run-2", claimed!.SharedRunId);
-            Assert.Equal("tenant-b", claimed.TenantId);
+            Assert.Equal("tenant-b", claimed.ExecutionContextSnapshot.TenantId);
         }
 
         [Fact]
@@ -466,7 +466,7 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedQueue
             {
                 SharedRunId = sharedRunId,
                 Status = status,
-                TenantId = tenantId,
+                ExecutionContextSnapshot = AiExecutionContextSnapshotTestFactory.Create(tenantId: tenantId),
                 PipelineKey = pipelineKey,
                 Priority = priority,
                 EnqueuedAtUtc = now,

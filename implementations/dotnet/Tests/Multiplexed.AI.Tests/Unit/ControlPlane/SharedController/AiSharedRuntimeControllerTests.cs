@@ -192,7 +192,10 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController
                 new NoopAiRuntimeScaleOutRequestPublisher(),
                 new StaticAiControlPlaneIdResolver("test-control-plane"),
                 Options.Create(new AiSharedRuntimeControllerOptions()),
-                new NoopAiControlPlaneObserver());
+                new NoopAiControlPlaneObserver(),
+                new FakeExecutionContextSnapshotProvider(
+                    AiExecutionContextSnapshotTestFactory.Create(
+                        tenantId: "tenant-1")));
 
             var result = await controller.SubmitRunAsync(new AiSharedRuntimeControllerRequest
             {
@@ -212,7 +215,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController
             Assert.NotNull(queueItem);
             Assert.Equal("shared-run-1", queueItem!.SharedRunId);
             Assert.Equal(AiSharedQueueItemStatus.Pending, queueItem.Status);
-            Assert.Equal("tenant-1", queueItem.TenantId);
+            Assert.Equal("tenant-1", queueItem.ExecutionContextSnapshot.TenantId);
             Assert.Equal("pipeline-1", queueItem.PipelineKey);
             Assert.Equal("No instance capacity.", queueItem.Reason);
         }
@@ -569,7 +572,10 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController
                 new NoopAiRuntimeScaleOutRequestPublisher(),
                 new StaticAiControlPlaneIdResolver("test-control-plane"),
                 Options.Create(new AiSharedRuntimeControllerOptions()),
-                observer);
+                observer,
+                new FakeExecutionContextSnapshotProvider(
+                    AiExecutionContextSnapshotTestFactory.Create(
+                        tenantId: "tenant-1")));
 
             var result = await controller.SubmitRunAsync(new AiSharedRuntimeControllerRequest
             {
@@ -610,7 +616,10 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController
                 scaleOutPublisher ?? new NoopAiRuntimeScaleOutRequestPublisher(),
                 new StaticAiControlPlaneIdResolver("test-control-plane"),
                 Options.Create(options ?? new AiSharedRuntimeControllerOptions()),
-                new NoopAiControlPlaneObserver());
+                new NoopAiControlPlaneObserver(),
+                new FakeExecutionContextSnapshotProvider(
+                    AiExecutionContextSnapshotTestFactory.Create(
+                        tenantId: "tenant-1")));
         }
 
         private static AiRuntimePipelineRunRequest CreateRunRequest()
