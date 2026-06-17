@@ -6,6 +6,447 @@ This project follows a deterministic runtime and observability model designed fo
 
 ---
 
+## [1.0.6.6] - 2026-06-18 — Runtime Run Index Tenant Isolation
+
+## Scope
+
+This update finalizes the tenant-isolation hardening around local runtime `RunId` visibility when the runtime queue control plane is accessed through MCP.
+
+The main goal was to prevent a tenant from bypassing isolation by calling runtime queue operations directly with another tenant's `RuntimeInstanceId` and local `RunId`.
+
+## Key changes
+
+### Redis-backed runtime run execution index
+
+Added a Redis-backed implementation for `IAiRuntimeRunExecutionIndex`.
+
+The index stores the relationship between a local runtime `RunId`, its eventual `ExecutionId`, runtime instance metadata, status, timestamps, and the associated `ExecutionContextSnapshot`.
+
+This makes the runtime run index durable and shared across MCP/control-plane hosts, HTTP runtime providers, local runtime pools, and Kubernetes-like multi-instance deployments.
+
+### ExecutionContextSnapshot persisted in the runtime run index
+
+Extended runtime run index entries with `ExecutionContextSnapshot`.
+
+The snapshot is now used as the durable tenant boundary for runtime run visibility.
+
+Important rule preserved:
+
+```text
+ExecutionContextSnapshot.TenantId = durable tenant isolation boundary
+ExecutionContextSnapshot.ContextKey = volatile RBAC/context key, not a durable partition key
+```
+
+### Tenant-aware Redis index behavior
+
+The Redis runtime run index now supports tenant filtering through the active execution context.
+
+When a caller resolves a runtime run by `RunId`, the Redis index verifies the tenant from the active `ExecutionContextSnapshot` before exposing the run.
+
+Expected behavior:
+
+```text
+Tenant A GetAsync(run-a) => visible
+Tenant A GetAsync(run-b) => null
+Tenant B GetAsync(run-b) => visible
+Tenant B GetAsync(run-a) => null
+```
+
+### Lua/script-cache support
+
+Added Lua-backed Redis operations and script caching for the runtime run index.
+
+The implementation supports:
+
+```text
+RegisterQueued
+MarkStarted
+MarkCompleted
+MarkFailed
+MarkCancelled
+```
+
+The script cache reloads scripts after `NOSCRIPT` responses, matching the pattern already used by other Redis-backed control-plane stores.
+
+### DI wiring
+
+Kept the default control-plane registration safe and in-memory:
+
+```csharp
+services.TryAddSingleton<IAiRuntimeRunExecutionIndex, InMemoryAiRuntimeRunExecutionIndex>();
+```
+
+Added an explicit Redis opt-in extension:
+
+```csharp
+services.AddAiRedisRuntimeRunExecutionIndex(...);
+```
+
+This extension replaces the default in-memory implementation only when Redis-backed control-plane stores are enabled.
+
+### MCP host Redis wiring
+
+The MCP host now enables the Redis runtime run execution index from the central Redis control-plane store registration path.
+
+The call is made from `AddRedisControlPlaneStoresIfAvailable(...)`, together with the other Redis-backed stores:
+
+```text
+Redis shared run store
+Redis shared queue
+Redis runtime run execution index
+Redis admission reservation store
+Redis scale-out request store
+```
+
+This avoids duplicating the wiring inside each MCP host mode.
+
+## Runtime queue control-plane hardening
+
+### Fixed GetRunStatus tenant bypass
+
+Before the fix, `GetRunStatus` asked the local runtime controller for `RunId` state before checking the runtime run index.
+
+That allowed a tenant to access another tenant's local runtime run by knowing:
+
+```text
+RuntimeInstanceId + LocalRunId
+```
+
+The method now checks the runtime run execution index first.
+
+Correct order:
+
+```text
+1. Resolve RunId through IAiRuntimeRunExecutionIndex
+2. If index returns null, return an empty result
+3. Only then ask the local runtime controller for live state
+```
+
+This makes the runtime run index the authority for tenant visibility.
+
+### Fixed CancelRun tenant bypass
+
+Before the fix, `CancelRun` called the local runtime controller before checking tenant visibility.
+
+That allowed a cross-tenant caller to attempt cancellation against another tenant's local run.
+
+The method now checks the runtime run execution index first.
+
+If the caller cannot see the indexed run, the operation returns an empty successful result and never touches the local controller.
+
+### Fixed CancelQueuedRun tenant bypass
+
+The same guard was applied to `CancelQueuedRun`.
+
+This prevents queued runtime run cancellation from bypassing tenant isolation.
+
+## Tests added / validated
+
+### Redis runtime run index tenant isolation
+
+Added direct Redis tests for `RedisAiRuntimeRunExecutionIndex`.
+
+Validated:
+
+```text
+RegisterQueued tenant isolation
+GetAsync tenant isolation
+MarkStarted tenant isolation
+MarkCompleted tenant isolation
+MarkFailed tenant isolation
+MarkCancelled tenant isolation
+ExecutionContextSnapshot persistence
+```
+
+### MCP runtime run status tenant isolation
+
+Added MCP scenario validating the full path:
+
+```text
+MCP RBAC headers
+ExecutionContextSnapshot mapping
+Shared runtime controller
+Shared queue dispatch
+Local runtime queue control-plane
+Redis runtime run execution index
+Runtime run status visibility
+```
+
+Validated:
+
+```text
+Tenant A submits and dispatches a run
+Tenant A can read runtime run status
+Tenant B cannot read Tenant A runtime run status
+Tenant B does not receive Tenant A ExecutionId
+```
+
+### Redis usage assertions
+
+Added explicit assertions proving Redis is actually used:
+
+```text
+DI resolves RedisAiRuntimeRunExecutionIndex
+Redis item key exists for the dispatched local RunId
+```
+
+This avoids false-positive tests where the in-memory implementation would accidentally be used.
+
+### MCP runtime run cancel tenant isolation
+
+Added MCP scenario for cross-tenant cancellation.
+
+Validated:
+
+```text
+Tenant A submits and dispatches a runtime run
+Tenant B attempts CancelRuntimeQueueRun against Tenant A LocalRunId
+Tenant B receives no RunState
+Tenant B receives no ExecutionId
+Tenant A's run remains visible to Tenant A
+Tenant A's run is not cancelled by Tenant B
+```
+
+## Important architectural result
+
+The runtime queue control-plane now follows this rule:
+
+```text
+For any operation targeting a local RunId, tenant visibility must be checked through IAiRuntimeRunExecutionIndex before the local runtime controller is accessed.
+```
+
+This is important because the local runtime controller owns execution mechanics, but it does not own tenant visibility.
+
+Tenant visibility belongs to:
+
+```text
+ExecutionContextSnapshot
+→ IAiRuntimeRunExecutionIndex
+→ RedisAiRuntimeRunExecutionIndex
+```
+
+## Current validated chain
+
+The following multi-tenant path is now covered:
+
+```text
+MCP RBAC context
+→ ExecutionContextSnapshot
+→ Redis shared run isolation
+→ Redis shared queue isolation
+→ Redis runtime run execution index isolation
+→ RuntimeQueue GetRunStatus isolation
+→ RuntimeQueue CancelRun isolation
+→ RuntimeQueue CancelQueuedRun guard
+```
+
+## Notes
+
+No global refactor was required.
+
+The update is a targeted hardening of the runtime run index and runtime queue control-plane visibility model.
+
+The default in-memory behavior remains available for lightweight/local hosts, while Redis is enabled explicitly for Redis-backed MCP/control-plane scenarios.
+
+---
+
+## [1.0.6.5] - 2026-06-17 — Multi-tenant Control Plane Isolation
+
+## Summary
+
+This update completes an important stabilization pass around execution-context propagation and tenant isolation for the control-plane runtime path.
+
+The main objective was to make the new strict `ExecutionContextSnapshot` requirement compatible with existing runtime integration tests, shared run execution, Redis-backed shared run storage, and MCP end-to-end scenarios.
+
+All tests are now green, and a Redis + MCP tenant isolation scenario has been added to lock the behavior.
+
+## Key outcome
+
+The runtime now consistently preserves and propagates the execution context snapshot from submission to execution.
+
+This means:
+
+- direct runtime requests must carry an `ExecutionContextSnapshot`;
+- shared runs persist the snapshot;
+- local runtime queue requests receive the snapshot;
+- the background controller restores the context before execution creation;
+- tenant identity comes from `ExecutionContextSnapshot.TenantId`;
+- `ContextKey` remains volatile and is not used as a durable tenant or execution key.
+
+## ExecutionContextSnapshot propagation fixes
+
+Several runtime integration tests were still creating direct `AiRuntimePipelineRunRequest` instances without an execution context snapshot.
+
+This caused failures like:
+
+```text
+No execution context snapshot is available for runtime run '...'
+The shared run must persist ExecutionContextSnapshot in Redis and propagate it to the local runtime queue.
+```
+
+The affected tests were updated to use the shared test fixture:
+
+```csharp
+AiRuntimeExecutionContextSnapshotTestFixture.CreateRunRequest(...)
+```
+
+### Updated test areas
+
+- `AiExecutionReplayReferenceIntegrationTests`
+- `AiRuntimePipelineBackgroundControllerQueueControlTests`
+- `AiRuntimeDistributedChaosIntegrationTests`
+- `AiRuntimePipelineBackgroundControllerChaosIntegrationTests`
+- `AiRuntimeInstanceWorkerIntegrationTests`
+- `AiEnterpriseRuntimeDemoPipelineTests`
+
+## Shared run store tenant isolation
+
+The shared run store path was hardened for tenant isolation.
+
+### Redis shared run store
+
+`RedisAiSharedRunStore` was updated to become tenant-aware while preserving backward compatibility.
+
+Added tenant-scoped index support:
+
+```text
+ai:control-plane:{controlPlaneId}:tenant:{tenantId}:shared-runs:index
+```
+
+The existing control-plane index remains:
+
+```text
+ai:control-plane:{controlPlaneId}:shared-runs:index
+```
+
+This keeps old behavior compatible while enabling tenant-filtered listing.
+
+### Redis Lua script
+
+`RedisAiSharedRunStoreScripts.Create` was updated to accept an optional third key:
+
+```text
+KEYS[1] = shared run hash key
+KEYS[2] = control-plane shared run index
+KEYS[3] = optional tenant shared run index
+```
+
+The script now writes to the tenant index when provided, without breaking old callers that still pass only two keys.
+
+### In-memory shared run store
+
+`InMemoryAiSharedRunStore` was updated to support tenant-aware reads when an `IExecutionContextSnapshotProvider` is available.
+
+The store now filters:
+
+- `GetAsync`
+- `ListAsync`
+- `CancelAsync`
+
+by `ExecutionContextSnapshot.TenantId`.
+
+`MarkDispatchedAsync` was intentionally kept compatible for background/pump flows where an active RBAC context may not exist.
+
+## MCP + Redis tenant isolation coverage
+
+A new Redis-backed MCP scenario was added:
+
+```text
+SharedRunTenantIsolationScenarioTests
+```
+
+This validates tenant isolation through the real path:
+
+```text
+MCP headers
+RBAC context
+ExecutionContextSnapshot.TenantId
+AiSharedRuntimeController
+RedisAiSharedRunStore
+Redis tenant indexes
+List/Get/Cancel tenant isolation
+```
+
+The test verifies:
+
+- Tenant A submits a shared run.
+- Tenant B submits a shared run.
+- Tenant A lists only Tenant A runs.
+- Tenant B lists only Tenant B runs.
+- Tenant A cannot read Tenant B's shared run.
+- Tenant A cannot cancel Tenant B's shared run.
+- Tenant B can cancel its own shared run.
+
+This is the real production-relevant validation because it exercises MCP, Redis, RBAC context, shared controller, and shared run store together.
+
+## Design decisions confirmed
+
+### Tenant identity
+
+`ExecutionContextSnapshot.TenantId` is the durable tenant boundary.
+
+### Context key
+
+`ExecutionContextSnapshot.ContextKey` remains volatile and must not be used as:
+
+- tenant partition key;
+- execution id;
+- orchestration key;
+- durable storage key.
+
+### Strict runtime engine
+
+The runtime engine remains strict.
+
+There is no silent default tenant fallback in execution creation. Tests and runtime requests must provide a valid `ExecutionContextSnapshot`.
+
+### Compatibility
+
+The Redis Lua script remains backward compatible with older calls using only the original two keys.
+
+The in-memory store keeps a default constructor so older tests and local demos continue to work.
+
+## Files changed / added
+
+### Runtime / Store
+
+- `RedisAiSharedRunStore.cs`
+- `RedisAiSharedRunStoreScripts.cs`
+- `InMemoryAiSharedRunStore.cs`
+
+### Runtime integration tests
+
+- `AiExecutionReplayReferenceIntegrationTests.cs`
+- `AiRuntimePipelineBackgroundControllerQueueControlTests.cs`
+- `AiRuntimeDistributedChaosIntegrationTests.cs`
+- `AiRuntimePipelineBackgroundControllerChaosIntegrationTests.cs`
+- `AiRuntimeInstanceWorkerIntegrationTests.cs`
+- `AiEnterpriseRuntimeDemoPipelineTests.cs`
+
+### New tenant isolation test
+
+- `SharedRunTenantIsolationScenarioTests.cs`
+
+## Validation
+
+All tests are green after the fixes.
+
+The important validation added in this cycle is not only that the tests pass, but that the Redis + MCP path now explicitly protects tenant isolation for shared runs.
+
+
+## Next recommended steps
+
+The next isolation work should continue in this order:
+
+1. Shared queue tenant isolation.
+2. Runtime run execution index tenant isolation.
+3. Runtime instance registry and capacity visibility rules.
+4. Dedicated/shared/hybrid runtime instance isolation modes.
+
+The most critical shared run boundary is now protected. The next risk is whether queue claiming, run indexes, and instance visibility can leak across tenants under shared infrastructure.
+
+---
+
 ## [1.0.6.4] - 2026-06-17 — Multi-tenant RBAC / ExecutionContextSnapshot / MCP Integration Tests
 
 ## Summary

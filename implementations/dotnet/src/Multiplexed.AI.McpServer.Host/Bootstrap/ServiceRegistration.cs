@@ -635,6 +635,11 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
                 options.KeyPrefix = keyPrefix;
             });
 
+            services.AddAiRedisRuntimeRunExecutionIndex(options =>
+            {
+                options.KeyPrefix = keyPrefix;
+            });
+
             services.AddRedisAiRuntimeAdmissionReservationStore(options =>
             {
                 options.KeyPrefix = keyPrefix;

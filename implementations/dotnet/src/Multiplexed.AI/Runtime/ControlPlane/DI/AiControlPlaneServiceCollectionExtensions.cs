@@ -14,6 +14,7 @@ using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Identity;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.SharedInstance;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue.Redis;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Controller;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Dispatch;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Scaling;
@@ -35,6 +36,7 @@ using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Identity;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.SharedInstance;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue.Redis;
 using Multiplexed.AI.Runtime.ControlPlane.SharedController;
 using Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling;
 using Multiplexed.AI.Runtime.ControlPlane.SharedController.Store;
@@ -163,6 +165,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
             services.AddOptions<AiRuntimeScaleOutRequestStoreOptions>();
             services.AddOptions<AiRuntimeScaleOutRequestWatcherOptions>();
             services.AddOptions<SimulatedAiRuntimeScaleOutProviderOptions>();
+            services.AddOptions<RedisAiRuntimeRunExecutionIndexOptions>();
 
             services.TryAddSingleton<IAiControlPlaneObserver, NoopAiControlPlaneObserver>();
 
@@ -209,6 +212,41 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
             services.TryAddSingleton<IAiControlPlaneHostIdentity, AiControlPlaneHostIdentity>();
 
             services.AddAiRuntimeInstanceProviders();
+
+            return services;
+        }
+
+        /// <summary>
+        /// Replaces the default in-memory runtime run execution index with the Redis-backed implementation.
+        /// </summary>
+        /// <param name="services">The service collection.</param>
+        /// <param name="configure">Optional Redis runtime run execution index options configuration.</param>
+        /// <returns>The same service collection for chaining.</returns>
+        /// <remarks>
+        /// The default control-plane registration keeps <see cref="InMemoryAiRuntimeRunExecutionIndex"/>
+        /// for local tests and lightweight hosts.
+        ///
+        /// Call this method only for Redis-backed control-plane hosts that need the runtime RunId to
+        /// ExecutionId bridge to survive across runtime instances, HTTP providers, MCP hosts, and
+        /// Kubernetes-like multi-instance execution.
+        /// </remarks>
+        public static IServiceCollection AddAiRedisRuntimeRunExecutionIndex(
+            this IServiceCollection services,
+            Action<RedisAiRuntimeRunExecutionIndexOptions>? configure = null)
+        {
+            ArgumentNullException.ThrowIfNull(services);
+
+            if (configure is null)
+            {
+                services.AddOptions<RedisAiRuntimeRunExecutionIndexOptions>();
+            }
+            else
+            {
+                services.Configure(configure);
+            }
+
+            services.RemoveAll<IAiRuntimeRunExecutionIndex>();
+            services.AddSingleton<IAiRuntimeRunExecutionIndex, RedisAiRuntimeRunExecutionIndex>();
 
             return services;
         }

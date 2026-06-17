@@ -317,6 +317,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue
                 .GetQueueStateAsync(cancellationToken)
                 .ConfigureAwait(false);
 
+            var executionContextSnapshot =
+                request.RunRequest?.ExecutionContextSnapshot;
+
             await _runExecutionIndex.RegisterQueuedAsync(
                     new AiRuntimeRunExecutionIndexEntry
                     {
@@ -328,6 +331,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue
                             request.RuntimeInstanceId,
                         Status = runState?.Status ?? "queued",
                         CreatedAtUtc = DateTimeOffset.UtcNow,
+                        ExecutionContextSnapshot = executionContextSnapshot,
                         Metadata = MergeMetadata(
                             request.Metadata,
                             new Dictionary<string, string>
@@ -335,7 +339,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue
                                 ["source"] = request.Source ?? string.Empty,
                                 ["requestedBy"] = request.RequestedBy ?? string.Empty,
                                 ["reason"] = request.Reason ?? string.Empty,
-                                ["correlationId"] = request.CorrelationId ?? string.Empty
+                                ["correlationId"] = request.CorrelationId ?? string.Empty,
+                                ["tenantId"] = executionContextSnapshot?.TenantId ?? string.Empty
                             })
                     },
                     cancellationToken)
@@ -359,6 +364,17 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue
             AiRuntimeQueueControlPlaneRequest request,
             CancellationToken cancellationToken)
         {
+            var indexedRun = await _runExecutionIndex
+                .GetAsync(
+                    request.RunId!,
+                    cancellationToken)
+                .ConfigureAwait(false);
+
+            if (indexedRun is null)
+            {
+                return new RuntimeQueueOperationResult();
+            }
+
             await _controller
                 .CancelRunAsync(
                     request.RunId!,
@@ -373,12 +389,12 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue
 
             await _runExecutionIndex.MarkCancelledAsync(
                     request.RunId!,
-                    runState?.ExecutionId,
+                    runState?.ExecutionId ?? indexedRun.ExecutionId,
                     request.Reason ?? "Runtime run was cancelled.",
                     cancellationToken)
                 .ConfigureAwait(false);
 
-            var indexedRun = await _runExecutionIndex
+            var cancelledIndexedRun = await _runExecutionIndex
                 .GetAsync(
                     request.RunId!,
                     cancellationToken)
@@ -390,9 +406,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue
 
             return new RuntimeQueueOperationResult
             {
-                RunState = indexedRun is not null
-                    ? CreateRunStateFromIndex(indexedRun)
-                    : runState,
+                RunState = cancelledIndexedRun is not null
+                    ? CreateRunStateFromIndex(cancelledIndexedRun)
+                    : CreateRunStateFromIndex(indexedRun),
                 QueueState = queueState
             };
         }
@@ -407,6 +423,17 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue
             AiRuntimeQueueControlPlaneRequest request,
             CancellationToken cancellationToken)
         {
+            var indexedRun = await _runExecutionIndex
+                .GetAsync(
+                    request.RunId!,
+                    cancellationToken)
+                .ConfigureAwait(false);
+
+            if (indexedRun is null)
+            {
+                return new RuntimeQueueOperationResult();
+            }
+
             await _controller
                 .CancelQueuedRunAsync(
                     request.RunId!,
@@ -421,12 +448,12 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue
 
             await _runExecutionIndex.MarkCancelledAsync(
                     request.RunId!,
-                    runState?.ExecutionId,
+                    runState?.ExecutionId ?? indexedRun.ExecutionId,
                     request.Reason ?? "Queued runtime run was cancelled.",
                     cancellationToken)
                 .ConfigureAwait(false);
 
-            var indexedRun = await _runExecutionIndex
+            var cancelledIndexedRun = await _runExecutionIndex
                 .GetAsync(
                     request.RunId!,
                     cancellationToken)
@@ -438,9 +465,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue
 
             return new RuntimeQueueOperationResult
             {
-                RunState = indexedRun is not null
-                    ? CreateRunStateFromIndex(indexedRun)
-                    : runState,
+                RunState = cancelledIndexedRun is not null
+                    ? CreateRunStateFromIndex(cancelledIndexedRun)
+                    : CreateRunStateFromIndex(indexedRun),
                 QueueState = queueState
             };
         }
@@ -505,27 +532,27 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue
         /// <param name="cancellationToken">The cancellation token.</param>
         /// <returns>The runtime run status operation result.</returns>
         /// <remarks>
-        /// The method first asks the local background controller for the current
-        /// run state. If the controller no longer exposes the run because it has
-        /// been consumed from the transient local queue, the method falls back to
-        /// the runtime run execution index.
+        /// The method first checks the runtime run execution index because the index owns
+        /// tenant visibility for local RunId to ExecutionId mappings.
+        /// This prevents a tenant from bypassing isolation by calling the local runtime
+        /// controller directly with another tenant's RunId.
         /// </remarks>
         private async Task<RuntimeQueueOperationResult> GetRunStatusInnerAsync(
             AiRuntimeQueueControlPlaneRequest request,
             CancellationToken cancellationToken)
         {
-            var runState = await _controller
-                .GetRunStateAsync(request.RunId!, cancellationToken)
-                .ConfigureAwait(false);
-
             var indexedRun = await _runExecutionIndex
                 .GetAsync(
                     request.RunId!,
                     cancellationToken)
                 .ConfigureAwait(false);
 
-            if (indexedRun is not null &&
-                IsTerminalStatus(indexedRun.Status))
+            if (indexedRun is null)
+            {
+                return new RuntimeQueueOperationResult();
+            }
+
+            if (IsTerminalStatus(indexedRun.Status))
             {
                 return new RuntimeQueueOperationResult
                 {
@@ -533,17 +560,16 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue
                 };
             }
 
+            var runState = await _controller
+                .GetRunStateAsync(request.RunId!, cancellationToken)
+                .ConfigureAwait(false);
+
             if (runState is not null)
             {
                 return new RuntimeQueueOperationResult
                 {
                     RunState = runState
                 };
-            }
-
-            if (indexedRun is null)
-            {
-                return new RuntimeQueueOperationResult();
             }
 
             return new RuntimeQueueOperationResult
