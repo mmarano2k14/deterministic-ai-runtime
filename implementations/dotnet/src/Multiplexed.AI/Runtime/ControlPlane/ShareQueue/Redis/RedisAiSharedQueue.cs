@@ -49,6 +49,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
         private const string SharedQueueKeySegment =
             "shared-queue";
 
+        private const string TenantKeySegment =
+            "tenant";
+
         private const string ItemKeySegment =
             "item";
 
@@ -67,6 +70,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
         private readonly RedisAiSharedQueueOptions _options;
         private readonly RedisAiSharedQueueScriptCache _scripts;
         private readonly IAiControlPlaneIdResolver _controlPlaneIdResolver;
+        private readonly IExecutionContextSnapshotProvider? _executionContextSnapshotProvider;
 
         /// <summary>
         /// Initializes a new instance of the <see cref="RedisAiSharedQueue"/> class.
@@ -82,6 +86,30 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
             IConnectionMultiplexer connection,
             IOptions<RedisAiSharedQueueOptions> options,
             IAiControlPlaneIdResolver controlPlaneIdResolver)
+            : this(
+                connection,
+                options,
+                controlPlaneIdResolver,
+                executionContextSnapshotProvider: null)
+        {
+        }
+
+        /// <summary>
+        /// Initializes a new tenant-aware instance of the <see cref="RedisAiSharedQueue"/> class.
+        /// </summary>
+        /// <param name="connection">The Redis connection multiplexer.</param>
+        /// <param name="options">The Redis shared queue options.</param>
+        /// <param name="controlPlaneIdResolver">The control-plane identifier resolver.</param>
+        /// <param name="executionContextSnapshotProvider">The execution context snapshot provider.</param>
+        /// <exception cref="ArgumentNullException">
+        /// Thrown when <paramref name="connection"/>, <paramref name="options"/>,
+        /// or <paramref name="controlPlaneIdResolver"/> is null.
+        /// </exception>
+        public RedisAiSharedQueue(
+            IConnectionMultiplexer connection,
+            IOptions<RedisAiSharedQueueOptions> options,
+            IAiControlPlaneIdResolver controlPlaneIdResolver,
+            IExecutionContextSnapshotProvider? executionContextSnapshotProvider)
         {
             ArgumentNullException.ThrowIfNull(connection);
             ArgumentNullException.ThrowIfNull(controlPlaneIdResolver);
@@ -90,6 +118,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
             _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
             _scripts = new RedisAiSharedQueueScriptCache(connection);
             _controlPlaneIdResolver = controlPlaneIdResolver;
+            _executionContextSnapshotProvider = executionContextSnapshotProvider;
         }
 
         /// <inheritdoc />
@@ -125,6 +154,16 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
             var allIndexKey =
                 BuildAllIndexKey(controlPlaneId);
 
+            var tenantPendingIndexKey =
+                BuildTenantPendingIndexKey(
+                    controlPlaneId,
+                    effectiveItem.ExecutionContextSnapshot.TenantId);
+
+            var tenantAllIndexKey =
+                BuildTenantAllIndexKey(
+                    controlPlaneId,
+                    effectiveItem.ExecutionContextSnapshot.TenantId);
+
             var score =
                 BuildQueueScore(effectiveItem);
 
@@ -138,7 +177,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
                     {
                         itemKey,
                         pendingIndexKey,
-                        allIndexKey
+                        allIndexKey,
+                        tenantPendingIndexKey,
+                        tenantAllIndexKey
                     },
                     BuildEnqueueValues(
                         effectiveItem,
@@ -204,8 +245,14 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
                         cancellationToken)
                     .ConfigureAwait(false);
 
-            var allIndexKey =
-                BuildAllIndexKey(controlPlaneId);
+            var tenantId =
+                TryResolveTenantId();
+
+            var allIndexKey = string.IsNullOrWhiteSpace(tenantId)
+                ? BuildAllIndexKey(controlPlaneId)
+                : BuildTenantAllIndexKey(
+                    controlPlaneId,
+                    tenantId);
 
             var ids = await _database
                 .SortedSetRangeByScoreAsync(
@@ -213,6 +260,17 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
                     order: Order.Ascending,
                     take: _options.ListScanLimit)
                 .ConfigureAwait(false);
+
+            if (ids.Length == 0 &&
+                !string.IsNullOrWhiteSpace(tenantId))
+            {
+                ids = await _database
+                    .SortedSetRangeByScoreAsync(
+                        BuildAllIndexKey(controlPlaneId),
+                        order: Order.Ascending,
+                        take: _options.ListScanLimit)
+                    .ConfigureAwait(false);
+            }
 
             var items = new List<AiSharedQueueItem>();
 
@@ -238,6 +296,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
                     await CleanupItemAsync(
                             controlPlaneId,
                             sharedRunId,
+                            tenantId: null,
                             deleteItem: true)
                         .ConfigureAwait(false);
 
@@ -251,6 +310,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
                     await CleanupItemAsync(
                             controlPlaneId,
                             sharedRunId,
+                            tenantId: rawItem.ExecutionContextSnapshot.TenantId,
                             deleteItem: true)
                         .ConfigureAwait(false);
 
@@ -261,6 +321,13 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
                     EnsureControlPlaneId(
                         rawItem,
                         controlPlaneId);
+
+                if (!BelongsToTenant(
+                        item,
+                        tenantId))
+                {
+                    continue;
+                }
 
                 if (!includeTerminal &&
                     IsTerminal(item.Status))
@@ -301,13 +368,35 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
 
             var claimToken = Guid.NewGuid().ToString("N");
 
+            var effectiveTenantId =
+                string.IsNullOrWhiteSpace(request.TenantId)
+                    ? null
+                    : request.TenantId;
+
+            var pendingIndexKey = string.IsNullOrWhiteSpace(effectiveTenantId)
+                ? BuildPendingIndexKey(controlPlaneId)
+                : BuildTenantPendingIndexKey(
+                    controlPlaneId,
+                    effectiveTenantId);
+
+            var claimKeys = string.IsNullOrWhiteSpace(effectiveTenantId)
+                ? new RedisKey[]
+                {
+                    BuildPendingIndexKey(controlPlaneId)
+                }
+                : new RedisKey[]
+                {
+                    pendingIndexKey,
+                    BuildPendingIndexKey(controlPlaneId),
+                    BuildTenantPendingIndexKey(
+                        controlPlaneId,
+                        effectiveTenantId)
+                };
+
             var result = await _scripts
                 .ExecuteClaimNextAsync(
                     _database,
-                    new RedisKey[]
-                    {
-                        BuildPendingIndexKey(controlPlaneId)
-                    },
+                    claimKeys,
                     new RedisValue[]
                     {
                         request.RuntimeInstanceId,
@@ -325,6 +414,38 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
 
             var sharedRunId = result.ToString();
 
+            if (string.IsNullOrWhiteSpace(sharedRunId) &&
+                !string.IsNullOrWhiteSpace(effectiveTenantId))
+            {
+                result = await _scripts
+                    .ExecuteClaimNextAsync(
+                        _database,
+                        new RedisKey[]
+                        {
+                            BuildPendingIndexKey(controlPlaneId),
+                            BuildPendingIndexKey(controlPlaneId),
+                            BuildTenantPendingIndexKey(
+                                controlPlaneId,
+                                effectiveTenantId)
+                        },
+                        new RedisValue[]
+                        {
+                            request.RuntimeInstanceId,
+                            request.WorkerId ?? string.Empty,
+                            claimToken,
+                            FormatDate(now),
+                            FormatDate(now.Add(claimTtl)),
+                            effectiveTenantId,
+                            request.PipelineKey ?? string.Empty,
+                            request.Reason ?? string.Empty,
+                            BuildQueueKeyPrefix(controlPlaneId),
+                            Math.Max(1, _options.ListScanLimit)
+                        })
+                    .ConfigureAwait(false);
+
+                sharedRunId = result.ToString();
+            }
+
             if (string.IsNullOrWhiteSpace(sharedRunId))
             {
                 return null;
@@ -341,6 +462,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
                 await CleanupItemAsync(
                         controlPlaneId,
                         sharedRunId,
+                        tenantId: null,
                         deleteItem: true)
                     .ConfigureAwait(false);
 
@@ -354,15 +476,25 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
                 await CleanupItemAsync(
                         controlPlaneId,
                         sharedRunId,
+                        tenantId: rawItem.ExecutionContextSnapshot.TenantId,
                         deleteItem: true)
                     .ConfigureAwait(false);
 
                 return null;
             }
 
-            return EnsureControlPlaneId(
+            var item = EnsureControlPlaneId(
                 rawItem,
                 controlPlaneId);
+
+            if (!BelongsToTenant(
+                    item,
+                    effectiveTenantId))
+            {
+                return null;
+            }
+
+            return item;
         }
 
         /// <inheritdoc />
@@ -462,24 +594,38 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
             }
 
             var now = DateTimeOffset.UtcNow;
+            var score = BuildQueueScoreFromParts(
+                priority: 0,
+                enqueuedAtUtc: now);
+
+            var requeueKeys = string.IsNullOrWhiteSpace(existing.ExecutionContextSnapshot.TenantId)
+                ? new RedisKey[]
+                {
+                    BuildItemKey(
+                        controlPlaneId,
+                        sharedRunId),
+                    BuildPendingIndexKey(controlPlaneId)
+                }
+                : new RedisKey[]
+                {
+                    BuildItemKey(
+                        controlPlaneId,
+                        sharedRunId),
+                    BuildPendingIndexKey(controlPlaneId),
+                    BuildTenantPendingIndexKey(
+                        controlPlaneId,
+                        existing.ExecutionContextSnapshot.TenantId)
+                };
 
             var result = await _scripts
                 .ExecuteRequeueAsync(
                     _database,
-                    new RedisKey[]
-                    {
-                        BuildItemKey(
-                            controlPlaneId,
-                            sharedRunId),
-                        BuildPendingIndexKey(controlPlaneId)
-                    },
+                    requeueKeys,
                     new RedisValue[]
                     {
                         sharedRunId,
                         claimToken,
-                        BuildQueueScoreFromParts(
-                            priority: 0,
-                            enqueuedAtUtc: now),
+                        score,
                         FormatDate(now),
                         reason ?? string.Empty
                     })
@@ -533,16 +679,29 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
                 return null;
             }
 
+            var cancelKeys = string.IsNullOrWhiteSpace(existing.ExecutionContextSnapshot.TenantId)
+                ? new RedisKey[]
+                {
+                    BuildItemKey(
+                        controlPlaneId,
+                        sharedRunId),
+                    BuildPendingIndexKey(controlPlaneId)
+                }
+                : new RedisKey[]
+                {
+                    BuildItemKey(
+                        controlPlaneId,
+                        sharedRunId),
+                    BuildPendingIndexKey(controlPlaneId),
+                    BuildTenantPendingIndexKey(
+                        controlPlaneId,
+                        existing.ExecutionContextSnapshot.TenantId)
+                };
+
             var result = await _scripts
                 .ExecuteCancelAsync(
                     _database,
-                    new RedisKey[]
-                    {
-                        BuildItemKey(
-                            controlPlaneId,
-                            sharedRunId),
-                        BuildPendingIndexKey(controlPlaneId)
-                    },
+                    cancelKeys,
                     new RedisValue[]
                     {
                         sharedRunId,
@@ -590,11 +749,23 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
                 return null;
             }
 
-            return item is null
-                ? null
-                : EnsureControlPlaneId(
-                    item,
-                    controlPlaneId);
+            if (item is null)
+            {
+                return null;
+            }
+
+            var effectiveItem = EnsureControlPlaneId(
+                item,
+                controlPlaneId);
+
+            if (!BelongsToTenant(
+                    effectiveItem,
+                    TryResolveTenantId()))
+            {
+                return null;
+            }
+
+            return effectiveItem;
         }
 
         private async Task<AiSharedQueueItem?> GetRawAsync(
@@ -624,6 +795,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
         private async Task CleanupItemAsync(
             string controlPlaneId,
             string sharedRunId,
+            string? tenantId,
             bool deleteItem)
         {
             var batch = _database.CreateBatch();
@@ -635,6 +807,24 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
             var removeAllTask = batch.SortedSetRemoveAsync(
                 BuildAllIndexKey(controlPlaneId),
                 sharedRunId);
+
+            Task<bool>? removeTenantPendingTask = null;
+            Task<bool>? removeTenantAllTask = null;
+
+            if (!string.IsNullOrWhiteSpace(tenantId))
+            {
+                removeTenantPendingTask = batch.SortedSetRemoveAsync(
+                    BuildTenantPendingIndexKey(
+                        controlPlaneId,
+                        tenantId),
+                    sharedRunId);
+
+                removeTenantAllTask = batch.SortedSetRemoveAsync(
+                    BuildTenantAllIndexKey(
+                        controlPlaneId,
+                        tenantId),
+                    sharedRunId);
+            }
 
             Task<bool>? deleteItemTask = null;
 
@@ -651,10 +841,107 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
             await removePendingTask.ConfigureAwait(false);
             await removeAllTask.ConfigureAwait(false);
 
+            if (removeTenantPendingTask is not null)
+            {
+                await removeTenantPendingTask.ConfigureAwait(false);
+            }
+
+            if (removeTenantAllTask is not null)
+            {
+                await removeTenantAllTask.ConfigureAwait(false);
+            }
+
             if (deleteItemTask is not null)
             {
                 await deleteItemTask.ConfigureAwait(false);
             }
+        }
+
+        private async Task AddToTenantIndexesAsync(
+            RedisKey tenantPendingIndexKey,
+            RedisKey tenantAllIndexKey,
+            string sharedRunId,
+            double score,
+            long expireSeconds)
+        {
+            var batch = _database.CreateBatch();
+
+            var addTenantPendingTask = batch.SortedSetAddAsync(
+                tenantPendingIndexKey,
+                sharedRunId,
+                score);
+
+            var addTenantAllTask = batch.SortedSetAddAsync(
+                tenantAllIndexKey,
+                sharedRunId,
+                score);
+
+            Task<bool>? expireTenantPendingTask = null;
+            Task<bool>? expireTenantAllTask = null;
+
+            if (expireSeconds > 0)
+            {
+                var expiry = TimeSpan.FromSeconds(expireSeconds);
+
+                expireTenantPendingTask = batch.KeyExpireAsync(
+                    tenantPendingIndexKey,
+                    expiry);
+
+                expireTenantAllTask = batch.KeyExpireAsync(
+                    tenantAllIndexKey,
+                    expiry);
+            }
+
+            batch.Execute();
+
+            await addTenantPendingTask.ConfigureAwait(false);
+            await addTenantAllTask.ConfigureAwait(false);
+
+            if (expireTenantPendingTask is not null)
+            {
+                await expireTenantPendingTask.ConfigureAwait(false);
+            }
+
+            if (expireTenantAllTask is not null)
+            {
+                await expireTenantAllTask.ConfigureAwait(false);
+            }
+        }
+
+        private Task AddToTenantPendingIndexAsync(
+            string controlPlaneId,
+            string tenantId,
+            string sharedRunId,
+            double score)
+        {
+            if (string.IsNullOrWhiteSpace(tenantId))
+            {
+                return Task.CompletedTask;
+            }
+
+            return _database.SortedSetAddAsync(
+                BuildTenantPendingIndexKey(
+                    controlPlaneId,
+                    tenantId),
+                sharedRunId,
+                score);
+        }
+
+        private Task RemoveFromTenantPendingIndexAsync(
+            string controlPlaneId,
+            string tenantId,
+            string sharedRunId)
+        {
+            if (string.IsNullOrWhiteSpace(tenantId))
+            {
+                return Task.CompletedTask;
+            }
+
+            return _database.SortedSetRemoveAsync(
+                BuildTenantPendingIndexKey(
+                    controlPlaneId,
+                    tenantId),
+                sharedRunId);
         }
 
         private static RedisValue[] BuildEnqueueValues(
@@ -814,6 +1101,52 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
                 StringComparison.Ordinal);
         }
 
+        private static bool BelongsToTenant(
+            AiSharedQueueItem item,
+            string? expectedTenantId)
+        {
+            if (string.IsNullOrWhiteSpace(expectedTenantId))
+            {
+                return true;
+            }
+
+            var itemTenantId =
+                item.ExecutionContextSnapshot.TenantId;
+
+            if (string.IsNullOrWhiteSpace(itemTenantId))
+            {
+                return false;
+            }
+
+            return string.Equals(
+                NormalizeKeySegment(itemTenantId),
+                NormalizeKeySegment(expectedTenantId),
+                StringComparison.Ordinal);
+        }
+
+        private string? TryResolveTenantId()
+        {
+            if (_executionContextSnapshotProvider is null)
+            {
+                return null;
+            }
+
+            try
+            {
+                var snapshot =
+                    _executionContextSnapshotProvider
+                        .MapToSnapshot();
+
+                return string.IsNullOrWhiteSpace(snapshot.TenantId)
+                    ? null
+                    : snapshot.TenantId;
+            }
+            catch (InvalidOperationException)
+            {
+                return null;
+            }
+        }
+
         private string BuildQueueKeyPrefix(
             string controlPlaneId)
         {
@@ -823,6 +1156,24 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
                 ControlPlaneKeySegment,
                 ":",
                 NormalizeKeySegment(controlPlaneId),
+                ":",
+                SharedQueueKeySegment);
+        }
+
+        private string BuildTenantQueueKeyPrefix(
+            string controlPlaneId,
+            string tenantId)
+        {
+            return string.Concat(
+                NormalizeBaseKeyPrefix(_options.KeyPrefix),
+                ":",
+                ControlPlaneKeySegment,
+                ":",
+                NormalizeKeySegment(controlPlaneId),
+                ":",
+                TenantKeySegment,
+                ":",
+                NormalizeKeySegment(tenantId),
                 ":",
                 SharedQueueKeySegment);
         }
@@ -853,6 +1204,30 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
         {
             return string.Concat(
                 BuildQueueKeyPrefix(controlPlaneId),
+                ":",
+                AllIndexKeySegment);
+        }
+
+        private RedisKey BuildTenantPendingIndexKey(
+            string controlPlaneId,
+            string tenantId)
+        {
+            return string.Concat(
+                BuildTenantQueueKeyPrefix(
+                    controlPlaneId,
+                    tenantId),
+                ":",
+                PendingIndexKeySegment);
+        }
+
+        private RedisKey BuildTenantAllIndexKey(
+            string controlPlaneId,
+            string tenantId)
+        {
+            return string.Concat(
+                BuildTenantQueueKeyPrefix(
+                    controlPlaneId,
+                    tenantId),
                 ":",
                 AllIndexKeySegment);
         }
