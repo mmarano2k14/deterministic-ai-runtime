@@ -1,9 +1,10 @@
-﻿using System.ComponentModel;
-using Microsoft.Extensions.Logging;
+﻿using Microsoft.Extensions.Logging;
 using ModelContextProtocol.Server;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.SharedInstance;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue;
+using Multiplexed.Rbac.Core.Authorization.Attributes;
+using System.ComponentModel;
 
 namespace Multiplexed.AI.McpServer.Tools
 {
@@ -99,6 +100,7 @@ namespace Multiplexed.AI.McpServer.Tools
         /// <returns>The runtime queue control-plane result.</returns>
         [McpServerTool(Name = "runtime_queue.status")]
         [Description("Gets the current visibility state of the local runtime queue.")]
+        [RequireCapability("runtime-queue", "status", "read")]
         public async Task<AiRuntimeQueueControlPlaneResult> GetQueueStatusAsync(
             AiRuntimeQueueControlPlaneRequest request,
             CancellationToken cancellationToken = default)
@@ -170,6 +172,7 @@ namespace Multiplexed.AI.McpServer.Tools
         /// <returns>The runtime queue control-plane result.</returns>
         [McpServerTool(Name = "runtime_queue.run_status")]
         [Description("Gets the current visibility state of a local runtime run.")]
+        [RequireCapability("runtime-queue", "run", "read")]
         public async Task<AiRuntimeQueueControlPlaneResult> GetRunStatusAsync(
             AiRuntimeQueueControlPlaneRequest request,
             CancellationToken cancellationToken = default)
@@ -244,6 +247,7 @@ namespace Multiplexed.AI.McpServer.Tools
         /// <returns>The runtime queue control-plane result.</returns>
         [McpServerTool(Name = "runtime_queue.pause")]
         [Description("Pauses the local runtime queue.")]
+        [RequireCapability("runtime-queue", "queue", "pause")]
         public async Task<AiRuntimeQueueControlPlaneResult> PauseQueueAsync(
             AiRuntimeQueueControlPlaneRequest request,
             CancellationToken cancellationToken = default)
@@ -315,6 +319,7 @@ namespace Multiplexed.AI.McpServer.Tools
         /// <returns>The runtime queue control-plane result.</returns>
         [McpServerTool(Name = "runtime_queue.resume")]
         [Description("Resumes the local runtime queue.")]
+        [RequireCapability("runtime-queue", "queue", "resume")]
         public async Task<AiRuntimeQueueControlPlaneResult> ResumeQueueAsync(
             AiRuntimeQueueControlPlaneRequest request,
             CancellationToken cancellationToken = default)
@@ -386,6 +391,7 @@ namespace Multiplexed.AI.McpServer.Tools
         /// <returns>The runtime queue control-plane result.</returns>
         [McpServerTool(Name = "runtime_queue.cancel_run")]
         [Description("Cancels a local runtime run by run id.")]
+        [RequireCapability("runtime-queue", "run", "cancel")]
         public async Task<AiRuntimeQueueControlPlaneResult> CancelRunAsync(
             AiRuntimeQueueControlPlaneRequest request,
             CancellationToken cancellationToken = default)
@@ -460,6 +466,7 @@ namespace Multiplexed.AI.McpServer.Tools
         /// <returns>The runtime queue control-plane result.</returns>
         [McpServerTool(Name = "runtime_queue.cancel_queued_run")]
         [Description("Cancels a local runtime run that is still queued.")]
+        [RequireCapability("runtime-queue", "run", "cancel")]
         public async Task<AiRuntimeQueueControlPlaneResult> CancelQueuedRunAsync(
             AiRuntimeQueueControlPlaneRequest request,
             CancellationToken cancellationToken = default)

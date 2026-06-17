@@ -78,8 +78,12 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
                 host.Services);
 
             var mcp =
-                new McpTestClient(
-                    client);
+            await McpRbacTestClientHelper
+                .CreateConfiguredClientAsync(
+                    host,
+                    client,
+                    RequestedBy)
+                .ConfigureAwait(false);
 
             await LogRuntimeInstancesAsync(
                     mcp)

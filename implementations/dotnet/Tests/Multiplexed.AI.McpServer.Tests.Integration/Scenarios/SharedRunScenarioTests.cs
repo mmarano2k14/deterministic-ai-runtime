@@ -1149,9 +1149,48 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
             using var emptyClient =
                 emptyHost.CreateClient();
 
+            var contextStore =
+                emptyHost.Services.GetRequiredService<IContextStore>();
+
+            var contextRuntimeOptions =
+                emptyHost.Services
+                    .GetRequiredService<IOptions<ContextRuntimeOptions>>()
+                    .Value;
+
+            var executionContext =
+                McpRbacTestContextFactory.CreateDefaultContext(
+                    RequestedBy);
+
+            var contextKey =
+                await contextStore
+                    .StoreAsync(executionContext)
+                    .ConfigureAwait(false);
+
+            emptyClient.DefaultRequestHeaders.Remove(
+                contextRuntimeOptions.AccessContextHeader);
+
+            emptyClient.DefaultRequestHeaders.Add(
+                contextRuntimeOptions.AccessContextHeader,
+                contextKey);
+
+            emptyClient.DefaultRequestHeaders.Remove(
+                McpRbacTestContextFactory.DemoUserIdHeaderName);
+
+            emptyClient.DefaultRequestHeaders.Add(
+                McpRbacTestContextFactory.DemoUserIdHeaderName,
+                RequestedBy);
+
             var emptyMcp =
                 new McpTestClient(
                     emptyClient);
+
+            Console.WriteLine(
+                $"[SHARED RUN EMPTY RUNTIME TEST] Configuring MCP RBAC headers. Header='{contextRuntimeOptions.AccessContextHeader}', ContextKey='{contextKey}', UserId='{RequestedBy}'.");
+
+            emptyMcp.SetRbacHeaders(
+                contextRuntimeOptions.AccessContextHeader,
+                contextKey,
+                RequestedBy);
 
             var allInstances =
                 await emptyMcp.ListRuntimeInstancesAsync(
@@ -1168,11 +1207,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
             Assert.NotNull(
                 activeInstances);
 
-            Assert.Empty(
-                allInstances.Where(instance => instance.Role == AiRuntimeInstanceRole.Runtime));
+            Assert.DoesNotContain(allInstances, instance => instance.Role == AiRuntimeInstanceRole.Runtime);
 
-            Assert.Empty(
-                activeInstances.Where(instance => instance.Role == AiRuntimeInstanceRole.Runtime));
+            Assert.DoesNotContain(activeInstances, instance => instance.Role == AiRuntimeInstanceRole.Runtime);
 
             McpScenarioOutput.WriteRuntimeInstanceSummary(
                 output,

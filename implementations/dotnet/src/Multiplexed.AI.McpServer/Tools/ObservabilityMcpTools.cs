@@ -1,8 +1,9 @@
-﻿using System.ComponentModel;
-using Microsoft.Extensions.Logging;
+﻿using Microsoft.Extensions.Logging;
 using ModelContextProtocol.Server;
 using Multiplexed.Abstractions.AI.Observability.Ledger;
 using Multiplexed.Abstractions.AI.Observability.Tracing;
+using Multiplexed.Rbac.Core.Authorization.Attributes;
+using System.ComponentModel;
 
 namespace Multiplexed.AI.McpServer.Tools
 {
@@ -50,6 +51,7 @@ namespace Multiplexed.AI.McpServer.Tools
         /// <returns>The ordered decision ledger entries for the execution.</returns>
         [McpServerTool(Name = "observability.ledger.get_by_execution")]
         [Description("Gets decision ledger entries for a specific execution.")]
+        [RequireCapability("observability", "ledger", "read")]
         public async Task<IReadOnlyList<AiDecisionLedgerEntry>> GetLedgerByExecutionAsync(
             string executionId,
             CancellationToken cancellationToken = default)
@@ -73,6 +75,7 @@ namespace Multiplexed.AI.McpServer.Tools
         /// <returns>The ordered decision ledger entries matching the query.</returns>
         [McpServerTool(Name = "observability.ledger.query")]
         [Description("Queries decision ledger entries using ledger query filters.")]
+        [RequireCapability("observability", "ledger", "query")]
         public async Task<IReadOnlyList<AiDecisionLedgerEntry>> QueryLedgerAsync(
             AiDecisionLedgerQuery query,
             CancellationToken cancellationToken = default)
@@ -94,6 +97,7 @@ namespace Multiplexed.AI.McpServer.Tools
         /// <returns>The ordered trace events for the execution.</returns>
         [McpServerTool(Name = "observability.trace.get_by_execution")]
         [Description("Gets trace timeline events for a specific execution.")]
+        [RequireCapability("observability", "trace", "read")]
         public IReadOnlyList<AiTraceEvent> GetTraceByExecution(
             string executionId)
         {
@@ -112,6 +116,7 @@ namespace Multiplexed.AI.McpServer.Tools
         /// <returns>A message describing why runtime metrics query tools are not exposed yet.</returns>
         [McpServerTool(Name = "observability.metrics.status")]
         [Description("Describes the current runtime metrics MCP exposure status.")]
+        [RequireCapability("observability", "metrics", "read")]
         public string GetMetricsStatus()
         {
             return "Runtime metrics are currently append-only through IAiRuntimeMetricStore. " +

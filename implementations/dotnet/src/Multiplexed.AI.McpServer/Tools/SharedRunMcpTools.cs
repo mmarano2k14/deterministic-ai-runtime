@@ -1,7 +1,8 @@
-﻿using System.ComponentModel;
-using Microsoft.Extensions.Logging;
+﻿using Microsoft.Extensions.Logging;
 using ModelContextProtocol.Server;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Controller;
+using Multiplexed.Rbac.Core.Authorization.Attributes;
+using System.ComponentModel;
 
 namespace Multiplexed.AI.McpServer.Tools
 {
@@ -42,6 +43,7 @@ namespace Multiplexed.AI.McpServer.Tools
         /// <returns>The shared runtime controller result.</returns>
         [McpServerTool(Name = "run.submit_run")]
         [Description("Submits one run to the shared runtime controller and shared queue.")]
+        [RequireCapability("shared-run", "execution", "submit")]
         public async Task<AiSharedRuntimeControllerResult> SubmitRunAsync(
             AiSharedRuntimeControllerRequest request,
             CancellationToken cancellationToken = default)
@@ -81,6 +83,7 @@ namespace Multiplexed.AI.McpServer.Tools
         /// <returns>The shared runtime controller results.</returns>
         [McpServerTool(Name = "run.submit_many_runs")]
         [Description("Submits multiple runs to the shared runtime controller and shared queue.")]
+        [RequireCapability("shared-run", "execution", "submit")]
         public async Task<IReadOnlyList<AiSharedRuntimeControllerResult>> SubmitManyRunsAsync(
             AiSharedRuntimeControllerRequest request,
             int count,
@@ -90,7 +93,10 @@ namespace Multiplexed.AI.McpServer.Tools
 
             if (count <= 0)
             {
-                throw new ArgumentOutOfRangeException(nameof(count), count, "Count must be greater than zero.");
+                throw new ArgumentOutOfRangeException(
+                    nameof(count),
+                    count,
+                    "Count must be greater than zero.");
             }
 
             logger.LogInformation(
@@ -136,6 +142,7 @@ namespace Multiplexed.AI.McpServer.Tools
         /// <returns>The shared runtime controller result.</returns>
         [McpServerTool(Name = "run.list_shared")]
         [Description("Lists shared runs known by the shared runtime controller.")]
+        [RequireCapability("shared-run", "registry", "list")]
         public async Task<AiSharedRuntimeControllerResult> ListSharedRunsAsync(
             AiSharedRuntimeControllerRequest request,
             CancellationToken cancellationToken = default)
@@ -161,6 +168,7 @@ namespace Multiplexed.AI.McpServer.Tools
         /// <returns>The shared runtime controller result.</returns>
         [McpServerTool(Name = "run.get_shared")]
         [Description("Gets a shared run known by the shared runtime controller.")]
+        [RequireCapability("shared-run", "registry", "read")]
         public async Task<AiSharedRuntimeControllerResult> GetSharedRunAsync(
             AiSharedRuntimeControllerRequest request,
             CancellationToken cancellationToken = default)
@@ -184,6 +192,7 @@ namespace Multiplexed.AI.McpServer.Tools
         /// <returns>The shared runtime controller result.</returns>
         [McpServerTool(Name = "run.cancel_shared")]
         [Description("Cancels a shared run through the shared runtime controller.")]
+        [RequireCapability("shared-run", "execution", "cancel")]
         public async Task<AiSharedRuntimeControllerResult> CancelSharedRunAsync(
             AiSharedRuntimeControllerRequest request,
             CancellationToken cancellationToken = default)

@@ -6,7 +6,73 @@ This project follows a deterministic runtime and observability model designed fo
 
 ---
 
-## ## [1.0.6.2] - 2026-06-12 — Redis-backed Local Runtime Scale-Out Flow
+## [1.0.6.3] - 2026-06-17 - MCP RBAC Tool Authorization
+
+### Added
+
+- Added RBAC capability authorization to MCP tool methods.
+- Added capability-based access control for shared run MCP tools:
+  - `run.submit_run`
+  - `run.submit_many_runs`
+  - `run.list_shared`
+  - `run.get_shared`
+  - `run.cancel_shared`
+- Added capability-based access control for shared queue MCP tools:
+  - `queue.drain`
+  - `shared_queue.list`
+  - `shared_queue.status`
+  - `shared_queue.activity`
+- Added capability-based access control for runtime queue MCP tools:
+  - `runtime_queue.status`
+  - `runtime_queue.run_status`
+  - `runtime_queue.pause`
+  - `runtime_queue.resume`
+  - `runtime_queue.cancel_run`
+  - `runtime_queue.cancel_queued_run`
+- Added capability-based access control for runtime instance visibility tools:
+  - `instance.list`
+  - `instance.active`
+  - `instance.status`
+- Added capability-based access control for execution control tools:
+  - `control.pause`
+  - `control.resume`
+  - `control.cancel`
+  - `control.status`
+- Added capability-based access control for observability tools:
+  - `observability.ledger.get_by_execution`
+  - `observability.ledger.query`
+  - `observability.trace.get_by_execution`
+  - `observability.metrics.status`
+- Added centralized MCP RBAC test context creation through `McpRbacTestContextFactory`.
+- Added centralized MCP RBAC test client setup through `McpRbacTestClientHelper`.
+- Added fake authentication support for MCP integration test hosts.
+- Added default RBAC execution context support for MCP runtime/system calls.
+- Added integration test coverage for MCP RBAC context propagation across local, HTTP, shared queue, runtime queue, execution control, observability, and scale-out scenarios.
+
+### Changed
+
+- Updated MCP endpoint pipeline ordering so authentication and RBAC execution-context middleware run before MCP tool mapping.
+- Updated MCP integration tests to propagate RBAC headers consistently through `X-Access-Context` and `X-Demo-UserId`.
+- Updated MCP test client to propagate RBAC demo headers for in-flight/race-limit test scenarios.
+- Updated scenario tests that create isolated MCP hosts to use the shared RBAC test client helper.
+- Updated MCP tools to use explicit TRN-compatible capability attributes based on resource, feature, and action.
+
+### Fixed
+
+- Fixed MCP integration test failures caused by missing RBAC execution context headers.
+- Fixed `401 Unauthorized` responses in isolated MCP scenario tests by storing and attaching a valid RBAC execution context.
+- Fixed RBAC in-flight/race-limit failures in high-polling MCP integration tests by propagating demo max in-flight headers.
+- Fixed inconsistent RBAC setup between fixture-based MCP tests and manually-created MCP test clients.
+
+### Security
+
+- MCP tool execution is now protected by capability-level RBAC authorization.
+- MCP control-plane operations now distinguish unauthorized context access, missing capabilities, and in-flight/race-limit violations.
+- Added explicit authorization boundaries for runtime submission, cancellation, queue draining, runtime visibility, execution control, replay, ledger, trace, and observability access.
+
+---
+
+## [1.0.6.2] - 2026-06-12 — Redis-backed Local Runtime Scale-Out Flow
 
 ## Summary
 

@@ -41,12 +41,40 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Auth
                         Name = Namespace,
                         Trns = new HashSet<string>
                         {
+                            $"trn:{Project}:runtime-instance:registry:list",
+                            $"trn:{Project}:runtime-instance:registry:read",
+
+                            $"trn:{Project}:runtime-queue:status:read",
+                            $"trn:{Project}:runtime-queue:run:read",
+                            $"trn:{Project}:runtime-queue:queue:pause",
+                            $"trn:{Project}:runtime-queue:queue:resume",
+                            $"trn:{Project}:runtime-queue:run:cancel",
+
+                            $"trn:{Project}:shared-queue:activity:read",
+                            $"trn:{Project}:shared-queue:pump:drain",
+                            $"trn:{Project}:shared-queue:queue:list",
+                            $"trn:{Project}:shared-queue:status:read",
+
+                            $"trn:{Project}:shared-run:execution:submit",
+                            $"trn:{Project}:shared-run:registry:list",
+                            $"trn:{Project}:shared-run:registry:read",
+                            $"trn:{Project}:shared-run:execution:cancel",
+
                             $"trn:{Project}:replay:execution:run",
                             $"trn:{Project}:replay:audit:run",
                             $"trn:{Project}:replay:report:read",
 
+                            $"trn:{Project}:execution:control:pause",
+                            $"trn:{Project}:execution:control:resume",
+                            $"trn:{Project}:execution:control:cancel",
+                            $"trn:{Project}:execution:control:read",
+
                             $"trn:{Project}:observability:ledger:read",
-                            $"trn:{Project}:observability:trace:read"
+                            $"trn:{Project}:observability:ledger:query",
+                            $"trn:{Project}:observability:trace:read",
+                            $"trn:{Project}:observability:metrics:read",
+
+
                         }
                     }
                 },

@@ -1,7 +1,8 @@
-﻿using System.ComponentModel;
-using Microsoft.Extensions.Logging;
+﻿using Microsoft.Extensions.Logging;
 using ModelContextProtocol.Server;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
+using Multiplexed.Rbac.Core.Authorization.Attributes;
+using System.ComponentModel;
 
 namespace Multiplexed.AI.McpServer.Tools
 {
@@ -42,6 +43,7 @@ namespace Multiplexed.AI.McpServer.Tools
         /// <returns>The runtime instance snapshots.</returns>
         [McpServerTool(Name = "instance.list")]
         [Description("Lists registered runtime instances with visibility, heartbeat, queue, and capacity information.")]
+        [RequireCapability("runtime-instance", "registry", "list")]
         public async Task<IReadOnlyList<AiRuntimeInstanceSnapshot>> ListRuntimeInstancesAsync(
             bool includeStopped = false,
             CancellationToken cancellationToken = default)
@@ -62,10 +64,12 @@ namespace Multiplexed.AI.McpServer.Tools
         /// <returns>The active runtime instance snapshots.</returns>
         [McpServerTool(Name = "instance.active")]
         [Description("Lists active runtime instances only.")]
+        [RequireCapability("runtime-instance", "registry", "list")]
         public async Task<IReadOnlyList<AiRuntimeInstanceSnapshot>> ListActiveRuntimeInstancesAsync(
             CancellationToken cancellationToken = default)
         {
-            logger.LogInformation("MCP instance.active called.");
+            logger.LogInformation(
+                "MCP instance.active called.");
 
             return await runtimeInstanceRegistry
                 .ListAsync(includeStopped: false, cancellationToken)
@@ -80,6 +84,7 @@ namespace Multiplexed.AI.McpServer.Tools
         /// <returns>The runtime instance snapshot, or null when not found.</returns>
         [McpServerTool(Name = "instance.status")]
         [Description("Gets one runtime instance visibility snapshot by runtime instance id.")]
+        [RequireCapability("runtime-instance", "registry", "read")]
         public async Task<AiRuntimeInstanceSnapshot?> GetRuntimeInstanceStatusAsync(
             string runtimeInstanceId,
             CancellationToken cancellationToken = default)

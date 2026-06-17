@@ -65,8 +65,12 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
                 host.CreateClient();
 
             var mcp =
-                new McpTestClient(
-                    client);
+            await McpRbacTestClientHelper
+                .CreateConfiguredClientAsync(
+                    host,
+                    client,
+                    RequestedBy)
+                .ConfigureAwait(false);
 
             var pipelineName =
                 $"mcp-queue-first-local-{Guid.NewGuid():N}";
@@ -154,8 +158,12 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
                 host.CreateClient();
 
             var mcp =
-                new McpTestClient(
-                    client);
+            await McpRbacTestClientHelper
+                .CreateConfiguredClientAsync(
+                    host,
+                    client,
+                    RequestedBy)
+                .ConfigureAwait(false);
 
             var pipelineName =
                 $"mcp-background-pump-local-one-{Guid.NewGuid():N}";
@@ -275,8 +283,12 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
                 host.CreateClient();
 
             var mcp =
-                new McpTestClient(
-                    client);
+            await McpRbacTestClientHelper
+                .CreateConfiguredClientAsync(
+                    host,
+                    client,
+                    RequestedBy)
+                .ConfigureAwait(false);
 
             var pipelineName =
                 $"mcp-background-pump-local-many-{Guid.NewGuid():N}";
@@ -425,8 +437,12 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
                 host.CreateClient();
 
             var mcp =
-                new McpTestClient(
-                    client);
+            await McpRbacTestClientHelper
+                .CreateConfiguredClientAsync(
+                    host,
+                    client,
+                    RequestedBy)
+                .ConfigureAwait(false);
 
             var pipelineName =
                 $"mcp-queue-first-local-manual-drain-{Guid.NewGuid():N}";

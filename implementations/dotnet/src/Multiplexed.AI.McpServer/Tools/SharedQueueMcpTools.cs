@@ -1,9 +1,10 @@
-﻿using System.ComponentModel;
-using Microsoft.Extensions.Logging;
+﻿using Microsoft.Extensions.Logging;
 using ModelContextProtocol.Server;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Pump;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Queue;
 using Multiplexed.AI.McpServer.Models.Responses;
+using Multiplexed.Rbac.Core.Authorization.Attributes;
+using System.ComponentModel;
 
 namespace Multiplexed.AI.McpServer.Tools
 {
@@ -34,10 +35,13 @@ namespace Multiplexed.AI.McpServer.Tools
 
         [McpServerTool(Name = "queue.drain")]
         [Description("Executes one shared queue pump cycle manually.")]
+        [RequireCapability("shared-queue", "pump", "drain")]
         public async Task<AiSharedQueuePumpResult> DrainAsync(
             AiSharedQueuePumpRequest request,
             CancellationToken cancellationToken = default)
         {
+            ArgumentNullException.ThrowIfNull(request);
+
             logger.LogInformation(
                 "MCP queue.drain called. RuntimeInstanceId={RuntimeInstanceId}, WorkerId={WorkerId}",
                 request.PumpRuntimeInstanceId,
@@ -50,6 +54,7 @@ namespace Multiplexed.AI.McpServer.Tools
 
         [McpServerTool(Name = "shared_queue.list")]
         [Description("Lists items currently known by the shared queue.")]
+        [RequireCapability("shared-queue", "queue", "list")]
         public async Task<IReadOnlyList<AiSharedQueueItem>> ListSharedQueueAsync(
             bool includeTerminal = true,
             CancellationToken cancellationToken = default)
@@ -65,6 +70,7 @@ namespace Multiplexed.AI.McpServer.Tools
 
         [McpServerTool(Name = "shared_queue.status")]
         [Description("Gets aggregated shared queue status counts.")]
+        [RequireCapability("shared-queue", "status", "read")]
         public async Task<SharedQueueStatusResult> GetSharedQueueStatusAsync(
             bool includeTerminal = true,
             CancellationToken cancellationToken = default)
