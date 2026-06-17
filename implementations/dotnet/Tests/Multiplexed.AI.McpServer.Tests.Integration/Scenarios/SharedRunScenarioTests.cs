@@ -54,10 +54,6 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
         /// Starts an isolated generic MCP host for the current test.
         /// </summary>
         /// <returns>A task representing the asynchronous initialization operation.</returns>
-        /// <summary>
-        /// Starts an isolated generic MCP host for the current test.
-        /// </summary>
-        /// <returns>A task representing the asynchronous initialization operation.</returns>
         public async Task InitializeAsync()
         {
             var controlPlaneId =
@@ -72,48 +68,17 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
             client =
                 host.CreateClient();
 
-            var contextStore =
-                host.Services.GetRequiredService<IContextStore>();
-
-            var contextRuntimeOptions =
-                host.Services
-                    .GetRequiredService<IOptions<ContextRuntimeOptions>>()
-                    .Value;
-
-            var executionContext =
-                McpRbacTestContextFactory.CreateDefaultContext(
-                    RequestedBy);
-
-            var contextKey =
-                await contextStore
-                    .StoreAsync(executionContext)
+            mcp =
+                await McpRbacTestClientHelper
+                    .CreateConfiguredClientAsync(
+                        host,
+                        client,
+                        RequestedBy,
+                        tenantId: TenantId)
                     .ConfigureAwait(false);
 
-            client.DefaultRequestHeaders.Remove(
-                contextRuntimeOptions.AccessContextHeader);
-
-            client.DefaultRequestHeaders.Add(
-                contextRuntimeOptions.AccessContextHeader,
-                contextKey);
-
-            client.DefaultRequestHeaders.Remove(
-                McpRbacTestContextFactory.DemoUserIdHeaderName);
-
-            client.DefaultRequestHeaders.Add(
-                McpRbacTestContextFactory.DemoUserIdHeaderName,
-                RequestedBy);
-
-            mcp =
-                new McpTestClient(
-                    client);
-
             Console.WriteLine(
-                $"[SHARED RUN SCENARIO] Configuring MCP RBAC headers. Header='{contextRuntimeOptions.AccessContextHeader}', ContextKey='{contextKey}', UserId='{RequestedBy}'.");
-
-            mcp.SetRbacHeaders(
-                contextRuntimeOptions.AccessContextHeader,
-                contextKey,
-                RequestedBy);
+                $"[SHARED RUN SCENARIO] Configured MCP RBAC headers. UserId='{RequestedBy}', TenantId='{TenantId}'.");
         }
 
         /// <summary>
@@ -1116,9 +1081,16 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
                 cancellingStatus.Success,
                 cancellingStatus.FailureReason ?? cancellingStatus.Message);
 
-            Assert.Equal(
-                "Cancelling",
-                cancellingStatus.State?.Status.ToString());
+            var cancellationStatus =
+                cancellingStatus.State?.Status.ToString();
+
+            Assert.Contains(
+                cancellationStatus,
+                new[]
+                {
+                    "Cancelling",
+                    "Cancelled"
+                });
 
             McpScenarioOutput.WriteExecutionControlSummary(
                 output,
@@ -1149,48 +1121,17 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
             using var emptyClient =
                 emptyHost.CreateClient();
 
-            var contextStore =
-                emptyHost.Services.GetRequiredService<IContextStore>();
-
-            var contextRuntimeOptions =
-                emptyHost.Services
-                    .GetRequiredService<IOptions<ContextRuntimeOptions>>()
-                    .Value;
-
-            var executionContext =
-                McpRbacTestContextFactory.CreateDefaultContext(
-                    RequestedBy);
-
-            var contextKey =
-                await contextStore
-                    .StoreAsync(executionContext)
+            var emptyMcp =
+                await McpRbacTestClientHelper
+                    .CreateConfiguredClientAsync(
+                        emptyHost,
+                        emptyClient,
+                        RequestedBy,
+                        tenantId: TenantId)
                     .ConfigureAwait(false);
 
-            emptyClient.DefaultRequestHeaders.Remove(
-                contextRuntimeOptions.AccessContextHeader);
-
-            emptyClient.DefaultRequestHeaders.Add(
-                contextRuntimeOptions.AccessContextHeader,
-                contextKey);
-
-            emptyClient.DefaultRequestHeaders.Remove(
-                McpRbacTestContextFactory.DemoUserIdHeaderName);
-
-            emptyClient.DefaultRequestHeaders.Add(
-                McpRbacTestContextFactory.DemoUserIdHeaderName,
-                RequestedBy);
-
-            var emptyMcp =
-                new McpTestClient(
-                    emptyClient);
-
             Console.WriteLine(
-                $"[SHARED RUN EMPTY RUNTIME TEST] Configuring MCP RBAC headers. Header='{contextRuntimeOptions.AccessContextHeader}', ContextKey='{contextKey}', UserId='{RequestedBy}'.");
-
-            emptyMcp.SetRbacHeaders(
-                contextRuntimeOptions.AccessContextHeader,
-                contextKey,
-                RequestedBy);
+                $"[SHARED RUN EMPTY RUNTIME TEST] Configured MCP RBAC headers. UserId='{RequestedBy}', TenantId='{TenantId}'.");
 
             var allInstances =
                 await emptyMcp.ListRuntimeInstancesAsync(
@@ -1207,9 +1148,13 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
             Assert.NotNull(
                 activeInstances);
 
-            Assert.DoesNotContain(allInstances, instance => instance.Role == AiRuntimeInstanceRole.Runtime);
+            Assert.DoesNotContain(
+                allInstances,
+                instance => instance.Role == AiRuntimeInstanceRole.Runtime);
 
-            Assert.DoesNotContain(activeInstances, instance => instance.Role == AiRuntimeInstanceRole.Runtime);
+            Assert.DoesNotContain(
+                activeInstances,
+                instance => instance.Role == AiRuntimeInstanceRole.Runtime);
 
             McpScenarioOutput.WriteRuntimeInstanceSummary(
                 output,

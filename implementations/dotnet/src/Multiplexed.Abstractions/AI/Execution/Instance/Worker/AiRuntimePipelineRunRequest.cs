@@ -1,4 +1,5 @@
 ﻿using Multiplexed.Abstractions.AI.Pipeline;
+using Multiplexed.Abstractions.Core.ExecutionContext;
 
 namespace Multiplexed.Abstractions.AI.Execution.Instance.Worker
 {
@@ -22,6 +23,12 @@ namespace Multiplexed.Abstractions.AI.Execution.Instance.Worker
     /// Source priority is: raw JSON first, JSON file path second, in-memory pipeline
     /// definition third.
     /// </para>
+    /// <para>
+    /// The optional <see cref="ExecutionContextSnapshot"/> is the durable execution
+    /// context captured by the control plane and propagated to runtime workers.
+    /// It allows background runtime execution to restore the active RBAC execution
+    /// context before creating the durable execution.
+    /// </para>
     /// </remarks>
     public sealed class AiRuntimePipelineRunRequest
     {
@@ -33,6 +40,22 @@ namespace Multiplexed.Abstractions.AI.Execution.Instance.Worker
         /// selected from the supplied JSON, JSON file, or in-memory definition.
         /// </remarks>
         public required string PipelineName { get; init; }
+
+        /// <summary>
+        /// Gets the optional durable execution context snapshot associated with this run.
+        /// </summary>
+        /// <remarks>
+        /// This snapshot is captured when the shared run is submitted and is propagated
+        /// through Redis, HTTP dispatch, and the local runtime queue.
+        ///
+        /// Runtime background workers use this value to restore the active RBAC
+        /// execution context before creating the durable execution.
+        ///
+        /// The snapshot context key is volatile and must not be used as a durable
+        /// execution identifier or tenant partition key. Persistent tenant isolation
+        /// must use <see cref="ExecutionContextSnapshot.TenantId"/>.
+        /// </remarks>
+        public ExecutionContextSnapshot? ExecutionContextSnapshot { get; init; }
 
         /// <summary>
         /// Gets the optional raw JSON pipeline definition source.

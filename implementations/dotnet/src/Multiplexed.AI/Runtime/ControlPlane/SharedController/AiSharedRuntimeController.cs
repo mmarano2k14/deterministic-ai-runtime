@@ -9,6 +9,7 @@ using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Dispatch;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Scaling;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Store;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Queue;
+using Multiplexed.Abstractions.AI.Execution.Instance.Worker;
 using Multiplexed.Abstractions.AI.Observability.Context;
 using Multiplexed.Abstractions.Core.ExecutionContext;
 
@@ -350,6 +351,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController
                 ? Guid.NewGuid().ToString("N")
                 : request.RequestedSharedRunId;
 
+            var runRequest =
+                AttachExecutionContextSnapshot(
+                    request.RunRequest!,
+                    executionContextSnapshot);
+
             var metadata =
                 MergeMetadata(
                     request.Metadata,
@@ -362,10 +368,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController
                 .AdmitAsync(
                     new AiRunAdmissionRequest
                     {
-                        RunRequest = request.RunRequest!,
+                        RunRequest = runRequest,
                         RunId = sharedRunId,
                         TenantId = executionContextSnapshot.TenantId,
-                        PipelineKey = request.PipelineKey ?? request.RunRequest?.PipelineName,
+                        PipelineKey = request.PipelineKey ?? runRequest.PipelineName,
                         PreferredRuntimeInstanceId = request.PreferredRuntimeInstanceId,
                         CorrelationId = request.CorrelationId,
                         RequestedBy = request.RequestedBy,
@@ -392,13 +398,13 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController
                 SharedRunId = sharedRunId,
                 ControlPlaneId = controlPlaneId,
                 Status = effectiveStatus,
-                RunRequest = request.RunRequest!,
+                RunRequest = runRequest,
                 ExecutionContextSnapshot = executionContextSnapshot,
                 AssignedRuntimeInstanceId = queueFirst
                     ? null
                     : admissionDecision.AssignedRuntimeInstanceId,
                 AdmissionDecision = admissionDecision,
-                PipelineKey = request.PipelineKey ?? request.RunRequest?.PipelineName,
+                PipelineKey = request.PipelineKey ?? runRequest.PipelineName,
                 CorrelationId = string.IsNullOrWhiteSpace(request.CorrelationId)
                     ? sharedRunId
                     : request.CorrelationId,
@@ -639,6 +645,35 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController
             return new SharedRuntimeControllerOperationResult
             {
                 Run = updated
+            };
+        }
+
+        /// <summary>
+        /// Attaches the durable execution context snapshot to the runtime pipeline
+        /// run request before the shared run is persisted and dispatched.
+        /// </summary>
+        /// <param name="request">The original runtime pipeline run request.</param>
+        /// <param name="executionContextSnapshot">
+        /// The durable execution context snapshot captured by the control plane.
+        /// </param>
+        /// <returns>
+        /// A runtime pipeline run request carrying the execution context snapshot.
+        /// </returns>
+        private static AiRuntimePipelineRunRequest AttachExecutionContextSnapshot(
+            AiRuntimePipelineRunRequest request,
+            ExecutionContextSnapshot executionContextSnapshot)
+        {
+            ArgumentNullException.ThrowIfNull(request);
+            ArgumentNullException.ThrowIfNull(executionContextSnapshot);
+
+            return new AiRuntimePipelineRunRequest
+            {
+                PipelineName = request.PipelineName,
+                ExecutionContextSnapshot = executionContextSnapshot,
+                PipelineJson = request.PipelineJson,
+                PipelineJsonFilePath = request.PipelineJsonFilePath,
+                PipelineDefinition = request.PipelineDefinition,
+                Input = request.Input
             };
         }
 

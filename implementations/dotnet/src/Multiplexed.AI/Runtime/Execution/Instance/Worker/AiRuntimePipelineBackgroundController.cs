@@ -11,12 +11,15 @@ using Multiplexed.Abstractions.AI.Observability.Tracing;
 using Multiplexed.Abstractions.AI.Pipeline;
 using Multiplexed.Abstractions.AI.Runtime.Execution.Instance;
 using Multiplexed.Abstractions.AI.Runtime.Execution.Instance.Worker;
+using Multiplexed.Abstractions.Core.ExecutionContext;
 using Multiplexed.AI.Runtime.Execution.Engine.Core;
 using Multiplexed.AI.Runtime.Observability.Helpers;
 using Multiplexed.AI.Runtime.Observability.Logging;
+using Multiplexed.Rbac.Core.ExecutionContext;
 using System.Collections.Concurrent;
 using System.Reflection;
 using System.Threading.Channels;
+using ExecutionContext = Multiplexed.Rbac.Core.ExecutionContext.ExecutionContext;
 
 namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
 {
@@ -68,6 +71,7 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
         private readonly IAiRuntimeInstanceIdentityDescriptor _runtimeInstanceIdentity;
         private readonly IAiExecutionAssistanceCandidateStore _assistanceCandidateStore;
         private readonly IAiRuntimeRunExecutionIndex _runExecutionIndex;
+        private readonly IExecutionContextAccessor _executionContextAccessor;
 
         private readonly AiRuntimePipelineBackgroundControllerOptions _options;
         private readonly Channel<AiRuntimeQueuedPipelineRun> _queue;
@@ -105,6 +109,7 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
         /// <param name="observability">The runtime observability facade.</param>
         /// <param name="assistanceCandidateStore">The execution assistance candidate store.</param>
         /// <param name="runExecutionIndex">The runtime run execution index.</param>
+        /// <param name="executionContextAccessor">The RBAC execution context accessor used to restore durable snapshots for background runs.</param>
         /// <param name="options">The controller options.</param>
         public AiRuntimePipelineBackgroundController(
             AiDagExecutionEngine engine,
@@ -120,6 +125,7 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
             IAiRuntimeObservability observability,
             IAiExecutionAssistanceCandidateStore assistanceCandidateStore,
             IAiRuntimeRunExecutionIndex runExecutionIndex,
+            IExecutionContextAccessor executionContextAccessor,
             IOptions<AiRuntimePipelineBackgroundControllerOptions> options)
         {
             _engine = engine ?? throw new ArgumentNullException(nameof(engine));
@@ -135,6 +141,7 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
             _observability = observability ?? throw new ArgumentNullException(nameof(observability));
             _assistanceCandidateStore = assistanceCandidateStore ?? throw new ArgumentNullException(nameof(assistanceCandidateStore));
             _runExecutionIndex = runExecutionIndex ?? throw new ArgumentNullException(nameof(runExecutionIndex));
+            _executionContextAccessor = executionContextAccessor ?? throw new ArgumentNullException(nameof(executionContextAccessor));
             _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
 
             var queueCapacity = Math.Max(1, _options.QueueCapacity);
@@ -911,15 +918,30 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
             AiPipelineDefinition? definition =
                 null;
 
+            var previousExecutionContext =
+                _executionContextAccessor.Current;
+
+            var executionContextRestored =
+                false;
+
             try
             {
+                diagnosticPhase =
+                    "restore-execution-context";
+
+                RestoreExecutionContextFromSnapshot(
+                    queuedRun);
+
+                executionContextRestored =
+                    true;
+
                 diagnosticPhase =
                     "mark-creating-execution";
 
                 handle.MarkCreatingExecution();
 
                 _logger.Engine.LogInformation(
-                    $"[AI PIPELINE CONTROLLER] Creating execution. RunId='{handle.RunId}', Pipeline='{request.PipelineName}', RuntimeInstanceId='{_runtimeInstanceIdentity.RuntimeInstanceId}', InputType='{ResolveInputTypeName(request.Input)}'.");
+                    $"[AI PIPELINE CONTROLLER] Creating execution. RunId='{handle.RunId}', Pipeline='{request.PipelineName}', RuntimeInstanceId='{_runtimeInstanceIdentity.RuntimeInstanceId}', TenantId='{request.ExecutionContextSnapshot?.TenantId ?? string.Empty}', ContextKey='{request.ExecutionContextSnapshot?.ContextKey ?? string.Empty}', InputType='{ResolveInputTypeName(request.Input)}'.");
 
                 diagnosticPhase =
                     "resolve-definition";
@@ -1002,6 +1024,9 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
                             ["run.id"] = handle.RunId,
                             ["execution.id"] = created.ExecutionId,
                             ["pipeline.name"] = request.PipelineName,
+                            ["tenant.id"] = request.ExecutionContextSnapshot?.TenantId ?? string.Empty,
+                            ["tenant.group.id"] = request.ExecutionContextSnapshot?.TenantGroupId ?? string.Empty,
+                            ["context.key"] = request.ExecutionContextSnapshot?.ContextKey ?? string.Empty,
                             ["distributed.enabled"] = _options.Distributed.Enabled.ToString(),
                             ["distributed.worker.count"] = _options.Distributed.WorkerCount.ToString(),
                             ["max.local.workers.per.execution"] = _options.MaxLocalWorkersPerExecution.ToString(),
@@ -1118,6 +1143,126 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
 
                 throw;
             }
+            finally
+            {
+                RestorePreviousExecutionContext(
+                    previousExecutionContext,
+                    executionContextRestored);
+            }
+        }
+
+        /// <summary>
+        /// Restores the active RBAC execution context from the durable snapshot carried by the runtime run request.
+        /// </summary>
+        /// <param name="queuedRun">The queued runtime pipeline run.</param>
+        private void RestoreExecutionContextFromSnapshot(
+            AiRuntimeQueuedPipelineRun queuedRun)
+        {
+            ArgumentNullException.ThrowIfNull(queuedRun);
+
+            var snapshot =
+                queuedRun.Request.ExecutionContextSnapshot;
+
+            if (snapshot is null)
+            {
+                throw new InvalidOperationException(
+                    $"No execution context snapshot is available for runtime run '{queuedRun.Handle.RunId}' and pipeline '{queuedRun.Request.PipelineName}'. The shared run must persist ExecutionContextSnapshot in Redis and propagate it to the local runtime queue.");
+            }
+
+            if (string.IsNullOrWhiteSpace(snapshot.TenantId))
+            {
+                throw new InvalidOperationException(
+                    $"Execution context snapshot for runtime run '{queuedRun.Handle.RunId}' has no TenantId.");
+            }
+
+            var context =
+                MapSnapshotToExecutionContext(
+                    snapshot);
+
+            _executionContextAccessor.Set(
+                context);
+        }
+
+        /// <summary>
+        /// Restores the previous RBAC execution context after a background run.
+        /// </summary>
+        /// <param name="previousExecutionContext">The context that was active before the run, if any.</param>
+        /// <param name="executionContextRestored">Whether this controller restored a context for the run.</param>
+        private void RestorePreviousExecutionContext(
+            ExecutionContext? previousExecutionContext,
+            bool executionContextRestored)
+        {
+            if (!executionContextRestored)
+            {
+                return;
+            }
+
+            if (previousExecutionContext is not null)
+            {
+                _executionContextAccessor.Set(
+                    previousExecutionContext);
+
+                return;
+            }
+
+            TryClearExecutionContextAccessor();
+        }
+
+        /// <summary>
+        /// Clears the execution context accessor when the concrete accessor supports a Clear method.
+        /// </summary>
+        /// <remarks>
+        /// The public abstraction only requires Set and Current. Some runtime accessors expose
+        /// Clear to prevent AsyncLocal leakage after background execution. This reflection-based
+        /// call keeps the controller compatible with both accessor shapes.
+        /// </remarks>
+        private void TryClearExecutionContextAccessor()
+        {
+            var clearMethod =
+                _executionContextAccessor
+                    .GetType()
+                    .GetMethod(
+                        "Clear",
+                        BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+                        binder: null,
+                        types: Type.EmptyTypes,
+                        modifiers: null);
+
+            clearMethod?.Invoke(
+                _executionContextAccessor,
+                parameters: null);
+        }
+
+        /// <summary>
+        /// Maps a durable execution context snapshot back to the RBAC execution context model.
+        /// </summary>
+        /// <param name="snapshot">The durable execution context snapshot.</param>
+        /// <returns>The runtime RBAC execution context.</returns>
+        private static ExecutionContext MapSnapshotToExecutionContext(
+            ExecutionContextSnapshot snapshot)
+        {
+            ArgumentNullException.ThrowIfNull(snapshot);
+
+            return new ExecutionContext
+            {
+                ContextKey = snapshot.ContextKey,
+                Project = snapshot.Project,
+                UserId = snapshot.UserId,
+                TenantId = snapshot.TenantId,
+                TenantGroupId = snapshot.TenantGroupId,
+                CurrentNamespace = snapshot.CurrentNamespace,
+                Namespaces = snapshot.Namespaces
+                    .Select(namespaceEntry => new NamespaceEntry
+                    {
+                        Name = namespaceEntry.Name,
+                        Trns = new HashSet<string>(
+                            namespaceEntry.Trns,
+                            StringComparer.Ordinal)
+                    })
+                    .ToList(),
+                InFlightCount = snapshot.InFlightCount,
+                TtlSeconds = snapshot.TtlSeconds
+            };
         }
 
         /// <summary>

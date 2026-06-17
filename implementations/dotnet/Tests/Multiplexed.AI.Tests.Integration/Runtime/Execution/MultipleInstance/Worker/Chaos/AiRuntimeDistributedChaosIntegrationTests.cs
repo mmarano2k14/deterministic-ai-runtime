@@ -1665,20 +1665,19 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution.MultipleInstance.Wo
             try
             {
                 handle = await controller.EnqueueAsync(
-                    new AiRuntimePipelineRunRequest
-                    {
-                        PipelineName = scenario.PipelineName,
-                        PipelineDefinition = scenario.PipelineDefinition,
-                        Input = new
-                        {
-                            candidateId = scenario.CandidateId,
-                            source = scenario.Name,
-                            stepCount = scenario.StepCount,
-                            workerCount = scenario.WorkerCount,
-                            chaos = true,
-                            ledger = true
-                        }
-                    });
+                 AiRuntimeExecutionContextSnapshotTestFixture.CreateRunRequest(
+                     pipelineName: scenario.PipelineName,
+                     pipelineDefinition: scenario.PipelineDefinition,
+                     input: new
+                     {
+                         candidateId = scenario.CandidateId,
+                         source = scenario.Name,
+                         stepCount = scenario.StepCount,
+                         workerCount = scenario.WorkerCount,
+                         chaos = true,
+                         ledger = true
+                     },
+                     source: scenario.Name));
 
                 Assert.NotNull(handle);
 

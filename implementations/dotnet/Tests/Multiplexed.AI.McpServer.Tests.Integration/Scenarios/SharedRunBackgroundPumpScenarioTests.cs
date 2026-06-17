@@ -69,7 +69,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
                 .CreateConfiguredClientAsync(
                     host,
                     client,
-                    RequestedBy)
+                    RequestedBy, 
+                    tenantId: TenantId)
                 .ConfigureAwait(false);
 
             var pipelineName =
@@ -112,7 +113,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
             await using var fixture =
                 new GenericMcpRuntimeFixture(
                     controlPlaneSettings,
-                    runtimeInstanceSettings);
+                    runtimeInstanceSettings,
+                    rbacTenantId: TenantId);
 
             await fixture
                 .InitializeAsync()
@@ -162,7 +164,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
                 .CreateConfiguredClientAsync(
                     host,
                     client,
-                    RequestedBy)
+                    RequestedBy,
+                    tenantId: TenantId)
                 .ConfigureAwait(false);
 
             var pipelineName =
@@ -221,7 +224,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
             await using var fixture =
                 new GenericMcpRuntimeFixture(
                     controlPlaneSettings,
-                    runtimeInstanceSettings);
+                    runtimeInstanceSettings,
+                    rbacTenantId: TenantId);
 
             await fixture
                 .InitializeAsync()
@@ -287,7 +291,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
                 .CreateConfiguredClientAsync(
                     host,
                     client,
-                    RequestedBy)
+                    RequestedBy,
+                    tenantId: TenantId)
                 .ConfigureAwait(false);
 
             var pipelineName =
@@ -373,7 +378,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
             await using var fixture =
                 new GenericMcpRuntimeFixture(
                     controlPlaneSettings,
-                    runtimeInstanceSettings);
+                    runtimeInstanceSettings,
+                    rbacTenantId: TenantId);
 
             await fixture
                 .InitializeAsync()
@@ -441,7 +447,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
                 .CreateConfiguredClientAsync(
                     host,
                     client,
-                    RequestedBy)
+                    RequestedBy,
+                    tenantId: TenantId)
                 .ConfigureAwait(false);
 
             var pipelineName =
@@ -530,7 +537,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
             await using var fixture =
                 new GenericMcpRuntimeFixture(
                     controlPlaneSettings,
-                    runtimeInstanceSettings);
+                    runtimeInstanceSettings,
+                    rbacTenantId: TenantId);
 
             await fixture
                 .InitializeAsync()

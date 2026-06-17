@@ -54,15 +54,15 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution.MultipleInstance.Wo
                     .ConfigureAwait(false);
 
                 handle = await controller.EnqueueAsync(
-                    new AiRuntimePipelineRunRequest
-                    {
-                        PipelineName = pipelineName,
-                        PipelineDefinition = CreatePipelineDefinition(pipelineName),
-                        Input = new
+                    AiRuntimeExecutionContextSnapshotTestFixture.CreateRunRequest(
+                        pipelineName: pipelineName,
+                        pipelineDefinition: CreatePipelineDefinition(pipelineName),
+                        input: new
                         {
                             source = "queue-control-test"
-                        }
-                    }).ConfigureAwait(false);
+                        },
+                        source: "queue-control-test"))
+                    .ConfigureAwait(false);
 
                 Assert.NotNull(handle);
                 Assert.Equal(AiRuntimeWorkerRunStatus.Queued, handle.Status);
@@ -121,18 +121,18 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution.MultipleInstance.Wo
             try
             {
                 handle = await controller.EnqueueAsync(
-                    new AiRuntimePipelineRunRequest
-                    {
-                        PipelineName = pipelineName,
-                        PipelineDefinition = CreatePipelineDefinition(
+                    AiRuntimeExecutionContextSnapshotTestFixture.CreateRunRequest(
+                        pipelineName: pipelineName,
+                        pipelineDefinition: CreatePipelineDefinition(
                             pipelineName,
                             signalKey,
                             delayMs: 300),
-                        Input = new
+                        input: new
                         {
                             source = "queue-control-running-test"
-                        }
-                    }).ConfigureAwait(false);
+                        },
+                        source: "queue-control-running-test"))
+                    .ConfigureAwait(false);
 
                 Assert.NotNull(handle);
 
@@ -193,15 +193,15 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution.MultipleInstance.Wo
                     .ConfigureAwait(false);
 
                 handle = await controller.EnqueueAsync(
-                    new AiRuntimePipelineRunRequest
-                    {
-                        PipelineName = pipelineName,
-                        PipelineDefinition = CreatePipelineDefinition(pipelineName),
-                        Input = new
+                    AiRuntimeExecutionContextSnapshotTestFixture.CreateRunRequest(
+                        pipelineName: pipelineName,
+                        pipelineDefinition: CreatePipelineDefinition(pipelineName),
+                        input: new
                         {
                             source = "queue-control-cancel-queued-test"
-                        }
-                    }).ConfigureAwait(false);
+                        },
+                        source: "queue-control-cancel-queued-test"))
+                    .ConfigureAwait(false);
 
                 Assert.NotNull(handle);
                 Assert.Equal(AiRuntimeWorkerRunStatus.Queued, handle.Status);
@@ -300,18 +300,18 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution.MultipleInstance.Wo
             try
             {
                 handle = await controller.EnqueueAsync(
-                    new AiRuntimePipelineRunRequest
-                    {
-                        PipelineName = pipelineName,
-                        PipelineDefinition = CreatePipelineDefinition(
+                    AiRuntimeExecutionContextSnapshotTestFixture.CreateRunRequest(
+                        pipelineName: pipelineName,
+                        pipelineDefinition: CreatePipelineDefinition(
                             pipelineName,
                             signalKey,
                             delayMs: 300),
-                        Input = new
+                        input: new
                         {
                             source = "queue-control-cancel-running-test"
-                        }
-                    }).ConfigureAwait(false);
+                        },
+                        source: "queue-control-cancel-running-test"))
+                    .ConfigureAwait(false);
 
                 Assert.NotNull(handle);
 
@@ -383,18 +383,18 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution.MultipleInstance.Wo
             try
             {
                 firstHandle = await controller.EnqueueAsync(
-                    new AiRuntimePipelineRunRequest
-                    {
-                        PipelineName = firstPipelineName,
-                        PipelineDefinition = CreatePipelineDefinition(
+                    AiRuntimeExecutionContextSnapshotTestFixture.CreateRunRequest(
+                        pipelineName: firstPipelineName,
+                        pipelineDefinition: CreatePipelineDefinition(
                             firstPipelineName,
                             firstSignalKey,
                             delayMs: 300),
-                        Input = new
+                        input: new
                         {
                             source = "queue-control-hot-add-first"
-                        }
-                    }).ConfigureAwait(false);
+                        },
+                        source: "queue-control-hot-add-first"))
+                    .ConfigureAwait(false);
 
                 Assert.NotNull(firstHandle);
 
@@ -403,15 +403,15 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution.MultipleInstance.Wo
                     TimeSpan.FromSeconds(15));
 
                 secondHandle = await controller.EnqueueAsync(
-                    new AiRuntimePipelineRunRequest
+                AiRuntimeExecutionContextSnapshotTestFixture.CreateRunRequest(
+                    pipelineName: secondPipelineName,
+                    pipelineDefinition: CreatePipelineDefinition(secondPipelineName),
+                    input: new
                     {
-                        PipelineName = secondPipelineName,
-                        PipelineDefinition = CreatePipelineDefinition(secondPipelineName),
-                        Input = new
-                        {
-                            source = "queue-control-hot-add-second"
-                        }
-                    }).ConfigureAwait(false);
+                        source = "queue-control-hot-add-second"
+                    },
+                    source: "queue-control-hot-add-second"))
+                .ConfigureAwait(false);
 
                 Assert.NotNull(secondHandle);
                 Assert.Equal(AiRuntimeWorkerRunStatus.Queued, secondHandle.Status);
@@ -484,26 +484,26 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution.MultipleInstance.Wo
                     .ConfigureAwait(false);
 
                 firstHandle = await controller.EnqueueAsync(
-                    new AiRuntimePipelineRunRequest
-                    {
-                        PipelineName = firstPipelineName,
-                        PipelineDefinition = CreatePipelineDefinition(firstPipelineName),
-                        Input = new
+                    AiRuntimeExecutionContextSnapshotTestFixture.CreateRunRequest(
+                        pipelineName: firstPipelineName,
+                        pipelineDefinition: CreatePipelineDefinition(firstPipelineName),
+                        input: new
                         {
                             source = "queue-control-hot-add-paused-first"
-                        }
-                    }).ConfigureAwait(false);
+                        },
+                        source: "queue-control-hot-add-paused-first"))
+                    .ConfigureAwait(false);
 
                 secondHandle = await controller.EnqueueAsync(
-                    new AiRuntimePipelineRunRequest
-                    {
-                        PipelineName = secondPipelineName,
-                        PipelineDefinition = CreatePipelineDefinition(secondPipelineName),
-                        Input = new
+                    AiRuntimeExecutionContextSnapshotTestFixture.CreateRunRequest(
+                        pipelineName: secondPipelineName,
+                        pipelineDefinition: CreatePipelineDefinition(secondPipelineName),
+                        input: new
                         {
                             source = "queue-control-hot-add-paused-second"
-                        }
-                    }).ConfigureAwait(false);
+                        },
+                        source: "queue-control-hot-add-paused-second"))
+                    .ConfigureAwait(false);
 
                 Assert.NotNull(firstHandle);
                 Assert.NotNull(secondHandle);

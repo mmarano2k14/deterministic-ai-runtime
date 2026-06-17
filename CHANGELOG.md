@@ -6,6 +6,352 @@ This project follows a deterministic runtime and observability model designed fo
 
 ---
 
+## [1.0.6.4] - 2026-06-17 — Multi-tenant RBAC / ExecutionContextSnapshot / MCP Integration Tests
+
+## Summary
+
+This update finalizes the propagation of the RBAC execution context across distributed runtime execution paths.
+
+The main issue fixed was that the control plane correctly captured and stored an `ExecutionContextSnapshot`, but runtime workers processing queued or dispatched runs did not always restore the active RBAC execution context before creating the durable execution.
+
+This caused failures such as:
+
+```text
+No active RBAC context is available.
+```
+
+The fix keeps the architecture strict:
+
+```text
+RBAC context
+-> ExecutionContextSnapshot
+-> Redis shared run / shared queue
+-> runtime dispatch request
+-> local runtime queue
+-> background controller
+-> restored active execution context
+-> AiDagExecutionCreator
+```
+
+No fallback tenant, no hidden default context, and no relaxation inside `AiDagExecutionCreator`.
+
+---
+
+## 1. Propagated ExecutionContextSnapshot into runtime run requests
+
+### Updated
+
+`AiRuntimePipelineRunRequest`
+
+### Change
+
+Added:
+
+```csharp
+public ExecutionContextSnapshot? ExecutionContextSnapshot { get; init; }
+```
+
+### Purpose
+
+The local runtime queue request can now carry the durable execution context captured by the control plane.
+
+This allows background runtime execution to restore the RBAC context before creating the execution.
+
+---
+
+## 2. Attached ExecutionContextSnapshot when submitting shared runs
+
+### Updated
+
+`AiSharedRuntimeController`
+
+### Change
+
+Before creating the shared run record and queue item, the controller now copies the captured `ExecutionContextSnapshot` into the nested `RunRequest`.
+
+### Result
+
+The same tenant/context snapshot is now present in:
+
+```text
+AiSharedRunRecord.ExecutionContextSnapshot
+AiSharedRunRecord.RunRequest.ExecutionContextSnapshot
+AiSharedQueueItem.ExecutionContextSnapshot
+```
+
+This makes Redis the durable source of truth for tenant-aware distributed execution.
+
+---
+
+## 3. Preserved ExecutionContextSnapshot during local shared runtime dispatch
+
+### Updated
+
+`LocalAiSharedRuntimeInstance`
+
+### Change
+
+Before enqueueing into the local runtime queue, the local shared runtime instance now ensures the `RunRequest` contains the shared run execution context snapshot.
+
+### Purpose
+
+This closes the gap between:
+
+```text
+SharedRun stored in Redis
+-> Dispatch to local runtime instance
+-> Local runtime queue request
+```
+
+Without this, the background controller could receive a run request without a context snapshot.
+
+---
+
+## 4. Restored RBAC execution context inside the runtime background controller
+
+### Updated
+
+`AiRuntimePipelineBackgroundController`
+
+### Change
+
+The background controller now restores the active RBAC execution context from:
+
+```csharp
+request.ExecutionContextSnapshot
+```
+
+before calling:
+
+```csharp
+CreateExecutionAsync(...)
+```
+
+### Result
+
+`AiDagExecutionCreator` can now safely access the active execution context through the accessor.
+
+This fixed the runtime failure:
+
+```text
+No active RBAC context is available.
+```
+
+### Design preserved
+
+The execution creator remains strict. It does not create fake/default contexts and does not silently fallback to a default tenant.
+
+---
+
+## 5. Fixed MCP integration fixtures to pass the tenant into RBAC context creation
+
+### Updated test areas
+
+- Shared run scenario tests
+- Shared run scale-out scenario tests
+- Shared run heavy dispatch scenario tests
+- Shared run background pump scenario tests
+- Runtime instance empty registry test
+
+### Change
+
+Old pattern:
+
+```csharp
+CreateConfiguredClientAsync(
+    host,
+    client,
+    RequestedBy)
+```
+
+New pattern:
+
+```csharp
+CreateConfiguredClientAsync(
+    host,
+    client,
+    RequestedBy,
+    tenantId: TenantId)
+```
+
+### Purpose
+
+The submit requests already used:
+
+```csharp
+TenantId = "test-tenant"
+```
+
+but the RBAC context could still be created with a default tenant.
+
+After this fix, the tenant is aligned across:
+
+```text
+SubmitRequest.TenantId
+RBAC context TenantId
+ExecutionContextSnapshot.TenantId
+Redis SharedRun TenantId
+Redis SharedQueue TenantId
+ScaleOutRequest TenantId
+```
+
+---
+
+## 6. Fixed HTTP runtime fixture tenant propagation
+
+### Updated
+
+`GenericMcpRuntimeFixture` usages in HTTP runtime tests.
+
+### Change
+
+Old pattern:
+
+```csharp
+new GenericMcpRuntimeFixture(
+    controlPlaneSettings,
+    runtimeInstanceSettings)
+```
+
+New pattern:
+
+```csharp
+new GenericMcpRuntimeFixture(
+    controlPlaneSettings,
+    runtimeInstanceSettings,
+    rbacTenantId: TenantId)
+```
+
+### Purpose
+
+HTTP control-plane/runtime-instance scenarios now use the same tenant-aware RBAC context as local scenarios.
+
+This keeps HTTP dispatch aligned with the same multi-tenant execution model.
+
+---
+
+## 7. Fixed health endpoint fixture after RBAC/auth middleware activation
+
+### Updated
+
+`McpServerFixture`
+
+### Problem
+
+The health test failed because the application now starts authentication middleware, but the old fixture did not register an authentication scheme.
+
+Failure:
+
+```text
+Unable to resolve service for type
+'Microsoft.AspNetCore.Authentication.IAuthenticationSchemeProvider'
+while attempting to activate 'AuthenticationMiddleware'.
+```
+
+### Change
+
+The old `McpServerTestHost` fixture was replaced with a `GenericMcpServerTestHost`-based fixture compatible with the RBAC/auth setup used by the other MCP integration tests.
+
+### Additional fix
+
+The same runtime instance id is now used consistently for:
+
+```text
+AiRuntimeInstanceRegistration:RuntimeInstanceId
+AiEngine:RuntimeInstanceId
+AiEngine:PipelineBackgroundController:RuntimeInstanceId
+AiEngine:RuntimeInstanceWorker:RuntimeInstanceId
+```
+
+This fixed the validation error:
+
+```text
+Runtime instance id mismatch.
+```
+
+---
+
+## 8. Made cancellation assertion tolerant to fast terminal transition
+
+### Updated
+
+Long-running cancellation test.
+
+### Problem
+
+The test expected:
+
+```text
+Cancelling
+```
+
+but the execution could already have reached:
+
+```text
+Cancelled
+```
+
+by the time the status was read.
+
+### Change
+
+Old assertion:
+
+```csharp
+Assert.Equal(
+    "Cancelling",
+    cancellingStatus.State?.Status.ToString());
+```
+
+New assertion:
+
+```csharp
+var cancellationStatus =
+    cancellingStatus.State?.Status.ToString();
+
+Assert.Contains(
+    cancellationStatus,
+    new[]
+    {
+        "Cancelling",
+        "Cancelled"
+    });
+```
+
+### Purpose
+
+This matches the real lifecycle behavior: `Cancelling` is transitional and can legitimately become `Cancelled` very quickly.
+
+---
+
+## Final result
+
+The runtime now correctly supports tenant-aware distributed execution across:
+
+```text
+MCP request
+RBAC context store
+Control plane
+Redis shared run store
+Redis shared queue
+Scale-out request store
+HTTP/local runtime dispatch
+Local runtime queue
+Background execution controller
+AiDagExecutionCreator
+Ledger / trace / replay
+```
+
+The key architectural guarantee is now preserved:
+
+```text
+Tenant identity comes from ExecutionContextSnapshot.
+ExecutionContextSnapshot is captured once, persisted, transported, and restored.
+No runtime worker creates executions without an active RBAC execution context.
+```
+
+---
+
 ## [1.0.6.3] - 2026-06-17 - MCP RBAC Tool Authorization
 
 ### Added

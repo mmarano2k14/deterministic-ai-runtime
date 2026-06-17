@@ -104,12 +104,13 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
                 host.Services);
 
             var mcp =
-            await McpRbacTestClientHelper
-                .CreateConfiguredClientAsync(
-                    host,
-                    client,
-                    RequestedBy)
-                .ConfigureAwait(false);
+                await McpRbacTestClientHelper
+                    .CreateConfiguredClientAsync(
+                        host,
+                        client,
+                        RequestedBy,
+                        tenantId: TenantId)
+                    .ConfigureAwait(false);
 
             var scaleOutRequestStore =
                 host.Services.GetRequiredService<IAiRuntimeScaleOutRequestStore>();
@@ -280,12 +281,13 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
                 host.Services);
 
             var mcp =
-            await McpRbacTestClientHelper
-                .CreateConfiguredClientAsync(
-                    host,
-                    client,
-                    RequestedBy)
-                .ConfigureAwait(false);
+                await McpRbacTestClientHelper
+                    .CreateConfiguredClientAsync(
+                        host,
+                        client,
+                        RequestedBy,
+                        tenantId: TenantId)
+                    .ConfigureAwait(false);
 
             var sharedQueue =
                 host.Services.GetRequiredService<IAiSharedQueue>();
