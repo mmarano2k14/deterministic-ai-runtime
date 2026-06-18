@@ -9,6 +9,7 @@ using Multiplexed.Abstractions.AI.Runtime.Execution.Instance.Worker;
 using Multiplexed.AI.Runtime.ControlPlane.Admission;
 using Multiplexed.AI.Runtime.ControlPlane.Admission.Reservations;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Capacity;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Isolation;
 
 namespace Multiplexed.AI.Tests.Unit.ControlPlane.Admission
 {
@@ -291,6 +292,136 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.Admission
         }
 
         [Fact]
+        public async Task AdmitAsync_Should_Use_Tenant_MaxRuntimeInstances_For_Dedicated_Tenant()
+        {
+            var registry = new FakeRuntimeInstanceRegistry(
+                CreateInstance(
+                    "tenant-a-runtime-1",
+                    AiRuntimeInstanceStatus.Busy,
+                    canAcceptRun: false,
+                    queuedRunCount: 8,
+                    runningRunCount: 2),
+                CreateInstance(
+                    "tenant-a-runtime-2",
+                    AiRuntimeInstanceStatus.Busy,
+                    canAcceptRun: false,
+                    queuedRunCount: 8,
+                    runningRunCount: 2),
+                CreateInstance(
+                    "tenant-a-runtime-3",
+                    AiRuntimeInstanceStatus.Busy,
+                    canAcceptRun: false,
+                    queuedRunCount: 8,
+                    runningRunCount: 2));
+
+            var controller = CreateController(
+                registry,
+                new AiRunAdmissionOptions
+                {
+                    Enabled = true,
+                    EnableScaleOutRequest = true,
+                    EnableGlobalQueueFallback = true,
+                    RejectWhenNoCapacity = true,
+                    MaxInstanceCount = 50
+                });
+
+            var decision = await controller.AdmitAsync(
+                CreateRequest(
+                    tenantId: "tenant-a"));
+
+            Assert.NotEqual(
+                AiRunAdmissionDecisionType.RequestScaleOut,
+                decision.DecisionType);
+
+            Assert.Equal(
+                AiRunAdmissionDecisionType.QueueGlobally,
+                decision.DecisionType);
+
+            Assert.True(
+                decision.ShouldQueueGlobally);
+
+            Assert.True(
+                decision.Accepted);
+
+            Assert.Equal(
+                3,
+                decision.CurrentInstanceCount);
+
+            Assert.Equal(
+                3,
+                decision.MaxInstanceCount);
+
+            Assert.True(
+                decision.Metadata.TryGetValue(
+                    "max.instance.count",
+                    out var maxInstanceCount));
+
+            Assert.Equal(
+                "3",
+                maxInstanceCount);
+        }
+
+        [Fact]
+        public async Task AdmitAsync_Should_Request_ScaleOut_When_Dedicated_Tenant_Is_Below_MaxRuntimeInstances()
+        {
+            var registry = new FakeRuntimeInstanceRegistry(
+                CreateInstance(
+                    "tenant-a-runtime-1",
+                    AiRuntimeInstanceStatus.Busy,
+                    canAcceptRun: false,
+                    queuedRunCount: 8,
+                    runningRunCount: 2),
+                CreateInstance(
+                    "tenant-a-runtime-2",
+                    AiRuntimeInstanceStatus.Busy,
+                    canAcceptRun: false,
+                    queuedRunCount: 8,
+                    runningRunCount: 2));
+
+            var controller = CreateController(
+                registry,
+                new AiRunAdmissionOptions
+                {
+                    Enabled = true,
+                    EnableScaleOutRequest = true,
+                    EnableGlobalQueueFallback = true,
+                    RejectWhenNoCapacity = true,
+                    MaxInstanceCount = 50
+                });
+
+            var decision = await controller.AdmitAsync(
+                CreateRequest(
+                    tenantId: "tenant-a"));
+
+            Assert.Equal(
+                AiRunAdmissionDecisionType.RequestScaleOut,
+                decision.DecisionType);
+
+            Assert.True(
+                decision.ShouldRequestScaleOut);
+
+            Assert.True(
+                decision.Accepted);
+
+            Assert.Equal(
+                2,
+                decision.CurrentInstanceCount);
+
+            Assert.Equal(
+                3,
+                decision.MaxInstanceCount);
+
+            Assert.True(
+                decision.Metadata.TryGetValue(
+                    "max.instance.count",
+                    out var maxInstanceCount));
+
+            Assert.Equal(
+                "3",
+                maxInstanceCount);
+        }
+
+        [Fact]
         public async Task AdmitAsync_Should_Throw_When_Request_Is_Null()
         {
             var registry = new FakeRuntimeInstanceRegistry();
@@ -326,7 +457,8 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.Admission
                 registry,
                 reservationStore ?? new InMemoryAiRuntimeAdmissionReservationStore(),
                 capacityStore,
-                Options.Create(options ?? new AiRunAdmissionOptions()), 
+                new HardcodedAiTenantRuntimeSettingsProvider(),
+                Options.Create(options ?? new AiRunAdmissionOptions()),
                 NullLogger<AiRunAdmissionController>.Instance);
         }
 
@@ -366,11 +498,13 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.Admission
         }
 
         private static AiRunAdmissionRequest CreateRequest(
-            string? preferredRuntimeInstanceId = null)
+            string? preferredRuntimeInstanceId = null,
+            string? tenantId = null)
         {
             return new AiRunAdmissionRequest
             {
                 PreferredRuntimeInstanceId = preferredRuntimeInstanceId,
+                TenantId = tenantId,
                 RunRequest = new AiRuntimePipelineRunRequest
                 {
                     PipelineName = "pipeline-1"
