@@ -124,14 +124,14 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Isolation
         }
 
         [Fact]
-        public void IsVisible_Should_Return_True_For_Hybrid_Instance_When_Fallback_Is_Allowed_For_Hybrid_Tenant()
+        public void IsVisible_Should_Return_True_For_Shared_Instance_When_Hybrid_Tenant_Allows_Fallback()
         {
             var evaluator = CreateEvaluator();
 
             var descriptor = new AiRuntimeInstanceVisibilityDescriptor
             {
-                RuntimeInstanceId = "hybrid-shared-runtime-1",
-                IsolationMode = AiRuntimeInstanceIsolationMode.Hybrid,
+                RuntimeInstanceId = "shared-runtime-1",
+                IsolationMode = AiRuntimeInstanceIsolationMode.Shared,
                 AllowSharedFallback = true
             };
 

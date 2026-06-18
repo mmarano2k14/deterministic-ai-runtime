@@ -1307,6 +1307,7 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedController
                 new FakeRunAdmissionController(
                     assignedRuntimeInstanceId: runtimeInstance.RuntimeInstanceId), 
                 new InMemoryAiRuntimeAdmissionReservationStore(),
+                new FakeExecutionContextAccessor(),
                 NullLogger<AiSharedQueueDispatcher>.Instance);
 
             var pump = new AiSharedQueuePump(

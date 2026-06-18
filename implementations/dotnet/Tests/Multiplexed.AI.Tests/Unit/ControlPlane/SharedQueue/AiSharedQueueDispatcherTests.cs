@@ -25,6 +25,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
                 new FakeSharedRunDispatcher(),
                 new FakeRunAdmissionController(),
                 new InMemoryAiRuntimeAdmissionReservationStore(),
+                new FakeExecutionContextAccessor(),
                 NullLogger<AiSharedQueueDispatcher>.Instance);
 
             var result = await dispatcher.DispatchNextAsync(new AiSharedQueueDispatchRequest
@@ -59,6 +60,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
                 runDispatcher,
                 fakeAdmission,
                 reservationStore,
+                new FakeExecutionContextAccessor(),
                 NullLogger<AiSharedQueueDispatcher>.Instance);
 
             var result = await dispatcher.DispatchNextAsync(new AiSharedQueueDispatchRequest
@@ -117,7 +119,8 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
                 store,
                 new FakeSharedRunDispatcher(),
                 new FakeRunAdmissionController(),
-                new InMemoryAiRuntimeAdmissionReservationStore(), 
+                new InMemoryAiRuntimeAdmissionReservationStore(),
+                new FakeExecutionContextAccessor(), 
                 NullLogger<AiSharedQueueDispatcher>.Instance);
 
             var result = await dispatcher.DispatchNextAsync(new AiSharedQueueDispatchRequest
@@ -166,6 +169,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
                 runDispatcher,
                 new FakeRunAdmissionController(),
                 new InMemoryAiRuntimeAdmissionReservationStore(),
+                new FakeExecutionContextAccessor(),     
                 NullLogger<AiSharedQueueDispatcher>.Instance);
 
             var result = await dispatcher.DispatchNextAsync(new AiSharedQueueDispatchRequest
@@ -222,7 +226,9 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
                 store,
                 new FakeSharedRunDispatcher(),
                 new FakeRunAdmissionController(),
-                new InMemoryAiRuntimeAdmissionReservationStore(), NullLogger<AiSharedQueueDispatcher>.Instance);
+                new InMemoryAiRuntimeAdmissionReservationStore(),
+                new FakeExecutionContextAccessor(),
+                NullLogger<AiSharedQueueDispatcher>.Instance);
 
             var result = await dispatcher.DispatchNextAsync(new AiSharedQueueDispatchRequest
             {
@@ -270,7 +276,8 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
                 store,
                 runDispatcher,
                 admissionController,
-                new InMemoryAiRuntimeAdmissionReservationStore(), 
+                new InMemoryAiRuntimeAdmissionReservationStore(),
+                new FakeExecutionContextAccessor(),
                 NullLogger<AiSharedQueueDispatcher>.Instance);
 
             var result = await dispatcher.DispatchNextAsync(new AiSharedQueueDispatchRequest
@@ -299,6 +306,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
                 new FakeSharedRunDispatcher(),
                 new FakeRunAdmissionController(),
                 new InMemoryAiRuntimeAdmissionReservationStore(),
+                new FakeExecutionContextAccessor(),
                 NullLogger<AiSharedQueueDispatcher>.Instance);
 
             await Assert.ThrowsAsync<ArgumentNullException>(() =>
@@ -313,7 +321,8 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
                 new InMemoryAiSharedRunStore(),
                 new FakeSharedRunDispatcher(),
                 new FakeRunAdmissionController(), 
-                new InMemoryAiRuntimeAdmissionReservationStore(), 
+                new InMemoryAiRuntimeAdmissionReservationStore(),
+                new FakeExecutionContextAccessor(),
                 NullLogger<AiSharedQueueDispatcher>.Instance);
 
             await Assert.ThrowsAsync<ArgumentException>(() =>
