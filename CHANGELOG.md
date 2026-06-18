@@ -6,6 +6,477 @@ This project follows a deterministic runtime and observability model designed fo
 
 ---
 
+## [1.0.6.7] - 2026-06-18 — Multi-Tenant Control Plane Isolation
+
+## Scope
+
+This changelog summarizes the work completed around tenant-aware MCP control-plane execution, runtime isolation, scale-out, dispatch, and test stabilization.
+
+The main objective was to make the control plane and runtime path tenant-aware without breaking the existing local, shared queue, Redis, retry, and execution-control flows.
+
+---
+
+## 1. Tenant Runtime Isolation Model
+
+### Added / validated isolation modes
+
+The runtime control plane now supports three tenant isolation modes:
+
+- `Shared`
+- `Dedicated`
+- `Hybrid`
+
+### Tenant runtime settings
+
+A hardcoded tenant settings provider is currently used as the foundation for future configurable tenant settings.
+
+Current tenant behavior:
+
+```text
+tenant-a
+  IsolationMode = Dedicated
+  PreferDedicatedCapacity = true
+  AllowSharedFallback = false
+  MaxRuntimeInstances = 3
+  RuntimeInstanceIdPrefix = tenant-a-runtime
+  WorkerCountPerInstance = 10
+  MaxConcurrentRunsPerInstance = 5
+  LocalQueueCapacity = 500
+
+tenant-b
+  IsolationMode = Hybrid
+  PreferDedicatedCapacity = true
+  AllowSharedFallback = true
+  MaxRuntimeInstances = 2
+  RuntimeInstanceIdPrefix = tenant-b-runtime
+  WorkerCountPerInstance = 5
+  MaxConcurrentRunsPerInstance = 3
+  LocalQueueCapacity = 250
+
+default / test-tenant / unknown tenant
+  IsolationMode = Shared
+  PreferDedicatedCapacity = false
+  AllowSharedFallback = true
+  MaxRuntimeInstances = 1
+  RuntimeInstanceIdPrefix = runtime-instance
+  WorkerCountPerInstance = 10
+  MaxConcurrentRunsPerInstance = 3
+```
+
+### Key architectural rule
+
+```text
+ContextKey = volatile RBAC / correlation / debug context
+ExecutionContextSnapshot.TenantId = durable tenant boundary
+```
+
+Tenant isolation must rely on `ExecutionContextSnapshot.TenantId`, not metadata and not only `ContextKey`.
+
+---
+
+## 2. Execution Context Snapshot Propagation
+
+### Completed
+
+The execution path now requires and preserves `ExecutionContextSnapshot` across async and distributed boundaries.
+
+Important paths now carry or restore the snapshot:
+
+```text
+MCP request
+  -> RBAC ExecutionContext
+  -> ExecutionContextSnapshot
+  -> SharedRunRecord
+  -> SharedQueueDispatcher
+  -> Runtime dispatch
+  -> Runtime local queue
+  -> BackgroundController
+  -> DAG execution
+```
+
+### Fixed background dispatch context restoration
+
+`AiSharedQueueDispatcher` now restores the tenant execution context from the shared run snapshot before running admission and dispatch logic.
+
+This fixed the issue where background dispatch had no tenant context and therefore saw zero tenant-visible runtime instances.
+
+### Updated unit test fixtures
+
+Added / updated a fake execution context accessor for tests that directly instantiate `AiSharedQueueDispatcher`.
+
+---
+
+## 3. Runtime Instance Visibility Rules
+
+### Fixed visibility evaluator rules
+
+The visibility model was tightened.
+
+Final rules:
+
+```text
+Shared runtime
+  - visible to Shared tenants
+  - visible to Hybrid/Dedicated tenants only if their tenant settings allow shared fallback
+
+Dedicated runtime
+  - visible only when TenantId or TenantGroupId matches
+
+Hybrid runtime
+  - visible only when TenantId or TenantGroupId matches
+  - AllowSharedFallback does not make an unowned Hybrid runtime visible
+```
+
+### Corrected old unsafe test expectation
+
+An old test expected an unowned Hybrid runtime to be visible to a Hybrid tenant when fallback was allowed.
+
+That was corrected because fallback means:
+
+```text
+Hybrid tenant may fall back to Shared runtime
+```
+
+It does **not** mean:
+
+```text
+Hybrid tenant may use any unowned Hybrid runtime
+```
+
+---
+
+## 4. Redis Runtime Registry and Capacity Filtering
+
+### Runtime registry filtering
+
+`RedisRuntimeInstanceRegistry.ListAsync` now filters runtime instances based on the current tenant visibility rules.
+
+Validated behavior:
+
+```text
+tenant-a Dedicated
+  sees tenant-a dedicated runtime only
+
+tenant-b Hybrid
+  sees tenant-b hybrid runtime and shared runtime when fallback is allowed
+
+shared / test-tenant
+  sees shared runtime only
+```
+
+### Runtime capacity filtering
+
+`RedisRuntimeInstanceCapacityStore.ListAsync` and `GetAsync` now respect the same tenant visibility model.
+
+This ensures admission cannot assign capacity from an invisible tenant runtime.
+
+---
+
+## 5. Admission Controller Tenant-Aware Assignment
+
+### Completed
+
+`AiRunAdmissionController` now assigns only tenant-visible runtime capacity.
+
+Validated cases:
+
+```text
+tenant-a Dedicated
+  - ignores tenant-b capacity
+  - ignores shared capacity when fallback disabled
+  - requests dedicated tenant-a scale-out if no visible capacity exists
+
+tenant-b Hybrid
+  - can use tenant-b hybrid capacity
+  - can fall back to shared capacity when allowed
+
+shared / test-tenant
+  - uses shared runtime capacity
+  - does not see tenant-a or tenant-b runtime capacity
+```
+
+### Scale-out decision includes tenant runtime settings
+
+When admission cannot assign capacity, the `RequestScaleOut` decision now preserves the relevant tenant runtime settings.
+
+---
+
+## 6. Tenant-Aware Scale-Out Request Persistence
+
+### Store-backed publisher
+
+`StoreBackedAiRuntimeScaleOutRequestPublisher` now copies strong tenant runtime fields into `AiRuntimeScaleOutRequestRecord`.
+
+Persisted fields include:
+
+```text
+TenantId
+TenantGroupId
+IsolationMode
+PreferDedicatedCapacity
+AllowSharedFallback
+MaxRuntimeInstances
+RuntimeInstanceIdPrefix
+WorkerCountPerInstance
+MaxConcurrentRunsPerInstance
+LocalQueueCapacity
+```
+
+### Redis scale-out request store fixed
+
+`RedisAiRuntimeScaleOutRequestStore` was updated to round-trip all tenant runtime fields.
+
+This fixed loss of tenant settings when a scale-out request was persisted and later read by the watcher/provider.
+
+---
+
+## 7. Local Runtime Scaler Tenant Scope Fix
+
+### Problem fixed
+
+`AiLocalRuntimeInstanceScaler` previously used the global host count when satisfying scale-out requests.
+
+That caused this bug:
+
+```text
+Shared runtime already exists: runtime-instance-1
+Tenant-a Dedicated requests one runtime
+Scaler sees global hosts.Count = 1
+Scaler incorrectly noops and returns shared runtime
+```
+
+### Fix
+
+The scaler now counts matching hosts by tenant-aware runtime prefix instead of global host count.
+
+Examples:
+
+```text
+runtime-instance-*     -> shared/default runtime pool
+tenant-a-runtime-*    -> tenant-a dedicated pool
+tenant-b-runtime-*    -> tenant-b hybrid pool
+```
+
+### Result
+
+Dedicated and Hybrid tenants now get their own runtime instance pools when required.
+
+---
+
+## 8. Shared Queue Dispatch Flow
+
+### Fixed flow
+
+The shared queue dispatcher now performs the correct tenant-aware sequence:
+
+```text
+Load queue item
+Load SharedRunRecord
+Restore ExecutionContextSnapshot
+Run admission with tenant-visible registry/capacity
+Reserve selected runtime capacity
+Dispatch to selected runtime instance
+Mark shared run dispatched
+Restore/clear previous execution context
+```
+
+### Validated paths
+
+```text
+Shared/default tenant
+  -> runtime-instance-1
+  -> scale-out + requeue + dispatch + execution OK
+
+tenant-a Dedicated
+  -> tenant-a-runtime-1
+  -> no shared fallback
+  -> scale-out + dispatch + execution OK
+
+tenant-b Hybrid
+  -> tenant-b-runtime-1 when dedicated/hybrid capacity is needed
+  -> runtime-instance-1 when shared fallback is available and allowed
+  -> dispatch + execution OK
+```
+
+---
+
+## 9. Runtime Local Queue / Background Controller Snapshot Requirement
+
+### Behavior tightened
+
+`AiRuntimePipelineBackgroundController` now fails fast if a queued runtime run has no `ExecutionContextSnapshot`.
+
+This protects tenant-aware execution from running without a durable tenant boundary.
+
+### Tests updated
+
+Legacy direct runtime integration tests were updated to provide a minimal `ExecutionContextSnapshot` when enqueueing directly into the runtime controller.
+
+---
+
+## 10. Execution Control Finalization Test Stabilization
+
+### Problem
+
+`AiExecutionControlFinalizationIntegrationTests` was fragile because it waited for `handle.ExecutionId` before the controlled step had actually started.
+
+### Fix
+
+The controlled step now signals startup together with the real `ExecutionId` from `context.Record.ExecutionId`.
+
+The test now follows this deterministic order:
+
+```text
+Enqueue run with ExecutionContextSnapshot
+Wait until controlled step starts
+Capture ExecutionId from step context
+Cancel execution while claimed work is running
+Wait for completion
+Assert final status is Cancelled
+Assert durable record is Cancelled
+Assert execution control store is Cancelled
+```
+
+### Result
+
+The test now validates the intended rule:
+
+```text
+Cancellation overrides natural DAG completion during terminal finalization.
+```
+
+---
+
+## 11. Redis Retry Test Stabilization
+
+### Problem
+
+`AiDagExecutionEngineRedisRetryIntegrationTests.ExecuteNextAsync_Should_Not_Reexecute_Step_Before_RetryDelay` asserted too strictly on the returned execution status from `ExecuteNextAsync`.
+
+The real invariant was not the returned record status, but the persisted Redis step state.
+
+### Fix
+
+The test now validates the persisted state:
+
+```text
+Step remains WaitingForRetry
+RetryCount remains 1
+NextRetryAtUtc remains unchanged
+NextRetryAtUtc is still in the future
+```
+
+The retry delay was increased to reduce timing flakiness under Redis / CI / debugger conditions.
+
+---
+
+## 12. Tests Added / Updated / Validated
+
+Key scenarios now covered:
+
+```text
+ControlPlaneWithLocalRuntimeInstances_With_Dedicated_Tenant_Should_Create_Tenant_Aware_ScaleOut_Request
+ControlPlaneWithLocalRuntimeInstances_With_Hybrid_Tenant_Should_Create_Tenant_Aware_ScaleOut_Request
+ControlPlaneWithLocalRuntimeInstances_With_Default_Tenant_Should_Create_Shared_ScaleOut_Request
+ScaleOutPublisher_With_Dedicated_Tenant_At_Max_Instance_Count_Should_Not_Request_Above_Tenant_Max
+ScaleOutPublisher_With_Hybrid_Tenant_At_Max_Instance_Count_Should_Not_Request_Above_Tenant_Max
+ScaleOutWatcher_With_Hybrid_Tenant_Request_Should_Preserve_Tenant_Runtime_Settings_When_Fulfilling
+RuntimeInstanceVisibilityEvaluator_Should_Respect_Tenant_Isolation_Modes
+RedisRuntimeInstanceRegistry_ListAsync_Should_Filter_Runtime_Instances_By_Current_Tenant_Visibility
+RedisRuntimeInstanceCapacityStore_ListAsync_And_GetAsync_Should_Filter_Capacity_By_Current_Tenant_Visibility
+RunAdmissionController_Should_Assign_Only_Tenant_Visible_Runtime_Capacity
+RunAdmissionController_With_Dedicated_Tenant_And_No_Visible_Capacity_Should_Request_Tenant_Aware_ScaleOut
+ControlPlaneWithLocalRuntimeInstances_With_Dedicated_Tenant_Should_ScaleOut_Dispatch_And_Execute_Run_On_Tenant_Runtime
+ControlPlaneWithLocalRuntimeInstances_With_Hybrid_Tenant_Should_ScaleOut_Dispatch_And_Execute_Run_On_Tenant_Runtime
+ControlPlaneWithLocalRuntimeInstances_With_Hybrid_Tenant_Should_Fallback_To_Shared_Runtime_When_Available
+ControlPlaneWithLocalRuntimeInstances_With_Dedicated_Tenant_Should_Not_Fallback_To_Shared_Runtime_When_Available
+```
+
+Additional legacy tests were fixed after the snapshot requirement became stricter.
+
+---
+
+## 13. Final Validation
+
+Final test result:
+
+```text
+1036 tests green
+```
+
+This validates that tenant-aware runtime isolation, scale-out, shared queue dispatch, retry behavior, and execution-control finalization are stable together.
+
+---
+
+## 14. Architectural Flow Summary
+
+```text
+MCP Tool
+  -> RBAC / Authorization / Tenant resolution
+  -> ExecutionContextSnapshot
+  -> SharedRuntimeController.SubmitRun
+  -> SharedRunStore
+  -> AdmissionController
+  -> Tenant runtime settings
+  -> Tenant-visible Registry + Capacity
+  -> AssignToInstance or RequestScaleOut
+  -> ScaleOutRequestStore
+  -> ScaleOutWatcher / Provider / LocalScaler
+  -> RuntimeInstanceRegistry + CapacityStore
+  -> SharedQueue
+  -> SharedQueueDispatcher restores ExecutionContextSnapshot
+  -> Admission again
+  -> Dispatch to RuntimeInstance
+  -> Runtime local queue
+  -> BackgroundController restores ExecutionContextSnapshot
+  -> AiDagExecutionEngine.CreateAsync
+  -> Worker ExecuteNextAsync loop
+  -> Step claim / execute / retry / recover / converge
+  -> ExecutionControl final override
+  -> Final AiExecutionRecord
+  -> SharedRun final status
+  -> Ledger / tracing / replay
+```
+
+---
+
+## 15. Recommended Commit Message
+
+```text
+Stabilize tenant-aware runtime isolation tests
+
+Fixes shared queue tenant context restoration, scopes local scale-out by runtime prefix, aligns runtime visibility tests with shared/dedicated/hybrid isolation rules, persists tenant runtime settings through Redis scale-out requests, and updates legacy execution tests for required execution context snapshots.
+```
+
+PowerShell:
+
+```powershell
+git add .; git commit -m "Stabilize tenant-aware runtime isolation tests - Fixes shared queue tenant context restoration, scopes local scale-out by runtime prefix, aligns runtime visibility tests with shared/dedicated/hybrid isolation rules, persists tenant runtime settings through Redis scale-out requests, and updates legacy execution tests for required execution context snapshots."
+```
+
+---
+
+## 16. Next Steps
+
+Recommended sequence:
+
+```text
+1. Continue Kubernetes demo on top of this clean isolation model.
+2. Then move to production hardening:
+   - HTTP/gRPC circuit breakers
+   - dispatch timeouts
+   - Redis TIME in Lua scripts
+   - queue max depth / backpressure
+   - DLQ store
+   - Mongo indexes
+   - MCP rate limiting
+   - Redis registry/capacity TTL + self-healing
+3. Later: V2 storage engine with step-level DAG storage and O(1) dependency counters.
+```
+
+
+---
+
 ## [1.0.6.6] - 2026-06-18 — Runtime Run Index Tenant Isolation
 
 ## Scope

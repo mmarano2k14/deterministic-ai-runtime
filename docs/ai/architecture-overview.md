@@ -1,10 +1,10 @@
 # Architecture Overview
 
-Status: Implemented architecture foundation / validated with shared controller, MCP, Redis coordination, Redis-backed scale-out request persistence, local runtime pools, local runtime scale-out, fulfilled-run requeue, HTTP pooled runtime provider scenarios, and end-to-end MCP scale-out execution.
+Status: Implemented architecture foundation / validated with shared controller, MCP, Redis coordination, Redis-backed scale-out request persistence, local runtime pools, local runtime scale-out, fulfilled-run requeue, HTTP pooled runtime provider scenarios, tenant-aware runtime isolation, shared/dedicated/hybrid runtime visibility, and end-to-end MCP scale-out execution.
 
 This document provides a high-level overview of the **Deterministic AI Runtime** architecture.
 
-It also reflects the current control-plane evolution: shared queue pump, queue-first submit mode, direct-dispatch scale-out mode, dispatch-time admission, runtime instance providers, MCP control-plane integration, Redis discovery/registry/capacity coordination, Redis-backed scale-out request coordination, admission reservations, local runtime scale-out, fulfilled-run requeue, HTTP pooled runtime hosting, and worker-capacity visibility.
+It also reflects the current control-plane evolution: shared queue pump, queue-first submit mode, direct-dispatch scale-out mode, dispatch-time admission, tenant-aware admission, runtime instance providers, MCP control-plane integration, Redis discovery/registry/capacity coordination, tenant-filtered runtime visibility, Redis-backed scale-out request coordination, admission reservations, local runtime scale-out, fulfilled-run requeue, HTTP pooled runtime hosting, and worker-capacity visibility.
 
 ---
 
@@ -37,6 +37,8 @@ It is an execution runtime responsible for:
 - creating local runtime capacity dynamically through provider-based scale-out
 - requeueing fulfilled scale-out runs for normal shared queue dispatch
 - supporting provider-based local, local scale-out, and HTTP pooled runtime dispatch
+- carrying durable tenant context across MCP, shared queue, scale-out, dispatch, and runtime execution
+- enforcing shared, dedicated, and hybrid runtime isolation during admission and dispatch
 
 The core idea is simple:
 
@@ -50,6 +52,8 @@ At a high level, the runtime is composed of the following layers:
 
 ```text
 Client / API / MCP Layer
+        ↓
+RBAC / Execution Context Snapshot Layer
         ↓
 Control Plane and Shared Queue Layer
         ↓
@@ -138,6 +142,46 @@ Redis/Mongo persist state safely.
 
 ## Main Runtime Layers
 
+### 0. RBAC / Execution Context Snapshot Layer
+
+The runtime now treats tenant context as durable execution input, not as volatile request-only metadata.
+
+The durable tenant boundary is:
+
+```text
+ExecutionContextSnapshot.TenantId
+```
+
+`ContextKey` remains useful for RBAC, correlation, debugging, and request scoping, but it is not the durable partition key for runtime execution.
+
+Metadata may duplicate tenant values for observability, but runtime isolation must use strong fields and the execution context snapshot.
+
+The execution context snapshot is carried through:
+
+```text
+MCP request
+        ↓
+RBAC execution context
+        ↓
+ExecutionContextSnapshot
+        ↓
+SharedRunRecord
+        ↓
+SharedQueueDispatcher context restore
+        ↓
+Admission and capacity filtering
+        ↓
+Runtime instance dispatch
+        ↓
+Runtime local queue
+        ↓
+Background controller context restore
+        ↓
+DAG execution
+```
+
+Every asynchronous, background, or distributed hop must either carry the snapshot or restore it before performing tenant-sensitive work.
+
 ### 1. Client / API Layer
 
 The client or API layer is the external entry point into the runtime.
@@ -164,12 +208,15 @@ It is responsible for:
 
 - shared run submission
 - shared run visibility
+- durable execution context snapshot propagation
+- tenant-aware shared run admission
 - queue-first submit mode
 - global shared queue coordination
 - shared queue pump and manual drain
 - dispatch-time admission
 - runtime instance registry visibility
 - runtime capacity descriptors
+- tenant-filtered runtime registry and capacity visibility
 - Redis control-plane discovery
 - control-plane id resolution
 - admission reservations
@@ -251,6 +298,16 @@ The watcher does not dispatch directly.
 It creates capacity and requeues the shared run.
 
 The pump remains responsible for claim ownership, dispatch-time admission, provider dispatch, and queue/run state updates.
+
+Tenant-aware dispatch adds an additional invariant:
+
+```text
+background dispatch must not depend on the ambient AsyncLocal context
+```
+
+The shared run persists `ExecutionContextSnapshot`, and `AiSharedQueueDispatcher` restores that snapshot before admission, reservation, and dispatch.
+
+This ensures that Redis registry and capacity queries are evaluated under the correct tenant context even when work is processed by a background pump, manual drain, or future remote control-plane worker.
 
 The current validated control-plane model also includes Redis-backed coordination components:
 
@@ -420,7 +477,7 @@ Redis scale-out request
     ↓
 Local runtime scaler
     ↓
-host-...:mcp-scaleout-runtime-1
+host-...:runtime-instance-1
     ↓
 Shared run requeued
     ↓
@@ -428,6 +485,24 @@ Shared queue pump dispatches
     ↓
 Runtime run completed
 ```
+Validated tenant-aware local scale-out identities:
+
+```text
+default / shared tenant
+    → host-...:runtime-instance-1
+
+tenant-a dedicated tenant
+    → host-...:tenant-a-runtime-1
+
+tenant-b hybrid tenant
+    → host-...:tenant-b-runtime-1
+    → or shared fallback to host-...:runtime-instance-1 when allowed
+```
+
+The local scaler must count matching runtime hosts by `RuntimeInstanceIdPrefix`, not by the global number of local hosts.
+
+This prevents a shared runtime instance from satisfying a dedicated tenant scale-out request.
+
 
 Important capacity fields include:
 
@@ -446,6 +521,21 @@ IsQueuePaused
 CanAcceptRun
 ```
 
+Runtime visibility is evaluated before admission can assign work:
+
+```text
+Shared runtime:
+- visible to shared/default tenants
+- visible to dedicated or hybrid tenants only when their tenant settings allow shared fallback
+
+Dedicated runtime:
+- visible only when TenantId or TenantGroupId matches
+
+Hybrid runtime:
+- visible only when TenantId or TenantGroupId matches
+- AllowSharedFallback does not make an unowned hybrid runtime visible
+```
+
 This layer allows the control plane, MCP tools, and future dashboards to see:
 
 - which runtime instances exist
@@ -461,7 +551,7 @@ This prevents one execution from consuming the whole local worker pool unless ex
 
 ---
 
-### 7. Distributed Coordination Layer
+### 8. Distributed Coordination Layer
 
 The runtime uses Redis as the hot coordination layer.
 
@@ -482,6 +572,8 @@ Redis is used for:
 - control-plane discovery store
 - admission reservation store
 - scale-out request store
+- tenant-aware runtime visibility descriptors
+- tenant-aware runtime settings propagated through scale-out requests
 
 Critical transitions are protected by Redis Lua scripts.
 
@@ -489,7 +581,7 @@ This allows multiple workers or runtime instances to coordinate safely without d
 
 ---
 
-### 8. Step Execution Layer
+### 9. Step Execution Layer
 
 Steps are executed by registered step executors.
 
@@ -512,7 +604,7 @@ Step executors receive resolved context from the context resolution layer.
 
 ---
 
-### 9. Policy and Governance Layer
+### 10. Policy and Governance Layer
 
 Policies provide reusable runtime decision logic.
 
@@ -544,7 +636,7 @@ The runtime applies state transitions safely.
 
 ---
 
-### 10. Persistence Layer
+### 11. Persistence Layer
 
 The persistence layer stores durable execution data.
 
@@ -564,7 +656,7 @@ MongoDB acts as the cold durable layer.
 
 ---
 
-### 11. Retention and Compaction Layer
+### 12. Retention and Compaction Layer
 
 AI workflows can generate large intermediate payloads.
 
@@ -584,7 +676,7 @@ The context resolver is what allows downstream steps to continue working even wh
 
 ---
 
-### 12. Replay and Audit Foundations
+### 13. Replay and Audit Foundations
 
 The runtime includes foundations for replay and auditability.
 
@@ -604,7 +696,7 @@ This creates the basis for future official replay APIs and durable decision ledg
 
 ---
 
-### 13. Observability Layer
+### 14. Observability Layer
 
 Observability is built into the runtime.
 
@@ -639,11 +731,13 @@ A simplified runtime data flow is:
 ```text
 Client / API / MCP submits pipeline run
         ↓
+RBAC context is mapped to ExecutionContextSnapshot
+        ↓
 Control-plane identity is resolved / published when required
         ↓
 Runtime registry and capacity descriptors are visible
         ↓
-Shared controller may create shared run
+Shared controller may create shared run with durable ExecutionContextSnapshot
         ↓
 Queue-first mode may enqueue in shared queue
         ↓
@@ -653,13 +747,15 @@ Scale-out watcher/provider/scaler may create runtime capacity
         ↓
 Fulfilled scale-out run may be requeued
         ↓
-Shared queue pump or manual drain may dispatch
+Shared queue pump or manual drain restores ExecutionContextSnapshot
         ↓
-Admission selects a runtime instance
+Tenant-aware admission selects a runtime instance
         ↓
 Reservation/provider dispatch path is used
         ↓
-Runtime instance local queue receives run
+Runtime instance local queue receives run with ExecutionContextSnapshot
+        ↓
+Runtime background controller restores ExecutionContextSnapshot
         ↓
 Runtime creates execution
         ↓
@@ -715,11 +811,12 @@ SharedRunId-level control belongs to the shared runtime controller.
 It manages:
 
 - shared run records
+- persisted execution context snapshots
 - queue-first submit mode
 - global shared queue state
 - shared queue item lifecycle
 - shared queue pump/manual drain
-- dispatch-time admission
+- dispatch-time tenant-aware admission
 - runtime capacity reservation
 - provider-based dispatch
 - scale-out request persistence
@@ -876,11 +973,11 @@ This allows the runtime to evolve by adding policies instead of hardcoding behav
 
 Runtime instance dispatch is moving toward a provider-based model.
 
-Admission decides which runtime instance should receive work.
+Admission decides which runtime instance should receive work, under the current tenant visibility rules.
 
 Providers decide how to contact that runtime instance.
 
-When admission requests scale-out, the scale-out provider selector decides which provider can create or request capacity.
+When admission requests scale-out, the scale-out provider selector decides which provider can create or request capacity inside the required tenant runtime scope.
 
 ```text
 Admission
@@ -899,7 +996,8 @@ Current provider-oriented foundations include:
 - HTTP runtime provider foundation
 - HTTP pooled runtime instance hosting
 - provider-based scale-out capability
-- local runtime instance scaler
+- tenant-aware scale-out request fields
+- local runtime instance scaler scoped by runtime instance prefix
 - Redis scale-out request store
 - fulfilled scale-out run requeue
 - runtime instance provider metadata
@@ -910,7 +1008,7 @@ Current provider-oriented foundations include:
 - Redis admission reservation store
 - MCP control-plane scenarios
 
-Validated local scale-out provider shape:
+Validated tenant-aware local scale-out provider shape:
 
 ```text
 MCP Control Plane
@@ -927,7 +1025,7 @@ LocalAiRuntimeInstanceProvider
     ↓
 AiLocalRuntimeInstanceScaler
     ↓
-host-...:mcp-scaleout-runtime-1
+host-...:runtime-instance-1
     ↓
 Shared run requeued
     ↓
@@ -1032,6 +1130,14 @@ Plugins remain responsible for domain-specific execution.
 | Scale-out provider selector | Implemented / validated |
 | Local runtime instance scaler | Implemented / validated |
 | Fulfilled scale-out run requeue | Implemented / validated |
+| Tenant runtime settings provider | Implemented foundation / hardcoded provider validated |
+| Shared / dedicated / hybrid runtime isolation | Implemented / validated |
+| Tenant-aware admission | Implemented / validated |
+| Tenant-filtered runtime registry visibility | Implemented / validated |
+| Tenant-filtered runtime capacity visibility | Implemented / validated |
+| Tenant-aware scale-out request persistence | Implemented / validated |
+| Shared queue dispatcher execution context restore | Implemented / validated |
+| Direct runtime queue execution context requirement | Implemented / validated |
 | MCP Redis local scale-out execution | Implemented / validated |
 | Shared queue pump readiness gate | Implemented / validated |
 | Runtime worker capacity visibility | Implemented / validated |
@@ -1050,6 +1156,47 @@ Plugins remain responsible for domain-specific execution.
 
 The current architecture has been validated through MCP, Redis, local runtime pool, local scale-out, and HTTP pooled runtime provider scenarios.
 
+Tenant-aware runtime isolation evidence:
+
+```text
+tenant-a Dedicated
+    IsolationMode = Dedicated
+    RuntimeInstanceIdPrefix = tenant-a-runtime
+    Shared fallback = disabled
+    Scale-out creates tenant-a-runtime-1
+    Shared runtime capacity is not used
+
+tenant-b Hybrid
+    IsolationMode = Hybrid
+    RuntimeInstanceIdPrefix = tenant-b-runtime
+    Shared fallback = enabled
+    Scale-out can create tenant-b-runtime-1
+    Shared runtime fallback is allowed only through Shared runtime visibility
+
+default / test tenant
+    IsolationMode = Shared
+    RuntimeInstanceIdPrefix = runtime-instance
+    Scale-out creates runtime-instance-1
+```
+
+Visibility evidence:
+
+```text
+tenant-a sees tenant-a dedicated capacity only
+tenant-b sees tenant-b hybrid capacity and shared fallback capacity
+default/shared tenants see shared capacity only
+unowned hybrid runtime instances are not visible
+```
+
+Context propagation evidence:
+
+```text
+SharedRunRecord persists ExecutionContextSnapshot
+AiSharedQueueDispatcher restores ExecutionContextSnapshot before admission and dispatch
+Runtime local queue requires ExecutionContextSnapshot before background execution
+Direct runtime tests now provide ExecutionContextSnapshot explicitly
+```
+
 Redis local scale-out execution evidence:
 
 ```text
@@ -1057,7 +1204,7 @@ Initial ActiveLocalInstances = 0
 Admission = RequestScaleOut
 SharedRun.Status = ScaleOutRequested
 ScaleOutRequest.Status = Fulfilled
-ScaleOutRuntimeInstanceId = host-...:mcp-scaleout-runtime-1
+ScaleOutRuntimeInstanceId = host-...:runtime-instance-1
 ActiveLocalInstances = 1
 SharedRun.Status = Dispatched
 QueueStatus = Dispatched
@@ -1109,18 +1256,22 @@ These validations prove the current architecture can:
 - resolve MCP/control-plane identity through Redis discovery
 - dispatch through local and HTTP providers
 - request scale-out through the provider model
+- preserve tenant runtime settings through Redis-backed scale-out requests
 - dynamically create local runtime capacity from zero executable instances
 - requeue fulfilled scale-out shared runs
 - dispatch scale-out requeued runs through the shared queue pump
+- restore tenant execution context during background dispatch
 - execute scale-out-triggered runs to completion
 - assign runs to pooled child runtime instances
 - expose runtime run status and execution ids
 - replay completed executions
-- inspect ledger and trace output.
+- inspect ledger and trace output
+- enforce shared, dedicated, and hybrid runtime isolation through tests.
 
 
 ## Related Documents
 
+- [Multi-Tenant Control Plane Isolation](multi-tenant-control-plane-isolation.md)
 - [Context Resolution and Helpers](context-resolution-and-helpers.md)
 - [Distributed Execution](distributed-execution.md)
 - [Execution Control State](execution-control-state.md)

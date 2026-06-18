@@ -1,14 +1,18 @@
 # Shared Runtime Controller / Shared Queue Usage
 
-This document shows how to configure and use the AI control plane shared runtime features.
+Status: Implemented / validated with Redis shared run store, Redis shared queue, Redis scale-out request persistence, tenant-aware admission, RBAC execution context propagation, local runtime scale-out, fulfilled-run requeue, Shared/Dedicated/Hybrid runtime isolation, HTTP pooled runtime scenarios, and end-to-end MCP scale-out execution.
+
+This document shows how to configure and use the AI control-plane shared runtime features.
 
 It covers:
 
+- RBAC integration and durable execution context snapshots
+- Tenant-aware shared controller submission
 - In-memory shared controller mode
 - Redis shared run store
 - Redis shared queue
 - Redis scale-out request persistence
-- Local runtime scale-out
+- Tenant-aware local runtime scale-out
 - Fulfilled scale-out run requeue
 - Direct assigned-run dispatch
 - Global shared queue dispatch
@@ -17,6 +21,7 @@ It covers:
 - Manual shared queue drain
 - Shared queue background service
 - Dispatch-time admission
+- Shared/Dedicated/Hybrid tenant isolation modes
 - Pump identity vs assigned runtime identity
 - Runtime worker capacity visibility
 - Full distributed host setup
@@ -24,9 +29,225 @@ It covers:
 - Current limitations
 - Future Kubernetes direction
 
+This document complements:
+
+- [Architecture Overview](architecture-overview.md)
+- [Runtime Control Plane](runtime-control-plane.md)
+- [Multi-Tenant Control Plane Isolation](multi-tenant-control-plane-isolation.md)
+- [Runtime Discovery, Registry, and Capacity](runtime-discovery-registry-capacity.md)
+- [Runtime Instance Provider Model](runtime-instance-provider-model.md)
+- [Shared Queue Pump and Worker Capacity](shared-queue-pump-and-worker-capacity.md)
+- [MCP Server as Runtime Control Plane](mcp-server-control-plane.md)
+- [Testing Strategy](testing-strategy.md)
+
 ---
 
-## 1. Basic in-memory setup
+## 1. Core rule: shared runs must carry durable tenant context
+
+Shared runtime orchestration is asynchronous and can cross hosted services, Redis stores, runtime providers, HTTP hosts, and future Kubernetes pods.
+
+Because of that, shared queue dispatch must not rely only on ambient `AsyncLocal` context.
+
+The durable tenant boundary is:
+
+```text
+ExecutionContextSnapshot.TenantId
+```
+
+Not:
+
+```text
+ContextKey
+Metadata["tenant"]
+```
+
+The rule is:
+
+```text
+ContextKey
+    = RBAC / correlation / debug context
+
+ExecutionContextSnapshot.TenantId
+    = durable tenant boundary
+
+Metadata
+    = observability duplicate only
+```
+
+Every submitted shared run should preserve an `ExecutionContextSnapshot`.
+
+```text
+MCP / API / CLI
+    ↓
+RBAC ExecutionContext
+    ↓
+ExecutionContextSnapshot
+    ↓
+AiSharedRuntimeControllerRequest
+    ↓
+AiSharedRunRecord
+    ↓
+Shared queue / scale-out / dispatch
+    ↓
+Runtime local queue
+    ↓
+Background controller restores snapshot
+    ↓
+DAG execution
+```
+
+If a direct runtime queued run has no execution context snapshot, the background controller should fail fast rather than silently executing work without tenant context.
+
+---
+
+## 2. RBAC integration
+
+The MCP control plane integrates with RBAC before shared runs are created.
+
+Typical path:
+
+```text
+MCP request
+    ↓
+Authentication
+    ↓
+RBAC execution context resolution
+    ↓
+Capability check / RequireCapability(...)
+    ↓
+McpRuntimeExecutionContextAccessor
+    ↓
+MapToSnapshot()
+    ↓
+AiSharedRuntimeController.SubmitRunAsync(...)
+```
+
+RBAC context includes:
+
+```text
+ContextKey
+Project
+UserId
+TenantId
+TenantGroupId
+CurrentNamespace
+Namespaces / TRNs
+```
+
+The snapshot should be persisted with the shared run.
+
+This ensures background workers can restore the correct tenant identity even when the original request scope is gone.
+
+---
+
+## 3. Tenant runtime settings
+
+The current tenant runtime settings foundation supports three modes.
+
+```text
+Shared
+Dedicated
+Hybrid
+```
+
+Current hardcoded foundation:
+
+```text
+tenant-a
+    IsolationMode = Dedicated
+    PreferDedicatedCapacity = true
+    AllowSharedFallback = false
+    MaxRuntimeInstances = 3
+    RuntimeInstanceIdPrefix = tenant-a-runtime
+    WorkerCountPerInstance = 10
+    MaxConcurrentRunsPerInstance = 5
+    LocalQueueCapacity = 500
+
+tenant-b
+    IsolationMode = Hybrid
+    PreferDedicatedCapacity = true
+    AllowSharedFallback = true
+    MaxRuntimeInstances = 2
+    RuntimeInstanceIdPrefix = tenant-b-runtime
+    WorkerCountPerInstance = 5
+    MaxConcurrentRunsPerInstance = 3
+    LocalQueueCapacity = 250
+
+default / unknown / test-tenant
+    IsolationMode = Shared
+    PreferDedicatedCapacity = false
+    AllowSharedFallback = true
+    MaxRuntimeInstances = 1
+    RuntimeInstanceIdPrefix = runtime-instance
+    WorkerCountPerInstance = 10
+    MaxConcurrentRunsPerInstance = 3
+```
+
+These settings are currently provider-backed/hardcoded for the foundation.
+
+They should later become configuration/database-backed tenant settings without changing the control-plane flow.
+
+---
+
+## 4. Tenant visibility rules
+
+Runtime registry and capacity listing are tenant-aware.
+
+Admission should only see runtime instances that are visible for the current tenant context.
+
+Visibility rules:
+
+```text
+Shared runtime:
+    visible to Shared tenants
+    visible to Hybrid/Dedicated tenants only when their tenant settings allow shared fallback
+
+Dedicated runtime:
+    visible only when TenantId or TenantGroupId matches
+
+Hybrid runtime:
+    visible only when TenantId or TenantGroupId matches
+    AllowSharedFallback does not make an unowned Hybrid runtime visible
+```
+
+Important:
+
+```text
+Hybrid fallback means:
+    a Hybrid tenant may use Shared runtime capacity when allowed.
+
+It does not mean:
+    an unowned Hybrid runtime is visible to every Hybrid tenant.
+```
+
+Examples:
+
+```text
+tenant-a Dedicated + tenant-a-runtime-1
+    visible
+
+tenant-a Dedicated + runtime-instance-1
+    not visible because tenant-a fallback is disabled
+
+tenant-b Hybrid + tenant-b-runtime-1
+    visible
+
+tenant-b Hybrid + runtime-instance-1
+    visible because tenant-b fallback is enabled
+
+test-tenant Shared + runtime-instance-1
+    visible
+
+test-tenant Shared + tenant-a-runtime-1
+    not visible
+
+test-tenant Shared + tenant-b-runtime-1
+    not visible
+```
+
+---
+
+## 5. Basic in-memory setup
 
 Use this mode for local development, unit tests, and single-process demos.
 
@@ -48,8 +269,7 @@ services.AddAiControlPlane(
         options.ReturnFailureResultInsteadOfThrowing = true;
         options.MeasureDuration = true;
 
-        // Optional:
-        // DirectDispatch keeps the classic behavior.
+        // DirectDispatch keeps admission-driven behavior.
         // QueueFirst always creates the shared run and queues it globally first.
         options.SubmitMode = AiSharedRuntimeSubmitMode.DirectDispatch;
     },
@@ -77,24 +297,24 @@ var provider = services.BuildServiceProvider();
 
 Registered by default:
 
-```txt
-IAiSharedRunStore          -> InMemoryAiSharedRunStore
-IAiSharedQueue             -> InMemoryAiSharedQueue
-IAiSharedRunDispatcher     -> LocalAiSharedRunDispatcher
-IAiSharedQueueDispatcher   -> AiSharedQueueDispatcher
-IAiSharedQueuePump         -> AiSharedQueuePump
-IAiSharedRuntimeController -> AiSharedRuntimeController
-IAiRuntimeScaleOutRequestStore -> InMemoryAiRuntimeScaleOutRequestStore
-IAiRuntimeScaleOutRequestPublisher -> StoreBackedAiRuntimeScaleOutRequestPublisher
-IAiRuntimeScaleOutProviderSelector -> AiRuntimeScaleOutProviderSelector
-IAiScaleOutFulfilledRunRequeueService -> AiScaleOutFulfilledRunRequeueService
+```text
+IAiSharedRunStore                       -> InMemoryAiSharedRunStore
+IAiSharedQueue                          -> InMemoryAiSharedQueue
+IAiSharedRunDispatcher                  -> LocalAiSharedRunDispatcher
+IAiSharedQueueDispatcher                -> AiSharedQueueDispatcher
+IAiSharedQueuePump                      -> AiSharedQueuePump
+IAiSharedRuntimeController              -> AiSharedRuntimeController
+IAiRuntimeScaleOutRequestStore          -> InMemoryAiRuntimeScaleOutRequestStore
+IAiRuntimeScaleOutRequestPublisher      -> StoreBackedAiRuntimeScaleOutRequestPublisher
+IAiRuntimeScaleOutProviderSelector      -> AiRuntimeScaleOutProviderSelector
+IAiScaleOutFulfilledRunRequeueService   -> AiScaleOutFulfilledRunRequeueService
 ```
 
 ---
 
-## 2. Redis setup for distributed shared controller mode
+## 6. Redis setup for distributed shared controller mode
 
-Use Redis when multiple runtime instances or workers need to coordinate shared runs.
+Use Redis when multiple runtime instances, workers, or control-plane hosts need to coordinate shared runs.
 
 ```csharp
 using Microsoft.Extensions.DependencyInjection;
@@ -177,7 +397,7 @@ var provider = services.BuildServiceProvider();
 
 Redis-backed services provide:
 
-```txt
+```text
 RedisAiSharedRunStore
   - hash storage per shared run
   - sorted set index
@@ -185,6 +405,7 @@ RedisAiSharedRunStore
   - Lua atomic cancel
   - Lua atomic mark-dispatched
   - SHA cache + NOSCRIPT reload
+  - durable ExecutionContextSnapshot persistence
 
 RedisAiSharedQueue
   - hash storage per queue item
@@ -201,38 +422,78 @@ RedisAiRuntimeScaleOutRequestStore
   - hash storage per scale-out request
   - pending request index
   - lifecycle transitions: Pending, Observed, Fulfilled, Rejected
+  - tenant runtime settings persistence
   - watcher-friendly query support
   - Redis-backed coordination for local and future Kubernetes scale-out adapters
 ```
 
 ---
 
-## 3. Submit a run to the shared runtime controller
+## 7. Submit a tenant-aware run to the shared runtime controller
+
+A tenant-aware shared run should include both:
+
+```text
+AiSharedRuntimeControllerRequest.TenantId
+RunRequest.ExecutionContextSnapshot.TenantId
+```
+
+`TenantId` on the controller request is useful for request-level routing and visibility.
+
+`ExecutionContextSnapshot.TenantId` is the durable boundary that survives Redis, queueing, background dispatch, and runtime provider hops.
 
 ```csharp
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController;
 using Multiplexed.Abstractions.AI.Runtime.Execution.Instance.Worker;
+using Multiplexed.Abstractions.Core.ExecutionContext;
 
 var controller = provider.GetRequiredService<IAiSharedRuntimeController>();
+
+var snapshot = new ExecutionContextSnapshot
+{
+    ContextKey = "ctx-tenant-a-user-001",
+    Project = "ai-runtime-demo",
+    UserId = "user-001",
+    TenantId = "tenant-a",
+    TenantGroupId = "tenant-a",
+    CurrentNamespace = "ai-runtime-demo",
+    Namespaces = new List<NamespaceEntry>
+    {
+        new()
+        {
+            Name = "ai-runtime-demo",
+            Trns = new HashSet<string>
+            {
+                "trn:ai-runtime-demo:shared-run:execution:submit",
+                "trn:ai-runtime-demo:shared-run:registry:read",
+                "trn:ai-runtime-demo:shared-run:registry:list",
+                "trn:ai-runtime-demo:shared-queue:queue:list",
+                "trn:ai-runtime-demo:shared-queue:status:read",
+                "trn:ai-runtime-demo:shared-queue:pump:drain"
+            }
+        }
+    }
+};
 
 var result = await controller.SubmitRunAsync(
     new AiSharedRuntimeControllerRequest
     {
         Operation = AiSharedRuntimeControllerOperation.SubmitRun,
         RequestedSharedRunId = "shared-run-001",
-        RunRequest = new AiRuntimePipelineRunRequest
-        {
-            PipelineName = "document-processing"
-        },
-        TenantId = "tenant-a",
+        TenantId = snapshot.TenantId,
         PipelineKey = "document-processing",
         CorrelationId = "correlation-001",
         RequestedBy = "api",
         Source = "example",
         Reason = "Submit document processing workflow.",
+        RunRequest = new AiRuntimePipelineRunRequest
+        {
+            PipelineName = "document-processing",
+            ExecutionContextSnapshot = snapshot
+        },
         Metadata = new Dictionary<string, string>
         {
-            ["tenant"] = "tenant-a",
+            ["tenant.id"] = snapshot.TenantId,
             ["priority"] = "normal",
             ["source"] = "usage-example"
         }
@@ -254,7 +515,7 @@ else
 
 Possible admission results:
 
-```txt
+```text
 AssignToInstance
   -> SharedRunStore.CreateAsync(...)
   -> IAiSharedRunDispatcher.DispatchAsync(...)
@@ -269,9 +530,9 @@ QueueGlobally
 RequestScaleOut
   -> SharedRunStore.CreateAsync(...)
   -> IAiRuntimeScaleOutRequestPublisher.PublishAsync(...)
-  -> Redis scale-out request is persisted
+  -> Redis scale-out request is persisted with tenant runtime settings
   -> SharedRun.Status = ScaleOutRequested
-  -> watcher/provider/scaler create capacity
+  -> watcher/provider/scaler create tenant-scoped capacity
   -> fulfilled run is requeued
   -> shared queue pump dispatches normally
 
@@ -282,7 +543,7 @@ Reject
 
 ---
 
-## 4. Queue-first submit mode
+## 8. Queue-first submit mode
 
 Queue-first mode is useful when the control plane should always persist the shared run and place it in the global queue before any runtime instance consumes it.
 
@@ -295,7 +556,7 @@ services.Configure<AiSharedRuntimeControllerOptions>(options =>
 
 Queue-first flow:
 
-```txt
+```text
 SubmitRunAsync
   -> SharedRunStore.CreateAsync(...)
   -> IAiSharedQueue.EnqueueAsync(...)
@@ -303,11 +564,13 @@ SubmitRunAsync
   -> run waits for background pump or manual drain
 ```
 
-Queue-first is different from forcing admission globally. It is a controller submit mode, not an admission override.
+Queue-first is different from forcing admission globally.
+
+It is a controller submit mode, not an admission override.
 
 Important:
 
-```txt
+```text
 QueueFirst bypasses submit-time DirectDispatch admission outcomes.
 It always creates the shared run and queues it globally first.
 Therefore QueueFirst does not produce ScaleOutRequested at submit time.
@@ -324,8 +587,7 @@ Use queue-first when:
 
 ---
 
-
-## 5. DirectDispatch scale-out submit mode
+## 9. DirectDispatch scale-out submit mode
 
 DirectDispatch is the mode used when the submit path should immediately ask admission what to do.
 
@@ -338,15 +600,26 @@ services.Configure<AiSharedRuntimeControllerOptions>(options =>
 
 DirectDispatch scale-out flow:
 
-```txt
+```text
 SubmitRunAsync
   -> IAiRunAdmissionController
+  -> tenant-aware registry/capacity filtering
   -> no eligible runtime capacity
   -> Decision = RequestScaleOut
   -> IAiSharedRunStore.CreateAsync(...)
   -> SharedRun.Status = ScaleOutRequested
   -> IAiRuntimeScaleOutRequestPublisher.PublishAsync(...)
-  -> Redis scale-out request is persisted
+  -> Redis scale-out request is persisted with:
+        TenantId
+        TenantGroupId
+        IsolationMode
+        PreferDedicatedCapacity
+        AllowSharedFallback
+        MaxRuntimeInstances
+        RuntimeInstanceIdPrefix
+        WorkerCountPerInstance
+        MaxConcurrentRunsPerInstance
+        LocalQueueCapacity
   -> AiRuntimeScaleOutRequestWatcherHostedService observes the pending request
   -> AiRuntimeScaleOutProviderSelector resolves a provider-capable scaler
   -> LocalAiRuntimeInstanceProvider delegates to AiLocalRuntimeInstanceScaler
@@ -354,7 +627,7 @@ SubmitRunAsync
   -> scale-out request is marked Fulfilled
   -> IAiScaleOutFulfilledRunRequeueService requeues the shared run
   -> IAiSharedQueuePump claims the requeued run
-  -> dispatch-time admission sees the new runtime capacity
+  -> dispatch-time admission sees the new tenant-visible runtime capacity
   -> run is dispatched to the created runtime instance
   -> local run receives an ExecutionId
   -> runtime run reaches a terminal status
@@ -362,26 +635,31 @@ SubmitRunAsync
 
 Use DirectDispatch when:
 
-- the first submission should request scale-out when no capacity exists
+- the first submission should request scale-out when no tenant-visible capacity exists
 - local runtime scale-out needs to be validated end-to-end
 - Redis scale-out request persistence should be exercised
+- tenant runtime settings must be propagated through the scale-out request
 - the fulfilled run should be requeued and consumed by the normal pump
 - tests need to prove that a new runtime instance executed the original run
 
-Validated MCP evidence:
+Validated tenant-aware examples:
 
-```txt
-SharedRunStatus = Dispatched
-AssignedRuntimeInstanceId = host-...:mcp-scaleout-runtime-1
-LocalRunId = created
-ExecutionId = created
-RuntimeRunStatus = completed
-QueueStatus = Dispatched
-ScaleOutRequestStatus = Fulfilled
-ActiveLocalInstances = 1
+```text
+default / test-tenant
+    AssignedRuntimeInstanceId = host-*:runtime-instance-1
+
+tenant-a Dedicated
+    AssignedRuntimeInstanceId = host-*:tenant-a-runtime-1
+    shared fallback disabled
+
+tenant-b Hybrid
+    AssignedRuntimeInstanceId = host-*:tenant-b-runtime-1
+    or host-*:runtime-instance-1 when shared fallback is used
 ```
 
-## 6. List shared runs
+---
+
+## 10. List shared runs
 
 ```csharp
 var list = await controller.ListRunsAsync(
@@ -399,9 +677,11 @@ foreach (var run in list.Runs)
 }
 ```
 
+Tenant-aware listing should use the current restored execution context when filtering is required by the store/control-plane adapter.
+
 ---
 
-## 7. Get one shared run
+## 11. Get one shared run
 
 ```csharp
 var get = await controller.GetRunAsync(
@@ -414,6 +694,7 @@ var get = await controller.GetRunAsync(
 if (get.Run is not null)
 {
     Console.WriteLine($"Status: {get.Run.Status}");
+    Console.WriteLine($"TenantId: {get.Run.ExecutionContextSnapshot.TenantId}");
     Console.WriteLine($"Pipeline: {get.Run.RunRequest.PipelineName}");
     Console.WriteLine($"LocalRunId: {get.Run.LocalRunId}");
     Console.WriteLine($"ExecutionId: {get.Run.ExecutionId}");
@@ -422,7 +703,7 @@ if (get.Run is not null)
 
 ---
 
-## 8. Cancel a shared run
+## 12. Cancel a shared run
 
 ```csharp
 var cancel = await controller.CancelRunAsync(
@@ -439,18 +720,26 @@ Console.WriteLine($"Cancelled: {cancel.Success}");
 Console.WriteLine($"Status: {cancel.Run?.Status}");
 ```
 
+Queued shared run cancellation happens at the shared run / shared queue layer.
+
+Running execution cancellation should be bridged to `ExecutionId`-level execution control once an execution id exists.
+
 ---
 
-## 9. Manually pump the shared queue
+## 13. Manually pump the shared queue
 
-A runtime instance can manually ask to claim and dispatch pending shared queue items.
+A runtime instance or control-plane adapter can manually ask to claim and dispatch pending shared queue items.
 
-The pump request now uses explicit pump identity fields:
+The pump request uses explicit pump identity fields:
 
-- `PumpRuntimeInstanceId`
-- `PumpWorkerId`
+```text
+PumpRuntimeInstanceId
+PumpWorkerId
+```
 
-These identify the runtime instance and worker executing the pump cycle. They do not necessarily identify the runtime instance that will receive the run.
+These identify the runtime instance or control-plane worker executing the pump cycle.
+
+They do not necessarily identify the runtime instance that will receive the run.
 
 ```csharp
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Pump;
@@ -484,21 +773,23 @@ Console.WriteLine($"No item: {pumpResult.StoppedBecauseNoItemAvailable}");
 
 Pump behavior:
 
-```txt
+```text
 PumpOnceAsync
   -> DispatchNextAsync
   -> ClaimNextAsync from IAiSharedQueue
   -> Get shared run from IAiSharedRunStore
+  -> Restore sharedRun.ExecutionContextSnapshot
   -> Re-admit the run for dispatch-time target selection
   -> Dispatch through IAiSharedRunDispatcher
   -> Mark queue item as Dispatched
   -> Mark shared run as Dispatched
+  -> Restore previous context / clear temporary context
   -> Repeat until max dispatches or no item
 ```
 
 Important:
 
-```txt
+```text
 PumpRuntimeInstanceId = instance executing the pump
 AssignedRuntimeInstanceId = instance selected by admission for dispatch
 ```
@@ -507,13 +798,54 @@ The pump identity and assigned runtime identity are intentionally separate.
 
 ---
 
-## 10. Manual drain while background pump is disabled
+## 14. Dispatch-time execution context restore
+
+The shared queue dispatcher must restore the shared run execution context before admission and dispatch.
+
+Why:
+
+```text
+Submit-time MCP request context is gone.
+Background pump runs later.
+Admission filters registry/capacity by current tenant context.
+Therefore dispatch must restore the persisted ExecutionContextSnapshot.
+```
+
+Dispatch-time flow:
+
+```text
+IAiSharedQueueDispatcher
+  -> IAiSharedQueue.ClaimNextAsync(...)
+  -> IAiSharedRunStore.GetAsync(...)
+  -> sharedRun.ExecutionContextSnapshot
+  -> restore RBAC ExecutionContext
+  -> IAiRunAdmissionController.AdmitAsync(...)
+  -> tenant-visible registry/capacity filtering
+  -> reserve selected capacity when required
+  -> IAiSharedRunDispatcher.DispatchAsync(...)
+  -> IAiSharedQueue.MarkDispatchedAsync(...)
+  -> IAiSharedRunStore.MarkDispatchedAsync(...)
+  -> restore previous context
+```
+
+This is required for:
+
+- background pump
+- manual MCP drain
+- fulfilled scale-out requeue dispatch
+- future Kubernetes control-plane pods
+- future remote provider dispatch
+- multi-control-plane scheduling.
+
+---
+
+## 15. Manual drain while background pump is disabled
 
 Manual drain can be enabled without enabling the hosted background pump.
 
 Required configuration:
 
-```txt
+```text
 AiSharedQueuePump:Enabled = true
 AiMcpHost:EnableSharedQueuePump = false
 AiSharedQueueBackgroundService:Enabled = false
@@ -521,7 +853,7 @@ AiSharedQueueBackgroundService:Enabled = false
 
 Behavior:
 
-```txt
+```text
 Submit run in QueueFirst mode
   -> SharedRun.Status = QueuedGlobally
   -> SharedQueueItem.Status = Pending
@@ -531,6 +863,7 @@ No background pump is running
 
 Manual queue.drain / PumpOnceAsync
   -> claim pending item
+  -> restore sharedRun.ExecutionContextSnapshot
   -> dispatch-time admission selects target runtime instance
   -> dispatch to runtime instance
   -> SharedRun.Status = Dispatched
@@ -541,7 +874,7 @@ This is useful for tests, MCP demos, controlled operator dispatch, and proving t
 
 ---
 
-## 11. Enable the background shared queue service
+## 16. Enable the background shared queue service
 
 The background service runs the pump continuously.
 
@@ -575,24 +908,25 @@ services.AddAiSharedQueueBackgroundService(options =>
 
 The hosted service does not contain dispatch logic directly.
 
-```txt
+```text
 AiSharedQueueBackgroundService
   -> IAiSharedQueuePump.PumpOnceAsync(...)
 ```
 
 The pump owns the cycle logic.
 
-```txt
+```text
 AiSharedQueuePump
   -> IAiSharedQueueDispatcher.DispatchNextAsync(...)
 ```
 
-The dispatcher owns claim, admission, dispatch, and state update.
+The dispatcher owns claim, context restore, admission, dispatch, and state update.
 
-```txt
+```text
 AiSharedQueueDispatcher
   -> IAiSharedQueue.ClaimNextAsync(...)
   -> IAiSharedRunStore.GetAsync(...)
+  -> restore ExecutionContextSnapshot
   -> IAiRunAdmissionController.AdmitAsync(...)
   -> IAiSharedRunDispatcher.DispatchAsync(...)
   -> IAiSharedQueue.MarkDispatchedAsync(...)
@@ -601,25 +935,25 @@ AiSharedQueueDispatcher
 
 ---
 
-## 12. Dispatch-time admission
+## 17. Dispatch-time admission
 
-Shared queue dispatch now performs admission at drain time.
+Shared queue dispatch performs admission at drain time.
 
 This means a queued run can be submitted earlier, then assigned later based on the latest visible runtime instance capacity.
 
-```txt
+```text
 Submit time:
-  -> run enters shared queue
+  -> run enters shared queue with ExecutionContextSnapshot
 
 Dispatch time:
   -> queue pump claims item
   -> dispatcher reads shared run
+  -> dispatcher restores ExecutionContextSnapshot
   -> dispatcher asks admission for target
+  -> admission lists tenant-visible registry/capacity
   -> admission selects assigned runtime instance
   -> dispatcher calls IAiSharedRunDispatcher
 ```
-
-This keeps queue ownership and runtime target selection separate.
 
 Benefits:
 
@@ -627,17 +961,19 @@ Benefits:
 - pump identity is not coupled to dispatch target
 - runtime target can be selected using current visibility
 - local, HTTP, and future Kubernetes runtime providers can share the same queue model
+- tenant isolation survives background dispatch.
 
 Current behavior:
 
 - admission uses visible capacity descriptors
 - Redis-backed admission reservations protect selected runtime capacity during heavy dispatch scenarios
-- heartbeat and capacity publication still remain the source of runtime visibility
-- further Lua refinement can harden multi-control-plane slot reservation semantics
+- registry and capacity listing are tenant-aware
+- heartbeat and capacity publication remain the source of runtime visibility
+- further Lua refinement can harden multi-control-plane slot reservation semantics.
 
 Future improvement:
 
-```txt
+```text
 admission selects runtime instance
   -> atomically reserve run slot / worker capacity
   -> dispatch
@@ -646,23 +982,23 @@ admission selects runtime instance
 
 ---
 
-
-## 13. Scale-out fulfilled requeue and dispatch
+## 18. Scale-out fulfilled requeue and dispatch
 
 When a submit-time admission decision requests scale-out, the shared controller does not dispatch the run directly.
 
 The validated scale-out lifecycle is:
 
-```txt
+```text
 SharedRun.Status = ScaleOutRequested
-  -> scale-out request persisted in Redis
+  -> scale-out request persisted in Redis with tenant runtime settings
   -> watcher observes pending request
   -> provider selector resolves a scale-out-capable provider
-  -> local provider creates runtime capacity through AiLocalRuntimeInstanceScaler
+  -> local provider creates tenant-scoped runtime capacity through AiLocalRuntimeInstanceScaler
   -> scale-out request is marked Fulfilled
   -> IAiScaleOutFulfilledRunRequeueService enqueues the shared run into IAiSharedQueue
   -> shared queue pump claims the requeued item
-  -> dispatch-time admission sees the newly registered runtime instance
+  -> dispatch-time admission restores tenant context
+  -> admission sees the newly registered tenant-visible runtime instance
   -> dispatcher sends the run to the selected runtime instance
   -> shared run and queue item are marked Dispatched
 ```
@@ -671,7 +1007,7 @@ The watcher intentionally does not dispatch the run itself.
 
 This keeps responsibilities separated:
 
-```txt
+```text
 AiRuntimeScaleOutRequestWatcherHostedService
   -> observes and fulfills scale-out requests
 
@@ -679,18 +1015,18 @@ IAiScaleOutFulfilledRunRequeueService
   -> requeues the shared run after capacity exists
 
 IAiSharedQueuePump / IAiSharedQueueDispatcher
-  -> owns claim, admission, dispatch, and queue item lifecycle
+  -> owns claim, context restore, admission, dispatch, and queue item lifecycle
 ```
 
 This design is important for Kubernetes because the same lifecycle can later be used when the scale-out provider creates pods instead of local runtime instances.
 
-Current validated local scale-out result:
+Current tenant-aware local scale-out results:
 
-```txt
-0 runtime capacity
+```text
+0 tenant-visible runtime capacity
   -> submit run
   -> scale-out requested
-  -> local runtime instance created
+  -> local runtime instance created using tenant RuntimeInstanceIdPrefix
   -> scale-out request fulfilled
   -> shared run requeued
   -> pump dispatches
@@ -698,13 +1034,45 @@ Current validated local scale-out result:
   -> runtime status completed
 ```
 
-## 14. Runtime worker capacity visibility
+---
 
-Runtime instances now expose worker capacity through queue state and instance snapshots.
+## 19. Local scaler tenant scope
+
+The local runtime scaler must create capacity inside the tenant runtime scope.
+
+It must not count global host count as if all tenants shared the same runtime pool.
+
+Correct behavior:
+
+```text
+default / test-tenant:
+    RuntimeInstanceIdPrefix = runtime-instance
+    created runtime = host-*:runtime-instance-1
+
+tenant-a Dedicated:
+    RuntimeInstanceIdPrefix = tenant-a-runtime
+    created runtime = host-*:tenant-a-runtime-1
+
+tenant-b Hybrid:
+    RuntimeInstanceIdPrefix = tenant-b-runtime
+    created runtime = host-*:tenant-b-runtime-1
+```
+
+The scaler should count matching hosts by `RuntimeInstanceIdPrefix`.
+
+It should not use global `hosts.Count` as the capacity count for every tenant.
+
+This prevents a shared runtime such as `runtime-instance-1` from satisfying a dedicated tenant-a scale-out request.
+
+---
+
+## 20. Runtime worker capacity visibility
+
+Runtime instances expose worker capacity through queue state and instance snapshots.
 
 Visible fields include:
 
-```txt
+```text
 WorkerCount
 ActiveWorkerCount
 AvailableWorkerCount
@@ -721,32 +1089,30 @@ CanAcceptRun
 
 Capacity path:
 
-```txt
+```text
 AiRuntimePipelineBackgroundController
   -> GetQueueStateAsync()
   -> AiRuntimePipelineQueueState
   -> AiRuntimeInstanceRegistrationHostedService
-  -> AiRuntimeInstanceCapacityDescriptor
   -> IAiRuntimeInstanceRegistry
-  -> RuntimeInstanceEntry
   -> AiRuntimeInstanceSnapshot
   -> MCP / control-plane list instances
 ```
 
-`CanAcceptRun` now reflects both run slots and worker availability.
+`CanAcceptRun` reflects both run slots and worker availability.
 
-```txt
+```text
 CanAcceptRun = queue not paused
             + queue capacity available
             + run slot available
             + worker available
 ```
 
-This is important for dashboards, MCP tools, Kubernetes demos, admission visibility, and future autoscaling decisions.
+This is important for dashboards, MCP tools, Kubernetes demos, admission visibility, tenant-aware dispatch, and future autoscaling decisions.
 
 ---
 
-## 15. Local worker capacity per execution
+## 21. Local worker capacity per execution
 
 `MaxLocalWorkersPerExecution` controls how many workers from one runtime instance may work on one execution.
 
@@ -764,7 +1130,7 @@ services.Configure<AiRuntimePipelineBackgroundControllerOptions>(options =>
 
 Example:
 
-```txt
+```text
 Distributed.WorkerCount = 20
 MaxLocalWorkersPerExecution = 4
 
@@ -775,7 +1141,7 @@ Other workers remain available for other executions.
 
 Effective worker count per execution is resolved from:
 
-```txt
+```text
 min(
   Distributed.WorkerCount,
   MaxLocalWorkersPerExecution,
@@ -785,17 +1151,19 @@ min(
 
 If no workers are available, the controller waits for worker capacity instead of immediately failing the run.
 
-This option is local to the runtime instance. It is not the same as cross-instance execution assistance.
+This option is local to the runtime instance.
+
+It is not the same as cross-instance execution assistance.
 
 ---
 
-## 16. Execution assistance vs local worker capacity
+## 22. Execution assistance vs local worker capacity
 
 `MaxLocalWorkersPerExecution` is a local runtime instance policy.
 
 `AiExecutionAssistanceOptions` controls cross-instance assistance.
 
-```txt
+```text
 Local worker capacity:
   - one runtime instance
   - one local worker pool
@@ -809,11 +1177,34 @@ Execution assistance:
 
 They are intentionally separate.
 
-The execution assistance candidate now uses the effective worker count per execution instead of raw distributed worker count. This prevents assistance visibility from over-reporting workers when `MaxLocalWorkersPerExecution` caps the actual execution worker group.
+The execution assistance candidate should use the effective worker count per execution instead of raw distributed worker count.
+
+This prevents assistance visibility from over-reporting workers when `MaxLocalWorkersPerExecution` caps the actual execution worker group.
 
 ---
 
-## 17. Full distributed host example
+## 23. Runtime local queue receives snapshot
+
+The final dispatch target is still the selected runtime instance local queue.
+
+The local runtime queue must receive the original `ExecutionContextSnapshot`.
+
+```text
+Shared queue dispatcher
+  -> restores snapshot for admission
+  -> provider dispatch
+  -> runtime instance local queue receives AiRuntimePipelineRunRequest
+  -> AiRuntimePipelineBackgroundController restores snapshot before execution
+  -> DAG execution starts
+```
+
+If the snapshot is missing, direct/background runtime execution should fail fast.
+
+This protects the runtime from executing work without tenant context.
+
+---
+
+## 24. Full distributed host example
 
 ```csharp
 using Microsoft.Extensions.DependencyInjection;
@@ -892,12 +1283,15 @@ await app.RunAsync();
 
 ---
 
-## 18. Current architecture summary
+## 25. Current architecture summary
 
-```txt
+```text
 Submit path:
 
-IAiSharedRuntimeController
+MCP / API / CLI
+  -> RBAC ExecutionContext
+  -> ExecutionContextSnapshot
+  -> IAiSharedRuntimeController
   -> IAiRunAdmissionController
   -> IAiSharedRunStore
   -> IAiSharedQueue
@@ -910,7 +1304,9 @@ IAiSharedQueuePump
   -> IAiSharedQueueDispatcher
   -> IAiSharedQueue
   -> IAiSharedRunStore
+  -> Restore ExecutionContextSnapshot
   -> IAiRunAdmissionController
+  -> Tenant-visible registry/capacity filtering
   -> IAiSharedRunDispatcher
 
 
@@ -918,6 +1314,7 @@ Local dispatch path:
 
 IAiSharedRunDispatcher
   -> IAiRuntimeQueueControlPlane
+  -> AiRuntimePipelineRunRequest.ExecutionContextSnapshot
 
 
 Background service path:
@@ -935,7 +1332,7 @@ IAiRuntimePipelineBackgroundController
   -> AiRuntimeInstanceSnapshot
 
 
-Scale-out request path:
+Tenant-aware scale-out request path:
 
 IAiSharedRuntimeController
   -> IAiRunAdmissionController
@@ -951,12 +1348,14 @@ IAiSharedRuntimeController
 
 ---
 
-## 19. Current limitations
+## 26. Current limitations
 
 Implemented:
 
-```txt
+```text
+- RBAC-to-ExecutionContextSnapshot propagation foundation
 - shared run persistence
+- durable shared run ExecutionContextSnapshot storage
 - Redis atomic shared run store
 - Redis atomic shared queue
 - direct dispatch for assigned runs
@@ -966,17 +1365,22 @@ Implemented:
 - manual drain
 - background service
 - local dispatcher V1
+- dispatch-time context restore
 - dispatch-time admission
+- tenant-aware registry filtering
+- tenant-aware capacity filtering
+- Shared/Dedicated/Hybrid runtime visibility rules
 - pump identity / assigned runtime identity separation
 - runtime worker capacity visibility
 - max local workers per execution
 - worker-aware CanAcceptRun
 - Redis-backed scale-out request persistence
+- tenant runtime settings propagation into scale-out requests
 - store-backed scale-out request publisher
 - scale-out request watcher
 - provider-based scale-out selector
 - local runtime scale-out provider
-- local runtime instance scaler
+- tenant-scoped local runtime instance scaler
 - fulfilled scale-out run requeue
 - MCP Redis local scale-out fulfillment
 - MCP Redis local scale-out requeue, dispatch, execution, and completion
@@ -984,7 +1388,7 @@ Implemented:
 
 Not implemented yet:
 
-```txt
+```text
 - Kubernetes pod creation
 - distributed runtime instance API dispatch
 - Kubernetes pod creation / deployment scaler adapter
@@ -993,17 +1397,19 @@ Not implemented yet:
 - Redis command queue runtime dispatch
 - gRPC runtime dispatch
 - dashboard UI
+- database-backed tenant runtime settings
+- production-grade tenant authorization hardening beyond current RBAC foundation
 ```
 
 ---
 
-## 20. Future Kubernetes direction
+## 27. Future Kubernetes direction
 
 The next layer should not change the core shared controller design.
 
 Future adapters can be added behind abstractions:
 
-```txt
+```text
 IAiSharedRunDispatcher
   -> LocalAiSharedRunDispatcher
   -> HttpRuntimeInstanceDispatcher
@@ -1019,21 +1425,28 @@ IAiRuntimeScaleOutProvider
   -> future Kubernetes scale-out provider
 ```
 
-The current system is ready for Kubernetes-style coordination because Redis already coordinates shared work and now also persists scale-out requests:
+The current system is ready for Kubernetes-style coordination because Redis already coordinates shared work and now also persists tenant-aware scale-out requests:
 
-```txt
+```text
 shared run state
+durable execution context snapshot
 pending queue state
 atomic claim
 dispatch ownership
+tenant-aware admission
+tenant-visible registry/capacity
 requeue on failure
 concurrent dispatcher safety
 scale-out request lifecycle
+tenant-scoped runtime capacity creation
 ```
 
 Runtime instance capacity visibility prepares the control plane for Kubernetes dashboards and autoscaling decisions:
 
-```txt
+```text
+tenant id
+tenant group id
+isolation mode
 worker count
 active worker count
 available worker count
@@ -1046,7 +1459,7 @@ capacity pressure
 
 Future autoscaling should use the existing abstractions:
 
-```txt
+```text
 IAiRuntimeInstanceRegistry
 IAiRuntimeInstanceCapacityStore
 IAiRunAdmissionController
@@ -1056,4 +1469,51 @@ IAiRuntimeScaleOutProviderSelector
 IAiRuntimeScaleOutProvider
 IAiScaleOutFulfilledRunRequeueService
 IAiSharedRunDispatcher
+```
+
+---
+
+## 28. Validated test evidence
+
+Current validation includes:
+
+```text
+1036 tests passing
+```
+
+Tenant-aware shared controller coverage includes:
+
+```text
+- default/shared tenant scale-out to runtime-instance-1
+- tenant-a Dedicated scale-out to tenant-a-runtime-1
+- tenant-a Dedicated no fallback to shared runtime
+- tenant-b Hybrid scale-out to tenant-b-runtime-1
+- tenant-b Hybrid fallback to runtime-instance-1 when shared capacity is visible
+- Redis scale-out request tenant field persistence
+- local scaler scoped by RuntimeInstanceIdPrefix
+- shared queue dispatcher restores ExecutionContextSnapshot before admission
+- direct runtime queued runs require ExecutionContextSnapshot
+- Redis registry listing filters by tenant visibility
+- Redis capacity listing filters by tenant visibility
+- admission assigns only tenant-visible runtime capacity
+```
+
+Legacy shared controller behavior remains validated:
+
+```text
+- shared run persistence
+- Redis shared run store
+- Redis shared queue
+- Redis atomic queue claim
+- direct assigned dispatch
+- queue-first submit
+- manual queue drain
+- background pump dispatch
+- missing shared run requeue
+- dispatch failure requeue
+- Redis local scale-out fulfillment
+- fulfilled shared run requeue
+- local queue execution completion
+- HTTP pooled runtime dispatch
+- heavy HTTP dispatch
 ```
