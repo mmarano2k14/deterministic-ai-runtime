@@ -2057,6 +2057,355 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
         }
 
         /// <summary>
+        /// Verifies that the Redis-backed scale-out watcher preserves tenant runtime settings
+        /// when converting a persisted scale-out request into a provider scale-out request.
+        /// </summary>
+        [Fact]
+        public async Task ScaleOutWatcher_With_Hybrid_Tenant_Request_Should_Preserve_Tenant_Runtime_Settings_When_Fulfilling()
+        {
+            var controlPlaneId =
+                GenericMcpServerTestSettings.CreateControlPlaneId(
+                    "hybrid-watcher-provider-request");
+
+            var controlPlaneSettings =
+                GenericMcpServerTestSettings.CreateLocalScaleOutOnlyControlPlaneSettings(
+                    controlPlaneId);
+
+            await using var host =
+                new GenericMcpServerTestHost(
+                    controlPlaneSettings);
+
+            AssertRedisStoresPublisherWatcherAndLocalScaler(
+                host.Services);
+
+            var tenantRuntimeSettingsProvider =
+                host.Services.GetRequiredService<IAiTenantRuntimeSettingsProvider>();
+
+            var tenantRuntimeSettings =
+                tenantRuntimeSettingsProvider.GetSettings(
+                    HybridTenantId,
+                    null);
+
+            output.WriteLine(
+                $"Hybrid watcher settings resolved. TenantId='{tenantRuntimeSettings.TenantId}', IsolationMode='{tenantRuntimeSettings.IsolationMode}', RuntimeInstanceIdPrefix='{tenantRuntimeSettings.RuntimeInstanceIdPrefix}', MaxRuntimeInstances='{tenantRuntimeSettings.MaxRuntimeInstances}', AllowSharedFallback='{tenantRuntimeSettings.AllowSharedFallback}'.");
+
+            Assert.Equal(
+                HybridTenantId,
+                tenantRuntimeSettings.TenantId);
+
+            Assert.Equal(
+                AiRuntimeInstanceIsolationMode.Hybrid,
+                tenantRuntimeSettings.IsolationMode);
+
+            Assert.Equal(
+                HybridRuntimeInstanceIdPrefix,
+                tenantRuntimeSettings.RuntimeInstanceIdPrefix);
+
+            Assert.Equal(
+                2,
+                tenantRuntimeSettings.MaxRuntimeInstances);
+
+            Assert.True(
+                tenantRuntimeSettings.PreferDedicatedCapacity);
+
+            Assert.True(
+                tenantRuntimeSettings.AllowSharedFallback);
+
+            var scaleOutPublisher =
+                host.Services.GetRequiredService<IAiRuntimeScaleOutRequestPublisher>();
+
+            var scaleOutRequestStore =
+                host.Services.GetRequiredService<IAiRuntimeScaleOutRequestStore>();
+
+            var scaler =
+                host.Services.GetRequiredService<IAiLocalRuntimeInstanceScaler>();
+
+            Assert.Equal(
+                0,
+                scaler.ActiveInstanceCount);
+
+            var sharedRunId =
+                $"hybrid-watcher-shared-run-{Guid.NewGuid():N}";
+
+            var pipelineName =
+                $"hybrid-watcher-pipeline-{Guid.NewGuid():N}";
+
+            var now =
+                DateTimeOffset.UtcNow;
+
+            var effectiveProject =
+                "hybrid-watcher-provider-request";
+
+            var effectiveNamespace =
+                HybridTenantId;
+
+            var executionContextSnapshot =
+                new ExecutionContextSnapshot
+                {
+                    TenantId = HybridTenantId,
+                    TenantGroupId = tenantRuntimeSettings.TenantGroupId,
+                    ContextKey = "ctx-hybrid-watcher-provider-request",
+                    CurrentNamespace = effectiveNamespace,
+                    Namespaces = new List<NamespaceEntry>
+                    {
+                new()
+                {
+                    Name = effectiveNamespace,
+                    Trns = new HashSet<string>
+                    {
+                        $"trn:{effectiveProject}:shared-run:execution:submit",
+                        $"trn:{effectiveProject}:shared-run:registry:read",
+                        $"trn:{effectiveProject}:shared-run:registry:list",
+                        $"trn:{effectiveProject}:shared-queue:queue:list",
+                        $"trn:{effectiveProject}:shared-queue:status:read",
+                        $"trn:{effectiveProject}:shared-queue:pump:drain"
+                    }
+                }
+                    },
+                    UserId = RequestedBy,
+                    Project = effectiveProject
+                };
+
+            var runRequest =
+                new AiRuntimePipelineRunRequest
+                {
+                    PipelineName = pipelineName,
+                    Input = "hybrid watcher provider request propagation test",
+                    ExecutionContextSnapshot = executionContextSnapshot
+                };
+
+            var sharedRun =
+                new AiSharedRunRecord
+                {
+                    SharedRunId = sharedRunId,
+                    Status = AiSharedRunStatus.ScaleOutRequested,
+                    RunRequest = runRequest,
+                    ExecutionContextSnapshot = executionContextSnapshot,
+                    AdmissionDecision = new AiRunAdmissionDecision
+                    {
+                        DecisionType = AiRunAdmissionDecisionType.RequestScaleOut,
+                        Reason = "Hybrid watcher provider request propagation test.",
+                        TenantId = HybridTenantId,
+                        TenantGroupId = tenantRuntimeSettings.TenantGroupId,
+                        TenantRuntimeSettings = tenantRuntimeSettings,
+                        VisibleInstanceCount = 0,
+                        AvailableInstanceCount = 0,
+                        CurrentInstanceCount = 0,
+                        MaxInstanceCount = tenantRuntimeSettings.MaxRuntimeInstances
+                    },
+                    ControlPlaneId = controlPlaneId,
+                    PipelineKey = pipelineName,
+                    CorrelationId = $"hybrid-watcher-correlation-{Guid.NewGuid():N}",
+                    RequestedBy = RequestedBy,
+                    Source = Source,
+                    Reason = "Hybrid watcher provider request propagation test.",
+                    SubmittedAtUtc = now,
+                    UpdatedAtUtc = now,
+                    Metadata = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                    {
+                        ["test"] = "hybrid-watcher-provider-request"
+                    }
+                };
+
+            var publishResult =
+                await scaleOutPublisher
+                    .PublishAsync(
+                        new AiRuntimeScaleOutRequest
+                        {
+                            SharedRunId = sharedRunId,
+                            SharedRun = sharedRun,
+                            TenantId = HybridTenantId,
+                            TenantGroupId = tenantRuntimeSettings.TenantGroupId,
+                            PipelineKey = pipelineName,
+                            Reason = "Hybrid watcher provider request propagation test.",
+                            RequestedBy = RequestedBy,
+                            Source = Source,
+                            CorrelationId = sharedRun.CorrelationId,
+
+                            IsolationMode = tenantRuntimeSettings.IsolationMode,
+                            PreferDedicatedCapacity = tenantRuntimeSettings.PreferDedicatedCapacity,
+                            AllowSharedFallback = tenantRuntimeSettings.AllowSharedFallback,
+                            MaxRuntimeInstances = tenantRuntimeSettings.MaxRuntimeInstances,
+                            RuntimeInstanceIdPrefix = tenantRuntimeSettings.RuntimeInstanceIdPrefix,
+                            WorkerCountPerInstance = tenantRuntimeSettings.WorkerCountPerInstance,
+                            MaxConcurrentRunsPerInstance = tenantRuntimeSettings.MaxConcurrentRunsPerInstance,
+                            LocalQueueCapacity = tenantRuntimeSettings.LocalQueueCapacity,
+
+                            VisibleInstanceCount = 0,
+                            AvailableInstanceCount = 0,
+                            CurrentInstanceCount = 0,
+                            MaxInstanceCount = tenantRuntimeSettings.MaxRuntimeInstances,
+                            Metadata = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                            {
+                                ["test"] = "hybrid-watcher-provider-request"
+                            }
+                        })
+                    .ConfigureAwait(false);
+
+            Assert.True(
+                publishResult.Success,
+                publishResult.Message);
+
+            var requestId =
+                $"scale-out-{sharedRunId}";
+
+            Assert.Equal(
+                requestId,
+                publishResult.ScaleOutRequestId);
+
+            var fulfilled =
+                await WaitForScaleOutRequestStatusAsync(
+                        scaleOutRequestStore,
+                        requestId,
+                        AiRuntimeScaleOutRequestStatus.Fulfilled,
+                        TimeSpan.FromSeconds(15))
+                    .ConfigureAwait(false);
+
+            Assert.Equal(
+                requestId,
+                fulfilled.RequestId);
+
+            Assert.Equal(
+                sharedRunId,
+                fulfilled.SharedRunId);
+
+            Assert.Equal(
+                controlPlaneId,
+                fulfilled.ControlPlaneId);
+
+            Assert.Equal(
+                HybridTenantId,
+                fulfilled.TenantId);
+
+            Assert.Equal(
+                tenantRuntimeSettings.TenantGroupId,
+                fulfilled.TenantGroupId);
+
+            Assert.Equal(
+                pipelineName,
+                fulfilled.PipelineKey);
+
+            Assert.Equal(
+                AiRuntimeScaleOutRequestStatus.Fulfilled,
+                fulfilled.Status);
+
+            Assert.Equal(
+                AiRuntimeInstanceIsolationMode.Hybrid,
+                fulfilled.IsolationMode);
+
+            Assert.True(
+                fulfilled.PreferDedicatedCapacity);
+
+            Assert.True(
+                fulfilled.AllowSharedFallback);
+
+            Assert.Equal(
+                2,
+                fulfilled.MaxRuntimeInstances);
+
+            Assert.Equal(
+                HybridRuntimeInstanceIdPrefix,
+                fulfilled.RuntimeInstanceIdPrefix);
+
+            Assert.Equal(
+                5,
+                fulfilled.WorkerCountPerInstance);
+
+            Assert.Equal(
+                3,
+                fulfilled.MaxConcurrentRunsPerInstance);
+
+            Assert.Equal(
+                250,
+                fulfilled.LocalQueueCapacity);
+
+            Assert.Equal(
+                0,
+                fulfilled.VisibleInstanceCount);
+
+            Assert.Equal(
+                0,
+                fulfilled.AvailableInstanceCount);
+
+            Assert.Equal(
+                0,
+                fulfilled.CurrentInstanceCount);
+
+            Assert.Equal(
+                2,
+                fulfilled.MaxInstanceCount);
+
+            Assert.Equal(
+                1,
+                fulfilled.RequestedTargetInstanceCount);
+
+            Assert.Equal(
+                "local",
+                fulfilled.ProviderHint);
+
+            Assert.Equal(
+                "mcp-scaleout-watcher",
+                fulfilled.ObservedBy);
+
+            Assert.Equal(
+                "mcp-scaleout-watcher",
+                fulfilled.FulfilledBy);
+
+            Assert.False(
+                string.IsNullOrWhiteSpace(
+                    fulfilled.FulfilledRuntimeInstanceId));
+
+            Assert.Contains(
+                $":{HybridRuntimeInstanceIdPrefix}-1",
+                fulfilled.FulfilledRuntimeInstanceId,
+                StringComparison.Ordinal);
+
+            Assert.Equal(
+                "Hybrid",
+                fulfilled.Metadata["runtime.isolationMode"]);
+
+            Assert.Equal(
+                "True",
+                fulfilled.Metadata["runtime.preferDedicatedCapacity"]);
+
+            Assert.Equal(
+                "True",
+                fulfilled.Metadata["runtime.allowSharedFallback"]);
+
+            Assert.Equal(
+                "2",
+                fulfilled.Metadata["runtime.maxRuntimeInstances"]);
+
+            Assert.Equal(
+                HybridRuntimeInstanceIdPrefix,
+                fulfilled.Metadata["runtime.instanceIdPrefix"]);
+
+            Assert.Equal(
+                "5",
+                fulfilled.Metadata["runtime.workerCountPerInstance"]);
+
+            Assert.Equal(
+                "3",
+                fulfilled.Metadata["runtime.maxConcurrentRunsPerInstance"]);
+
+            Assert.Equal(
+                "250",
+                fulfilled.Metadata["runtime.localQueueCapacity"]);
+
+            await WaitUntilAsync(
+                    () => scaler.ActiveInstanceCount >= 1,
+                    TimeSpan.FromSeconds(5))
+                .ConfigureAwait(false);
+
+            Assert.True(
+                scaler.ActiveInstanceCount >= 1,
+                $"Expected the watcher/provider flow to create at least one hybrid tenant runtime instance. ActiveInstanceCount='{scaler.ActiveInstanceCount}'.");
+
+            output.WriteLine(
+                $"Hybrid watcher provider request fulfilled. RequestId='{fulfilled.RequestId}', TenantId='{fulfilled.TenantId}', IsolationMode='{fulfilled.IsolationMode}', RuntimeInstancePrefix='{fulfilled.RuntimeInstanceIdPrefix}', FulfilledRuntimeInstanceId='{fulfilled.FulfilledRuntimeInstanceId}', RequestedTargetInstanceCount='{fulfilled.RequestedTargetInstanceCount}', ActiveLocalInstances='{scaler.ActiveInstanceCount}'.");
+        }
+
+        /// <summary>
         /// Waits until a scale-out request reaches the expected status.
         /// </summary>
         /// <param name="store">The scale-out request store.</param>
