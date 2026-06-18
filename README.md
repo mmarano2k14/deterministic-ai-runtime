@@ -1,601 +1,1362 @@
-# Documentation Index
+# Deterministic AI Runtime
 
-This directory contains the documentation for **Deterministic AI Runtime**.
+A deterministic AI execution runtime for production-grade AI workloads.
 
-The main repository README is the public entry point. It explains the project, its purpose, current capabilities, validated evidence, and roadmap.
+This repository provides a reference implementation of a distributed, state-driven runtime for executing AI workflows with deterministic DAG orchestration, context resolution, Redis Lua coordination, retry/recovery, retention/compaction, distributed concurrency control, execution control state, replay validation, correlated metrics and tracing, execution-correlated decision ledger, shared runtime control-plane orchestration, Redis-backed shared queue coordination, queue-first submission, shared queue pumping/manual drain, dispatch-time admission, runtime instance provider hosting, Redis control-plane discovery, runtime instance registry and capacity stores, admission reservations, HTTP pooled runtime dispatch, runtime worker-capacity visibility, RBAC execution-context propagation, tenant-aware control-plane isolation, Shared/Dedicated/Hybrid runtime visibility, Redis-backed scale-out request lifecycle, local runtime scale-out, fulfilled-run requeue, and executable enterprise demo scenarios.
 
-The complete technical reference is preserved at the root of this `docs/` directory.
+The current runtime foundations are intentionally designed as the base for a broader product platform for deterministic AI execution, runtime control, replay, audit, governance, observability, dashboarding, pipeline building, managed hosting, multi-tenant execution isolation, and enterprise-oriented AI operations.
 
-Focused AI runtime documentation is organized under:
-
-- [`ai/`](ai/)
+[![Version](https://img.shields.io/badge/Version-1.0.6.2-blue)](./CHANGELOG.md)
+[![Changelog](https://img.shields.io/badge/Changelog-view-lightgrey)](./CHANGELOG.md)
+![AI Runtime](https://img.shields.io/badge/AI-Deterministic%20Execution-purple)
+![Runtime](https://img.shields.io/badge/Runtime-distributed-brightgreen)
+![Redis](https://img.shields.io/badge/Redis-required-red?logo=redis)
+![MongoDB](https://img.shields.io/badge/MongoDB-required-green?logo=mongodb)
+![Status](https://img.shields.io/badge/Status-active%20development-orange)
 
 ---
 
-## Start Here
+## Latest Updates
 
-| Document | Purpose |
+The latest major updates focused on tenant-aware control-plane isolation, RBAC execution-context propagation, Redis-backed scale-out lifecycle, and provider-hosting validation.
+
+| Area | Summary |
 |---|---|
-| [`../README.md`](../README.md) | Main repository entry point with the current runtime capabilities, validated evidence, roadmap, and documentation map. |
-| [`runtime-internals.md`](runtime-internals.md) | Complete technical reference preserved from the original README. |
-| [`enterprise-readiness.md`](enterprise-readiness.md) | Matrix of enterprise AI execution questions and runtime answers. |
-| [`ai/architecture-overview.md`](ai/architecture-overview.md) | High-level runtime architecture and major runtime layers, including shared control-plane orchestration, provider dispatch, Redis coordination, and multi-tenant runtime isolation. |
-| [`ai/multi-tenant-control-plane-isolation.md`](ai/multi-tenant-control-plane-isolation.md) | Multi-tenant control-plane isolation, RBAC execution-context propagation, durable `ExecutionContextSnapshot`, tenant-aware registry/capacity/admission, Shared/Dedicated/Hybrid runtime visibility, and tenant-aware scale-out. |
-| [`ai/runtime-control-plane.md`](ai/runtime-control-plane.md) | Runtime control-plane foundation covering replay, execution control, runtime queues, runtime registry/capacity, discovery, admission, shared controller orchestration, scale-out lifecycle, and tenant-aware dispatch. |
-| [`ai/runtime-discovery-registry-capacity.md`](ai/runtime-discovery-registry-capacity.md) | Runtime discovery, registry, and capacity foundation covering Redis control-plane discovery, `ControlPlaneIdResolver`, runtime registration, tenant-filtered capacity descriptors, pump readiness, cleanup, local scale-out, and HTTP pooled runtime identity. |
-| [`ai/mcp-server-control-plane.md`](ai/mcp-server-control-plane.md) | MCP server as a runtime control-plane adapter, including host modes, RBAC integration, MCP tool groups, runtime role separation, local runtime pools, Redis/local scale-out, shared queue dispatch, and Kubernetes direction. |
-| [`ai/runtime-instance-provider-model.md`](ai/runtime-instance-provider-model.md) | Provider-based runtime instance administration for local, Redis command queue, HTTP, gRPC, and Kubernetes providers, including tenant-aware dispatch/status/control/scale-out capabilities and provider routing. |
-| [`ai/shared-controller-usage.md`](ai/shared-controller-usage.md) | Shared runtime controller usage, queue-first/direct-dispatch modes, Redis stores, scale-out request persistence, tenant snapshot propagation, manual drain, and background pump setup. |
-| [`ai/shared-queue-pump-and-worker-capacity.md`](ai/shared-queue-pump-and-worker-capacity.md) | Shared queue pump, fulfilled-run requeue, dispatch-time admission, context restoration, worker capacity visibility, and `MaxLocalWorkersPerExecution`. |
-| [`ai/testing-strategy.md`](ai/testing-strategy.md) | Testing strategy and validation approach for distributed runtime guarantees, RBAC context propagation, tenant isolation, Redis/local scale-out, requeue, dispatch, and execution evidence. |
-| [`ai/execution-correlated-ledger.md`](ai/execution-correlated-ledger.md) | Execution-correlated runtime decision ledger, audit foundations, retention auditability, and replay lifecycle event correlation. |
-| [`ai/observability.md`](ai/observability.md) | High-level observability index summarizing ledger, tracing, metrics, logs, correlation, replay diagnostics, and roadmap direction. |
-| [`ai/observability-tracing.md`](ai/observability-tracing.md) | Runtime tracing, trace timelines, correlation, trace storage modes, Mongo trace persistence, MemoryAndMongo mode, and tracing improvements. |
-| [`ai/runtime-metrics.md`](ai/runtime-metrics.md) | Runtime metric domains, metric storage modes, worker/retention/storage/resolver/hot-state/policy metrics, and metrics improvements. |
-| [`ai/replay-and-audit.md`](ai/replay-and-audit.md) | Deterministic Replay Engine V1, snapshot restore, fingerprint validation, replay metadata, ledger/timeline diagnostics, and replay improvements. |
-| [`comparison-existing-tools.md`](comparison-existing-tools.md) | Ecosystem positioning against agent frameworks, workflow engines, orchestration tools, observability platforms, and distributed infrastructure. |
-| [`roadmap.md`](roadmap.md) | Project roadmap organized by phases. |
+| RBAC execution-context integration | Integrated RBAC execution context as the entry-point authority for MCP/control-plane operations and persisted a durable `ExecutionContextSnapshot` across shared and local runtime paths. |
+| Multi-tenant control-plane isolation | Added tenant-aware runtime visibility using `ExecutionContextSnapshot.TenantId` as the durable isolation boundary, with Shared, Dedicated, and Hybrid runtime modes. |
+| Tenant-aware registry, capacity, and admission | Registry and capacity listing now filter runtime instances through tenant visibility rules before admission, dispatch, MCP visibility, or scale-out decisions. |
+| Shared queue context restoration | The shared queue dispatcher restores the persisted `ExecutionContextSnapshot` before dispatch-time admission, capacity filtering, reservation, and provider dispatch. |
+| Runtime local queue snapshot requirement | Runtime background execution now requires an `ExecutionContextSnapshot` so direct queued runs and shared-dispatched runs preserve tenant/user/project identity before creating the durable `ExecutionId`. |
+| Tenant-scoped scale-out settings | Scale-out requests preserve tenant runtime settings such as isolation mode, fallback behavior, runtime instance prefix, worker count, run slots, queue capacity, and maximum runtime instances. |
+| Local scaler prefix isolation | Local runtime scale-out now counts existing hosts by tenant-aware `RuntimeInstanceIdPrefix`, preventing shared capacity from blocking dedicated or hybrid tenant scale-out. |
+| Redis-backed scale-out request lifecycle | Added persisted scale-out requests, request observation, fulfilled/rejected lifecycle handling, provider hint propagation, and Redis-backed scale-out coordination. |
+| Provider-based scale-out capability | Added scale-out as a runtime instance provider capability through `IAiRuntimeScaleOutProvider`, resolved by the existing provider router through `AiRuntimeScaleOutProviderSelector`. |
+| Local runtime scale-out | Added local runtime instance scaling through `LocalAiRuntimeInstanceProvider` and `AiLocalRuntimeInstanceScaler`, allowing runtime capacity to be created dynamically from zero executable local instances. |
+| Fulfilled-run requeue and pump dispatch | Added fulfilled scale-out shared-run requeue so the watcher creates capacity but the normal shared queue pump still owns claim, dispatch-time admission, provider dispatch, and queue/run state transitions. |
+| MCP Redis local scale-out validation | Validated the full MCP flow: submit with no runtime capacity, request scale-out, fulfill the request, create/register runtime capacity, requeue the run, dispatch through the pump, expose `LocalRunId` and `ExecutionId`, and complete the runtime run. |
+| Test validation | The current branch has been validated with 1036 green tests covering multi-tenant isolation, RBAC snapshot propagation, registry/capacity filtering, shared queue dispatch, local scale-out, HTTP pooled runtime dispatch, and legacy execution paths. |
+
+For detailed changes, see [`CHANGELOG.md`](./CHANGELOG.md), [`docs/index.md`](docs/index.md), [`docs/ai/multi-tenant-control-plane-isolation.md`](docs/ai/multi-tenant-control-plane-isolation.md), and the product roadmap documentation under [`docs/product-roadmap/index.md`](docs/product-roadmap/index.md).
 
 ---
 
-## Recommended Reading Paths
+## Overview
 
-### For CTOs, Engineering Managers, and Recruiters
+Deterministic AI Runtime is a .NET runtime for executing complex AI workflows as controlled, observable, recoverable, replayable, auditable, and tenant-isolated distributed executions.
 
-Start with:
+It is designed for workloads such as:
 
-1. [`../README.md`](../README.md)
-2. [`enterprise-readiness.md`](enterprise-readiness.md)
-3. [`comparison-existing-tools.md`](comparison-existing-tools.md)
-4. [`roadmap.md`](roadmap.md)
+- LLM orchestration
+- RAG pipelines
+- tool execution
+- decision workflows
+- long-running AI processes
+- multi-step distributed execution
+- shared control-plane orchestration
+- multi-tenant AI runtime hosting
+- Kubernetes-oriented runtime instance pools
+- operational replay and audit workflows
 
-This path explains what the project is, why it matters, and how it maps to enterprise AI execution problems.
+The runtime treats AI orchestration as a systems problem, not only as a prompt engineering problem.
 
-### For Architects and Senior Engineers
+It provides a state-driven execution layer where:
 
-Start with:
+- workflows are modeled as DAGs
+- RBAC execution context is captured into a durable `ExecutionContextSnapshot`
+- tenant identity is propagated across shared runs, background dispatch, runtime queues, and distributed execution
+- `ExecutionContextSnapshot.TenantId` is the durable tenant isolation boundary
+- `ContextKey` remains useful for RBAC correlation, access-context lookup, and diagnostics, but is not the tenant isolation boundary
+- workers are stateless
+- Redis stores hot execution state
+- Redis Lua scripts enforce atomic coordination
+- MongoDB stores durable payloads and snapshots
+- context helpers resolve inputs, payloads, provider metadata, and policy context
+- policies control retry, retention, and concurrency
+- metrics, traces, and ledger events share runtime correlation
+- executions can be replay-validated from persisted snapshots
+- execution can be paused, resumed, cancelled, or blocked for human input
+- submitted runs can be admitted, assigned, globally queued, queue-first submitted, pumped manually or by background service, dispatched, scale-out requested, rejected, listed, retrieved, or cancelled through the shared runtime controller
+- tenant-aware admission filters Shared, Dedicated, and Hybrid runtime instances before assignment, fallback, or scale-out
+- runtime instances expose run capacity, worker capacity, queue pressure, and worker-aware `CanAcceptRun`
+- MCP/control-plane discovery allows runtime-only hosts to resolve the logical control-plane identity before registration
+- Redis registry, capacity, and admission reservation stores validate shared runtime coordination
+- local and HTTP pooled provider hosting foundations validate the path toward Kubernetes-style runtime instances
+- tenant runtime settings can define the desired isolation mode, fallback behavior, runtime instance prefix, worker count, local queue capacity, max concurrent runs, and max runtime instances
 
-1. [`../README.md`](../README.md)
-2. [`ai/architecture-overview.md`](ai/architecture-overview.md)
-3. [`ai/multi-tenant-control-plane-isolation.md`](ai/multi-tenant-control-plane-isolation.md)
-4. [`enterprise-readiness.md`](enterprise-readiness.md)
-5. [`ai/runtime-control-plane.md`](ai/runtime-control-plane.md)
-6. [`ai/runtime-discovery-registry-capacity.md`](ai/runtime-discovery-registry-capacity.md)
-7. [`ai/mcp-server-control-plane.md`](ai/mcp-server-control-plane.md)
-8. [`ai/runtime-instance-provider-model.md`](ai/runtime-instance-provider-model.md)
-9. [`ai/shared-controller-usage.md`](ai/shared-controller-usage.md)
-10. [`ai/shared-queue-pump-and-worker-capacity.md`](ai/shared-queue-pump-and-worker-capacity.md)
-11. [`ai/distributed-execution.md`](ai/distributed-execution.md)
-12. [`ai/execution-control-state.md`](ai/execution-control-state.md)
-13. [`ai/observability.md`](ai/observability.md)
-14. [`ai/execution-correlated-ledger.md`](ai/execution-correlated-ledger.md)
-15. [`ai/observability-tracing.md`](ai/observability-tracing.md)
-16. [`ai/runtime-metrics.md`](ai/runtime-metrics.md)
-17. [`ai/replay-and-audit.md`](ai/replay-and-audit.md)
-18. [`runtime-internals.md`](runtime-internals.md)
-
-This path gives both the strategic positioning and the complete technical depth.
-
-### For Contributors
-
-Start with:
-
-1. [`ai/architecture-overview.md`](ai/architecture-overview.md)
-2. [`ai/multi-tenant-control-plane-isolation.md`](ai/multi-tenant-control-plane-isolation.md)
-3. [`ai/config-driven-runtime.md`](ai/config-driven-runtime.md)
-4. [`ai/policy-driven-execution.md`](ai/policy-driven-execution.md)
-5. [`ai/context-resolution-and-helpers.md`](ai/context-resolution-and-helpers.md)
-6. [`ai/step-plugins.md`](ai/step-plugins.md)
-7. [`ai/runtime-control-plane.md`](ai/runtime-control-plane.md)
-8. [`ai/runtime-discovery-registry-capacity.md`](ai/runtime-discovery-registry-capacity.md)
-9. [`ai/mcp-server-control-plane.md`](ai/mcp-server-control-plane.md)
-10. [`ai/runtime-instance-provider-model.md`](ai/runtime-instance-provider-model.md)
-11. [`ai/shared-controller-usage.md`](ai/shared-controller-usage.md)
-12. [`ai/shared-queue-pump-and-worker-capacity.md`](ai/shared-queue-pump-and-worker-capacity.md)
-13. [`ai/distributed-execution.md`](ai/distributed-execution.md)
-14. [`ai/execution-control-state.md`](ai/execution-control-state.md)
-15. [`ai/execution-correlated-ledger.md`](ai/execution-correlated-ledger.md)
-16. [`ai/observability-tracing.md`](ai/observability-tracing.md)
-17. [`ai/runtime-metrics.md`](ai/runtime-metrics.md)
-18. [`ai/replay-and-audit.md`](ai/replay-and-audit.md)
-19. [`ai/testing-strategy.md`](ai/testing-strategy.md)
-20. [`runtime-internals.md`](runtime-internals.md)
-21. [`roadmap.md`](roadmap.md)
-
-This path gives the current architecture, configuration model, RBAC/context propagation model, tenant isolation model, control-plane/runtime split, extension model, technical reference, and next planned improvements.
+The project should be read as an AI execution infrastructure foundation. The runtime core is already substantial, while the longer-term direction is to evolve toward a broader product platform for deterministic AI execution, operational control, replay/audit, dashboarding, pipeline building, managed hosting, and enterprise AI workflow governance.
 
 ---
 
-## Core Documentation
+## Why This Exists
 
-### [`runtime-internals.md`](runtime-internals.md)
+Most AI projects focus on prompts, agents, RAG, embeddings, or model calls.
 
-The complete technical reference preserved from the original README.
+That is enough for prototypes.
 
-It includes detailed explanations of:
+Once AI moves to production, the hard problem becomes execution:
 
-- runtime architecture
-- DAG execution
-- Redis hot state
-- Redis Lua coordination
-- distributed workers
-- retry and recovery
-- retention and compaction
-- payload externalization
-- rehydration resolver
-- distributed concurrency and throttling
-- execution control state
-- runtime queue control
-- observability
-- deterministic replay engine and snapshot foundations
-- replay metadata, ledger, and timeline diagnostics
-- execution-correlated decision ledger
-- roadmap and vision
+- How do you coordinate multiple workers?
+- How do you avoid duplicate execution?
+- How do you recover after crashes?
+- How do you replay an execution?
+- How do you control retries?
+- How do you throttle providers and models?
+- How do you keep memory bounded?
+- How do you resolve context safely across steps, payloads, providers, and policies?
+- How do you pause, resume, or cancel safely?
+- How do you support human-in-the-loop workflows?
+- How do you preserve RBAC and tenant identity after the original request leaves the MCP/API context?
+- How do you prevent one tenant from seeing or consuming another tenant's dedicated runtime capacity?
+- How do you scale out runtime instances without losing tenant-specific settings?
+- How do you prove deterministic convergence?
 
-This document intentionally keeps the original depth. It should not be deleted.
+This runtime exists to address those production execution concerns.
 
-### [`enterprise-readiness.md`](enterprise-readiness.md)
+---
 
-A structured matrix answering key enterprise AI runtime questions:
+## What Problem This Runtime Fixes
 
-- worker crashes
-- duplicate execution prevention
-- replay
-- auditability
-- concurrency limits
-- pause/resume/cancel
-- human-in-the-loop
-- bounded memory/state
-- multi-runtime-instance coordination
-- deterministic convergence
+Modern AI applications often start as simple prompts, agents, or RAG pipelines.
 
-### [`ai/architecture-overview.md`](ai/architecture-overview.md)
+That works for prototypes, but production AI execution quickly becomes a distributed systems problem.
 
-High-level architecture overview for the deterministic runtime.
+This runtime is designed to fix the operational problems that appear when AI workflows must run reliably across multiple steps, workers, runtime instances, providers, queues, control-plane operations, and tenants.
 
-This document explains:
+| Problem | What the Runtime Provides |
+|---|---|
+| AI workflows are hard to reproduce | Deterministic DAG execution, persisted execution state, replay metadata, fingerprints, snapshots, and replay validation. |
+| Workers can crash mid-execution | Redis-backed execution state, stale running-step recovery, retry state, and deterministic convergence. |
+| Multiple workers can duplicate work | Redis Lua atomic claims, claim tokens, lease validation, and single-owner step execution. |
+| Retry behavior becomes unpredictable | Step-scoped retry state, retry scheduling, recovery separation, and policy-driven retry behavior. |
+| Provider and model calls can overload external services | Distributed concurrency gates, Redis ZSET leases, provider/model/operation limits, and throttling policies. |
+| Runtime memory can grow without bounds | Retention, compaction, eviction, payload externalization, and payload rehydration. |
+| Context can become corrupted or inconsistent | Dedicated context resolution helpers for inputs, previous step outputs, payloads, provider metadata, policy context, RAG context, RBAC execution context, and durable `ExecutionContextSnapshot`. |
+| Tenant identity can be lost across async/background hops | RBAC execution context is captured into `ExecutionContextSnapshot` and restored by shared queue dispatchers and runtime background controllers before admission or execution. |
+| Dedicated tenant runtimes can leak into shared scheduling | Tenant-aware visibility rules filter registry and capacity descriptors before admission, dispatch, MCP visibility, and scale-out decisions. |
+| Hybrid tenants need safe shared fallback | Hybrid tenants can use dedicated/hybrid capacity first and fall back only to Shared runtime capacity when tenant settings explicitly allow fallback. |
+| Tenant-specific scale-out can create the wrong runtime prefix | Scale-out records carry tenant runtime settings including isolation mode, fallback flags, `RuntimeInstanceIdPrefix`, worker count, run slots, queue capacity, and maximum runtime instances. |
+| Queued work is hard to control | RunId-level queue control, queue pause/resume, queued cancellation, running cancellation bridge, shared run records, and shared queue coordination. |
+| Live executions are hard to control | ExecutionId-level pause, resume, cancel, waiting-for-input, and human input submission. |
+| Runtime behavior is hard to audit | Execution-correlated decision ledger, runtime lifecycle events, claim/retry/recovery/concurrency events, control-plane events, tenant metadata, and replay lifecycle events. |
+| Distributed runtime instances are hard to observe | Runtime instance registration, heartbeat, Redis-backed registry, Redis-backed capacity descriptors, queue pressure, available run slots, worker identity propagation, active worker count, available worker count, tenant ownership metadata, and worker-aware `CanAcceptRun`. |
+| Queued global work needs controlled dispatch | Queue-first submit mode, shared queue pump, readiness gate, manual drain, dispatch-time admission, tenant-aware capacity visibility, admission reservations, and no-double-dispatch shared queue coordination. |
+| One execution can consume too many local workers | `MaxLocalWorkersPerExecution`, effective worker reservation, active/free worker visibility, and worker-aware runtime capacity snapshots. |
+| Control-plane operations become coupled to internals | Adapter-neutral control-plane facades for MCP, HTTP API, CLI, dashboards, and Kubernetes-oriented orchestration. |
+| Dispatch and scaling can become transport-specific | Provider-based runtime instance model and foundations for local and HTTP pooled runtime providers, with future Redis command queue, gRPC, and Kubernetes providers. |
+| Kubernetes scaling needs runtime visibility | Runtime roles, runtime capacity descriptors, shared queue coordination, scale-out request publication, provider-based administration direction, and tenant-scoped runtime settings. |
+| Runtime-only hosts can register under the wrong control-plane id | Redis control-plane discovery store and `ControlPlaneIdResolver` allow runtime-only hosts to resolve the MCP-published logical control-plane identity before registration. |
+| Shutdown cleanup can race with disposed discovery/logging/Redis dependencies | Registry unregister and capacity descriptor cleanup reuse the known resolved control-plane id and are best-effort during shutdown. |
+| HTTP dispatch can accidentally target the parent transport host | HTTP pooled runtime model treats `runtime-http-*` child runtime instances as dispatch targets and the HTTP host as transport infrastructure. |
 
-- major runtime layers
-- shared controller and shared queue orchestration
-- scale-out request lifecycle
-- fulfilled-run requeue
-- provider-based dispatch
-- local, local scale-out, and HTTP pooled runtime hosting
-- runtime instance and worker capacity
-- Redis hot state and distributed coordination
-- replay, observability, retention, and policy layers
-- multi-tenant control-plane/runtime isolation as a first-class architecture boundary
+The main goal is to make production AI execution controllable, observable, recoverable, auditable, replayable, tenant-isolated, and eventually scalable across runtime instances without turning the runtime core into a transport-specific scheduler.
 
-### [`ai/multi-tenant-control-plane-isolation.md`](ai/multi-tenant-control-plane-isolation.md)
+The runtime treats AI execution as infrastructure:
 
-Multi-tenant control-plane isolation reference.
+```text
+Prompt / Tool / RAG call
+    ↓
+RBAC ExecutionContext
+    ↓
+ExecutionContextSnapshot
+    ↓
+Workflow step
+    ↓
+Deterministic DAG state
+    ↓
+Distributed worker coordination
+    ↓
+Runtime control plane
+    ↓
+Tenant-aware registry / capacity / admission
+    ↓
+Replay, audit, metrics, tracing, and capacity visibility
+```
 
-This document explains:
+This is the difference between a prototype agent and an operational AI execution platform.
 
-- RBAC integration at the MCP/control-plane boundary
-- why `ExecutionContextSnapshot.TenantId` is the durable tenant boundary
-- why `ContextKey` is volatile RBAC/correlation/debug context
-- why metadata is only diagnostic, not routing authority
-- how shared runs persist `ExecutionContextSnapshot`
-- how the shared queue dispatcher restores context before admission and dispatch
-- how runtime local queues require an execution context snapshot before execution
-- tenant runtime settings
-- Shared, Dedicated, and Hybrid isolation modes
-- runtime instance visibility rules
+---
+
+## The Production AI Execution Problem
+
+Production AI workloads are no longer single prompts running in isolation.
+
+They become distributed execution systems with:
+
+- multiple pipeline steps
+- parallel branches
+- dependencies
+- retries
+- external providers
+- large payloads
+- compacted or externalized state
+- context resolution across previous step outputs
+- failure recovery
+- operational controls
+- audit and replay requirements
+- multiple workers or runtime instances
+- multiple tenants
+- runtime-specific capacity policies
+- admission, scheduling, dispatch, and scale-out decisions that must remain isolated by tenant
+
+Without a real execution runtime, these systems often become fragile:
+
+- hidden retry loops
+- duplicated work
+- lost state
+- corrupted execution progress
+- unbounded memory growth
+- unclear ownership
+- inconsistent input/context reconstruction
+- RBAC context lost after background dispatch
+- tenants accidentally sharing dedicated runtime capacity
+- scale-out creating runtime instances with the wrong prefix or capacity settings
+- poor or fragmented observability
+- impossible replay
+
+This project explores what an AI execution runtime should look like when reliability, determinism, context resolution, tenant isolation, and distributed coordination are treated as first-class design requirements.
+
+---
+
+## Core Capabilities
+
+| Capability | Status | Summary |
+|---|---:|---|
+| Deterministic DAG execution | Implemented | Workflows execute through dependency-aware DAG state. |
+| Redis hot state | Implemented | Active execution state is stored in Redis. |
+| Redis Lua atomic coordination | Implemented | Critical transitions use Lua-backed atomic operations. |
+| Distributed workers | Implemented | Workers can claim and execute steps safely. |
+| Multi-runtime-instance execution foundations | Implemented | Runtime instances can coordinate through shared Redis-backed execution state. |
+| Context resolution and helpers | Foundation available | Input bindings, previous step outputs, provider metadata, policy context, RBAC context, execution snapshots, and payload rehydration are resolved through helper layers. |
+| Deterministic convergence | Implemented | Final state is derived from state transitions, not worker ordering. |
+| Retry and recovery | Implemented | Retry state, waiting windows, and stale running-step recovery are separated. |
+| Retention and compaction | Implemented | Hot state can be compacted/evicted while payloads remain resolvable. |
+| Distributed concurrency and throttling | Implemented | Redis ZSET leases enforce global, pipeline, step, execution, instance, provider, model, and operation limits. |
+| Enterprise throttling scenario | Implemented | `throttling-100` demonstrates provider-level distributed throttling with realtime visibility and deterministic convergence. |
+| Policy-driven execution | Implemented | Retry, retention, and concurrency use configurable policy definitions. |
+| Execution control state | Implemented | ExecutionId-level pause, resume, cancel, waiting-for-input, and human input submission. |
+| Runtime queue control | Implemented | RunId-level queue pause/resume, queued cancellation, running cancellation bridge, hot enqueue, and required execution context snapshot propagation. |
+| Runtime control plane foundation | Implemented | Adapter-neutral facades expose replay, execution control, local queue control, runtime instance control, admission, shared runtime controller, shared queue dispatch, queue pump/manual drain, background service, Redis-backed scale-out request lifecycle, tenant-aware isolation, and scale-out publication for API/MCP/CLI/dashboard/Kubernetes adapters. |
+| RBAC execution context integration | Implemented / validated | MCP/control-plane operations capture RBAC execution context and persist `ExecutionContextSnapshot` so tenant/user/project identity survives shared queues, background services, dispatchers, and runtime local queues. |
+| Multi-tenant control-plane isolation | Implemented / validated | Tenant-aware registry, capacity, admission, shared queue dispatch, and scale-out paths use `ExecutionContextSnapshot.TenantId` as the durable tenant boundary. |
+| Shared/Dedicated/Hybrid runtime visibility | Implemented / validated | Shared tenants see shared capacity, dedicated tenants see only owned dedicated capacity unless configured otherwise, and hybrid tenants can prefer dedicated capacity with explicit shared fallback. |
+| Tenant-scoped runtime settings | Implemented foundation / validated | Tenant settings currently provide hardcoded runtime isolation mode, fallback behavior, runtime instance prefix, worker count, max concurrent runs, local queue capacity, and maximum runtime instances. |
+| Runtime instance registry and control | Implemented / validated | Runtime instances can register, heartbeat, expose queue capacity, expose worker capacity, publish tenant visibility descriptors, be listed, marked draining, or unregistered through in-memory and Redis-backed registry foundations. |
+| Redis control-plane discovery | Implemented / validated | MCP/control-plane hosts can publish a logical control-plane discovery descriptor and runtime-only hosts can resolve it before registration. |
+| Redis admission reservations | Implemented / validated | Redis-backed admission reservations protect selected runtime capacity during provider dispatch scenarios. |
+| HTTP pooled runtime dispatch | Implemented / validated | `ControlPlaneWithHttpRuntimeInstances` dispatches through the HTTP provider into `RuntimeInstanceOnly` hosts with pooled `runtime-http-*` child runtime instances. |
+| Run admission / slot decisions | Implemented | Admission can assign runs to a tenant-visible runtime instance, request scale-out, queue globally, or reject according to policy. Direct-dispatch mode preserves `RequestScaleOut`; queue-first mode intentionally queues globally first. |
+| Redis-backed scale-out request lifecycle | Implemented / validated | Scale-out requests are persisted in Redis, observed by a watcher, resolved through provider selection, fulfilled or rejected, linked back to the original shared run, and enriched with tenant runtime settings. |
+| Local runtime scale-out and fulfilled-run requeue | Implemented / validated | The local provider/scaler can create tenant-scoped runtime capacity dynamically; fulfilled requests requeue the shared run so the normal pump performs dispatch and execution proceeds through the local queue. |
+| Shared Runtime Controller V1 | Implemented | Shared controller handles assigned dispatch, queue-first submission, global queue enqueue, Redis-backed shared queue dispatch, dispatch-time admission, queue pump/background consumption, Redis-backed scale-out request publication, fulfilled-run requeue, tenant-aware visibility, and shared run visibility. |
+| Shared queue pump and manual drain | Implemented / validated | Queue-first runs can remain globally queued, be dispatched by a background pump after readiness, or be manually drained later through MCP/control-plane tools. The dispatcher restores tenant execution context before dispatch-time admission. |
+| Redis runtime capacity descriptors | Implemented / validated | Runtime instances publish Redis-backed capacity descriptors for worker count, active/free workers, max workers per execution, run slots, queue pressure, heartbeat, provider metadata, tenant metadata, and capacity-aware admission. |
+| Runtime worker capacity visibility | Implemented / validated | Runtime snapshots expose `WorkerCount`, `ActiveWorkerCount`, `AvailableWorkerCount`, `MaxLocalWorkersPerExecution`, and worker-aware `CanAcceptRun`. |
+| MCP server control-plane adapter | Foundation available / validated | MCP tools expose shared run, shared queue, manual drain, background pump, runtime instance, runtime queue, replay, execution control, observability, worker-capacity visibility operations, and RBAC-backed tenant-aware control-plane operations. |
+| Runtime instance provider model | Implemented foundations / validated local and HTTP pooled scenarios | Provider-based runtime administration has local and HTTP pooled foundations, with future Redis command queue, gRPC, and Kubernetes providers. |
+| RunId vs ExecutionId separation | Implemented | Controller lifecycle identity is separated from durable DAG execution identity. |
+| Snapshot and Replay API foundations | Implemented | Terminal snapshots, replay metadata, deterministic fingerprint validation, audit-only replay, restore replay, ledger loading, and timeline loading are available. |
+| Execution-correlated decision ledger | Implemented | Durable correlated ledger events exist for execution lifecycle, run lifecycle, queue control, claims, steps, retry, recovery, policy evaluation, concurrency, execution control, human input, snapshots, storage failures, replay lifecycle, retention, compaction, tenant context, and finalization. |
+| Observability, metrics, and tracing | Foundation available | Runtime metrics, trace recording, realtime events, correlated trace timelines, and configurable Memory/Mongo/MemoryAndMongo persistence exist; production-grade OpenTelemetry integration and dashboarding remain planned. |
+| Product-platform evolution | Direction defined | Long-term product direction is documented under `docs/product-roadmap/`, including roadmap, dashboard, pipeline builder, MCP interface, memory/context lifecycle, security, testing, observability, multi-tenant readiness, and managed hosting direction. |
+| Durable decision ledger | Foundation available | Execution-correlated runtime ledger foundations are implemented and aligned with runtime correlation, including replay lifecycle visibility. |
+| Public API / SDK polish | Planned | Future work for cleaner external developer experience. |
+
+---
+
+## Architecture at a Glance
+
+```text
+Client / API / MCP / Controller
+        |
+        v
+RBAC Execution Context / ExecutionContextSnapshot / Tenant Isolation Layer
+        |
+        +--> User / Project / Namespace / ContextKey
+        +--> TenantId / TenantGroupId
+        +--> Durable execution context snapshot
+        |
+        v
+Runtime Orchestration / Shared Control Plane Layer
+        |
+        +--> Shared Run Store
+        +--> Shared Queue
+        +--> Queue Pump / Manual Drain
+        +--> Dispatch-Time Admission
+        +--> Runtime Readiness Gate
+        +--> Scale-Out Request Publication
+        +--> Fulfilled-Run Requeue
+        |
+        v
+Tenant-Aware Registry / Capacity / Admission Layer
+        |
+        +--> Shared runtime visibility
+        +--> Dedicated runtime visibility
+        +--> Hybrid runtime visibility
+        +--> Tenant runtime settings
+        +--> Tenant-scoped scale-out limits
+        |
+        v
+Redis Discovery / Registry / Capacity / Reservation / Scale-Out Request Layer
+        |
+        +--> Control-plane discovery
+        +--> Runtime instance registry
+        +--> Runtime capacity descriptors
+        +--> Admission reservations
+        +--> Scale-out requests
+        |
+        v
+Runtime Instance Provider / Scale-Out / Local Queue Layer
+        |
+        v
+Pipeline Definition + DAG Resolution
+        |
+        v
+Context Resolution and Helper Layer
+        |
+        +--> Input binding resolution
+        +--> Previous step output resolution
+        +--> Payload rehydration
+        +--> Provider / model / operation context
+        +--> Policy context
+        +--> Concurrency context
+        +--> RAG retrieval / merge / compose context
+        +--> Replay-safe context
+        |
+        v
+DAG Execution Engine
+        |
+        +--> Execution Control Gate
+        |
+        +--> Concurrency / Throttling Engine
+        |
+        v
+Redis Hot State + Redis Lua Coordination
+        |
+        +--> Atomic step claims
+        +--> Retry scheduling
+        +--> Worker recovery
+        +--> Control state
+        +--> Distributed leases
+        +--> Shared run records
+        +--> Shared queue claims
+        +--> Runtime registry entries
+        +--> Runtime capacity descriptors
+        +--> Control-plane discovery
+        +--> Admission reservations
+        |
+        v
+Runtime Instances / Local Queues / Stateless Workers
+        |
+        v
+Step Executors
+        |
+        +--> LLM
+        +--> RAG
+        +--> Tools
+        +--> Decisions
+        |
+        v
+MongoDB Payloads / Snapshots / Replay Validation
+        |
+        v
+Execution-Correlated Decision Ledger
+        |
+        v
+Correlated Observability / Metrics / Tracing Foundations
+```
+
+The runtime is intentionally split into layers:
+
+- RBAC context is captured once and converted into durable execution snapshots
+- tenant isolation rules filter runtime visibility before admission and dispatch
+- orchestration starts and manages executions
+- DAG state determines what can run
+- context helpers resolve inputs, payloads, metadata, RBAC snapshots, tenant data, and policy context
+- Redis coordinates distributed workers
+- policies control runtime behavior
+- workers execute claimed steps
+- persistence stores large payloads and snapshots
+- replay validates deterministic reconstruction from persisted snapshots
+- shared controller coordinates run admission, shared run persistence, queue-first submission, global queue dispatch, queue pumping/manual drain, dispatch-time admission, and scale-out publication
+- runtime instance providers route selected runs to local or HTTP pooled runtime instances while preserving local queues
+- runtime capacity snapshots expose run slots, worker pressure, provider metadata, tenant visibility, and worker-aware `CanAcceptRun`
+- correlated observability records runtime behavior across ledger, metrics, traces, workers, tenants, and executions
+
+---
+
+## Multi-Tenant Control-Plane Isolation
+
+The current runtime now includes a tenant-aware control-plane foundation.
+
+The core rule is:
+
+```text
+ExecutionContextSnapshot.TenantId
+    = durable tenant isolation boundary
+```
+
+RBAC execution context is used at the API/MCP/tool edge. The stable execution identity is then captured and persisted as `ExecutionContextSnapshot`.
+
+```text
+MCP/API call
+    ↓
+RBAC ExecutionContext
+    ↓
+ExecutionContextSnapshot
+    ↓
+SharedRunRecord
+    ↓
+Shared Queue / Dispatcher / Admission
+    ↓
+Runtime local queue
+    ↓
+Background controller restores context
+    ↓
+DAG ExecutionId
+```
+
+### ContextKey vs TenantId
+
+`ContextKey` is useful for:
+
+- RBAC access-context lookup
+- correlation
+- debugging
+- demo override headers
+- diagnostics
+
+`TenantId` is used for:
+
+- durable runtime isolation
+- tenant-aware registry filtering
+- tenant-aware capacity filtering
+- admission decisions
+- scale-out settings
+- runtime instance visibility
+- future persistence partitioning
+
+Do not use `ContextKey` as the durable tenant boundary.
+
+### Isolation Modes
+
+The current runtime supports three validated isolation modes:
+
+```text
+Shared
+Dedicated
+Hybrid
+```
+
+Shared runtime behavior:
+
+```text
+Shared runtime:
+    visible to shared/default tenants
+    visible to hybrid/dedicated tenants only when tenant settings allow shared fallback
+```
+
+Dedicated runtime behavior:
+
+```text
+Dedicated runtime:
+    visible only to matching TenantId or TenantGroupId
+```
+
+Hybrid runtime behavior:
+
+```text
+Hybrid runtime:
+    visible only to matching TenantId or TenantGroupId
+    may allow its owning tenant to fall back to shared capacity
+    does not make unowned hybrid runtimes globally visible
+```
+
+### Tenant Runtime Settings
+
+Current tenant runtime settings are hardcoded as a foundation and will later become configuration or database backed.
+
+The settings include:
+
+```text
+IsolationMode
+PreferDedicatedCapacity
+AllowSharedFallback
+MaxRuntimeInstances
+RuntimeInstanceIdPrefix
+WorkerCountPerInstance
+MaxConcurrentRunsPerInstance
+LocalQueueCapacity
+```
+
+Current validated examples:
+
+```text
+tenant-a
+    IsolationMode = Dedicated
+    PreferDedicatedCapacity = true
+    AllowSharedFallback = false
+    RuntimeInstanceIdPrefix = tenant-a-runtime
+
+tenant-b
+    IsolationMode = Hybrid
+    PreferDedicatedCapacity = true
+    AllowSharedFallback = true
+    RuntimeInstanceIdPrefix = tenant-b-runtime
+
+default / unknown / test-tenant
+    IsolationMode = Shared
+    PreferDedicatedCapacity = false
+    AllowSharedFallback = true
+    RuntimeInstanceIdPrefix = runtime-instance
+```
+
+### Tenant-Aware Dispatch Flow
+
+```text
+Shared run submitted
+    ↓
+ExecutionContextSnapshot persisted
+    ↓
+Registry/capacity listed through tenant visibility evaluator
+    ↓
+Admission selects only tenant-visible runtime instances
+    ↓
+Shared queue dispatcher restores snapshot before dispatch-time admission
+    ↓
+Provider dispatches into selected runtime local queue
+    ↓
+Runtime background controller restores snapshot before execution
+    ↓
+ExecutionId created with tenant context available
+```
+
+### Tenant-Aware Scale-Out Flow
+
+```text
+No tenant-visible capacity
+    ↓
+Admission = RequestScaleOut
+    ↓
+Scale-out request persisted with tenant settings
+    ↓
+Watcher observes request
+    ↓
+Provider selector resolves scale-out provider
+    ↓
+Local scaler creates instance using tenant RuntimeInstanceIdPrefix
+    ↓
+New runtime registers and publishes tenant-aware capacity
+    ↓
+Scale-out request fulfilled
+    ↓
+Shared run requeued
+    ↓
+Pump dispatches using normal tenant-aware admission
+```
+
+This keeps scale-out and dispatch separated while preserving tenant isolation.
+
+---
+
+## Enterprise Readiness
+
+The project is designed around production questions that enterprise AI systems must answer.
+
+| Enterprise Question | Runtime Direction |
+|---|---|
+| What happens if a worker crashes? | Running steps can be recovered through stale-claim detection and Redis-backed recovery. |
+| How do you prevent duplicate executions? | Atomic Redis Lua claims and claim tokens enforce single step ownership. |
+| How do you replay a workflow? | Terminal snapshots, replay metadata, deterministic fingerprint validation, audit-only replay, and restore replay provide replay foundations. |
+| How do you audit an AI decision? | Execution-correlated decision ledger events, correlated metrics/traces, execution state, step results, retry metadata, recovery state, snapshots, replay reports, tenant context, and observability provide audit foundations. |
+| How do you limit concurrency? | Distributed Redis ZSET leases and policy-driven throttling enforce limits. |
+| How do you resolve execution context safely? | Context helpers resolve inputs, step outputs, payload references, provider metadata, policy context, RBAC snapshots, and tenant identity consistently. |
+| How do you pause/resume/cancel safely? | Execution control state blocks new claims and coordinates deterministic finalization. |
+| How do you control human-in-the-loop? | WaitingForInput and SubmitHumanInput are supported through durable control state. |
+| How do you keep memory/state bounded? | Retention, compaction, eviction, and payload externalization control hot state size. |
+| How do you coordinate multiple runtime instances? | Shared Redis state, Lua coordination, leases, shared run records, Redis-backed shared queue claims, Redis discovery, Redis registry/capacity stores, admission reservations, queue pump/background consumption, dispatch-time admission, provider-hosting foundations, and deterministic convergence enable coordination. |
+| How do you preserve RBAC after background dispatch? | RBAC execution context is persisted into `ExecutionContextSnapshot` and restored by shared queue dispatchers and runtime background controllers before admission or execution. |
+| How do you isolate tenants in registry, capacity, admission, and scale-out? | Tenant-aware visibility evaluates Shared, Dedicated, and Hybrid runtime descriptors against `TenantId`, `TenantGroupId`, and tenant runtime settings before scheduling. |
+| How do tenant-specific runtime settings affect scale-out? | Scale-out requests preserve tenant isolation mode, fallback policy, runtime instance prefix, worker count, run slots, queue capacity, and max instance count. |
+| How do you prevent one execution from consuming all workers? | `MaxLocalWorkersPerExecution`, active/free worker tracking, effective worker reservation, and worker-aware runtime capacity snapshots. |
+| How do you dispatch queued work without an automatic background pump? | Queue-first submit mode plus manual shared queue drain through MCP/control-plane tooling. |
+| How do you submit work when no runtime capacity exists? | Direct-dispatch admission can return `RequestScaleOut`, persist a Redis-backed scale-out request, and let the scale-out watcher/provider path create runtime capacity. |
+| How do you execute the run after scale-out succeeds? | The fulfilled scale-out request requeues the original shared run; the normal shared queue pump then performs claim, dispatch-time admission, provider dispatch, and local runtime execution. |
+| How do runtime-only hosts join the correct MCP/control-plane scope? | Redis control-plane discovery and `ControlPlaneIdResolver` allow runtime-only hosts to resolve the MCP-published logical identity before registration. |
+| How do you validate remote-style HTTP runtime dispatch before Kubernetes? | HTTP pooled provider scenarios validate `RuntimeInstanceOnly` HTTP hosts with internal `runtime-http-*` child runtime instances. |
+| How do you prove deterministic convergence? | Integration tests and enterprise demo scenarios validate completion, replay fingerprints, distributed execution, throttling, recovery behavior, atomic retention, compaction consistency, ledger visibility, and trace timeline visibility. |
+| How does this evolve toward a product platform? | Runtime foundations are designed to support future AI execution control planes, governance, observability, replay, dashboard, pipeline builder, MCP tools, managed hosting, memory/context governance, and operational workflows. |
+
+For the detailed enterprise matrix, see [`docs/enterprise-readiness.md`](docs/enterprise-readiness.md).
+
+---
+
+## Runtime Control Plane
+
+The runtime includes an adapter-neutral control-plane foundation for operational runtime control.
+
+The control plane currently exposes foundations for:
+
+- replay and audit control
+- execution control
+- local runtime queue control
+- runtime instance registration and heartbeat
+- runtime instance visibility and draining
+- Redis control-plane discovery
+- control-plane id resolution
+- runtime capacity publication and cleanup
+- RBAC execution-context capture
+- durable `ExecutionContextSnapshot` propagation
+- tenant-aware Shared/Dedicated/Hybrid runtime visibility
 - tenant-aware registry and capacity filtering
 - tenant-aware admission
-- tenant-aware scale-out request persistence
-- local scaler isolation by `RuntimeInstanceIdPrefix`
-- validated test evidence for multi-tenant control-plane isolation
-
-### [`ai/execution-correlated-ledger.md`](ai/execution-correlated-ledger.md)
-
-Execution-correlated runtime decision ledger foundations.
-
-This document explains:
-
-- execution-correlated runtime auditability
-- structured runtime decision recording
-- execution versus run correlation
-- claim and concurrency audit visibility
-- retry and recovery audit visibility
-- queue and execution control observability
-- human-in-the-loop auditability
-- retention and compaction auditability
-- snapshot persistence audit events
-- finalization race visibility
-- replay lifecycle event correlation
-
-The document also explains how replay lifecycle events are correlated with the same execution ledger model used by the rest of the runtime.
-
-### [`ai/replay-and-audit.md`](ai/replay-and-audit.md)
-
-Deterministic replay and audit foundations.
-
-This document explains:
-
-- replay-as-validation using persisted snapshots
-- audit-only replay
-- restore from persisted snapshot
-- deterministic replay fingerprint comparison
-- replay metadata
-- payload reference validation
-- replay lifecycle ledger events
-- replay timeline diagnostics
-- 100-step distributed replay reference tests
-- replay log examples
-- replay TODO and improvement roadmap
-
-### [`ai/observability.md`](ai/observability.md)
-
-High-level observability index and summary.
-
-This document links the focused observability areas:
-
-- execution-correlated decision ledger
-- observability and tracing
-- runtime metrics
-
-It explains how logs, metrics, traces, and ledger entries work together around a shared runtime correlation model.
-
-### [`ai/observability-tracing.md`](ai/observability-tracing.md)
-
-Runtime observability and tracing foundations.
-
-This document explains:
-
-- runtime observability facade
-- runtime tracing facade
-- in-memory trace recorder
-- in-memory trace timeline
-- trace correlation context
-- trace store abstraction
-- MongoDB-backed trace persistence
-- trace storage modes: `Disabled`, `Memory`, `Mongo`, and `MemoryAndMongo`
-- distributed chaos trace diagnostics
-- tracing TODO and improvement roadmap
-
-### [`ai/runtime-metrics.md`](ai/runtime-metrics.md)
-
-Runtime metrics foundations.
-
-This document explains:
-
-- runtime metrics facade
-- execution metrics
-- worker metrics
-- retention metrics
-- storage metrics
-- resolver metrics
-- hot-state metrics
-- policy metrics
-- metric storage modes: `Disabled`, `Memory`, `Mongo`, and `MemoryAndMongo`
-- distributed chaos metrics diagnostics
-- metrics TODO and improvement roadmap
-
-### [`ai/runtime-control-plane.md`](ai/runtime-control-plane.md)
-
-Runtime control-plane and orchestration foundations.
-
-This document explains:
-
-- replay control-plane facade
-- execution control-plane facade
-- local runtime queue control-plane facade
-- runtime instance registry
-- runtime instance capacity store
-- control-plane discovery store
-- control-plane id resolver
-- runtime instance control-plane facade
-- run admission and slot decisioning
+- tenant-scoped scale-out settings
 - admission reservations
-- Redis-backed scale-out request persistence
-- scale-out watcher/provider selector lifecycle
-- fulfilled scale-out shared run requeue
-- RunId versus ExecutionId separation at the control-plane level
-- queue pause/resume ledger correlation behavior
-- shared runtime controller foundations
-- RBAC execution-context restoration before background admission/dispatch
-- tenant-aware runtime visibility and dispatch
-
-### [`ai/runtime-discovery-registry-capacity.md`](ai/runtime-discovery-registry-capacity.md)
-
-Runtime discovery, registry, and capacity foundations.
-
-This document explains:
-
-- Redis control-plane discovery store
-- MCP-published logical control-plane identity
-- `ControlPlaneIdResolver`
-- runtime-only host discovery resolution
-- runtime instance registration
-- runtime heartbeat
-- runtime capacity descriptor publication
-- worker and run-slot capacity visibility
-- shared queue pump readiness gate
-- provider metadata for local, HTTP, and local scale-out dispatch
-- scale-out-created runtime capacity visibility
-- HTTP pooled runtime identity model
-- registry and capacity shutdown cleanup
-- TTL and self-healing direction
-- tenant-aware runtime registry and capacity filtering
-- validated Redis registry, capacity, discovery, tenant visibility, and admission reservation behavior
-
-### [`ai/mcp-server-control-plane.md`](ai/mcp-server-control-plane.md)
-
-MCP server as a runtime control-plane adapter.
-
-This document explains:
-
-- MCP server purpose and scope
-- RBAC integration
-- `ControlPlaneOnly` mode
-- `ControlPlaneWithLocalRuntimeInstances` mode
-- `RuntimeInstanceOnly` mode
-- runtime role separation between control-plane hosts and executable runtime instances
-- control-plane discovery publication
-- runtime-only host identity resolution
-- local runtime instance pool behavior
-- HTTP pooled runtime provider behavior
-- Redis/local scale-out execution flow
-- shared queue dispatch flow
-- MCP tool groups
-- RunId versus ExecutionId behavior in MCP tools
-- local queue preservation rules
-- tenant-aware MCP tool execution and context propagation
-- Kubernetes direction for MCP/control-plane deployment
-
-### [`ai/runtime-instance-provider-model.md`](ai/runtime-instance-provider-model.md)
-
-Provider-based runtime instance administration model.
-
-This document explains:
-
-- why runtime instance providers are needed
-- provider discovery through class attributes
-- provider capabilities for dispatch, status, control, capacity, and scale-out
-- provider router responsibilities
-- local provider behavior
-- local provider scale-out capability
-- Redis command queue provider direction
-- HTTP and gRPC provider direction
-- Kubernetes provider responsibilities
-- admission and provider separation
-- Redis admission reservation foundation
-- HTTP pooled runtime provider validation
-- descriptor metadata keys for provider routing
-- tenant-aware dispatch and scale-out boundaries
-
-### [`ai/shared-controller-usage.md`](ai/shared-controller-usage.md)
-
-Shared runtime controller and shared queue usage guide.
-
-This document explains:
-
-- in-memory shared controller setup
-- Redis shared run store setup
-- Redis shared queue setup
-- Redis scale-out request store setup
-- store-backed scale-out request publisher
-- direct-dispatch and queue-first modes
-- shared run submission
-- shared run listing and cancellation
-- manual pump/drain
-- background shared queue service
-- dispatch-time admission
-- fulfilled scale-out requeue
-- RBAC execution-context snapshot propagation
-- tenant-aware controller request examples
-
-### [`ai/shared-queue-pump-and-worker-capacity.md`](ai/shared-queue-pump-and-worker-capacity.md)
-
-Shared queue pump and worker capacity model.
-
-This document explains:
-
+- run admission / slot decisions
+- Shared Runtime Controller V1
+- Redis-backed runtime instance registry and capacity descriptors
+- Redis control-plane discovery and id resolution
+- Redis admission reservation store
+- Redis-backed control-plane discovery
+- MCP server control-plane adapter documentation
+- runtime instance provider model direction
+- shared run persistence
+- Redis-backed shared run store
+- Redis-backed shared queue
+- direct assigned-run dispatch
 - queue-first submit mode
-- direct-dispatch scale-out path
-- fulfilled scale-out shared run requeue
-- manual shared queue drain
-- background shared queue pump
+- global shared queue dispatch
 - dispatch-time admission
-- shared queue dispatcher context restoration
-- pump identity versus assigned runtime identity
-- local runtime queue preservation
-- shared queue no-double-dispatch behavior
-- local and HTTP provider dispatch foundations
-- HTTP pooled runtime dispatch validation
-- Redis admission reservation foundation
+- shared queue pump
+- manual shared queue drain
+- hosted shared queue background consumption
+- runtime worker-capacity visibility
+- HTTP pooled runtime provider dispatch
+- Redis-backed scale-out request publication
+- scale-out watcher/provider selector lifecycle
+- fulfilled scale-out shared-run requeue
+- Redis discovery/registry/capacity foundations
+- future API, MCP, CLI, dashboard, and Kubernetes adapters
+
+The control plane separates three identity levels.
+
+```text
+SharedRunId
+= shared controller / global queue lifecycle id
+
+RunId
+= local runtime queue / background controller lifecycle id
+
+ExecutionId
+= authoritative durable DAG execution id
+```
+
+This separation allows the runtime to manage global queue work, local queue work, and durable execution state without mixing their lifecycles.
+
+### RBAC and Tenant Isolation in the Control Plane
+
+External MCP/API/tool calls should enter the runtime through an RBAC execution context.
+
+The runtime then maps that context into a durable `ExecutionContextSnapshot`.
+
+```text
+RBAC ExecutionContext
+    ↓
+ExecutionContextSnapshot
+    ↓
+Shared run request
+    ↓
+Shared run record
+    ↓
+Shared queue item
+    ↓
+Runtime local queue run
+    ↓
+Durable ExecutionId
+```
+
+The control plane must preserve this snapshot across:
+
+- direct assigned dispatch
+- queue-first submission
+- shared queue persistence
+- manual drain
+- background pump dispatch
+- dispatch-time admission
+- provider dispatch
+- local runtime queue enqueue
+- runtime background execution
+- scale-out request publication
+- fulfilled-run requeue
+
+Without this, a background service could lose the original tenant and incorrectly list all registry/capacity entries or select the wrong runtime capacity.
+
+### ExecutionId-Level Control
+
+Implemented execution control capabilities include:
+
+- pause execution
+- resume execution
+- cancel execution
+- wait for human input
+- submit human input
+- block new claims based on control state
+- cancellation finalization override
+
+### RunId-Level Queue Control
+
+Implemented controller queue capabilities include:
+
+- pause queue
+- resume queue
+- cancel queued run
+- cancel running run by bridging to ExecutionId cancellation
+- hot enqueue while controller is running
+- hot enqueue while queue is paused
+- require `ExecutionContextSnapshot` before starting local background execution
+
+This makes the runtime controllable, not only executable.
+
+### Runtime Instance Control
+
+Implemented runtime instance capabilities include:
+
+- register runtime instance
+- heartbeat runtime instance
+- get runtime instance status
+- list runtime instances
+- expose local queue pressure
+- expose available run slots
+- expose active worker count
+- expose available worker count
+- expose max local workers per execution
+- expose worker-aware CanAcceptRun
+- expose tenant ownership and isolation descriptors
+- filter runtime visibility by tenant settings
+- mark runtime instance as draining
+- unregister runtime instance
+
+These foundations prepare the runtime for Kubernetes pod visibility, shared admission, dashboards, multi-tenant scheduling, and future autoscaling.
+
+### Runtime Discovery, Registry, and Capacity
+
+Implemented discovery and visibility capabilities include:
+
+- Redis control-plane discovery descriptor publication
+- `ControlPlaneIdResolver`
+- runtime-only host identity resolution before registration
+- Redis runtime instance registry
+- Redis runtime capacity store
+- runtime capacity descriptor publication
+- runtime capacity descriptor cleanup
+- tenant visibility descriptors
 - shared queue pump readiness gate
+- cleanup without late rediscovery dependency
+
+The current validated flow is:
+
+```text
+MCP Control Plane
+    ↓
+RBAC ExecutionContext
+    ↓
+ExecutionContextSnapshot
+    ↓
+Redis Control-Plane Discovery Store
+    ↓
+ControlPlaneIdResolver
+    ↓
+RuntimeInstanceOnly Host
+    ↓
+Runtime Instance Registry
+    ↓
+Runtime Capacity Store
+    ↓
+Tenant Visibility Filter
+    ↓
+Shared Queue Pump Readiness
+    ↓
+Provider Dispatch
+```
+
+### Run Admission / Slot Decisions
+
+Implemented admission capabilities include:
+
+- assign a run to a tenant-visible runtime instance
+- prefer a requested runtime instance when available and visible
+- prefer dedicated capacity when tenant settings require it
+- use shared fallback only when tenant settings allow it
+- select the least-loaded available instance from the tenant-visible set
+- request scale-out when no tenant-visible instance has capacity
+- queue globally later when shared queue fallback is enabled
+- reject when no capacity or fallback exists
+
+Admission does not enqueue runs directly.
+
+It only decides what should happen next. The shared runtime controller now applies that decision by dispatching assigned runs, enqueueing globally queued runs, publishing scale-out requests, or recording rejected runs.
+
+### Shared Runtime Controller V1
+
+Implemented shared controller capabilities include:
+
+- submit shared run
+- submit shared run in queue-first mode
+- persist `ExecutionContextSnapshot` with the shared run
+- get shared run
+- list shared runs
+- cancel shared run
+- assign run to runtime instance
+- dispatch assigned run locally or through provider metadata
+- queue run globally
+- claim globally queued run
+- dispatch globally queued run
+- restore execution context at dispatch time
+- re-admit queued work at dispatch time
+- separate pump identity from assigned runtime identity
+- requeue failed dispatch
+- mark shared run dispatched
+- mark shared queue item dispatched
+- publish tenant-scoped scale-out request
+- pump shared queue manually
+- consume shared queue through hosted background service
+- coordinate shared queue dispatch through Redis
+- prevent double dispatch through Redis atomic claim
+
+The current shared controller flow is:
+
+```text
+SubmitRun
+  -> RBAC ExecutionContext
+  -> ExecutionContextSnapshot
+  -> IAiRunAdmissionController
+
+  -> AssignToInstance
+      -> IAiSharedRunStore.CreateAsync(...)
+      -> IAiSharedRunDispatcher.DispatchAsync(...)
+      -> IAiSharedRunStore.MarkDispatchedAsync(...)
+      -> SharedRun.Status = Dispatched
+
+  -> QueueGlobally / QueueFirst
+      -> IAiSharedRunStore.CreateAsync(...)
+      -> IAiSharedQueue.EnqueueAsync(...)
+      -> SharedRun.Status = QueuedGlobally
+      -> SharedQueueItem.Status = Pending
+
+  -> SharedQueuePump / ManualDrain
+      -> IAiSharedQueue.ClaimNextAsync(...)
+      -> IAiSharedRunStore.GetAsync(...)
+      -> restore ExecutionContextSnapshot
+      -> IAiRunAdmissionController.AdmitAsync(...)
+      -> IAiRuntimeAdmissionReservationStore.TryReserveAsync(...)
+      -> IAiSharedRunDispatcher.DispatchAsync(...)
+      -> IAiSharedQueue.MarkDispatchedAsync(...)
+      -> IAiSharedRunStore.MarkDispatchedAsync(...)
+
+  -> RequestScaleOut
+      -> IAiSharedRunStore.CreateAsync(...)
+      -> IAiRuntimeScaleOutRequestPublisher.PublishAsync(...)
+      -> Redis scale-out request persisted with tenant runtime settings
+      -> SharedRun.Status = ScaleOutRequested
+      -> watcher/provider/scaler creates tenant-scoped capacity
+      -> fulfilled run is requeued
+      -> shared queue pump dispatches normally
+
+  -> Reject
+      -> IAiSharedRunStore.CreateAsync(...)
+      -> SharedRun.Status = Rejected
+```
+
+For details, see [`docs/ai/runtime-control-plane.md`](docs/ai/runtime-control-plane.md).
+
+---
+
+## Distributed Execution and Coordination
+
+The runtime uses Redis as a hot state and coordination layer.
+
+Redis is not only used as a cache. It is used as the active distributed execution state.
+
+Critical operations include:
+
+- creating execution state
+- restoring execution context before local runtime execution
+- claiming ready DAG steps
+- validating claim ownership
+- completing steps
+- failing steps
+- scheduling retries
+- recovering stale running steps
+- enforcing distributed concurrency leases
+- storing execution control state
+
+Redis Lua scripts are used for atomic transitions where race conditions must be avoided.
+
+This allows multiple workers or runtime instances to cooperate safely without direct worker-to-worker communication.
+
+Distributed execution must preserve the same execution context that was created at submission time.
+
+```text
+SharedRun.ExecutionContextSnapshot
+    ↓
+Runtime local queue request
+    ↓
+Background controller restore
+    ↓
+ExecutionId creation
+    ↓
+Worker execution
+```
+
+The tenant context is not inferred from logs, metadata, or runtime instance names during execution.
+
+It is restored from the durable snapshot.
+
+---
+
+## Context Resolution and Runtime Helpers
+
+The runtime includes a helper layer that connects declarative configuration to concrete execution behavior.
+
+This layer resolves:
+
+- input bindings from execution state
+- previous step outputs
+- compacted or externalized payloads
+- provider, providerKey, model, and operation metadata
+- retry policy context
+- retention policy context
+- concurrency context
+- RBAC execution context
+- durable `ExecutionContextSnapshot`
+- tenant and tenant-group identity
+- RAG retrieval, merge, and compose context
+- replay-safe comparison data
+
+This keeps the DAG engine focused on orchestration and prevents plugins, policies, providers, and control-plane components from manually reconstructing raw execution state.
+
+For details, see [`docs/ai/context-resolution-and-helpers.md`](docs/ai/context-resolution-and-helpers.md).
+
+---
+
+## Observability, Replay, and Audit Foundations
+
+The runtime includes foundations for production visibility and replayability:
+
+- execution lifecycle metrics
+- retry and recovery metrics
+- retention metrics
+- resolver metrics
+- storage metrics
+- context resolution diagnostics
+- concurrency admission diagnostics
+- realtime runtime events
+- readable console runtime events
+- execution-correlated decision ledger
+- durable runtime lifecycle audit events
+- tenant context visibility
+- RBAC context correlation
+- claim, concurrency, retry, and recovery audit visibility
+- queue and execution control audit visibility
+- atomic retention and compaction auditability
+- shared runtime controller foundations
+- Redis-backed shared queue coordination
+- queue pump and background consumption
+- queue-first and manual drain visibility
+- dispatch-time admission visibility
 - runtime worker capacity visibility
-- worker-aware `CanAcceptRun`
-- `MaxLocalWorkersPerExecution`
-- tenant-aware dispatch-time admission
-- future admission capacity reservation
-- Kubernetes-oriented runtime hosting direction
+- tenant-aware registry and capacity filtering
+- Redis-backed scale-out request publication
+- tenant-scoped scale-out settings
+- scale-out watcher/provider selector lifecycle
+- fulfilled scale-out shared-run requeue
+- Redis discovery/registry/capacity foundations
+- snapshot persistence audit events
+- replay lifecycle ledger events
+- replay metadata
+- replay report generation
+- replay snapshot loading
+- replay deterministic fingerprint validation
+- replay dependency graph validation
+- replay step state validation
+- replay payload reference validation
+- replay ledger event loading
+- replay trace timeline loading
+- replay diagnostic output for ledger and timeline inspection
+- correlated trace recording foundations
+- correlated metric and trace storage modes
+- in-memory, MongoDB, and MemoryAndMongo observability persistence
+- terminal snapshots
+- replay restoration
+- deterministic replay fingerprint validation
 
-### [`comparison-existing-tools.md`](comparison-existing-tools.md)
+Runtime metrics and traces can be configured as `Disabled`, `Memory`, `Mongo`, or `MemoryAndMongo`. This allows local diagnostics, durable MongoDB-backed inspection, or both at the same time while keeping the execution runtime independent from observability storage choices.
 
-A high-level ecosystem positioning document comparing the runtime with existing categories such as:
+Replay can validate persisted executions without re-running LLMs, tools, external providers, or side effects. It can expose replay metadata, decision ledger events, tenant context, and trace timeline events when requested.
 
-- agent frameworks
-- workflow engines
-- data orchestration tools
-- observability platforms
-- distributed compute systems
-- infrastructure orchestration
-
-This document does not rank tools. It clarifies where Deterministic AI Runtime fits architecturally.
-
-### [`roadmap.md`](roadmap.md)
-
-The project roadmap organized into phases:
-
-- Completed
-- Phase 0 — Documentation Restructure
-- Phase 1 — Enterprise Demo
-- Phase 2 — Real Enterprise Sample
-- Phase 3 — Correlated Observability, Tracing, and Metrics
-- Phase 4 — Kubernetes Deployment Demo
-- Phase 5 — Public API / SDK Polish
-- Phase 6 — Deterministic Replay Engine and Audit Foundations
-- Phase 7 — Replay Controller, HTTP APIs, Dashboard, and Operational Tooling
-- Phase 8 — Cost and Provider Governance
-- Phase 9 — Articles / Public Positioning
+OpenTelemetry-style distributed tracing, richer dashboards, HTTP replay APIs, replay audit tooling, advanced decision lineage, lifecycle diagnostics, memory/context evidence, and product-roadmap features remain roadmap items.
 
 ---
 
-## Runtime Architecture and Execution
+## Current Status
 
-| Document | Purpose |
-|---|---|
-| [`ai/architecture-overview.md`](ai/architecture-overview.md) | High-level runtime architecture and major runtime layers, including control-plane scale-out, fulfilled-run requeue, provider-based dispatch, and multi-tenant isolation. |
-| [`ai/multi-tenant-control-plane-isolation.md`](ai/multi-tenant-control-plane-isolation.md) | RBAC context propagation, durable execution snapshots, tenant-aware runtime visibility, Shared/Dedicated/Hybrid isolation, registry/capacity filtering, and tenant-aware scale-out. |
-| [`ai/distributed-execution.md`](ai/distributed-execution.md) | Distributed workers, Redis coordination, claims, leases, deterministic convergence, and context restoration across distributed/background execution hops. |
-| [`ai/execution-control-state.md`](ai/execution-control-state.md) | ExecutionId-level pause, resume, cancel, waiting-for-input, control-state behavior, and interaction with tenant-aware execution snapshots. |
-| [`ai/runtime-queue-control.md`](ai/runtime-queue-control.md) | RunId-level background controller queue control, hot enqueue, queue pause/resume, and RunId versus ExecutionId separation. |
-| [`ai/runtime-control-plane.md`](ai/runtime-control-plane.md) | Runtime control-plane foundation for replay, execution control, runtime queue control, runtime instance registry/control, discovery, capacity, admission, scale-out request lifecycle, and shared orchestration. |
-| [`ai/runtime-discovery-registry-capacity.md`](ai/runtime-discovery-registry-capacity.md) | Runtime discovery, Redis registry, Redis capacity descriptors, ControlPlaneIdResolver, pump readiness, tenant-filtered visibility, local scale-out capacity visibility, cleanup, and HTTP pooled runtime identity. |
-| [`ai/mcp-server-control-plane.md`](ai/mcp-server-control-plane.md) | MCP server adapter over runtime control-plane foundations, including RBAC integration, host modes, tool groups, role separation, local runtime pool behavior, Redis/local scale-out execution, and Kubernetes direction. |
-| [`ai/runtime-instance-provider-model.md`](ai/runtime-instance-provider-model.md) | Provider-based runtime instance administration, dispatch, and scale-out model for local, Redis command queue, HTTP, gRPC, and Kubernetes providers. |
-| [`ai/shared-controller-usage.md`](ai/shared-controller-usage.md) | Shared controller setup and usage, Redis shared stores, queue-first/direct-dispatch modes, scale-out lifecycle, and tenant snapshot propagation. |
-| [`ai/shared-queue-pump-and-worker-capacity.md`](ai/shared-queue-pump-and-worker-capacity.md) | Shared queue pump, queue-first submit mode, direct-dispatch scale-out path, fulfilled-run requeue, manual drain, dispatch-time admission, worker capacity visibility, and local worker caps per execution. |
-| [`ai/execution-correlated-ledger.md`](ai/execution-correlated-ledger.md) | Execution-correlated runtime auditability, runtime decision recording, and replay lifecycle event correlation. |
-| [`ai/observability.md`](ai/observability.md) | High-level observability index and summary linking ledger, tracing, metrics, and logs. |
+This project is under active development.
 
----
+It should be treated as an advanced reference implementation and evolving AI infrastructure project, not as a polished commercial product.
 
-## Reliability, State, and Recovery
+The strongest areas today are:
 
-| Document | Purpose |
-|---|---|
-| [`ai/retry-and-recovery.md`](ai/retry-and-recovery.md) | Retry engine, retry state, WaitingForRetry, Redis Lua transitions, and stale worker recovery. |
-| [`ai/retention-and-compaction.md`](ai/retention-and-compaction.md) | Bounded hot state, compaction, eviction, payload externalization, and resolver safety. |
-| [`ai/replay-and-audit.md`](ai/replay-and-audit.md) | Deterministic Replay Engine V1, snapshot restore, audit-only replay, fingerprint validation, replay metadata, ledger/timeline diagnostics, and future replay APIs. |
-| [`ai/execution-correlated-ledger.md`](ai/execution-correlated-ledger.md) | Execution-correlated decision ledger, retention auditability, control-state auditability, and replay lifecycle evidence. |
-| [`ai/multi-tenant-control-plane-isolation.md`](ai/multi-tenant-control-plane-isolation.md) | Tenant boundary reliability, durable snapshot propagation, registry/capacity filtering, and prevention of cross-tenant dispatch leakage. |
-
----
-
-## Distributed Governance and Observability
-
-| Document | Purpose |
-|---|---|
-| [`ai/distributed-concurrency-throttling.md`](ai/distributed-concurrency-throttling.md) | Redis ZSET concurrency gate, provider/model/operation throttling, and admission policies. |
-| [`ai/observability.md`](ai/observability.md) | High-level observability index summarizing logs, metrics, traces, ledger, correlation, and roadmap direction. |
-| [`ai/observability-tracing.md`](ai/observability-tracing.md) | Runtime tracing, trace timelines, trace records, Mongo trace persistence, Memory/Mongo/MemoryAndMongo modes, and tracing improvements. |
-| [`ai/runtime-metrics.md`](ai/runtime-metrics.md) | Runtime metric domains, metric storage modes, worker/retention/storage/resolver/hot-state/policy metrics, and metrics improvements. |
-| [`ai/execution-correlated-ledger.md`](ai/execution-correlated-ledger.md) | Execution-correlated decision ledger, runtime audit visibility, and structured runtime lifecycle evidence. |
-| [`ai/testing-strategy.md`](ai/testing-strategy.md) | Integration testing strategy and validation approach for distributed runtime guarantees, RBAC context propagation, tenant isolation, Redis/local scale-out request, requeue, dispatch, and execution evidence. |
-
----
-
-## Runtime Control Plane and Orchestration
-
-| Document | Purpose |
-|---|---|
-| [`ai/multi-tenant-control-plane-isolation.md`](ai/multi-tenant-control-plane-isolation.md) | Tenant-aware control-plane isolation model, RBAC snapshot propagation, runtime visibility rules, tenant settings, admission, scale-out, and validated test evidence. |
-| [`ai/runtime-control-plane.md`](ai/runtime-control-plane.md) | Runtime control-plane foundation, replay/execution/queue/instance facades, discovery, capacity, admission, Redis-backed scale-out lifecycle, fulfilled-run requeue, and shared controller orchestration. |
-| [`ai/runtime-discovery-registry-capacity.md`](ai/runtime-discovery-registry-capacity.md) | Redis discovery, ControlPlaneIdResolver, runtime registry, tenant-filtered capacity descriptors, scale-out capacity visibility, readiness gate, cleanup lifecycle, and HTTP pooled identity model. |
-| [`ai/mcp-server-control-plane.md`](ai/mcp-server-control-plane.md) | MCP server as control-plane adapter, including RBAC integration, host modes, discovery publication, MCP tool groups, Redis/local scale-out execution, shared queue dispatch, local/HTTP pooled runtime behavior, and runtime role separation. |
-| [`ai/runtime-instance-provider-model.md`](ai/runtime-instance-provider-model.md) | Runtime instance provider model for provider-based dispatch, HTTP pooled runtime hosting, status, control, capacity, scale-out, descriptor metadata, and provider routing. |
-| [`ai/shared-controller-usage.md`](ai/shared-controller-usage.md) | Shared controller usage, Redis store configuration, queue-first/direct-dispatch behavior, tenant snapshot propagation, scale-out lifecycle, manual drain, and background pump setup. |
-| [`ai/shared-queue-pump-and-worker-capacity.md`](ai/shared-queue-pump-and-worker-capacity.md) | Shared queue pump/manual drain, queue-first dispatch, direct-dispatch scale-out, fulfilled-run requeue, readiness gate, dispatch-time admission, pump identity separation, runtime worker capacity visibility, and `MaxLocalWorkersPerExecution`. |
-| [`ai/runtime-queue-control.md`](ai/runtime-queue-control.md) | RunId-level local runtime queue control, hot enqueue, queue pause/resume, and queued/running cancellation behavior. |
-| [`ai/execution-control-state.md`](ai/execution-control-state.md) | ExecutionId-level durable pause, resume, cancel, waiting-for-input, and human-input control state. |
-| [`ai/execution-correlated-ledger.md`](ai/execution-correlated-ledger.md) | Execution-correlated runtime decision ledger and audit visibility used by control-plane operations. |
-| [`ai/observability.md`](ai/observability.md) | Observability index connecting logs, metrics, traces, ledger, replay diagnostics, and control-plane visibility. |
-
----
-
-## Runtime Extension and Configuration
-
-| Document | Purpose |
-|---|---|
-| [`ai/config-driven-runtime.md`](ai/config-driven-runtime.md) | How pipeline definitions and structured configuration drive runtime behavior, with tenant runtime settings moving toward config/database-backed resolution. |
-| [`ai/policy-driven-execution.md`](ai/policy-driven-execution.md) | Shared policy model used by retry, retention, concurrency, throttling, admission control, and future tenant-specific governance. |
-| [`ai/context-resolution-and-helpers.md`](ai/context-resolution-and-helpers.md) | Input resolution, step context building, payload rehydration, provider metadata, policy context, helper services, and durable execution context snapshot propagation. |
-| [`ai/step-plugins.md`](ai/step-plugins.md) | Step keys, registered executors, class attributes, assembly scanning, provider abstractions, and plugin-style runtime extension. |
-| [`ai/rag-pipelines.md`](ai/rag-pipelines.md) | RAG retrieval, merge, compose, provider-oriented workflow execution, auto-registered RAG steps, and deterministic RAG pipelines. |
-
----
-
-## Product Roadmap Documentation
-
-The product roadmap documentation lives under:
-
-- [`product-roadmap/`](product-roadmap/)
-
-Useful entry points:
-
-| Document | Purpose |
-|---|---|
-| [`product-roadmap/index.md`](product-roadmap/index.md) | Product roadmap index and product-platform reading guide. |
-| [`product-roadmap/product-roadmap.md`](product-roadmap/product-roadmap.md) | Public product roadmap from runtime foundation toward dashboard, pipeline builder, MCP interface, managed hosting, security, memory/context lifecycle, and enterprise readiness. |
-| [`product-roadmap/current-foundation.md`](product-roadmap/current-foundation.md) | Current architectural foundation for deterministic execution, replay, policy, providers, lifecycle management, observability, and control-plane direction. |
-| [`product-roadmap/improvement-backlog.md`](product-roadmap/improvement-backlog.md) | Planned improvements required to productize the existing runtime foundation. |
-| [`product-roadmap/multi-tenant-readiness.md`](product-roadmap/multi-tenant-readiness.md) | Product-level multi-tenant readiness direction. |
-| [`product-roadmap/managed-hosting-model.md`](product-roadmap/managed-hosting-model.md) | Managed hosting model by runtime instance and worker capacity. |
-
----
-
-## Documentation Status
-
-Many focused documents started as documentation split placeholders, but several core runtime areas are now fully documented, including:
-
-- architecture overview
-- multi-tenant control-plane isolation
-- RBAC execution-context propagation
+- deterministic DAG execution
+- Redis-backed distributed state
+- Redis Lua atomic coordination
+- context resolution and helper foundations
+- retry/recovery semantics
+- retention/compaction
+- distributed concurrency and throttling
+- executable distributed throttling scenario
 - execution control state
+- shared run records
+- shared queue claims
+- runtime instance registry entries
+- runtime capacity descriptors
+- control-plane discovery descriptors
+- admission reservations
 - runtime queue control
 - runtime control-plane foundations
-- MCP server control-plane usage
-- runtime instance provider architecture direction
-- runtime discovery/registry/capacity
-- Redis-backed scale-out request lifecycle
-- fulfilled-run requeue
-- shared controller usage
-- shared queue pump and worker capacity
-- distributed execution
-- distributed concurrency
-- retention/compaction
-- deterministic replay and audit foundations
-- execution-correlated decision ledger foundations
-- observability/tracing foundations
-- runtime metrics foundations
-- testing strategy
+- RBAC execution context propagation into durable runtime snapshots
+- tenant-aware Shared/Dedicated/Hybrid runtime visibility
+- tenant-aware registry, capacity, admission, shared queue dispatch, and scale-out settings
+- Shared Runtime Controller V1
+- Redis-backed runtime instance registry and capacity descriptors
+- Redis control-plane discovery and id resolution
+- Redis admission reservation store
+- Redis-backed control-plane discovery
+- MCP server control-plane adapter documentation
+- runtime instance provider model direction
+- Redis-backed shared run store and shared queue
+- shared queue dispatcher, pump, manual drain, and background service
+- queue-first submit mode
+- dispatch-time admission
+- runtime worker capacity visibility
+- local and HTTP pooled runtime provider hosting foundations
+- Redis-backed scale-out request publication
+- scale-out watcher/provider selector lifecycle
+- fulfilled scale-out shared-run requeue
+- Redis discovery/registry/capacity foundations
+- runtime instance registry and control
+- run admission / slot decisioning
+- queue and execution control observability
+- replay/snapshot validation foundations
+- replay metadata, ledger, and trace timeline diagnostics
+- correlated observability, tracing, metrics, and realtime logging foundations
+- integration-test-driven validation
+- 1036 green tests on the current multi-tenant control-plane isolation branch
 
-The complete technical reference remains preserved in:
+Areas still evolving include:
 
-- [`runtime-internals.md`](runtime-internals.md)
-
-Focused documents should be expanded progressively by extracting, refining, and linking content from `runtime-internals.md`.
+- public API/SDK polish
+- remote runtime instance dispatch hardening
+- provider-based runtime instance administration beyond local/HTTP pooled foundations
+- automatic Kubernetes scaling adapter
+- tenant settings persistence through configuration or database-backed provider
+- HTTP/gRPC/Kubernetes tenant propagation hardening
+- Mongo persistence partitioning and indexes for tenant-aware ledger/replay/correlation
+- HTTP replay/control-plane APIs and controller abstractions
+- OpenTelemetry/exporter polish for tracing and metrics
+- operational dashboarding
+- Kubernetes deployment assets
+- real enterprise sample workflows
+- product-roadmap platform capabilities
+- dashboard and pipeline builder product layers
+- memory/context lifecycle productization
+- security and encryption hardening direction
+- developer experience / API / SDK / CLI polish
+- production documentation split
 
 ---
 
-## Documentation Rule
+## Enterprise Runtime Demo
 
-The original technical depth must be preserved.
+A local enterprise-oriented demo is available in [`demo/enterprise-runtime/`](demo/enterprise-runtime/README.md).
 
-New focused documents should be extracted from `runtime-internals.md` gradually.
+The demo is designed to prove that the runtime behaves like distributed AI execution infrastructure, not a toy agent framework.
 
-Do not delete technical content until it has been safely moved, reviewed, and linked from this index.
+It currently includes:
 
-When adding new documentation:
+- Docker Compose infrastructure for Redis and MongoDB
+- scenario documentation for enterprise runtime behaviors
+- an external sample step plugin under `Samples/Multiplexed.Sample.External.Plugins.Steps`
+- a JSON pipeline at `demo/enterprise-runtime/pipelines/enterprise-demo-pipeline.json`
+- interactive console scenario selection
+- distributed runtime worker participation
+- realtime readable runtime logs
+- live progress output
+- execution pause, resume, and cancel controls
+- retry recovery summaries
+- retention and hot-state summaries
+- replay validation for supported scenarios
+- replay metadata, ledger, and timeline diagnostics in integration tests
+- distributed provider throttling through the `throttling-100` scenario
+- `RunId` and `ExecutionId` separation
+- terminal completion through the controller path
+- execution-correlated runtime ledger visibility
+- correlated metrics and tracing diagnostics
+- MemoryAndMongo observability validation
+- queue and execution control audit events
+- retry, recovery, and concurrency ledger validation
+- atomic retention and compaction auditability
+- shared runtime controller foundations
+- Redis-backed shared queue coordination
+- queue pump and background consumption
+- queue-first and manual drain visibility
+- dispatch-time admission visibility
+- runtime worker capacity visibility
+- RBAC execution context propagation
+- tenant-aware registry and capacity filtering
+- Redis-backed scale-out request publication
+- tenant-scoped scale-out settings
+- scale-out watcher/provider selector lifecycle
+- fulfilled scale-out shared-run requeue
+- Redis discovery/registry/capacity foundations
 
-1. Add core documentation directly under `docs/`.
-2. Add focused AI runtime documentation under `docs/ai/`.
-3. Link new documents from this index.
-4. Keep links relative to this file.
-5. Preserve the complete technical reference in `runtime-internals.md`.
-6. Clearly distinguish between implemented features, available foundations, and planned work.
-7. Keep replay documentation connected to ledger, tracing, and metrics because Replay V1 exposes replay metadata, replay lifecycle ledger events, and trace timeline diagnostics.
-8. Keep observability overview, tracing, runtime metrics, and replay/audit linked together because they describe different layers of the same runtime visibility model.
-9. Keep runtime control-plane documentation linked with runtime queue control, execution control state, instance visibility, admission, shared controller, shared queue pump, and Kubernetes preparation.
-10. Keep MCP server control-plane and runtime instance provider documentation linked with runtime control-plane, shared controller, admission, local runtime queues, runtime capacity descriptors, RBAC authorization, tenant context propagation, and Kubernetes preparation.
-11. Keep shared controller usage linked with shared queue pump, runtime control-plane, MCP control-plane, runtime discovery/registry/capacity, runtime instance provider model, and testing strategy.
-12. Keep shared queue pump and worker capacity documentation linked with shared controller usage, runtime queue control, MCP control-plane, runtime instance provider model, runtime discovery/registry/capacity, multi-tenant isolation, and testing strategy.
-13. Keep runtime discovery, registry, and capacity documentation linked with runtime control-plane, MCP control-plane, runtime instance provider model, shared queue pump readiness, multi-tenant isolation, and testing strategy.
-14. Keep Redis/local scale-out documentation linked across runtime control-plane, MCP control-plane, runtime instance provider model, shared controller usage, shared queue pump, discovery/registry/capacity, config-driven runtime, and testing strategy.
-15. Keep multi-tenant control-plane isolation documentation linked across architecture overview, runtime control-plane, discovery/registry/capacity, MCP server, runtime instance provider model, shared controller usage, shared queue pump, distributed execution, execution control state, testing strategy, README, and product roadmap documents.
-16. Keep RBAC documentation connected to MCP tool authorization, `ExecutionContextSnapshot`, tenant-aware admission, runtime visibility, and all background/distributed hops.
+The current executable console scenarios are:
+
+```text
+json
+chaos-100
+chaos-500
+throttling-100
+```
+
+The `throttling-100` scenario demonstrates:
+
+- distributed provider throttling
+- Redis lease-based concurrency admission
+- realtime `[THROTTLED]` visibility
+- randomized provider distribution with OpenAI as the throttled target
+- bounded provider capacity under worker pressure
+- deterministic convergence despite throttling delays
+
+The demo validates the controller execution path, distributed worker participation, runtime controls, realtime logging, correlated observability, and terminal completion behavior. It is intended to show distributed AI execution infrastructure, not only a simple batch or in-memory execution path.
+
+Future demo work will expand further into crash recovery, human-in-the-loop, advanced replay workflows, Kubernetes deployment assets, real enterprise sample workflows, dashboard visibility, pipeline builder direction, MCP control scenarios, tenant-aware operations, memory/context lifecycle diagnostics, and broader product-platform capabilities.
+
+---
+
+## Roadmap
+
+The roadmap is organized into phases.
+
+| Phase | Focus | Status |
+|---|---|---|
+| Completed | Core runtime foundations already implemented | Implemented / validated by tests |
+| Phase 0 | README review and documentation restructure | Completed (V1) |
+| Phase 1 | Enterprise demo | Completed (V1) - controller demo, distributed workers, runtime controls, chaos scenarios, retention/replay, and throttling scenario validated |
+| Phase 2 | Real enterprise sample | Planned |
+| Phase 3 | Correlated observability, tracing, and metrics | Foundations available / active polish |
+| Phase 4 | Kubernetes deployment demo | Planned - shared controller V1, Redis shared queue, Redis discovery/registry/capacity, Redis/local scale-out lifecycle, fulfilled-run requeue, HTTP pooled runtime provider foundations, and multi-tenant isolation foundations completed |
+| Phase 5 | Public API / SDK polish | Planned |
+| Phase 6 | Deterministic Replay Engine and Audit Foundations | Completed (V1) |
+| Phase 7 | Replay Controller, HTTP APIs, Dashboard, and Operational Tooling | Planned |
+| Phase 8 | Cost, Provider Governance, and Tenant Governance | Planned |
+| Phase 9 | Articles and public positioning | Planned |
+
+The roadmap above tracks the current runtime and enterprise demo evolution.
+
+The broader product direction is tracked in [`docs/product-roadmap/index.md`](docs/product-roadmap/index.md), which describes how these deterministic execution foundations evolve toward a complete product platform: runtime engine, replay/audit, Decision Ledger, policy governance, retention lifecycle, observability, execution control, MCP interface, enterprise dashboard, pipeline builder, memory/context lifecycle, security hardening, testing reliability, multi-tenant readiness, managed hosting, and banking/financial-services technical-control direction.
+
+For the runtime roadmap, see [`docs/roadmap.md`](docs/roadmap.md). For the product roadmap, see [`docs/product-roadmap/product-roadmap.md`](docs/product-roadmap/product-roadmap.md).
+
+---
+
+## Roadmap to Product
+
+The runtime foundations are now documented as the base for a product roadmap, not only as a road-to-MLOps direction.
+
+The product roadmap explains how the project can evolve from deterministic execution infrastructure into a broader product platform with:
+
+- deterministic runtime engine
+- execution control and state lifecycle
+- replay and audit layer
+- execution-correlated Decision Ledger
+- policy engine and runtime governance
+- tenant-aware control-plane isolation
+- tenant runtime settings and managed capacity
+- retention, eviction, compaction, snapshot, and archive lifecycle
+- observability and runtime telemetry
+- MCP control interface
+- enterprise dashboard
+- visual pipeline builder
+- developer experience / API / SDK / CLI direction
+- testing and reliability strategy
+- security and encryption hardening
+- memory, context, and reasoning lifecycle
+- multi-tenant readiness
+- managed hosting by runtime instance and worker capacity
+- banking and financial-services technical-control direction.
+
+The main product roadmap entry point is [`docs/product-roadmap/index.md`](docs/product-roadmap/index.md).
+
+---
+
+## Documentation
+
+The full documentation map is available here:
+
+- [`docs/index.md`](docs/index.md) — Documentation index and reading guide.
+- [`docs/runtime-internals.md`](docs/runtime-internals.md) — Complete technical reference preserved from the original README.
+- [`docs/enterprise-readiness.md`](docs/enterprise-readiness.md) — Enterprise readiness matrix.
+- [`docs/comparison-existing-tools.md`](docs/comparison-existing-tools.md) — Ecosystem positioning and comparison with existing tools.
+- [`docs/roadmap.md`](docs/roadmap.md) — Project roadmap.
+- [`docs/product-roadmap/index.md`](docs/product-roadmap/index.md) — Product roadmap index and product-platform reading guide.
+- [`docs/product-roadmap/product-roadmap.md`](docs/product-roadmap/product-roadmap.md) — Public product roadmap from runtime foundation toward dashboard, pipeline builder, MCP interface, managed hosting, security, memory/context lifecycle, and enterprise readiness.
+- [`docs/product-roadmap/what-already-exists.md`](docs/product-roadmap/what-already-exists.md) — Summary of the foundations already implemented or actively in place today.
+- [`docs/product-roadmap/current-foundation.md`](docs/product-roadmap/current-foundation.md) — Current architectural foundation for deterministic execution, replay, policy, providers, lifecycle management, observability, and control-plane direction.
+- [`docs/product-roadmap/improvement-backlog.md`](docs/product-roadmap/improvement-backlog.md) — Planned improvements required to productize the existing runtime foundation.
+- [`docs/product-roadmap/roadmap-6-months.md`](docs/product-roadmap/roadmap-6-months.md) — Short-term productization direction for a single-developer project.
+- [`docs/product-roadmap/roadmap-12-24-months.md`](docs/product-roadmap/roadmap-12-24-months.md) — Longer-term product maturity, enterprise readiness, and commercial scale direction.
+- [`docs/ai/architecture-overview.md`](docs/ai/architecture-overview.md) — High-level runtime architecture and major runtime layers, including control-plane scale-out, fulfilled-run requeue, provider-based dispatch, and tenant-aware context propagation.
+- [`docs/ai/multi-tenant-control-plane-isolation.md`](docs/ai/multi-tenant-control-plane-isolation.md) — RBAC execution-context propagation, durable `ExecutionContextSnapshot`, tenant-aware Shared/Dedicated/Hybrid runtime isolation, registry/capacity filtering, admission, shared queue dispatch, and tenant-scoped scale-out settings.
+- [`docs/ai/runtime-control-plane.md`](docs/ai/runtime-control-plane.md) — Runtime control-plane foundation for replay, execution control, runtime queue control, runtime instance visibility/control, discovery, capacity, run admission, Shared Runtime Controller V1, Redis shared queue coordination, queue pump/background service, Redis-backed scale-out lifecycle, fulfilled-run requeue, and tenant-aware control-plane operations.
+- [`docs/ai/runtime-discovery-registry-capacity.md`](docs/ai/runtime-discovery-registry-capacity.md) — Runtime discovery, Redis registry, Redis capacity descriptors, ControlPlaneIdResolver, pump readiness, local scale-out capacity visibility, cleanup lifecycle, HTTP pooled runtime identity model, and tenant-aware visibility filtering.
+- [`docs/ai/mcp-server-control-plane.md`](docs/ai/mcp-server-control-plane.md) — MCP server as a runtime control-plane adapter, including host modes, tool groups, RBAC integration, runtime role separation, local runtime pool behavior, Redis/local scale-out execution, shared queue dispatch flow, and Kubernetes direction.
+- [`docs/ai/runtime-instance-provider-model.md`](docs/ai/runtime-instance-provider-model.md) — Provider-based runtime instance administration, dispatch, status/control, and scale-out model for local, Redis command queue, HTTP, gRPC, and Kubernetes providers, including tenant-scoped provider dispatch and scale-out.
+- [`docs/ai/shared-queue-pump-and-worker-capacity.md`](docs/ai/shared-queue-pump-and-worker-capacity.md) — Shared queue pump, queue-first submit mode, direct-dispatch scale-out path, fulfilled-run requeue, manual drain, dispatch-time admission, pump identity separation, runtime worker capacity visibility, `MaxLocalWorkersPerExecution`, and context restoration during dispatch.
+- [`docs/ai/distributed-execution.md`](docs/ai/distributed-execution.md) — Distributed workers, Redis coordination, claims, leases, deterministic convergence, and execution-context restoration across distributed/background runtime hops.
+- [`docs/ai/execution-control-state.md`](docs/ai/execution-control-state.md) — ExecutionId-level pause, resume, cancel, waiting-for-input, control-state behavior, and snapshot-aware runtime execution control.
+- [`docs/ai/testing-strategy.md`](docs/ai/testing-strategy.md) — Integration testing strategy and validation approach for distributed runtime guarantees, including Redis/local scale-out request, requeue, dispatch, execution evidence, RBAC snapshot propagation, and tenant isolation coverage.
+- [`demo/enterprise-runtime/README.md`](demo/enterprise-runtime/README.md) — Local enterprise runtime demo using Docker Compose, Redis, MongoDB, external demo steps, controller execution, distributed workers, and scenario documentation.
+- [`demo/enterprise-runtime/scenarios/06-distributed-throttling.md`](demo/enterprise-runtime/scenarios/06-distributed-throttling.md) — Executable distributed throttling scenario documentation.
+- [`demo/enterprise-runtime/scenarios/08-deterministic-convergence.md`](demo/enterprise-runtime/scenarios/08-deterministic-convergence.md) — Deterministic convergence scenario documentation.
+
+Focused AI runtime documentation:
+
+- [`docs/ai/architecture-overview.md`](docs/ai/architecture-overview.md)
+- [`docs/ai/multi-tenant-control-plane-isolation.md`](docs/ai/multi-tenant-control-plane-isolation.md)
+- [`docs/ai/distributed-execution.md`](docs/ai/distributed-execution.md)
+- [`docs/ai/execution-control-state.md`](docs/ai/execution-control-state.md)
+- [`docs/ai/runtime-queue-control.md`](docs/ai/runtime-queue-control.md)
+- [`docs/ai/runtime-control-plane.md`](docs/ai/runtime-control-plane.md)
+- [`docs/ai/runtime-discovery-registry-capacity.md`](docs/ai/runtime-discovery-registry-capacity.md)
+- [`docs/ai/mcp-server-control-plane.md`](docs/ai/mcp-server-control-plane.md)
+- [`docs/ai/runtime-instance-provider-model.md`](docs/ai/runtime-instance-provider-model.md)
+- [`docs/ai/shared-queue-pump-and-worker-capacity.md`](docs/ai/shared-queue-pump-and-worker-capacity.md)
+- [`docs/ai/retry-and-recovery.md`](docs/ai/retry-and-recovery.md)
+- [`docs/ai/retention-and-compaction.md`](docs/ai/retention-and-compaction.md)
+- [`docs/ai/distributed-concurrency-throttling.md`](docs/ai/distributed-concurrency-throttling.md)
+- [`docs/ai/replay-and-audit.md`](docs/ai/replay-and-audit.md)
+- [`docs/ai/observability.md`](docs/ai/observability.md)
+- [`docs/ai/observability-tracing.md`](docs/ai/observability-tracing.md)
+- [`docs/ai/runtime-metrics.md`](docs/ai/runtime-metrics.md)
+- [`docs/ai/execution-correlated-ledger.md`](docs/ai/execution-correlated-ledger.md)
+- [`docs/ai/testing-strategy.md`](docs/ai/testing-strategy.md)
+- [`docs/ai/config-driven-runtime.md`](docs/ai/config-driven-runtime.md)
+- [`docs/ai/policy-driven-execution.md`](docs/ai/policy-driven-execution.md)
+- [`docs/ai/context-resolution-and-helpers.md`](docs/ai/context-resolution-and-helpers.md)
+- [`docs/ai/step-plugins.md`](docs/ai/step-plugins.md)
+- [`docs/ai/rag-pipelines.md`](docs/ai/rag-pipelines.md)
+
+These files were extracted progressively from `docs/runtime-internals.md`.
+
+---
+
+## Validation Evidence
+
+The current implementation is validated by a large unit and integration test suite.
+
+Current validated evidence includes:
+
+```text
+1036 green tests
+```
+
+Validated areas include:
+
+- deterministic DAG execution
+- Redis Lua atomic claiming
+- retry and recovery
+- retention and replay compatibility
+- execution control state
+- runtime queue control
+- shared runtime controller
+- Redis shared run store
+- Redis shared queue
+- dispatch-time admission
+- manual drain
+- background shared queue pump
+- runtime readiness gate
+- Redis registry and capacity stores
+- Redis control-plane discovery
+- Redis admission reservations
+- HTTP pooled runtime provider dispatch
+- Redis-backed scale-out request store
+- store-backed scale-out request publisher
+- scale-out watcher
+- provider-based scale-out selector
+- local runtime scaler
+- fulfilled scale-out run requeue
+- MCP Redis local scale-out execution
+- RBAC execution context integration
+- `ExecutionContextSnapshot` propagation
+- tenant-aware Shared/Dedicated/Hybrid visibility
+- tenant-aware registry/capacity/admission filtering
+- tenant-scoped scale-out settings
+- local scaler runtime prefix isolation
+- direct local runtime queue snapshot requirement
+
+Example scale-out evidence:
+
+```text
+Initial ActiveLocalInstances = 0
+Admission = RequestScaleOut
+SharedRun.Status = ScaleOutRequested
+ScaleOutRequest.Status = Fulfilled
+ScaleOutRuntimeInstanceId = host-...:mcp-scaleout-runtime-1
+ActiveLocalInstances = 1
+SharedRun.Status = Dispatched
+QueueStatus = Dispatched
+LocalRunId = available
+ExecutionId = available
+RuntimeRunStatus = completed
+```
+
+Example HTTP pooled dispatch evidence:
+
+```text
+Runs = 50
+StepsPerRun = 100
+RuntimeInstances = runtime-http-1, runtime-http-2, runtime-http-3
+RedisAiSharedRunStore = validated
+RedisAiSharedQueue = validated
+RedisAiRuntimeAdmissionReservationStore = validated
+```
+
+Example tenant isolation evidence:
+
+```text
+tenant-a
+    Dedicated
+    no shared fallback
+    scale-out creates tenant-a-runtime-*
+
+tenant-b
+    Hybrid
+    dedicated preferred
+    shared fallback allowed
+    scale-out creates tenant-b-runtime-*
+
+default/test-tenant
+    Shared
+    uses shared runtime-instance-* capacity
+```
+
+---
+
+## License
+
+This project is licensed under the **Business Source License 1.1 (BSL)**.
+
+- Free for development, testing, and internal use
+- Commercial production use requires a license
+- Automatically converts to Apache 2.0 on 2029-01-01
+
+See the repository license file for full terms.
