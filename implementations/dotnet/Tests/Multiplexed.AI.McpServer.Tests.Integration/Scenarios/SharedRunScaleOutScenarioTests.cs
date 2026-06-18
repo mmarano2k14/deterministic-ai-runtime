@@ -3,6 +3,7 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.ControlPlane.Admission;
 using Multiplexed.Abstractions.AI.ControlPlane.Admission.Reservations;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Pool;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Controller;
@@ -53,14 +54,24 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
         private const string Source = "mcp-scaleout-test";
 
         /// <summary>
-        /// Tenant used by scale-out scenario tests.
+        /// Tenant used by existing scale-out scenario tests.
         /// </summary>
         private const string TenantId = "test-tenant";
 
         /// <summary>
-        /// Runtime id prefix used by the local scaler in this scenario.
+        /// Dedicated tenant used by tenant-aware scale-out propagation tests.
+        /// </summary>
+        private const string TenantAwareTenantId = "tenant-a";
+
+        /// <summary>
+        /// Runtime id prefix used by the default local scaler scenario.
         /// </summary>
         private const string LocalRuntimeInstanceIdPrefix = "mcp-scaleout-runtime";
+
+        /// <summary>
+        /// Runtime id prefix expected from hardcoded tenant-a runtime settings.
+        /// </summary>
+        private const string TenantAwareRuntimeInstanceIdPrefix = "tenant-a-runtime";
 
         /// <summary>
         /// The test output helper.
@@ -456,6 +467,256 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
                 $"ActiveLocalInstances='{scaler.ActiveInstanceCount}'.");
         }
 
+        
+        /// <summary>
+        /// Verifies that a real MCP control-plane host propagates dedicated tenant runtime
+        /// settings from admission into the Redis-backed scale-out request and the local scaler.
+        /// </summary>
+        [Fact]
+        public async Task ControlPlaneWithLocalRuntimeInstances_With_Dedicated_Tenant_Should_Create_Tenant_Aware_ScaleOut_Request()
+        {
+            var controlPlaneId =
+                GenericMcpServerTestSettings.CreateControlPlaneId(
+                    "tenant-aware-local-scaleout-request");
+
+            var controlPlaneSettings =
+                GenericMcpServerTestSettings.CreateLocalScaleOutOnlyControlPlaneSettings(
+                    controlPlaneId);
+
+            await using var host =
+                new GenericMcpServerTestHost(
+                    controlPlaneSettings);
+
+            using var client =
+                host.CreateClient();
+
+            AssertRedisStoresPublisherWatcherAndLocalScaler(
+                host.Services);
+
+            var tenantRuntimeSettingsProvider =
+                host.Services.GetRequiredService<IAiTenantRuntimeSettingsProvider>();
+
+            var tenantRuntimeSettings =
+                tenantRuntimeSettingsProvider.GetSettings(
+                    TenantAwareTenantId,
+                    null);
+
+            output.WriteLine(
+                $"Tenant-aware settings resolved. TenantId='{tenantRuntimeSettings.TenantId}', IsolationMode='{tenantRuntimeSettings.IsolationMode}', RuntimeInstanceIdPrefix='{tenantRuntimeSettings.RuntimeInstanceIdPrefix}', MaxRuntimeInstances='{tenantRuntimeSettings.MaxRuntimeInstances}'.");
+
+            Assert.Equal(
+                TenantAwareTenantId,
+                tenantRuntimeSettings.TenantId);
+
+            Assert.Equal(
+                AiRuntimeInstanceIsolationMode.Dedicated,
+                tenantRuntimeSettings.IsolationMode);
+
+            Assert.Equal(
+                TenantAwareRuntimeInstanceIdPrefix,
+                tenantRuntimeSettings.RuntimeInstanceIdPrefix);
+
+            var mcp =
+                await McpRbacTestClientHelper
+                    .CreateConfiguredClientAsync(
+                        host,
+                        client,
+                        RequestedBy,
+                        tenantId: TenantAwareTenantId)
+                    .ConfigureAwait(false);
+
+            var scaleOutRequestStore =
+                host.Services.GetRequiredService<IAiRuntimeScaleOutRequestStore>();
+
+            var scaler =
+                host.Services.GetRequiredService<IAiLocalRuntimeInstanceScaler>();
+
+            Assert.Equal(
+                0,
+                scaler.ActiveInstanceCount);
+
+            var pipelineName =
+                $"mcp-tenant-aware-local-scaleout-{Guid.NewGuid():N}";
+
+            var expectedSharedRunIds =
+                await SubmitRunsAsync(
+                        mcp,
+                        pipelineName,
+                        count: 1,
+                        stepCount: 3,
+                        flakyStepInterval: 0,
+                        tenantId: TenantAwareTenantId)
+                    .ConfigureAwait(false);
+
+            var sharedRunId =
+                Assert.Single(
+                    expectedSharedRunIds);
+
+            var sharedRunStore =
+                host.Services.GetRequiredService<IAiSharedRunStore>();
+
+            var sharedRun =
+                await sharedRunStore
+                    .GetAsync(
+                        sharedRunId)
+                    .ConfigureAwait(false);
+
+            Assert.NotNull(
+                sharedRun);
+
+            output.WriteLine(
+                $"Tenant-aware shared run after submit. SharedRunId='{sharedRun.SharedRunId}', Status='{sharedRun.Status}', ControlPlaneId='{sharedRun.ControlPlaneId}', PipelineKey='{sharedRun.PipelineKey}', TenantId='{sharedRun.ExecutionContextSnapshot.TenantId}'.");
+
+            Assert.Equal(
+                AiSharedRunStatus.ScaleOutRequested,
+                sharedRun.Status);
+
+            Assert.Equal(
+                controlPlaneId,
+                sharedRun.ControlPlaneId);
+
+            Assert.Equal(
+                pipelineName,
+                sharedRun.PipelineKey);
+
+            Assert.Equal(
+                TenantAwareTenantId,
+                sharedRun.ExecutionContextSnapshot.TenantId);
+
+            Assert.NotNull(
+                sharedRun.AdmissionDecision);
+
+            Assert.Equal(
+                TenantAwareTenantId,
+                sharedRun.AdmissionDecision.TenantId);
+
+            output.WriteLine(
+                $"Tenant-aware admission decision stored with shared run. DecisionType='{sharedRun.AdmissionDecision.DecisionType}', TenantId='{sharedRun.AdmissionDecision.TenantId}', TenantGroupId='{sharedRun.AdmissionDecision.TenantGroupId}', StoredIsolationMode='{sharedRun.AdmissionDecision.TenantRuntimeSettings?.IsolationMode.ToString() ?? "null"}'.");
+
+            var expectedScaleOutRequestId =
+                $"scale-out-{sharedRunId}";
+
+            var scaleOutRequest =
+                await WaitForScaleOutRequestStatusAsync(
+                        scaleOutRequestStore,
+                        expectedScaleOutRequestId,
+                        AiRuntimeScaleOutRequestStatus.Fulfilled,
+                        TimeSpan.FromSeconds(15))
+                    .ConfigureAwait(false);
+
+            Assert.Equal(
+                expectedScaleOutRequestId,
+                scaleOutRequest.RequestId);
+
+            Assert.Equal(
+                sharedRunId,
+                scaleOutRequest.SharedRunId);
+
+            Assert.Equal(
+                controlPlaneId,
+                scaleOutRequest.ControlPlaneId);
+
+            Assert.Equal(
+                TenantAwareTenantId,
+                scaleOutRequest.TenantId);
+
+            Assert.Equal(
+                pipelineName,
+                scaleOutRequest.PipelineKey);
+
+            Assert.Equal(
+                AiRuntimeInstanceIsolationMode.Dedicated,
+                scaleOutRequest.IsolationMode);
+
+            Assert.True(
+                scaleOutRequest.PreferDedicatedCapacity);
+
+            Assert.False(
+                scaleOutRequest.AllowSharedFallback);
+
+            Assert.Equal(
+                3,
+                scaleOutRequest.MaxRuntimeInstances);
+
+            Assert.Equal(
+                TenantAwareRuntimeInstanceIdPrefix,
+                scaleOutRequest.RuntimeInstanceIdPrefix);
+
+            Assert.Equal(
+                10,
+                scaleOutRequest.WorkerCountPerInstance);
+
+            Assert.Equal(
+                5,
+                scaleOutRequest.MaxConcurrentRunsPerInstance);
+
+            Assert.Equal(
+                500,
+                scaleOutRequest.LocalQueueCapacity);
+
+            Assert.Equal(
+                AiRuntimeScaleOutRequestStatus.Fulfilled,
+                scaleOutRequest.Status);
+
+            Assert.Equal(
+                "local",
+                scaleOutRequest.ProviderHint);
+
+            Assert.Equal(
+                "Dedicated",
+                scaleOutRequest.Metadata["runtime.isolationMode"]);
+
+            Assert.Equal(
+                "True",
+                scaleOutRequest.Metadata["runtime.preferDedicatedCapacity"]);
+
+            Assert.Equal(
+                "False",
+                scaleOutRequest.Metadata["runtime.allowSharedFallback"]);
+
+            Assert.Equal(
+                "3",
+                scaleOutRequest.Metadata["runtime.maxRuntimeInstances"]);
+
+            Assert.Equal(
+                TenantAwareRuntimeInstanceIdPrefix,
+                scaleOutRequest.Metadata["runtime.instanceIdPrefix"]);
+
+            Assert.Equal(
+                "10",
+                scaleOutRequest.Metadata["runtime.workerCountPerInstance"]);
+
+            Assert.Equal(
+                "5",
+                scaleOutRequest.Metadata["runtime.maxConcurrentRunsPerInstance"]);
+
+            Assert.Equal(
+                "500",
+                scaleOutRequest.Metadata["runtime.localQueueCapacity"]);
+
+            Assert.False(
+                string.IsNullOrWhiteSpace(
+                    scaleOutRequest.FulfilledRuntimeInstanceId));
+
+            Assert.Contains(
+                $":{TenantAwareRuntimeInstanceIdPrefix}-1",
+                scaleOutRequest.FulfilledRuntimeInstanceId,
+                StringComparison.Ordinal);
+
+            await WaitUntilAsync(
+                    () => scaler.ActiveInstanceCount >= 1,
+                    TimeSpan.FromSeconds(5))
+                .ConfigureAwait(false);
+
+            Assert.True(
+                scaler.ActiveInstanceCount >= 1,
+                $"Expected the local scaler to create at least one tenant-aware runtime instance. ActiveInstanceCount='{scaler.ActiveInstanceCount}'.");
+
+            output.WriteLine(
+                $"Tenant-aware Redis local scale-out request fulfilled. ControlPlaneId='{controlPlaneId}', SharedRunId='{sharedRunId}', RequestId='{scaleOutRequest.RequestId}', TenantId='{scaleOutRequest.TenantId}', IsolationMode='{scaleOutRequest.IsolationMode}', RuntimeInstancePrefix='{scaleOutRequest.RuntimeInstanceIdPrefix}', RuntimeInstanceId='{scaleOutRequest.FulfilledRuntimeInstanceId}', PipelineKey='{pipelineName}', ActiveLocalInstances='{scaler.ActiveInstanceCount}'.");
+        }
+
+
         /// <summary>
         /// Verifies that Redis-backed control-plane stores, the store-backed scale-out publisher,
         /// the selector, local provider, local scaler, admission policy, and watcher hosted service are registered correctly.
@@ -708,19 +969,22 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
         /// <param name="count">The number of runs to submit.</param>
         /// <param name="stepCount">The number of pipeline steps.</param>
         /// <param name="flakyStepInterval">The flaky step interval.</param>
+        /// <param name="tenantId">The optional tenant id for the submit request.</param>
         /// <returns>The submitted shared run ids.</returns>
         private static async Task<IReadOnlySet<string>> SubmitRunsAsync(
             McpTestClient mcp,
             string pipelineName,
             int count,
             int stepCount,
-            int flakyStepInterval)
+            int flakyStepInterval,
+            string? tenantId = null)
         {
             var submitRequest =
                 CreateSubmitRequest(
                     pipelineName,
                     stepCount: stepCount,
-                    flakyStepInterval: flakyStepInterval);
+                    flakyStepInterval: flakyStepInterval,
+                    tenantId: tenantId);
 
             var submitResults =
                 await mcp
@@ -838,17 +1102,19 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
         /// <param name="pipelineName">The pipeline key.</param>
         /// <param name="stepCount">The number of steps.</param>
         /// <param name="flakyStepInterval">The flaky interval.</param>
+        /// <param name="tenantId">The optional tenant id for the submit request.</param>
         /// <returns>The submit request.</returns>
         private static AiSharedRuntimeControllerRequest CreateSubmitRequest(
             string pipelineName,
             int stepCount,
-            int flakyStepInterval)
+            int flakyStepInterval,
+            string? tenantId = null)
         {
             return new AiSharedRuntimeControllerRequest
             {
                 Operation = AiSharedRuntimeControllerOperation.SubmitRun,
                 PipelineKey = pipelineName,
-                TenantId = TenantId,
+                TenantId = tenantId ?? TenantId,
                 RequestedBy = RequestedBy,
                 Source = Source,
                 RunRequest = McpTestPipelineFactory.CreateRunRequest(
