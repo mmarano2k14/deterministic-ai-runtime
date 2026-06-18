@@ -569,9 +569,20 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController
             CancellationToken cancellationToken)
         {
             var tenantRuntimeSettings =
+                admissionDecision.TenantRuntimeSettings ??
                 _tenantRuntimeSettingsProvider.GetSettings(
                     created.ExecutionContextSnapshot.TenantId,
                     created.ExecutionContextSnapshot.TenantGroupId);
+
+            var tenantId =
+                !string.IsNullOrWhiteSpace(admissionDecision.TenantId)
+                    ? admissionDecision.TenantId
+                    : tenantRuntimeSettings.TenantId ?? created.ExecutionContextSnapshot.TenantId;
+
+            var tenantGroupId =
+                !string.IsNullOrWhiteSpace(admissionDecision.TenantGroupId)
+                    ? admissionDecision.TenantGroupId
+                    : tenantRuntimeSettings.TenantGroupId ?? created.ExecutionContextSnapshot.TenantGroupId;
 
             await _scaleOutPublisher
                 .PublishAsync(
@@ -580,8 +591,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController
                         SharedRun = created,
                         SharedRunId = created.SharedRunId,
 
-                        TenantId = created.ExecutionContextSnapshot.TenantId,
-                        TenantGroupId = created.ExecutionContextSnapshot.TenantGroupId,
+                        TenantId = tenantId,
+                        TenantGroupId = tenantGroupId,
                         PipelineKey = created.PipelineKey,
 
                         IsolationMode = tenantRuntimeSettings.IsolationMode,
