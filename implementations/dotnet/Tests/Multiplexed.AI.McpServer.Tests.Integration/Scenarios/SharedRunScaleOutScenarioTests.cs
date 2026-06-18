@@ -2406,6 +2406,184 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
         }
 
         /// <summary>
+        /// Verifies that runtime instance visibility respects dedicated, hybrid, and shared tenant isolation rules.
+        /// </summary>
+        [Fact]
+        public async Task RuntimeInstanceVisibilityEvaluator_Should_Respect_Tenant_Isolation_Modes()
+        {
+            var controlPlaneId =
+                GenericMcpServerTestSettings.CreateControlPlaneId(
+                    "tenant-runtime-visibility");
+
+            var controlPlaneSettings =
+                GenericMcpServerTestSettings.CreateLocalScaleOutOnlyControlPlaneSettings(
+                    controlPlaneId);
+
+            await using var host =
+                new GenericMcpServerTestHost(
+                    controlPlaneSettings);
+
+            AssertRedisStoresPublisherWatcherAndLocalScaler(
+                host.Services);
+
+            var visibilityEvaluator =
+                host.Services.GetRequiredService<IAiRuntimeInstanceVisibilityEvaluator>();
+
+            var tenantRuntimeSettingsProvider =
+                host.Services.GetRequiredService<IAiTenantRuntimeSettingsProvider>();
+
+            var dedicatedTenantSettings =
+                tenantRuntimeSettingsProvider.GetSettings(
+                    TenantAwareTenantId,
+                    null);
+
+            var hybridTenantSettings =
+                tenantRuntimeSettingsProvider.GetSettings(
+                    HybridTenantId,
+                    null);
+
+            var sharedTenantSettings =
+                tenantRuntimeSettingsProvider.GetSettings(
+                    TenantId,
+                    null);
+
+            output.WriteLine(
+                $"Visibility settings. DedicatedTenant='{dedicatedTenantSettings.TenantId}', DedicatedMode='{dedicatedTenantSettings.IsolationMode}', DedicatedFallback='{dedicatedTenantSettings.AllowSharedFallback}', HybridTenant='{hybridTenantSettings.TenantId}', HybridMode='{hybridTenantSettings.IsolationMode}', HybridFallback='{hybridTenantSettings.AllowSharedFallback}', SharedTenant='{sharedTenantSettings.TenantId}', SharedMode='{sharedTenantSettings.IsolationMode}', SharedFallback='{sharedTenantSettings.AllowSharedFallback}'.");
+
+            Assert.Equal(
+                AiRuntimeInstanceIsolationMode.Dedicated,
+                dedicatedTenantSettings.IsolationMode);
+
+            Assert.Equal(
+                AiRuntimeInstanceIsolationMode.Hybrid,
+                hybridTenantSettings.IsolationMode);
+
+            Assert.Equal(
+                AiRuntimeInstanceIsolationMode.Shared,
+                sharedTenantSettings.IsolationMode);
+
+            var tenantADedicatedDescriptor =
+                visibilityEvaluator.CreateDescriptor(
+                    $"{TenantAwareRuntimeInstanceIdPrefix}-1",
+                    new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                    {
+                        [AiRuntimeInstanceIsolationMetadataKeys.TenantId] = TenantAwareTenantId,
+                        [AiRuntimeInstanceIsolationMetadataKeys.TenantGroupId] = dedicatedTenantSettings.TenantGroupId ?? string.Empty,
+                        [AiRuntimeInstanceIsolationMetadataKeys.IsolationMode] = AiRuntimeInstanceIsolationMode.Dedicated.ToString(),
+                        [AiRuntimeInstanceIsolationMetadataKeys.PreferDedicatedCapacity] = true.ToString(),
+                        [AiRuntimeInstanceIsolationMetadataKeys.AllowSharedFallback] = false.ToString()
+                    });
+
+            var tenantBHybridDescriptor =
+                visibilityEvaluator.CreateDescriptor(
+                    $"{HybridRuntimeInstanceIdPrefix}-1",
+                    new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                    {
+                        [AiRuntimeInstanceIsolationMetadataKeys.TenantId] = HybridTenantId,
+                        [AiRuntimeInstanceIsolationMetadataKeys.TenantGroupId] = hybridTenantSettings.TenantGroupId ?? string.Empty,
+                        [AiRuntimeInstanceIsolationMetadataKeys.IsolationMode] = AiRuntimeInstanceIsolationMode.Hybrid.ToString(),
+                        [AiRuntimeInstanceIsolationMetadataKeys.PreferDedicatedCapacity] = true.ToString(),
+                        [AiRuntimeInstanceIsolationMetadataKeys.AllowSharedFallback] = true.ToString()
+                    });
+
+            var sharedDescriptor =
+                visibilityEvaluator.CreateDescriptor(
+                    $"{LocalRuntimeInstanceIdPrefix}-1",
+                    new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                    {
+                        [AiRuntimeInstanceIsolationMetadataKeys.IsolationMode] = AiRuntimeInstanceIsolationMode.Shared.ToString(),
+                        [AiRuntimeInstanceIsolationMetadataKeys.PreferDedicatedCapacity] = false.ToString(),
+                        [AiRuntimeInstanceIsolationMetadataKeys.AllowSharedFallback] = true.ToString()
+                    });
+
+            Assert.Equal(
+                TenantAwareTenantId,
+                tenantADedicatedDescriptor.TenantId);
+
+            Assert.Equal(
+                AiRuntimeInstanceIsolationMode.Dedicated,
+                tenantADedicatedDescriptor.IsolationMode);
+
+            Assert.Equal(
+                HybridTenantId,
+                tenantBHybridDescriptor.TenantId);
+
+            Assert.Equal(
+                AiRuntimeInstanceIsolationMode.Hybrid,
+                tenantBHybridDescriptor.IsolationMode);
+
+            Assert.Equal(
+                AiRuntimeInstanceIsolationMode.Shared,
+                sharedDescriptor.IsolationMode);
+
+            Assert.True(
+                visibilityEvaluator.IsVisible(
+                    TenantAwareTenantId,
+                    dedicatedTenantSettings.TenantGroupId,
+                    tenantADedicatedDescriptor),
+                "tenant-a must see its own dedicated runtime instance.");
+
+            Assert.False(
+                visibilityEvaluator.IsVisible(
+                    TenantAwareTenantId,
+                    dedicatedTenantSettings.TenantGroupId,
+                    tenantBHybridDescriptor),
+                "tenant-a must not see tenant-b hybrid runtime instance.");
+
+            Assert.False(
+                visibilityEvaluator.IsVisible(
+                    TenantAwareTenantId,
+                    dedicatedTenantSettings.TenantGroupId,
+                    sharedDescriptor),
+                "tenant-a dedicated mode has shared fallback disabled and must not see shared runtime instances.");
+
+            Assert.True(
+                visibilityEvaluator.IsVisible(
+                    HybridTenantId,
+                    hybridTenantSettings.TenantGroupId,
+                    tenantBHybridDescriptor),
+                "tenant-b must see its own hybrid runtime instance.");
+
+            Assert.False(
+                visibilityEvaluator.IsVisible(
+                    HybridTenantId,
+                    hybridTenantSettings.TenantGroupId,
+                    tenantADedicatedDescriptor),
+                "tenant-b must not see tenant-a dedicated runtime instance.");
+
+            Assert.True(
+                visibilityEvaluator.IsVisible(
+                    HybridTenantId,
+                    hybridTenantSettings.TenantGroupId,
+                    sharedDescriptor),
+                "tenant-b hybrid mode allows shared fallback and must see shared runtime instances.");
+
+            Assert.True(
+                visibilityEvaluator.IsVisible(
+                    TenantId,
+                    sharedTenantSettings.TenantGroupId,
+                    sharedDescriptor),
+                "default shared tenant must see shared runtime instances.");
+
+            Assert.False(
+                visibilityEvaluator.IsVisible(
+                    TenantId,
+                    sharedTenantSettings.TenantGroupId,
+                    tenantADedicatedDescriptor),
+                "default shared tenant must not see tenant-a dedicated runtime instance.");
+
+            Assert.False(
+                visibilityEvaluator.IsVisible(
+                    TenantId,
+                    sharedTenantSettings.TenantGroupId,
+                    tenantBHybridDescriptor),
+                "default shared tenant must not see tenant-b hybrid runtime instance.");
+
+            output.WriteLine(
+                $"Runtime visibility validated. TenantA sees own dedicated='{visibilityEvaluator.IsVisible(TenantAwareTenantId, dedicatedTenantSettings.TenantGroupId, tenantADedicatedDescriptor)}', TenantB sees shared fallback='{visibilityEvaluator.IsVisible(HybridTenantId, hybridTenantSettings.TenantGroupId, sharedDescriptor)}', Shared sees shared='{visibilityEvaluator.IsVisible(TenantId, sharedTenantSettings.TenantGroupId, sharedDescriptor)}'.");
+        }
+
+        /// <summary>
         /// Waits until a scale-out request reaches the expected status.
         /// </summary>
         /// <param name="store">The scale-out request store.</param>

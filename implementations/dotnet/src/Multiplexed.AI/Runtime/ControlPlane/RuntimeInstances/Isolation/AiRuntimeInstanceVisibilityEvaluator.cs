@@ -7,16 +7,17 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Isolation
     /// </summary>
     public sealed class AiRuntimeInstanceVisibilityEvaluator : IAiRuntimeInstanceVisibilityEvaluator
     {
-        private readonly IAiTenantRuntimeSettingsProvider _tenantRuntimeSettingsProvider;
+        private readonly IAiTenantRuntimeSettingsProvider tenantRuntimeSettingsProvider;
 
         /// <summary>
-        /// Initializes a new instance of the <see cref="AiRuntimeInstanceVisibilityEvaluator"/> class.
+        /// Initializes a new instance of the <see cref="AiRuntimeInstanceVisibilityEvaluator" /> class.
         /// </summary>
         /// <param name="tenantRuntimeSettingsProvider">The tenant runtime settings provider.</param>
         public AiRuntimeInstanceVisibilityEvaluator(
             IAiTenantRuntimeSettingsProvider tenantRuntimeSettingsProvider)
         {
-            _tenantRuntimeSettingsProvider = tenantRuntimeSettingsProvider
+            this.tenantRuntimeSettingsProvider =
+                tenantRuntimeSettingsProvider
                 ?? throw new ArgumentNullException(nameof(tenantRuntimeSettingsProvider));
         }
 
@@ -26,39 +27,33 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Isolation
             string? tenantGroupId,
             AiRuntimeInstanceVisibilityDescriptor descriptor)
         {
-            if (descriptor == null)
-            {
-                throw new ArgumentNullException(nameof(descriptor));
-            }
+            ArgumentNullException.ThrowIfNull(descriptor);
 
-            var tenantSettings = _tenantRuntimeSettingsProvider.GetSettings(
-                tenantId,
-                tenantGroupId);
+            var tenantSettings =
+                this.tenantRuntimeSettingsProvider.GetSettings(
+                    tenantId,
+                    tenantGroupId);
 
             if (descriptor.IsolationMode == AiRuntimeInstanceIsolationMode.Shared)
             {
-                return IsSharedVisibleForTenant(tenantSettings);
+                return IsSharedVisibleForTenant(
+                    tenantSettings);
             }
 
             if (descriptor.IsolationMode == AiRuntimeInstanceIsolationMode.Dedicated)
             {
-                if (IsDedicatedMatch(tenantId, tenantGroupId, descriptor))
-                {
-                    return true;
-                }
-
-                return false;
+                return IsDedicatedMatch(
+                    tenantId,
+                    tenantGroupId,
+                    descriptor);
             }
 
             if (descriptor.IsolationMode == AiRuntimeInstanceIsolationMode.Hybrid)
             {
-                if (IsDedicatedMatch(tenantId, tenantGroupId, descriptor))
-                {
-                    return true;
-                }
-
-                return descriptor.AllowSharedFallback &&
-                       tenantSettings.AllowSharedFallback;
+                return IsDedicatedMatch(
+                    tenantId,
+                    tenantGroupId,
+                    descriptor);
             }
 
             return false;
@@ -69,25 +64,41 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Isolation
             string? runtimeInstanceId,
             IReadOnlyDictionary<string, string>? metadata)
         {
-            var safeMetadata = metadata ?? new Dictionary<string, string>();
+            var safeMetadata =
+                metadata ?? new Dictionary<string, string>();
 
             return new AiRuntimeInstanceVisibilityDescriptor
             {
                 RuntimeInstanceId = runtimeInstanceId,
-                TenantId = GetValue(safeMetadata, AiRuntimeInstanceIsolationMetadataKeys.TenantId),
-                TenantGroupId = GetValue(safeMetadata, AiRuntimeInstanceIsolationMetadataKeys.TenantGroupId),
+                TenantId = GetValue(
+                    safeMetadata,
+                    AiRuntimeInstanceIsolationMetadataKeys.TenantId),
+                TenantGroupId = GetValue(
+                    safeMetadata,
+                    AiRuntimeInstanceIsolationMetadataKeys.TenantGroupId),
                 IsolationMode = ParseIsolationMode(
-                    GetValue(safeMetadata, AiRuntimeInstanceIsolationMetadataKeys.IsolationMode)),
+                    GetValue(
+                        safeMetadata,
+                        AiRuntimeInstanceIsolationMetadataKeys.IsolationMode)),
                 AllowSharedFallback = ParseBool(
-                    GetValue(safeMetadata, AiRuntimeInstanceIsolationMetadataKeys.AllowSharedFallback),
+                    GetValue(
+                        safeMetadata,
+                        AiRuntimeInstanceIsolationMetadataKeys.AllowSharedFallback),
                     defaultValue: true),
                 PreferDedicatedCapacity = ParseBool(
-                    GetValue(safeMetadata, AiRuntimeInstanceIsolationMetadataKeys.PreferDedicatedCapacity),
+                    GetValue(
+                        safeMetadata,
+                        AiRuntimeInstanceIsolationMetadataKeys.PreferDedicatedCapacity),
                     defaultValue: false),
                 Metadata = safeMetadata
             };
         }
 
+        /// <summary>
+        /// Determines whether a shared runtime resource is visible for the tenant settings.
+        /// </summary>
+        /// <param name="tenantSettings">The tenant runtime settings.</param>
+        /// <returns><see langword="true" /> when the shared resource is visible; otherwise, <see langword="false" />.</returns>
         private static bool IsSharedVisibleForTenant(
             AiTenantRuntimeSettings tenantSettings)
         {
@@ -109,6 +120,13 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Isolation
             return false;
         }
 
+        /// <summary>
+        /// Determines whether a tenant identity matches a dedicated or hybrid runtime resource owner.
+        /// </summary>
+        /// <param name="tenantId">The current tenant identifier.</param>
+        /// <param name="tenantGroupId">The current tenant group identifier.</param>
+        /// <param name="descriptor">The runtime resource visibility descriptor.</param>
+        /// <returns><see langword="true" /> when the runtime resource belongs to the tenant; otherwise, <see langword="false" />.</returns>
         private static bool IsDedicatedMatch(
             string? tenantId,
             string? tenantGroupId,
@@ -116,14 +134,20 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Isolation
         {
             if (!string.IsNullOrWhiteSpace(tenantId) &&
                 !string.IsNullOrWhiteSpace(descriptor.TenantId) &&
-                string.Equals(tenantId, descriptor.TenantId, StringComparison.OrdinalIgnoreCase))
+                string.Equals(
+                    tenantId,
+                    descriptor.TenantId,
+                    StringComparison.OrdinalIgnoreCase))
             {
                 return true;
             }
 
             if (!string.IsNullOrWhiteSpace(tenantGroupId) &&
                 !string.IsNullOrWhiteSpace(descriptor.TenantGroupId) &&
-                string.Equals(tenantGroupId, descriptor.TenantGroupId, StringComparison.OrdinalIgnoreCase))
+                string.Equals(
+                    tenantGroupId,
+                    descriptor.TenantGroupId,
+                    StringComparison.OrdinalIgnoreCase))
             {
                 return true;
             }
@@ -131,6 +155,12 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Isolation
             return false;
         }
 
+        /// <summary>
+        /// Gets a metadata value using case-insensitive key matching.
+        /// </summary>
+        /// <param name="metadata">The metadata dictionary.</param>
+        /// <param name="key">The metadata key.</param>
+        /// <returns>The metadata value, or <see langword="null" /> when missing.</returns>
         private static string? GetValue(
             IReadOnlyDictionary<string, string> metadata,
             string key)
@@ -142,7 +172,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Isolation
 
             foreach (var item in metadata)
             {
-                if (string.Equals(item.Key, key, StringComparison.OrdinalIgnoreCase))
+                if (string.Equals(
+                        item.Key,
+                        key,
+                        StringComparison.OrdinalIgnoreCase))
                 {
                     return item.Value;
                 }
@@ -151,6 +184,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Isolation
             return null;
         }
 
+        /// <summary>
+        /// Parses the runtime instance isolation mode.
+        /// </summary>
+        /// <param name="value">The serialized isolation mode.</param>
+        /// <returns>The parsed isolation mode, or shared mode when missing or invalid.</returns>
         private static AiRuntimeInstanceIsolationMode ParseIsolationMode(
             string? value)
         {
@@ -170,6 +208,12 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Isolation
             return AiRuntimeInstanceIsolationMode.Shared;
         }
 
+        /// <summary>
+        /// Parses a boolean metadata value.
+        /// </summary>
+        /// <param name="value">The serialized boolean value.</param>
+        /// <param name="defaultValue">The default value used when the metadata value is missing or invalid.</param>
+        /// <returns>The parsed boolean value.</returns>
         private static bool ParseBool(
             string? value,
             bool defaultValue)
@@ -179,7 +223,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Isolation
                 return defaultValue;
             }
 
-            if (bool.TryParse(value, out var parsed))
+            if (bool.TryParse(
+                    value,
+                    out var parsed))
             {
                 return parsed;
             }
