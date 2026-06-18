@@ -125,9 +125,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.DI
 
             Assert.NotNull(descriptor);
             Assert.Equal(ServiceLifetime.Singleton, descriptor.Lifetime);
-            Assert.Equal(
-                typeof(RedisAiRuntimeInstanceRegistry),
-                descriptor.ImplementationType);
+            Assert.NotNull(descriptor.ImplementationFactory);
         }
 
         [Fact]

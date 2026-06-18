@@ -357,7 +357,7 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
                     runtimeId);
 
             this.logger.LogInformation(
-                "Creating local runtime instance host. HostMode={HostMode}, EnableSharedQueuePump={EnableSharedQueuePump}, HostId={HostId}, RuntimeId={RuntimeId}, RuntimeInstanceId={RuntimeInstanceId}, Index={Index}, TargetInstanceCount={TargetInstanceCount}, WorkerCountPerInstance={WorkerCountPerInstance}, MaxConcurrentRunsPerInstance={MaxConcurrentRunsPerInstance}, LocalQueueCapacity={LocalQueueCapacity}",
+                "Creating local runtime instance host. HostMode={HostMode}, EnableSharedQueuePump={EnableSharedQueuePump}, HostId={HostId}, RuntimeId={RuntimeId}, RuntimeInstanceId={RuntimeInstanceId}, Index={Index}, TargetInstanceCount={TargetInstanceCount}, WorkerCountPerInstance={WorkerCountPerInstance}, MaxConcurrentRunsPerInstance={MaxConcurrentRunsPerInstance}, LocalQueueCapacity={LocalQueueCapacity}, MetadataCount={MetadataCount}",
                 hostMode,
                 enableSharedQueuePump,
                 this.runtimeHostIdentity.HostId,
@@ -367,7 +367,8 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
                 targetInstanceCount,
                 this.options.WorkerCountPerInstance,
                 this.options.MaxConcurrentRunsPerInstance,
-                this.options.LocalQueueCapacity?.ToString() ?? "unlimited");
+                this.options.LocalQueueCapacity?.ToString() ?? "unlimited",
+                this.options.Metadata.Count);
 
             var host =
                 await this.hostFactory
@@ -376,6 +377,7 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
                         this.options.WorkerCountPerInstance,
                         this.options.MaxConcurrentRunsPerInstance,
                         this.options.LocalQueueCapacity,
+                        this.options.Metadata,
                         cancellationToken)
                     .ConfigureAwait(false);
 

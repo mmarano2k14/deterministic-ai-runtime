@@ -47,5 +47,18 @@
         /// </summary>
         public string RuntimeInstanceIdPrefix { get; set; } =
             "runtime-instance";
+
+        /// <summary>
+        /// Metadata copied to each local runtime instance created by the pool.
+        /// </summary>
+        /// <remarks>
+        /// This is used to propagate runtime instance ownership and isolation
+        /// information, such as tenant id, tenant group id, or runtime isolation mode,
+        /// into the runtime instance registration and capacity descriptors.
+        ///
+        /// When empty, local runtime instances remain shared/backward-compatible.
+        /// </remarks>
+        public Dictionary<string, string> Metadata { get; set; } =
+            new(StringComparer.OrdinalIgnoreCase);
     }
 }

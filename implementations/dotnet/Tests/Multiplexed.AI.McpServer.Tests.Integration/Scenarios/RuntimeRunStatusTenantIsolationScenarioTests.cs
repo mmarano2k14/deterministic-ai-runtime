@@ -577,6 +577,10 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
                     ["AiLocalRuntimeInstancePool:WorkerCountPerInstance"] = "10",
                     ["AiLocalRuntimeInstancePool:MaxConcurrentRunsPerInstance"] = "5",
                     ["AiLocalRuntimeInstancePool:RuntimeInstanceIdPrefix"] = RuntimeInstancePrefix,
+                    ["AiLocalRuntimeInstancePool:Metadata:tenantId"] = TenantA,
+                    ["AiLocalRuntimeInstancePool:Metadata:runtime.isolationMode"] = "Dedicated",
+                    ["AiLocalRuntimeInstancePool:Metadata:runtime.allowSharedFallback"] = "false",
+                    ["AiLocalRuntimeInstancePool:Metadata:runtime.preferDedicatedCapacity"] = "true",
 
                     ["AiEngine:ControlPlane:ControlPlaneId"] = controlPlaneId,
                     ["AiEngine:RuntimeInstanceId"] = controlPlaneRuntimeInstanceId,
