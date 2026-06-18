@@ -114,6 +114,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
         /// No runtime instance may exist yet during scale-out. The descriptor is therefore
         /// intentionally synthetic and only carries the provider metadata required by the
         /// existing runtime instance provider router.
+        ///
+        /// The resolved provider name is authoritative and is written after copying request
+        /// metadata so caller-provided metadata cannot accidentally override provider routing.
         /// </remarks>
         /// <param name="request">The scale-out provider request.</param>
         /// <param name="providerName">The provider name.</param>
@@ -124,27 +127,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
         {
             var metadata =
                 new Dictionary<string, string>(
-                    StringComparer.OrdinalIgnoreCase)
-                {
-                    [AiRuntimeInstanceProviderMetadataKeys.ProviderName] = providerName,
-                    ["scaleout.request.id"] = request.RequestId,
-                    ["scaleout.shared.run.id"] = request.SharedRunId
-                };
-
-            if (!string.IsNullOrWhiteSpace(request.TenantId))
-            {
-                metadata["tenant.id"] = request.TenantId;
-            }
-
-            if (!string.IsNullOrWhiteSpace(request.PipelineKey))
-            {
-                metadata["pipeline.key"] = request.PipelineKey;
-            }
-
-            if (!string.IsNullOrWhiteSpace(request.CorrelationId))
-            {
-                metadata["correlation.id"] = request.CorrelationId;
-            }
+                    StringComparer.OrdinalIgnoreCase);
 
             foreach (var pair in request.Metadata)
             {
@@ -153,6 +136,42 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
                 {
                     metadata[pair.Key] = pair.Value;
                 }
+            }
+
+            metadata[AiRuntimeInstanceProviderMetadataKeys.ProviderName] =
+                providerName;
+
+            metadata["provider"] =
+                providerName;
+
+            metadata["scaleout.request.id"] =
+                request.RequestId;
+
+            metadata["scaleout.shared.run.id"] =
+                request.SharedRunId;
+
+            if (!string.IsNullOrWhiteSpace(request.TenantId))
+            {
+                metadata["tenant.id"] =
+                    request.TenantId;
+            }
+
+            if (!string.IsNullOrWhiteSpace(request.TenantGroupId))
+            {
+                metadata["tenant.group.id"] =
+                    request.TenantGroupId;
+            }
+
+            if (!string.IsNullOrWhiteSpace(request.PipelineKey))
+            {
+                metadata["pipeline.key"] =
+                    request.PipelineKey;
+            }
+
+            if (!string.IsNullOrWhiteSpace(request.CorrelationId))
+            {
+                metadata["correlation.id"] =
+                    request.CorrelationId;
             }
 
             return new AiRuntimeInstanceCapacityDescriptor
