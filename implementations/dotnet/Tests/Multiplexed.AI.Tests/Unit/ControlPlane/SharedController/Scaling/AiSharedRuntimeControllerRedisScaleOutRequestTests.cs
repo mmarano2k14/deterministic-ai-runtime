@@ -9,6 +9,7 @@ using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Store;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Queue;
 using Multiplexed.Abstractions.AI.Execution.Instance.Worker;
 using Multiplexed.AI.Runtime.ControlPlane.Observability;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Isolation;
 using Multiplexed.AI.Runtime.ControlPlane.SharedController;
 using Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling;
 using Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling.Redis;
@@ -96,6 +97,7 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedController
                 new ThrowingSharedRunDispatcher(),
                 scaleOutPublisher,
                 controlPlaneIdResolver,
+                new HardcodedAiTenantRuntimeSettingsProvider(),
                 Options.Create(new AiSharedRuntimeControllerOptions
                 {
                     EnableSubmitRun = true,

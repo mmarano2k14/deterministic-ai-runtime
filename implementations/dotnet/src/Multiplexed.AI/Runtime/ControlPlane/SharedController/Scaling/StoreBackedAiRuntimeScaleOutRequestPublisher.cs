@@ -88,20 +88,35 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
                 RequestId = CreateRequestId(request),
                 ControlPlaneId = controlPlaneId,
                 SharedRunId = request.SharedRunId,
+
                 TenantId = request.TenantId,
+                TenantGroupId = request.TenantGroupId,
                 PipelineKey = request.PipelineKey,
+
+                IsolationMode = request.IsolationMode,
+                PreferDedicatedCapacity = request.PreferDedicatedCapacity,
+                AllowSharedFallback = request.AllowSharedFallback,
+                MaxRuntimeInstances = request.MaxRuntimeInstances,
+                RuntimeInstanceIdPrefix = request.RuntimeInstanceIdPrefix,
+                WorkerCountPerInstance = request.WorkerCountPerInstance,
+                MaxConcurrentRunsPerInstance = request.MaxConcurrentRunsPerInstance,
+                LocalQueueCapacity = request.LocalQueueCapacity,
+
                 Status = AiRuntimeScaleOutRequestStatus.Pending,
                 Reason = GetReason(request),
+
                 VisibleInstanceCount = request.VisibleInstanceCount,
                 AvailableInstanceCount = request.AvailableInstanceCount,
                 CurrentInstanceCount = request.CurrentInstanceCount,
                 MaxInstanceCount = request.MaxInstanceCount,
                 RequestedTargetInstanceCount = targetInstanceCount,
+
                 ProviderHint = providerHint,
                 RequestedBy = request.RequestedBy,
                 Source = request.Source,
                 CorrelationId = request.CorrelationId,
                 CreatedAtUtc = DateTimeOffset.UtcNow,
+
                 Metadata = CreateMetadata(
                     request,
                     controlPlaneId,
@@ -253,9 +268,64 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
             metadata["controlPlaneId"] = controlPlaneId;
             metadata["sharedRunId"] = request.SharedRunId;
             metadata["providerHint"] = providerHint;
-            metadata["visibleInstanceCount"] = request.VisibleInstanceCount.ToString(CultureInfo.InvariantCulture);
-            metadata["availableInstanceCount"] = request.AvailableInstanceCount.ToString(CultureInfo.InvariantCulture);
-            metadata["currentInstanceCount"] = request.CurrentInstanceCount.ToString(CultureInfo.InvariantCulture);
+
+            if (!string.IsNullOrWhiteSpace(request.TenantId))
+            {
+                metadata["tenantId"] = request.TenantId;
+            }
+
+            if (!string.IsNullOrWhiteSpace(request.TenantGroupId))
+            {
+                metadata["tenantGroupId"] = request.TenantGroupId;
+            }
+
+            if (!string.IsNullOrWhiteSpace(request.PipelineKey))
+            {
+                metadata["pipelineKey"] = request.PipelineKey;
+            }
+
+            metadata["runtime.isolationMode"] = request.IsolationMode.ToString();
+            metadata["runtime.preferDedicatedCapacity"] = request.PreferDedicatedCapacity.ToString();
+            metadata["runtime.allowSharedFallback"] = request.AllowSharedFallback.ToString();
+
+            if (request.MaxRuntimeInstances.HasValue)
+            {
+                metadata["runtime.maxRuntimeInstances"] =
+                    request.MaxRuntimeInstances.Value.ToString(CultureInfo.InvariantCulture);
+            }
+
+            if (!string.IsNullOrWhiteSpace(request.RuntimeInstanceIdPrefix))
+            {
+                metadata["runtime.instanceIdPrefix"] =
+                    request.RuntimeInstanceIdPrefix;
+            }
+
+            if (request.WorkerCountPerInstance.HasValue)
+            {
+                metadata["runtime.workerCountPerInstance"] =
+                    request.WorkerCountPerInstance.Value.ToString(CultureInfo.InvariantCulture);
+            }
+
+            if (request.MaxConcurrentRunsPerInstance.HasValue)
+            {
+                metadata["runtime.maxConcurrentRunsPerInstance"] =
+                    request.MaxConcurrentRunsPerInstance.Value.ToString(CultureInfo.InvariantCulture);
+            }
+
+            if (request.LocalQueueCapacity.HasValue)
+            {
+                metadata["runtime.localQueueCapacity"] =
+                    request.LocalQueueCapacity.Value.ToString(CultureInfo.InvariantCulture);
+            }
+
+            metadata["visibleInstanceCount"] =
+                request.VisibleInstanceCount.ToString(CultureInfo.InvariantCulture);
+
+            metadata["availableInstanceCount"] =
+                request.AvailableInstanceCount.ToString(CultureInfo.InvariantCulture);
+
+            metadata["currentInstanceCount"] =
+                request.CurrentInstanceCount.ToString(CultureInfo.InvariantCulture);
 
             if (request.MaxInstanceCount.HasValue)
             {

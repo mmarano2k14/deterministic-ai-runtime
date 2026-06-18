@@ -4,6 +4,7 @@ using Multiplexed.Abstractions.AI.ControlPlane.Discovery;
 using Multiplexed.Abstractions.AI.ControlPlane.Observability;
 using Multiplexed.Abstractions.AI.ControlPlane.Observability.Area;
 using Multiplexed.Abstractions.AI.ControlPlane.Observability.Events;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Controller;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Dispatch;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Scaling;
@@ -48,6 +49,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController
         private readonly IAiSharedRunDispatcher _dispatcher;
         private readonly IAiRuntimeScaleOutRequestPublisher _scaleOutPublisher;
         private readonly IAiControlPlaneIdResolver _controlPlaneIdResolver;
+        private readonly IAiTenantRuntimeSettingsProvider _tenantRuntimeSettingsProvider;
         private readonly AiSharedRuntimeControllerOptions _options;
         private readonly IAiControlPlaneObserver _observer;
         private readonly IExecutionContextSnapshotProvider _executionContextSnapshotProvider;
@@ -61,6 +63,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController
         /// <param name="dispatcher">The shared run dispatcher used when admission assigns a run to an instance.</param>
         /// <param name="scaleOutPublisher">The scale-out request publisher used when admission requests more capacity.</param>
         /// <param name="controlPlaneIdResolver">The control-plane identifier resolver.</param>
+        /// <param name="tenantRuntimeSettingsProvider">
+        /// The tenant runtime settings provider used to resolve tenant-specific runtime capacity settings
+        /// before publishing scale-out requests.
+        /// </param>
         /// <param name="options">The shared runtime controller options.</param>
         /// <param name="observer">The control-plane observer used to record operation events.</param>
         /// <param name="executionContextSnapshotProvider">
@@ -77,6 +83,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController
             IAiSharedRunDispatcher dispatcher,
             IAiRuntimeScaleOutRequestPublisher scaleOutPublisher,
             IAiControlPlaneIdResolver controlPlaneIdResolver,
+            IAiTenantRuntimeSettingsProvider tenantRuntimeSettingsProvider,
             IOptions<AiSharedRuntimeControllerOptions> options,
             IAiControlPlaneObserver observer,
             IExecutionContextSnapshotProvider executionContextSnapshotProvider)
@@ -104,6 +111,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController
             _controlPlaneIdResolver =
                 controlPlaneIdResolver
                 ?? throw new ArgumentNullException(nameof(controlPlaneIdResolver));
+
+            _tenantRuntimeSettingsProvider =
+                tenantRuntimeSettingsProvider
+                ?? throw new ArgumentNullException(nameof(tenantRuntimeSettingsProvider));
 
             _options =
                 options?.Value
@@ -557,18 +568,36 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController
             AiRunAdmissionDecision admissionDecision,
             CancellationToken cancellationToken)
         {
+            var tenantRuntimeSettings =
+                _tenantRuntimeSettingsProvider.GetSettings(
+                    created.ExecutionContextSnapshot.TenantId,
+                    created.ExecutionContextSnapshot.TenantGroupId);
+
             await _scaleOutPublisher
                 .PublishAsync(
                     new AiRuntimeScaleOutRequest
                     {
                         SharedRun = created,
                         SharedRunId = created.SharedRunId,
+
                         TenantId = created.ExecutionContextSnapshot.TenantId,
+                        TenantGroupId = created.ExecutionContextSnapshot.TenantGroupId,
                         PipelineKey = created.PipelineKey,
+
+                        IsolationMode = tenantRuntimeSettings.IsolationMode,
+                        PreferDedicatedCapacity = tenantRuntimeSettings.PreferDedicatedCapacity,
+                        AllowSharedFallback = tenantRuntimeSettings.AllowSharedFallback,
+                        MaxRuntimeInstances = tenantRuntimeSettings.MaxRuntimeInstances,
+                        RuntimeInstanceIdPrefix = tenantRuntimeSettings.RuntimeInstanceIdPrefix,
+                        WorkerCountPerInstance = tenantRuntimeSettings.WorkerCountPerInstance,
+                        MaxConcurrentRunsPerInstance = tenantRuntimeSettings.MaxConcurrentRunsPerInstance,
+                        LocalQueueCapacity = tenantRuntimeSettings.LocalQueueCapacity,
+
                         VisibleInstanceCount = admissionDecision.VisibleInstanceCount,
                         AvailableInstanceCount = admissionDecision.AvailableInstanceCount,
                         CurrentInstanceCount = admissionDecision.CurrentInstanceCount,
                         MaxInstanceCount = admissionDecision.MaxInstanceCount,
+
                         CorrelationId = created.CorrelationId,
                         RequestedBy = created.RequestedBy,
                         Source = created.Source,
