@@ -3,9 +3,11 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.ControlPlane.Admission;
 using Multiplexed.Abstractions.AI.ControlPlane.Admission.Reservations;
+using Multiplexed.Abstractions.AI.ControlPlane.Discovery;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Pool;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Controller;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Scaling;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Store;
@@ -17,10 +19,12 @@ using Multiplexed.AI.McpServer.Tests.Integration.Fixtures;
 using Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic;
 using Multiplexed.AI.McpServer.Tests.Integration.Helpers;
 using Multiplexed.AI.Runtime.ControlPlane.Admission.Reservations;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Local;
 using Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling;
 using Multiplexed.AI.Runtime.ControlPlane.SharedController.Store;
 using Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis;
+using StackExchange.Redis;
 using Xunit.Abstractions;
 
 namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
@@ -2581,6 +2585,317 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
 
             output.WriteLine(
                 $"Runtime visibility validated. TenantA sees own dedicated='{visibilityEvaluator.IsVisible(TenantAwareTenantId, dedicatedTenantSettings.TenantGroupId, tenantADedicatedDescriptor)}', TenantB sees shared fallback='{visibilityEvaluator.IsVisible(HybridTenantId, hybridTenantSettings.TenantGroupId, sharedDescriptor)}', Shared sees shared='{visibilityEvaluator.IsVisible(TenantId, sharedTenantSettings.TenantGroupId, sharedDescriptor)}'.");
+        }
+
+        /// <summary>
+        /// Verifies that the Redis-backed runtime instance registry applies tenant visibility filtering
+        /// when listing runtime instances through the active execution context snapshot.
+        /// </summary>
+        [Fact]
+        public async Task RedisRuntimeInstanceRegistry_ListAsync_Should_Filter_Runtime_Instances_By_Current_Tenant_Visibility()
+        {
+            var controlPlaneId =
+                GenericMcpServerTestSettings.CreateControlPlaneId(
+                    "tenant-runtime-registry-visibility");
+
+            var controlPlaneSettings =
+                GenericMcpServerTestSettings.CreateLocalScaleOutOnlyControlPlaneSettings(
+                    controlPlaneId);
+
+            await using var host =
+                new GenericMcpServerTestHost(
+                    controlPlaneSettings);
+
+            AssertRedisStoresPublisherWatcherAndLocalScaler(
+                host.Services);
+
+            var redis =
+                host.Services.GetRequiredService<IConnectionMultiplexer>();
+
+            var registrationOptions =
+                host.Services.GetRequiredService<IOptions<AiRuntimeInstanceRegistrationOptions>>();
+
+            var controlPlaneIdResolver =
+                host.Services.GetRequiredService<IAiControlPlaneIdResolver>();
+
+            var visibilityEvaluator =
+                host.Services.GetRequiredService<IAiRuntimeInstanceVisibilityEvaluator>();
+
+            var tenantRuntimeSettingsProvider =
+                host.Services.GetRequiredService<IAiTenantRuntimeSettingsProvider>();
+
+            var executionContextProvider =
+                new MutableExecutionContextSnapshotProvider();
+
+            var registry =
+                new RedisAiRuntimeInstanceRegistry(
+                    redis,
+                    registrationOptions,
+                    controlPlaneIdResolver,
+                    visibilityEvaluator,
+                    executionContextProvider);
+
+            var dedicatedTenantSettings =
+                tenantRuntimeSettingsProvider.GetSettings(
+                    TenantAwareTenantId,
+                    null);
+
+            var hybridTenantSettings =
+                tenantRuntimeSettingsProvider.GetSettings(
+                    HybridTenantId,
+                    null);
+
+            var sharedTenantSettings =
+                tenantRuntimeSettingsProvider.GetSettings(
+                    TenantId,
+                    null);
+
+            var uniqueSuffix =
+                Guid.NewGuid().ToString("N");
+
+            var tenantARuntimeInstanceId =
+                $"{TenantAwareRuntimeInstanceIdPrefix}-registry-{uniqueSuffix}";
+
+            var tenantBRuntimeInstanceId =
+                $"{HybridRuntimeInstanceIdPrefix}-registry-{uniqueSuffix}";
+
+            var sharedRuntimeInstanceId =
+                $"runtime-instance-registry-{uniqueSuffix}";
+
+            await registry
+                .RegisterAsync(
+                    CreateRuntimeInstanceRegistration(
+                        controlPlaneId,
+                        tenantARuntimeInstanceId,
+                        workerCount: 10,
+                        maxConcurrentRuns: 5,
+                        queueCapacity: 500,
+                        metadata: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                        {
+                            [AiRuntimeInstanceIsolationMetadataKeys.TenantId] = TenantAwareTenantId,
+                            [AiRuntimeInstanceIsolationMetadataKeys.TenantGroupId] = dedicatedTenantSettings.TenantGroupId ?? string.Empty,
+                            [AiRuntimeInstanceIsolationMetadataKeys.IsolationMode] = AiRuntimeInstanceIsolationMode.Dedicated.ToString(),
+                            [AiRuntimeInstanceIsolationMetadataKeys.PreferDedicatedCapacity] = true.ToString(),
+                            [AiRuntimeInstanceIsolationMetadataKeys.AllowSharedFallback] = false.ToString()
+                        }))
+                .ConfigureAwait(false);
+
+            await registry
+                .RegisterAsync(
+                    CreateRuntimeInstanceRegistration(
+                        controlPlaneId,
+                        tenantBRuntimeInstanceId,
+                        workerCount: 5,
+                        maxConcurrentRuns: 3,
+                        queueCapacity: 250,
+                        metadata: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                        {
+                            [AiRuntimeInstanceIsolationMetadataKeys.TenantId] = HybridTenantId,
+                            [AiRuntimeInstanceIsolationMetadataKeys.TenantGroupId] = hybridTenantSettings.TenantGroupId ?? string.Empty,
+                            [AiRuntimeInstanceIsolationMetadataKeys.IsolationMode] = AiRuntimeInstanceIsolationMode.Hybrid.ToString(),
+                            [AiRuntimeInstanceIsolationMetadataKeys.PreferDedicatedCapacity] = true.ToString(),
+                            [AiRuntimeInstanceIsolationMetadataKeys.AllowSharedFallback] = true.ToString()
+                        }))
+                .ConfigureAwait(false);
+
+            await registry
+                .RegisterAsync(
+                    CreateRuntimeInstanceRegistration(
+                        controlPlaneId,
+                        sharedRuntimeInstanceId,
+                        workerCount: 10,
+                        maxConcurrentRuns: 3,
+                        queueCapacity: 100,
+                        metadata: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                        {
+                            [AiRuntimeInstanceIsolationMetadataKeys.IsolationMode] = AiRuntimeInstanceIsolationMode.Shared.ToString(),
+                            [AiRuntimeInstanceIsolationMetadataKeys.PreferDedicatedCapacity] = false.ToString(),
+                            [AiRuntimeInstanceIsolationMetadataKeys.AllowSharedFallback] = true.ToString()
+                        }))
+                .ConfigureAwait(false);
+
+            executionContextProvider.Current =
+                CreateRuntimeVisibilityExecutionContextSnapshot(
+                    TenantAwareTenantId,
+                    dedicatedTenantSettings.TenantGroupId,
+                    "tenant-a-registry-visibility");
+
+            var tenantAVisibleInstances =
+                await registry
+                    .ListAsync()
+                    .ConfigureAwait(false);
+
+            var tenantAVisibleIds =
+                tenantAVisibleInstances
+                    .Select(instance => instance.RuntimeInstanceId)
+                    .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+            Assert.Contains(
+                tenantARuntimeInstanceId,
+                tenantAVisibleIds);
+
+            Assert.DoesNotContain(
+                tenantBRuntimeInstanceId,
+                tenantAVisibleIds);
+
+            Assert.DoesNotContain(
+                sharedRuntimeInstanceId,
+                tenantAVisibleIds);
+
+            executionContextProvider.Current =
+                CreateRuntimeVisibilityExecutionContextSnapshot(
+                    HybridTenantId,
+                    hybridTenantSettings.TenantGroupId,
+                    "tenant-b-registry-visibility");
+
+            var tenantBVisibleInstances =
+                await registry
+                    .ListAsync()
+                    .ConfigureAwait(false);
+
+            var tenantBVisibleIds =
+                tenantBVisibleInstances
+                    .Select(instance => instance.RuntimeInstanceId)
+                    .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+            Assert.DoesNotContain(
+                tenantARuntimeInstanceId,
+                tenantBVisibleIds);
+
+            Assert.Contains(
+                tenantBRuntimeInstanceId,
+                tenantBVisibleIds);
+
+            Assert.Contains(
+                sharedRuntimeInstanceId,
+                tenantBVisibleIds);
+
+            executionContextProvider.Current =
+                CreateRuntimeVisibilityExecutionContextSnapshot(
+                    TenantId,
+                    sharedTenantSettings.TenantGroupId,
+                    "shared-registry-visibility");
+
+            var sharedVisibleInstances =
+                await registry
+                    .ListAsync()
+                    .ConfigureAwait(false);
+
+            var sharedVisibleIds =
+                sharedVisibleInstances
+                    .Select(instance => instance.RuntimeInstanceId)
+                    .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+            Assert.DoesNotContain(
+                tenantARuntimeInstanceId,
+                sharedVisibleIds);
+
+            Assert.DoesNotContain(
+                tenantBRuntimeInstanceId,
+                sharedVisibleIds);
+
+            Assert.Contains(
+                sharedRuntimeInstanceId,
+                sharedVisibleIds);
+
+            output.WriteLine(
+                $"Redis registry tenant visibility validated. TenantA='{string.Join(",", tenantAVisibleIds)}', TenantB='{string.Join(",", tenantBVisibleIds)}', Shared='{string.Join(",", sharedVisibleIds)}'.");
+        }
+
+        /// <summary>
+        /// Creates a runtime instance registration for tenant visibility registry tests.
+        /// </summary>
+        /// <param name="controlPlaneId">The logical control-plane identifier.</param>
+        /// <param name="runtimeInstanceId">The runtime instance identifier.</param>
+        /// <param name="workerCount">The runtime worker count.</param>
+        /// <param name="maxConcurrentRuns">The maximum concurrent run count.</param>
+        /// <param name="queueCapacity">The local queue capacity.</param>
+        /// <param name="metadata">The runtime instance metadata.</param>
+        /// <returns>The runtime instance registration.</returns>
+        private static AiRuntimeInstanceRegistration CreateRuntimeInstanceRegistration(
+            string controlPlaneId,
+            string runtimeInstanceId,
+            int workerCount,
+            int maxConcurrentRuns,
+            int queueCapacity,
+            IReadOnlyDictionary<string, string> metadata)
+        {
+            return new AiRuntimeInstanceRegistration
+            {
+                RuntimeInstanceId = runtimeInstanceId,
+                ControlPlaneId = controlPlaneId,
+                ControlPlaneHostId = $"control-plane-host-{controlPlaneId}",
+                HostId = $"host-{runtimeInstanceId}",
+                RuntimeId = runtimeInstanceId,
+                Role = AiRuntimeInstanceRole.Runtime,
+                WorkerCount = workerCount,
+                QueueCapacity = queueCapacity,
+                MaxConcurrentRuns = maxConcurrentRuns,
+                RegisteredAtUtc = DateTimeOffset.UtcNow,
+                Metadata = new Dictionary<string, string>(
+                    metadata,
+                    StringComparer.OrdinalIgnoreCase)
+                {
+                    ["controlPlaneId"] = controlPlaneId
+                }
+            };
+        }
+
+        /// <summary>
+        /// Creates an execution context snapshot for runtime visibility registry tests.
+        /// </summary>
+        /// <param name="tenantId">The tenant identifier.</param>
+        /// <param name="tenantGroupId">The tenant group identifier.</param>
+        /// <param name="project">The project identifier.</param>
+        /// <returns>The execution context snapshot.</returns>
+        private static ExecutionContextSnapshot CreateRuntimeVisibilityExecutionContextSnapshot(
+            string tenantId,
+            string? tenantGroupId,
+            string project)
+        {
+            return new ExecutionContextSnapshot
+            {
+                TenantId = tenantId,
+                TenantGroupId = tenantGroupId,
+                ContextKey = $"ctx-{project}",
+                CurrentNamespace = tenantId,
+                Namespaces = new List<NamespaceEntry>
+        {
+            new()
+            {
+                Name = tenantId,
+                Trns = new HashSet<string>
+                {
+                    $"trn:{project}:runtime-instance:registry:read",
+                    $"trn:{project}:runtime-instance:registry:list",
+                    $"trn:{project}:runtime-instance:capacity:read",
+                    $"trn:{project}:shared-run:registry:read",
+                    $"trn:{project}:shared-run:registry:list"
+                }
+            }
+        },
+                UserId = RequestedBy,
+                Project = project
+            };
+        }
+
+        /// <summary>
+        /// Mutable execution context snapshot provider used by runtime registry visibility tests.
+        /// </summary>
+        private sealed class MutableExecutionContextSnapshotProvider : IExecutionContextSnapshotProvider
+        {
+            /// <summary>
+            /// Gets or sets the current execution context snapshot.
+            /// </summary>
+            public ExecutionContextSnapshot? Current { get; set; }
+
+            /// <inheritdoc />
+            public ExecutionContextSnapshot MapToSnapshot()
+            {
+                return this.Current
+                    ?? throw new InvalidOperationException(
+                        "No execution context snapshot is currently configured for the test.");
+            }
         }
 
         /// <summary>
