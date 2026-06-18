@@ -1157,6 +1157,268 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
         }
 
         /// <summary>
+        /// Verifies that a real MCP control-plane host keeps the default tenant in shared mode
+        /// and uses the shared tenant runtime settings for scale-out.
+        /// </summary>
+        [Fact]
+        public async Task ControlPlaneWithLocalRuntimeInstances_With_Default_Tenant_Should_Create_Shared_ScaleOut_Request()
+        {
+            var controlPlaneId =
+                GenericMcpServerTestSettings.CreateControlPlaneId(
+                    "default-tenant-local-scaleout-request");
+
+            var controlPlaneSettings =
+                GenericMcpServerTestSettings.CreateLocalScaleOutOnlyControlPlaneSettings(
+                    controlPlaneId);
+
+            await using var host =
+                new GenericMcpServerTestHost(
+                    controlPlaneSettings);
+
+            using var client =
+                host.CreateClient();
+
+            AssertRedisStoresPublisherWatcherAndLocalScaler(
+                host.Services);
+
+            var tenantRuntimeSettingsProvider =
+                host.Services.GetRequiredService<IAiTenantRuntimeSettingsProvider>();
+
+            var tenantRuntimeSettings =
+                tenantRuntimeSettingsProvider.GetSettings(
+                    TenantId,
+                    null);
+
+            output.WriteLine(
+                $"Default tenant settings resolved. TenantId='{tenantRuntimeSettings.TenantId}', IsolationMode='{tenantRuntimeSettings.IsolationMode}', RuntimeInstanceIdPrefix='{tenantRuntimeSettings.RuntimeInstanceIdPrefix}', MaxRuntimeInstances='{tenantRuntimeSettings.MaxRuntimeInstances}', AllowSharedFallback='{tenantRuntimeSettings.AllowSharedFallback}'.");
+
+            Assert.Equal(
+                TenantId,
+                tenantRuntimeSettings.TenantId);
+
+            Assert.Equal(
+                AiRuntimeInstanceIsolationMode.Shared,
+                tenantRuntimeSettings.IsolationMode);
+
+            Assert.False(
+                tenantRuntimeSettings.PreferDedicatedCapacity);
+
+            Assert.True(
+                tenantRuntimeSettings.AllowSharedFallback);
+
+            Assert.Equal(
+                1,
+                tenantRuntimeSettings.MaxRuntimeInstances);
+
+            Assert.Equal(
+                "runtime-instance",
+                tenantRuntimeSettings.RuntimeInstanceIdPrefix);
+
+            Assert.Equal(
+                10,
+                tenantRuntimeSettings.WorkerCountPerInstance);
+
+            Assert.Equal(
+                3,
+                tenantRuntimeSettings.MaxConcurrentRunsPerInstance);
+
+            var mcp =
+                await McpRbacTestClientHelper
+                    .CreateConfiguredClientAsync(
+                        host,
+                        client,
+                        RequestedBy,
+                        tenantId: TenantId)
+                    .ConfigureAwait(false);
+
+            var scaleOutRequestStore =
+                host.Services.GetRequiredService<IAiRuntimeScaleOutRequestStore>();
+
+            var scaler =
+                host.Services.GetRequiredService<IAiLocalRuntimeInstanceScaler>();
+
+            Assert.Equal(
+                0,
+                scaler.ActiveInstanceCount);
+
+            var pipelineName =
+                $"mcp-default-tenant-local-scaleout-{Guid.NewGuid():N}";
+
+            var expectedSharedRunIds =
+                await SubmitRunsAsync(
+                        mcp,
+                        pipelineName,
+                        count: 1,
+                        stepCount: 3,
+                        flakyStepInterval: 0,
+                        tenantId: TenantId)
+                    .ConfigureAwait(false);
+
+            var sharedRunId =
+                Assert.Single(
+                    expectedSharedRunIds);
+
+            var sharedRunStore =
+                host.Services.GetRequiredService<IAiSharedRunStore>();
+
+            var sharedRun =
+                await sharedRunStore
+                    .GetAsync(
+                        sharedRunId)
+                    .ConfigureAwait(false);
+
+            Assert.NotNull(
+                sharedRun);
+
+            output.WriteLine(
+                $"Default tenant shared run after submit. SharedRunId='{sharedRun.SharedRunId}', Status='{sharedRun.Status}', ControlPlaneId='{sharedRun.ControlPlaneId}', PipelineKey='{sharedRun.PipelineKey}', TenantId='{sharedRun.ExecutionContextSnapshot.TenantId}'.");
+
+            Assert.Equal(
+                AiSharedRunStatus.ScaleOutRequested,
+                sharedRun.Status);
+
+            Assert.Equal(
+                controlPlaneId,
+                sharedRun.ControlPlaneId);
+
+            Assert.Equal(
+                pipelineName,
+                sharedRun.PipelineKey);
+
+            Assert.Equal(
+                TenantId,
+                sharedRun.ExecutionContextSnapshot.TenantId);
+
+            Assert.NotNull(
+                sharedRun.AdmissionDecision);
+
+            Assert.Equal(
+                TenantId,
+                sharedRun.AdmissionDecision.TenantId);
+
+            Assert.Equal(
+                AiRuntimeInstanceIsolationMode.Shared,
+                sharedRun.AdmissionDecision.TenantRuntimeSettings?.IsolationMode);
+
+            output.WriteLine(
+                $"Default tenant admission decision stored with shared run. DecisionType='{sharedRun.AdmissionDecision.DecisionType}', TenantId='{sharedRun.AdmissionDecision.TenantId}', TenantGroupId='{sharedRun.AdmissionDecision.TenantGroupId}', StoredIsolationMode='{sharedRun.AdmissionDecision.TenantRuntimeSettings?.IsolationMode.ToString() ?? "null"}'.");
+
+            var expectedScaleOutRequestId =
+                $"scale-out-{sharedRunId}";
+
+            var scaleOutRequest =
+                await WaitForScaleOutRequestStatusAsync(
+                        scaleOutRequestStore,
+                        expectedScaleOutRequestId,
+                        AiRuntimeScaleOutRequestStatus.Fulfilled,
+                        TimeSpan.FromSeconds(15))
+                    .ConfigureAwait(false);
+
+            Assert.Equal(
+                expectedScaleOutRequestId,
+                scaleOutRequest.RequestId);
+
+            Assert.Equal(
+                sharedRunId,
+                scaleOutRequest.SharedRunId);
+
+            Assert.Equal(
+                controlPlaneId,
+                scaleOutRequest.ControlPlaneId);
+
+            Assert.Equal(
+                TenantId,
+                scaleOutRequest.TenantId);
+
+            Assert.Equal(
+                pipelineName,
+                scaleOutRequest.PipelineKey);
+
+            Assert.Equal(
+                AiRuntimeInstanceIsolationMode.Shared,
+                scaleOutRequest.IsolationMode);
+
+            Assert.False(
+                scaleOutRequest.PreferDedicatedCapacity);
+
+            Assert.True(
+                scaleOutRequest.AllowSharedFallback);
+
+            Assert.Equal(
+                1,
+                scaleOutRequest.MaxRuntimeInstances);
+
+            Assert.Equal(
+                "runtime-instance",
+                scaleOutRequest.RuntimeInstanceIdPrefix);
+
+            Assert.Equal(
+                10,
+                scaleOutRequest.WorkerCountPerInstance);
+
+            Assert.Equal(
+                3,
+                scaleOutRequest.MaxConcurrentRunsPerInstance);
+
+            Assert.Equal(
+                AiRuntimeScaleOutRequestStatus.Fulfilled,
+                scaleOutRequest.Status);
+
+            Assert.Equal(
+                "local",
+                scaleOutRequest.ProviderHint);
+
+            Assert.Equal(
+                "Shared",
+                scaleOutRequest.Metadata["runtime.isolationMode"]);
+
+            Assert.Equal(
+                "False",
+                scaleOutRequest.Metadata["runtime.preferDedicatedCapacity"]);
+
+            Assert.Equal(
+                "True",
+                scaleOutRequest.Metadata["runtime.allowSharedFallback"]);
+
+            Assert.Equal(
+                "1",
+                scaleOutRequest.Metadata["runtime.maxRuntimeInstances"]);
+
+            Assert.Equal(
+                "runtime-instance",
+                scaleOutRequest.Metadata["runtime.instanceIdPrefix"]);
+
+            Assert.Equal(
+                "10",
+                scaleOutRequest.Metadata["runtime.workerCountPerInstance"]);
+
+            Assert.Equal(
+                "3",
+                scaleOutRequest.Metadata["runtime.maxConcurrentRunsPerInstance"]);
+
+            Assert.False(
+                string.IsNullOrWhiteSpace(
+                    scaleOutRequest.FulfilledRuntimeInstanceId));
+
+            Assert.Contains(
+                ":runtime-instance-1",
+                scaleOutRequest.FulfilledRuntimeInstanceId,
+                StringComparison.Ordinal);
+
+            await WaitUntilAsync(
+                    () => scaler.ActiveInstanceCount >= 1,
+                    TimeSpan.FromSeconds(5))
+                .ConfigureAwait(false);
+
+            Assert.True(
+                scaler.ActiveInstanceCount >= 1,
+                $"Expected the local scaler to create at least one shared default runtime instance. ActiveInstanceCount='{scaler.ActiveInstanceCount}'.");
+
+            output.WriteLine(
+                $"Default tenant Redis local scale-out request fulfilled. ControlPlaneId='{controlPlaneId}', SharedRunId='{sharedRunId}', RequestId='{scaleOutRequest.RequestId}', TenantId='{scaleOutRequest.TenantId}', IsolationMode='{scaleOutRequest.IsolationMode}', RuntimeInstancePrefix='{scaleOutRequest.RuntimeInstanceIdPrefix}', RuntimeInstanceId='{scaleOutRequest.FulfilledRuntimeInstanceId}', PipelineKey='{pipelineName}', ActiveLocalInstances='{scaler.ActiveInstanceCount}'.");
+        }
+
+        /// <summary>
         /// Waits until a scale-out request reaches the expected status.
         /// </summary>
         /// <param name="store">The scale-out request store.</param>
