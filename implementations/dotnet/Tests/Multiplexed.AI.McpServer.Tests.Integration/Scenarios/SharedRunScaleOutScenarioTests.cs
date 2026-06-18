@@ -1736,6 +1736,327 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
         }
 
         /// <summary>
+        /// Verifies that the Redis-backed scale-out publisher does not request more runtime
+        /// instances than the hybrid tenant-specific maximum instance count.
+        /// </summary>
+        [Fact]
+        public async Task ScaleOutPublisher_With_Hybrid_Tenant_At_Max_Instance_Count_Should_Not_Request_Above_Tenant_Max()
+        {
+            var controlPlaneId =
+                GenericMcpServerTestSettings.CreateControlPlaneId(
+                    "hybrid-tenant-max-scaleout-cap");
+
+            var controlPlaneSettings =
+                GenericMcpServerTestSettings.CreateLocalScaleOutOnlyControlPlaneSettings(
+                    controlPlaneId);
+
+            await using var host =
+                new GenericMcpServerTestHost(
+                    controlPlaneSettings);
+
+            AssertRedisStoresPublisherWatcherAndLocalScaler(
+                host.Services);
+
+            var tenantRuntimeSettingsProvider =
+                host.Services.GetRequiredService<IAiTenantRuntimeSettingsProvider>();
+
+            var tenantRuntimeSettings =
+                tenantRuntimeSettingsProvider.GetSettings(
+                    HybridTenantId,
+                    null);
+
+            output.WriteLine(
+                $"Hybrid tenant max scale-out cap settings resolved. TenantId='{tenantRuntimeSettings.TenantId}', IsolationMode='{tenantRuntimeSettings.IsolationMode}', RuntimeInstanceIdPrefix='{tenantRuntimeSettings.RuntimeInstanceIdPrefix}', MaxRuntimeInstances='{tenantRuntimeSettings.MaxRuntimeInstances}'.");
+
+            Assert.Equal(
+                HybridTenantId,
+                tenantRuntimeSettings.TenantId);
+
+            Assert.Equal(
+                AiRuntimeInstanceIsolationMode.Hybrid,
+                tenantRuntimeSettings.IsolationMode);
+
+            Assert.Equal(
+                2,
+                tenantRuntimeSettings.MaxRuntimeInstances);
+
+            Assert.True(
+                tenantRuntimeSettings.PreferDedicatedCapacity);
+
+            Assert.True(
+                tenantRuntimeSettings.AllowSharedFallback);
+
+            var scaleOutPublisher =
+                host.Services.GetRequiredService<IAiRuntimeScaleOutRequestPublisher>();
+
+            var scaleOutRequestStore =
+                host.Services.GetRequiredService<IAiRuntimeScaleOutRequestStore>();
+
+            var sharedRunId =
+                $"hybrid-tenant-max-shared-run-{Guid.NewGuid():N}";
+
+            var pipelineName =
+                $"hybrid-tenant-max-pipeline-{Guid.NewGuid():N}";
+
+            var now =
+                DateTimeOffset.UtcNow;
+
+            var effectiveProject =
+                "hybrid-tenant-max-scaleout-cap";
+
+            var effectiveNamespace =
+                HybridTenantId;
+
+            var executionContextSnapshot =
+                new ExecutionContextSnapshot
+                {
+                    TenantId = HybridTenantId,
+                    TenantGroupId = tenantRuntimeSettings.TenantGroupId,
+                    ContextKey = "ctx-hybrid-tenant-max-scaleout-cap",
+                    CurrentNamespace = effectiveNamespace,
+                    Namespaces = new List<NamespaceEntry>
+                    {
+                new()
+                {
+                    Name = effectiveNamespace,
+                    Trns = new HashSet<string>
+                    {
+                        $"trn:{effectiveProject}:shared-run:execution:submit",
+                        $"trn:{effectiveProject}:shared-run:registry:read",
+                        $"trn:{effectiveProject}:shared-run:registry:list",
+                        $"trn:{effectiveProject}:shared-queue:queue:list",
+                        $"trn:{effectiveProject}:shared-queue:status:read",
+                        $"trn:{effectiveProject}:shared-queue:pump:drain"
+                    }
+                }
+                    },
+                    UserId = RequestedBy,
+                    Project = effectiveProject
+                };
+
+            var runRequest =
+                new AiRuntimePipelineRunRequest
+                {
+                    PipelineName = pipelineName,
+                    Input = "hybrid tenant max scale-out cap test",
+                    ExecutionContextSnapshot = executionContextSnapshot
+                };
+
+            var sharedRun =
+                new AiSharedRunRecord
+                {
+                    SharedRunId = sharedRunId,
+                    Status = AiSharedRunStatus.ScaleOutRequested,
+                    RunRequest = runRequest,
+                    ExecutionContextSnapshot = executionContextSnapshot,
+                    AdmissionDecision = new AiRunAdmissionDecision
+                    {
+                        DecisionType = AiRunAdmissionDecisionType.RequestScaleOut,
+                        Reason = "Hybrid tenant max instance count cap test.",
+                        TenantId = HybridTenantId,
+                        TenantGroupId = tenantRuntimeSettings.TenantGroupId,
+                        TenantRuntimeSettings = tenantRuntimeSettings,
+                        VisibleInstanceCount = 2,
+                        AvailableInstanceCount = 0,
+                        CurrentInstanceCount = 2,
+                        MaxInstanceCount = tenantRuntimeSettings.MaxRuntimeInstances
+                    },
+                    ControlPlaneId = controlPlaneId,
+                    PipelineKey = pipelineName,
+                    CorrelationId = $"hybrid-tenant-max-correlation-{Guid.NewGuid():N}",
+                    RequestedBy = RequestedBy,
+                    Source = Source,
+                    Reason = "Hybrid tenant max instance count cap test.",
+                    SubmittedAtUtc = now,
+                    UpdatedAtUtc = now,
+                    Metadata = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                    {
+                        ["test"] = "hybrid-tenant-max-scaleout-cap"
+                    }
+                };
+
+            var publishResult =
+                await scaleOutPublisher
+                    .PublishAsync(
+                        new AiRuntimeScaleOutRequest
+                        {
+                            SharedRunId = sharedRunId,
+                            SharedRun = sharedRun,
+                            TenantId = HybridTenantId,
+                            TenantGroupId = tenantRuntimeSettings.TenantGroupId,
+                            PipelineKey = pipelineName,
+                            Reason = "Hybrid tenant max instance count cap test.",
+                            RequestedBy = RequestedBy,
+                            Source = Source,
+                            CorrelationId = sharedRun.CorrelationId,
+
+                            IsolationMode = tenantRuntimeSettings.IsolationMode,
+                            PreferDedicatedCapacity = tenantRuntimeSettings.PreferDedicatedCapacity,
+                            AllowSharedFallback = tenantRuntimeSettings.AllowSharedFallback,
+                            MaxRuntimeInstances = tenantRuntimeSettings.MaxRuntimeInstances,
+                            RuntimeInstanceIdPrefix = tenantRuntimeSettings.RuntimeInstanceIdPrefix,
+                            WorkerCountPerInstance = tenantRuntimeSettings.WorkerCountPerInstance,
+                            MaxConcurrentRunsPerInstance = tenantRuntimeSettings.MaxConcurrentRunsPerInstance,
+                            LocalQueueCapacity = tenantRuntimeSettings.LocalQueueCapacity,
+
+                            VisibleInstanceCount = 2,
+                            AvailableInstanceCount = 0,
+                            CurrentInstanceCount = 2,
+                            MaxInstanceCount = tenantRuntimeSettings.MaxRuntimeInstances,
+                            Metadata = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                            {
+                                ["test"] = "hybrid-tenant-max-scaleout-cap"
+                            }
+                        })
+                    .ConfigureAwait(false);
+
+            Assert.True(
+                publishResult.Success,
+                publishResult.Message);
+
+            Assert.Equal(
+                sharedRunId,
+                publishResult.SharedRunId);
+
+            var requestId =
+                $"scale-out-{sharedRunId}";
+
+            Assert.Equal(
+                requestId,
+                publishResult.ScaleOutRequestId);
+
+            Assert.Equal(
+                2,
+                publishResult.RequestedTargetInstanceCount);
+
+            var persisted =
+                await scaleOutRequestStore
+                    .GetAsync(
+                        requestId)
+                    .ConfigureAwait(false);
+
+            Assert.NotNull(
+                persisted);
+
+            Assert.Equal(
+                requestId,
+                persisted.RequestId);
+
+            Assert.Equal(
+                sharedRunId,
+                persisted.SharedRunId);
+
+            Assert.Equal(
+                controlPlaneId,
+                persisted.ControlPlaneId);
+
+            Assert.Equal(
+                HybridTenantId,
+                persisted.TenantId);
+
+            Assert.Equal(
+                tenantRuntimeSettings.TenantGroupId,
+                persisted.TenantGroupId);
+
+            Assert.Equal(
+                pipelineName,
+                persisted.PipelineKey);
+
+            Assert.Equal(
+                AiRuntimeScaleOutRequestStatus.Pending,
+                persisted.Status);
+
+            Assert.Equal(
+                AiRuntimeInstanceIsolationMode.Hybrid,
+                persisted.IsolationMode);
+
+            Assert.True(
+                persisted.PreferDedicatedCapacity);
+
+            Assert.True(
+                persisted.AllowSharedFallback);
+
+            Assert.Equal(
+                2,
+                persisted.MaxRuntimeInstances);
+
+            Assert.Equal(
+                HybridRuntimeInstanceIdPrefix,
+                persisted.RuntimeInstanceIdPrefix);
+
+            Assert.Equal(
+                5,
+                persisted.WorkerCountPerInstance);
+
+            Assert.Equal(
+                3,
+                persisted.MaxConcurrentRunsPerInstance);
+
+            Assert.Equal(
+                250,
+                persisted.LocalQueueCapacity);
+
+            Assert.Equal(
+                2,
+                persisted.VisibleInstanceCount);
+
+            Assert.Equal(
+                0,
+                persisted.AvailableInstanceCount);
+
+            Assert.Equal(
+                2,
+                persisted.CurrentInstanceCount);
+
+            Assert.Equal(
+                2,
+                persisted.MaxInstanceCount);
+
+            Assert.Equal(
+                2,
+                persisted.RequestedTargetInstanceCount);
+
+            Assert.Equal(
+                "local",
+                persisted.ProviderHint);
+
+            Assert.Equal(
+                "Hybrid",
+                persisted.Metadata["runtime.isolationMode"]);
+
+            Assert.Equal(
+                "True",
+                persisted.Metadata["runtime.preferDedicatedCapacity"]);
+
+            Assert.Equal(
+                "True",
+                persisted.Metadata["runtime.allowSharedFallback"]);
+
+            Assert.Equal(
+                "2",
+                persisted.Metadata["runtime.maxRuntimeInstances"]);
+
+            Assert.Equal(
+                HybridRuntimeInstanceIdPrefix,
+                persisted.Metadata["runtime.instanceIdPrefix"]);
+
+            Assert.Equal(
+                "5",
+                persisted.Metadata["runtime.workerCountPerInstance"]);
+
+            Assert.Equal(
+                "3",
+                persisted.Metadata["runtime.maxConcurrentRunsPerInstance"]);
+
+            Assert.Equal(
+                "250",
+                persisted.Metadata["runtime.localQueueCapacity"]);
+
+            output.WriteLine(
+                $"Hybrid tenant max scale-out cap persisted. RequestId='{persisted.RequestId}', TenantId='{persisted.TenantId}', IsolationMode='{persisted.IsolationMode}', CurrentInstanceCount='{persisted.CurrentInstanceCount}', MaxInstanceCount='{persisted.MaxInstanceCount}', RequestedTargetInstanceCount='{persisted.RequestedTargetInstanceCount}'.");
+        }
+
+        /// <summary>
         /// Waits until a scale-out request reaches the expected status.
         /// </summary>
         /// <param name="store">The scale-out request store.</param>
