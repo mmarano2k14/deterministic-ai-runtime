@@ -23,6 +23,8 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
     /// - <see cref="AiLocalRuntimeInstancePoolOptions.Enabled" /> controls startup pool creation.
     /// - It must not block dynamic scale-out requests.
     /// - Dynamic scale-out is controlled by admission and provider selection.
+    /// - Dynamic scale-out targets are scoped by the resolved runtime instance id prefix,
+    ///   not by the global number of local runtime hosts in the process.
     /// </remarks>
     public sealed class AiLocalRuntimeInstanceScaler :
         IAiLocalRuntimeInstanceScaler
@@ -126,19 +128,24 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
                 var targetInstanceCount =
                     ResolveTargetInstanceCount(request);
 
-                if (targetInstanceCount <= this.hosts.Count)
+                var matchingHosts =
+                    this.GetMatchingHosts(
+                            settings)
+                        .ToList();
+
+                if (targetInstanceCount <= matchingHosts.Count)
                 {
                     return new AiRuntimeScaleOutProviderResult
                     {
                         Success = true,
                         Rejected = false,
-                        RuntimeInstanceId = this.hosts.LastOrDefault()?.RuntimeInstanceId,
+                        RuntimeInstanceId = matchingHosts.LastOrDefault()?.RuntimeInstanceId,
                         ProviderOperationId = $"local-scaleout-noop-{request.RequestId}",
-                        Message = $"Local runtime instance capacity already satisfies target '{targetInstanceCount}'.",
+                        Message = $"Local runtime instance capacity already satisfies scoped target '{targetInstanceCount}'.",
                         Metadata = CreateMetadata(
                             request,
                             "noop",
-                            this.hosts.Count,
+                            matchingHosts.Count,
                             targetInstanceCount,
                             createdInstanceCount: 0)
                     };
@@ -147,12 +154,12 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
                 var createdInstanceCount = 0;
                 IAiLocalRuntimeInstanceHost? lastCreatedHost = null;
 
-                while (this.hosts.Count < targetInstanceCount)
+                while (matchingHosts.Count < targetInstanceCount)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
 
                     var index =
-                        this.hosts.Count + 1;
+                        matchingHosts.Count + 1;
 
                     var host =
                         await this.CreateStartAndRegisterHostAsync(
@@ -163,6 +170,8 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
                             .ConfigureAwait(false);
 
                     this.hosts.Add(host);
+                    matchingHosts.Add(host);
+
                     lastCreatedHost = host;
                     createdInstanceCount++;
                 }
@@ -171,7 +180,7 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
                     DateTimeOffset.UtcNow;
 
                 this.logger.LogInformation(
-                    "Local runtime instance scale-out fulfilled. HostId={HostId}, RequestId={RequestId}, SharedRunId={SharedRunId}, TenantId={TenantId}, TenantGroupId={TenantGroupId}, IsolationMode={IsolationMode}, ActiveInstanceCount={ActiveInstanceCount}, TargetInstanceCount={TargetInstanceCount}, CreatedInstanceCount={CreatedInstanceCount}, RuntimeInstanceIdPrefix={RuntimeInstanceIdPrefix}, WorkerCountPerInstance={WorkerCountPerInstance}, MaxConcurrentRunsPerInstance={MaxConcurrentRunsPerInstance}, LocalQueueCapacity={LocalQueueCapacity}, DurationMs={DurationMs}",
+                    "Local runtime instance scale-out fulfilled. HostId={HostId}, RequestId={RequestId}, SharedRunId={SharedRunId}, TenantId={TenantId}, TenantGroupId={TenantGroupId}, IsolationMode={IsolationMode}, ActiveInstanceCount={ActiveInstanceCount}, ScopedActiveInstanceCount={ScopedActiveInstanceCount}, TargetInstanceCount={TargetInstanceCount}, CreatedInstanceCount={CreatedInstanceCount}, RuntimeInstanceIdPrefix={RuntimeInstanceIdPrefix}, WorkerCountPerInstance={WorkerCountPerInstance}, MaxConcurrentRunsPerInstance={MaxConcurrentRunsPerInstance}, LocalQueueCapacity={LocalQueueCapacity}, DurationMs={DurationMs}",
                     this.runtimeHostIdentity.HostId,
                     request.RequestId,
                     request.SharedRunId,
@@ -179,6 +188,7 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
                     request.TenantGroupId,
                     request.IsolationMode,
                     this.hosts.Count,
+                    matchingHosts.Count,
                     targetInstanceCount,
                     createdInstanceCount,
                     settings.RuntimeInstanceIdPrefix,
@@ -191,13 +201,13 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
                 {
                     Success = true,
                     Rejected = false,
-                    RuntimeInstanceId = lastCreatedHost?.RuntimeInstanceId ?? this.hosts.LastOrDefault()?.RuntimeInstanceId,
+                    RuntimeInstanceId = lastCreatedHost?.RuntimeInstanceId ?? matchingHosts.LastOrDefault()?.RuntimeInstanceId,
                     ProviderOperationId = $"local-scaleout-{request.RequestId}",
                     Message = $"Local runtime instance scale-out fulfilled. Created {createdInstanceCount} runtime instance(s).",
                     Metadata = CreateMetadata(
                         request,
                         "fulfilled",
-                        this.hosts.Count,
+                        matchingHosts.Count,
                         targetInstanceCount,
                         createdInstanceCount)
                 };
@@ -362,8 +372,8 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
         /// <summary>
         /// Creates, starts, and registers one local runtime instance host.
         /// </summary>
-        /// <param name="index">The runtime instance index within the current scaler process.</param>
-        /// <param name="targetInstanceCount">The target number of active runtime instances.</param>
+        /// <param name="index">The runtime instance index within the requested scale-out scope.</param>
+        /// <param name="targetInstanceCount">The target number of active runtime instances within the requested scope.</param>
         /// <param name="settings">The resolved scale-out settings to apply to the created runtime instance.</param>
         /// <param name="cancellationToken">The cancellation token.</param>
         /// <returns>The started local runtime instance host.</returns>
@@ -533,11 +543,13 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
             if (!string.IsNullOrWhiteSpace(request.TenantId))
             {
                 metadata["tenantId"] = request.TenantId;
+                metadata["tenant.id"] = request.TenantId;
             }
 
             if (!string.IsNullOrWhiteSpace(request.TenantGroupId))
             {
                 metadata["tenantGroupId"] = request.TenantGroupId;
+                metadata["tenant.groupId"] = request.TenantGroupId;
             }
 
             if (HasExplicitTenantRuntimeSettings(request))
@@ -587,8 +599,8 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
         /// Resolves the target runtime instance count for the current scale-out request.
         /// </summary>
         /// <param name="request">The provider scale-out request.</param>
-        /// <returns>The target runtime instance count.</returns>
-        private int ResolveTargetInstanceCount(
+        /// <returns>The target runtime instance count within the requested scope.</returns>
+        private static int ResolveTargetInstanceCount(
             AiRuntimeScaleOutProviderRequest request)
         {
             var requestedTarget =
@@ -606,7 +618,51 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
 
             return Math.Max(
                 requestedTarget,
-                this.hosts.Count);
+                1);
+        }
+
+        /// <summary>
+        /// Gets the active local runtime hosts matching the scale-out request scope.
+        /// </summary>
+        /// <param name="settings">The resolved scale-out settings.</param>
+        /// <returns>The matching local runtime hosts.</returns>
+        private IEnumerable<IAiLocalRuntimeInstanceHost> GetMatchingHosts(
+            LocalRuntimeInstanceScaleOutSettings settings)
+        {
+            foreach (var host in this.hosts)
+            {
+                if (IsMatchingHost(
+                        host,
+                        settings))
+                {
+                    yield return host;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Determines whether an existing local runtime host belongs to the requested scale-out scope.
+        /// </summary>
+        /// <param name="host">The local runtime host.</param>
+        /// <param name="settings">The resolved scale-out settings.</param>
+        /// <returns><see langword="true"/> when the host belongs to the requested scope; otherwise, <see langword="false"/>.</returns>
+        private static bool IsMatchingHost(
+            IAiLocalRuntimeInstanceHost host,
+            LocalRuntimeInstanceScaleOutSettings settings)
+        {
+            if (host is null)
+            {
+                return false;
+            }
+
+            if (string.IsNullOrWhiteSpace(settings.RuntimeInstanceIdPrefix))
+            {
+                return false;
+            }
+
+            return host.RuntimeInstanceId.Contains(
+                $":{settings.RuntimeInstanceIdPrefix}-",
+                StringComparison.Ordinal);
         }
 
         /// <summary>
@@ -642,8 +698,8 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
         /// </summary>
         /// <param name="request">The provider scale-out request.</param>
         /// <param name="status">The provider operation status.</param>
-        /// <param name="activeInstanceCount">The active runtime instance count.</param>
-        /// <param name="targetInstanceCount">The target runtime instance count.</param>
+        /// <param name="activeInstanceCount">The active runtime instance count within the requested scope.</param>
+        /// <param name="targetInstanceCount">The target runtime instance count within the requested scope.</param>
         /// <param name="createdInstanceCount">The number of runtime instances created by this operation.</param>
         /// <returns>The metadata dictionary.</returns>
         private static IReadOnlyDictionary<string, string> CreateMetadata(
@@ -672,11 +728,13 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
             if (!string.IsNullOrWhiteSpace(request.TenantId))
             {
                 metadata["tenantId"] = request.TenantId;
+                metadata["tenant.id"] = request.TenantId;
             }
 
             if (!string.IsNullOrWhiteSpace(request.TenantGroupId))
             {
                 metadata["tenantGroupId"] = request.TenantGroupId;
+                metadata["tenant.groupId"] = request.TenantGroupId;
             }
 
             if (HasExplicitTenantRuntimeSettings(request))
