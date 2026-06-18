@@ -5223,6 +5223,419 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
         }
 
         /// <summary>
+        /// Verifies that a hybrid tenant can fall back to an existing shared runtime instance:
+        /// default shared runtime scale-out first, then tenant-b hybrid submission without tenant-b dedicated scale-out.
+        /// </summary>
+        [Fact]
+        public async Task ControlPlaneWithLocalRuntimeInstances_With_Hybrid_Tenant_Should_Fallback_To_Shared_Runtime_When_Available()
+        {
+            var controlPlaneId =
+                GenericMcpServerTestSettings.CreateControlPlaneId(
+                    "tenant-b-hybrid-shared-fallback");
+
+            var controlPlaneSettings =
+                GenericMcpServerTestSettings.CreateLocalScaleOutOnlyControlPlaneSettings(
+                    controlPlaneId);
+
+            await using var host =
+                new GenericMcpServerTestHost(
+                    controlPlaneSettings);
+
+            using var client =
+                host.CreateClient();
+
+            AssertRedisStoresPublisherWatcherAndLocalScaler(
+                host.Services);
+
+            var defaultMcp =
+                await McpRbacTestClientHelper
+                    .CreateConfiguredClientAsync(
+                        host,
+                        client,
+                        RequestedBy,
+                        tenantId: TenantId)
+                    .ConfigureAwait(false);
+
+            var hybridMcp =
+                await McpRbacTestClientHelper
+                    .CreateConfiguredClientAsync(
+                        host,
+                        client,
+                        RequestedBy,
+                        tenantId: HybridTenantId)
+                    .ConfigureAwait(false);
+
+            var sharedQueue =
+                host.Services.GetRequiredService<IAiSharedQueue>();
+
+            var sharedRunStore =
+                host.Services.GetRequiredService<IAiSharedRunStore>();
+
+            var scaleOutRequestStore =
+                host.Services.GetRequiredService<IAiRuntimeScaleOutRequestStore>();
+
+            var scaler =
+                host.Services.GetRequiredService<IAiLocalRuntimeInstanceScaler>();
+
+            var controlPlaneIdResolver =
+                host.Services.GetRequiredService<IAiControlPlaneIdResolver>();
+
+            var resolvedControlPlaneId =
+                await controlPlaneIdResolver
+                    .ResolveAsync()
+                    .ConfigureAwait(false);
+
+            output.WriteLine(
+                $"Resolved control-plane id before submit. Expected='{controlPlaneId}', Resolved='{resolvedControlPlaneId}'.");
+
+            Assert.Equal(
+                controlPlaneId,
+                resolvedControlPlaneId);
+
+            Assert.Equal(
+                0,
+                scaler.ActiveInstanceCount);
+
+            var sharedPipelineName =
+                $"shared-runtime-bootstrap-{Guid.NewGuid():N}";
+
+            var sharedRuntimeRunIds =
+                await SubmitRunsAsync(
+                        defaultMcp,
+                        sharedPipelineName,
+                        count: 1,
+                        stepCount: 2,
+                        flakyStepInterval: 0,
+                        tenantId: TenantId)
+                    .ConfigureAwait(false);
+
+            var sharedRuntimeSharedRunId =
+                Assert.Single(
+                    sharedRuntimeRunIds);
+
+            var expectedSharedRuntimeScaleOutRequestId =
+                $"scale-out-{sharedRuntimeSharedRunId}";
+
+            var sharedRuntimeScaleOutRequest =
+                await WaitForScaleOutRequestStatusAsync(
+                        scaleOutRequestStore,
+                        expectedSharedRuntimeScaleOutRequestId,
+                        AiRuntimeScaleOutRequestStatus.Fulfilled,
+                        TimeSpan.FromSeconds(15))
+                    .ConfigureAwait(false);
+
+            Assert.Equal(
+                TenantId,
+                sharedRuntimeScaleOutRequest.TenantId);
+
+            Assert.Equal(
+                AiRuntimeInstanceIsolationMode.Shared,
+                sharedRuntimeScaleOutRequest.IsolationMode);
+
+            Assert.Equal(
+                "runtime-instance",
+                sharedRuntimeScaleOutRequest.RuntimeInstanceIdPrefix);
+
+            Assert.False(
+                string.IsNullOrWhiteSpace(
+                    sharedRuntimeScaleOutRequest.FulfilledRuntimeInstanceId));
+
+            Assert.Contains(
+                ":runtime-instance-1",
+                sharedRuntimeScaleOutRequest.FulfilledRuntimeInstanceId,
+                StringComparison.Ordinal);
+
+            await WaitUntilAsync(
+                    () => scaler.ActiveInstanceCount >= 1,
+                    TimeSpan.FromSeconds(5))
+                .ConfigureAwait(false);
+
+            var sharedRuntimeInstanceId =
+                sharedRuntimeScaleOutRequest.FulfilledRuntimeInstanceId!;
+
+            output.WriteLine(
+                $"Shared runtime bootstrap scale-out fulfilled. SharedRunId='{sharedRuntimeSharedRunId}', RuntimeInstanceId='{sharedRuntimeInstanceId}', ActiveInstanceCount='{scaler.ActiveInstanceCount}'.");
+
+            var sharedRuntimeDispatchedRuns =
+                await McpTestWaitHelpers
+                    .WaitForDispatchedRunsAsync(
+                        defaultMcp,
+                        sharedPipelineName,
+                        sharedRuntimeRunIds,
+                        expectedCount: 1,
+                        timeout: TimeSpan.FromSeconds(30))
+                    .ConfigureAwait(false);
+
+            var sharedRuntimeDispatchedRun =
+                Assert.Single(
+                    sharedRuntimeDispatchedRuns);
+
+            Assert.False(
+                string.IsNullOrWhiteSpace(
+                    sharedRuntimeDispatchedRun.AssignedRuntimeInstanceId));
+
+            Assert.Contains(
+                ":runtime-instance-1",
+                sharedRuntimeDispatchedRun.AssignedRuntimeInstanceId,
+                StringComparison.Ordinal);
+
+            var sharedRuntimeTerminalStatuses =
+                await McpTestWaitHelpers
+                    .WaitForTerminalRuntimeRunStatusesAsync(
+                        defaultMcp,
+                        sharedRuntimeDispatchedRuns,
+                        TimeSpan.FromSeconds(60))
+                    .ConfigureAwait(false);
+
+            var sharedRuntimeFinalStatus =
+                Assert.Single(
+                    sharedRuntimeTerminalStatuses);
+
+            Assert.True(
+                sharedRuntimeFinalStatus.Success,
+                sharedRuntimeFinalStatus.FailureReason ?? sharedRuntimeFinalStatus.Message);
+
+            Assert.Equal(
+                "completed",
+                sharedRuntimeFinalStatus.RunState?.Status);
+
+            var activeInstancesAfterSharedBootstrap =
+                scaler.ActiveInstanceCount;
+
+            Assert.True(
+                activeInstancesAfterSharedBootstrap >= 1,
+                $"Expected one shared runtime instance after bootstrap. ActiveInstanceCount='{activeInstancesAfterSharedBootstrap}'.");
+
+            var hybridPipelineName =
+                $"tenant-b-hybrid-shared-fallback-{Guid.NewGuid():N}";
+
+            var hybridRunIds =
+                await SubmitRunsAsync(
+                        hybridMcp,
+                        hybridPipelineName,
+                        count: 1,
+                        stepCount: 3,
+                        flakyStepInterval: 0,
+                        tenantId: HybridTenantId)
+                    .ConfigureAwait(false);
+
+            var hybridSharedRunId =
+                Assert.Single(
+                    hybridRunIds);
+
+            var hybridRunAfterSubmit =
+                await sharedRunStore
+                    .GetAsync(
+                        hybridSharedRunId)
+                    .ConfigureAwait(false);
+
+            Assert.NotNull(
+                hybridRunAfterSubmit);
+
+            Assert.Equal(
+                controlPlaneId,
+                hybridRunAfterSubmit.ControlPlaneId);
+
+            Assert.Equal(
+                hybridPipelineName,
+                hybridRunAfterSubmit.PipelineKey);
+
+            Assert.Equal(
+                HybridTenantId,
+                hybridRunAfterSubmit.ExecutionContextSnapshot.TenantId);
+
+            Assert.Equal(
+                HybridTenantId,
+                hybridRunAfterSubmit.RunRequest.ExecutionContextSnapshot?.TenantId);
+
+            Assert.NotNull(
+                hybridRunAfterSubmit.AdmissionDecision);
+
+            Assert.Equal(
+                HybridTenantId,
+                hybridRunAfterSubmit.AdmissionDecision.TenantId);
+
+            Assert.Equal(
+                AiRuntimeInstanceIsolationMode.Hybrid,
+                hybridRunAfterSubmit.AdmissionDecision.TenantRuntimeSettings?.IsolationMode);
+
+            Assert.True(
+                hybridRunAfterSubmit.AdmissionDecision.TenantRuntimeSettings?.PreferDedicatedCapacity);
+
+            Assert.True(
+                hybridRunAfterSubmit.AdmissionDecision.TenantRuntimeSettings?.AllowSharedFallback);
+
+            Assert.Equal(
+                2,
+                hybridRunAfterSubmit.AdmissionDecision.TenantRuntimeSettings?.MaxRuntimeInstances);
+
+            output.WriteLine(
+                $"Hybrid tenant run submitted with shared runtime already available. SharedRunId='{hybridSharedRunId}', " +
+                $"TenantId='{hybridRunAfterSubmit.ExecutionContextSnapshot.TenantId}', Status='{hybridRunAfterSubmit.Status}', " +
+                $"InitialDecision='{hybridRunAfterSubmit.AdmissionDecision.DecisionType}', PipelineKey='{hybridPipelineName}'.");
+
+            var hybridScaleOutRequestId =
+                $"scale-out-{hybridSharedRunId}";
+
+            await Task
+                .Delay(
+                    TimeSpan.FromMilliseconds(750))
+                .ConfigureAwait(false);
+
+            var unexpectedHybridScaleOutRequest =
+                await scaleOutRequestStore
+                    .GetAsync(
+                        hybridScaleOutRequestId)
+                    .ConfigureAwait(false);
+
+            Assert.Null(
+                unexpectedHybridScaleOutRequest);
+
+            Assert.Equal(
+                activeInstancesAfterSharedBootstrap,
+                scaler.ActiveInstanceCount);
+
+            var hybridDispatchedRuns =
+                await McpTestWaitHelpers
+                    .WaitForDispatchedRunsAsync(
+                        hybridMcp,
+                        hybridPipelineName,
+                        hybridRunIds,
+                        expectedCount: 1,
+                        timeout: TimeSpan.FromSeconds(30))
+                    .ConfigureAwait(false);
+
+            var hybridDispatchedRun =
+                Assert.Single(
+                    hybridDispatchedRuns);
+
+            Assert.Equal(
+                hybridSharedRunId,
+                hybridDispatchedRun.SharedRunId);
+
+            Assert.Equal(
+                controlPlaneId,
+                hybridDispatchedRun.ControlPlaneId);
+
+            Assert.Equal(
+                hybridPipelineName,
+                hybridDispatchedRun.PipelineKey);
+
+            Assert.Equal(
+                HybridTenantId,
+                hybridDispatchedRun.ExecutionContextSnapshot.TenantId);
+
+            Assert.False(
+                string.IsNullOrWhiteSpace(
+                    hybridDispatchedRun.AssignedRuntimeInstanceId));
+
+            Assert.Equal(
+                sharedRuntimeInstanceId,
+                hybridDispatchedRun.AssignedRuntimeInstanceId);
+
+            Assert.Contains(
+                ":runtime-instance-1",
+                hybridDispatchedRun.AssignedRuntimeInstanceId,
+                StringComparison.Ordinal);
+
+            Assert.DoesNotContain(
+                $":{HybridRuntimeInstanceIdPrefix}-1",
+                hybridDispatchedRun.AssignedRuntimeInstanceId,
+                StringComparison.Ordinal);
+
+            Assert.DoesNotContain(
+                $":{TenantAwareRuntimeInstanceIdPrefix}-1",
+                hybridDispatchedRun.AssignedRuntimeInstanceId,
+                StringComparison.Ordinal);
+
+            Assert.False(
+                string.IsNullOrWhiteSpace(
+                    hybridDispatchedRun.LocalRunId));
+
+            var hybridExecutionStatus =
+                await McpTestWaitHelpers
+                    .WaitForRuntimeRunExecutionIdAsync(
+                        hybridMcp,
+                        hybridDispatchedRun,
+                        TimeSpan.FromSeconds(30))
+                    .ConfigureAwait(false);
+
+            var hybridExecutionId =
+                hybridExecutionStatus.ExecutionId ??
+                hybridExecutionStatus.RunState?.ExecutionId;
+
+            Assert.False(
+                string.IsNullOrWhiteSpace(
+                    hybridExecutionId));
+
+            var hybridTerminalStatuses =
+                await McpTestWaitHelpers
+                    .WaitForTerminalRuntimeRunStatusesAsync(
+                        hybridMcp,
+                        hybridDispatchedRuns,
+                        TimeSpan.FromSeconds(60))
+                    .ConfigureAwait(false);
+
+            var hybridFinalStatus =
+                Assert.Single(
+                    hybridTerminalStatuses);
+
+            Assert.True(
+                hybridFinalStatus.Success,
+                hybridFinalStatus.FailureReason ?? hybridFinalStatus.Message);
+
+            Assert.Equal(
+                "completed",
+                hybridFinalStatus.RunState?.Status);
+
+            var hybridQueueItem =
+                await sharedQueue
+                    .GetAsync(
+                        hybridSharedRunId)
+                    .ConfigureAwait(false);
+
+            Assert.NotNull(
+                hybridQueueItem);
+
+            Assert.Equal(
+                AiSharedQueueItemStatus.Dispatched,
+                hybridQueueItem.Status);
+
+            var finalHybridRun =
+                await sharedRunStore
+                    .GetAsync(
+                        hybridSharedRunId)
+                    .ConfigureAwait(false);
+
+            Assert.NotNull(
+                finalHybridRun);
+
+            Assert.Equal(
+                AiSharedRunStatus.Dispatched,
+                finalHybridRun.Status);
+
+            Assert.Equal(
+                sharedRuntimeInstanceId,
+                finalHybridRun.AssignedRuntimeInstanceId);
+
+            Assert.Equal(
+                activeInstancesAfterSharedBootstrap,
+                scaler.ActiveInstanceCount);
+
+            output.WriteLine(
+                $"FINAL TENANT-B HYBRID SHARED FALLBACK EXECUTION STATUS: SharedRunId='{hybridDispatchedRun.SharedRunId}', " +
+                $"TenantId='{hybridDispatchedRun.ExecutionContextSnapshot.TenantId}', " +
+                $"SharedRunStatus='{finalHybridRun.Status}', " +
+                $"AssignedRuntimeInstanceId='{hybridDispatchedRun.AssignedRuntimeInstanceId}', " +
+                $"LocalRunId='{hybridDispatchedRun.LocalRunId}', " +
+                $"ExecutionId='{hybridExecutionId}', " +
+                $"RuntimeRunStatus='{hybridFinalStatus.RunState?.Status}', " +
+                $"QueueStatus='{hybridQueueItem.Status}', " +
+                $"UnexpectedHybridScaleOutRequest='{unexpectedHybridScaleOutRequest is not null}', " +
+                $"ActiveLocalInstances='{scaler.ActiveInstanceCount}'.");
+        }
+
+        /// <summary>
         /// Creates an admission request for tenant-aware admission capacity tests.
         /// </summary>
         /// <param name="tenantId">The tenant identifier.</param>
