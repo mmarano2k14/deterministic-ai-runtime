@@ -2,7 +2,10 @@
 using System.Text.Json;
 using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.ControlPlane.Discovery;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
+using Multiplexed.Abstractions.Core.ExecutionContext;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Isolation;
 using StackExchange.Redis;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances
@@ -22,6 +25,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances
     /// - Reads are defensively filtered by logical control-plane identifier to avoid returning
     ///   stale, migrated, corrupted, or foreign entries.
     /// - Registry listing self-heals the scoped index by removing missing or foreign entries.
+    /// - Tenant-aware visibility is applied on read operations through the active execution context.
     /// </remarks>
     public sealed class RedisAiRuntimeInstanceRegistry : IAiRuntimeInstanceRegistry
     {
@@ -34,6 +38,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances
         private readonly IDatabase database;
         private readonly AiRuntimeInstanceRegistrationOptions registrationOptions;
         private readonly IAiControlPlaneIdResolver controlPlaneIdResolver;
+        private readonly IAiRuntimeInstanceVisibilityEvaluator visibilityEvaluator;
+        private readonly IExecutionContextSnapshotProvider? executionContextSnapshotProvider;
         private readonly ConcurrentDictionary<string, string> controlPlaneIdsByRuntimeInstanceId =
             new(StringComparer.Ordinal);
 
@@ -51,14 +57,44 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances
             IConnectionMultiplexer redis,
             IOptions<AiRuntimeInstanceRegistrationOptions> registrationOptions,
             IAiControlPlaneIdResolver controlPlaneIdResolver)
+            : this(
+                redis,
+                registrationOptions,
+                controlPlaneIdResolver,
+                new AiRuntimeInstanceVisibilityEvaluator(new HardcodedAiTenantRuntimeSettingsProvider()),
+                executionContextSnapshotProvider: null)
+        {
+        }
+
+        /// <summary>
+        /// Initializes a tenant-aware instance of the <see cref="RedisAiRuntimeInstanceRegistry"/> class.
+        /// </summary>
+        /// <param name="redis">The Redis connection multiplexer.</param>
+        /// <param name="registrationOptions">The runtime instance registration options.</param>
+        /// <param name="controlPlaneIdResolver">The control-plane identifier resolver.</param>
+        /// <param name="visibilityEvaluator">The runtime instance visibility evaluator.</param>
+        /// <param name="executionContextSnapshotProvider">The execution context snapshot provider.</param>
+        /// <exception cref="ArgumentNullException">
+        /// Thrown when <paramref name="redis"/>, <paramref name="registrationOptions"/>,
+        /// <paramref name="controlPlaneIdResolver"/>, or <paramref name="visibilityEvaluator"/> is null.
+        /// </exception>
+        public RedisAiRuntimeInstanceRegistry(
+            IConnectionMultiplexer redis,
+            IOptions<AiRuntimeInstanceRegistrationOptions> registrationOptions,
+            IAiControlPlaneIdResolver controlPlaneIdResolver,
+            IAiRuntimeInstanceVisibilityEvaluator visibilityEvaluator,
+            IExecutionContextSnapshotProvider? executionContextSnapshotProvider)
         {
             ArgumentNullException.ThrowIfNull(redis);
             ArgumentNullException.ThrowIfNull(registrationOptions);
             ArgumentNullException.ThrowIfNull(controlPlaneIdResolver);
+            ArgumentNullException.ThrowIfNull(visibilityEvaluator);
 
             database = redis.GetDatabase();
             this.registrationOptions = registrationOptions.Value;
             this.controlPlaneIdResolver = controlPlaneIdResolver;
+            this.visibilityEvaluator = visibilityEvaluator;
+            this.executionContextSnapshotProvider = executionContextSnapshotProvider;
         }
 
         /// <inheritdoc />
@@ -218,7 +254,19 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances
                     cancellationToken)
                 .ConfigureAwait(false);
 
-            return entry?.ToSnapshot(DateTimeOffset.UtcNow);
+            if (entry is null)
+            {
+                return null;
+            }
+
+            var snapshot = entry.ToSnapshot(DateTimeOffset.UtcNow);
+
+            if (!IsVisibleToCurrentTenant(snapshot))
+            {
+                return null;
+            }
+
+            return snapshot;
         }
 
         /// <inheritdoc />
@@ -293,7 +341,14 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances
                     continue;
                 }
 
-                snapshots.Add(entry.ToSnapshot(now));
+                var snapshot = entry.ToSnapshot(now);
+
+                if (!IsVisibleToCurrentTenant(snapshot))
+                {
+                    continue;
+                }
+
+                snapshots.Add(snapshot);
             }
 
             return snapshots
@@ -404,6 +459,53 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances
                 out _);
 
             return snapshot;
+        }
+
+        /// <summary>
+        /// Determines whether a runtime instance snapshot is visible to the current tenant context.
+        /// </summary>
+        /// <param name="snapshot">The runtime instance snapshot.</param>
+        /// <returns>
+        /// <c>true</c> when the runtime instance snapshot is visible to the current tenant context;
+        /// otherwise, <c>false</c>.
+        /// </returns>
+        private bool IsVisibleToCurrentTenant(
+            AiRuntimeInstanceSnapshot snapshot)
+        {
+            var currentSnapshot = TryResolveSnapshot();
+
+            var descriptor = visibilityEvaluator.CreateDescriptor(
+                snapshot.RuntimeInstanceId,
+                snapshot.Metadata);
+
+            return visibilityEvaluator.IsVisible(
+                currentSnapshot?.TenantId,
+                currentSnapshot?.TenantGroupId,
+                descriptor);
+        }
+
+        /// <summary>
+        /// Resolves the current execution context snapshot when a provider is available.
+        /// </summary>
+        /// <returns>
+        /// The current execution context snapshot, or <c>null</c> when no execution context
+        /// provider is available or no active execution context can be resolved.
+        /// </returns>
+        private ExecutionContextSnapshot? TryResolveSnapshot()
+        {
+            if (executionContextSnapshotProvider is null)
+            {
+                return null;
+            }
+
+            try
+            {
+                return executionContextSnapshotProvider.MapToSnapshot();
+            }
+            catch (InvalidOperationException)
+            {
+                return null;
+            }
         }
 
         /// <summary>

@@ -11,6 +11,7 @@ using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Capacity;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Control;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Environment;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Identity;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.SharedInstance;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue;
@@ -33,6 +34,7 @@ using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Capacity;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Environment;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Identity;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Isolation;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.SharedInstance;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue;
@@ -200,6 +202,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
             services.TryAddSingleton<IAiRuntimeScaleOutProviderSelector, AiRuntimeScaleOutProviderSelector>();
             services.TryAddSingleton<IAiScaleOutFulfilledRunRequeueService, AiScaleOutFulfilledRunRequeueService>();
             services.TryAddSingleton<IAiRuntimeScaleOutProvider, SimulatedAiRuntimeScaleOutProvider>();
+
+            services.TryAddSingleton<IAiTenantRuntimeSettingsProvider, HardcodedAiTenantRuntimeSettingsProvider>();
+            services.TryAddSingleton<IAiRuntimeInstanceVisibilityEvaluator, AiRuntimeInstanceVisibilityEvaluator>();
 
             services.TryAddSingleton<IAiSharedRuntimeController, AiSharedRuntimeController>();
 
