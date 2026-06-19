@@ -21,6 +21,7 @@ Focused AI runtime documentation is organized under:
 | [`enterprise-readiness.md`](enterprise-readiness.md) | Matrix of enterprise AI execution questions and runtime answers. |
 | [`ai/architecture-overview.md`](ai/architecture-overview.md) | High-level runtime architecture and major runtime layers, including shared control-plane orchestration, provider dispatch, Redis coordination, and multi-tenant runtime isolation. |
 | [`ai/multi-tenant-control-plane-isolation.md`](ai/multi-tenant-control-plane-isolation.md) | Multi-tenant control-plane isolation, RBAC execution-context propagation, durable `ExecutionContextSnapshot`, tenant-aware registry/capacity/admission, Shared/Dedicated/Hybrid runtime visibility, and tenant-aware scale-out. |
+| [`ai/multi-tenant-runtime-flow.md`](ai/multi-tenant-runtime-flow.md) | End-to-end ASCII runtime flow explaining MCP/RBAC context resolution, durable `ExecutionContextSnapshot`, shared run persistence, tenant-aware admission, tenant-aware scale-out, shared queue dispatch, local runtime queue execution, DAG worker loop, execution control, finalization, and observability. |
 | [`ai/runtime-control-plane.md`](ai/runtime-control-plane.md) | Runtime control-plane foundation covering replay, execution control, runtime queues, runtime registry/capacity, discovery, admission, shared controller orchestration, scale-out lifecycle, and tenant-aware dispatch. |
 | [`ai/runtime-discovery-registry-capacity.md`](ai/runtime-discovery-registry-capacity.md) | Runtime discovery, registry, and capacity foundation covering Redis control-plane discovery, `ControlPlaneIdResolver`, runtime registration, tenant-filtered capacity descriptors, pump readiness, cleanup, local scale-out, and HTTP pooled runtime identity. |
 | [`ai/mcp-server-control-plane.md`](ai/mcp-server-control-plane.md) | MCP server as a runtime control-plane adapter, including host modes, RBAC integration, MCP tool groups, runtime role separation, local runtime pools, Redis/local scale-out, shared queue dispatch, and Kubernetes direction. |
@@ -58,21 +59,22 @@ Start with:
 1. [`../README.md`](../README.md)
 2. [`ai/architecture-overview.md`](ai/architecture-overview.md)
 3. [`ai/multi-tenant-control-plane-isolation.md`](ai/multi-tenant-control-plane-isolation.md)
-4. [`enterprise-readiness.md`](enterprise-readiness.md)
-5. [`ai/runtime-control-plane.md`](ai/runtime-control-plane.md)
-6. [`ai/runtime-discovery-registry-capacity.md`](ai/runtime-discovery-registry-capacity.md)
-7. [`ai/mcp-server-control-plane.md`](ai/mcp-server-control-plane.md)
-8. [`ai/runtime-instance-provider-model.md`](ai/runtime-instance-provider-model.md)
-9. [`ai/shared-controller-usage.md`](ai/shared-controller-usage.md)
-10. [`ai/shared-queue-pump-and-worker-capacity.md`](ai/shared-queue-pump-and-worker-capacity.md)
-11. [`ai/distributed-execution.md`](ai/distributed-execution.md)
-12. [`ai/execution-control-state.md`](ai/execution-control-state.md)
-13. [`ai/observability.md`](ai/observability.md)
-14. [`ai/execution-correlated-ledger.md`](ai/execution-correlated-ledger.md)
-15. [`ai/observability-tracing.md`](ai/observability-tracing.md)
-16. [`ai/runtime-metrics.md`](ai/runtime-metrics.md)
-17. [`ai/replay-and-audit.md`](ai/replay-and-audit.md)
-18. [`runtime-internals.md`](runtime-internals.md)
+4. [`ai/multi-tenant-runtime-flow.md`](ai/multi-tenant-runtime-flow.md)
+5. [`enterprise-readiness.md`](enterprise-readiness.md)
+6. [`ai/runtime-control-plane.md`](ai/runtime-control-plane.md)
+7. [`ai/runtime-discovery-registry-capacity.md`](ai/runtime-discovery-registry-capacity.md)
+8. [`ai/mcp-server-control-plane.md`](ai/mcp-server-control-plane.md)
+9. [`ai/runtime-instance-provider-model.md`](ai/runtime-instance-provider-model.md)
+10. [`ai/shared-controller-usage.md`](ai/shared-controller-usage.md)
+11. [`ai/shared-queue-pump-and-worker-capacity.md`](ai/shared-queue-pump-and-worker-capacity.md)
+12. [`ai/distributed-execution.md`](ai/distributed-execution.md)
+13. [`ai/execution-control-state.md`](ai/execution-control-state.md)
+14. [`ai/observability.md`](ai/observability.md)
+15. [`ai/execution-correlated-ledger.md`](ai/execution-correlated-ledger.md)
+16. [`ai/observability-tracing.md`](ai/observability-tracing.md)
+17. [`ai/runtime-metrics.md`](ai/runtime-metrics.md)
+18. [`ai/replay-and-audit.md`](ai/replay-and-audit.md)
+19. [`runtime-internals.md`](runtime-internals.md)
 
 This path gives both the strategic positioning and the complete technical depth.
 
@@ -82,25 +84,26 @@ Start with:
 
 1. [`ai/architecture-overview.md`](ai/architecture-overview.md)
 2. [`ai/multi-tenant-control-plane-isolation.md`](ai/multi-tenant-control-plane-isolation.md)
-3. [`ai/config-driven-runtime.md`](ai/config-driven-runtime.md)
-4. [`ai/policy-driven-execution.md`](ai/policy-driven-execution.md)
-5. [`ai/context-resolution-and-helpers.md`](ai/context-resolution-and-helpers.md)
-6. [`ai/step-plugins.md`](ai/step-plugins.md)
-7. [`ai/runtime-control-plane.md`](ai/runtime-control-plane.md)
-8. [`ai/runtime-discovery-registry-capacity.md`](ai/runtime-discovery-registry-capacity.md)
-9. [`ai/mcp-server-control-plane.md`](ai/mcp-server-control-plane.md)
-10. [`ai/runtime-instance-provider-model.md`](ai/runtime-instance-provider-model.md)
-11. [`ai/shared-controller-usage.md`](ai/shared-controller-usage.md)
-12. [`ai/shared-queue-pump-and-worker-capacity.md`](ai/shared-queue-pump-and-worker-capacity.md)
-13. [`ai/distributed-execution.md`](ai/distributed-execution.md)
-14. [`ai/execution-control-state.md`](ai/execution-control-state.md)
-15. [`ai/execution-correlated-ledger.md`](ai/execution-correlated-ledger.md)
-16. [`ai/observability-tracing.md`](ai/observability-tracing.md)
-17. [`ai/runtime-metrics.md`](ai/runtime-metrics.md)
-18. [`ai/replay-and-audit.md`](ai/replay-and-audit.md)
-19. [`ai/testing-strategy.md`](ai/testing-strategy.md)
-20. [`runtime-internals.md`](runtime-internals.md)
-21. [`roadmap.md`](roadmap.md)
+3. [`ai/multi-tenant-runtime-flow.md`](ai/multi-tenant-runtime-flow.md)
+4. [`ai/config-driven-runtime.md`](ai/config-driven-runtime.md)
+5. [`ai/policy-driven-execution.md`](ai/policy-driven-execution.md)
+6. [`ai/context-resolution-and-helpers.md`](ai/context-resolution-and-helpers.md)
+7. [`ai/step-plugins.md`](ai/step-plugins.md)
+8. [`ai/runtime-control-plane.md`](ai/runtime-control-plane.md)
+9. [`ai/runtime-discovery-registry-capacity.md`](ai/runtime-discovery-registry-capacity.md)
+10. [`ai/mcp-server-control-plane.md`](ai/mcp-server-control-plane.md)
+11. [`ai/runtime-instance-provider-model.md`](ai/runtime-instance-provider-model.md)
+12. [`ai/shared-controller-usage.md`](ai/shared-controller-usage.md)
+13. [`ai/shared-queue-pump-and-worker-capacity.md`](ai/shared-queue-pump-and-worker-capacity.md)
+14. [`ai/distributed-execution.md`](ai/distributed-execution.md)
+15. [`ai/execution-control-state.md`](ai/execution-control-state.md)
+16. [`ai/execution-correlated-ledger.md`](ai/execution-correlated-ledger.md)
+17. [`ai/observability-tracing.md`](ai/observability-tracing.md)
+18. [`ai/runtime-metrics.md`](ai/runtime-metrics.md)
+19. [`ai/replay-and-audit.md`](ai/replay-and-audit.md)
+20. [`ai/testing-strategy.md`](ai/testing-strategy.md)
+21. [`runtime-internals.md`](runtime-internals.md)
+22. [`roadmap.md`](roadmap.md)
 
 This path gives the current architecture, configuration model, RBAC/context propagation model, tenant isolation model, control-plane/runtime split, extension model, technical reference, and next planned improvements.
 
@@ -187,6 +190,23 @@ This document explains:
 - tenant-aware scale-out request persistence
 - local scaler isolation by `RuntimeInstanceIdPrefix`
 - validated test evidence for multi-tenant control-plane isolation
+
+### [`ai/multi-tenant-runtime-flow.md`](ai/multi-tenant-runtime-flow.md)
+
+End-to-end multi-tenant runtime flow reference.
+
+This document explains:
+
+- the complete MCP/API/control-plane to DAG execution path using a large ASCII flow
+- how RBAC `ExecutionContext` becomes a durable `ExecutionContextSnapshot`
+- where context can be lost across async, Redis, shared queue, provider, and local queue boundaries
+- why ambient `IExecutionContextAccessor.Current` is not enough for background execution
+- how shared runs, shared queue items, local queued runs, and background controller execution preserve the snapshot
+- how tenant-aware admission sees only visible runtime registry and capacity records
+- how tenant settings are copied into scale-out requests
+- how local scale-out avoids cross-tenant counting by using `RuntimeInstanceIdPrefix`
+- how worker execution, retry, recovery, execution control, finalization, and observability fit into the same flow
+- the enterprise demo lesson learned: direct local runtime queue paths also require a durable snapshot
 
 ### [`ai/execution-correlated-ledger.md`](ai/execution-correlated-ledger.md)
 
@@ -451,6 +471,7 @@ The project roadmap organized into phases:
 |---|---|
 | [`ai/architecture-overview.md`](ai/architecture-overview.md) | High-level runtime architecture and major runtime layers, including control-plane scale-out, fulfilled-run requeue, provider-based dispatch, and multi-tenant isolation. |
 | [`ai/multi-tenant-control-plane-isolation.md`](ai/multi-tenant-control-plane-isolation.md) | RBAC context propagation, durable execution snapshots, tenant-aware runtime visibility, Shared/Dedicated/Hybrid isolation, registry/capacity filtering, and tenant-aware scale-out. |
+| [`ai/multi-tenant-runtime-flow.md`](ai/multi-tenant-runtime-flow.md) | End-to-end ASCII runtime flow from MCP/RBAC through shared runs, tenant-aware admission, scale-out, shared queue dispatch, local runtime queue execution, DAG worker execution, finalization, and observability. |
 | [`ai/distributed-execution.md`](ai/distributed-execution.md) | Distributed workers, Redis coordination, claims, leases, deterministic convergence, and context restoration across distributed/background execution hops. |
 | [`ai/execution-control-state.md`](ai/execution-control-state.md) | ExecutionId-level pause, resume, cancel, waiting-for-input, control-state behavior, and interaction with tenant-aware execution snapshots. |
 | [`ai/runtime-queue-control.md`](ai/runtime-queue-control.md) | RunId-level background controller queue control, hot enqueue, queue pause/resume, and RunId versus ExecutionId separation. |
@@ -474,6 +495,7 @@ The project roadmap organized into phases:
 | [`ai/replay-and-audit.md`](ai/replay-and-audit.md) | Deterministic Replay Engine V1, snapshot restore, audit-only replay, fingerprint validation, replay metadata, ledger/timeline diagnostics, and future replay APIs. |
 | [`ai/execution-correlated-ledger.md`](ai/execution-correlated-ledger.md) | Execution-correlated decision ledger, retention auditability, control-state auditability, and replay lifecycle evidence. |
 | [`ai/multi-tenant-control-plane-isolation.md`](ai/multi-tenant-control-plane-isolation.md) | Tenant boundary reliability, durable snapshot propagation, registry/capacity filtering, and prevention of cross-tenant dispatch leakage. |
+| [`ai/multi-tenant-runtime-flow.md`](ai/multi-tenant-runtime-flow.md) | Runtime-flow reliability map showing every async/background/distributed boundary where the durable snapshot must be preserved or restored. |
 
 ---
 
@@ -487,6 +509,7 @@ The project roadmap organized into phases:
 | [`ai/runtime-metrics.md`](ai/runtime-metrics.md) | Runtime metric domains, metric storage modes, worker/retention/storage/resolver/hot-state/policy metrics, and metrics improvements. |
 | [`ai/execution-correlated-ledger.md`](ai/execution-correlated-ledger.md) | Execution-correlated decision ledger, runtime audit visibility, and structured runtime lifecycle evidence. |
 | [`ai/testing-strategy.md`](ai/testing-strategy.md) | Integration testing strategy and validation approach for distributed runtime guarantees, RBAC context propagation, tenant isolation, Redis/local scale-out request, requeue, dispatch, and execution evidence. |
+| [`ai/multi-tenant-runtime-flow.md`](ai/multi-tenant-runtime-flow.md) | Operational context/audit map tying tenant context, correlation ids, shared run ids, local run ids, execution ids, runtime instances, workers, ledger, tracing, metrics, and replay together. |
 
 ---
 
@@ -495,6 +518,7 @@ The project roadmap organized into phases:
 | Document | Purpose |
 |---|---|
 | [`ai/multi-tenant-control-plane-isolation.md`](ai/multi-tenant-control-plane-isolation.md) | Tenant-aware control-plane isolation model, RBAC snapshot propagation, runtime visibility rules, tenant settings, admission, scale-out, and validated test evidence. |
+| [`ai/multi-tenant-runtime-flow.md`](ai/multi-tenant-runtime-flow.md) | Full operational flow showing where the tenant snapshot is created, persisted, restored, dispatched, executed, finalized, and correlated for audit/debugging. |
 | [`ai/runtime-control-plane.md`](ai/runtime-control-plane.md) | Runtime control-plane foundation, replay/execution/queue/instance facades, discovery, capacity, admission, Redis-backed scale-out lifecycle, fulfilled-run requeue, and shared controller orchestration. |
 | [`ai/runtime-discovery-registry-capacity.md`](ai/runtime-discovery-registry-capacity.md) | Redis discovery, ControlPlaneIdResolver, runtime registry, tenant-filtered capacity descriptors, scale-out capacity visibility, readiness gate, cleanup lifecycle, and HTTP pooled identity model. |
 | [`ai/mcp-server-control-plane.md`](ai/mcp-server-control-plane.md) | MCP server as control-plane adapter, including RBAC integration, host modes, discovery publication, MCP tool groups, Redis/local scale-out execution, shared queue dispatch, local/HTTP pooled runtime behavior, and runtime role separation. |
@@ -545,6 +569,7 @@ Many focused documents started as documentation split placeholders, but several 
 
 - architecture overview
 - multi-tenant control-plane isolation
+- multi-tenant runtime flow ASCII reference
 - RBAC execution-context propagation
 - execution control state
 - runtime queue control
@@ -599,3 +624,4 @@ When adding new documentation:
 14. Keep Redis/local scale-out documentation linked across runtime control-plane, MCP control-plane, runtime instance provider model, shared controller usage, shared queue pump, discovery/registry/capacity, config-driven runtime, and testing strategy.
 15. Keep multi-tenant control-plane isolation documentation linked across architecture overview, runtime control-plane, discovery/registry/capacity, MCP server, runtime instance provider model, shared controller usage, shared queue pump, distributed execution, execution control state, testing strategy, README, and product roadmap documents.
 16. Keep RBAC documentation connected to MCP tool authorization, `ExecutionContextSnapshot`, tenant-aware admission, runtime visibility, and all background/distributed hops.
+17. Keep the multi-tenant runtime flow document linked with multi-tenant isolation, runtime control-plane, shared controller usage, shared queue pump, distributed execution, execution control state, testing strategy, and README because it is the operational map of the whole tenant-aware execution path.

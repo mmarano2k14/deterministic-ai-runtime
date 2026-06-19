@@ -8,6 +8,7 @@ using Multiplexed.Abstractions.AI.Observability.Metrics;
 using Multiplexed.Abstractions.Core.ExecutionContext;
 using Multiplexed.AI.Runtime.Execution.Persistence.Replay;
 using Multiplexed.AI.Stores;
+using Multiplexed.Rbac.Core.ExecutionContext;
 using Multiplexed.Sample.Demo.EnterpriseRuntime.Runner.Runtime.Execution.Control;
 using Multiplexed.Sample.Demo.EnterpriseRuntime.Runner.Runtime.Execution.Persistence;
 using Multiplexed.Sample.Demo.EnterpriseRuntime.Runner.Runtime.Execution.Progress;
@@ -18,7 +19,8 @@ using Multiplexed.Sample.Demo.EnterpriseRuntime.Runner.Runtime.Execution.Throttl
 using Multiplexed.Sample.Demo.EnterpriseRuntime.Runner.Runtime.Execution.Validation;
 using Multiplexed.Sample.Demo.EnterpriseRuntime.Runner.Scenarios;
 using Multiplexed.Sample.Demo.EnterpriseRuntime.Runner.Scenarios.Chaos;
-using System.Reflection.Metadata;
+
+using RbacExecutionContext = Multiplexed.Rbac.Core.ExecutionContext.ExecutionContext;
 
 namespace Multiplexed.Sample.Demo.EnterpriseRuntime.Runner.Runtime.Execution
 {
@@ -128,17 +130,22 @@ namespace Multiplexed.Sample.Demo.EnterpriseRuntime.Runner.Runtime.Execution
                 Console.WriteLine("Enqueuing enterprise runtime execution...");
                 Console.WriteLine();
 
+                var executionContextSnapshot = CreateExecutionContextSnapshot(
+                    request.PipelineName);
+
                 handle = await EnqueueAsync(
                         controller,
                         request,
+                        executionContextSnapshot,
                         cancellationToken)
                     .ConfigureAwait(false);
 
-                Console.WriteLine($"RunId:       {handle.RunId}");
+                Console.WriteLine($"RunId: {handle.RunId}");
                 Console.WriteLine("ExecutionId: waiting for execution creation...");
                 Console.WriteLine();
 
-                using var runnerCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                using var runnerCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+                    cancellationToken);
 
                 using var progressCancellation = CancellationTokenSource.CreateLinkedTokenSource(
                     cancellationToken);
@@ -208,7 +215,8 @@ namespace Multiplexed.Sample.Demo.EnterpriseRuntime.Runner.Runtime.Execution
 
                 Console.WriteLine();
 
-                if (string.IsNullOrWhiteSpace(handle.ExecutionId))
+                if (string.IsNullOrWhiteSpace(
+                        handle.ExecutionId))
                 {
                     throw new InvalidOperationException(
                         "The execution completed without producing an ExecutionId.");
@@ -273,8 +281,7 @@ namespace Multiplexed.Sample.Demo.EnterpriseRuntime.Runner.Runtime.Execution
 
                 _reporter.PrintValidationSummary();
 
-                if (request.ValidateReplay &&
-                    request.ChaosScenario is not null)
+                if (request.ValidateReplay && request.ChaosScenario is not null)
                 {
                     await ValidateReplayAsync(
                             request,
@@ -300,7 +307,8 @@ namespace Multiplexed.Sample.Demo.EnterpriseRuntime.Runner.Runtime.Execution
                     .ConfigureAwait(false);
 
                 if (request.CleanupExecutionBundle &&
-                    !string.IsNullOrWhiteSpace(handle?.ExecutionId))
+                    !string.IsNullOrWhiteSpace(
+                        handle?.ExecutionId))
                 {
                     Console.WriteLine("Cleaning up execution bundle...");
 
@@ -322,6 +330,9 @@ namespace Multiplexed.Sample.Demo.EnterpriseRuntime.Runner.Runtime.Execution
         /// <param name="request">
         /// The execution request.
         /// </param>
+        /// <param name="executionContextSnapshot">
+        /// The durable execution context snapshot to persist with the runtime run.
+        /// </param>
         /// <param name="cancellationToken">
         /// The cancellation token.
         /// </param>
@@ -331,29 +342,42 @@ namespace Multiplexed.Sample.Demo.EnterpriseRuntime.Runner.Runtime.Execution
         private static async Task<AiRuntimeWorkerRunHandle> EnqueueAsync(
             IAiRuntimePipelineBackgroundController controller,
             EnterpriseRuntimeExecutionRequest request,
+            ExecutionContextSnapshot executionContextSnapshot,
             CancellationToken cancellationToken)
         {
+            ArgumentNullException.ThrowIfNull(
+                controller);
+
+            ArgumentNullException.ThrowIfNull(
+                request);
+
+            ArgumentNullException.ThrowIfNull(
+                executionContextSnapshot);
+
             var pipelineRequest = request.PipelineInput switch
             {
                 { PipelineJsonFilePath: not null } => new AiRuntimePipelineRunRequest
                 {
                     PipelineName = request.PipelineName,
                     PipelineJsonFilePath = request.PipelineInput.PipelineJsonFilePath,
-                    Input = request.Input
+                    Input = request.Input,
+                    ExecutionContextSnapshot = executionContextSnapshot
                 },
 
                 { PipelineJsonText: not null } => new AiRuntimePipelineRunRequest
                 {
                     PipelineName = request.PipelineName,
                     PipelineJson = request.PipelineInput.PipelineJsonText,
-                    Input = request.Input
+                    Input = request.Input,
+                    ExecutionContextSnapshot = executionContextSnapshot
                 },
 
                 { PipelineDefinition: not null } => new AiRuntimePipelineRunRequest
                 {
                     PipelineName = request.PipelineName,
                     PipelineDefinition = request.PipelineInput.PipelineDefinition,
-                    Input = request.Input
+                    Input = request.Input,
+                    ExecutionContextSnapshot = executionContextSnapshot
                 },
 
                 _ => throw new InvalidOperationException(
@@ -364,6 +388,147 @@ namespace Multiplexed.Sample.Demo.EnterpriseRuntime.Runner.Runtime.Execution
                     pipelineRequest,
                     cancellationToken)
                 .ConfigureAwait(false);
+        }
+
+        /// <summary>
+        /// Creates the durable execution context snapshot used by the enterprise runtime demo.
+        /// </summary>
+        /// <param name="pipelineName">
+        /// The pipeline name.
+        /// </param>
+        /// <returns>
+        /// The durable execution context snapshot.
+        /// </returns>
+        private ExecutionContextSnapshot CreateExecutionContextSnapshot(
+            string pipelineName)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(
+                pipelineName);
+
+            var executionContextAccessor = _serviceProvider
+                .GetRequiredService<IExecutionContextAccessor>();
+
+            var current = executionContextAccessor.Current;
+
+            if (current is null)
+            {
+                throw new InvalidOperationException(
+                    $"No RBAC execution context is available for enterprise runtime demo pipeline '{pipelineName}'.");
+            }
+
+            return CreateExecutionContextSnapshot(
+                pipelineName,
+                current);
+        }
+
+        /// <summary>
+        /// Creates a durable runtime execution context snapshot from the current RBAC execution context.
+        /// </summary>
+        /// <param name="pipelineName">
+        /// The pipeline name.
+        /// </param>
+        /// <param name="context">
+        /// The current RBAC execution context.
+        /// </param>
+        /// <returns>
+        /// The durable execution context snapshot.
+        /// </returns>
+        private static ExecutionContextSnapshot CreateExecutionContextSnapshot(
+            string pipelineName,
+            RbacExecutionContext context)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(
+                pipelineName);
+
+            ArgumentNullException.ThrowIfNull(
+                context);
+
+            var tenantId = string.IsNullOrWhiteSpace(
+                    context.TenantId)
+                ? "test-tenant"
+                : context.TenantId;
+
+            return new ExecutionContextSnapshot
+            {
+                ContextKey = string.IsNullOrWhiteSpace(
+                        context.ContextKey)
+                    ? $"ctx:{pipelineName}:enterprise-demo"
+                    : context.ContextKey,
+
+                Project = string.IsNullOrWhiteSpace(
+                        context.Project)
+                    ? "enterprise-runtime-demo"
+                    : context.Project,
+
+                UserId = string.IsNullOrWhiteSpace(
+                        context.UserId)
+                    ? "enterprise-runtime-demo"
+                    : context.UserId,
+
+                TenantId = tenantId,
+
+                TenantGroupId = string.IsNullOrWhiteSpace(
+                        context.TenantGroupId)
+                    ? tenantId
+                    : context.TenantGroupId,
+
+                CurrentNamespace = string.IsNullOrWhiteSpace(
+                        context.CurrentNamespace)
+                    ? "enterprise-runtime-demo"
+                    : context.CurrentNamespace,
+
+                Namespaces = CreateNamespaceSnapshots(
+                    context)
+            };
+        }
+
+        /// <summary>
+        /// Creates snapshot namespace entries from the RBAC execution context.
+        /// </summary>
+        /// <param name="context">
+        /// The RBAC execution context.
+        /// </param>
+        /// <returns>
+        /// The namespace snapshot entries.
+        /// </returns>
+        private static List<NamespaceEntry> CreateNamespaceSnapshots(
+            RbacExecutionContext context)
+        {
+            ArgumentNullException.ThrowIfNull(
+                context);
+
+            if (context.Namespaces is not null &&
+                context.Namespaces.Any())
+            {
+                return context.Namespaces
+                    .Select(
+                        ns => new NamespaceEntry
+                        {
+                            Name = ns.Name,
+                            Trns = ns.Trns is null
+                                ? new HashSet<string>()
+                                : new HashSet<string>(
+                                    ns.Trns)
+                        })
+                    .ToList();
+            }
+
+            return new List<NamespaceEntry>
+            {
+                new()
+                {
+                    Name = "enterprise-runtime-demo",
+                    Trns = new HashSet<string>
+                    {
+                        "trn:enterprise-runtime-demo:execution:run",
+                        "trn:enterprise-runtime-demo:execution:read",
+                        "trn:enterprise-runtime-demo:execution:cancel",
+                        "trn:enterprise-runtime-demo:execution:control",
+                        "trn:enterprise-runtime-demo:replay:read",
+                        "trn:enterprise-runtime-demo:observability:read"
+                    }
+                }
+            };
         }
 
         /// <summary>
@@ -502,14 +667,15 @@ namespace Multiplexed.Sample.Demo.EnterpriseRuntime.Runner.Runtime.Execution
                     cancellationToken)
                 .ConfigureAwait(false);
 
-            var beforeReplayFingerprint = await EnterpriseRuntimeReplayValidator.CreateFingerprintAsync(
-                    request.ChaosScenario,
-                    executionId,
-                    persistedRecord,
-                    persistedState,
-                    resolver,
-                    cancellationToken)
-                .ConfigureAwait(false);
+            var beforeReplayFingerprint =
+                await EnterpriseRuntimeReplayValidator.CreateFingerprintAsync(
+                        request.ChaosScenario,
+                        executionId,
+                        persistedRecord,
+                        persistedState,
+                        resolver,
+                        cancellationToken)
+                    .ConfigureAwait(false);
 
             await dagStore.DeleteExecutionBundleAsync(
                     executionId)
@@ -523,18 +689,18 @@ namespace Multiplexed.Sample.Demo.EnterpriseRuntime.Runner.Runtime.Execution
                     executionId)
                 .ConfigureAwait(false);
 
-            if (deletedRecord is not null ||
-                deletedState is not null)
+            if (deletedRecord is not null || deletedState is not null)
             {
                 throw new InvalidOperationException(
                     $"Expected live execution bundle '{executionId}' to be deleted before replay.");
             }
 
             var replayResult = await replayService.ReplayAsync(
-                new AiExecutionReplayRequest
-                {
-                    ExecutionId = executionId,
-                });
+                    new AiExecutionReplayRequest
+                    {
+                        ExecutionId = executionId
+                    })
+                .ConfigureAwait(false);
 
             if (!replayResult.ReplayValid)
             {
@@ -570,21 +736,22 @@ namespace Multiplexed.Sample.Demo.EnterpriseRuntime.Runner.Runtime.Execution
                     cancellationToken)
                 .ConfigureAwait(false);
 
-            var afterReplayFingerprint = await EnterpriseRuntimeReplayValidator.CreateFingerprintAsync(
-                    request.ChaosScenario,
-                    executionId,
-                    restoredRecord,
-                    restoredState,
-                    resolver,
-                    cancellationToken)
-                .ConfigureAwait(false);
+            var afterReplayFingerprint =
+                await EnterpriseRuntimeReplayValidator.CreateFingerprintAsync(
+                        request.ChaosScenario,
+                        executionId,
+                        restoredRecord,
+                        restoredState,
+                        resolver,
+                        cancellationToken)
+                    .ConfigureAwait(false);
 
             EnterpriseRuntimeReplayValidator.ValidateMatch(
                 beforeReplayFingerprint,
                 afterReplayFingerprint);
 
             Console.WriteLine("Snapshot created: true");
-            Console.WriteLine("Replay restored:  true");
+            Console.WriteLine("Replay restored: true");
             Console.WriteLine("Fingerprint match: true");
             Console.WriteLine();
         }
