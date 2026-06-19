@@ -1,4 +1,5 @@
-﻿using Microsoft.Extensions.DependencyInjection;
+﻿using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Capacity;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers.Transport;
@@ -104,12 +105,29 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.DI
         }
 
         /// <summary>
-        /// Registers the minimum dependencies required to instantiate the local runtime instance provider.
+        /// Registers the minimum dependencies required to instantiate the local and HTTP runtime instance providers.
         /// </summary>
         /// <param name="services">The service collection.</param>
         private static void AddRequiredLocalProviderDependencies(
             IServiceCollection services)
         {
+            services.AddSingleton<IConfiguration>(
+                new ConfigurationBuilder()
+                    .AddInMemoryCollection(
+                        new Dictionary<string, string?>
+                        {
+                            ["AiHttpRuntimeInstanceProvider:EnableRetry"] = "true",
+                            ["AiHttpRuntimeInstanceProvider:MaxRetryAttempts"] = "1",
+                            ["AiHttpRuntimeInstanceProvider:RetryBaseDelay"] = "00:00:00.010",
+                            ["AiHttpRuntimeInstanceProvider:RetryMaxDelay"] = "00:00:00.050",
+                            ["AiHttpRuntimeInstanceProvider:RetryTimeouts"] = "false",
+                            ["AiHttpRuntimeInstanceProvider:EnableCircuitBreaker"] = "true",
+                            ["AiHttpRuntimeInstanceProvider:CircuitBreakerFailureThreshold"] = "5",
+                            ["AiHttpRuntimeInstanceProvider:CircuitBreakerBreakDuration"] = "00:00:30",
+                            ["AiHttpRuntimeInstanceProvider:DispatchTimeout"] = "00:00:30"
+                        })
+                    .Build());
+
             services.AddSingleton<IAiSharedRuntimeInstanceRegistry, TestSharedRuntimeInstanceRegistry>();
         }
 
