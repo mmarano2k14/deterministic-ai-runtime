@@ -51,6 +51,12 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
     public static class HttpAiRuntimeInstanceProviderServiceCollectionExtensions
     {
         /// <summary>
+        /// Defines the configuration section used by the HTTP runtime instance provider options.
+        /// </summary>
+        private const string OptionsSectionName =
+            "AiHttpRuntimeInstanceProvider";
+
+        /// <summary>
         /// Registers the HTTP runtime instance provider as an opt-in runtime instance provider.
         /// </summary>
         /// <remarks>
@@ -58,6 +64,16 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
         /// This method registers <see cref="HttpAiRuntimeInstanceProvider"/> with
         /// <see cref="HttpClient"/> support and exposes it as an
         /// <see cref="IAiRuntimeInstanceProvider"/>.
+        /// </para>
+        ///
+        /// <para>
+        /// This method also binds <see cref="AiHttpRuntimeInstanceProviderOptions"/>
+        /// from the <c>AiHttpRuntimeInstanceProvider</c> configuration section.
+        /// </para>
+        ///
+        /// <para>
+        /// Supported hardening settings include dispatch timeout, retry behavior,
+        /// timeout retry policy, and circuit breaker settings.
         /// </para>
         ///
         /// <para>
@@ -99,7 +115,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
         {
             ArgumentNullException.ThrowIfNull(services);
 
-            services.AddOptions<AiHttpRuntimeInstanceProviderOptions>();
+            services
+                .AddOptions<AiHttpRuntimeInstanceProviderOptions>()
+                .BindConfiguration(OptionsSectionName);
 
             services.AddHttpClient<HttpAiRuntimeInstanceProvider>();
 
