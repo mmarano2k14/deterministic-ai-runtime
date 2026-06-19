@@ -1,4 +1,5 @@
 ﻿using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Capacity;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers.Transport;
@@ -25,13 +26,13 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Providers
         public void CanHandle_WithHttpProviderMetadata_ShouldReturnTrue()
         {
             var provider =
-                CreateProvider(new TestHttpMessageHandler());
+            CreateProvider(new TestHttpMessageHandler());
 
             var canHandle =
                 provider.CanHandle(
                     CreateDescriptor());
 
-            Assert.True(canHandle);
+                Assert.True(canHandle);
         }
 
         /// <summary>
@@ -287,7 +288,13 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Providers
                 };
 
             var provider =
-                CreateProvider(handler);
+                CreateProvider(
+                    handler,
+                    new AiHttpRuntimeInstanceProviderOptions
+                    {
+                        EnableRetry = false,
+                        MaxRetryAttempts = 0
+                    });
 
             var result =
                 await provider.DispatchAsync(
@@ -331,6 +338,149 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Providers
             Assert.False(result.Success);
             Assert.Equal("http-command-exception", result.FailureReason);
             Assert.Equal(runtimeInstanceId, result.RuntimeInstanceId);
+        }
+
+        /// <summary>
+        /// Verifies that HTTP provider unavailable failures are retried when retry is enabled.
+        /// </summary>
+        [Fact]
+        public async Task DispatchAsync_Should_Retry_When_HttpRequestException_Is_Thrown_And_Retry_Is_Enabled()
+        {
+            var handler =
+                new ThrowingHttpMessageHandler(
+                    _ =>
+                    {
+                        throw new HttpRequestException(
+                            "Remote runtime unavailable.");
+                    });
+
+            var provider =
+                CreateProvider(
+                    handler,
+                    new AiHttpRuntimeInstanceProviderOptions
+                    {
+                        EnableRetry = true,
+                        MaxRetryAttempts = 2,
+                        RetryBaseDelay = TimeSpan.Zero,
+                        RetryMaxDelay = TimeSpan.Zero,
+                        DispatchTimeout = TimeSpan.FromSeconds(5)
+                    });
+
+            var runtimeInstanceId =
+                "runtime-http-1";
+
+            var result =
+                await provider.DispatchAsync(
+                    CreateDescriptor(
+                        runtimeInstanceId,
+                        endpoint: "http://localhost:5001"),
+                    CreateDispatchRequest(runtimeInstanceId),
+                    CancellationToken.None);
+
+            Assert.False(result.Success);
+            Assert.Equal(
+                AiHttpRuntimeDispatchFailureReasons.ProviderUnavailable,
+                result.FailureReason);
+            Assert.Equal(3, handler.SendCallCount);
+        }
+
+        /// <summary>
+        /// Verifies that non-retryable HTTP client failures are not retried.
+        /// </summary>
+        [Fact]
+        public async Task DispatchAsync_Should_Not_Retry_When_HttpClientFailure_Is_NonRetryable()
+        {
+            var runtimeInstanceId =
+                "runtime-http-1";
+
+            var handler =
+                new TestHttpMessageHandler
+                {
+                    Response = new HttpResponseMessage(HttpStatusCode.BadRequest)
+                };
+
+            var provider =
+                CreateProvider(
+                    handler,
+                    new AiHttpRuntimeInstanceProviderOptions
+                    {
+                        EnableRetry = true,
+                        MaxRetryAttempts = 2,
+                        RetryBaseDelay = TimeSpan.Zero,
+                        RetryMaxDelay = TimeSpan.Zero,
+                        DispatchTimeout = TimeSpan.FromSeconds(5)
+                    });
+
+            var result =
+                await provider.DispatchAsync(
+                    CreateDescriptor(runtimeInstanceId),
+                    CreateDispatchRequest(runtimeInstanceId),
+                    CancellationToken.None);
+
+            Assert.False(result.Success);
+
+            Assert.Equal(
+                AiHttpRuntimeDispatchFailureReasons.NonRetryableHttpError,
+                result.FailureReason);
+
+            Assert.Equal(
+                1,
+                handler.SendCallCount);
+        }
+
+        /// <summary>
+        /// Verifies that retryable HTTP server failures are retried and can succeed on a later attempt.
+        /// </summary>
+        [Fact]
+        public async Task DispatchAsync_Should_Retry_And_Succeed_When_HttpServerFailure_Is_Followed_By_Success()
+        {
+            var runtimeInstanceId =
+                "runtime-http-1";
+
+            var expectedDispatchResult =
+                CreateDispatchResult(
+                    runtimeInstanceId,
+                    success: true);
+
+            var handler =
+                new SequenceHttpMessageHandler(
+                    new HttpResponseMessage(HttpStatusCode.InternalServerError),
+                    new HttpResponseMessage(HttpStatusCode.OK)
+                    {
+                        Content = JsonContent.Create(
+                            new AiRuntimeInstanceCommandResult
+                            {
+                                Success = true,
+                                Operation = AiRuntimeInstanceCommandOperation.DispatchRun,
+                                RuntimeInstanceId = runtimeInstanceId,
+                                DispatchResult = expectedDispatchResult,
+                                StartedAtUtc = DateTimeOffset.UtcNow,
+                                CompletedAtUtc = DateTimeOffset.UtcNow,
+                                DurationMs = 0
+                            })
+                    });
+
+            var provider =
+                CreateProvider(
+                    handler,
+                    new AiHttpRuntimeInstanceProviderOptions
+                    {
+                        EnableRetry = true,
+                        MaxRetryAttempts = 2,
+                        RetryBaseDelay = TimeSpan.Zero,
+                        RetryMaxDelay = TimeSpan.Zero,
+                        DispatchTimeout = TimeSpan.FromSeconds(5)
+                    });
+
+            var result =
+                await provider.DispatchAsync(
+                    CreateDescriptor(runtimeInstanceId),
+                    CreateDispatchRequest(runtimeInstanceId),
+                    CancellationToken.None);
+
+            Assert.True(result.Success);
+            Assert.Equal(runtimeInstanceId, result.RuntimeInstanceId);
+            Assert.Equal(2, handler.SendCallCount);
         }
 
         /// <summary>
@@ -410,14 +560,180 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Providers
         }
 
         /// <summary>
-        /// Creates an HTTP runtime instance provider.
+        /// Verifies that HTTP dispatch timeouts are not retried by default.
         /// </summary>
+        [Fact]
+        public async Task DispatchAsync_Should_Not_Retry_When_Timeouts_Are_Not_Retryable()
+        {
+            var runtimeInstanceId =
+                "runtime-http-1";
+
+            var handler =
+                new DelayedHttpMessageHandler(
+                    TimeSpan.FromMilliseconds(200));
+
+            var provider =
+                CreateProvider(
+                    handler,
+                    new AiHttpRuntimeInstanceProviderOptions
+                    {
+                        EnableRetry = true,
+                        MaxRetryAttempts = 2,
+                        RetryBaseDelay = TimeSpan.Zero,
+                        RetryMaxDelay = TimeSpan.Zero,
+                        RetryTimeouts = false,
+                        DispatchTimeout = TimeSpan.FromMilliseconds(25)
+                    });
+
+            var result =
+                await provider.DispatchAsync(
+                    CreateDescriptor(runtimeInstanceId),
+                    CreateDispatchRequest(runtimeInstanceId),
+                    CancellationToken.None);
+
+            Assert.False(result.Success);
+
+            Assert.Equal(
+                AiHttpRuntimeDispatchFailureReasons.Timeout,
+                result.FailureReason);
+
+            Assert.Equal(
+                1,
+                handler.SendCallCount);
+        }
+
+        /// <summary>
+        /// Verifies that HTTP dispatch timeouts are retried when timeout retry is explicitly enabled.
+        /// </summary>
+        [Fact]
+        public async Task DispatchAsync_Should_Retry_When_Timeouts_Are_Retryable()
+        {
+            var runtimeInstanceId =
+                "runtime-http-1";
+
+            var expectedDispatchResult =
+                CreateDispatchResult(
+                    runtimeInstanceId,
+                    success: true);
+
+            var handler =
+                new TimeoutThenSuccessHttpMessageHandler(
+                    TimeSpan.FromMilliseconds(200),
+                    new HttpResponseMessage(HttpStatusCode.OK)
+                    {
+                        Content = JsonContent.Create(
+                            new AiRuntimeInstanceCommandResult
+                            {
+                                Success = true,
+                                Operation = AiRuntimeInstanceCommandOperation.DispatchRun,
+                                RuntimeInstanceId = runtimeInstanceId,
+                                DispatchResult = expectedDispatchResult,
+                                StartedAtUtc = DateTimeOffset.UtcNow,
+                                CompletedAtUtc = DateTimeOffset.UtcNow,
+                                DurationMs = 0
+                            })
+                    });
+
+            var provider =
+                CreateProvider(
+                    handler,
+                    new AiHttpRuntimeInstanceProviderOptions
+                    {
+                        EnableRetry = true,
+                        MaxRetryAttempts = 2,
+                        RetryBaseDelay = TimeSpan.Zero,
+                        RetryMaxDelay = TimeSpan.Zero,
+                        RetryTimeouts = true,
+                        DispatchTimeout = TimeSpan.FromMilliseconds(25)
+                    });
+
+            var result =
+                await provider.DispatchAsync(
+                    CreateDescriptor(runtimeInstanceId),
+                    CreateDispatchRequest(runtimeInstanceId),
+                    CancellationToken.None);
+
+            Assert.True(result.Success);
+            Assert.Equal(runtimeInstanceId, result.RuntimeInstanceId);
+            Assert.Equal(2, handler.SendCallCount);
+        }
+
+        /// <summary>
+        /// Test HTTP message handler that returns HTTP responses in sequence.
+        /// </summary>
+        private sealed class SequenceHttpMessageHandler : HttpMessageHandler
+        {
+            /// <summary>
+            /// The response queue.
+            /// </summary>
+            private readonly Queue<HttpResponseMessage> responses;
+
+            /// <summary>
+            /// Initializes a new instance of the <see cref="SequenceHttpMessageHandler"/> class.
+            /// </summary>
+            /// <param name="responses">The HTTP responses returned in order.</param>
+            public SequenceHttpMessageHandler(
+                params HttpResponseMessage[] responses)
+            {
+                this.responses =
+                    new Queue<HttpResponseMessage>(
+                        responses ?? Array.Empty<HttpResponseMessage>());
+            }
+
+            /// <summary>
+            /// Gets the number of send calls.
+            /// </summary>
+            public int SendCallCount { get; private set; }
+
+            /// <inheritdoc />
+            protected override Task<HttpResponseMessage> SendAsync(
+                HttpRequestMessage request,
+                CancellationToken cancellationToken)
+            {
+                ArgumentNullException.ThrowIfNull(request);
+
+                SendCallCount++;
+
+                if (this.responses.Count == 0)
+                {
+                    return Task.FromResult(
+                        new HttpResponseMessage(HttpStatusCode.InternalServerError));
+                }
+
+                return Task.FromResult(
+                    this.responses.Dequeue());
+            }
+        }
+
+
+
+        /// <summary>
+        /// Creates an HTTP runtime instance provider using the supplied HTTP message handler.
+        /// </summary>
+        /// <param name="handler">The HTTP message handler used by the test HTTP client.</param>
+        /// <returns>The HTTP runtime instance provider.</returns>
         private static HttpAiRuntimeInstanceProvider CreateProvider(
             HttpMessageHandler handler)
         {
+            return CreateProvider(
+                handler,
+                new AiHttpRuntimeInstanceProviderOptions());
+        }
+
+        /// <summary>
+        /// Creates an HTTP runtime instance provider using the supplied HTTP message handler and options.
+        /// </summary>
+        /// <param name="handler">The HTTP message handler used by the test HTTP client.</param>
+        /// <param name="options">The HTTP provider options.</param>
+        /// <returns>The HTTP runtime instance provider.</returns>
+        private static HttpAiRuntimeInstanceProvider CreateProvider(
+            HttpMessageHandler handler,
+            AiHttpRuntimeInstanceProviderOptions options)
+        {
             return new HttpAiRuntimeInstanceProvider(
                 new HttpClient(handler),
-                NullLogger<HttpAiRuntimeInstanceProvider>.Instance);
+                NullLogger<HttpAiRuntimeInstanceProvider>.Instance,
+                Options.Create(options));
         }
 
         /// <summary>
@@ -551,6 +867,10 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Providers
             };
         }
 
+        /// <summary>
+        /// Creates an execution context snapshot for test dispatch records.
+        /// </summary>
+        /// <returns>The execution context snapshot.</returns>
         private static ExecutionContextSnapshot CreateExecutionContextSnapshot()
         {
             return new ExecutionContextSnapshot
@@ -562,20 +882,134 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Providers
                 TenantGroupId = "tenant-group-id-xxx",
                 CurrentNamespace = "mcp-ai-runtime",
                 Namespaces = new List<NamespaceEntry>
+            {
+                new()
                 {
-                    new()
+                    Name = "mcp-ai-runtime",
+                    Trns = new HashSet<string>
                     {
-                        Name = "mcp-ai-runtime",
-                        Trns = new HashSet<string>
-                        {
-                            "trn:distributed-deterministic-ai-runtime:shared-run:execution:submit"
-                        }
+                        "trn:distributed-deterministic-ai-runtime:shared-run:execution:submit"
                     }
-                },
+                }
+            },
                 InFlightCount = 0,
                 TtlSeconds = 300,
                 CreatedAtUtc = DateTime.UtcNow
             };
+        }
+
+        /// <summary>
+        /// Test HTTP message handler that delays before returning a response.
+        /// </summary>
+        private sealed class DelayedHttpMessageHandler : HttpMessageHandler
+        {
+            /// <summary>
+            /// The response delay.
+            /// </summary>
+            private readonly TimeSpan delay;
+
+            /// <summary>
+            /// Initializes a new instance of the <see cref="DelayedHttpMessageHandler"/> class.
+            /// </summary>
+            /// <param name="delay">The response delay.</param>
+            public DelayedHttpMessageHandler(
+                TimeSpan delay)
+            {
+                this.delay =
+                    delay;
+            }
+
+            /// <summary>
+            /// Gets the number of send calls.
+            /// </summary>
+            public int SendCallCount { get; private set; }
+
+            /// <inheritdoc />
+            protected override async Task<HttpResponseMessage> SendAsync(
+                HttpRequestMessage request,
+                CancellationToken cancellationToken)
+            {
+                ArgumentNullException.ThrowIfNull(request);
+
+                SendCallCount++;
+
+                await Task.Delay(
+                        this.delay,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = JsonContent.Create(
+                        new AiRuntimeInstanceCommandResult
+                        {
+                            Success = true,
+                            Operation = AiRuntimeInstanceCommandOperation.DispatchRun,
+                            RuntimeInstanceId = "runtime-http-1",
+                            StartedAtUtc = DateTimeOffset.UtcNow,
+                            CompletedAtUtc = DateTimeOffset.UtcNow,
+                            DurationMs = 0
+                        })
+                };
+            }
+        }
+
+        /// <summary>
+        /// Test HTTP message handler that times out once and then returns a successful response.
+        /// </summary>
+        private sealed class TimeoutThenSuccessHttpMessageHandler : HttpMessageHandler
+        {
+            /// <summary>
+            /// The first attempt delay.
+            /// </summary>
+            private readonly TimeSpan firstAttemptDelay;
+
+            /// <summary>
+            /// The success response returned after the first timeout.
+            /// </summary>
+            private readonly HttpResponseMessage successResponse;
+
+            /// <summary>
+            /// Initializes a new instance of the <see cref="TimeoutThenSuccessHttpMessageHandler"/> class.
+            /// </summary>
+            /// <param name="firstAttemptDelay">The first attempt delay.</param>
+            /// <param name="successResponse">The success response.</param>
+            public TimeoutThenSuccessHttpMessageHandler(
+                TimeSpan firstAttemptDelay,
+                HttpResponseMessage successResponse)
+            {
+                this.firstAttemptDelay =
+                    firstAttemptDelay;
+
+                this.successResponse =
+                    successResponse
+                    ?? throw new ArgumentNullException(nameof(successResponse));
+            }
+
+            /// <summary>
+            /// Gets the number of send calls.
+            /// </summary>
+            public int SendCallCount { get; private set; }
+
+            /// <inheritdoc />
+            protected override async Task<HttpResponseMessage> SendAsync(
+                HttpRequestMessage request,
+                CancellationToken cancellationToken)
+            {
+                ArgumentNullException.ThrowIfNull(request);
+
+                SendCallCount++;
+
+                if (SendCallCount == 1)
+                {
+                    await Task.Delay(
+                            this.firstAttemptDelay,
+                            cancellationToken)
+                        .ConfigureAwait(false);
+                }
+
+                return this.successResponse;
+            }
         }
 
         /// <summary>
@@ -666,5 +1100,47 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Providers
                     options);
             }
         }
+
+        /// <summary>
+        /// Test HTTP message handler that throws an exception for each send attempt.
+        /// </summary>
+        private sealed class ThrowingHttpMessageHandler : HttpMessageHandler
+        {
+            /// <summary>
+            /// Send callback used by this handler.
+            /// </summary>
+            private readonly Func<HttpRequestMessage, Exception> exceptionFactory;
+
+            /// <summary>
+            /// Initializes a new instance of the <see cref="ThrowingHttpMessageHandler"/> class.
+            /// </summary>
+            /// <param name="exceptionFactory">The exception factory.</param>
+            public ThrowingHttpMessageHandler(
+                Func<HttpRequestMessage, Exception> exceptionFactory)
+            {
+                this.exceptionFactory =
+                    exceptionFactory
+                    ?? throw new ArgumentNullException(nameof(exceptionFactory));
+            }
+
+            /// <summary>
+            /// Gets the number of send calls.
+            /// </summary>
+            public int SendCallCount { get; private set; }
+
+            /// <inheritdoc />
+            protected override Task<HttpResponseMessage> SendAsync(
+                HttpRequestMessage request,
+                CancellationToken cancellationToken)
+            {
+                ArgumentNullException.ThrowIfNull(request);
+
+                SendCallCount++;
+
+                throw this.exceptionFactory(
+                    request);
+            }
+        }
     }
+
 }

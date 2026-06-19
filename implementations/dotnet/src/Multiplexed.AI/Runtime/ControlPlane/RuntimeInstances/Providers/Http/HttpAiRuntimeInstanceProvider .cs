@@ -1,5 +1,6 @@
 ﻿using System.Net.Http.Json;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Capacity;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Identity;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers;
@@ -59,6 +60,14 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http
         /// </summary>
         private readonly ILogger<HttpAiRuntimeInstanceProvider> logger;
 
+        /// <summary>
+        /// HTTP provider hardening options.
+        /// </summary>
+        private readonly AiHttpRuntimeInstanceProviderOptions options;
+
+        /// <summary>
+        /// Gets the control-plane host identity associated with this provider instance.
+        /// </summary>
         public IAiControlPlaneHostIdentity? Identity { get; private set; }
 
         /// <summary>
@@ -66,9 +75,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http
         /// </summary>
         /// <param name="httpClient">The HTTP client.</param>
         /// <param name="logger">The logger.</param>
+        /// <param name="options">The HTTP provider hardening options.</param>
         public HttpAiRuntimeInstanceProvider(
             HttpClient httpClient,
-            ILogger<HttpAiRuntimeInstanceProvider> logger)
+            ILogger<HttpAiRuntimeInstanceProvider> logger,
+            IOptions<AiHttpRuntimeInstanceProviderOptions> options)
         {
             this.httpClient =
                 httpClient
@@ -77,6 +88,14 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http
             this.logger =
                 logger
                 ?? throw new ArgumentNullException(nameof(logger));
+
+            ArgumentNullException.ThrowIfNull(options);
+
+            this.options =
+                options.Value
+                ?? throw new ArgumentException(
+                    "HTTP runtime instance provider options must be provided.",
+                    nameof(options));
         }
 
         /// <inheritdoc />
@@ -165,7 +184,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http
                 return CreateFailedDispatchResult(
                     request,
                     runtimeInstanceId,
-                    endpointResolution.FailureReason ?? "http-endpoint-missing",
+                    endpointResolution.FailureReason ?? AiHttpRuntimeDispatchFailureReasons.EndpointMissing,
                     endpointResolution.Message ?? "HTTP runtime instance endpoint is missing.");
             }
 
@@ -379,7 +398,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http
                     request,
                     queueOperation,
                     runtimeInstanceId,
-                    endpointResolution.FailureReason ?? "http-endpoint-missing",
+                    endpointResolution.FailureReason ?? AiHttpRuntimeDispatchFailureReasons.EndpointMissing,
                     endpointResolution.Message ?? "HTTP runtime instance endpoint is missing.");
             }
 
@@ -446,7 +465,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http
         }
 
         /// <summary>
-        /// Sends a command request to the remote runtime instance HTTP endpoint.
+        /// Sends a command request to the remote runtime instance HTTP endpoint with conservative retry handling.
         /// </summary>
         /// <param name="endpoint">The HTTP command endpoint.</param>
         /// <param name="request">The command request.</param>
@@ -460,11 +479,119 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http
             ArgumentNullException.ThrowIfNull(endpoint);
             ArgumentNullException.ThrowIfNull(request);
 
+            var maxRetryAttempts =
+                this.options.EnableRetry
+                    ? Math.Max(
+                        0,
+                        this.options.MaxRetryAttempts)
+                    : 0;
+
+            var totalAttempts =
+                maxRetryAttempts + 1;
+
+            AiRuntimeInstanceCommandResult? lastResult = null;
+
+            for (var attempt = 1; attempt <= totalAttempts; attempt++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                logger.LogInformation(
+                    "HTTP RUNTIME COMMAND ATTEMPT RuntimeInstanceId={RuntimeInstanceId} Operation={Operation} Endpoint={Endpoint} SharedRunId={SharedRunId} RunId={RunId} Attempt={Attempt} TotalAttempts={TotalAttempts}",
+                    request.RuntimeInstanceId,
+                    request.Operation,
+                    endpoint,
+                    request.DispatchRequest?.SharedRun.SharedRunId,
+                    request.QueueRequest?.RunId,
+                    attempt,
+                    totalAttempts);
+
+                lastResult =
+                    await SendCommandOnceAsync(
+                            endpoint,
+                            request,
+                            cancellationToken)
+                        .ConfigureAwait(false);
+
+                if (lastResult.Success)
+                {
+                    return lastResult;
+                }
+
+                if (attempt >= totalAttempts ||
+                    !IsRetryableCommandFailure(
+                        lastResult.FailureReason))
+                {
+                    return lastResult;
+                }
+
+                var retryDelay =
+                    CalculateRetryDelay(
+                        attempt);
+
+                logger.LogWarning(
+                    "HTTP RUNTIME COMMAND RETRY RuntimeInstanceId={RuntimeInstanceId} Operation={Operation} Endpoint={Endpoint} SharedRunId={SharedRunId} RunId={RunId} Attempt={Attempt} NextAttempt={NextAttempt} TotalAttempts={TotalAttempts} FailureReason={FailureReason} RetryDelayMs={RetryDelayMs}",
+                    request.RuntimeInstanceId,
+                    request.Operation,
+                    endpoint,
+                    request.DispatchRequest?.SharedRun.SharedRunId,
+                    request.QueueRequest?.RunId,
+                    attempt,
+                    attempt + 1,
+                    totalAttempts,
+                    lastResult.FailureReason,
+                    Math.Max(
+                        0,
+                        (long)retryDelay.TotalMilliseconds));
+
+                if (retryDelay > TimeSpan.Zero)
+                {
+                    await Task.Delay(
+                            retryDelay,
+                            cancellationToken)
+                        .ConfigureAwait(false);
+                }
+            }
+
+            var now =
+                DateTimeOffset.UtcNow;
+
+            return lastResult ??
+                new AiRuntimeInstanceCommandResult
+                {
+                    Success = false,
+                    Operation = request.Operation,
+                    RuntimeInstanceId = request.RuntimeInstanceId,
+                    Message = "HTTP command failed before a command result was produced.",
+                    FailureReason = AiHttpRuntimeDispatchFailureReasons.Exception,
+                    StartedAtUtc = now,
+                    CompletedAtUtc = now,
+                    DurationMs = 0
+                };
+        }
+
+        /// <summary>
+        /// Sends one command attempt to the remote runtime instance HTTP endpoint.
+        /// </summary>
+        /// <param name="endpoint">The HTTP command endpoint.</param>
+        /// <param name="request">The command request.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <returns>The command result.</returns>
+        private async Task<AiRuntimeInstanceCommandResult> SendCommandOnceAsync(
+            Uri endpoint,
+            AiRuntimeInstanceCommandRequest request,
+            CancellationToken cancellationToken)
+        {
+            ArgumentNullException.ThrowIfNull(endpoint);
+            ArgumentNullException.ThrowIfNull(request);
+
             var startedAtUtc =
                 DateTimeOffset.UtcNow;
 
+            var dispatchTimeout =
+                this.options.DispatchTimeout;
+
             logger.LogInformation(
-                "HTTP RUNTIME COMMAND SEND RuntimeInstanceId={RuntimeInstanceId} Operation={Operation} Endpoint={Endpoint} SharedRunId={SharedRunId} RunId={RunId} CorrelationId={CorrelationId} RequestedBy={RequestedBy} Source={Source}",
+                "HTTP RUNTIME COMMAND SEND RuntimeInstanceId={RuntimeInstanceId} Operation={Operation} Endpoint={Endpoint} SharedRunId={SharedRunId} RunId={RunId} CorrelationId={CorrelationId} RequestedBy={RequestedBy} Source={Source} DispatchTimeoutMs={DispatchTimeoutMs}",
                 request.RuntimeInstanceId,
                 request.Operation,
                 endpoint,
@@ -472,7 +599,20 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http
                 request.QueueRequest?.RunId,
                 request.CorrelationId,
                 request.RequestedBy,
-                request.Source);
+                request.Source,
+                Math.Max(
+                    0,
+                    (long)dispatchTimeout.TotalMilliseconds));
+
+            using var timeoutCancellationTokenSource =
+                CancellationTokenSource.CreateLinkedTokenSource(
+                    cancellationToken);
+
+            if (dispatchTimeout > TimeSpan.Zero)
+            {
+                timeoutCancellationTokenSource.CancelAfter(
+                    dispatchTimeout);
+            }
 
             try
             {
@@ -481,7 +621,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http
                         .PostAsJsonAsync(
                             endpoint,
                             request,
-                            cancellationToken)
+                            timeoutCancellationTokenSource.Token)
                         .ConfigureAwait(false);
 
                 if (!response.IsSuccessStatusCode)
@@ -489,12 +629,19 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http
                     var completedAtUtc =
                         DateTimeOffset.UtcNow;
 
+                    var failureReason =
+                        IsNonRetryableHttpStatusCode(
+                            response.StatusCode)
+                            ? AiHttpRuntimeDispatchFailureReasons.NonRetryableHttpError
+                            : AiHttpRuntimeDispatchFailureReasons.HttpError;
+
                     logger.LogWarning(
-                        "HTTP RUNTIME COMMAND RESPONSE FAILED RuntimeInstanceId={RuntimeInstanceId} Operation={Operation} Endpoint={Endpoint} StatusCode={StatusCode} DurationMs={DurationMs}",
+                        "HTTP RUNTIME COMMAND RESPONSE FAILED RuntimeInstanceId={RuntimeInstanceId} Operation={Operation} Endpoint={Endpoint} StatusCode={StatusCode} FailureReason={FailureReason} DurationMs={DurationMs}",
                         request.RuntimeInstanceId,
                         request.Operation,
                         endpoint,
                         response.StatusCode,
+                        failureReason,
                         Math.Max(
                             0,
                             (long)(completedAtUtc - startedAtUtc).TotalMilliseconds));
@@ -505,7 +652,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http
                         Operation = request.Operation,
                         RuntimeInstanceId = request.RuntimeInstanceId,
                         Message = $"HTTP command failed with status code {(int)response.StatusCode}.",
-                        FailureReason = "http-command-failed",
+                        FailureReason = failureReason,
                         StartedAtUtc = startedAtUtc,
                         CompletedAtUtc = completedAtUtc,
                         DurationMs = Math.Max(
@@ -519,7 +666,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http
                 var result =
                     await response.Content
                         .ReadFromJsonAsync<AiRuntimeInstanceCommandResult>(
-                            cancellationToken)
+                            timeoutCancellationTokenSource.Token)
                         .ConfigureAwait(false);
 
                 if (result is not null)
@@ -558,12 +705,53 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http
                     Operation = request.Operation,
                     RuntimeInstanceId = request.RuntimeInstanceId,
                     Message = "HTTP command response body was empty.",
-                    FailureReason = "http-command-empty-response",
+                    FailureReason = AiHttpRuntimeDispatchFailureReasons.InvalidResponse,
                     StartedAtUtc = startedAtUtc,
                     CompletedAtUtc = completedAtUtcForMissingBody,
                     DurationMs = Math.Max(
                         0,
                         (long)(completedAtUtcForMissingBody - startedAtUtc).TotalMilliseconds)
+                };
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+                var completedAtUtc =
+                    DateTimeOffset.UtcNow;
+
+                logger.LogWarning(
+                    "HTTP RUNTIME COMMAND TIMEOUT RuntimeInstanceId={RuntimeInstanceId} Operation={Operation} Endpoint={Endpoint} SharedRunId={SharedRunId} RunId={RunId} DispatchTimeoutMs={DispatchTimeoutMs} DurationMs={DurationMs}",
+                    request.RuntimeInstanceId,
+                    request.Operation,
+                    endpoint,
+                    request.DispatchRequest?.SharedRun.SharedRunId,
+                    request.QueueRequest?.RunId,
+                    Math.Max(
+                        0,
+                        (long)dispatchTimeout.TotalMilliseconds),
+                    Math.Max(
+                        0,
+                        (long)(completedAtUtc - startedAtUtc).TotalMilliseconds));
+
+                return new AiRuntimeInstanceCommandResult
+                {
+                    Success = false,
+                    Operation = request.Operation,
+                    RuntimeInstanceId = request.RuntimeInstanceId,
+                    Message = $"HTTP command timed out after {dispatchTimeout.TotalMilliseconds:0} ms.",
+                    FailureReason = AiHttpRuntimeDispatchFailureReasons.Timeout,
+                    StartedAtUtc = startedAtUtc,
+                    CompletedAtUtc = completedAtUtc,
+                    DurationMs = Math.Max(
+                        0,
+                        (long)(completedAtUtc - startedAtUtc).TotalMilliseconds),
+                    Metadata = new Dictionary<string, string>
+                    {
+                        ["timeout.ms"] =
+                            Math.Max(
+                                    0,
+                                    (long)dispatchTimeout.TotalMilliseconds)
+                                .ToString()
+                    }
                 };
             }
             catch (OperationCanceledException)
@@ -577,6 +765,43 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http
                     request.QueueRequest?.RunId);
 
                 throw;
+            }
+            catch (HttpRequestException exception)
+            {
+                var completedAtUtc =
+                    DateTimeOffset.UtcNow;
+
+                logger.LogWarning(
+                    exception,
+                    "HTTP RUNTIME COMMAND PROVIDER UNAVAILABLE RuntimeInstanceId={RuntimeInstanceId} Operation={Operation} Endpoint={Endpoint} SharedRunId={SharedRunId} RunId={RunId} DurationMs={DurationMs}",
+                    request.RuntimeInstanceId,
+                    request.Operation,
+                    endpoint,
+                    request.DispatchRequest?.SharedRun.SharedRunId,
+                    request.QueueRequest?.RunId,
+                    Math.Max(
+                        0,
+                        (long)(completedAtUtc - startedAtUtc).TotalMilliseconds));
+
+                return new AiRuntimeInstanceCommandResult
+                {
+                    Success = false,
+                    Operation = request.Operation,
+                    RuntimeInstanceId = request.RuntimeInstanceId,
+                    Message = exception.Message,
+                    FailureReason = AiHttpRuntimeDispatchFailureReasons.ProviderUnavailable,
+                    StartedAtUtc = startedAtUtc,
+                    CompletedAtUtc = completedAtUtc,
+                    DurationMs = Math.Max(
+                        0,
+                        (long)(completedAtUtc - startedAtUtc).TotalMilliseconds),
+                    Metadata = new Dictionary<string, string>
+                    {
+                        ["exception.type"] =
+                            exception.GetType().FullName ??
+                            exception.GetType().Name
+                    }
+                };
             }
             catch (Exception exception)
             {
@@ -601,7 +826,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http
                     Operation = request.Operation,
                     RuntimeInstanceId = request.RuntimeInstanceId,
                     Message = exception.Message,
-                    FailureReason = "http-command-exception",
+                    FailureReason = AiHttpRuntimeDispatchFailureReasons.Exception,
                     StartedAtUtc = startedAtUtc,
                     CompletedAtUtc = completedAtUtc,
                     DurationMs = Math.Max(
@@ -615,6 +840,108 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http
                     }
                 };
             }
+        }
+
+        /// <summary>
+        /// Determines whether an HTTP status code represents a non-retryable command failure.
+        /// </summary>
+        /// <param name="statusCode">The HTTP status code.</param>
+        /// <returns>
+        /// <c>true</c> when the status code is a client-side failure that should not be retried;
+        /// otherwise, <c>false</c>.
+        /// </returns>
+        private static bool IsNonRetryableHttpStatusCode(
+            System.Net.HttpStatusCode statusCode)
+        {
+            var numericStatusCode =
+                (int)statusCode;
+
+            return numericStatusCode >= 400 &&
+                numericStatusCode < 500;
+        }
+
+        /// <summary>
+        /// Determines whether a command failure can be retried safely by the HTTP provider.
+        /// </summary>
+        /// <param name="failureReason">The command failure reason.</param>
+        /// <returns>
+        /// <c>true</c> when the failure can be retried safely; otherwise, <c>false</c>.
+        /// </returns>
+        private bool IsRetryableCommandFailure(
+            string? failureReason)
+        {
+            if (!this.options.EnableRetry)
+            {
+                return false;
+            }
+
+            if (string.IsNullOrWhiteSpace(failureReason))
+            {
+                return false;
+            }
+
+            if (string.Equals(
+                    failureReason,
+                    AiHttpRuntimeDispatchFailureReasons.HttpError,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            if (string.Equals(
+                    failureReason,
+                    AiHttpRuntimeDispatchFailureReasons.ProviderUnavailable,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            if (string.Equals(
+                    failureReason,
+                    AiHttpRuntimeDispatchFailureReasons.Timeout,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return this.options.RetryTimeouts;
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// Calculates the retry delay for the specified retry attempt.
+        /// </summary>
+        /// <param name="retryAttempt">The retry attempt number starting at one.</param>
+        /// <returns>The retry delay.</returns>
+        private TimeSpan CalculateRetryDelay(
+            int retryAttempt)
+        {
+            if (retryAttempt <= 0)
+            {
+                return TimeSpan.Zero;
+            }
+
+            var baseDelay =
+                this.options.RetryBaseDelay > TimeSpan.Zero
+                    ? this.options.RetryBaseDelay
+                    : TimeSpan.Zero;
+
+            var maxDelay =
+                this.options.RetryMaxDelay > TimeSpan.Zero
+                    ? this.options.RetryMaxDelay
+                    : baseDelay;
+
+            var multiplier =
+                Math.Pow(
+                    2,
+                    retryAttempt - 1);
+
+            var calculatedDelay =
+                TimeSpan.FromMilliseconds(
+                    baseDelay.TotalMilliseconds * multiplier);
+
+            return calculatedDelay <= maxDelay
+                ? calculatedDelay
+                : maxDelay;
         }
 
         /// <summary>
@@ -634,7 +961,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http
                 string.IsNullOrWhiteSpace(endpoint))
             {
                 return HttpCommandEndpointResolution.Failed(
-                    "http-endpoint-missing",
+                    AiHttpRuntimeDispatchFailureReasons.EndpointMissing,
                     $"Runtime instance descriptor '{descriptor.RuntimeInstanceId}' does not define '{AiRuntimeInstanceCommandTransportMetadataKeys.TransportEndpoint}'.");
             }
 
@@ -647,7 +974,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http
                     out var baseEndpoint))
             {
                 return HttpCommandEndpointResolution.Failed(
-                    "http-endpoint-invalid",
+                    AiHttpRuntimeDispatchFailureReasons.EndpointInvalid,
                     $"Runtime instance HTTP endpoint '{endpointText}' is not a valid absolute URI.");
             }
 
@@ -813,7 +1140,12 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http
             };
         }
 
-        public void SetControlPlaneIdentity(IAiControlPlaneHostIdentity identity)
+        /// <summary>
+        /// Sets the control-plane host identity associated with this provider instance.
+        /// </summary>
+        /// <param name="identity">The control-plane host identity.</param>
+        public void SetControlPlaneIdentity(
+            IAiControlPlaneHostIdentity identity)
         {
             ArgumentNullException.ThrowIfNull(identity);
 

@@ -99,6 +99,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
         {
             ArgumentNullException.ThrowIfNull(services);
 
+            services.AddOptions<AiHttpRuntimeInstanceProviderOptions>();
+
             services.AddHttpClient<HttpAiRuntimeInstanceProvider>();
 
             services.TryAddEnumerable(
