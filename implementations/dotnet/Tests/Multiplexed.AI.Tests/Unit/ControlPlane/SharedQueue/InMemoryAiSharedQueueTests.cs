@@ -2,6 +2,7 @@
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Claiming;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Queue;
 using Multiplexed.AI.Runtime.ControlPlane.SharedQueue;
+using Multiplexed.AI.Tests.Fixtures;
 
 namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
 {
@@ -134,7 +135,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
 
             Assert.NotNull(claimed);
             Assert.Equal("shared-run-2", claimed!.SharedRunId);
-            Assert.Equal("tenant-b", claimed.TenantId);
+            Assert.Equal("tenant-b", claimed.ExecutionContextSnapshot.TenantId);
         }
 
         [Fact]
@@ -360,7 +361,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
             {
                 SharedRunId = sharedRunId,
                 Status = status,
-                TenantId = tenantId,
+                ExecutionContextSnapshot = AiExecutionContextSnapshotTestFactory.Create(tenantId: tenantId),
                 PipelineKey = pipelineKey,
                 Priority = priority,
                 EnqueuedAtUtc = now,

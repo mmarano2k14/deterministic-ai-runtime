@@ -2,6 +2,7 @@
 using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Options;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Scaling;
 using StackExchange.Redis;
 
@@ -48,9 +49,17 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
             IOptions<RedisAiRuntimeScaleOutRequestStoreOptions>? options = null,
             RedisAiRuntimeScaleOutRequestStoreScriptCache? scriptCache = null)
         {
-            this.connection = connection ?? throw new ArgumentNullException(nameof(connection));
-            this.options = options?.Value ?? new RedisAiRuntimeScaleOutRequestStoreOptions();
-            this.scriptCache = scriptCache ?? new RedisAiRuntimeScaleOutRequestStoreScriptCache(connection);
+            this.connection =
+                connection
+                ?? throw new ArgumentNullException(nameof(connection));
+
+            this.options =
+                options?.Value
+                ?? new RedisAiRuntimeScaleOutRequestStoreOptions();
+
+            this.scriptCache =
+                scriptCache
+                ?? new RedisAiRuntimeScaleOutRequestStoreScriptCache(connection);
         }
 
         /// <inheritdoc />
@@ -62,31 +71,49 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
 
             cancellationToken.ThrowIfCancellationRequested();
 
-            var normalized = this.NormalizeForCreate(request);
-            var database = this.GetDatabase();
-            var hashEntries = ToHashEntries(normalized);
-            var values = CreateScriptValues(normalized, hashEntries, this.options);
+            var normalized =
+                this.NormalizeForCreate(request);
 
-            var result = await this.scriptCache.ExecuteCreateAsync(
-                    database,
-                    new RedisKey[]
-                    {
-                        this.GetRequestKey(normalized.ControlPlaneId, normalized.RequestId),
-                        this.GetAllIndexKey(normalized.ControlPlaneId),
-                        this.GetPendingIndexKey(normalized.ControlPlaneId),
-                        this.GetSharedRunKey(normalized.ControlPlaneId, normalized.SharedRunId),
-                        this.GetDedupKey(normalized),
-                        this.GetRequestControlPlaneIndexKey(normalized.RequestId)
-                    },
-                    values)
-                .ConfigureAwait(false);
+            var database =
+                this.GetDatabase();
 
-            var createdRequestId = result.ToString();
+            var hashEntries =
+                ToHashEntries(normalized);
+
+            var values =
+                CreateScriptValues(
+                    normalized,
+                    hashEntries,
+                    this.options);
+
+            var result =
+                await this.scriptCache
+                    .ExecuteCreateAsync(
+                        database,
+                        new RedisKey[]
+                        {
+                            this.GetRequestKey(normalized.ControlPlaneId, normalized.RequestId),
+                            this.GetAllIndexKey(normalized.ControlPlaneId),
+                            this.GetPendingIndexKey(normalized.ControlPlaneId),
+                            this.GetSharedRunKey(normalized.ControlPlaneId, normalized.SharedRunId),
+                            this.GetDedupKey(normalized),
+                            this.GetRequestControlPlaneIndexKey(normalized.RequestId)
+                        },
+                        values)
+                    .ConfigureAwait(false);
+
+            var createdRequestId =
+                result.ToString();
 
             if (!string.IsNullOrWhiteSpace(createdRequestId) &&
                 !string.Equals(createdRequestId, normalized.RequestId, StringComparison.Ordinal))
             {
-                var existing = await this.GetAsync(createdRequestId, cancellationToken).ConfigureAwait(false);
+                var existing =
+                    await this
+                        .GetAsync(
+                            createdRequestId,
+                            cancellationToken)
+                        .ConfigureAwait(false);
 
                 if (existing is not null)
                 {
@@ -94,7 +121,12 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
                 }
             }
 
-            var created = await this.GetAsync(normalized.RequestId, cancellationToken).ConfigureAwait(false);
+            var created =
+                await this
+                    .GetAsync(
+                        normalized.RequestId,
+                        cancellationToken)
+                    .ConfigureAwait(false);
 
             return created ?? normalized;
         }
@@ -108,15 +140,25 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
 
             cancellationToken.ThrowIfCancellationRequested();
 
-            var database = this.GetDatabase();
-            var requestKey = await this.FindRequestKeyAsync(database, requestId).ConfigureAwait(false);
+            var database =
+                this.GetDatabase();
+
+            var requestKey =
+                await this
+                    .FindRequestKeyAsync(
+                        database,
+                        requestId)
+                    .ConfigureAwait(false);
 
             if (string.IsNullOrWhiteSpace(requestKey))
             {
                 return null;
             }
 
-            var entries = await database.HashGetAllAsync(requestKey).ConfigureAwait(false);
+            var entries =
+                await database
+                    .HashGetAllAsync(requestKey)
+                    .ConfigureAwait(false);
 
             if (entries.Length == 0)
             {
@@ -140,16 +182,20 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
                 return Array.Empty<AiRuntimeScaleOutRequestRecord>();
             }
 
-            var database = this.GetDatabase();
-            var requestIds = await database
-                .SortedSetRangeByRankAsync(
-                    this.GetAllIndexKey(query.ControlPlaneId),
-                    start: 0,
-                    stop: this.GetIndexScanStop(query),
-                    order: Order.Descending)
-                .ConfigureAwait(false);
+            var database =
+                this.GetDatabase();
 
-            return await this.LoadAndFilterAsync(
+            var requestIds =
+                await database
+                    .SortedSetRangeByRankAsync(
+                        this.GetAllIndexKey(query.ControlPlaneId),
+                        start: 0,
+                        stop: this.GetIndexScanStop(query),
+                        order: Order.Descending)
+                    .ConfigureAwait(false);
+
+            return await this
+                .LoadAndFilterAsync(
                     database,
                     query,
                     requestIds,
@@ -171,23 +217,28 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
                 return Array.Empty<AiRuntimeScaleOutRequestRecord>();
             }
 
-            var database = this.GetDatabase();
-            var requestIds = await database
-                .SortedSetRangeByRankAsync(
-                    this.GetPendingIndexKey(query.ControlPlaneId),
-                    start: 0,
-                    stop: this.GetIndexScanStop(query),
-                    order: Order.Ascending)
-                .ConfigureAwait(false);
+            var database =
+                this.GetDatabase();
 
-            var pendingQuery = CopyQuery(query);
+            var requestIds =
+                await database
+                    .SortedSetRangeByRankAsync(
+                        this.GetPendingIndexKey(query.ControlPlaneId),
+                        start: 0,
+                        stop: this.GetIndexScanStop(query),
+                        order: Order.Ascending)
+                    .ConfigureAwait(false);
+
+            var pendingQuery =
+                CopyQuery(query);
 
             if (pendingQuery.Statuses.Count == 0)
             {
                 pendingQuery.Statuses.Add(AiRuntimeScaleOutRequestStatus.Pending);
             }
 
-            return await this.LoadAndFilterAsync(
+            return await this
+                .LoadAndFilterAsync(
                     database,
                     pendingQuery,
                     requestIds,
@@ -225,14 +276,16 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
             ArgumentException.ThrowIfNullOrWhiteSpace(requestId);
             ArgumentException.ThrowIfNullOrWhiteSpace(fulfilledBy);
 
-            var fields = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
-            {
-                ["fulfilledBy"] = fulfilledBy
-            };
+            var fields =
+                new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["fulfilledBy"] = fulfilledBy
+                };
 
             if (!string.IsNullOrWhiteSpace(runtimeInstanceId))
             {
-                fields["fulfilledRuntimeInstanceId"] = runtimeInstanceId;
+                fields["fulfilledRuntimeInstanceId"] =
+                    runtimeInstanceId;
             }
 
             return this.TransitionAsync(
@@ -319,27 +372,40 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            var database = this.GetDatabase();
-            var requestKey = await this.FindRequestKeyAsync(database, requestId).ConfigureAwait(false);
+            var database =
+                this.GetDatabase();
+
+            var requestKey =
+                await this
+                    .FindRequestKeyAsync(
+                        database,
+                        requestId)
+                    .ConfigureAwait(false);
 
             if (string.IsNullOrWhiteSpace(requestKey))
             {
                 return false;
             }
 
-            var controlPlaneId = await database.HashGetAsync(requestKey, "controlPlaneId").ConfigureAwait(false);
+            var controlPlaneId =
+                await database
+                    .HashGetAsync(
+                        requestKey,
+                        "controlPlaneId")
+                    .ConfigureAwait(false);
 
             if (controlPlaneId.IsNullOrEmpty)
             {
                 return false;
             }
 
-            var values = new List<RedisValue>
-            {
-                targetStatus.ToString(),
-                timestampField,
-                FormatDate(DateTimeOffset.UtcNow)
-            };
+            var values =
+                new List<RedisValue>
+                {
+                    targetStatus.ToString(),
+                    timestampField,
+                    FormatDate(DateTimeOffset.UtcNow)
+                };
 
             foreach (var pair in additionalFields)
             {
@@ -347,17 +413,22 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
                 values.Add(pair.Value);
             }
 
-            var result = await this.scriptCache.ExecuteTransitionAsync(
-                    database,
-                    new RedisKey[]
-                    {
-                        requestKey,
-                        this.GetPendingIndexKey(controlPlaneId.ToString())
-                    },
-                    values.ToArray())
-                .ConfigureAwait(false);
+            var result =
+                await this.scriptCache
+                    .ExecuteTransitionAsync(
+                        database,
+                        new RedisKey[]
+                        {
+                            requestKey,
+                            this.GetPendingIndexKey(controlPlaneId.ToString())
+                        },
+                        values.ToArray())
+                    .ConfigureAwait(false);
 
-            return string.Equals(result.ToString(), "updated", StringComparison.Ordinal);
+            return string.Equals(
+                result.ToString(),
+                "updated",
+                StringComparison.Ordinal);
         }
 
         /// <summary>
@@ -374,8 +445,13 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
             IReadOnlyCollection<RedisValue> requestIds,
             CancellationToken cancellationToken)
         {
-            var results = new List<AiRuntimeScaleOutRequestRecord>();
-            var maxResults = GetMaxResults(query, this.options);
+            var results =
+                new List<AiRuntimeScaleOutRequestRecord>();
+
+            var maxResults =
+                GetMaxResults(
+                    query,
+                    this.options);
 
             foreach (var redisRequestId in requestIds)
             {
@@ -386,17 +462,33 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
                     continue;
                 }
 
-                var requestId = redisRequestId.ToString();
-                var requestKey = this.GetRequestKey(query.ControlPlaneId!, requestId);
-                var entries = await database.HashGetAllAsync(requestKey).ConfigureAwait(false);
+                var requestId =
+                    redisRequestId.ToString();
+
+                var requestKey =
+                    this.GetRequestKey(
+                        query.ControlPlaneId!,
+                        requestId);
+
+                var entries =
+                    await database
+                        .HashGetAllAsync(requestKey)
+                        .ConfigureAwait(false);
 
                 if (entries.Length == 0)
                 {
-                    await this.RemoveMissingIndexReferencesAsync(database, query.ControlPlaneId!, requestId).ConfigureAwait(false);
+                    await this
+                        .RemoveMissingIndexReferencesAsync(
+                            database,
+                            query.ControlPlaneId!,
+                            requestId)
+                        .ConfigureAwait(false);
+
                     continue;
                 }
 
-                var record = FromHashEntries(entries);
+                var record =
+                    FromHashEntries(entries);
 
                 if (!MatchesQuery(record, query))
                 {
@@ -426,8 +518,17 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
             string controlPlaneId,
             string requestId)
         {
-            await database.SortedSetRemoveAsync(this.GetAllIndexKey(controlPlaneId), requestId).ConfigureAwait(false);
-            await database.SortedSetRemoveAsync(this.GetPendingIndexKey(controlPlaneId), requestId).ConfigureAwait(false);
+            await database
+                .SortedSetRemoveAsync(
+                    this.GetAllIndexKey(controlPlaneId),
+                    requestId)
+                .ConfigureAwait(false);
+
+            await database
+                .SortedSetRemoveAsync(
+                    this.GetPendingIndexKey(controlPlaneId),
+                    requestId)
+                .ConfigureAwait(false);
         }
 
         /// <summary>
@@ -438,36 +539,49 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
         /// <exception cref="ArgumentException">
         /// Thrown when required request identity fields are missing.
         /// </exception>
-        private AiRuntimeScaleOutRequestRecord NormalizeForCreate(AiRuntimeScaleOutRequestRecord request)
+        private AiRuntimeScaleOutRequestRecord NormalizeForCreate(
+            AiRuntimeScaleOutRequestRecord request)
         {
-            var now = DateTimeOffset.UtcNow;
-            var normalized = Clone(request);
+            var now =
+                DateTimeOffset.UtcNow;
+
+            var normalized =
+                Clone(request);
 
             if (string.IsNullOrWhiteSpace(normalized.RequestId))
             {
-                normalized.RequestId = Guid.NewGuid().ToString("N");
+                normalized.RequestId =
+                    Guid.NewGuid().ToString("N");
             }
 
             if (string.IsNullOrWhiteSpace(normalized.ControlPlaneId))
             {
-                throw new ArgumentException("Scale-out request control-plane id is required.", nameof(request));
+                throw new ArgumentException(
+                    "Scale-out request control-plane id is required.",
+                    nameof(request));
             }
 
             if (string.IsNullOrWhiteSpace(normalized.SharedRunId))
             {
-                throw new ArgumentException("Scale-out request shared run id is required.", nameof(request));
+                throw new ArgumentException(
+                    "Scale-out request shared run id is required.",
+                    nameof(request));
             }
 
-            normalized.Status = AiRuntimeScaleOutRequestStatus.Pending;
+            normalized.Status =
+                AiRuntimeScaleOutRequestStatus.Pending;
 
             if (normalized.CreatedAtUtc == default)
             {
-                normalized.CreatedAtUtc = now;
+                normalized.CreatedAtUtc =
+                    now;
             }
 
-            if (normalized.ExpiresAtUtc is null && this.options.DefaultTtl > TimeSpan.Zero)
+            if (normalized.ExpiresAtUtc is null &&
+                this.options.DefaultTtl > TimeSpan.Zero)
             {
-                normalized.ExpiresAtUtc = normalized.CreatedAtUtc.Add(this.options.DefaultTtl);
+                normalized.ExpiresAtUtc =
+                    normalized.CreatedAtUtc.Add(this.options.DefaultTtl);
             }
 
             return normalized;
@@ -492,15 +606,24 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
             IDatabase database,
             string requestId)
         {
-            var controlPlaneIndexKey = this.GetRequestControlPlaneIndexKey(requestId);
-            var controlPlaneId = await database.StringGetAsync(controlPlaneIndexKey).ConfigureAwait(false);
+            var controlPlaneIndexKey =
+                this.GetRequestControlPlaneIndexKey(requestId);
+
+            var controlPlaneId =
+                await database
+                    .StringGetAsync(controlPlaneIndexKey)
+                    .ConfigureAwait(false);
 
             if (controlPlaneId.IsNullOrEmpty)
             {
                 return null;
             }
 
-            return this.GetRequestKey(controlPlaneId.ToString(), requestId).ToString();
+            return this
+                .GetRequestKey(
+                    controlPlaneId.ToString(),
+                    requestId)
+                .ToString();
         }
 
         /// <summary>
@@ -521,7 +644,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
         /// </summary>
         /// <param name="controlPlaneId">The logical control-plane identifier.</param>
         /// <returns>The Redis all-requests index key.</returns>
-        private RedisKey GetAllIndexKey(string controlPlaneId)
+        private RedisKey GetAllIndexKey(
+            string controlPlaneId)
         {
             return $"{this.options.KeyPrefix}:{{{controlPlaneId}}}:scaleout:all";
         }
@@ -531,7 +655,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
         /// </summary>
         /// <param name="controlPlaneId">The logical control-plane identifier.</param>
         /// <returns>The Redis pending-requests index key.</returns>
-        private RedisKey GetPendingIndexKey(string controlPlaneId)
+        private RedisKey GetPendingIndexKey(
+            string controlPlaneId)
         {
             return $"{this.options.KeyPrefix}:{{{controlPlaneId}}}:scaleout:pending";
         }
@@ -554,7 +679,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
         /// </summary>
         /// <param name="requestId">The scale-out request identifier.</param>
         /// <returns>The Redis request-to-control-plane lookup key.</returns>
-        private RedisKey GetRequestControlPlaneIndexKey(string requestId)
+        private RedisKey GetRequestControlPlaneIndexKey(
+            string requestId)
         {
             return $"{this.options.KeyPrefix}:scaleout:request-control-plane:{requestId}";
         }
@@ -564,12 +690,20 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
         /// </summary>
         /// <param name="request">The scale-out request record.</param>
         /// <returns>The Redis deduplication key.</returns>
-        private RedisKey GetDedupKey(AiRuntimeScaleOutRequestRecord request)
+        private RedisKey GetDedupKey(
+            AiRuntimeScaleOutRequestRecord request)
         {
-            var tenant = NormalizeKeyPart(request.TenantId);
-            var pipeline = NormalizeKeyPart(request.PipelineKey);
-            var reason = NormalizeKeyPart(request.Reason);
-            var provider = NormalizeKeyPart(request.ProviderHint);
+            var tenant =
+                NormalizeKeyPart(request.TenantId);
+
+            var pipeline =
+                NormalizeKeyPart(request.PipelineKey);
+
+            var reason =
+                NormalizeKeyPart(request.Reason);
+
+            var provider =
+                NormalizeKeyPart(request.ProviderHint);
 
             return $"{this.options.KeyPrefix}:{{{request.ControlPlaneId}}}:scaleout:dedup:{tenant}:{pipeline}:{reason}:{provider}";
         }
@@ -579,13 +713,17 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
         /// </summary>
         /// <param name="query">The query filters.</param>
         /// <returns>The inclusive sorted-set stop index.</returns>
-        private long GetIndexScanStop(AiRuntimeScaleOutRequestQuery query)
+        private long GetIndexScanStop(
+            AiRuntimeScaleOutRequestQuery query)
         {
-            var requested = query.MaxResults > 0
-                ? Math.Max(query.MaxResults, this.options.DefaultIndexScanLimit)
-                : this.options.DefaultIndexScanLimit;
+            var requested =
+                query.MaxResults > 0
+                    ? Math.Max(query.MaxResults, this.options.DefaultIndexScanLimit)
+                    : this.options.DefaultIndexScanLimit;
 
-            return Math.Max(0, requested - 1);
+            return Math.Max(
+                0,
+                requested - 1);
         }
 
         /// <summary>
@@ -603,7 +741,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
                 return options.MaxListResults;
             }
 
-            return Math.Min(query.MaxResults, options.MaxListResults);
+            return Math.Min(
+                query.MaxResults,
+                options.MaxListResults);
         }
 
         /// <summary>
@@ -611,7 +751,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
         /// </summary>
         /// <param name="request">The request record.</param>
         /// <returns>The Redis hash entries.</returns>
-        private static HashEntry[] ToHashEntries(AiRuntimeScaleOutRequestRecord request)
+        private static HashEntry[] ToHashEntries(
+            AiRuntimeScaleOutRequestRecord request)
         {
             return new[]
             {
@@ -619,7 +760,18 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
                 new HashEntry("controlPlaneId", request.ControlPlaneId),
                 new HashEntry("sharedRunId", request.SharedRunId),
                 new HashEntry("tenantId", request.TenantId ?? string.Empty),
+                new HashEntry("tenantGroupId", request.TenantGroupId ?? string.Empty),
                 new HashEntry("pipelineKey", request.PipelineKey ?? string.Empty),
+
+                new HashEntry("isolationMode", request.IsolationMode.ToString()),
+                new HashEntry("preferDedicatedCapacity", request.PreferDedicatedCapacity.ToString(CultureInfo.InvariantCulture)),
+                new HashEntry("allowSharedFallback", request.AllowSharedFallback.ToString(CultureInfo.InvariantCulture)),
+                new HashEntry("maxRuntimeInstances", request.MaxRuntimeInstances?.ToString(CultureInfo.InvariantCulture) ?? string.Empty),
+                new HashEntry("runtimeInstanceIdPrefix", request.RuntimeInstanceIdPrefix ?? string.Empty),
+                new HashEntry("workerCountPerInstance", request.WorkerCountPerInstance?.ToString(CultureInfo.InvariantCulture) ?? string.Empty),
+                new HashEntry("maxConcurrentRunsPerInstance", request.MaxConcurrentRunsPerInstance?.ToString(CultureInfo.InvariantCulture) ?? string.Empty),
+                new HashEntry("localQueueCapacity", request.LocalQueueCapacity?.ToString(CultureInfo.InvariantCulture) ?? string.Empty),
+
                 new HashEntry("status", request.Status.ToString()),
                 new HashEntry("reason", request.Reason ?? string.Empty),
                 new HashEntry("visibleInstanceCount", FormatInt(request.VisibleInstanceCount)),
@@ -652,19 +804,25 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
         /// </summary>
         /// <param name="entries">The Redis hash entries.</param>
         /// <returns>The scale-out request record.</returns>
-        private static AiRuntimeScaleOutRequestRecord FromHashEntries(HashEntry[] entries)
+        private static AiRuntimeScaleOutRequestRecord FromHashEntries(
+            HashEntry[] entries)
         {
-            var fields = entries.ToDictionary(
-                entry => entry.Name.ToString(),
-                entry => entry.Value.ToString(),
-                StringComparer.OrdinalIgnoreCase);
+            var fields =
+                entries.ToDictionary(
+                    entry => entry.Name.ToString(),
+                    entry => entry.Value.ToString(),
+                    StringComparer.OrdinalIgnoreCase);
 
-            var metadata = ParseMetadata(GetString(fields, "metadata"));
-            var cancelledBy = GetString(fields, "cancelledBy");
+            var metadata =
+                ParseMetadata(GetString(fields, "metadata"));
+
+            var cancelledBy =
+                GetString(fields, "cancelledBy");
 
             if (!string.IsNullOrWhiteSpace(cancelledBy))
             {
-                metadata["cancelledBy"] = cancelledBy;
+                metadata["cancelledBy"] =
+                    cancelledBy;
             }
 
             return new AiRuntimeScaleOutRequestRecord
@@ -673,7 +831,18 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
                 ControlPlaneId = GetString(fields, "controlPlaneId") ?? string.Empty,
                 SharedRunId = GetString(fields, "sharedRunId") ?? string.Empty,
                 TenantId = EmptyToNull(GetString(fields, "tenantId")),
+                TenantGroupId = EmptyToNull(GetString(fields, "tenantGroupId")),
                 PipelineKey = EmptyToNull(GetString(fields, "pipelineKey")),
+
+                IsolationMode = ParseIsolationMode(GetString(fields, "isolationMode")),
+                PreferDedicatedCapacity = ParseBool(GetString(fields, "preferDedicatedCapacity")),
+                AllowSharedFallback = ParseBool(GetString(fields, "allowSharedFallback")),
+                MaxRuntimeInstances = ParseNullableInt(GetString(fields, "maxRuntimeInstances")),
+                RuntimeInstanceIdPrefix = EmptyToNull(GetString(fields, "runtimeInstanceIdPrefix")),
+                WorkerCountPerInstance = ParseNullableInt(GetString(fields, "workerCountPerInstance")),
+                MaxConcurrentRunsPerInstance = ParseNullableInt(GetString(fields, "maxConcurrentRunsPerInstance")),
+                LocalQueueCapacity = ParseNullableInt(GetString(fields, "localQueueCapacity")),
+
                 Status = ParseStatus(GetString(fields, "status")),
                 Reason = GetString(fields, "reason") ?? string.Empty,
                 VisibleInstanceCount = ParseInt(GetString(fields, "visibleInstanceCount")),
@@ -713,16 +882,17 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
             IReadOnlyCollection<HashEntry> hashEntries,
             RedisAiRuntimeScaleOutRequestStoreOptions options)
         {
-            var values = new List<RedisValue>
-            {
-                request.RequestId,
-                request.SharedRunId,
-                request.CreatedAtUtc.ToUnixTimeMilliseconds().ToString(CultureInfo.InvariantCulture),
-                GetExpirationSeconds(request, options).ToString(CultureInfo.InvariantCulture),
-                GetDeduplicationSeconds(options).ToString(CultureInfo.InvariantCulture),
-                options.EnableDeduplication ? "1" : "0",
-                request.ControlPlaneId
-            };
+            var values =
+                new List<RedisValue>
+                {
+                    request.RequestId,
+                    request.SharedRunId,
+                    request.CreatedAtUtc.ToUnixTimeMilliseconds().ToString(CultureInfo.InvariantCulture),
+                    GetExpirationSeconds(request, options).ToString(CultureInfo.InvariantCulture),
+                    GetDeduplicationSeconds(options).ToString(CultureInfo.InvariantCulture),
+                    options.EnableDeduplication ? "1" : "0",
+                    request.ControlPlaneId
+                };
 
             foreach (var entry in hashEntries)
             {
@@ -745,15 +915,20 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
         {
             if (request.ExpiresAtUtc is not null)
             {
-                var remaining = request.ExpiresAtUtc.Value - DateTimeOffset.UtcNow;
+                var remaining =
+                    request.ExpiresAtUtc.Value - DateTimeOffset.UtcNow;
 
                 return remaining <= TimeSpan.Zero
                     ? 1
-                    : Math.Max(1, Convert.ToInt64(Math.Ceiling(remaining.TotalSeconds)));
+                    : Math.Max(
+                        1,
+                        Convert.ToInt64(Math.Ceiling(remaining.TotalSeconds)));
             }
 
             return options.DefaultTtl > TimeSpan.Zero
-                ? Math.Max(1, Convert.ToInt64(Math.Ceiling(options.DefaultTtl.TotalSeconds)))
+                ? Math.Max(
+                    1,
+                    Convert.ToInt64(Math.Ceiling(options.DefaultTtl.TotalSeconds)))
                 : 0;
         }
 
@@ -762,10 +937,13 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
         /// </summary>
         /// <param name="options">The store options.</param>
         /// <returns>The deduplication expiration duration in seconds.</returns>
-        private static long GetDeduplicationSeconds(RedisAiRuntimeScaleOutRequestStoreOptions options)
+        private static long GetDeduplicationSeconds(
+            RedisAiRuntimeScaleOutRequestStoreOptions options)
         {
             return options.DeduplicationWindow > TimeSpan.Zero
-                ? Math.Max(1, Convert.ToInt64(Math.Ceiling(options.DeduplicationWindow.TotalSeconds)))
+                ? Math.Max(
+                    1,
+                    Convert.ToInt64(Math.Ceiling(options.DeduplicationWindow.TotalSeconds)))
                 : 0;
         }
 
@@ -803,22 +981,26 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
                 return false;
             }
 
-            if (query.Statuses.Count > 0 && !query.Statuses.Contains(request.Status))
+            if (query.Statuses.Count > 0 &&
+                !query.Statuses.Contains(request.Status))
             {
                 return false;
             }
 
-            if (!query.IncludeExpired && request.Status is AiRuntimeScaleOutRequestStatus.Expired)
+            if (!query.IncludeExpired &&
+                request.Status is AiRuntimeScaleOutRequestStatus.Expired)
             {
                 return false;
             }
 
-            if (query.CreatedAfterUtc is not null && request.CreatedAtUtc < query.CreatedAfterUtc.Value)
+            if (query.CreatedAfterUtc is not null &&
+                request.CreatedAtUtc < query.CreatedAfterUtc.Value)
             {
                 return false;
             }
 
-            if (query.CreatedBeforeUtc is not null && request.CreatedAtUtc > query.CreatedBeforeUtc.Value)
+            if (query.CreatedBeforeUtc is not null &&
+                request.CreatedAtUtc > query.CreatedBeforeUtc.Value)
             {
                 return false;
             }
@@ -831,7 +1013,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
         /// </summary>
         /// <param name="request">The request to clone.</param>
         /// <returns>The cloned request.</returns>
-        private static AiRuntimeScaleOutRequestRecord Clone(AiRuntimeScaleOutRequestRecord request)
+        private static AiRuntimeScaleOutRequestRecord Clone(
+            AiRuntimeScaleOutRequestRecord request)
         {
             return new AiRuntimeScaleOutRequestRecord
             {
@@ -839,7 +1022,18 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
                 ControlPlaneId = request.ControlPlaneId,
                 SharedRunId = request.SharedRunId,
                 TenantId = request.TenantId,
+                TenantGroupId = request.TenantGroupId,
                 PipelineKey = request.PipelineKey,
+
+                IsolationMode = request.IsolationMode,
+                PreferDedicatedCapacity = request.PreferDedicatedCapacity,
+                AllowSharedFallback = request.AllowSharedFallback,
+                MaxRuntimeInstances = request.MaxRuntimeInstances,
+                RuntimeInstanceIdPrefix = request.RuntimeInstanceIdPrefix,
+                WorkerCountPerInstance = request.WorkerCountPerInstance,
+                MaxConcurrentRunsPerInstance = request.MaxConcurrentRunsPerInstance,
+                LocalQueueCapacity = request.LocalQueueCapacity,
+
                 Status = request.Status,
                 Reason = request.Reason,
                 VisibleInstanceCount = request.VisibleInstanceCount,
@@ -874,7 +1068,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
         /// </summary>
         /// <param name="query">The query to copy.</param>
         /// <returns>The copied query.</returns>
-        private static AiRuntimeScaleOutRequestQuery CopyQuery(AiRuntimeScaleOutRequestQuery query)
+        private static AiRuntimeScaleOutRequestQuery CopyQuery(
+            AiRuntimeScaleOutRequestQuery query)
         {
             return new AiRuntimeScaleOutRequestQuery
             {
@@ -895,14 +1090,16 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
         /// </summary>
         /// <param name="value">The key value.</param>
         /// <returns>The normalized key part.</returns>
-        private static string NormalizeKeyPart(string? value)
+        private static string NormalizeKeyPart(
+            string? value)
         {
             if (string.IsNullOrWhiteSpace(value))
             {
                 return "_";
             }
 
-            return Convert.ToHexString(Encoding.UTF8.GetBytes(value));
+            return Convert.ToHexString(
+                Encoding.UTF8.GetBytes(value));
         }
 
         /// <summary>
@@ -910,7 +1107,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
         /// </summary>
         /// <param name="value">The integer value.</param>
         /// <returns>The formatted integer.</returns>
-        private static string FormatInt(int value)
+        private static string FormatInt(
+            int value)
         {
             return value.ToString(CultureInfo.InvariantCulture);
         }
@@ -920,7 +1118,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
         /// </summary>
         /// <param name="value">The timestamp value.</param>
         /// <returns>The formatted timestamp.</returns>
-        private static string FormatDate(DateTimeOffset value)
+        private static string FormatDate(
+            DateTimeOffset value)
         {
             return value.ToString("O", CultureInfo.InvariantCulture);
         }
@@ -930,7 +1129,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
         /// </summary>
         /// <param name="value">The nullable timestamp value.</param>
         /// <returns>The formatted timestamp or an empty string.</returns>
-        private static string FormatNullableDate(DateTimeOffset? value)
+        private static string FormatNullableDate(
+            DateTimeOffset? value)
         {
             return value?.ToString("O", CultureInfo.InvariantCulture) ?? string.Empty;
         }
@@ -955,7 +1155,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
         /// </summary>
         /// <param name="value">The value to convert.</param>
         /// <returns><see langword="null" /> when empty; otherwise, the original value.</returns>
-        private static string? EmptyToNull(string? value)
+        private static string? EmptyToNull(
+            string? value)
         {
             return string.IsNullOrWhiteSpace(value)
                 ? null
@@ -963,13 +1164,32 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
         }
 
         /// <summary>
+        /// Parses a boolean value.
+        /// </summary>
+        /// <param name="value">The value to parse.</param>
+        /// <returns>The parsed boolean, or <see langword="false" /> when parsing fails.</returns>
+        private static bool ParseBool(
+            string? value)
+        {
+            return bool.TryParse(
+                    value,
+                    out var parsed) &&
+                parsed;
+        }
+
+        /// <summary>
         /// Parses an integer value.
         /// </summary>
         /// <param name="value">The value to parse.</param>
         /// <returns>The parsed integer, or zero when parsing fails.</returns>
-        private static int ParseInt(string? value)
+        private static int ParseInt(
+            string? value)
         {
-            return int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed)
+            return int.TryParse(
+                    value,
+                    NumberStyles.Integer,
+                    CultureInfo.InvariantCulture,
+                    out var parsed)
                 ? parsed
                 : 0;
         }
@@ -979,9 +1199,14 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
         /// </summary>
         /// <param name="value">The value to parse.</param>
         /// <returns>The parsed integer, or <see langword="null" /> when parsing fails.</returns>
-        private static int? ParseNullableInt(string? value)
+        private static int? ParseNullableInt(
+            string? value)
         {
-            return int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed)
+            return int.TryParse(
+                    value,
+                    NumberStyles.Integer,
+                    CultureInfo.InvariantCulture,
+                    out var parsed)
                 ? parsed
                 : null;
         }
@@ -991,7 +1216,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
         /// </summary>
         /// <param name="value">The value to parse.</param>
         /// <returns>The parsed timestamp, or <see langword="null" /> when parsing fails.</returns>
-        private static DateTimeOffset? ParseDate(string? value)
+        private static DateTimeOffset? ParseDate(
+            string? value)
         {
             return DateTimeOffset.TryParse(
                     value,
@@ -1007,11 +1233,31 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
         /// </summary>
         /// <param name="value">The status value.</param>
         /// <returns>The parsed status, or <see cref="AiRuntimeScaleOutRequestStatus.Pending" /> when parsing fails.</returns>
-        private static AiRuntimeScaleOutRequestStatus ParseStatus(string? value)
+        private static AiRuntimeScaleOutRequestStatus ParseStatus(
+            string? value)
         {
-            return Enum.TryParse<AiRuntimeScaleOutRequestStatus>(value, ignoreCase: true, out var parsed)
+            return Enum.TryParse<AiRuntimeScaleOutRequestStatus>(
+                    value,
+                    ignoreCase: true,
+                    out var parsed)
                 ? parsed
                 : AiRuntimeScaleOutRequestStatus.Pending;
+        }
+
+        /// <summary>
+        /// Parses a runtime instance isolation mode.
+        /// </summary>
+        /// <param name="value">The isolation mode value.</param>
+        /// <returns>The parsed isolation mode, or <see cref="AiRuntimeInstanceIsolationMode.Shared" /> when parsing fails.</returns>
+        private static AiRuntimeInstanceIsolationMode ParseIsolationMode(
+            string? value)
+        {
+            return Enum.TryParse<AiRuntimeInstanceIsolationMode>(
+                    value,
+                    ignoreCase: true,
+                    out var parsed)
+                ? parsed
+                : AiRuntimeInstanceIsolationMode.Shared;
         }
 
         /// <summary>
@@ -1019,7 +1265,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
         /// </summary>
         /// <param name="value">The JSON value.</param>
         /// <returns>The parsed metadata dictionary.</returns>
-        private static Dictionary<string, string> ParseMetadata(string? value)
+        private static Dictionary<string, string> ParseMetadata(
+            string? value)
         {
             if (string.IsNullOrWhiteSpace(value))
             {
@@ -1028,11 +1275,16 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
 
             try
             {
-                var parsed = JsonSerializer.Deserialize<Dictionary<string, string>>(value, JsonOptions);
+                var parsed =
+                    JsonSerializer.Deserialize<Dictionary<string, string>>(
+                        value,
+                        JsonOptions);
 
                 return parsed is null
                     ? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
-                    : new Dictionary<string, string>(parsed, StringComparer.OrdinalIgnoreCase);
+                    : new Dictionary<string, string>(
+                        parsed,
+                        StringComparer.OrdinalIgnoreCase);
             }
             catch (JsonException)
             {

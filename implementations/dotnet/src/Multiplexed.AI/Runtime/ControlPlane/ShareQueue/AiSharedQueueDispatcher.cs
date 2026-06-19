@@ -6,6 +6,9 @@ using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Store;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Claiming;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Dispatch;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Queue;
+using Multiplexed.Abstractions.Core.ExecutionContext;
+using Multiplexed.Rbac.Core.ExecutionContext;
+using RbacExecutionContext = Multiplexed.Rbac.Core.ExecutionContext.ExecutionContext;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
 {
@@ -36,6 +39,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
         private readonly IAiSharedRunDispatcher _sharedRunDispatcher;
         private readonly IAiRunAdmissionController _admissionController;
         private readonly IAiRuntimeAdmissionReservationStore _reservationStore;
+        private readonly IExecutionContextAccessor _executionContextAccessor;
         private readonly ILogger<AiSharedQueueDispatcher> _logger;
 
         /// <summary>
@@ -47,6 +51,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
             IAiSharedRunDispatcher sharedRunDispatcher,
             IAiRunAdmissionController admissionController,
             IAiRuntimeAdmissionReservationStore reservationStore,
+            IExecutionContextAccessor executionContextAccessor,
             ILogger<AiSharedQueueDispatcher> logger)
         {
             _sharedQueue = sharedQueue ?? throw new ArgumentNullException(nameof(sharedQueue));
@@ -54,6 +59,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
             _sharedRunDispatcher = sharedRunDispatcher ?? throw new ArgumentNullException(nameof(sharedRunDispatcher));
             _admissionController = admissionController ?? throw new ArgumentNullException(nameof(admissionController));
             _reservationStore = reservationStore ?? throw new ArgumentNullException(nameof(reservationStore));
+            _executionContextAccessor = executionContextAccessor ?? throw new ArgumentNullException(nameof(executionContextAccessor));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
 
@@ -185,152 +191,67 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                     "Shared run record loaded. SharedRunId={SharedRunId}, ControlPlaneId={ControlPlaneId}, TenantId={TenantId}, PipelineKey={PipelineKey}, AssignedRuntimeInstanceId={AssignedRuntimeInstanceId}, Status={Status}",
                     sharedRun.SharedRunId,
                     controlPlaneId,
-                    sharedRun.TenantId,
+                    sharedRun.ExecutionContextSnapshot.TenantId,
                     sharedRun.PipelineKey,
                     sharedRun.AssignedRuntimeInstanceId,
                     sharedRun.Status);
 
-                var admissionDecision = await _admissionController
-                    .AdmitAsync(
-                        new AiRunAdmissionRequest
-                        {
-                            RunRequest = sharedRun.RunRequest,
-                            RunId = sharedRun.SharedRunId,
-                            TenantId = sharedRun.TenantId,
-                            PipelineKey = sharedRun.PipelineKey,
-                            PreferredRuntimeInstanceId = sharedRun.AssignedRuntimeInstanceId,
-                            CorrelationId = request.CorrelationId ?? sharedRun.CorrelationId,
-                            RequestedBy = request.RequestedBy,
-                            Source = request.Source,
-                            Reason = request.Reason ?? "Selecting runtime instance for shared queue dispatch.",
-                            Metadata = operationMetadata
-                        },
-                        cancellationToken)
-                    .ConfigureAwait(false);
-
-                _logger.LogInformation(
-                    "Shared queue admission decision received. SharedRunId={SharedRunId}, ControlPlaneId={ControlPlaneId}, DecisionType={DecisionType}, AssignedRuntimeInstanceId={AssignedRuntimeInstanceId}, Reason={Reason}",
-                    sharedRun.SharedRunId,
-                    controlPlaneId,
-                    admissionDecision.DecisionType,
-                    admissionDecision.AssignedRuntimeInstanceId,
-                    admissionDecision.Reason);
-
-                if (admissionDecision.DecisionType != AiRunAdmissionDecisionType.AssignToInstance ||
-                    string.IsNullOrWhiteSpace(admissionDecision.AssignedRuntimeInstanceId))
-                {
-                    _logger.LogWarning(
-                        "Shared queue dispatch could not assign runtime instance. SharedRunId={SharedRunId}, ControlPlaneId={ControlPlaneId}, DecisionType={DecisionType}, Reason={Reason}",
-                        sharedRun.SharedRunId,
-                        controlPlaneId,
-                        admissionDecision.DecisionType,
-                        admissionDecision.Reason);
-
-                    await RequeueBestEffortAsync(
-                            queueItem,
-                            admissionDecision.Reason ?? "No runtime instance available for shared queue dispatch.",
-                            cancellationToken)
-                        .ConfigureAwait(false);
-
-                    var completedAtUtc = DateTimeOffset.UtcNow;
-
-                    return new AiSharedQueueDispatchResult
-                    {
-                        Success = false,
-                        SharedRunId = queueItem.SharedRunId,
-                        RuntimeInstanceId = request.RuntimeInstanceId,
-                        QueueItem = queueItem,
-                        SharedRun = sharedRun,
-                        Message = "Shared queue item could not be dispatched because admission did not assign a runtime instance.",
-                        FailureReason = admissionDecision.Reason,
-                        StartedAtUtc = startedAtUtc,
-                        CompletedAtUtc = completedAtUtc,
-                        DurationMs = CalculateDurationMs(startedAtUtc, completedAtUtc),
-                        Diagnostics = new[]
-                        {
-                            admissionDecision.Reason ?? "Admission did not assign a runtime instance."
-                        }
-                    };
-                }
-
-                var targetRuntimeInstanceId =
-                    admissionDecision.AssignedRuntimeInstanceId;
-
-                _logger.LogDebug(
-                    "Reserving temporary admission capacity. SharedRunId={SharedRunId}, ControlPlaneId={ControlPlaneId}, RuntimeInstanceId={RuntimeInstanceId}, RunCount={RunCount}",
-                    sharedRun.SharedRunId,
-                    controlPlaneId,
-                    targetRuntimeInstanceId,
-                    1);
-
-                await _reservationStore
-                    .ReserveAsync(
-                        targetRuntimeInstanceId,
-                        runCount: 1,
-                        cancellationToken)
-                    .ConfigureAwait(false);
-
-                reservedRuntimeInstanceId =
-                    targetRuntimeInstanceId;
-
-                reservedSharedRunId =
-                    sharedRun.SharedRunId;
-
-                _logger.LogInformation(
-                    "Temporary admission capacity reserved. SharedRunId={SharedRunId}, ControlPlaneId={ControlPlaneId}, RuntimeInstanceId={RuntimeInstanceId}, RunCount={RunCount}",
-                    sharedRun.SharedRunId,
-                    controlPlaneId,
-                    targetRuntimeInstanceId,
-                    1);
+                var previousExecutionContext =
+                    _executionContextAccessor.Current;
 
                 try
                 {
-                    _logger.LogInformation(
-                        "Shared run dispatch to runtime instance started. SharedRunId={SharedRunId}, ControlPlaneId={ControlPlaneId}, RuntimeInstanceId={RuntimeInstanceId}, ClaimToken={ClaimToken}",
+                    _executionContextAccessor.Set(
+                        CreateExecutionContext(
+                            sharedRun.ExecutionContextSnapshot));
+
+                    _logger.LogDebug(
+                        "Shared queue dispatcher restored execution context from shared run snapshot. SharedRunId={SharedRunId}, ControlPlaneId={ControlPlaneId}, TenantId={TenantId}, TenantGroupId={TenantGroupId}, ContextKey={ContextKey}",
                         sharedRun.SharedRunId,
                         controlPlaneId,
-                        targetRuntimeInstanceId,
-                        queueItem.ClaimToken);
+                        sharedRun.ExecutionContextSnapshot.TenantId,
+                        sharedRun.ExecutionContextSnapshot.TenantGroupId,
+                        sharedRun.ExecutionContextSnapshot.ContextKey);
 
-                    var dispatchResult = await _sharedRunDispatcher
-                        .DispatchAsync(
-                            new AiSharedRunDispatchRequest
+                    var admissionDecision = await _admissionController
+                        .AdmitAsync(
+                            new AiRunAdmissionRequest
                             {
-                                SharedRun = sharedRun,
-                                QueueItem = queueItem,
-                                RuntimeInstanceId = targetRuntimeInstanceId,
-                                ClaimToken = queueItem.ClaimToken,
+                                RunRequest = sharedRun.RunRequest,
+                                RunId = sharedRun.SharedRunId,
+                                TenantId = sharedRun.ExecutionContextSnapshot.TenantId,
+                                PipelineKey = sharedRun.PipelineKey,
+                                PreferredRuntimeInstanceId = sharedRun.AssignedRuntimeInstanceId,
                                 CorrelationId = request.CorrelationId ?? sharedRun.CorrelationId,
                                 RequestedBy = request.RequestedBy,
                                 Source = request.Source,
-                                Reason = request.Reason ?? "Dispatching claimed shared queue item.",
+                                Reason = request.Reason ?? "Selecting runtime instance for shared queue dispatch.",
                                 Metadata = operationMetadata
                             },
                             cancellationToken)
                         .ConfigureAwait(false);
 
                     _logger.LogInformation(
-                        "Shared run dispatch result received. SharedRunId={SharedRunId}, ControlPlaneId={ControlPlaneId}, RuntimeInstanceId={RuntimeInstanceId}, Success={Success}, LocalRunId={LocalRunId}, ExecutionId={ExecutionId}, FailureReason={FailureReason}",
+                        "Shared queue admission decision received. SharedRunId={SharedRunId}, ControlPlaneId={ControlPlaneId}, DecisionType={DecisionType}, AssignedRuntimeInstanceId={AssignedRuntimeInstanceId}, Reason={Reason}",
                         sharedRun.SharedRunId,
                         controlPlaneId,
-                        targetRuntimeInstanceId,
-                        dispatchResult.Success,
-                        dispatchResult.LocalRunId,
-                        dispatchResult.ExecutionId,
-                        dispatchResult.FailureReason);
+                        admissionDecision.DecisionType,
+                        admissionDecision.AssignedRuntimeInstanceId,
+                        admissionDecision.Reason);
 
-                    if (!dispatchResult.Success)
+                    if (admissionDecision.DecisionType != AiRunAdmissionDecisionType.AssignToInstance ||
+                        string.IsNullOrWhiteSpace(admissionDecision.AssignedRuntimeInstanceId))
                     {
                         _logger.LogWarning(
-                            "Shared run dispatch failed. Requeuing shared queue item. SharedRunId={SharedRunId}, ControlPlaneId={ControlPlaneId}, RuntimeInstanceId={RuntimeInstanceId}, FailureReason={FailureReason}",
+                            "Shared queue dispatch could not assign runtime instance. SharedRunId={SharedRunId}, ControlPlaneId={ControlPlaneId}, DecisionType={DecisionType}, Reason={Reason}",
                             sharedRun.SharedRunId,
                             controlPlaneId,
-                            targetRuntimeInstanceId,
-                            dispatchResult.FailureReason);
+                            admissionDecision.DecisionType,
+                            admissionDecision.Reason);
 
                         await RequeueBestEffortAsync(
                                 queueItem,
-                                dispatchResult.FailureReason ?? "Shared run dispatch failed.",
+                                admissionDecision.Reason ?? "No runtime instance available for shared queue dispatch.",
                                 cancellationToken)
                             .ConfigureAwait(false);
 
@@ -340,83 +261,191 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                         {
                             Success = false,
                             SharedRunId = queueItem.SharedRunId,
-                            RuntimeInstanceId = targetRuntimeInstanceId,
+                            RuntimeInstanceId = request.RuntimeInstanceId,
                             QueueItem = queueItem,
                             SharedRun = sharedRun,
-                            DispatchResult = dispatchResult,
-                            Message = "Shared queue item dispatch failed and was requeued.",
-                            FailureReason = dispatchResult.FailureReason,
+                            Message = "Shared queue item could not be dispatched because admission did not assign a runtime instance.",
+                            FailureReason = admissionDecision.Reason,
                             StartedAtUtc = startedAtUtc,
                             CompletedAtUtc = completedAtUtc,
                             DurationMs = CalculateDurationMs(startedAtUtc, completedAtUtc),
-                            Diagnostics = dispatchResult.Diagnostics
+                            Diagnostics = new[]
+                            {
+                                admissionDecision.Reason ?? "Admission did not assign a runtime instance."
+                            }
                         };
                     }
 
-                    var dispatchedQueueItem = await _sharedQueue
-                        .MarkDispatchedAsync(
-                            queueItem.SharedRunId,
-                            queueItem.ClaimToken!,
-                            dispatchResult.Message,
-                            cancellationToken)
-                        .ConfigureAwait(false);
+                    var targetRuntimeInstanceId =
+                        admissionDecision.AssignedRuntimeInstanceId;
 
                     _logger.LogDebug(
-                        "Shared queue item marked as dispatched. SharedRunId={SharedRunId}, ControlPlaneId={ControlPlaneId}, RuntimeInstanceId={RuntimeInstanceId}, ClaimToken={ClaimToken}",
-                        queueItem.SharedRunId,
-                        controlPlaneId,
-                        targetRuntimeInstanceId,
-                        queueItem.ClaimToken);
-
-                    var dispatchedRun = await _sharedRunStore
-                        .MarkDispatchedAsync(
-                            sharedRun.SharedRunId,
-                            targetRuntimeInstanceId,
-                            dispatchResult.LocalRunId,
-                            dispatchResult.ExecutionId,
-                            dispatchResult.Message,
-                            cancellationToken)
-                        .ConfigureAwait(false);
-
-                    _logger.LogInformation(
-                        "Shared run record marked as dispatched. SharedRunId={SharedRunId}, ControlPlaneId={ControlPlaneId}, RuntimeInstanceId={RuntimeInstanceId}, LocalRunId={LocalRunId}, ExecutionId={ExecutionId}",
+                        "Reserving temporary admission capacity. SharedRunId={SharedRunId}, ControlPlaneId={ControlPlaneId}, RuntimeInstanceId={RuntimeInstanceId}, RunCount={RunCount}",
                         sharedRun.SharedRunId,
                         controlPlaneId,
                         targetRuntimeInstanceId,
-                        dispatchResult.LocalRunId,
-                        dispatchResult.ExecutionId);
+                        1);
 
-                    var completed =
-                        dispatchedRun ?? sharedRun;
+                    await _reservationStore
+                        .ReserveAsync(
+                            targetRuntimeInstanceId,
+                            runCount: 1,
+                            cancellationToken)
+                        .ConfigureAwait(false);
 
-                    var completedAtUtcSuccess =
-                        DateTimeOffset.UtcNow;
+                    reservedRuntimeInstanceId =
+                        targetRuntimeInstanceId;
 
-                    return new AiSharedQueueDispatchResult
+                    reservedSharedRunId =
+                        sharedRun.SharedRunId;
+
+                    _logger.LogInformation(
+                        "Temporary admission capacity reserved. SharedRunId={SharedRunId}, ControlPlaneId={ControlPlaneId}, RuntimeInstanceId={RuntimeInstanceId}, RunCount={RunCount}",
+                        sharedRun.SharedRunId,
+                        controlPlaneId,
+                        targetRuntimeInstanceId,
+                        1);
+
+                    try
                     {
-                        Success = true,
-                        SharedRunId = queueItem.SharedRunId,
-                        RuntimeInstanceId = targetRuntimeInstanceId,
-                        QueueItem = dispatchedQueueItem ?? queueItem,
-                        SharedRun = completed,
-                        DispatchResult = dispatchResult,
-                        Message = "Shared queue item dispatched successfully.",
-                        StartedAtUtc = startedAtUtc,
-                        CompletedAtUtc = completedAtUtcSuccess,
-                        DurationMs = CalculateDurationMs(startedAtUtc, completedAtUtcSuccess),
-                        Diagnostics = dispatchResult.Diagnostics
-                    };
+                        _logger.LogInformation(
+                            "Shared run dispatch to runtime instance started. SharedRunId={SharedRunId}, ControlPlaneId={ControlPlaneId}, RuntimeInstanceId={RuntimeInstanceId}, ClaimToken={ClaimToken}",
+                            sharedRun.SharedRunId,
+                            controlPlaneId,
+                            targetRuntimeInstanceId,
+                            queueItem.ClaimToken);
+
+                        var dispatchResult = await _sharedRunDispatcher
+                            .DispatchAsync(
+                                new AiSharedRunDispatchRequest
+                                {
+                                    SharedRun = sharedRun,
+                                    QueueItem = queueItem,
+                                    RuntimeInstanceId = targetRuntimeInstanceId,
+                                    ClaimToken = queueItem.ClaimToken,
+                                    CorrelationId = request.CorrelationId ?? sharedRun.CorrelationId,
+                                    RequestedBy = request.RequestedBy,
+                                    Source = request.Source,
+                                    Reason = request.Reason ?? "Dispatching claimed shared queue item.",
+                                    Metadata = operationMetadata
+                                },
+                                cancellationToken)
+                            .ConfigureAwait(false);
+
+                        _logger.LogInformation(
+                            "Shared run dispatch result received. SharedRunId={SharedRunId}, ControlPlaneId={ControlPlaneId}, RuntimeInstanceId={RuntimeInstanceId}, Success={Success}, LocalRunId={LocalRunId}, ExecutionId={ExecutionId}, FailureReason={FailureReason}",
+                            sharedRun.SharedRunId,
+                            controlPlaneId,
+                            targetRuntimeInstanceId,
+                            dispatchResult.Success,
+                            dispatchResult.LocalRunId,
+                            dispatchResult.ExecutionId,
+                            dispatchResult.FailureReason);
+
+                        if (!dispatchResult.Success)
+                        {
+                            _logger.LogWarning(
+                                "Shared run dispatch failed. Requeuing shared queue item. SharedRunId={SharedRunId}, ControlPlaneId={ControlPlaneId}, RuntimeInstanceId={RuntimeInstanceId}, FailureReason={FailureReason}",
+                                sharedRun.SharedRunId,
+                                controlPlaneId,
+                                targetRuntimeInstanceId,
+                                dispatchResult.FailureReason);
+
+                            await RequeueBestEffortAsync(
+                                    queueItem,
+                                    dispatchResult.FailureReason ?? "Shared run dispatch failed.",
+                                    cancellationToken)
+                                .ConfigureAwait(false);
+
+                            var completedAtUtc = DateTimeOffset.UtcNow;
+
+                            return new AiSharedQueueDispatchResult
+                            {
+                                Success = false,
+                                SharedRunId = queueItem.SharedRunId,
+                                RuntimeInstanceId = targetRuntimeInstanceId,
+                                QueueItem = queueItem,
+                                SharedRun = sharedRun,
+                                DispatchResult = dispatchResult,
+                                Message = "Shared queue item dispatch failed and was requeued.",
+                                FailureReason = dispatchResult.FailureReason,
+                                StartedAtUtc = startedAtUtc,
+                                CompletedAtUtc = completedAtUtc,
+                                DurationMs = CalculateDurationMs(startedAtUtc, completedAtUtc),
+                                Diagnostics = dispatchResult.Diagnostics
+                            };
+                        }
+
+                        var dispatchedQueueItem = await _sharedQueue
+                            .MarkDispatchedAsync(
+                                queueItem.SharedRunId,
+                                queueItem.ClaimToken!,
+                                dispatchResult.Message,
+                                cancellationToken)
+                            .ConfigureAwait(false);
+
+                        _logger.LogDebug(
+                            "Shared queue item marked as dispatched. SharedRunId={SharedRunId}, ControlPlaneId={ControlPlaneId}, RuntimeInstanceId={RuntimeInstanceId}, ClaimToken={ClaimToken}",
+                            queueItem.SharedRunId,
+                            controlPlaneId,
+                            targetRuntimeInstanceId,
+                            queueItem.ClaimToken);
+
+                        var dispatchedRun = await _sharedRunStore
+                            .MarkDispatchedAsync(
+                                sharedRun.SharedRunId,
+                                targetRuntimeInstanceId,
+                                dispatchResult.LocalRunId,
+                                dispatchResult.ExecutionId,
+                                dispatchResult.Message,
+                                cancellationToken)
+                            .ConfigureAwait(false);
+
+                        _logger.LogInformation(
+                            "Shared run record marked as dispatched. SharedRunId={SharedRunId}, ControlPlaneId={ControlPlaneId}, RuntimeInstanceId={RuntimeInstanceId}, LocalRunId={LocalRunId}, ExecutionId={ExecutionId}",
+                            sharedRun.SharedRunId,
+                            controlPlaneId,
+                            targetRuntimeInstanceId,
+                            dispatchResult.LocalRunId,
+                            dispatchResult.ExecutionId);
+
+                        var completed =
+                            dispatchedRun ?? sharedRun;
+
+                        var completedAtUtcSuccess =
+                            DateTimeOffset.UtcNow;
+
+                        return new AiSharedQueueDispatchResult
+                        {
+                            Success = true,
+                            SharedRunId = queueItem.SharedRunId,
+                            RuntimeInstanceId = targetRuntimeInstanceId,
+                            QueueItem = dispatchedQueueItem ?? queueItem,
+                            SharedRun = completed,
+                            DispatchResult = dispatchResult,
+                            Message = "Shared queue item dispatched successfully.",
+                            StartedAtUtc = startedAtUtc,
+                            CompletedAtUtc = completedAtUtcSuccess,
+                            DurationMs = CalculateDurationMs(startedAtUtc, completedAtUtcSuccess),
+                            Diagnostics = dispatchResult.Diagnostics
+                        };
+                    }
+                    finally
+                    {
+                        await ReleaseReservationBestEffortAsync(
+                                reservedSharedRunId,
+                                reservedRuntimeInstanceId,
+                                CancellationToken.None)
+                            .ConfigureAwait(false);
+
+                        reservedSharedRunId = null;
+                        reservedRuntimeInstanceId = null;
+                    }
                 }
                 finally
                 {
-                    await ReleaseReservationBestEffortAsync(
-                            reservedSharedRunId,
-                            reservedRuntimeInstanceId,
-                            CancellationToken.None)
-                        .ConfigureAwait(false);
-
-                    reservedSharedRunId = null;
-                    reservedRuntimeInstanceId = null;
+                    RestoreExecutionContext(
+                        previousExecutionContext);
                 }
             }
             catch (Exception exception)
@@ -607,6 +636,84 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
             }
 
             return merged;
+        }
+
+        /// <summary>
+        /// Creates an RBAC execution context from a durable execution context snapshot.
+        /// </summary>
+        /// <param name="snapshot">The durable execution context snapshot.</param>
+        /// <returns>The restored RBAC execution context.</returns>
+        private static RbacExecutionContext CreateExecutionContext(
+            ExecutionContextSnapshot snapshot)
+        {
+            ArgumentNullException.ThrowIfNull(snapshot);
+
+            return new RbacExecutionContext
+            {
+                ContextKey = string.IsNullOrWhiteSpace(snapshot.ContextKey)
+                    ? $"ctx-{Guid.NewGuid():N}"
+                    : snapshot.ContextKey,
+
+                Project = snapshot.Project ?? string.Empty,
+                UserId = snapshot.UserId ?? string.Empty,
+
+                TenantId = snapshot.TenantId ?? string.Empty,
+                TenantGroupId = snapshot.TenantGroupId ?? string.Empty,
+
+                CurrentNamespace = snapshot.CurrentNamespace ?? snapshot.TenantId ?? string.Empty,
+
+                Namespaces = CloneNamespaces(
+                    snapshot.Namespaces),
+
+                InFlightCount = 0,
+                TtlSeconds = 30,
+                CreatedAtUtc = DateTime.UtcNow
+            };
+        }
+
+        /// <summary>
+        /// Restores the previous RBAC execution context.
+        /// </summary>
+        /// <param name="previousExecutionContext">The previous execution context.</param>
+        private void RestoreExecutionContext(
+            RbacExecutionContext? previousExecutionContext)
+        {
+            if (previousExecutionContext is not null)
+            {
+                _executionContextAccessor.Set(
+                    previousExecutionContext);
+
+                return;
+            }
+
+            _executionContextAccessor.Clear();
+        }
+
+        /// <summary>
+        /// Clones namespace entries from a durable execution context snapshot.
+        /// </summary>
+        /// <param name="namespaces">The namespace entries to clone.</param>
+        /// <returns>The cloned namespace entries.</returns>
+        private static List<NamespaceEntry> CloneNamespaces(
+            IEnumerable<NamespaceEntry>? namespaces)
+        {
+            if (namespaces is null)
+            {
+                return new List<NamespaceEntry>();
+            }
+
+            return namespaces
+                .Select(
+                    item => new NamespaceEntry
+                    {
+                        Name = item.Name,
+                        Trns = item.Trns is null
+                            ? new HashSet<string>()
+                            : new HashSet<string>(
+                                item.Trns,
+                                StringComparer.Ordinal)
+                    })
+                .ToList();
         }
     }
 }

@@ -1,8 +1,10 @@
 ﻿using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.ControlPlane.Admission;
 using Multiplexed.Abstractions.AI.ControlPlane.Admission.Reservations;
+using Multiplexed.Abstractions.AI.ControlPlane.Discovery;
 using Multiplexed.Abstractions.AI.ControlPlane.Execution;
 using Multiplexed.Abstractions.AI.ControlPlane.ExecutionAssistance;
 using Multiplexed.Abstractions.AI.ControlPlane.Observability;
@@ -11,9 +13,11 @@ using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Capacity;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Control;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Environment;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Identity;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.SharedInstance;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue.Redis;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Controller;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Dispatch;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Scaling;
@@ -22,6 +26,7 @@ using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Background;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Dispatch;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Pump;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Queue;
+using Multiplexed.Abstractions.Core.ExecutionContext;
 using Multiplexed.AI.Runtime.ControlPlane.Admission;
 using Multiplexed.AI.Runtime.ControlPlane.Admission.Reservations;
 using Multiplexed.AI.Runtime.ControlPlane.Execution;
@@ -32,14 +37,17 @@ using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Capacity;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Environment;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Identity;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Isolation;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.SharedInstance;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue.Redis;
 using Multiplexed.AI.Runtime.ControlPlane.SharedController;
 using Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling;
 using Multiplexed.AI.Runtime.ControlPlane.SharedController.Store;
 using Multiplexed.AI.Runtime.ControlPlane.SharedQueue;
 using Multiplexed.AI.Runtime.Observability.Logging;
+using StackExchange.Redis;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.DI
 {
@@ -163,6 +171,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
             services.AddOptions<AiRuntimeScaleOutRequestStoreOptions>();
             services.AddOptions<AiRuntimeScaleOutRequestWatcherOptions>();
             services.AddOptions<SimulatedAiRuntimeScaleOutProviderOptions>();
+            services.AddOptions<RedisAiRuntimeRunExecutionIndexOptions>();
 
             services.TryAddSingleton<IAiControlPlaneObserver, NoopAiControlPlaneObserver>();
 
@@ -171,7 +180,31 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
             services.TryAddSingleton<IAiRuntimeRunExecutionIndex, InMemoryAiRuntimeRunExecutionIndex>();
             services.TryAddSingleton<IAiRuntimeQueueControlPlane, AiRuntimeQueueControlPlane>();
 
-            services.TryAddSingleton<IAiRuntimeInstanceRegistry, RedisAiRuntimeInstanceRegistry>();
+            services.TryAddSingleton<IAiRuntimeInstanceRegistry>(serviceProvider =>
+            {
+                var redis =
+                    serviceProvider.GetRequiredService<IConnectionMultiplexer>();
+
+                var registrationOptions =
+                    serviceProvider.GetRequiredService<IOptions<AiRuntimeInstanceRegistrationOptions>>();
+
+                var controlPlaneIdResolver =
+                    serviceProvider.GetRequiredService<IAiControlPlaneIdResolver>();
+
+                var visibilityEvaluator =
+                    serviceProvider.GetRequiredService<IAiRuntimeInstanceVisibilityEvaluator>();
+
+                var executionContextSnapshotProvider =
+                    serviceProvider.GetService<IExecutionContextSnapshotProvider>();
+
+                return new RedisAiRuntimeInstanceRegistry(
+                    redis,
+                    registrationOptions,
+                    controlPlaneIdResolver,
+                    visibilityEvaluator,
+                    executionContextSnapshotProvider);
+            });
+
             services.TryAddSingleton<IAiRuntimeInstanceControlPlane, AiRuntimeInstanceControlPlane>();
             services.TryAddSingleton<IAiRuntimeEnvironmentProvider, LocalAiRuntimeEnvironmentProvider>();
             services.TryAddSingleton<IAiSharedRuntimeInstanceRegistry, InMemoryAiSharedRuntimeInstanceRegistry>();
@@ -198,17 +231,75 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
             services.TryAddSingleton<IAiScaleOutFulfilledRunRequeueService, AiScaleOutFulfilledRunRequeueService>();
             services.TryAddSingleton<IAiRuntimeScaleOutProvider, SimulatedAiRuntimeScaleOutProvider>();
 
+            services.TryAddSingleton<IAiTenantRuntimeSettingsProvider, HardcodedAiTenantRuntimeSettingsProvider>();
+            services.TryAddSingleton<IAiRuntimeInstanceVisibilityEvaluator, AiRuntimeInstanceVisibilityEvaluator>();
+
             services.TryAddSingleton<IAiSharedRuntimeController, AiSharedRuntimeController>();
 
-            services.TryAddEnumerable(
-                ServiceDescriptor.Singleton<
-                    IAiRuntimeInstanceCapacityStore,
-                    RedisAiRuntimeInstanceCapacityStore>());
+            services.TryAddSingleton<IAiRuntimeInstanceCapacityStore>(serviceProvider =>
+            {
+                var redis =
+                    serviceProvider.GetRequiredService<IConnectionMultiplexer>();
+
+                var registrationOptions =
+                    serviceProvider.GetRequiredService<IOptions<AiRuntimeInstanceRegistrationOptions>>();
+
+                var controlPlaneIdResolver =
+                    serviceProvider.GetRequiredService<IAiControlPlaneIdResolver>();
+
+                var visibilityEvaluator =
+                    serviceProvider.GetRequiredService<IAiRuntimeInstanceVisibilityEvaluator>();
+
+                var executionContextSnapshotProvider =
+                    serviceProvider.GetService<IExecutionContextSnapshotProvider>();
+
+                return new RedisAiRuntimeInstanceCapacityStore(
+                    redis,
+                    registrationOptions,
+                    controlPlaneIdResolver,
+                    visibilityEvaluator,
+                    executionContextSnapshotProvider);
+            });
 
             services.TryAddSingleton<IAiRuntimeHostIdentity, AiRuntimeHostIdentity>();
             services.TryAddSingleton<IAiControlPlaneHostIdentity, AiControlPlaneHostIdentity>();
 
             services.AddAiRuntimeInstanceProviders();
+
+            return services;
+        }
+
+        /// <summary>
+        /// Replaces the default in-memory runtime run execution index with the Redis-backed implementation.
+        /// </summary>
+        /// <param name="services">The service collection.</param>
+        /// <param name="configure">Optional Redis runtime run execution index options configuration.</param>
+        /// <returns>The same service collection for chaining.</returns>
+        /// <remarks>
+        /// The default control-plane registration keeps <see cref="InMemoryAiRuntimeRunExecutionIndex"/>
+        /// for local tests and lightweight hosts.
+        ///
+        /// Call this method only for Redis-backed control-plane hosts that need the runtime RunId to
+        /// ExecutionId bridge to survive across runtime instances, HTTP providers, MCP hosts, and
+        /// Kubernetes-like multi-instance execution.
+        /// </remarks>
+        public static IServiceCollection AddAiRedisRuntimeRunExecutionIndex(
+            this IServiceCollection services,
+            Action<RedisAiRuntimeRunExecutionIndexOptions>? configure = null)
+        {
+            ArgumentNullException.ThrowIfNull(services);
+
+            if (configure is null)
+            {
+                services.AddOptions<RedisAiRuntimeRunExecutionIndexOptions>();
+            }
+            else
+            {
+                services.Configure(configure);
+            }
+
+            services.RemoveAll<IAiRuntimeRunExecutionIndex>();
+            services.AddSingleton<IAiRuntimeRunExecutionIndex, RedisAiRuntimeRunExecutionIndex>();
 
             return services;
         }

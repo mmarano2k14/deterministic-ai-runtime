@@ -1,6 +1,7 @@
 ﻿using Multiplexed.Abstractions.AI.ControlPlane.Admission;
 using Multiplexed.Abstractions.AI.Execution.Instance.Worker;
 using Multiplexed.Abstractions.AI.Runtime.Execution.Instance.Worker;
+using Multiplexed.Abstractions.Core.ExecutionContext;
 
 namespace Multiplexed.Abstractions.AI.ControlPlane.SharedController.Store
 {
@@ -16,6 +17,12 @@ namespace Multiplexed.Abstractions.AI.ControlPlane.SharedController.Store
     /// - SharedRunId: shared controller lifecycle id.
     /// - LocalRunId: local runtime queue/controller run id once dispatched.
     /// - ExecutionId: durable DAG execution id once created by a runtime instance.
+    ///
+    /// Tenant separation:
+    /// - ExecutionContextSnapshot.TenantId is the persistent tenant boundary used
+    ///   for filtering, storage isolation, dashboard views, and audit.
+    /// - ExecutionContextSnapshot.ContextKey is volatile and must only be used
+    ///   for traceability/debugging.
     /// </remarks>
     public sealed class AiSharedRunRecord
     {
@@ -33,6 +40,19 @@ namespace Multiplexed.Abstractions.AI.ControlPlane.SharedController.Store
         /// Original pipeline run request submitted to the shared controller.
         /// </summary>
         public required AiRuntimePipelineRunRequest RunRequest { get; init; }
+
+        /// <summary>
+        /// Snapshot of the RBAC execution context at the time this shared run
+        /// was submitted or created.
+        /// </summary>
+        /// <remarks>
+        /// Tenant filtering must use ExecutionContextSnapshot.TenantId.
+        /// Tenant group filtering must use ExecutionContextSnapshot.TenantGroupId.
+        ///
+        /// ContextKey is volatile and must not be used as a durable tenant partition key,
+        /// execution identifier, or orchestration key.
+        /// </remarks>
+        public required ExecutionContextSnapshot ExecutionContextSnapshot { get; init; }
 
         /// <summary>
         /// Optional local runtime queue run id once the shared run is dispatched
@@ -55,11 +75,6 @@ namespace Multiplexed.Abstractions.AI.ControlPlane.SharedController.Store
         /// Admission decision produced for this shared run.
         /// </summary>
         public AiRunAdmissionDecision? AdmissionDecision { get; init; }
-
-        /// <summary>
-        /// Optional tenant id used for future tenant-aware admission policies.
-        /// </summary>
-        public string? TenantId { get; init; }
 
         /// <summary>
         /// Optional pipeline key or pipeline name used for policy and routing decisions.
@@ -104,7 +119,7 @@ namespace Multiplexed.Abstractions.AI.ControlPlane.SharedController.Store
         public DateTimeOffset UpdatedAtUtc { get; init; }
 
         /// <summary>
-        /// Optional metadata for future tenant, priority, routing, dashboard,
+        /// Optional metadata for future priority, routing, dashboard,
         /// Kubernetes, or shared queue labels.
         /// </summary>
         public IReadOnlyDictionary<string, string> Metadata { get; init; } =

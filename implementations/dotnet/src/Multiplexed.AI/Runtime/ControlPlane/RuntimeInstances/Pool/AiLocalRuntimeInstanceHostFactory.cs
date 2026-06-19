@@ -65,6 +65,7 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
             int workerCount,
             int maxConcurrentRuns,
             int? localQueueCapacity,
+            IReadOnlyDictionary<string, string>? metadata = null,
             CancellationToken cancellationToken = default)
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(runtimeInstanceId);
@@ -75,6 +76,13 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
 
             var identity =
                 RuntimeInstanceIdentityParts.Parse(runtimeInstanceId);
+
+            var effectiveMetadata =
+                metadata is null
+                    ? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                    : new Dictionary<string, string>(
+                        metadata,
+                        StringComparer.OrdinalIgnoreCase);
 
             var services =
                 new ServiceCollection();
@@ -117,7 +125,8 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
                     runtimeInstanceId,
                     identity.HostId,
                     identity.RuntimeId,
-                    identity.ControlPlaneHostId));
+                    identity.ControlPlaneHostId,
+                    effectiveMetadata));
 
             services.TryAddEnumerable(
                 ServiceDescriptor.Singleton<IHostedService,
@@ -138,6 +147,33 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
                 if (localQueueCapacity.HasValue)
                 {
                     options.QueueCapacity = localQueueCapacity.Value;
+                }
+
+                if (effectiveMetadata.Count > 0)
+                {
+                    var registrationMetadata =
+                        new Dictionary<string, string>(
+                            options.Metadata,
+                            StringComparer.OrdinalIgnoreCase);
+
+                    var providerMetadata =
+                        new Dictionary<string, string>(
+                            options.ProviderMetadata,
+                            StringComparer.OrdinalIgnoreCase);
+
+                    foreach (var pair in effectiveMetadata)
+                    {
+                        if (string.IsNullOrWhiteSpace(pair.Key))
+                        {
+                            continue;
+                        }
+
+                        registrationMetadata[pair.Key] = pair.Value;
+                        providerMetadata[pair.Key] = pair.Value;
+                    }
+
+                    options.Metadata = registrationMetadata;
+                    options.ProviderMetadata = providerMetadata;
                 }
             });
 
@@ -163,14 +199,15 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
                     .ConfigureAwait(false);
 
             logger.LogInformation(
-                "Pool runtime instance created. RuntimeInstanceId={RuntimeInstanceId}, HostId={HostId}, RuntimeId={RuntimeId}, QueueStateRuntimeInstanceId={QueueStateRuntimeInstanceId}",
+                "Pool runtime instance created. RuntimeInstanceId={RuntimeInstanceId}, HostId={HostId}, RuntimeId={RuntimeId}, QueueStateRuntimeInstanceId={QueueStateRuntimeInstanceId}, MetadataCount={MetadataCount}",
                 runtimeInstanceId,
                 identity.HostId,
                 identity.RuntimeId,
-                queueState.RuntimeInstanceId);
+                queueState.RuntimeInstanceId,
+                effectiveMetadata.Count);
 
             logger.LogInformation(
-                "Pool runtime instance capacity resolved. RuntimeInstanceId={RuntimeInstanceId}, HostId={HostId}, RuntimeId={RuntimeId}, WorkerCountArg={WorkerCountArg}, MaxConcurrentRunsArg={MaxConcurrentRunsArg}, LocalQueueCapacityArg={LocalQueueCapacityArg}, QueueStateRuntimeInstanceId={QueueStateRuntimeInstanceId}, QueueStateMaxConcurrentRuns={QueueStateMaxConcurrentRuns}, QueueStateAvailableRunSlots={QueueStateAvailableRunSlots}, QueueStateRunningRunCount={QueueStateRunningRunCount}, QueueStateQueuedRunCount={QueueStateQueuedRunCount}, QueueStateQueueCapacity={QueueStateQueueCapacity}",
+                "Pool runtime instance capacity resolved. RuntimeInstanceId={RuntimeInstanceId}, HostId={HostId}, RuntimeId={RuntimeId}, WorkerCountArg={WorkerCountArg}, MaxConcurrentRunsArg={MaxConcurrentRunsArg}, LocalQueueCapacityArg={LocalQueueCapacityArg}, QueueStateRuntimeInstanceId={QueueStateRuntimeInstanceId}, QueueStateMaxConcurrentRuns={QueueStateMaxConcurrentRuns}, QueueStateAvailableRunSlots={QueueStateAvailableRunSlots}, QueueStateRunningRunCount={QueueStateRunningRunCount}, QueueStateQueuedRunCount={QueueStateQueuedRunCount}, QueueStateQueueCapacity={QueueStateQueueCapacity}, MetadataCount={MetadataCount}",
                 runtimeInstanceId,
                 identity.HostId,
                 identity.RuntimeId,
@@ -182,7 +219,8 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
                 queueState.AvailableRunSlots,
                 queueState.RunningRunCount,
                 queueState.QueuedRunCount,
-                queueState.QueueCapacity);
+                queueState.QueueCapacity,
+                effectiveMetadata.Count);
 
             var sharedRuntimeInstance =
                 new LocalAiSharedRuntimeInstance(
@@ -257,17 +295,31 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
             private readonly string hostId;
             private readonly string runtimeId;
             private readonly string controlPlaneHostId;
+            private readonly IReadOnlyDictionary<string, string> metadata;
 
             public PooledLocalRuntimeEnvironmentProvider(
                 string runtimeInstanceId,
                 string hostId,
                 string runtimeId,
-                string controlPlaneHostId)
+                string controlPlaneHostId,
+                IReadOnlyDictionary<string, string> metadata)
             {
-                this.runtimeInstanceId = runtimeInstanceId;
-                this.hostId = hostId;
-                this.runtimeId = runtimeId;
-                this.controlPlaneHostId = controlPlaneHostId;
+                this.runtimeInstanceId =
+                    runtimeInstanceId ?? throw new ArgumentNullException(nameof(runtimeInstanceId));
+
+                this.hostId =
+                    hostId ?? throw new ArgumentNullException(nameof(hostId));
+
+                this.runtimeId =
+                    runtimeId ?? throw new ArgumentNullException(nameof(runtimeId));
+
+                this.controlPlaneHostId =
+                    controlPlaneHostId ?? throw new ArgumentNullException(nameof(controlPlaneHostId));
+
+                this.metadata =
+                    new Dictionary<string, string>(
+                        metadata ?? new Dictionary<string, string>(),
+                        StringComparer.OrdinalIgnoreCase);
             }
 
             public Task<AiRuntimeEnvironmentSnapshot> GetSnapshotAsync(
@@ -281,6 +333,19 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
                 var hostName =
                     Environment.MachineName;
 
+                var providerMetadata =
+                    new Dictionary<string, string>(
+                        this.metadata,
+                        StringComparer.OrdinalIgnoreCase)
+                    {
+                        ["provider"] = "local-pool",
+                        ["machineName"] = hostName,
+                        ["processId"] = processId.ToString(),
+                        ["hostId"] = hostId,
+                        ["runtimeId"] = runtimeId,
+                        ["controlPlaneHostId"] = controlPlaneHostId
+                    };
+
                 return Task.FromResult(
                     new AiRuntimeEnvironmentSnapshot
                     {
@@ -291,15 +356,7 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
                         ControlPlaneHostId = controlPlaneHostId,
                         HostName = hostName,
                         ProcessId = processId,
-                        ProviderMetadata = new Dictionary<string, string>
-                        {
-                            ["provider"] = "local-pool",
-                            ["machineName"] = hostName,
-                            ["processId"] = processId.ToString(),
-                            ["hostId"] = hostId,
-                            ["runtimeId"] = runtimeId,
-                            ["controlPlaneHostId"] = controlPlaneHostId
-                        }
+                        ProviderMetadata = providerMetadata
                     });
             }
         }

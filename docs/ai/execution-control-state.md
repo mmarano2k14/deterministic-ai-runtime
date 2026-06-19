@@ -1,638 +1,633 @@
-# Execution Control State
+# Distributed Execution
 
-Status: Documentation split in progress.
+Status: Implemented / validated foundation, updated for RBAC-aware execution context propagation and multi-tenant runtime isolation.
 
-This document describes the **ExecutionId-level control state** used by the Deterministic AI Runtime to pause, resume, cancel, and wait for human input safely.
+This document describes how the **Deterministic AI Runtime** coordinates distributed workers and runtime instances safely.
 
 The complete technical reference is currently preserved in:
 
 - [runtime-internals.md](../runtime-internals.md)
 
+This document is also aligned with the current multi-tenant control-plane foundation.
+
+Execution control remains an `ExecutionId`-level concern, but every control-plane entry point that leads to runtime execution must preserve the durable execution context:
+
+```text
+RBAC ExecutionContext
+        ↓
+ExecutionContextSnapshot
+        ↓
+SharedRunRecord / Runtime Run Request
+        ↓
+Background dispatcher restores context
+        ↓
+Tenant-aware admission, registry, capacity, and execution control
+```
+
+The durable tenant boundary is `ExecutionContextSnapshot.TenantId`.
+
+`ContextKey` remains useful for RBAC correlation, diagnostics, and request-scoped control-plane behavior, but it is not the durable tenant isolation key.
+
+
 ---
 
 ## Purpose
 
-Production AI workflows are not always fire-and-forget.
+Distributed execution is one of the core foundations of the runtime.
 
-Long-running AI executions often need to be controlled after they have started.
+The goal is to allow multiple workers and distributed runtime instances to advance AI workflow execution safely without:
 
-Typical requirements include:
+- duplicate step execution
+- broken dependency ordering
+- stale ownership corruption
+- uncontrolled parallelism
+- lost retry state
+- corrupted terminal lifecycle
+- non-deterministic final results
 
-- pause an execution safely
-- resume an execution later
-- cancel an execution deterministically
-- wait for human approval or input
-- submit human input and continue execution
-- block new work without corrupting DAG state
-- preserve replay and audit foundations
-- avoid local process-only cancellation flags
+The runtime treats AI workflow execution as a distributed systems problem.
 
-The runtime solves this by introducing a durable **execution control state**.
+Workers do not own the workflow.
 
-This state belongs to the runtime execution itself and is addressed by `ExecutionId`.
-
----
-
-## Two-Layer Control Model
-
-The runtime separates control into two layers.
-
-```text
-Layer 1: Controller / Queue / Run Control
-        RunId
-        background controller queue
-        queued runs
-        running controller runs
-        hot enqueue
-        queue pause / resume
-        queued run cancellation
-        running run cancellation bridge
-
-Layer 2: Execution Control
-        ExecutionId
-        DAG execution control state
-        pause / resume
-        cancellation
-        waiting for human input
-        submit human input
-        claim blocking
-        finalization override
-```
-
-This distinction is important.
-
-A `RunId` belongs to the controller lifecycle.
-
-An `ExecutionId` belongs to the durable DAG execution lifecycle.
-
-```text
-RunId != ExecutionId
-```
-
-The controller may receive, queue, cancel, or start a run.
-
-The execution engine owns the deterministic DAG state once an execution exists.
+The execution state owns the workflow.
 
 ---
 
-## ExecutionId-Level Control
+## Execution Model
 
-Execution control operates at the `ExecutionId` level.
+The runtime executes workflows as DAGs.
 
-An `ExecutionId` is the authoritative runtime execution identifier.
+Each execution is represented by:
 
-It owns:
-
-- DAG execution state
+- an `ExecutionId`
+- an execution record
+- a DAG state
 - step states
-- dependency state
+- dependency information
 - retry state
-- retention and replay state
+- claim ownership metadata
+- result and payload references
+- terminal snapshot and replay metadata when applicable
+
+Workers advance the execution by reading shared state and attempting atomic transitions.
+
+The basic model is:
+
+```text
+Execution state exists
+        ↓
+Workers inspect state
+        ↓
+Ready steps are identified
+        ↓
+Workers attempt atomic claims
+        ↓
+Only one worker wins ownership of each step
+        ↓
+Step executes
+        ↓
+Result is persisted through controlled transition
+        ↓
+Runtime evaluates convergence
+```
+
+Execution is therefore state-driven, not process-driven.
+
+---
+
+## Redis as Distributed Hot State
+
+Redis is used as the active distributed coordination layer.
+
+It stores the hot execution state required to coordinate workers.
+
+This includes:
+
+- active execution records
+- step states
+- claim tokens
+- claim ownership metadata
+- retry scheduling metadata
+- recovery metadata
+- dependency information
+- distributed concurrency leases
 - execution control state
 
-Execution control must not be confused with controller queue control.
+Redis is not used only as a cache.
+
+It acts as the shared coordination substrate for active execution.
+
+---
+
+## Hot State vs Cold Storage
+
+Redis is the hot state layer.
+
+It is optimized for:
+
+- active execution state
+- coordination
+- atomic transitions
+- low-latency scheduling
+- claim ownership
+- retry and recovery metadata
+
+Redis should not hold large payloads or long-term history indefinitely.
+
+Large payloads, terminal snapshots, archived step data, and replay-related durable data are handled through durable storage such as MongoDB and payload stores.
+
+The separation is:
 
 ```text
-RunId
-= background controller / queued job lifecycle id
+Redis
+= hot coordination state
 
-ExecutionId
-= durable runtime execution id
+MongoDB / payload store
+= durable payloads, snapshots, archive, replay foundations
 ```
 
-Execution control applies only after a runtime execution exists.
+This distinction matters because distributed execution must remain fast while retention keeps hot state bounded.
 
 ---
 
-## Why Control State Must Be Durable
+## Atomic Coordination with Redis Lua
 
-Pause, resume, cancel, and human-in-the-loop control cannot rely only on:
+Critical state transitions are protected by Redis Lua scripts.
 
-- local process memory
-- cancellation tokens
-- temporary flags
-- worker-specific state
+Lua is used because distributed workers may attempt the same operation at the same time.
 
-Those approaches break when:
+Atomic Redis Lua transitions protect operations such as:
 
-- workers restart
-- multiple workers are running
-- the runtime is distributed
-- the process crashes
-- a controller instance is replaced
-- a workflow waits for human input for a long time
+- claiming a ready step
+- completing an owned step
+- failing an owned step
+- moving a failed step to `WaitingForRetry`
+- recovering stale running steps
+- applying finalization rules
+- enforcing concurrency lease acquisition
 
-The control state must therefore be persisted in shared infrastructure.
-
-The runtime stores execution control state independently from DAG step state.
+This ensures that multiple workers can safely compete for work without corrupting state.
 
 ---
 
-## Separation from DAG State
+## Atomic Step Claiming
 
-Execution DAG state describes workflow progress.
+Step claiming is one of the most important distributed operations.
 
-It answers questions such as:
+A worker can execute a step only if it successfully claims it.
 
-- which steps exist?
-- which steps are ready?
-- which steps are running?
-- which steps are completed?
-- which steps failed?
-- which steps are waiting for retry?
-- which claims are active?
-- which payload references exist?
-- whether convergence can be evaluated?
+A claim operation must verify:
 
-Execution control state describes whether execution is allowed to advance.
+- the execution exists
+- the step exists
+- the step is eligible
+- all dependencies are completed
+- the step is not already owned
+- retry timing allows execution
+- control state does not block claims
+- concurrency admission has succeeded
+- distributed capacity is available when required
 
-It answers questions such as:
+If the claim succeeds:
 
-- is execution paused?
-- is cancellation requested?
-- should new claims be blocked?
-- is the execution waiting for human input?
-- was human input submitted?
-- should finalization override natural completion?
+- the step moves to `Running`
+- the worker receives ownership
+- a claim token is stored
+- claim timestamp is recorded
 
-This separation keeps the DAG state machine clean.
-
-It avoids mixing operator, user, or system control state into the DAG execution state machine.
+Only the owning worker can complete or fail that step.
 
 ---
 
-## Control State Storage
+## Claim Tokens and Ownership
 
-Execution control state is stored under a dedicated Redis namespace.
+Each claimed step is protected by a claim token.
+
+The claim token must be provided when the worker attempts to:
+
+- complete the step
+- fail the step
+- schedule retry
+- persist terminal step transition
+
+If the token does not match, the update is rejected.
+
+This prevents stale workers from overwriting valid state.
+
+Example scenario:
 
 ```text
-ai:execution:control:{executionId}
+Worker A claims step
+        ↓
+Worker A becomes slow or crashes
+        ↓
+Recovery eventually releases the step
+        ↓
+Worker B claims and completes the step
+        ↓
+Worker A later wakes up and tries to complete
+        ↓
+Claim token mismatch
+        ↓
+Update rejected
 ```
 
-This keeps control state separate from Redis DAG execution state.
-
-The Redis control store supports:
-
-- get control state
-- create control state only if missing
-- update control state with optimistic versioning
-- delete control state
-
-Distributed-safe updates are implemented with Redis Lua compare-and-set behavior.
-
-This prevents multiple workers or operators from overwriting each other’s control transitions.
+This protects the execution from stale ownership corruption.
 
 ---
 
-## Control Statuses
+## Leases and Crash Recovery
 
-The execution control state supports the following statuses:
+Distributed execution must assume workers can crash.
+
+When a worker claims a step, the step is associated with claim timing metadata.
+
+If the worker crashes while the step is `Running`, the step may remain in a running state.
+
+Recovery logic detects stale running work.
+
+A stale running step can be moved back to `Ready` when its ownership window expires.
+
+Important distinction:
 
 ```text
-None
-Running
-Pausing
-Paused
-Resuming
-Cancelling
-Cancelled
-WaitingForInput
+Retry
+= the step logic failed
+
+Recovery
+= the worker disappeared or abandoned ownership
 ```
 
-These statuses represent the effective current control state of the execution.
+Recovery should not consume retry budget.
 
-They are separate from requested actions.
+This distinction is important for deterministic failure semantics.
 
 ---
 
-## Control Actions
+## Worker Crash Scenario
 
-Requested actions are tracked separately from status.
-
-Supported actions include:
+A typical worker crash flow is:
 
 ```text
-None
-Pause
-Resume
-Cancel
-WaitForInput
-SubmitInput
+Step is Ready
+        ↓
+Worker A claims step
+        ↓
+Step becomes Running
+        ↓
+Worker A crashes before completion
+        ↓
+Step remains Running
+        ↓
+Recovery detects stale ownership
+        ↓
+Step returns to Ready
+        ↓
+Worker B claims step
+        ↓
+Worker B completes step
 ```
 
-This separation allows the runtime to represent transitional states clearly.
+The runtime guarantee is:
 
-Example:
-
-```text
-Action = Pause
-Status = Pausing
-```
-
-This means a pause was requested, but active claimed work may still be draining.
-
-Once no active work remains:
-
-```text
-Status = Paused
-Action = None
-```
+- the step does not remain stuck forever
+- no invalid completion is accepted
+- retry count is not consumed by crash recovery
+- the execution can continue
 
 ---
 
-## Execution Control Service
+## Duplicate Execution Prevention
 
-The execution control service exposes high-level operations.
+Duplicate execution prevention is handled through:
 
-Example operations include:
+- Redis Lua atomic claims
+- claim tokens
+- ownership validation
+- strict state transitions
+- idempotent completion rules
 
-```csharp
-await controlService.PauseExecutionAsync(executionId);
-
-await controlService.ResumeExecutionAsync(executionId);
-
-await controlService.CancelExecutionAsync(executionId);
-
-await controlService.MarkWaitingForInputAsync(
-    executionId,
-    waitingKey: "approval:pricing",
-    waitingStepName: "human-approval");
-
-await controlService.SubmitHumanInputAsync(
-    executionId,
-    waitingKey: "approval:pricing",
-    input: new Dictionary<string, object?>
-    {
-        ["approved"] = true,
-        ["comment"] = "Approved by operator"
-    });
-```
-
-The service owns durable control transitions.
-
-The execution engine should not duplicate pause, resume, cancel, or human-input state logic internally.
-
-Instead, the execution engine asks the runtime control gate whether execution may advance.
-
----
-
-## Runtime Control Gate
-
-The runtime uses a control gate before advancing execution work.
+If multiple workers attempt to claim the same step:
 
 ```text
-Execution worker
+Worker A tries to claim step
+Worker B tries to claim step
+Worker C tries to claim step
         ↓
-Execution control gate
+Redis Lua evaluates atomically
         ↓
-Can this ExecutionId claim or advance work?
+Only one worker succeeds
         ↓
-Yes → continue claim flow
-No  → stop claiming
+Others fail and must retry another eligible step
 ```
 
-The control gate returns a decision describing whether:
-
-- execution may continue
-- new claims should stop
-- cancellation should be applied
-- execution is waiting for input
-- execution is already cancelled
-
-This keeps the claim path clean and avoids duplicating control logic across runners and workers.
+This ensures that only one worker owns a step at a time.
 
 ---
 
-## Claim Blocking
+## Dependency-Safe Scheduling
 
-Execution control state is evaluated before Redis DAG step claiming.
+The runtime respects DAG dependencies before execution.
 
-New claims are blocked for:
+A step can become eligible only when:
+
+- all dependencies are completed
+- the step is `Ready` or retry-eligible
+- no other worker currently owns the step
+- control state allows advancement
+- concurrency admission allows execution
+- distributed capacity is available
+
+This guarantees that distributed scheduling does not violate the DAG structure.
+
+Parallelism is allowed only where dependencies allow it.
+
+---
+
+## Bounded Parallel DAG Execution
+
+The runtime supports bounded distributed parallel DAG execution.
+
+Instead of executing one step at a time, workers can evaluate eligible DAG steps, resolve concurrency admission, acquire distributed capacity, claim ownership atomically, and execute multiple steps concurrently.
+
+This enables:
+
+- bounded local parallel execution
+- dependency-aware scheduling
+- distributed-safe multi-worker orchestration
+- deterministic batch convergence
+- policy-aware concurrency admission before execution
+- provider/model/operation throttling across workers
+
+Execution remains fully state-driven.
+
+Workers:
+
+1. evaluate eligible steps
+2. resolve pipeline-level and step-level `config.concurrency`
+3. create an `AiConcurrencyContext` containing pipeline, step, provider, model, and operation metadata
+4. apply matching generic throttle rules
+5. evaluate configured concurrency admission policies
+6. acquire distributed concurrency capacity through Redis
+7. atomically claim steps through Redis Lua scripts
+8. execute claimed steps concurrently
+9. release concurrency capacity after execution
+10. persist completion/failure transitions safely
+
+---
+
+## Concurrency Before Claim
+
+Concurrency admission is enforced before DAG step ownership is claimed.
+
+A safe distributed flow is:
 
 ```text
-Pausing
-Paused
-WaitingForInput
-Cancelling
-Cancelled
-```
-
-New claims are allowed for:
-
-```text
-None
-Running
-Resuming
-```
-
-This means an execution can be paused or cancelled without corrupting DAG state.
-
-Already claimed work may finish safely.
-
-New work will not be claimed while the execution is controlled.
-
----
-
-## Pause Behavior
-
-Pause is cooperative and deterministic.
-
-A pause request does not kill already running work.
-
-Instead, it prevents new step claims.
-
-The flow is:
-
-```text
-PauseExecutionAsync
+Resolve pipeline + step config.concurrency
         ↓
-Status = Pausing
+Create AiConcurrencyContext
         ↓
-new claims are blocked
+Apply matching concurrency.throttle rules
         ↓
-already claimed work may finish
-        ↓
-runtime observes no active claimed/running work
-        ↓
-Status = Paused
-```
-
-This makes pause safe for distributed workers.
-
-The runtime does not kill running steps.
-
-It prevents new work from being claimed and waits for active work to drain.
-
----
-
-## Resume Behavior
-
-Resume allows a paused execution to continue.
-
-The flow is:
-
-```text
-ResumeExecutionAsync
-        ↓
-Status = Resuming
-        ↓
-claims are allowed again
-        ↓
-runtime observes advancement
-        ↓
-Status = Running
-```
-
-Resume does not rebuild execution state.
-
-It re-enables state-driven DAG advancement.
-
----
-
-## Cancellation Behavior
-
-Cancellation is cooperative and deterministic.
-
-The flow is:
-
-```text
-CancelExecutionAsync
-        ↓
-Status = Cancelling
-        ↓
-new claims are blocked
-        ↓
-already claimed work may finish
-        ↓
-finalization observes cancellation
-        ↓
-final persisted execution status = Cancelled
-```
-
-Cancellation is represented as durable state.
-
-This avoids relying on a local cancellation token that disappears when the process restarts.
-
----
-
-## Cancellation Finalization Override
-
-Cancellation must override natural DAG completion.
-
-This is important in race scenarios.
-
-Example:
-
-```text
-Cancellation requested
-        +
-already claimed step completes successfully
-        +
-DAG convergence says Completed
-        ↓
-final persisted status = Cancelled
-```
-
-Without cancellation finalization override, a cancelled workflow could incorrectly converge as completed.
-
-The runtime must preserve the operator/user cancellation intent during terminal finalization.
-
----
-
-## Human-in-the-Loop State
-
-The runtime can place an execution into `WaitingForInput`.
-
-This is useful for:
-
-- human approval
-- manual review
-- compliance checkpoint
-- external decision gate
-- operator intervention
-- workflow continuation after external input
-
-The flow is:
-
-```text
-MarkWaitingForInputAsync
-        ↓
-Status = WaitingForInput
-        ↓
-claims are blocked
-        ↓
-operator or external system submits input
-        ↓
-SubmitHumanInputAsync
-        ↓
-Status = Resuming
-        ↓
-runtime marks execution Running on next advancement
-```
-
-This provides a durable foundation for human-in-the-loop workflows.
-
----
-
-## Human Input Payload
-
-Submitted human input is stored in durable execution control state.
-
-It may include structured values such as:
-
-```json
-{
-  "approved": true,
-  "comment": "Approved by operator",
-  "reviewedBy": "admin"
-}
-```
-
-This input can later be consumed by runtime logic, a human approval step, or a continuation mechanism depending on the pipeline design.
-
-The current capability is a foundation for durable human input handling.
-
----
-
-## Control State and Distributed Workers
-
-Distributed workers must all observe the same control state.
-
-Because control state is stored in Redis, each worker can evaluate the current control decision before claiming work.
-
-This ensures that:
-
-- one worker cannot continue claiming while another has paused the execution
-- cancellation is visible across workers
-- waiting-for-input blocks distributed advancement
-- resumed execution can continue across available workers
-
----
-
-## Control State and Retry
-
-Execution control state works alongside retry state.
-
-A step may be retry-ready, but still not claimable if execution control blocks advancement.
-
-Example:
-
-```text
-Step is WaitingForRetry
-Retry window opens
-Execution is Paused
-        ↓
-Step remains unclaimed
-```
-
-This ensures operator control has priority over normal scheduling.
-
----
-
-## Control State and Concurrency
-
-Execution control state is evaluated before distributed concurrency capacity should be acquired.
-
-Concurrency admission should not be consumed when control state blocks execution.
-
-A safe ordering is:
-
-```text
-Check execution control gate
-        ↓
-Resolve concurrency config
-        ↓
-Evaluate policy admission
+Evaluate configured admission policies
         ↓
 Acquire Redis concurrency lease
         ↓
+Attempt DAG claim
+```
+
+Important rules:
+
+- if policy admission is denied, no Redis concurrency lease is acquired
+- if Redis admission is denied, no DAG claim is attempted
+- if Redis admission succeeds but the DAG claim fails, the concurrency lease is released immediately
+- if the DAG claim succeeds, the lease remains owned until step execution finishes
+
+This prevents leaked distributed capacity.
+
+---
+
+## Multi-Worker Execution
+
+Multiple workers can safely process the same execution because they coordinate through shared state.
+
+Workers do not communicate directly with each other.
+
+They coordinate through Redis.
+
+```text
+Worker 1 ─┐
+Worker 2 ─┼── Redis hot state / Lua coordination ── Execution state
+Worker 3 ─┘
+```
+
+This reduces coupling and allows workers to remain stateless.
+
+---
+
+## RunId and ExecutionId
+
+The runtime separates controller lifecycle identity from runtime execution identity.
+
+```text
+RunId
+= controller/job lifecycle identifier
+
+ExecutionId
+= authoritative runtime execution identifier
+```
+
+This separation is critical.
+
+A `RunId` is not a DAG execution id.
+
+An `ExecutionId` is not a controller queue id.
+
+The DAG store, snapshots, replay, resolver, retention, and cleanup lifecycle are addressed by `ExecutionId`.
+
+The background controller tracks queued and running work by `RunId`.
+
+---
+
+## Distributed Execution Modes
+
+The runtime supports two important execution models.
+
+```text
+Model 1:
+multiple isolated executions
+unique ExecutionId per run
+safe snapshot/replay per execution
+```
+
+```text
+Model 2:
+one ExecutionId
+multiple runtime instances
+shared distributed DAG execution
+workers competing safely for the same execution's steps
+```
+
+The distributed shared-execution model relies on:
+
+- Redis-backed DAG state
+- atomic step claiming
+- lease-based ownership
+- deterministic convergence
+- bounded batch execution
+- idempotent terminal lifecycle handling
+- archive-backed resolver reconstruction after retention
+
+This makes distributed runtime-instance execution a validated runtime capability, not only a future direction.
+
+---
+
+## Multi-Runtime-Instance Execution
+
+In distributed multi-runtime-instance execution, multiple runtime workers can safely advance the same `ExecutionId` through Redis-backed DAG coordination.
+
+Current validated behavior includes:
+
+- strict `RunId` / `ExecutionId` separation
+- isolated execution state per independent `ExecutionId`
+- shared execution mode for one `ExecutionId`
+- Redis-backed DAG coordination
+- atomic ownership through Lua
+- bounded batch execution
+- retry-safe multi-worker execution
+- idempotent terminal lifecycle processing
+- terminal snapshot support
+- retention and replay compatibility
+- archive-backed resolver reconstruction after retention
+- distributed execution testing scenarios
+
+Enterprise demo and Kubernetes deployment scenarios remain roadmap items.
+
+---
+
+## Retry-Aware Distributed Execution
+
+Retry behavior is coordinated through runtime state.
+
+When a step fails and retry is allowed:
+
+- retry count is updated
+- next retry time is calculated
+- step moves to `WaitingForRetry`
+- the step cannot be claimed again until retry time opens
+
+Workers must respect retry state.
+
+A retry-ready step becomes eligible only when:
+
+```text
+UtcNow >= NextRetryAtUtc
+```
+
+This prevents retry storms and keeps retry behavior deterministic.
+
+---
+
+## Control-State-Aware Execution
+
+Distributed workers must also respect execution control state.
+
+The control gate may block claims for statuses such as:
+
+- `Pausing`
+- `Paused`
+- `WaitingForInput`
+- `Cancelling`
+- `Cancelled`
+
+This means pause, cancel, and human-in-the-loop control can stop new claims without corrupting DAG state.
+
+Already claimed work may drain safely depending on the control scenario.
+
+---
+
+## Terminal Finalization
+
+Distributed finalization must be idempotent.
+
+More than one worker may observe that an execution appears terminal.
+
+Finalization must therefore be safe if attempted multiple times.
+
+The runtime must ensure that:
+
+- terminal state is persisted once
+- snapshots are created consistently
+- cancellation override is respected
+- cleanup does not remove required replay or resolver data too early
+- final status remains deterministic
+
+This is especially important when cancellation races with natural DAG completion.
+
+---
+
+## Deterministic Convergence Under Concurrency
+
+The distributed execution model is designed to converge deterministically.
+
+The final execution result should not depend on:
+
+- which worker claimed a step
+- which worker finished first
+- how many workers were active
+- whether a stale worker was recovered
+- whether retry timing created different scheduling order
+- whether retention compacted or externalized completed payloads
+
+The final result is derived from state and valid transitions.
+
+This is the core difference between simply running distributed work and building deterministic execution infrastructure.
+
+---
+
+## Distributed Execution Flow
+
+A simplified distributed execution flow is:
+
+```text
+Start execution
+        ↓
+Create DAG state
+        ↓
+Workers poll or receive execution work
+        ↓
+Recover stale running steps
+        ↓
+Find eligible ready steps
+        ↓
+Apply execution control gate
+        ↓
+Resolve concurrency configuration
+        ↓
+Create concurrency context
+        ↓
+Apply throttle rules
+        ↓
+Evaluate policy admission
+        ↓
+Acquire distributed concurrency lease
+        ↓
 Claim step atomically
+        ↓
+Execute step
+        ↓
+Complete / fail / schedule retry atomically
+        ↓
+Release concurrency lease
+        ↓
+Apply retention if required
+        ↓
+Evaluate convergence
+        ↓
+Finalize execution if terminal
 ```
 
-If control blocks execution, no concurrency capacity should be acquired.
-
----
-
-## Control State and Replay
-
-Execution control state must not corrupt replay foundations.
-
-Replay should be based on durable execution state and terminal snapshots.
-
-For terminal executions, final persisted status must reflect cancellation if cancellation won the finalization race.
-
-Future replay and audit work may include richer control history, but the current foundation already separates control intent from DAG step state.
-
----
-
-## Control State Lifecycle
-
-A simplified lifecycle is:
-
-```text
-None / Running
-        ↓
-Pause requested
-        ↓
-Pausing
-        ↓
-Paused
-        ↓
-Resume requested
-        ↓
-Resuming
-        ↓
-Running
-```
-
-Cancellation can occur from active or controlled states:
-
-```text
-Running / Pausing / Paused / WaitingForInput
-        ↓
-Cancel requested
-        ↓
-Cancelling
-        ↓
-Cancelled
-```
-
-Human input follows:
-
-```text
-Running
-        ↓
-WaitingForInput
-        ↓
-SubmitInput
-        ↓
-Resuming
-        ↓
-Running on next advancement
-```
-
----
-
-## Validated Behavior
-
-The execution-control implementation is validated by integration tests covering:
-
-- Redis control state persistence
-- optimistic Redis version updates
-- execution pause
-- execution resume
-- execution cancellation
-- waiting for human input
-- human input submission
-- control-based claim blocking
-- `Pausing -> Paused`
-- `Resuming -> Running`
-- cancellation override during finalization
-- chaos scenarios with distributed execution
-
-Queue-level control is documented separately in:
-
-- [Runtime Queue Control](runtime-queue-control.md)
+This flow keeps execution safe under concurrency, failure, retry, retention, and control-plane operations.
 
 ---
 
@@ -640,29 +635,39 @@ Queue-level control is documented separately in:
 
 | Component | Responsibility |
 |---|---|
-| Execution control store | Persists durable control state by `ExecutionId`. |
-| Execution control service | Applies high-level pause, resume, cancel, wait, and submit-input operations. |
-| Runtime control gate | Evaluates whether execution may advance or claim work. |
-| DAG claim service | Blocks new claims when control state requires it. |
-| Finalization service | Applies cancellation override during terminal status resolution. |
-| Background controller | Bridges running `RunId` cancellation to `ExecutionId` control. |
+| DAG execution engine | Evaluates dependencies and convergence. |
+| Redis DAG store | Stores active execution state and applies atomic transitions. |
+| Redis Lua scripts | Protect critical distributed state changes. |
+| Worker / runner | Executes claimed steps and reports results. |
+| Claim service | Acquires ownership of eligible work. |
+| Retry engine | Decides retry behavior from config and policies. |
+| Concurrency engine | Applies admission and distributed capacity limits. |
+| Redis concurrency gate | Enforces distributed concurrency through lease-based scopes. |
+| Execution control gate | Blocks or allows advancement based on control state. |
+| Retention coordinator | Keeps hot state bounded while preserving required data. |
+| Resolver | Reconstructs compacted or evicted data when needed. |
+| Finalization service | Persists terminal state and snapshots safely. |
 
 ---
 
 ## Failure Scenarios Covered
 
+Distributed execution is designed to handle:
+
 | Scenario | Runtime Behavior |
 |---|---|
-| Pause requested while workers are active | New claims are blocked; already claimed work drains. |
-| Resume requested after pause | Claims become allowed again. |
-| Cancel requested near natural completion | Finalization resolves execution as `Cancelled`. |
-| Worker restarts during paused execution | Control state remains in Redis. |
-| Human input required | Execution moves to `WaitingForInput`; claims are blocked. |
-| Human input submitted | Execution moves toward `Resuming` and can continue. |
-| Multiple operators update state | Optimistic Redis versioning prevents unsafe overwrite. |
-| Distributed workers observe different timing | Shared control state keeps final behavior consistent. |
-| Retry window opens while paused | Retry-ready step remains unclaimed. |
-| Concurrency would otherwise allow execution | Control gate still blocks advancement first. |
+| Worker crashes while running a step | Recovery returns stale running step to eligible state. |
+| Multiple workers claim same step | Redis Lua allows only one winner. |
+| Stale worker completes late | Claim token mismatch rejects update. |
+| Step fails transiently | Retry state moves step to `WaitingForRetry`. |
+| Retry window not open | Step is not claimable yet. |
+| Execution is paused | New claims are blocked. |
+| Execution is waiting for input | New claims are blocked until input is submitted. |
+| Execution is cancelled | Finalization resolves to `Cancelled`. |
+| Concurrency capacity is denied | No DAG claim is attempted. |
+| Concurrency lease acquired but claim fails | Lease is released immediately. |
+| Large payload is evicted | Resolver reconstructs from persistent storage. |
+| Multiple workers observe terminal state | Finalization remains idempotent. |
 
 ---
 
@@ -670,31 +675,35 @@ Queue-level control is documented separately in:
 
 | Capability | Status |
 |---|---|
-| Durable execution control state | Implemented / validated |
-| Redis-backed control store | Implemented / validated |
-| Optimistic control state updates | Implemented / validated |
-| Pause execution | Implemented / validated |
-| Resume execution | Implemented / validated |
-| Cancel execution | Implemented / validated |
-| Claim blocking by control status | Implemented / validated |
-| Waiting for human input | Implemented / validated |
-| Submit human input | Implemented / validated |
-| `Pausing -> Paused` transition | Implemented / validated |
-| `Resuming -> Running` transition | Implemented / validated |
-| Cancellation finalization override | Implemented / validated |
-| Control gate integration | Implemented / validated |
-| Rich control history / audit trail | Planned |
-| Durable decision ledger integration | Planned |
+| Redis-backed hot execution state | Implemented |
+| Redis Lua atomic step claiming | Implemented |
+| Claim token ownership | Implemented |
+| Retry-aware distributed state | Implemented |
+| Worker crash recovery | Implemented |
+| Bounded batch execution | Implemented |
+| Distributed workers | Implemented |
+| RunId / ExecutionId separation | Implemented |
+| Runtime queue control integration | Implemented |
+| Execution control gate integration | Implemented |
+| Distributed multi-runtime-instance execution | Implemented / validated foundations |
+| Retention and replay compatibility | Implemented / validated foundations |
+| Archive-backed resolver reconstruction after retention | Foundation available |
+| Kubernetes deployment scenario | Planned |
+| Enterprise demo scenario | Planned |
 
 ---
 
 ## Related Documents
 
 - [Architecture Overview](architecture-overview.md)
-- [Distributed Execution](distributed-execution.md)
-- [Runtime Queue Control](runtime-queue-control.md)
-- [Retry and Recovery](retry-and-recovery.md)
 - [Distributed Concurrency and Throttling](distributed-concurrency-throttling.md)
+- [Retry and Recovery](retry-and-recovery.md)
+- [Execution Control State](execution-control-state.md)
+- [Runtime Queue Control](runtime-queue-control.md)
+- [Multi-Tenant Control Plane Isolation](multi-tenant-control-plane-isolation.md)
+- [MCP Server as Runtime Control Plane](mcp-server-control-plane.md)
+- [Shared Runtime Controller / Shared Queue Usage](shared-controller-usage.md)
+- [Retention and Compaction](retention-and-compaction.md)
 - [Replay and Audit](replay-and-audit.md)
 - [Testing Strategy](testing-strategy.md)
 

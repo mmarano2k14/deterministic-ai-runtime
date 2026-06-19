@@ -1,6 +1,7 @@
 ﻿using Microsoft.Extensions.Options;
 using Multiplexed.AI.McpServer.Host.Configuration;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http;
+using Multiplexed.Rbac.Core.Runtime;
 
 namespace Multiplexed.AI.McpServer.Host.Bootstrap
 {
@@ -33,7 +34,21 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
                 case AiMcpHostMode.ControlPlaneWithLocalRuntimeInstances:
                 case AiMcpHostMode.ControlPlaneWithHttpRuntimeInstances:
                     Console.WriteLine("[APP CONFIG] Mapping MCP endpoint '/mcp'.");
+
+                    app.UseAuthentication();
+
+                    app.UseWhen(
+                        context => context.Request.Path.StartsWithSegments("/mcp"),
+                        branch =>
+                        {
+                            branch.UseMiddleware<ExecutionContextMiddleware>();
+                            branch.UseMiddleware<NamespaceGuardMiddleware>();
+                        });
+
+                    app.UseAuthorization();
+
                     app.MapMcp("/mcp");
+
                     break;
 
                 case AiMcpHostMode.RuntimeInstanceOnly:

@@ -1,4 +1,5 @@
-﻿using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
+﻿using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
 
 namespace Multiplexed.Abstractions.AI.ControlPlane.Admission
 {
@@ -33,6 +34,21 @@ namespace Multiplexed.Abstractions.AI.ControlPlane.Admission
         /// Snapshot of the selected runtime instance when available.
         /// </summary>
         public AiRuntimeInstanceSnapshot? AssignedInstance { get; init; }
+
+        /// <summary>
+        /// Tenant identifier evaluated by admission.
+        /// </summary>
+        public string? TenantId { get; init; }
+
+        /// <summary>
+        /// Tenant group identifier evaluated by admission.
+        /// </summary>
+        public string? TenantGroupId { get; init; }
+
+        /// <summary>
+        /// Runtime settings resolved for the tenant during admission.
+        /// </summary>
+        public AiTenantRuntimeSettings? TenantRuntimeSettings { get; init; }
 
         /// <summary>
         /// Indicates whether the caller should request runtime instance scale-out.
@@ -90,6 +106,7 @@ namespace Multiplexed.Abstractions.AI.ControlPlane.Admission
 
         /// <summary>
         /// Optional metadata useful for logs, dashboards, and future shared admission.
+        /// Metadata must not be used as the primary source for critical routing decisions.
         /// </summary>
         public IReadOnlyDictionary<string, string> Metadata { get; init; } =
             new Dictionary<string, string>();

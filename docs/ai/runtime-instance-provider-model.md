@@ -1,17 +1,20 @@
 # Runtime Instance Provider Model
 
-Status: Architecture direction, implemented foundation validated for local dispatch, HTTP pooled runtime scenarios, provider-based scale-out, Redis-backed scale-out request persistence, local runtime scale-out, fulfilled-run requeue, and end-to-end MCP scale-out execution.
+Status: Implemented foundation / validated for local dispatch, HTTP pooled runtime scenarios, provider-based scale-out, Redis-backed scale-out request persistence, local runtime scale-out, fulfilled-run requeue, end-to-end MCP scale-out execution, and tenant-aware runtime isolation across shared, dedicated, and hybrid runtime modes.
 
 This document describes the **runtime instance provider model** for the Deterministic AI Runtime control plane.
 
-The first provider-based hosting layer is now implemented and validated through local and HTTP runtime instance providers, runtime instance visibility, shared queue dispatch, Redis-backed runtime coordination, provider-based scale-out, local runtime instance scaling, and MCP control-plane integration.
+The provider model makes runtime instance administration, dispatch, status/control operations, and scale-out provider-based, dynamically extensible, and compatible with the existing local runtime queue architecture.
 
-The goal is to make runtime instance administration, dispatch, status/control operations, and scale-out provider-based, dynamically loadable, and extensible without changing the local runtime queue architecture.
+It also defines how provider dispatch and provider scale-out participate in the multi-tenant control-plane isolation model.
 
 The complete technical reference is currently preserved in:
 
-- [runtime-control-plane.md](runtime-control-plane.md)
-- [mcp-server-control-plane.md](mcp-server-control-plane.md)
+- [Architecture Overview](architecture-overview.md)
+- [Runtime Control Plane](runtime-control-plane.md)
+- [Runtime Discovery, Registry, and Capacity](runtime-discovery-registry-capacity.md)
+- [MCP Server as Runtime Control Plane](mcp-server-control-plane.md)
+- [Multi-Tenant Control Plane Isolation](multi-tenant-control-plane-isolation.md)
 
 ---
 
@@ -44,9 +47,14 @@ The runtime now has:
 - dispatch-time admission
 - Redis-backed admission reservation store
 - MCP control-plane adapter
+- tenant-aware runtime settings
+- tenant-aware admission
+- tenant-visible registry filtering
+- tenant-visible capacity filtering
+- shared, dedicated, and hybrid runtime isolation
 - end-to-end MCP Redis local scale-out execution validation
 
-The next step is to continue hardening provider capabilities and remote transports while preserving the validated local and HTTP provider paths.
+The provider model exists so the shared controller and admission layer do not become transport-specific.
 
 Today, dispatch already flows through provider-style runtime instance resolution for local and HTTP pooled runtime scenarios.
 
@@ -60,21 +68,200 @@ Tomorrow, runtime instances may live behind:
 - external provider
 - hosted runtime worker pool
 
-The core architecture should not be rewritten for each transport.
+The runtime architecture should not be rewritten for each transport.
 
 Providers solve this.
 
-The provider model must also preserve the new shared queue pump semantics:
+---
+
+## Core Principle
+
+Admission decides **which runtime instance** should receive a run.
+
+Providers decide **how to communicate** with that runtime instance.
+
+For scale-out, admission decides **that more capacity is needed**.
+
+The provider selector decides **which provider can create that capacity**.
 
 ```text
-PumpRuntimeInstanceId
-    identifies the runtime instance executing a pump cycle
+Admission
+    decides WHO or WHETHER SCALE-OUT IS NEEDED
 
-AssignedRuntimeInstanceId
-    identifies the runtime instance selected by admission for dispatch
+Provider Router
+    decides HOW TO REACH OR SCALE THE TARGET ENVIRONMENT
+
+Provider
+    performs the transport-specific operation
 ```
 
-These two identities are intentionally separate.
+Scale-out is modeled as a provider capability.
+
+`IAiRuntimeScaleOutProvider` extends `IAiRuntimeInstanceProvider`.
+
+This means scale-out uses the same provider discovery/routing model as dispatch, status, and control.
+
+There is no separate scale-out architecture.
+
+---
+
+## Multi-Tenant Provider Boundary
+
+The provider model must preserve the tenant boundary established by the control plane.
+
+The durable tenant boundary is:
+
+```text
+ExecutionContextSnapshot.TenantId
+```
+
+The following values are useful but must not be treated as the durable tenant boundary:
+
+```text
+ContextKey
+metadata tenant aliases
+provider metadata
+transport endpoint
+runtime instance id string
+```
+
+The provider model must preserve `ExecutionContextSnapshot` across every hop:
+
+```text
+MCP request
+    ↓
+RBAC ExecutionContext
+    ↓
+ExecutionContextSnapshot
+    ↓
+SharedRunRecord
+    ↓
+Shared queue dispatcher restores context
+    ↓
+Admission filters tenant-visible registry/capacity
+    ↓
+Provider dispatch
+    ↓
+Target runtime local queue
+    ↓
+Background controller restores context
+    ↓
+DAG execution
+```
+
+Providers may use metadata for diagnostics and routing, but tenant isolation must come from strong runtime settings, registry/capacity descriptors, and the execution context snapshot.
+
+---
+
+## Tenant Runtime Modes
+
+Runtime capacity can be organized by tenant mode.
+
+```text
+Shared
+    Runtime capacity is shared/default capacity.
+
+Dedicated
+    Runtime capacity belongs to one tenant or tenant group.
+
+Hybrid
+    Runtime capacity may have dedicated tenant-owned capacity,
+    and the tenant may optionally fall back to shared capacity.
+```
+
+Validated tenant settings:
+
+```text
+tenant-a
+    IsolationMode = Dedicated
+    PreferDedicatedCapacity = true
+    AllowSharedFallback = false
+    RuntimeInstanceIdPrefix = tenant-a-runtime
+    MaxRuntimeInstances = 3
+    WorkerCountPerInstance = 10
+    MaxConcurrentRunsPerInstance = 5
+    LocalQueueCapacity = 500
+
+tenant-b
+    IsolationMode = Hybrid
+    PreferDedicatedCapacity = true
+    AllowSharedFallback = true
+    RuntimeInstanceIdPrefix = tenant-b-runtime
+    MaxRuntimeInstances = 2
+    WorkerCountPerInstance = 5
+    MaxConcurrentRunsPerInstance = 3
+    LocalQueueCapacity = 250
+
+default / test-tenant
+    IsolationMode = Shared
+    PreferDedicatedCapacity = false
+    AllowSharedFallback = true
+    RuntimeInstanceIdPrefix = runtime-instance
+    MaxRuntimeInstances = 1
+    WorkerCountPerInstance = 10
+    MaxConcurrentRunsPerInstance = 3
+```
+
+Provider dispatch and scale-out must respect these settings.
+
+---
+
+## Tenant Visibility Rules
+
+Admission, provider routing, runtime registry listing, and capacity listing rely on the same visibility rules.
+
+```text
+Shared runtime instance:
+    visible to Shared tenants
+    visible to Hybrid/Dedicated tenants only if tenant settings allow shared fallback
+
+Dedicated runtime instance:
+    visible only if TenantId or TenantGroupId matches
+
+Hybrid runtime instance:
+    visible only if TenantId or TenantGroupId matches
+    AllowSharedFallback does not make an unowned Hybrid runtime visible
+```
+
+Important rule:
+
+```text
+Hybrid fallback means a Hybrid tenant may use Shared runtime capacity.
+
+It does not mean every Hybrid runtime instance becomes visible to every Hybrid tenant.
+```
+
+This prevents accidental cross-tenant capacity leakage.
+
+---
+
+## Provider Identity vs Tenant Identity
+
+Provider metadata tells the runtime **how** to contact an instance.
+
+Tenant identity tells the runtime **who is allowed** to see and use an instance.
+
+These concerns must remain separate.
+
+Examples:
+
+```text
+provider.name = local
+provider.transport = in-memory
+tenant.id = tenant-a
+isolation.mode = Dedicated
+```
+
+```text
+provider.name = http
+provider.endpoint = http://localhost:5001/runtime-instance/commands
+tenant.id = tenant-b
+isolation.mode = Hybrid
+```
+
+The provider router may use `provider.name`.
+
+The visibility evaluator uses tenant isolation fields.
 
 ---
 
@@ -100,7 +287,7 @@ Runtime Instance Registration
 Runtime Capacity Publication
 ```
 
-The important identities are:
+Important identities:
 
 ```text
 ControlPlaneId
@@ -114,51 +301,58 @@ RuntimeInstanceId
 
 RuntimeId
     local runtime id inside a host or pool
+
+WorkerId
+    worker identity inside a runtime instance
 ```
 
-Runtime hosts must not guess the control-plane id when discovery is required.
+These identities must not be collapsed.
 
-They should resolve it from the discovery store and reuse the resolved identity consistently for:
-
-- runtime registry entries
-- runtime capacity descriptors
-- heartbeat updates
-- provider routing metadata
-- cleanup paths.
-
-Cleanup must not depend on rediscovery after the runtime instance has already been registered or published.
+Cleanup must not depend on rediscovery after a runtime instance has already registered or published capacity.
 
 During shutdown, registry unregister and capacity descriptor removal should reuse the known control-plane id for the runtime instance.
 
+---
 
-## Core Principle
+## Pump Identity vs Assigned Runtime Identity
 
-Admission decides **which runtime instance** should receive a run.
-
-Providers decide **how to communicate** with that runtime instance.
-
-For scale-out, admission decides **that more capacity is needed**.
-
-The provider selector decides **which provider can create that capacity**.
+The provider model must preserve the distinction between pump ownership and dispatch target.
 
 ```text
-Admission
-    decides WHO or WHETHER SCALE-OUT IS NEEDED
+PumpRuntimeInstanceId
+    identifies the runtime instance or control-plane worker executing a pump cycle
 
-Provider Router
-    decides HOW TO REACH OR SCALE THE TARGET ENVIRONMENT
-
-Provider
-    performs the transport-specific operation
+AssignedRuntimeInstanceId
+    identifies the runtime instance selected by admission for dispatch
 ```
 
-Scale-out is now modeled as a provider capability.
+These two identities are intentionally separate.
 
-`IAiRuntimeScaleOutProvider` extends `IAiRuntimeInstanceProvider`.
+A pump can claim a shared queue item without being the runtime instance that receives the run.
 
-This means scale-out uses the same provider discovery/routing model as dispatch, status, and control.
+```text
+Shared queue item pending
+    ↓
+PumpRuntimeInstanceId claims queue work
+    ↓
+Shared queue dispatcher loads shared run
+    ↓
+Restores ExecutionContextSnapshot
+    ↓
+Admission re-evaluates tenant-visible capacity
+    ↓
+AssignedRuntimeInstanceId is selected
+    ↓
+Provider router resolves transport
+    ↓
+Provider dispatches into target runtime local queue
+```
 
-This separation protects the architecture.
+Production code must not assume:
+
+```text
+PumpRuntimeInstanceId == AssignedRuntimeInstanceId
+```
 
 ---
 
@@ -173,6 +367,10 @@ Providers must not mutate execution state directly.
 Providers must not claim DAG steps.
 
 Providers must not become the runtime engine.
+
+Providers must not use metadata as the durable tenant boundary.
+
+Providers must not dispatch work to a runtime instance that is not tenant-visible.
 
 The local runtime queue remains the ownership boundary for an executable runtime instance.
 
@@ -194,46 +392,13 @@ DAG Execution Engine
 
 ---
 
-## Why Providers Are Needed
-
-Without providers, the shared controller can easily become coupled to transport details.
-
-Bad direction:
-
-```text
-if local -> use in-memory registry
-if redis -> push command
-if http -> call endpoint
-if kubernetes -> call API
-```
-
-That makes the shared controller grow into a transport-specific scheduler.
-
-Better direction:
-
-```text
-Shared Controller
-    ↓
-Admission Decision
-    ↓
-Runtime Instance Provider Router
-    ↓
-Provider selected by descriptor metadata
-```
-
-The shared controller remains stable.
-
-New transports are added as providers.
-
----
-
 ## Runtime Instance Capacity and Worker Visibility
 
 Runtime instance descriptors are not only transport descriptors.
 
-They are also visibility snapshots used by admission, dashboards, MCP tools, and future autoscaling.
+They are visibility snapshots used by admission, dashboards, MCP tools, provider routing, and future autoscaling.
 
-The runtime now exposes worker-aware capacity fields through the runtime instance snapshot path:
+The runtime exposes worker-aware capacity fields through the runtime instance snapshot path:
 
 ```text
 AiRuntimePipelineBackgroundController
@@ -266,11 +431,15 @@ MaxConcurrentRuns
 AvailableRunSlots
 IsQueuePaused
 CanAcceptRun
+TenantId
+TenantGroupId
+IsolationMode
+PreferDedicatedCapacity
+AllowSharedFallback
+RuntimeInstanceIdPrefix
 ```
 
-`CanAcceptRun` is now worker-aware.
-
-A runtime instance should only be considered available when it has both run capacity and worker capacity.
+`CanAcceptRun` is worker-aware.
 
 ```text
 CanAcceptRun = queue not paused
@@ -279,7 +448,7 @@ CanAcceptRun = queue not paused
             + worker available
 ```
 
-This matters for provider routing because a provider can only deliver work correctly if the target runtime instance is visible and able to accept work.
+A provider can only deliver work correctly if the target runtime instance is visible, eligible, and able to accept work.
 
 ---
 
@@ -322,7 +491,7 @@ This policy is visible through runtime instance snapshots and should be consider
 
 ## Runtime Instance Descriptor as Source of Dispatch Metadata
 
-Runtime instances already publish descriptors and capacity information.
+Runtime instances publish descriptors and capacity information.
 
 The provider model extends this idea.
 
@@ -345,31 +514,22 @@ available.run.slots
 can.accept.run
 ```
 
-Future examples:
+Tenant metadata may be duplicated for observability:
 
 ```text
-provider.name = redis-command-queue
-provider.commandQueueKey = ai:runtime:mcp-runtime-1:commands
+tenant.id = tenant-a
+tenant.groupId = enterprise
+isolation.mode = Dedicated
+allow.shared.fallback = false
+prefer.dedicated.capacity = true
+runtime.instance.id.prefix = tenant-a-runtime
 ```
 
-```text
-provider.name = http
-provider.endpoint = http://mcp-runtime-1.runtime.svc.cluster.local
-```
+However, metadata is not the source of durable tenant isolation when strong fields are available.
 
-```text
-provider.name = grpc
-provider.endpoint = grpc://mcp-runtime-1.runtime.svc.cluster.local:5001
-```
+Strong fields should be used first.
 
-```text
-provider.name = kubernetes
-provider.namespace = ai-runtime
-provider.podName = runtime-7c9d7f
-provider.serviceName = runtime-service
-```
-
-The provider router reads the descriptor metadata and resolves the correct provider.
+Metadata is for diagnostics, compatibility, and observability.
 
 ---
 
@@ -384,7 +544,8 @@ Example:
 public sealed class LocalAiRuntimeInstanceProvider :
     IAiRuntimeInstanceDispatchProvider,
     IAiRuntimeInstanceStatusProvider,
-    IAiRuntimeInstanceControlProvider
+    IAiRuntimeInstanceControlProvider,
+    IAiRuntimeScaleOutProvider
 {
 }
 ```
@@ -428,7 +589,7 @@ public sealed class AiRuntimeInstanceProviderAttribute : Attribute
 
 The provider name should be stable and lowercase.
 
-Recommended initial provider names:
+Recommended provider names:
 
 ```text
 local
@@ -472,26 +633,25 @@ ProviderName => "local"
 
 Providers should use capabilities instead of one large interface.
 
-A local provider may support dispatch, status, and control.
-
-A Kubernetes provider may support discovery and scaling.
-
-A Redis command queue provider may support dispatch and control through commands.
-
 A provider should only implement the capabilities it supports.
 
-A provider can support scale-out without being the dispatch transport for every runtime instance.
-
-For example, the local provider now supports:
+Capability examples:
 
 ```text
 dispatch
 status
 control
+capacity
 scale-out
 ```
 
-Kubernetes will likely support scale-out before it becomes a direct dispatch provider.
+A local provider may support dispatch, status, control, and scale-out.
+
+A Kubernetes provider may support discovery and scaling before it becomes a direct dispatch provider.
+
+A Redis command queue provider may support dispatch and control through commands.
+
+A provider can support scale-out without being the dispatch transport for every runtime instance.
 
 ---
 
@@ -513,6 +673,21 @@ public interface IAiRuntimeInstanceDispatchProvider :
 Dispatch should deliver the run to the target runtime instance.
 
 It should not execute DAG steps directly.
+
+It must preserve:
+
+```text
+SharedRunId
+PipelineKey
+RunRequest
+ExecutionContextSnapshot
+TenantId
+CorrelationId
+RequestedBy
+Source
+```
+
+The target runtime queue must receive the original `ExecutionContextSnapshot`.
 
 ---
 
@@ -591,7 +766,7 @@ public interface IAiRuntimeInstanceCapacityProvider :
 
 The current Redis capacity store already provides the foundation for this capability.
 
-A provider may implement capacity directly or delegate to a shared capacity store.
+Capacity listing must apply tenant visibility filtering when a current execution context snapshot is available.
 
 ---
 
@@ -620,8 +795,6 @@ IAiRuntimeScaleOutProvider extends IAiRuntimeInstanceProvider
 This keeps scale-out inside the existing provider model.
 
 There is no separate scale-out router.
-
-There is no separate provider-name property on the scale-out provider.
 
 Provider identity still comes from:
 
@@ -663,6 +836,64 @@ Scale-out should remain separate from dispatch, but it should reuse the same pro
 
 ---
 
+## Tenant-Aware Scale-Out
+
+Scale-out requests carry tenant runtime settings.
+
+The following fields must be preserved from admission to the scale-out request store, watcher, provider request, scaler, runtime registration, and capacity publication:
+
+```text
+TenantId
+TenantGroupId
+IsolationMode
+PreferDedicatedCapacity
+AllowSharedFallback
+MaxRuntimeInstances
+RuntimeInstanceIdPrefix
+WorkerCountPerInstance
+MaxConcurrentRunsPerInstance
+LocalQueueCapacity
+```
+
+The scale-out provider must create capacity inside the requested tenant runtime scope.
+
+For local scale-out, this means the local scaler must count existing matching hosts by `RuntimeInstanceIdPrefix`, not by global host count.
+
+Correct examples:
+
+```text
+default/test-tenant shared
+    runtime-instance-1
+
+tenant-a dedicated
+    tenant-a-runtime-1
+
+tenant-b hybrid
+    tenant-b-runtime-1
+```
+
+Incorrect behavior:
+
+```text
+A shared runtime already exists.
+tenant-a requests dedicated capacity.
+Scaler sees hosts.Count == 1 and returns shared runtime.
+```
+
+Correct behavior:
+
+```text
+A shared runtime already exists.
+tenant-a requests dedicated capacity.
+Scaler counts only hosts matching tenant-a-runtime.
+No matching host exists.
+Scaler creates tenant-a-runtime-1.
+```
+
+This prevents cross-tenant scale-out leakage.
+
+---
+
 ## Provider Router
 
 The provider router resolves providers by name and capability.
@@ -674,7 +905,7 @@ Expected responsibilities:
 - verify requested capability is supported
 - throw or return structured failure when provider is missing
 - keep shared controller independent from transport details
-- allow selectors to request a specific provider capability such as dispatch, status, control, or scale-out
+- allow selectors to request a specific provider capability such as dispatch, status, control, capacity, or scale-out
 
 Example usage:
 
@@ -688,28 +919,38 @@ var result = await provider.DispatchRunAsync(
     cancellationToken);
 ```
 
+The router should not override tenant visibility decisions.
+
+The router should only resolve a provider for a descriptor that admission already selected as tenant-visible and eligible.
+
 ---
 
 ## Provider Resolution Flow
 
+Shared queue dispatch flow:
+
 ```text
 Shared Runtime Controller
     ↓
-Admission returns RuntimeInstanceId
+SharedRunRecord persisted with ExecutionContextSnapshot
     ↓
-Load capacity descriptor
+Shared queue item claimed
     ↓
-Read descriptor metadata
+Shared queue dispatcher restores ExecutionContextSnapshot
     ↓
-provider.name = local
+Admission returns AssignedRuntimeInstanceId
+    ↓
+Load tenant-visible capacity descriptor
+    ↓
+Read provider metadata
+    ↓
+provider.name = local/http/grpc/...
     ↓
 Provider Router
     ↓
-LocalAiRuntimeInstanceProvider
+Provider dispatch
     ↓
-DispatchRunAsync
-    ↓
-Local runtime queue
+Target runtime local queue
 ```
 
 Current HTTP pooled provider flow:
@@ -739,7 +980,7 @@ Target runtime local queue
 
 In this model, the parent HTTP host is transport and hosting infrastructure.
 
-The dispatchable runtime identities are the child runtime instances created by the local runtime instance pool.
+The dispatchable runtime identities are child runtime instances created by the local runtime instance pool.
 
 ```text
 HTTP host identity != dispatch target
@@ -752,6 +993,8 @@ Current local scale-out provider resolution flow:
 Shared Runtime Controller
     ↓
 Admission returns RequestScaleOut
+    ↓
+Tenant runtime settings attached to admission decision
     ↓
 StoreBackedAiRuntimeScaleOutRequestPublisher
     ↓
@@ -772,7 +1015,7 @@ LocalAiRuntimeInstanceProvider
     ↓
 AiLocalRuntimeInstanceScaler
     ↓
-create local runtime instance
+create tenant-scoped local runtime instance
     ↓
 register runtime instance / publish capacity
     ↓
@@ -801,7 +1044,7 @@ Push dispatch command to Redis
     ↓
 Remote runtime instance consumes command
     ↓
-Remote runtime instance enqueues local run
+Remote runtime instance enqueues local run with ExecutionContextSnapshot
 ```
 
 ---
@@ -810,7 +1053,7 @@ Remote runtime instance enqueues local run
 
 The first provider is local.
 
-It preserves the current behavior.
+It preserves current behavior.
 
 ```text
 Local provider
@@ -820,7 +1063,7 @@ Local provider
     enqueues through IAiRuntimeQueueControlPlane
 ```
 
-The local provider should support:
+The local provider supports or prepares:
 
 - dispatch
 - run status
@@ -844,11 +1087,13 @@ Current implementation direction:
 - when scale-out is requested, it delegates capacity creation to `AiLocalRuntimeInstanceScaler`
 - when no scaler is registered, it returns a structured rejected provider result
 
+For tenant-aware scale-out, the local provider must pass tenant runtime settings through to the scaler.
+
 ---
 
 ## Scale-Out Request Lifecycle
 
-Scale-out is now implemented as a persisted request lifecycle.
+Scale-out is implemented as a persisted request lifecycle.
 
 The shared controller does not create runtime instances directly.
 
@@ -863,11 +1108,13 @@ SubmitRun
     ↓
 DirectDispatch mode
     ↓
-Admission sees no runtime capacity
+Admission sees no tenant-visible runtime capacity
     ↓
 Decision = RequestScaleOut
     ↓
 SharedRun.Status = ScaleOutRequested
+    ↓
+Tenant runtime settings copied to scale-out request
     ↓
 StoreBackedAiRuntimeScaleOutRequestPublisher
     ↓
@@ -883,7 +1130,7 @@ LocalAiRuntimeInstanceProvider
     ↓
 AiLocalRuntimeInstanceScaler
     ↓
-runtime instance created/registered/started
+tenant-scoped runtime instance created/registered/started
     ↓
 ScaleOutRequest.Status = Fulfilled
     ↓
@@ -893,7 +1140,7 @@ SharedQueueItem.Status = Pending
     ↓
 AiSharedQueuePump
     ↓
-dispatch-time admission sees new capacity
+dispatch-time admission restores tenant context and sees new capacity
     ↓
 Provider dispatch to selected runtime instance
     ↓
@@ -909,9 +1156,9 @@ Future Kubernetes provider flow should preserve the same boundary:
 ```text
 RequestScaleOut
     ↓
-Kubernetes provider creates or expands runtime capacity
+Kubernetes provider creates or expands tenant-scoped runtime capacity
     ↓
-runtime pod registers/publishes capacity
+runtime pod registers/publishes tenant-aware capacity
     ↓
 scale-out request fulfilled
     ↓
@@ -943,13 +1190,14 @@ Dispatch command example:
   "sharedRunId": "shared-run-id",
   "pipelineKey": "pipeline-key",
   "tenantId": "tenant-id",
+  "tenantGroupId": "tenant-group-id",
   "correlationId": "correlation-id",
   "requestedBy": "mcp",
   "source": "shared-controller"
 }
 ```
 
-The remote runtime instance would consume commands and enqueue into its local queue.
+The remote runtime instance would consume commands and enqueue into its local queue with the full `ExecutionContextSnapshot`.
 
 This keeps cross-pod communication simple and resilient.
 
@@ -996,8 +1244,6 @@ The HTTP runtime host exposes transport endpoints.
 
 The child runtime instances created by the pool expose the real execution capacity and are used as dispatch targets.
 
-
-
 This provider is useful when runtime pods expose an HTTP control endpoint.
 
 ---
@@ -1015,6 +1261,8 @@ provider.endpoint = grpc://runtime-1.ai-runtime.svc.cluster.local:5001
 
 gRPC may be useful for lower-latency internal cluster communication.
 
+The gRPC provider must preserve `ExecutionContextSnapshot` in dispatch messages.
+
 ---
 
 ## Kubernetes Provider
@@ -1030,6 +1278,7 @@ It should be responsible for:
 - requesting scale-out
 - requesting scale-in
 - creating or expanding runtime capacity when handling scale-out requests
+- applying tenant-aware runtime settings to pod/deployment selection
 - attaching Kubernetes metadata to descriptors
 
 Kubernetes should not be required to dispatch a run directly.
@@ -1059,7 +1308,9 @@ PumpRuntimeInstanceId claims queue work
     ↓
 Shared queue dispatcher loads shared run
     ↓
-Admission re-evaluates the run
+Shared queue dispatcher restores ExecutionContextSnapshot
+    ↓
+Admission re-evaluates the run with tenant visibility
     ↓
 AssignedRuntimeInstanceId is selected
     ↓
@@ -1116,7 +1367,7 @@ This separation keeps admission deterministic and testable.
 
 ---
 
-## Capacity-Aware Admission
+## Capacity-Aware and Tenant-Aware Admission
 
 Capacity-aware admission should use Redis capacity descriptors as its primary source of truth.
 
@@ -1124,6 +1375,7 @@ Eligible runtime instances should satisfy:
 
 - role is runtime
 - status is ready or acceptable
+- tenant visibility rules allow access
 - queue is not paused unless allowed
 - not draining unless allowed
 - heartbeat is not stale
@@ -1143,6 +1395,8 @@ Recommended ordering:
 .ThenBy(instance => instance.RuntimeInstanceId, StringComparer.Ordinal)
 ```
 
+For tenant-specific admission, visibility filtering happens before provider routing.
+
 ---
 
 ## Slot Reservations
@@ -1156,8 +1410,6 @@ In multi-control-plane setups, snapshots alone are not enough.
 Two control-plane processes may read the same available slot at the same time.
 
 Admission should use Redis-backed reservations to protect selected capacity during dispatch.
-
-Lua-based reservation refinement may still be added later for stronger atomic coordination across more advanced scheduling paths.
 
 Expected reservation flow:
 
@@ -1175,6 +1427,8 @@ If dispatch fails:
 ```
 
 This protects against double assignment when multiple control-plane pods exist.
+
+Lua-based reservation refinement may still be added later for stronger atomic coordination across more advanced scheduling paths.
 
 ---
 
@@ -1217,6 +1471,12 @@ Recommended metadata keys:
 | `provider.serviceName` | Kubernetes service name. |
 | `provider.nodeName` | Kubernetes node name. |
 | `provider.region` | Region or deployment zone. |
+| `tenant.id` | Diagnostic duplicate of runtime tenant id. |
+| `tenant.groupId` | Diagnostic duplicate of runtime tenant group id. |
+| `isolation.mode` | Diagnostic duplicate of runtime isolation mode. |
+| `allow.shared.fallback` | Diagnostic duplicate of fallback behavior. |
+| `prefer.dedicated.capacity` | Diagnostic duplicate of tenant preference. |
+| `runtime.instance.id.prefix` | Diagnostic duplicate of runtime prefix. |
 | `scaleout.request.id` | Scale-out request id when descriptor/request metadata is tied to a scale-out flow. |
 | `scaleout.sharedRunId` | Shared run id that requested scale-out. |
 | `scaleout.controlPlaneId` | Control-plane id associated with a scale-out request. |
@@ -1283,6 +1543,7 @@ Errors should include:
 - success flag
 - failure reason
 - retryable flag when useful
+- tenant id when available
 - correlation id when available
 
 Provider errors should be observable through:
@@ -1309,6 +1570,7 @@ Events should include:
 - run id
 - shared run id
 - execution id when available
+- tenant id when available
 - duration
 - failure reason
 
@@ -1320,9 +1582,11 @@ Provider observability is essential for Kubernetes and dashboard demos.
 
 Future provider calls must respect runtime security boundaries.
 
-Potential future concerns:
+Current validated foundation includes tenant-aware runtime visibility and tenant-scoped scale-out.
 
-- tenant authorization
+Future hardening should continue with:
+
+- tenant authorization for external tools
 - runtime instance scope
 - tool access scope
 - admin vs runtime operator permissions
@@ -1330,8 +1594,9 @@ Potential future concerns:
 - Kubernetes namespace restrictions
 - command queue signing or validation
 - MCP tool authorization
+- provider-level circuit breakers and dispatch timeouts
 
-This is not fully implemented yet but should be considered in provider design.
+Tenant isolation is now a runtime control-plane concern, not only an external authorization concern.
 
 ---
 
@@ -1371,6 +1636,15 @@ Current completed or validated pieces:
 27. Local runtime instance scaler
 28. Fulfilled scale-out shared run requeue
 29. MCP Redis local scale-out dispatch and execution completion
+30. Tenant runtime settings provider foundation
+31. Shared/Dedicated/Hybrid runtime isolation
+32. Tenant-aware admission
+33. Tenant-visible registry filtering
+34. Tenant-visible capacity filtering
+35. Tenant-aware scale-out request persistence
+36. Local scaler scoped by RuntimeInstanceIdPrefix
+37. Shared queue dispatcher context restore
+38. Runtime local queue ExecutionContextSnapshot requirement
 ```
 
 The implementation must continue to preserve existing behavior.
@@ -1385,25 +1659,29 @@ Shared controller behavior should remain stable and delegate transport-specific 
 
 ## Future Implementation Targets
 
-After the local and HTTP pooled providers are stable:
+After the local, HTTP pooled, and tenant-aware provider foundations are stable:
 
 ```text
 1. Complete status provider capability.
 2. Complete control provider capability.
 3. Add Redis command queue provider.
 4. Add command consumer in runtime-only host.
-5. Add Kubernetes metadata provider.
-6. Add Kubernetes scaling provider using the existing `IAiRuntimeScaleOutProvider` capability model.
-7. Add Kubernetes scale-out request handling that creates/expands runtime pods and waits for registration/capacity.
-8. Refine Redis/Lua slot reservation paths where stronger atomic coordination is required.
-9. Continue hardening admission to use capacity descriptors and reservations as primary scheduling inputs.
+5. Add gRPC runtime provider.
+6. Add Kubernetes metadata provider.
+7. Add Kubernetes scaling provider using the existing IAiRuntimeScaleOutProvider capability model.
+8. Add Kubernetes scale-out request handling that creates/expands runtime pods and waits for registration/capacity.
+9. Refine Redis/Lua slot reservation paths where stronger atomic coordination is required.
+10. Add provider circuit breakers.
+11. Add dispatch timeouts.
+12. Add registry and capacity TTL self-healing.
+13. Continue hardening admission to use capacity descriptors and reservations as primary scheduling inputs.
 ```
 
 ---
 
 ## Current Limitations
 
-The provider model is implemented for the validated local, HTTP dispatch, and local scale-out paths, but it is not complete for all future transports.
+The provider model is implemented for the validated local, HTTP dispatch, local scale-out, and tenant-aware scale-out paths, but it is not complete for all future transports.
 
 Current limitations include:
 
@@ -1414,14 +1692,17 @@ Current limitations include:
 - Kubernetes pod/deployment scale-out is not implemented yet
 - capability negotiation is not complete yet
 - Lua-based slot reservation refinement is not implemented yet
+- provider circuit breakers are not implemented yet
+- dispatch timeout hardening is not implemented yet
+- registry/capacity TTL self-healing is not complete yet
 - admission uses Redis-backed reservation support in validated scenarios but still needs further production hardening for multi-control-plane scheduling
-- admission still needs to become fully descriptor/capacity-first for production multi-control-plane scheduling
+- tenant runtime settings are currently foundation/provider-backed and should later become configurable or database-backed
 
 ---
 
 ## Validated Test Evidence
 
-The provider model has been validated through MCP integration scenarios and heavy HTTP dispatch scenarios.
+The provider model has been validated through MCP integration scenarios, heavy HTTP dispatch scenarios, and tenant-aware runtime isolation tests.
 
 Validated behavior includes:
 
@@ -1455,15 +1736,51 @@ Validated behavior includes:
 - Fulfilled scale-out shared run requeue.
 - Shared queue pump dispatch after scale-out fulfillment.
 - Runtime execution completion after local scale-out.
+- Dedicated tenant scale-out creates `tenant-a-runtime-*` capacity.
+- Hybrid tenant scale-out creates `tenant-b-runtime-*` capacity.
+- Shared/default tenant scale-out creates `runtime-instance-*` capacity.
+- Hybrid tenant fallback can dispatch to shared runtime capacity.
+- Dedicated tenant does not fall back to shared runtime capacity when fallback is disabled.
+- Redis runtime registry filters by tenant visibility.
+- Redis runtime capacity store filters by tenant visibility.
+- Admission assigns only tenant-visible runtime capacity.
+- Scale-out requests preserve tenant runtime settings in Redis.
+- Local scaler counts matching tenant runtime prefix, not global host count.
+- Shared queue dispatcher restores `ExecutionContextSnapshot` before admission and dispatch.
+- Runtime queued runs require `ExecutionContextSnapshot`.
+- Visibility evaluator rejects unowned Hybrid runtime instances.
+- 1036 tests green after the tenant-aware runtime isolation update.
 
+---
 
 ## Related Documents
 
-- [MCP Server as Runtime Control Plane](mcp-server-control-plane.md)
+- [Architecture Overview](architecture-overview.md)
 - [Runtime Control Plane](runtime-control-plane.md)
+- [Runtime Discovery, Registry, and Capacity](runtime-discovery-registry-capacity.md)
+- [MCP Server as Runtime Control Plane](mcp-server-control-plane.md)
+- [Multi-Tenant Control Plane Isolation](multi-tenant-control-plane-isolation.md)
 - [Runtime Queue Control](runtime-queue-control.md)
 - [Distributed Execution](distributed-execution.md)
 - [Observability and Tracing](observability-tracing.md)
 - [Runtime Metrics](runtime-metrics.md)
 - [Testing Strategy](testing-strategy.md)
 - [Shared Queue Pump and Worker Capacity](shared-queue-pump-and-worker-capacity.md)
+
+---
+
+## Documentation Rule
+
+This document describes the runtime instance provider model.
+
+Do not present Redis command queue dispatch, gRPC dispatch, Kubernetes pod scaling, or production dashboard features as completed capabilities until they are implemented and validated.
+
+Provider dispatch and provider scale-out must continue to preserve the runtime boundaries:
+
+```text
+Admission decides.
+Providers transport or scale.
+Local runtime queues own RunId.
+DAG engine owns ExecutionId.
+ExecutionContextSnapshot carries durable tenant context.
+```

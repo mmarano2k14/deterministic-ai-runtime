@@ -118,8 +118,8 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution
                 pipelineName: "dag-retry-delay",
                 stepKey: "fail-once-then-succeed",
                 maxRetries: 1,
-                baseDelayMs: 500,
-                maxDelayMs: 500);
+                baseDelayMs: 5000,
+                maxDelayMs: 5000);
 
             var stateWriter = host.ServiceProvider.GetRequiredService<IAiExecutionStateWriter>();
 
@@ -129,23 +129,72 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution
             {
                 await ExecuteIgnoringFailureAsync(host.Engine, created.ExecutionId);
 
-                var second = await host.Engine.ExecuteNextAsync(created.ExecutionId);
+                var dagStore = host.ServiceProvider.GetRequiredService<IAiDagExecutionStore>();
+
+                var stateAfterFirstFailure =
+                    await dagStore.GetStateAsync(created.ExecutionId);
+
+                Assert.NotNull(
+                    stateAfterFirstFailure);
+
+                var stepAfterFirstFailure =
+                    stateWriter.GetOrCreateStep(
+                        stateAfterFirstFailure!,
+                        "retry-step");
+
+                Assert.Equal(
+                    AiStepExecutionStatus.WaitingForRetry,
+                    stepAfterFirstFailure.Status);
+
+                Assert.Equal(
+                    1,
+                    stepAfterFirstFailure.RetryState?.RetryCount);
+
+                Assert.NotNull(
+                    stepAfterFirstFailure.RetryState?.NextRetryAtUtc);
+
+                var nextRetryAtUtc =
+                    stepAfterFirstFailure.RetryState!.NextRetryAtUtc!.Value;
 
                 Assert.True(
-                    second.Status == AiExecutionStatus.Waiting ||
-                    second.Status == AiExecutionStatus.Running);
+                    nextRetryAtUtc > DateTime.UtcNow,
+                    $"Expected retry window to still be in the future after first failure. NextRetryAtUtc='{nextRetryAtUtc:O}', Now='{DateTime.UtcNow:O}'.");
 
-                var dagStore = host.ServiceProvider.GetRequiredService<IAiDagExecutionStore>();
-                var state = await dagStore.GetStateAsync(created.ExecutionId);
+                var second =
+                    await host.Engine.ExecuteNextAsync(
+                        created.ExecutionId);
 
-                Assert.NotNull(state);
+                var stateAfterSecondExecute =
+                    await dagStore.GetStateAsync(
+                        created.ExecutionId);
 
-                var step = stateWriter.GetOrCreateStep(state!, "retry-step");
+                Assert.NotNull(
+                    stateAfterSecondExecute);
 
-                Assert.Equal(AiStepExecutionStatus.WaitingForRetry, step.Status);
-                Assert.Equal(1, step.RetryState?.RetryCount);
-                Assert.NotNull(step.RetryState?.NextRetryAtUtc);
-                Assert.True(step.RetryState?.NextRetryAtUtc > DateTime.UtcNow);
+                var stepAfterSecondExecute =
+                    stateWriter.GetOrCreateStep(
+                        stateAfterSecondExecute!,
+                        "retry-step");
+
+                Assert.Equal(
+                    AiStepExecutionStatus.WaitingForRetry,
+                    stepAfterSecondExecute.Status);
+
+                Assert.Equal(
+                    1,
+                    stepAfterSecondExecute.RetryState?.RetryCount);
+
+                Assert.NotNull(
+                    stepAfterSecondExecute.RetryState?.NextRetryAtUtc);
+
+                Assert.Equal(
+                    nextRetryAtUtc,
+                    stepAfterSecondExecute.RetryState!.NextRetryAtUtc!.Value);
+
+                Assert.True(
+                    stepAfterSecondExecute.RetryState.NextRetryAtUtc > DateTime.UtcNow,
+                    $"Expected retry window to remain closed after second ExecuteNextAsync. " +
+                    $"SecondStatus='{second.Status}', NextRetryAtUtc='{stepAfterSecondExecute.RetryState.NextRetryAtUtc:O}', Now='{DateTime.UtcNow:O}'.");
             }
             finally
             {

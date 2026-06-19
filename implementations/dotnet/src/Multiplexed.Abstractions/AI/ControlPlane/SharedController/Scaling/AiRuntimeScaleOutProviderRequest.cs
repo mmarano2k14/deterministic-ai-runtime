@@ -1,4 +1,6 @@
-﻿namespace Multiplexed.Abstractions.AI.ControlPlane.SharedController.Scaling
+﻿using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
+
+namespace Multiplexed.Abstractions.AI.ControlPlane.SharedController.Scaling
 {
     /// <summary>
     /// Represents a provider-level request to create or expose additional runtime capacity.
@@ -31,9 +33,61 @@
         public string? TenantId { get; set; }
 
         /// <summary>
+        /// Gets or sets the tenant group identifier associated with the request.
+        /// </summary>
+        public string? TenantGroupId { get; set; }
+
+        /// <summary>
         /// Gets or sets the pipeline key associated with the request.
         /// </summary>
         public string? PipelineKey { get; set; }
+
+        /// <summary>
+        /// Gets or sets the runtime instance isolation mode resolved for the tenant.
+        /// </summary>
+        public AiRuntimeInstanceIsolationMode IsolationMode { get; set; } =
+            AiRuntimeInstanceIsolationMode.Shared;
+
+        /// <summary>
+        /// Gets or sets a value indicating whether dedicated runtime capacity
+        /// should be preferred for the tenant.
+        /// </summary>
+        public bool PreferDedicatedCapacity { get; set; }
+
+        /// <summary>
+        /// Gets or sets a value indicating whether shared runtime capacity may be used
+        /// when dedicated tenant capacity is not available.
+        /// </summary>
+        public bool AllowSharedFallback { get; set; } = true;
+
+        /// <summary>
+        /// Gets or sets the maximum number of runtime instances allowed for the tenant.
+        /// </summary>
+        public int? MaxRuntimeInstances { get; set; }
+
+        /// <summary>
+        /// Gets or sets the runtime instance identifier prefix that should be used
+        /// when creating tenant-specific runtime instances.
+        /// </summary>
+        public string? RuntimeInstanceIdPrefix { get; set; }
+
+        /// <summary>
+        /// Gets or sets the worker count to use for each runtime instance created
+        /// for this scale-out request.
+        /// </summary>
+        public int? WorkerCountPerInstance { get; set; }
+
+        /// <summary>
+        /// Gets or sets the maximum number of concurrent runs allowed per runtime instance
+        /// created for this scale-out request.
+        /// </summary>
+        public int? MaxConcurrentRunsPerInstance { get; set; }
+
+        /// <summary>
+        /// Gets or sets the local queue capacity to use for runtime instances created
+        /// for this scale-out request.
+        /// </summary>
+        public int? LocalQueueCapacity { get; set; }
 
         /// <summary>
         /// Gets or sets the number of runtime instances visible when scale-out was requested.

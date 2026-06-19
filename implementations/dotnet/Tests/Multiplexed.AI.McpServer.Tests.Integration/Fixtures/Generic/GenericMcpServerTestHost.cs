@@ -1,7 +1,10 @@
-﻿using Microsoft.AspNetCore.Hosting;
+﻿using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 using Multiplexed.AI.McpServer.Host;
+using Multiplexed.AI.McpServer.Tests.Integration.Auth;
 using Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Http;
 
 namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic
@@ -9,23 +12,6 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic
     /// <summary>
     /// Provides a generic MCP server host for startup-bound integration tests.
     /// </summary>
-    /// <remarks>
-    /// PURPOSE:
-    /// - Starts an MCP host in control-plane mode for integration tests.
-    /// - Applies all test-provided configuration before application startup.
-    /// - Injects one or more runtime HTTP clients into the control-plane host when the
-    ///   scenario uses HTTP runtime instances.
-    ///
-    /// IMPORTANT:
-    /// - This host does not generate configuration values itself.
-    /// - The caller must provide a logical control-plane identifier.
-    /// - The same logical control-plane identifier must be used by all runtime-instance
-    ///   hosts participating in the same scenario.
-    /// - Local runtime-instance scenarios do not need runtime HTTP clients.
-    /// - HTTP runtime-instance clients are optional at MCP startup time. This allows
-    ///   tests to start the MCP control-plane host first, then start runtime hosts later
-    ///   and populate the shared mutable client dictionary.
-    /// </remarks>
     public sealed class GenericMcpServerTestHost
         : WebApplicationFactory<Program>
     {
@@ -54,17 +40,6 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic
         private readonly HttpClient? runtimeClient;
         private readonly IReadOnlyDictionary<string, HttpClient> runtimeClientsByRuntimeInstanceId;
 
-        /// <summary>
-        /// Initializes a new instance of the <see cref="GenericMcpServerTestHost"/> class.
-        /// </summary>
-        /// <param name="settings">The test host settings.</param>
-        /// <param name="runtimeClient">The optional runtime HTTP client used by single-runtime HTTP provider tests.</param>
-        /// <exception cref="ArgumentNullException">
-        /// Thrown when <paramref name="settings"/> is null.
-        /// </exception>
-        /// <exception cref="ArgumentException">
-        /// Thrown when required MCP control-plane settings are missing or inconsistent.
-        /// </exception>
         public GenericMcpServerTestHost(
             IReadOnlyDictionary<string, string?> settings,
             HttpClient? runtimeClient = null)
@@ -88,26 +63,6 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic
                     };
         }
 
-        /// <summary>
-        /// Initializes a new instance of the <see cref="GenericMcpServerTestHost"/> class
-        /// with multiple runtime HTTP clients.
-        /// </summary>
-        /// <remarks>
-        /// This overload is useful when a test only needs multiple clients available but
-        /// does not require deterministic routing by runtime instance id.
-        ///
-        /// The list may be empty when the MCP control-plane host must start before runtime
-        /// hosts. In that case the injected HTTP client factory will throw only if a runtime
-        /// client is requested before one has been registered.
-        /// </remarks>
-        /// <param name="settings">The test host settings.</param>
-        /// <param name="runtimeClients">The runtime HTTP clients.</param>
-        /// <exception cref="ArgumentNullException">
-        /// Thrown when <paramref name="settings"/> or <paramref name="runtimeClients"/> is null.
-        /// </exception>
-        /// <exception cref="ArgumentException">
-        /// Thrown when required MCP settings are missing.
-        /// </exception>
         public GenericMcpServerTestHost(
             IReadOnlyDictionary<string, string?> settings,
             IReadOnlyList<HttpClient> runtimeClients)
@@ -149,28 +104,6 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic
                 clients;
         }
 
-        /// <summary>
-        /// Initializes a new instance of the <see cref="GenericMcpServerTestHost"/> class
-        /// with runtime HTTP clients keyed by runtime instance id.
-        /// </summary>
-        /// <remarks>
-        /// This overload is the preferred mode for HTTP multi-runtime provider tests.
-        /// It allows the injected <see cref="IHttpClientFactory"/> to return the correct
-        /// runtime host client based on the requested client name.
-        ///
-        /// The dictionary may be empty at MCP startup time when tests intentionally start
-        /// the MCP control-plane before runtime hosts. The dictionary is kept by reference,
-        /// so callers may populate it after runtime hosts are created.
-        /// </remarks>
-        /// <param name="settings">The test host settings.</param>
-        /// <param name="runtimeClientsByRuntimeInstanceId">The runtime HTTP clients keyed by runtime instance id.</param>
-        /// <exception cref="ArgumentNullException">
-        /// Thrown when <paramref name="settings"/> or
-        /// <paramref name="runtimeClientsByRuntimeInstanceId"/> is null.
-        /// </exception>
-        /// <exception cref="ArgumentException">
-        /// Thrown when required MCP settings are missing or when a runtime client key is empty.
-        /// </exception>
         public GenericMcpServerTestHost(
             IReadOnlyDictionary<string, string?> settings,
             IReadOnlyDictionary<string, HttpClient> runtimeClientsByRuntimeInstanceId)
@@ -202,10 +135,6 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic
                 runtimeClientsByRuntimeInstanceId.Values.FirstOrDefault();
         }
 
-        /// <summary>
-        /// Configures the MCP test web host.
-        /// </summary>
-        /// <param name="builder">The web host builder.</param>
         protected override void ConfigureWebHost(
             IWebHostBuilder builder)
         {
@@ -217,6 +146,27 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic
                     setting.Key,
                     setting.Value);
             }
+
+            builder.ConfigureTestServices(services =>
+            {
+                services
+                    .AddAuthentication(options =>
+                    {
+                        options.DefaultAuthenticateScheme =
+                            FakeAuthHandler.AuthenticationScheme;
+
+                        options.DefaultChallengeScheme =
+                            FakeAuthHandler.AuthenticationScheme;
+
+                        options.DefaultScheme =
+                            FakeAuthHandler.AuthenticationScheme;
+                    })
+                    .AddScheme<AuthenticationSchemeOptions, FakeAuthHandler>(
+                        FakeAuthHandler.AuthenticationScheme,
+                        _ => { });
+
+                services.AddAuthorization();
+            });
 
             builder.ConfigureServices(services =>
             {
@@ -251,13 +201,6 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic
             });
         }
 
-        /// <summary>
-        /// Validates required MCP control-plane settings before the test host starts.
-        /// </summary>
-        /// <param name="settings">The MCP host settings.</param>
-        /// <exception cref="ArgumentException">
-        /// Thrown when required settings are missing or inconsistent.
-        /// </exception>
         private static void ValidateSettings(
             IReadOnlyDictionary<string, string?> settings)
         {
@@ -317,11 +260,6 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic
             }
         }
 
-        /// <summary>
-        /// Determines whether the configured MCP host mode is a supported control-plane mode.
-        /// </summary>
-        /// <param name="mode">The configured MCP host mode.</param>
-        /// <returns><c>true</c> when the mode is supported; otherwise, <c>false</c>.</returns>
         private static bool IsSupportedControlPlaneMode(
             string mode)
         {
@@ -335,15 +273,6 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic
                     StringComparison.Ordinal);
         }
 
-        /// <summary>
-        /// Gets a required setting value from a settings dictionary.
-        /// </summary>
-        /// <param name="settings">The settings dictionary.</param>
-        /// <param name="key">The required setting key.</param>
-        /// <returns>The required setting value.</returns>
-        /// <exception cref="ArgumentException">
-        /// Thrown when the setting is missing or empty.
-        /// </exception>
         private static string GetRequiredSetting(
             IReadOnlyDictionary<string, string?> settings,
             string key)
@@ -359,11 +288,6 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic
             return value;
         }
 
-        /// <summary>
-        /// Normalizes a value for stable test-host comparisons.
-        /// </summary>
-        /// <param name="value">The value to normalize.</param>
-        /// <returns>The normalized value.</returns>
         private static string NormalizeKeySegment(
             string value)
         {
@@ -375,17 +299,6 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic
                 .Replace("\\", "/", StringComparison.Ordinal);
         }
 
-        /// <summary>
-        /// Provides an <see cref="IHttpClientFactory"/> implementation for multi-runtime HTTP tests.
-        /// </summary>
-        /// <remarks>
-        /// The HTTP runtime provider should request a client by runtime instance id when
-        /// dispatching to a selected runtime instance.
-        ///
-        /// The factory intentionally supports an initially empty dictionary so the MCP
-        /// control-plane host can start before runtime hosts. The dictionary is read at
-        /// request time, not captured as a fixed fallback at construction time.
-        /// </remarks>
         private sealed class MultiRuntimeHttpClientFactory : IHttpClientFactory
         {
             private readonly IReadOnlyDictionary<string, HttpClient> clientsByRuntimeInstanceId;

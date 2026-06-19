@@ -6,6 +6,7 @@ using Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue;
 using Multiplexed.Abstractions.AI.Execution;
 using Multiplexed.Abstractions.AI.Execution.Instance.Worker;
 using Multiplexed.Abstractions.AI.Runtime.Execution.Instance.Worker;
+using Multiplexed.Abstractions.Core.ExecutionContext;
 using Multiplexed.AI.Runtime.ControlPlane.Observability;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue;
 
@@ -40,7 +41,13 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeQueue
         public async Task CancelRunAsync_Should_Call_Controller_With_RunId_Reason_And_RequestedBy()
         {
             var controller = new FakeRuntimePipelineBackgroundController();
-            var controlPlane = CreateControlPlane(controller);
+            var runExecutionIndex = new InMemoryAiRuntimeRunExecutionIndex();
+
+            await RegisterIndexedRunAsync(runExecutionIndex);
+
+            var controlPlane = CreateControlPlane(
+                controller,
+                runExecutionIndex: runExecutionIndex);
 
             var result = await controlPlane.CancelRunAsync(new AiRuntimeQueueControlPlaneRequest
             {
@@ -61,7 +68,13 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeQueue
         public async Task CancelQueuedRunAsync_Should_Call_Controller_With_RunId_Reason_And_RequestedBy()
         {
             var controller = new FakeRuntimePipelineBackgroundController();
-            var controlPlane = CreateControlPlane(controller);
+            var runExecutionIndex = new InMemoryAiRuntimeRunExecutionIndex();
+
+            await RegisterIndexedRunAsync(runExecutionIndex);
+
+            var controlPlane = CreateControlPlane(
+                controller,
+                runExecutionIndex: runExecutionIndex);
 
             var result = await controlPlane.CancelQueuedRunAsync(new AiRuntimeQueueControlPlaneRequest
             {
@@ -122,12 +135,21 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeQueue
         public async Task GetRunStatusAsync_Should_Call_GetRunStateAsync()
         {
             var controller = new FakeRuntimePipelineBackgroundController();
-            var controlPlane = CreateControlPlane(controller);
+            var runExecutionIndex = new InMemoryAiRuntimeRunExecutionIndex();
+
+            await RegisterIndexedRunAsync(
+                runExecutionIndex,
+                status: "running");
+
+            var controlPlane = CreateControlPlane(
+                controller,
+                runExecutionIndex: runExecutionIndex);
 
             var result = await controlPlane.GetRunStatusAsync(new AiRuntimeQueueControlPlaneRequest
             {
                 Operation = AiRuntimeQueueControlPlaneOperation.GetRunStatus,
-                RunId = "run-1"
+                RunId = "run-1",
+                IncludeRunState = true
             });
 
             Assert.True(result.Success);
@@ -156,7 +178,13 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeQueue
         public async Task ExecuteAsync_Should_Dispatch_By_Operation()
         {
             var controller = new FakeRuntimePipelineBackgroundController();
-            var controlPlane = CreateControlPlane(controller);
+            var runExecutionIndex = new InMemoryAiRuntimeRunExecutionIndex();
+
+            await RegisterIndexedRunAsync(runExecutionIndex);
+
+            var controlPlane = CreateControlPlane(
+                controller,
+                runExecutionIndex: runExecutionIndex);
 
             var result = await controlPlane.ExecuteAsync(new AiRuntimeQueueControlPlaneRequest
             {
@@ -263,13 +291,69 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeQueue
 
         private static AiRuntimeQueueControlPlane CreateControlPlane(
             IAiRuntimePipelineBackgroundController controller,
-            AiRuntimeQueueControlPlaneOptions? options = null)
+            AiRuntimeQueueControlPlaneOptions? options = null,
+            IAiRuntimeRunExecutionIndex? runExecutionIndex = null)
         {
             return new AiRuntimeQueueControlPlane(
                 controller,
-                new InMemoryAiRuntimeRunExecutionIndex(),
+                runExecutionIndex ?? new InMemoryAiRuntimeRunExecutionIndex(),
                 Options.Create(options ?? new AiRuntimeQueueControlPlaneOptions()),
                 new NoopAiControlPlaneObserver());
+        }
+
+        private static async Task RegisterIndexedRunAsync(
+            IAiRuntimeRunExecutionIndex runExecutionIndex,
+            string runId = "run-1",
+            string executionId = "execution-1",
+            string runtimeInstanceId = "runtime-instance-1",
+            string status = "running")
+        {
+            await runExecutionIndex
+                .RegisterQueuedAsync(
+                    new AiRuntimeRunExecutionIndexEntry
+                    {
+                        RunId = runId,
+                        ExecutionId = executionId,
+                        RuntimeInstanceId = runtimeInstanceId,
+                        Status = status,
+                        CreatedAtUtc = DateTimeOffset.UtcNow,
+                        ExecutionContextSnapshot = CreateExecutionContextSnapshot(),
+                        Metadata = new Dictionary<string, string>
+                        {
+                            ["source"] = "unit-test",
+                            ["requestedBy"] = "tester",
+                            ["tenantId"] = "unit-test-tenant"
+                        }
+                    })
+                .ConfigureAwait(false);
+        }
+
+        private static ExecutionContextSnapshot CreateExecutionContextSnapshot()
+        {
+            return new ExecutionContextSnapshot
+            {
+                ContextKey = $"unit-test-context-{Guid.NewGuid():N}",
+                TenantId = "unit-test-tenant",
+                TenantGroupId = "unit-test-tenant-group",
+                Project = "deterministic-ai-runtime-tests",
+                UserId = "unit-test-user",
+                CurrentNamespace = "default",
+                Namespaces = new List<NamespaceEntry>
+                    {
+                        new()
+                        {
+                            Name = "default",
+                            Trns = new HashSet<string>
+                            {
+                                "trn:deterministic-ai-runtime-tests:runtime:run:read",
+                                "trn:deterministic-ai-runtime-tests:runtime:run:write",
+                                "trn:deterministic-ai-runtime-tests:runtime:execution:read"
+                            }
+                        }
+                    },
+                InFlightCount = 0,
+                TtlSeconds = 300
+            };
         }
 
         private sealed class CapturingControlPlaneObserver : IAiControlPlaneObserver

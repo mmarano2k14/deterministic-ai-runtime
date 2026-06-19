@@ -4,6 +4,7 @@ using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.ControlPlane.Discovery;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Capacity;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Environment;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
 using Multiplexed.Abstractions.AI.Execution.Instance.Worker;
 using Multiplexed.Abstractions.AI.Runtime.Execution.Instance.Worker;
@@ -248,6 +249,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
             runtimeInstanceId =
                 ResolveRuntimeInstanceId(environment);
 
+            var providerName =
+                ResolveProviderName(environment);
+
             runtimeMetadata =
                 MergeMetadata(
                     options.Metadata,
@@ -255,13 +259,14 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
                     environment.ProviderMetadata,
                     new Dictionary<string, string>
                     {
-                        ["provider"] = options.ProviderName ?? environment.ProviderName,
+                        [AiRuntimeInstanceProviderMetadataKeys.ProviderName] = providerName,
+                        ["provider"] = providerName,
                         ["controlPlaneId"] = controlPlaneId,
                         ["controlPlaneHostId"] = controlPlaneHostId ?? string.Empty
                     });
 
             SafeLogInformation(
-                "Runtime instance id resolved. RuntimeInstanceId={RuntimeInstanceId}, ControlPlaneId={ControlPlaneId}, OptionsRuntimeInstanceId={OptionsRuntimeInstanceId}, EnvironmentRuntimeInstanceId={EnvironmentRuntimeInstanceId}, HostName={HostName}, ProcessId={ProcessId}, HostId={HostId}, RuntimeId={RuntimeId}, ControlPlaneHostId={ControlPlaneHostId}, RegistryType={RegistryType}, RegistryHash={RegistryHash}",
+                "Runtime instance id resolved. RuntimeInstanceId={RuntimeInstanceId}, ControlPlaneId={ControlPlaneId}, OptionsRuntimeInstanceId={OptionsRuntimeInstanceId}, EnvironmentRuntimeInstanceId={EnvironmentRuntimeInstanceId}, HostName={HostName}, ProcessId={ProcessId}, HostId={HostId}, RuntimeId={RuntimeId}, ControlPlaneHostId={ControlPlaneHostId}, ProviderName={ProviderName}, RegistryType={RegistryType}, RegistryHash={RegistryHash}",
                 runtimeInstanceId,
                 controlPlaneId,
                 options.RuntimeInstanceId,
@@ -271,6 +276,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
                 environment.HostId,
                 environment.RuntimeId,
                 controlPlaneHostId,
+                providerName,
                 registry.GetType().FullName,
                 registry.GetHashCode());
 
@@ -352,7 +358,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
                 snapshot.RuntimeInstanceId,
                 snapshot.ControlPlaneId,
                 snapshot.Status,
-                options.ProviderName ?? environment.ProviderName,
+                providerName,
                 snapshot.HostId,
                 snapshot.RuntimeId,
                 snapshot.ControlPlaneHostId,
@@ -527,6 +533,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
                     status,
                     queueState);
 
+            var descriptorMetadata =
+                EnsureProviderMetadata(
+                    metadata);
+
             var descriptor =
                 new AiRuntimeInstanceCapacityDescriptor
                 {
@@ -551,16 +561,21 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
                     IsQueuePaused = queueState.IsPaused,
                     CanAcceptRun = effectiveCapacity.CanAcceptRun,
                     LastHeartbeatAtUtc = DateTimeOffset.UtcNow,
-                    Metadata = metadata
+                    Metadata = descriptorMetadata
                 };
 
             SafeLogInformation(
-                "Runtime instance capacity descriptor publishing. RuntimeInstanceId={RuntimeInstanceId}, ControlPlaneId={ControlPlaneId}, ControlPlaneHostId={ControlPlaneHostId}, Role={Role}, Status={Status}, QueuedRunCount={QueuedRunCount}, RunningRunCount={RunningRunCount}, ActiveRunCount={ActiveRunCount}, QueueCapacity={QueueCapacity}, QueueHasCapacity={QueueHasCapacity}, AvailableRunSlots={AvailableRunSlots}, AvailableWorkerCount={AvailableWorkerCount}, CanAcceptRun={CanAcceptRun}, IsQueuePaused={IsQueuePaused}, StoreCount={StoreCount}",
+                "Runtime instance capacity descriptor publishing. RuntimeInstanceId={RuntimeInstanceId}, ControlPlaneId={ControlPlaneId}, ControlPlaneHostId={ControlPlaneHostId}, Role={Role}, Status={Status}, Provider={Provider}, QueuedRunCount={QueuedRunCount}, RunningRunCount={RunningRunCount}, ActiveRunCount={ActiveRunCount}, QueueCapacity={QueueCapacity}, QueueHasCapacity={QueueHasCapacity}, AvailableRunSlots={AvailableRunSlots}, AvailableWorkerCount={AvailableWorkerCount}, CanAcceptRun={CanAcceptRun}, IsQueuePaused={IsQueuePaused}, StoreCount={StoreCount}",
                 runtimeInstanceId,
                 descriptor.ControlPlaneId,
                 descriptor.ControlPlaneHostId,
                 descriptor.Role,
                 descriptor.Status,
+                descriptorMetadata.TryGetValue(AiRuntimeInstanceProviderMetadataKeys.ProviderName, out var providerName)
+                    ? providerName
+                    : descriptorMetadata.TryGetValue("provider", out var providerAlias)
+                        ? providerAlias
+                        : "(unknown)",
                 descriptor.QueuedRunCount,
                 descriptor.RunningRunCount,
                 descriptor.ActiveRunCount,
@@ -730,6 +745,85 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
         }
 
         /// <summary>
+        /// Resolves the logical provider name for the current runtime instance.
+        /// </summary>
+        /// <param name="environment">The runtime environment snapshot.</param>
+        /// <returns>The logical provider name.</returns>
+        private string ResolveProviderName(
+            AiRuntimeEnvironmentSnapshot environment)
+        {
+            var providerName =
+                options.ProviderName ?? environment.ProviderName;
+
+            if (string.IsNullOrWhiteSpace(providerName))
+            {
+                return "local";
+            }
+
+            return providerName.Trim();
+        }
+
+        /// <summary>
+        /// Ensures that metadata contains both the canonical provider key and the legacy provider alias.
+        /// </summary>
+        /// <param name="metadata">The source metadata.</param>
+        /// <returns>The normalized metadata dictionary.</returns>
+        private IReadOnlyDictionary<string, string> EnsureProviderMetadata(
+            IReadOnlyDictionary<string, string> metadata)
+        {
+            var result =
+                new Dictionary<string, string>(
+                    metadata,
+                    StringComparer.OrdinalIgnoreCase);
+
+            var providerName =
+                ResolveProviderNameFromMetadata(result);
+
+            result[AiRuntimeInstanceProviderMetadataKeys.ProviderName] =
+                providerName;
+
+            result["provider"] =
+                providerName;
+
+            return result;
+        }
+
+        /// <summary>
+        /// Resolves the provider name from metadata or registration options.
+        /// </summary>
+        /// <param name="metadata">The metadata dictionary.</param>
+        /// <returns>The resolved provider name.</returns>
+        private string ResolveProviderNameFromMetadata(
+            IReadOnlyDictionary<string, string> metadata)
+        {
+            if (metadata.TryGetValue(
+                    AiRuntimeInstanceProviderMetadataKeys.ProviderName,
+                    out var providerName) &&
+                !string.IsNullOrWhiteSpace(providerName))
+            {
+                return providerName.Trim();
+            }
+
+            if (metadata.TryGetValue(
+                    "provider",
+                    out var providerAlias) &&
+                !string.IsNullOrWhiteSpace(providerAlias))
+            {
+                return providerAlias.Trim();
+            }
+
+            var configuredProviderName =
+                options.ProviderName;
+
+            if (!string.IsNullOrWhiteSpace(configuredProviderName))
+            {
+                return configuredProviderName.Trim();
+            }
+
+            return "local";
+        }
+
+        /// <summary>
         /// Merges metadata dictionaries.
         /// </summary>
         private static IReadOnlyDictionary<string, string> MergeMetadata(
@@ -737,7 +831,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
         {
             var result =
                 new Dictionary<string, string>(
-                    StringComparer.Ordinal);
+                    StringComparer.OrdinalIgnoreCase);
 
             foreach (var source in sources)
             {

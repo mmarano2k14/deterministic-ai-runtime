@@ -1283,7 +1283,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
                     CreateHttpControlPlaneSettings(
                         controlPlaneId),
                     CreateHttpRuntimeInstanceHostSettings(
-                        controlPlaneId));
+                        controlPlaneId),
+                    rbacTenantId: TenantId);
 
             await fixture.InitializeAsync()
                 .ConfigureAwait(false);

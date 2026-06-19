@@ -3,6 +3,7 @@ using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.ControlPlane.Admission;
 using Multiplexed.Abstractions.AI.ControlPlane.Admission.Reservations;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Capacity;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.Admission
@@ -23,6 +24,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission
         private readonly IAiRuntimeInstanceRegistry _registry;
         private readonly IAiRuntimeAdmissionReservationStore _reservationStore;
         private readonly IAiRuntimeInstanceCapacityStore _capacityStore;
+        private readonly IAiTenantRuntimeSettingsProvider _tenantRuntimeSettingsProvider;
         private readonly AiRunAdmissionOptions _options;
         private readonly ILogger<AiRunAdmissionController> _logger;
         private long _admissionSequence;
@@ -33,18 +35,21 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission
         /// <param name="registry">The runtime instance registry used to discover visible runtime instances.</param>
         /// <param name="reservationStore">The admission reservation store used to account for temporary reserved capacity.</param>
         /// <param name="capacityStore">The runtime instance capacity store used to verify dispatchable runtime capacity.</param>
+        /// <param name="tenantRuntimeSettingsProvider">The tenant runtime settings provider.</param>
         /// <param name="options">The run admission options.</param>
         /// <param name="logger">The logger.</param>
         public AiRunAdmissionController(
             IAiRuntimeInstanceRegistry registry,
             IAiRuntimeAdmissionReservationStore reservationStore,
             IAiRuntimeInstanceCapacityStore capacityStore,
+            IAiTenantRuntimeSettingsProvider tenantRuntimeSettingsProvider,
             IOptions<AiRunAdmissionOptions> options,
             ILogger<AiRunAdmissionController> logger)
         {
             _registry = registry ?? throw new ArgumentNullException(nameof(registry));
             _reservationStore = reservationStore ?? throw new ArgumentNullException(nameof(reservationStore));
             _capacityStore = capacityStore ?? throw new ArgumentNullException(nameof(capacityStore));
+            _tenantRuntimeSettingsProvider = tenantRuntimeSettingsProvider ?? throw new ArgumentNullException(nameof(tenantRuntimeSettingsProvider));
             _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
@@ -64,6 +69,15 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission
 
             cancellationToken.ThrowIfCancellationRequested();
 
+            var tenantRuntimeSettings =
+                _tenantRuntimeSettingsProvider.GetSettings(
+                    request.TenantId,
+                    ResolveTenantGroupId(request));
+
+            var effectiveMaxInstanceCount =
+                ResolveEffectiveMaxInstanceCount(
+                    tenantRuntimeSettings);
+
             if (!_options.Enabled)
             {
                 _logger.LogWarning(
@@ -76,7 +90,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission
                     AiRunAdmissionDecisionType.Reject,
                     reason: "Run admission is disabled.",
                     visibleInstances: Array.Empty<AiRuntimeInstanceSnapshot>(),
-                    availableInstances: Array.Empty<AiRuntimeInstanceSnapshot>());
+                    availableInstances: Array.Empty<AiRuntimeInstanceSnapshot>(),
+                    maxInstanceCount: effectiveMaxInstanceCount,
+                    tenantRuntimeSettings: tenantRuntimeSettings);
             }
 
             var instances = await _registry
@@ -84,14 +100,18 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission
                 .ConfigureAwait(false);
 
             _logger.LogInformation(
-                "Admission started. RunId={RunId}, TenantId={TenantId}, PipelineKey={PipelineKey}, PreferredRuntimeInstanceId={PreferredRuntimeInstanceId}, VisibleInstanceCount={VisibleInstanceCount}, EnableScaleOutRequest={EnableScaleOutRequest}, MaxInstanceCount={MaxInstanceCount}, EnableGlobalQueueFallback={EnableGlobalQueueFallback}, RejectWhenNoCapacity={RejectWhenNoCapacity}",
+                "Admission started. RunId={RunId}, TenantId={TenantId}, TenantGroupId={TenantGroupId}, PipelineKey={PipelineKey}, PreferredRuntimeInstanceId={PreferredRuntimeInstanceId}, VisibleInstanceCount={VisibleInstanceCount}, EnableScaleOutRequest={EnableScaleOutRequest}, MaxInstanceCount={MaxInstanceCount}, TenantIsolationMode={TenantIsolationMode}, TenantMaxRuntimeInstances={TenantMaxRuntimeInstances}, EffectiveMaxInstanceCount={EffectiveMaxInstanceCount}, EnableGlobalQueueFallback={EnableGlobalQueueFallback}, RejectWhenNoCapacity={RejectWhenNoCapacity}",
                 request.RunId,
-                request.TenantId,
+                tenantRuntimeSettings.TenantId,
+                tenantRuntimeSettings.TenantGroupId,
                 request.PipelineKey,
                 request.PreferredRuntimeInstanceId,
                 instances.Count,
                 _options.EnableScaleOutRequest,
                 _options.MaxInstanceCount,
+                tenantRuntimeSettings.IsolationMode,
+                tenantRuntimeSettings.MaxRuntimeInstances,
+                effectiveMaxInstanceCount,
                 _options.EnableGlobalQueueFallback,
                 _options.RejectWhenNoCapacity);
 
@@ -169,6 +189,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission
                     preferred,
                     instances,
                     availableInstances,
+                    effectiveMaxInstanceCount,
+                    tenantRuntimeSettings,
                     "Preferred runtime instance selected for run admission.");
             }
 
@@ -192,33 +214,42 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission
                     selected,
                     instances,
                     availableInstances,
+                    effectiveMaxInstanceCount,
+                    tenantRuntimeSettings,
                     "Runtime instance selected for run admission.");
             }
 
-            if (ShouldRequestScaleOut(runtimeCandidates.Length))
+            if (ShouldRequestScaleOut(runtimeCandidates.Length, effectiveMaxInstanceCount))
             {
                 _logger.LogWarning(
-                    "Admission requesting scale-out. RunId={RunId}, VisibleInstanceCount={VisibleInstanceCount}, RuntimeCandidateCount={RuntimeCandidateCount}, AvailableCandidateCount={AvailableCandidateCount}, CurrentRuntimeInstanceCount={CurrentRuntimeInstanceCount}, MaxInstanceCount={MaxInstanceCount}, Reason={Reason}",
+                    "Admission requesting scale-out. RunId={RunId}, TenantId={TenantId}, TenantGroupId={TenantGroupId}, TenantIsolationMode={TenantIsolationMode}, VisibleInstanceCount={VisibleInstanceCount}, RuntimeCandidateCount={RuntimeCandidateCount}, AvailableCandidateCount={AvailableCandidateCount}, CurrentRuntimeInstanceCount={CurrentRuntimeInstanceCount}, MaxInstanceCount={MaxInstanceCount}, Reason={Reason}",
                     request.RunId,
+                    tenantRuntimeSettings.TenantId,
+                    tenantRuntimeSettings.TenantGroupId,
+                    tenantRuntimeSettings.IsolationMode,
                     instances.Count,
                     runtimeCandidates.Length,
                     availableCandidates.Count,
                     runtimeCandidates.Length,
-                    _options.MaxInstanceCount,
+                    effectiveMaxInstanceCount,
                     "No runtime instance can currently accept the run and scale-out is allowed.");
 
                 return CreateDecision(
                     AiRunAdmissionDecisionType.RequestScaleOut,
                     reason: "No runtime instance can currently accept the run and scale-out is allowed.",
                     visibleInstances: instances,
-                    availableInstances: availableInstances);
+                    availableInstances: availableInstances,
+                    maxInstanceCount: effectiveMaxInstanceCount,
+                    tenantRuntimeSettings: tenantRuntimeSettings);
             }
 
             if (_options.EnableGlobalQueueFallback)
             {
                 _logger.LogWarning(
-                    "Admission falling back to global queue. RunId={RunId}, VisibleInstanceCount={VisibleInstanceCount}, RuntimeCandidateCount={RuntimeCandidateCount}, AvailableCandidateCount={AvailableCandidateCount}, Reason={Reason}",
+                    "Admission falling back to global queue. RunId={RunId}, TenantId={TenantId}, TenantGroupId={TenantGroupId}, VisibleInstanceCount={VisibleInstanceCount}, RuntimeCandidateCount={RuntimeCandidateCount}, AvailableCandidateCount={AvailableCandidateCount}, Reason={Reason}",
                     request.RunId,
+                    tenantRuntimeSettings.TenantId,
+                    tenantRuntimeSettings.TenantGroupId,
                     instances.Count,
                     runtimeCandidates.Length,
                     availableCandidates.Count,
@@ -228,14 +259,18 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission
                     AiRunAdmissionDecisionType.QueueGlobally,
                     reason: "No runtime instance can currently accept the run; global queue fallback is allowed.",
                     visibleInstances: instances,
-                    availableInstances: availableInstances);
+                    availableInstances: availableInstances,
+                    maxInstanceCount: effectiveMaxInstanceCount,
+                    tenantRuntimeSettings: tenantRuntimeSettings);
             }
 
             if (_options.RejectWhenNoCapacity)
             {
                 _logger.LogWarning(
-                    "Admission rejecting run because no capacity is available. RunId={RunId}, VisibleInstanceCount={VisibleInstanceCount}, RuntimeCandidateCount={RuntimeCandidateCount}, AvailableCandidateCount={AvailableCandidateCount}",
+                    "Admission rejecting run because no capacity is available. RunId={RunId}, TenantId={TenantId}, TenantGroupId={TenantGroupId}, VisibleInstanceCount={VisibleInstanceCount}, RuntimeCandidateCount={RuntimeCandidateCount}, AvailableCandidateCount={AvailableCandidateCount}",
                     request.RunId,
+                    tenantRuntimeSettings.TenantId,
+                    tenantRuntimeSettings.TenantGroupId,
                     instances.Count,
                     runtimeCandidates.Length,
                     availableCandidates.Count);
@@ -244,12 +279,16 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission
                     AiRunAdmissionDecisionType.Reject,
                     reason: "No runtime instance can currently accept the run.",
                     visibleInstances: instances,
-                    availableInstances: availableInstances);
+                    availableInstances: availableInstances,
+                    maxInstanceCount: effectiveMaxInstanceCount,
+                    tenantRuntimeSettings: tenantRuntimeSettings);
             }
 
             _logger.LogWarning(
-                "Admission produced unknown decision. RunId={RunId}, VisibleInstanceCount={VisibleInstanceCount}, RuntimeCandidateCount={RuntimeCandidateCount}, AvailableCandidateCount={AvailableCandidateCount}",
+                "Admission produced unknown decision. RunId={RunId}, TenantId={TenantId}, TenantGroupId={TenantGroupId}, VisibleInstanceCount={VisibleInstanceCount}, RuntimeCandidateCount={RuntimeCandidateCount}, AvailableCandidateCount={AvailableCandidateCount}",
                 request.RunId,
+                tenantRuntimeSettings.TenantId,
+                tenantRuntimeSettings.TenantGroupId,
                 instances.Count,
                 runtimeCandidates.Length,
                 availableCandidates.Count);
@@ -258,7 +297,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission
                 AiRunAdmissionDecisionType.Unknown,
                 reason: "No admission policy produced a terminal decision.",
                 visibleInstances: instances,
-                availableInstances: availableInstances);
+                availableInstances: availableInstances,
+                maxInstanceCount: effectiveMaxInstanceCount,
+                tenantRuntimeSettings: tenantRuntimeSettings);
         }
 
         /// <summary>
@@ -564,24 +605,55 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission
         }
 
         /// <summary>
+        /// Resolves the tenant group identifier from the admission request.
+        /// </summary>
+        /// <param name="request">The admission request.</param>
+        /// <returns>The tenant group identifier when available; otherwise, <see langword="null"/>.</returns>
+        private static string? ResolveTenantGroupId(
+            AiRunAdmissionRequest request)
+        {
+            return request.RunRequest.ExecutionContextSnapshot?.TenantGroupId;
+        }
+
+        /// <summary>
+        /// Resolves the effective maximum runtime instance count for this admission decision.
+        /// </summary>
+        /// <param name="tenantRuntimeSettings">The tenant runtime settings.</param>
+        /// <returns>The effective maximum runtime instance count.</returns>
+        private int? ResolveEffectiveMaxInstanceCount(
+            AiTenantRuntimeSettings tenantRuntimeSettings)
+        {
+            if (tenantRuntimeSettings.IsolationMode is
+                AiRuntimeInstanceIsolationMode.Dedicated or
+                AiRuntimeInstanceIsolationMode.Hybrid)
+            {
+                return tenantRuntimeSettings.MaxRuntimeInstances;
+            }
+
+            return _options.MaxInstanceCount;
+        }
+
+        /// <summary>
         /// Determines whether the admission controller should request scale-out.
         /// </summary>
         /// <param name="currentRuntimeInstanceCount">The number of currently visible runtime instances.</param>
+        /// <param name="maxInstanceCount">The effective maximum number of runtime instances allowed.</param>
         /// <returns><see langword="true"/> when scale-out should be requested; otherwise, <see langword="false"/>.</returns>
         private bool ShouldRequestScaleOut(
-            int currentRuntimeInstanceCount)
+            int currentRuntimeInstanceCount,
+            int? maxInstanceCount)
         {
             if (!_options.EnableScaleOutRequest)
             {
                 return false;
             }
 
-            if (!_options.MaxInstanceCount.HasValue)
+            if (!maxInstanceCount.HasValue)
             {
                 return true;
             }
 
-            return currentRuntimeInstanceCount < _options.MaxInstanceCount.Value;
+            return currentRuntimeInstanceCount < maxInstanceCount.Value;
         }
 
         /// <summary>
@@ -590,28 +662,24 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission
         /// <param name="candidate">The selected admission candidate.</param>
         /// <param name="visibleInstances">All visible runtime instances.</param>
         /// <param name="availableInstances">The available runtime instances considered for assignment.</param>
+        /// <param name="maxInstanceCount">The effective maximum number of runtime instances allowed.</param>
+        /// <param name="tenantRuntimeSettings">The tenant runtime settings resolved for this admission decision.</param>
         /// <param name="reason">The decision reason.</param>
         /// <returns>The assignment admission decision.</returns>
         private AiRunAdmissionDecision CreateAssignmentDecision(
             AdmissionCandidate candidate,
             IReadOnlyCollection<AiRuntimeInstanceSnapshot> visibleInstances,
             IReadOnlyCollection<AiRuntimeInstanceSnapshot> availableInstances,
+            int? maxInstanceCount,
+            AiTenantRuntimeSettings tenantRuntimeSettings,
             string reason)
         {
             var instance =
                 candidate.Instance;
 
-            return new AiRunAdmissionDecision
-            {
-                DecisionType = AiRunAdmissionDecisionType.AssignToInstance,
-                AssignedRuntimeInstanceId = instance.RuntimeInstanceId,
-                AssignedInstance = instance,
-                Reason = reason,
-                VisibleInstanceCount = visibleInstances.Count,
-                AvailableInstanceCount = availableInstances.Count,
-                CurrentInstanceCount = visibleInstances.Count,
-                MaxInstanceCount = _options.MaxInstanceCount,
-                Metadata = new Dictionary<string, string>
+            var metadata =
+                new Dictionary<string, string>(
+                    StringComparer.OrdinalIgnoreCase)
                 {
                     ["assigned.runtime.instance.id"] = instance.RuntimeInstanceId,
                     ["assigned.runtime.instance.status"] = (candidate.CapacityDescriptor?.Status ?? instance.Status).ToString(),
@@ -630,8 +698,29 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission
                     ["assigned.runtime.instance.max.local.workers.per.execution"] =
                         GetMaxWorkersPerRun(candidate).ToString(),
                     ["assigned.runtime.instance.queue.first"] =
-                        (candidate.EffectiveAvailableRunSlots <= 0).ToString()
-                }
+                        (candidate.EffectiveAvailableRunSlots <= 0).ToString(),
+                    ["max.instance.count"] =
+                        maxInstanceCount?.ToString() ?? string.Empty
+                };
+
+            AddTenantRuntimeSettingsMetadata(
+                metadata,
+                tenantRuntimeSettings);
+
+            return new AiRunAdmissionDecision
+            {
+                DecisionType = AiRunAdmissionDecisionType.AssignToInstance,
+                AssignedRuntimeInstanceId = instance.RuntimeInstanceId,
+                AssignedInstance = instance,
+                TenantId = tenantRuntimeSettings.TenantId,
+                TenantGroupId = tenantRuntimeSettings.TenantGroupId,
+                TenantRuntimeSettings = tenantRuntimeSettings,
+                Reason = reason,
+                VisibleInstanceCount = visibleInstances.Count,
+                AvailableInstanceCount = availableInstances.Count,
+                CurrentInstanceCount = visibleInstances.Count,
+                MaxInstanceCount = maxInstanceCount,
+                Metadata = metadata
             };
         }
 
@@ -642,28 +731,89 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission
         /// <param name="reason">The decision reason.</param>
         /// <param name="visibleInstances">All visible runtime instances.</param>
         /// <param name="availableInstances">The available runtime instances.</param>
+        /// <param name="maxInstanceCount">The effective maximum number of runtime instances allowed.</param>
+        /// <param name="tenantRuntimeSettings">The tenant runtime settings resolved for this admission decision.</param>
         /// <returns>The admission decision.</returns>
         private AiRunAdmissionDecision CreateDecision(
             AiRunAdmissionDecisionType decisionType,
             string reason,
             IReadOnlyCollection<AiRuntimeInstanceSnapshot> visibleInstances,
-            IReadOnlyCollection<AiRuntimeInstanceSnapshot> availableInstances)
+            IReadOnlyCollection<AiRuntimeInstanceSnapshot> availableInstances,
+            int? maxInstanceCount,
+            AiTenantRuntimeSettings tenantRuntimeSettings)
         {
+            var metadata =
+                new Dictionary<string, string>(
+                    StringComparer.OrdinalIgnoreCase)
+                {
+                    ["visible.instance.count"] = visibleInstances.Count.ToString(),
+                    ["available.instance.count"] = availableInstances.Count.ToString(),
+                    ["max.instance.count"] = maxInstanceCount?.ToString() ?? string.Empty
+                };
+
+            AddTenantRuntimeSettingsMetadata(
+                metadata,
+                tenantRuntimeSettings);
+
             return new AiRunAdmissionDecision
             {
                 DecisionType = decisionType,
                 Reason = reason,
+                TenantId = tenantRuntimeSettings.TenantId,
+                TenantGroupId = tenantRuntimeSettings.TenantGroupId,
+                TenantRuntimeSettings = tenantRuntimeSettings,
                 VisibleInstanceCount = visibleInstances.Count,
                 AvailableInstanceCount = availableInstances.Count,
                 CurrentInstanceCount = visibleInstances.Count,
-                MaxInstanceCount = _options.MaxInstanceCount,
-                Metadata = new Dictionary<string, string>
-                {
-                    ["visible.instance.count"] = visibleInstances.Count.ToString(),
-                    ["available.instance.count"] = availableInstances.Count.ToString(),
-                    ["max.instance.count"] = _options.MaxInstanceCount?.ToString() ?? string.Empty
-                }
+                MaxInstanceCount = maxInstanceCount,
+                Metadata = metadata
             };
+        }
+
+        /// <summary>
+        /// Adds tenant runtime settings to admission metadata for diagnostics, logs, dashboards,
+        /// and non-critical observability.
+        /// </summary>
+        /// <remarks>
+        /// These metadata values are intentionally duplicated from strongly typed admission
+        /// properties. They must not become the primary source for critical routing decisions.
+        /// Critical runtime behavior should use <see cref="AiRunAdmissionDecision.TenantRuntimeSettings"/>.
+        /// </remarks>
+        /// <param name="metadata">The metadata dictionary to enrich.</param>
+        /// <param name="tenantRuntimeSettings">The tenant runtime settings resolved for the decision.</param>
+        private static void AddTenantRuntimeSettingsMetadata(
+            IDictionary<string, string> metadata,
+            AiTenantRuntimeSettings tenantRuntimeSettings)
+        {
+            metadata["tenant.id"] =
+                tenantRuntimeSettings.TenantId ?? string.Empty;
+
+            metadata["tenant.group.id"] =
+                tenantRuntimeSettings.TenantGroupId ?? string.Empty;
+
+            metadata["runtime.isolationMode"] =
+                tenantRuntimeSettings.IsolationMode.ToString();
+
+            metadata["runtime.preferDedicatedCapacity"] =
+                tenantRuntimeSettings.PreferDedicatedCapacity.ToString();
+
+            metadata["runtime.allowSharedFallback"] =
+                tenantRuntimeSettings.AllowSharedFallback.ToString();
+
+            metadata["runtime.maxRuntimeInstances"] =
+                tenantRuntimeSettings.MaxRuntimeInstances.ToString();
+
+            metadata["runtime.workerCountPerInstance"] =
+                tenantRuntimeSettings.WorkerCountPerInstance.ToString();
+
+            metadata["runtime.maxConcurrentRunsPerInstance"] =
+                tenantRuntimeSettings.MaxConcurrentRunsPerInstance.ToString();
+
+            metadata["runtime.instanceIdPrefix"] =
+                tenantRuntimeSettings.RuntimeInstanceIdPrefix ?? string.Empty;
+
+            metadata["runtime.localQueueCapacity"] =
+                tenantRuntimeSettings.LocalQueueCapacity?.ToString() ?? string.Empty;
         }
 
         /// <summary>
@@ -705,6 +855,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission
                 reason);
         }
 
+        /// <summary>
+        /// Gets the queued run count from a candidate capacity descriptor or registry snapshot.
+        /// </summary>
+        /// <param name="candidate">The admission candidate.</param>
+        /// <returns>The queued run count.</returns>
         private static int GetQueuedRunCount(
             AdmissionCandidate candidate)
         {
@@ -712,6 +867,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission
                    candidate.Instance.QueuedRunCount;
         }
 
+        /// <summary>
+        /// Gets the running run count from a candidate capacity descriptor or registry snapshot.
+        /// </summary>
+        /// <param name="candidate">The admission candidate.</param>
+        /// <returns>The running run count.</returns>
         private static int GetRunningRunCount(
             AdmissionCandidate candidate)
         {
@@ -719,6 +879,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission
                    candidate.Instance.RunningRunCount;
         }
 
+        /// <summary>
+        /// Gets the available run slot count from a candidate capacity descriptor or registry snapshot.
+        /// </summary>
+        /// <param name="candidate">The admission candidate.</param>
+        /// <returns>The available run slot count.</returns>
         private static int GetAvailableRunSlots(
             AdmissionCandidate candidate)
         {
@@ -727,6 +892,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission
                    0;
         }
 
+        /// <summary>
+        /// Gets the active worker count from a candidate capacity descriptor or registry snapshot.
+        /// </summary>
+        /// <param name="candidate">The admission candidate.</param>
+        /// <returns>The active worker count.</returns>
         private static int GetActiveWorkerCount(
             AdmissionCandidate candidate)
         {
@@ -735,6 +905,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission
                    0;
         }
 
+        /// <summary>
+        /// Gets the available worker count from a candidate capacity descriptor or registry snapshot.
+        /// </summary>
+        /// <param name="candidate">The admission candidate.</param>
+        /// <returns>The available worker count.</returns>
         private static int GetAvailableWorkerCount(
             AdmissionCandidate candidate)
         {
@@ -743,6 +918,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission
                    0;
         }
 
+        /// <summary>
+        /// Gets the maximum worker count per run from a candidate capacity descriptor or registry snapshot.
+        /// </summary>
+        /// <param name="candidate">The admission candidate.</param>
+        /// <returns>The maximum worker count per run when available; otherwise, <see langword="null"/>.</returns>
         private static int? GetMaxWorkersPerRun(
             AdmissionCandidate candidate)
         {

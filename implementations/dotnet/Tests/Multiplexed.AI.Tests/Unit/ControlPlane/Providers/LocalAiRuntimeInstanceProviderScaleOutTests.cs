@@ -1,4 +1,5 @@
 ﻿using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Capacity;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Pool;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.SharedInstance;
@@ -67,6 +68,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.Providers
                 result.ProviderOperationId);
 
             Assert.NotNull(result.Metadata);
+
             Assert.Equal(
                 "local",
                 result.Metadata[AiRuntimeInstanceProviderMetadataKeys.ProviderName]);
@@ -74,37 +76,6 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.Providers
             Assert.Equal(
                 "request-1",
                 result.Metadata["scaleOutRequestId"]);
-        }
-
-        /// <summary>
-        /// Creates a scale-out provider request.
-        /// </summary>
-        /// <returns>The created request.</returns>
-        private static AiRuntimeScaleOutProviderRequest CreateScaleOutRequest()
-        {
-            return new AiRuntimeScaleOutProviderRequest
-            {
-                RequestId = "request-1",
-                ControlPlaneId = "cp-test",
-                SharedRunId = "shared-run-1",
-                TenantId = "tenant-test",
-                PipelineKey = "pipeline-test",
-                VisibleInstanceCount = 0,
-                AvailableInstanceCount = 0,
-                CurrentInstanceCount = 0,
-                MaxInstanceCount = 3,
-                RequestedTargetInstanceCount = 1,
-                ProviderHint = "local",
-                RequestedBy = "unit-test",
-                Source = "unit-test",
-                CorrelationId = "correlation-test",
-                Reason = "No runtime capacity was available for admission.",
-                Metadata = new Dictionary<string, string>(
-                    StringComparer.OrdinalIgnoreCase)
-                {
-                    ["test"] = "true"
-                }
-            };
         }
 
         /// <summary>
@@ -131,11 +102,75 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.Providers
             Assert.False(result.Rejected);
             Assert.Equal("test-local-runtime-1", result.RuntimeInstanceId);
             Assert.Equal(1, scaler.CallCount);
+
+            Assert.NotNull(scaler.LastRequest);
+            Assert.Equal("tenant-test", scaler.LastRequest!.TenantId);
+            Assert.Equal("tenant-group-test", scaler.LastRequest.TenantGroupId);
+            Assert.Equal(AiRuntimeInstanceIsolationMode.Dedicated, scaler.LastRequest.IsolationMode);
+            Assert.True(scaler.LastRequest.PreferDedicatedCapacity);
+            Assert.False(scaler.LastRequest.AllowSharedFallback);
+            Assert.Equal(3, scaler.LastRequest.MaxRuntimeInstances);
+            Assert.Equal("tenant-test-runtime", scaler.LastRequest.RuntimeInstanceIdPrefix);
+            Assert.Equal(10, scaler.LastRequest.WorkerCountPerInstance);
+            Assert.Equal(5, scaler.LastRequest.MaxConcurrentRunsPerInstance);
+            Assert.Equal(500, scaler.LastRequest.LocalQueueCapacity);
         }
 
         /// <summary>
-        /// Provides an empty shared runtime instance registry for local provider tests.
+        /// Creates a scale-out provider request.
         /// </summary>
+        /// <returns>The created request.</returns>
+        private static AiRuntimeScaleOutProviderRequest CreateScaleOutRequest()
+        {
+            return new AiRuntimeScaleOutProviderRequest
+            {
+                RequestId = "request-1",
+                ControlPlaneId = "cp-test",
+                SharedRunId = "shared-run-1",
+
+                TenantId = "tenant-test",
+                TenantGroupId = "tenant-group-test",
+                PipelineKey = "pipeline-test",
+
+                IsolationMode = AiRuntimeInstanceIsolationMode.Dedicated,
+                PreferDedicatedCapacity = true,
+                AllowSharedFallback = false,
+                MaxRuntimeInstances = 3,
+                RuntimeInstanceIdPrefix = "tenant-test-runtime",
+                WorkerCountPerInstance = 10,
+                MaxConcurrentRunsPerInstance = 5,
+                LocalQueueCapacity = 500,
+
+                VisibleInstanceCount = 0,
+                AvailableInstanceCount = 0,
+                CurrentInstanceCount = 0,
+                MaxInstanceCount = 3,
+                RequestedTargetInstanceCount = 1,
+
+                ProviderHint = "local",
+                RequestedBy = "unit-test",
+                Source = "unit-test",
+                CorrelationId = "correlation-test",
+                Reason = "No runtime capacity was available for admission.",
+
+                Metadata = new Dictionary<string, string>(
+                    StringComparer.OrdinalIgnoreCase)
+                {
+                    ["test"] = "true",
+                    ["tenantId"] = "tenant-test",
+                    ["tenantGroupId"] = "tenant-group-test",
+                    ["runtime.isolationMode"] = "Dedicated",
+                    ["runtime.preferDedicatedCapacity"] = "true",
+                    ["runtime.allowSharedFallback"] = "false",
+                    ["runtime.maxRuntimeInstances"] = "3",
+                    ["runtime.instanceIdPrefix"] = "tenant-test-runtime",
+                    ["runtime.workerCountPerInstance"] = "10",
+                    ["runtime.maxConcurrentRunsPerInstance"] = "5",
+                    ["runtime.localQueueCapacity"] = "500"
+                }
+            };
+        }
+
         /// <summary>
         /// Provides an empty shared runtime instance registry for local provider tests.
         /// </summary>
@@ -194,6 +229,11 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.Providers
             /// </summary>
             public int CallCount { get; private set; }
 
+            /// <summary>
+            /// Gets the last scale-out request received by the scaler.
+            /// </summary>
+            public AiRuntimeScaleOutProviderRequest? LastRequest { get; private set; }
+
             /// <inheritdoc />
             public int ActiveInstanceCount { get; private set; }
 
@@ -207,6 +247,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.Providers
                 cancellationToken.ThrowIfCancellationRequested();
 
                 this.CallCount++;
+                this.LastRequest = request;
                 this.ActiveInstanceCount = 1;
 
                 return Task.FromResult(
@@ -223,6 +264,8 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.Providers
                             ["scaleOutRequestId"] = request.RequestId,
                             ["sharedRunId"] = request.SharedRunId,
                             ["controlPlaneId"] = request.ControlPlaneId,
+                            ["tenantId"] = request.TenantId ?? string.Empty,
+                            ["tenantGroupId"] = request.TenantGroupId ?? string.Empty,
                             ["provider"] = "local"
                         }
                     });

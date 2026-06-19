@@ -34,6 +34,10 @@
         /// The local queue capacity.
         /// Null means unlimited.
         /// </param>
+        /// <param name="metadata">
+        /// Optional metadata copied to the runtime instance registration,
+        /// capacity descriptor, and provider metadata.
+        /// </param>
         /// <param name="cancellationToken">
         /// A token used to cancel the operation.
         /// </param>
@@ -45,6 +49,7 @@
             int workerCount,
             int maxConcurrentRuns,
             int? localQueueCapacity,
+            IReadOnlyDictionary<string, string>? metadata = null,
             CancellationToken cancellationToken = default);
     }
 }

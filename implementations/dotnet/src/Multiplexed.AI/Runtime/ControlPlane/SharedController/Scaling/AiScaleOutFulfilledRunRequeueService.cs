@@ -84,7 +84,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
                     StringComparer.OrdinalIgnoreCase)
                 {
                     ["scaleOutRequestId"] = request.RequestId,
-                    ["scaleOutRequeued"] = "true"
+                    ["scaleOutRequeued"] = "true",
+                    ["tenant.id"] = sharedRun.ExecutionContextSnapshot.TenantId ?? string.Empty,
+                    ["tenant.group.id"] = sharedRun.ExecutionContextSnapshot.TenantGroupId ?? string.Empty,
+                    ["pipelineKey"] = sharedRun.PipelineKey ?? string.Empty
                 };
 
             if (!string.IsNullOrWhiteSpace(runtimeInstanceId))
@@ -92,23 +95,48 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
                 metadata["scaleOutRuntimeInstanceId"] = runtimeInstanceId;
             }
 
-            await this.sharedQueue
-                .EnqueueAsync(
-                    new AiSharedQueueItem
-                    {
-                        SharedRunId = sharedRun.SharedRunId,
-                        ControlPlaneId = sharedRun.ControlPlaneId,
-                        Status = AiSharedQueueItemStatus.Pending,
-                        TenantId = sharedRun.TenantId,
-                        PipelineKey = sharedRun.PipelineKey,
-                        Priority = 0,
-                        EnqueuedAtUtc = now,
-                        UpdatedAtUtc = now,
-                        Reason = "Scale-out fulfilled; shared run requeued for dispatch.",
-                        Metadata = metadata
-                    },
-                    cancellationToken)
-                .ConfigureAwait(false);
+            try
+            {
+                await this.sharedQueue
+                    .EnqueueAsync(
+                        new AiSharedQueueItem
+                        {
+                            SharedRunId = sharedRun.SharedRunId,
+                            ControlPlaneId = sharedRun.ControlPlaneId,
+                            Status = AiSharedQueueItemStatus.Pending,
+                            ExecutionContextSnapshot = sharedRun.ExecutionContextSnapshot,
+                            PipelineKey = sharedRun.PipelineKey,
+                            Priority = 0,
+                            EnqueuedAtUtc = now,
+                            UpdatedAtUtc = now,
+                            Reason = "Scale-out fulfilled; shared run requeued for dispatch.",
+                            Metadata = metadata
+                        },
+                        cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            catch (InvalidOperationException exception)
+                when (IsDuplicateQueueItemException(
+                    exception,
+                    sharedRun.SharedRunId))
+            {
+                return;
+            }
+        }
+
+        /// <summary>
+        /// Determines whether an exception represents an idempotent duplicate shared queue item.
+        /// </summary>
+        /// <param name="exception">The exception to inspect.</param>
+        /// <param name="sharedRunId">The shared run identifier.</param>
+        /// <returns><see langword="true" /> when the exception is a duplicate queue item error; otherwise, <see langword="false" />.</returns>
+        private static bool IsDuplicateQueueItemException(
+            InvalidOperationException exception,
+            string sharedRunId)
+        {
+            return exception.Message.Contains(
+                $"Shared queue item '{sharedRunId}' already exists.",
+                StringComparison.Ordinal);
         }
     }
 }

@@ -1,5 +1,7 @@
 ﻿using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.SharedInstance;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue;
+using Multiplexed.Abstractions.AI.Execution.Instance.Worker;
+using Multiplexed.Abstractions.Core.ExecutionContext;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.SharedInstance
@@ -25,11 +27,17 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.SharedInstance
     /// - It is useful for tests and local multi-instance simulation.
     /// - Future Kubernetes implementations can use HTTP, gRPC, Redis streams,
     ///   or command queues behind the same shared runtime instance abstraction.
+    ///
+    /// Tenant context propagation:
+    /// - The shared run record is the durable source of truth for the execution
+    ///   context snapshot.
+    /// - The snapshot is copied into the local runtime run request before the run
+    ///   is enqueued locally so the background runtime controller can restore the
+    ///   active RBAC execution context before creating the execution.
     /// </remarks>
     public sealed class LocalAiSharedRuntimeInstance : IAiSharedRuntimeInstance
     {
         private readonly IAiRuntimeQueueControlPlane _runtimeQueue;
-        public IAiRuntimeQueueControlPlane QueueControlPlane { get; }
 
         public LocalAiSharedRuntimeInstance(
             string runtimeInstanceId,
@@ -43,6 +51,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.SharedInstance
             QueueControlPlane = runtimeQueue;
         }
 
+        /// <summary>
+        /// Gets the runtime queue control-plane used by this local runtime instance.
+        /// </summary>
+        public IAiRuntimeQueueControlPlane QueueControlPlane { get; }
+
         /// <inheritdoc />
         public string RuntimeInstanceId { get; }
 
@@ -55,8 +68,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.SharedInstance
             ArgumentException.ThrowIfNullOrWhiteSpace(request.RuntimeInstanceId);
             ArgumentNullException.ThrowIfNull(request.SharedRun);
             ArgumentNullException.ThrowIfNull(request.RunRequest);
-
-            
 
             var startedAtUtc = DateTimeOffset.UtcNow;
 
@@ -83,12 +94,16 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.SharedInstance
 
             try
             {
+                var runRequest = AttachExecutionContextSnapshot(
+                    request.RunRequest,
+                    request.SharedRun.ExecutionContextSnapshot);
+
                 var result = await _runtimeQueue
                     .EnqueueRunAsync(
                         new AiRuntimeQueueControlPlaneRequest
                         {
                             Operation = AiRuntimeQueueControlPlaneOperation.EnqueueRun,
-                            RunRequest = request.RunRequest,
+                            RunRequest = runRequest,
                             CorrelationId = request.CorrelationId ?? request.SharedRun.CorrelationId,
                             RequestedBy = request.RequestedBy,
                             Source = request.Source,
@@ -98,7 +113,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.SharedInstance
                                 request.SharedRun.Metadata,
                                 request.SharedRun.SharedRunId,
                                 RuntimeInstanceId,
-                                request.ClaimToken)
+                                request.ClaimToken,
+                                runRequest.ExecutionContextSnapshot)
                         },
                         cancellationToken)
                     .ConfigureAwait(false);
@@ -175,7 +191,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.SharedInstance
                             {
                                 ["runtime.instance.id"] = RuntimeInstanceId,
                                 ["shared.run.id"] = request.SharedRun.SharedRunId,
-                                ["local.run.id"] = localRunId
+                                ["local.run.id"] = localRunId,
+                                ["tenant.id"] = request.SharedRun.ExecutionContextSnapshot.TenantId,
+                                ["tenant.group.id"] = request.SharedRun.ExecutionContextSnapshot.TenantGroupId,
+                                ["context.key"] = request.SharedRun.ExecutionContextSnapshot.ContextKey
                             }
                         },
                         cancellationToken)
@@ -249,10 +268,33 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.SharedInstance
                     {
                         ["runtime.instance.id"] = RuntimeInstanceId,
                         ["shared.run.id"] = request.SharedRun.SharedRunId,
-                        ["exception.type"] = exception.GetType().FullName ?? exception.GetType().Name
+                        ["tenant.id"] = request.SharedRun.ExecutionContextSnapshot.TenantId,
+                        ["tenant.group.id"] = request.SharedRun.ExecutionContextSnapshot.TenantGroupId,
+                        ["context.key"] = request.SharedRun.ExecutionContextSnapshot.ContextKey,
+                        ["exception.type"] = exception.GetType().FullName ?? exception.GetType().Name,
+                        ["exception.message"] = exception.Message,
+                        ["exception.stack"] = exception.StackTrace ?? string.Empty
                     }
                 };
             }
+        }
+
+        private static AiRuntimePipelineRunRequest AttachExecutionContextSnapshot(
+            AiRuntimePipelineRunRequest request,
+            ExecutionContextSnapshot executionContextSnapshot)
+        {
+            ArgumentNullException.ThrowIfNull(request);
+            ArgumentNullException.ThrowIfNull(executionContextSnapshot);
+
+            return new AiRuntimePipelineRunRequest
+            {
+                PipelineName = request.PipelineName,
+                ExecutionContextSnapshot = executionContextSnapshot,
+                PipelineJson = request.PipelineJson,
+                PipelineJsonFilePath = request.PipelineJsonFilePath,
+                PipelineDefinition = request.PipelineDefinition,
+                Input = request.Input
+            };
         }
 
         private static IReadOnlyDictionary<string, string> MergeMetadata(
@@ -260,7 +302,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.SharedInstance
             IReadOnlyDictionary<string, string>? sharedRunMetadata,
             string sharedRunId,
             string runtimeInstanceId,
-            string? claimToken)
+            string? claimToken,
+            ExecutionContextSnapshot? executionContextSnapshot)
         {
             var metadata = new Dictionary<string, string>(
                 StringComparer.Ordinal);
@@ -289,6 +332,15 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.SharedInstance
                 metadata["claim.token"] = claimToken;
             }
 
+            if (executionContextSnapshot is not null)
+            {
+                metadata["tenant.id"] = executionContextSnapshot.TenantId;
+                metadata["tenant.group.id"] = executionContextSnapshot.TenantGroupId;
+                metadata["project"] = executionContextSnapshot.Project;
+                metadata["user.id"] = executionContextSnapshot.UserId;
+                metadata["context.key"] = executionContextSnapshot.ContextKey;
+            }
+
             return metadata;
         }
 
@@ -314,7 +366,13 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.SharedInstance
                 ["result.state.execution.id"] = result.RunState?.ExecutionId ?? string.Empty,
                 ["result.success"] = result.Success.ToString(),
                 ["result.message"] = result.Message ?? string.Empty,
-                ["result.failure"] = result.FailureReason ?? string.Empty
+                ["result.failure"] = result.FailureReason ?? string.Empty,
+                ["tenant.id"] = request.SharedRun.ExecutionContextSnapshot.TenantId,
+                ["tenant.group.id"] = request.SharedRun.ExecutionContextSnapshot.TenantGroupId,
+                ["project"] = request.SharedRun.ExecutionContextSnapshot.Project,
+                ["user.id"] = request.SharedRun.ExecutionContextSnapshot.UserId,
+                ["context.key"] = request.SharedRun.ExecutionContextSnapshot.ContextKey,
+                ["run.request.has.snapshot"] = (request.RunRequest.ExecutionContextSnapshot is not null).ToString()
             };
 
             if (visibilityCheck is not null)

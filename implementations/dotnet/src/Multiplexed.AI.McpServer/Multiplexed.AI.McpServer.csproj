@@ -16,4 +16,8 @@
     <ProjectReference Include="..\Multiplexed.AI\Multiplexed.AI.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Folder Include="Authorization\" />
+  </ItemGroup>
+
 </Project>

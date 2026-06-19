@@ -69,16 +69,18 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution.Demo
             try
             {
                 handle = await controller.EnqueueAsync(
-                    new AiRuntimePipelineRunRequest
-                    {
-                        PipelineName = pipelineName,
-                        PipelineJsonFilePath = "config/enterprise-demo-pipeline.json",
-                        Input = new
+                    AiRuntimeExecutionContextSnapshotTestFixture.AttachSnapshot(
+                        new AiRuntimePipelineRunRequest
                         {
-                            source = "enterprise-demo-test",
-                            demo = true
-                        }
-                    });
+                            PipelineName = pipelineName,
+                            PipelineJsonFilePath = "config/enterprise-demo-pipeline.json",
+                            Input = new
+                            {
+                                source = "enterprise-demo-test",
+                                demo = true
+                            }
+                        },
+                        source: "enterprise-demo-test"));
 
                 Assert.NotNull(handle);
                 Assert.False(string.IsNullOrWhiteSpace(handle.RunId));
@@ -186,16 +188,18 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution.Demo
             try
             {
                 handle = await controller.EnqueueAsync(
-                    new AiRuntimePipelineRunRequest
-                    {
-                        PipelineName = pipelineName,
-                        PipelineJsonFilePath = "config/enterprise-demo-pipeline.json",
-                        Input = new
+                    AiRuntimeExecutionContextSnapshotTestFixture.AttachSnapshot(
+                        new AiRuntimePipelineRunRequest
                         {
-                            source = "enterprise-demo-retry-test",
-                            demo = true
-                        }
-                    });
+                            PipelineName = pipelineName,
+                            PipelineJsonFilePath = "config/enterprise-demo-pipeline.json",
+                            Input = new
+                            {
+                                source = "enterprise-demo-retry-test",
+                                demo = true
+                            }
+                        },
+                        source: "enterprise-demo-retry-test"));
 
                 Assert.NotNull(handle);
 

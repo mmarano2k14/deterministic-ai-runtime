@@ -7,6 +7,7 @@ using Multiplexed.AI.DI.AI;
 using Multiplexed.AI.DI.Cleanup;
 using Multiplexed.AI.DI.Engine;
 using Multiplexed.AI.DI.Persistence;
+using Multiplexed.AI.McpServer.Tools;
 using Multiplexed.AI.Observability.Ledger;
 using Multiplexed.AI.Runtime;
 using Multiplexed.AI.Runtime.AI.Providers.Llm.OpenAI.DI;
@@ -20,7 +21,6 @@ using Multiplexed.Rbac.Core.Runtime.DI;
 using Multiplexed.Rbac.Core.Runtime.Messaging.NServiceBus.DI;
 using Multiplexed.Realtime.DI;
 using StackExchange.Redis;
-using ExecutionContext = Multiplexed.Rbac.Core.ExecutionContext.ExecutionContext;
 
 namespace Multiplexed.AI.McpServer.Host.Bootstrap
 {
@@ -102,6 +102,7 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
                     })
                 .AddMultiplexedRbacHttp()
                 .AddMultiplexedRbacNServiceBus()
+                .AddMultiplexedRbacAuthorizedServices(typeof(ReplayMcpTools).Assembly)
                 .AddAiPromptRuntime(typeof(AiRuntimeAssemblyMarker).Assembly)
                 .AddOpenAiPromptProvider(openAiOptions =>
                 {
@@ -109,25 +110,27 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
                         ?? throw new InvalidOperationException("OPENAI_API_KEY is required.");
                 });
 
+            services.AddSingleton<McpRuntimeExecutionContextAccessor>();
+
+            services.Replace(
+                ServiceDescriptor.Singleton<IExecutionContextAccessor>(
+                    serviceProvider =>
+                        serviceProvider.GetRequiredService<McpRuntimeExecutionContextAccessor>()));
+
+            services.AddSingleton<IExecutionContextSnapshotProvider>(
+                serviceProvider =>
+                    serviceProvider.GetRequiredService<McpRuntimeExecutionContextAccessor>());
+
             services.AddSingleton<TestStepAttemptTracker>();
 
             services.AddRagCore();
 
-
-
             if (options.Snapshots.Enabled && options.Snapshots.Mongo.Enabled)
             {
                 services.AddAiExecutionSnapshots(options);
-
-                
             }
 
             services.AddAiExecutionReplay();
-
-            services.Replace(
-                ServiceDescriptor.Singleton<IExecutionContextAccessor, McpRuntimeExecutionContextAccessor>());
-
-            
         }
 
         private static void EnsureSnapshotOptions(
@@ -173,36 +176,5 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
             options.PayloadStore.Mongo.ConnectionString ??= connectionString;
             options.PayloadStore.Mongo.DatabaseName ??= databaseName;
         }
-
-        /// <summary>
-        /// Creates a runtime RBAC context suitable for integration tests.
-        /// </summary>
-        /// <returns>The created RBAC execution context.</returns>
-        private static ExecutionContext CreateRuntimeContext()
-        {
-            return new ExecutionContext
-            {
-                ContextKey = string.Empty,
-                Project = "Project",
-                TenantId = "tenant-id-xxxx",
-                TenantGroupId = "tenant-group-id-xxx",
-                CurrentNamespace = "Namespace",
-                UserId = "userId",
-                Namespaces = new List<NamespaceEntry>
-                {
-                    new NamespaceEntry
-                    {
-                        Name = "Namespace",
-                        Trns = new HashSet<string>
-                        {
-                            "trn:Project:crm:billing:invoice:read",
-                            "trn:Project:crm:billing:invoice:refund"
-                        }
-                    }
-                },
-                TtlSeconds = 300
-            };
-        }
     }
-
 }

@@ -6,6 +6,7 @@ using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Store;
 using Multiplexed.Abstractions.AI.Execution.Instance.Worker;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.SharedInstance;
+using Multiplexed.AI.Tests.Fixtures;
 
 namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Providers.Http
 {
@@ -332,6 +333,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Providers.Http
                 {
                     SharedRunId = "shared-run-1",
                     Status = AiSharedRunStatus.Submitted,
+                    ExecutionContextSnapshot = AiExecutionContextSnapshotTestFactory.Create(),
                     RunRequest = runRequest,
                     PipelineKey = "test-pipeline",
                     SubmittedAtUtc = DateTimeOffset.UtcNow,

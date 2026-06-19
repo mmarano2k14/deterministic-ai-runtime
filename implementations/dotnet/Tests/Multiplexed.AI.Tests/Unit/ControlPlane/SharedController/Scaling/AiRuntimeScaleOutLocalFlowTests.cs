@@ -337,15 +337,23 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController.Scaling
             /// </summary>
             public List<TestLocalRuntimeInstanceHost> CreatedHosts { get; } = new();
 
+            /// <summary>
+            /// Gets the metadata received by each create call.
+            /// </summary>
+            public List<IReadOnlyDictionary<string, string>?> ReceivedMetadata { get; } = new();
+
             /// <inheritdoc />
             public Task<IAiLocalRuntimeInstanceHost> CreateAsync(
                 string runtimeInstanceId,
                 int workerCount,
                 int maxConcurrentRuns,
                 int? localQueueCapacity,
+                IReadOnlyDictionary<string, string>? metadata = null,
                 CancellationToken cancellationToken = default)
             {
                 cancellationToken.ThrowIfCancellationRequested();
+
+                this.ReceivedMetadata.Add(metadata);
 
                 var host =
                     new TestLocalRuntimeInstanceHost(

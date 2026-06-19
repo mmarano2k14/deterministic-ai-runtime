@@ -1,10 +1,10 @@
 # MCP Server as Runtime Control Plane
 
-Status: Active foundation validated for local runtime pools, HTTP pooled runtime scenarios, Redis-backed shared queue coordination, Redis scale-out request persistence, local runtime scale-out, fulfilled-run requeue, and end-to-end MCP scale-out execution.
+Status: Active foundation validated for RBAC-protected MCP tools, tenant-aware execution context propagation, local runtime pools, HTTP pooled runtime scenarios, Redis-backed shared queue coordination, Redis scale-out request persistence, local runtime scale-out, fulfilled-run requeue, and end-to-end MCP scale-out execution.
 
 This document describes how the **MCP Server** acts as a concrete runtime control-plane adapter for the Deterministic AI Runtime.
 
-It also reflects the current shared queue pump, queue-first submit mode, direct-dispatch admission scale-out mode, dispatch-time admission, runtime instance provider hosting, Redis-backed discovery/registry/capacity coordination, Redis-backed scale-out request coordination, HTTP pooled runtime hosting, local runtime scale-out, fulfilled-run requeue, and worker-capacity visibility work.
+It also reflects the current RBAC integration, tenant context propagation, shared queue pump, queue-first submit mode, direct-dispatch admission scale-out mode, dispatch-time admission, runtime instance provider hosting, Redis-backed discovery/registry/capacity coordination, Redis-backed scale-out request coordination, HTTP pooled runtime hosting, local runtime scale-out, fulfilled-run requeue, and worker-capacity visibility work.
 
 The MCP server does not replace the runtime engine.
 
@@ -30,6 +30,8 @@ The MCP server is one concrete adapter over that control plane.
 Its purpose is to expose operational runtime commands such as:
 
 - submit shared runs
+- authorize MCP tools through RBAC capabilities
+- map MCP access context into a durable execution context snapshot
 - inspect shared runs
 - submit queue-first runs
 - submit direct-dispatch runs that may request scale-out
@@ -105,6 +107,216 @@ Shutdown cleanup reuses the known resolved identity.
 
 This prevents runtime hosts from registering under a different control-plane id than the MCP server.
 
+
+## RBAC and Tenant Context Integration
+
+The MCP server is also the point where runtime operations enter the RBAC boundary.
+
+A MCP request is not only a command.
+
+It carries operator identity, context, tenant scope, namespace scope, and capability requirements.
+
+The validated MCP/RBAC integration follows this shape:
+
+```text
+MCP Client / Tool Caller
+    ↓
+Authentication
+    ↓
+RBAC Runtime
+    ↓
+X-Access-Context / user context resolution
+    ↓
+RbacExecutionContext
+    ↓
+McpRuntimeExecutionContextAccessor
+    ↓
+ExecutionContextSnapshot
+    ↓
+Shared Runtime Controller / Run Request
+```
+
+The RBAC layer is responsible for:
+
+- authenticating the caller
+- resolving the access context
+- resolving `TenantId`
+- resolving `TenantGroupId`
+- resolving namespace and TRN scope
+- enforcing tool capability requirements
+- exposing the current execution context to the runtime adapter
+- allowing control-plane tools to remain adapter-level, not engine-level.
+
+MCP tools should use capability checks for sensitive operations.
+
+Examples:
+
+```text
+Replay tools
+    require replay / audit capabilities
+
+Execution control tools
+    require pause / resume / cancel / input capabilities
+
+Observability tools
+    require ledger / trace / read capabilities
+
+Shared runtime tools
+    require submit / queue / dispatch / read capabilities
+
+Runtime instance tools
+    require registry / capacity / status / control capabilities
+```
+
+The MCP server must not treat `ContextKey` as the durable tenant boundary.
+
+The important rule is:
+
+```text
+ContextKey
+    = RBAC correlation / access context / diagnostics
+
+ExecutionContextSnapshot.TenantId
+    = durable tenant boundary used by runtime execution and control-plane isolation
+```
+
+`ContextKey` may be useful for logging and correlation.
+
+`TenantId` and `TenantGroupId` in `ExecutionContextSnapshot` are what must travel through asynchronous, background, Redis-backed, and distributed runtime hops.
+
+---
+
+## ExecutionContextSnapshot Propagation from MCP
+
+Every MCP-submitted runtime operation that can lead to execution must preserve the RBAC-derived execution context as a durable snapshot.
+
+This applies to:
+
+- direct shared run submission
+- queue-first shared run submission
+- direct-dispatch scale-out submission
+- fulfilled scale-out requeue
+- shared queue pump dispatch
+- local runtime queue enqueue
+- background controller execution.
+
+The required propagation path is:
+
+```text
+MCP request
+    ↓
+RBAC ExecutionContext
+    ↓
+ExecutionContextSnapshot
+    ↓
+AiSharedRuntimeControllerRequest
+    ↓
+AiSharedRunRecord.ExecutionContextSnapshot
+    ↓
+AiRuntimePipelineRunRequest.ExecutionContextSnapshot
+    ↓
+Shared queue item references shared run
+    ↓
+AiSharedQueueDispatcher restores context before admission
+    ↓
+Provider dispatch preserves run request snapshot
+    ↓
+Runtime local queue stores queued run snapshot
+    ↓
+AiRuntimePipelineBackgroundController restores context before execution
+```
+
+This is critical because background services do not naturally inherit the original request `AsyncLocal` context.
+
+A background queue pump must restore the persisted `ExecutionContextSnapshot` from the shared run before it performs dispatch-time admission.
+
+Likewise, the runtime background controller must restore the queued run snapshot before creating or executing the DAG run.
+
+If a local runtime queued run is missing its snapshot, it should fail fast instead of running outside a known tenant context.
+
+---
+
+## Tenant-Aware MCP Control-Plane Behavior
+
+The MCP server now participates in tenant-aware runtime isolation.
+
+The durable tenant data enters through RBAC and is propagated into runtime control-plane records.
+
+Tenant-aware MCP behavior includes:
+
+```text
+MCP tool call
+    ↓
+RBAC context resolved
+    ↓
+Tenant runtime settings resolved
+    ↓
+Admission filters registry and capacity by tenant visibility
+    ↓
+Scale-out request carries tenant runtime fields
+    ↓
+Provider creates tenant-scoped runtime capacity
+    ↓
+Shared queue dispatcher restores tenant context
+    ↓
+Runtime queue executes under the correct tenant snapshot
+```
+
+Tenant runtime isolation supports three modes:
+
+```text
+Shared
+    normal shared capacity
+
+Dedicated
+    tenant-owned capacity only, no shared fallback when disabled
+
+Hybrid
+    tenant-owned capacity preferred, shared fallback allowed when enabled
+```
+
+Current validated hardcoded tenant examples:
+
+```text
+tenant-a
+    IsolationMode = Dedicated
+    RuntimeInstanceIdPrefix = tenant-a-runtime
+    AllowSharedFallback = false
+
+tenant-b
+    IsolationMode = Hybrid
+    RuntimeInstanceIdPrefix = tenant-b-runtime
+    AllowSharedFallback = true
+
+default / test-tenant
+    IsolationMode = Shared
+    RuntimeInstanceIdPrefix = runtime-instance
+    AllowSharedFallback = true
+```
+
+MCP integration must preserve these rules:
+
+```text
+Shared runtime
+    visible to shared/default tenants
+    visible to hybrid/dedicated tenants only when their tenant settings allow shared fallback
+
+Dedicated runtime
+    visible only when TenantId or TenantGroupId matches
+
+Hybrid runtime
+    visible only when TenantId or TenantGroupId matches
+
+Hybrid fallback
+    means hybrid tenant can use Shared runtime capacity
+    does not mean unowned Hybrid runtime capacity becomes globally visible
+```
+
+This prevents one tenant from seeing or consuming another tenant's dedicated or hybrid runtime capacity.
+
+Metadata may duplicate tenant values for diagnostics, but routing and isolation should use strong fields and the durable execution context snapshot.
+
+---
 
 ## What the MCP Server Is
 
@@ -474,7 +686,7 @@ Scale-out watcher
     ↓
 Local runtime scaler
     ↓
-mcp-scaleout-runtime-1 created/registered/started
+runtime-instance-1 created/registered/started
     ↓
 Shared run requeued
     ↓
@@ -484,6 +696,30 @@ Local runtime executes DAG
 ```
 
 This validates the scale-out control loop before replacing the local scaler with a Kubernetes deployment/pod scaler.
+
+
+Tenant-aware scale-out uses the tenant runtime settings to choose the runtime instance prefix.
+
+Examples:
+
+```text
+default / shared tenant
+    ↓
+host-...:runtime-instance-1
+
+tenant-a dedicated tenant
+    ↓
+host-...:tenant-a-runtime-1
+
+tenant-b hybrid tenant
+    ↓
+host-...:tenant-b-runtime-1
+```
+
+The local scaler must count already-created hosts inside the resolved tenant runtime prefix.
+
+It must not use the global local host count as the tenant-scoped instance count.
+
 
 ---
 
@@ -736,7 +972,7 @@ background pump / shared queue pump
     ↓
 dispatch-time admission sees new capacity
     ↓
-AssignedRuntimeInstanceId = host-...:mcp-scaleout-runtime-1
+AssignedRuntimeInstanceId = host-...:runtime-instance-1
     ↓
 selected runtime instance local queue
     ↓
@@ -916,7 +1152,7 @@ Validated local scale-out evidence:
 
 ```text
 SharedRunStatus = Dispatched
-AssignedRuntimeInstanceId = host-...:mcp-scaleout-runtime-1
+AssignedRuntimeInstanceId = host-...:runtime-instance-1
 LocalRunId = available
 ExecutionId = available
 RuntimeRunStatus = completed
@@ -1131,13 +1367,13 @@ Scale-out watcher
     ↓
 Local provider scale-out capability
     ↓
-Local runtime scaler creates mcp-scaleout-runtime-1
+Local runtime scaler creates runtime-instance-1
     ↓
 Scale-out request fulfilled
     ↓
 Shared run requeued
     ↓
-Shared queue pump dispatches to mcp-scaleout-runtime-1
+Shared queue pump dispatches to runtime-instance-1
     ↓
 Local queue starts execution
     ↓
@@ -1298,6 +1534,10 @@ Kubernetes does not need to replace runtime queues.
 Current MCP integration tests validate:
 
 - MCP host startup
+- RBAC-protected MCP tool execution
+- RBAC execution context mapping to ExecutionContextSnapshot
+- tenant-aware shared run submission
+- tenant-aware admission and scale-out propagation
 - control-plane role registration
 - local runtime instance pool startup
 - HTTP runtime instance provider flow
@@ -1317,9 +1557,11 @@ Current MCP integration tests validate:
 - shared queue pump readiness gate
 - manual queue drain with background pump disabled
 - Redis scale-out request persistence
+- scale-out request tenant field persistence
 - scale-out watcher processing
 - scale-out provider selector resolution
 - local runtime scale-out from zero runtime capacity
+- local scale-out scoped by RuntimeInstanceIdPrefix
 - fulfilled scale-out shared run requeue
 - scale-out requeued run dispatch through the shared queue pump
 - scale-out runtime execution completion
@@ -1378,7 +1620,7 @@ Initial ActiveLocalInstances = 0
 Admission = RequestScaleOut
 SharedRun.Status = ScaleOutRequested
 ScaleOutRequest.Status = Fulfilled
-ScaleOutRuntimeInstanceId = host-...:mcp-scaleout-runtime-1
+ScaleOutRuntimeInstanceId = host-...:runtime-instance-1
 ActiveLocalInstances = 1
 SharedRun.Status = Dispatched
 QueueStatus = Dispatched
@@ -1451,8 +1693,8 @@ The current MCP server/control-plane adapter does not yet provide:
 - distributed shared controller leader election
 - production dashboard UI
 - OpenTelemetry exporter polish
-- production security model for MCP access
-- tenant-aware operational authorization
+- full production security model for MCP access beyond the validated RBAC foundation
+- production hardening of tenant-aware operational authorization across future providers
 - full provider capability negotiation beyond the current local scale-out provider
 - Redis/Lua slot reservation refinement for multi-control-plane dispatch safety
 - production-grade admission reservation hardening
@@ -1550,6 +1792,7 @@ Future providers should be added without changing the shared controller architec
 
 ## Related Documents
 
+- [Multi-Tenant Control-Plane Isolation](multi-tenant-control-plane-isolation.md)
 - [Runtime Control Plane](runtime-control-plane.md)
 - [Runtime Queue Control](runtime-queue-control.md)
 - [Shared Runtime Controller / Shared Queue Usage](shared-controller-usage.md)

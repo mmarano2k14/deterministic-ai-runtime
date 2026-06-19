@@ -572,6 +572,13 @@ namespace Multiplexed.AI.Tests.Integration.ControlPlane.SharedController
 
                     services.AddAiControlPlane();
 
+                    services.RemoveAll<IExecutionContextSnapshotProvider>();
+                    services.AddSingleton<IExecutionContextSnapshotProvider>(
+                        new StaticExecutionContextSnapshotProvider(
+                            CreateExecutionContextSnapshot(
+                                tenantId: "tenant-shared-controller-execution",
+                                userId: "integration-test")));
+
                     services.RemoveAll<IAiRunAdmissionController>();
                     services.AddSingleton<IAiRunAdmissionController>(
                         new SharedControllerExecutionAdmissionController(
@@ -1055,6 +1062,61 @@ namespace Multiplexed.AI.Tests.Integration.ControlPlane.SharedController
             }
 
             return config;
+        }
+
+        private static ExecutionContextSnapshot CreateExecutionContextSnapshot(
+    string tenantId,
+    string userId)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(tenantId);
+            ArgumentException.ThrowIfNullOrWhiteSpace(userId);
+
+            return new ExecutionContextSnapshot
+            {
+                ContextKey = Guid.NewGuid().ToString("N"),
+                Project = "distributed-deterministic-ai-runtime",
+                UserId = userId,
+                TenantId = tenantId,
+                TenantGroupId = "tenant-group-shared-controller-execution",
+                CurrentNamespace = "mcp-ai-runtime",
+                Namespaces = new List<NamespaceEntry>
+        {
+            new()
+            {
+                Name = "mcp-ai-runtime",
+                Trns = new HashSet<string>
+                {
+                    "trn:distributed-deterministic-ai-runtime:shared-run:execution:submit",
+                    "trn:distributed-deterministic-ai-runtime:shared-run:registry:read",
+                    "trn:distributed-deterministic-ai-runtime:shared-run:registry:list",
+                    "trn:distributed-deterministic-ai-runtime:shared-queue:queue:list",
+                    "trn:distributed-deterministic-ai-runtime:shared-queue:status:read",
+                    "trn:distributed-deterministic-ai-runtime:shared-queue:pump:drain"
+                }
+            }
+        },
+                InFlightCount = 0,
+                TtlSeconds = 300,
+                CreatedAtUtc = DateTime.UtcNow
+            };
+        }
+
+        private sealed class StaticExecutionContextSnapshotProvider :
+            IExecutionContextSnapshotProvider
+        {
+            private readonly ExecutionContextSnapshot snapshot;
+
+            public StaticExecutionContextSnapshotProvider(
+                ExecutionContextSnapshot snapshot)
+            {
+                this.snapshot = snapshot
+                    ?? throw new ArgumentNullException(nameof(snapshot));
+            }
+
+            public ExecutionContextSnapshot MapToSnapshot()
+            {
+                return snapshot;
+            }
         }
 
         private sealed class SharedControllerExecutionAdmissionController : IAiRunAdmissionController

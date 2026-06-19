@@ -5,6 +5,7 @@ using Multiplexed.Abstractions.AI.Execution.Instance.Worker;
 using Multiplexed.Abstractions.AI.Pipeline;
 using Multiplexed.Abstractions.AI.Runtime.Execution.Instance.Worker;
 using Multiplexed.Abstractions.AI.Steps;
+using Multiplexed.Abstractions.Core.ExecutionContext;
 using Multiplexed.AI.Configuration;
 using Multiplexed.AI.DI.Engine;
 using Multiplexed.AI.Runtime;
@@ -57,6 +58,7 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution.Control
             await controller.StartAsync();
 
             AiRuntimeWorkerRunHandle? handle = null;
+            string? executionId = null;
 
             try
             {
@@ -64,6 +66,8 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution.Control
                     new AiRuntimePipelineRunRequest
                     {
                         PipelineName = pipelineName,
+                        ExecutionContextSnapshot = CreateExecutionContextSnapshot(
+                            pipelineName),
                         PipelineDefinition = CreatePipelineDefinition(
                             pipelineName,
                             signalKey),
@@ -76,16 +80,15 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution.Control
 
                 Assert.NotNull(handle);
 
-                var executionId = await WaitForExecutionIdAsync(
-                    handle,
-                    TimeSpan.FromSeconds(15));
+                executionId =
+                    await WaitForStepStartOrFailAsync(
+                            signalKey,
+                            handle,
+                            TimeSpan.FromSeconds(30))
+                        .ConfigureAwait(false);
 
                 Assert.False(
                     string.IsNullOrWhiteSpace(executionId));
-
-                await ExecutionControlFinalizationSignalRegistry.WaitForStartedAsync(
-                    signalKey,
-                    TimeSpan.FromSeconds(15));
 
                 await controlService.CancelExecutionAsync(
                         executionId,
@@ -122,7 +125,13 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution.Control
             {
                 await controller.StopAsync();
 
-                if (!string.IsNullOrWhiteSpace(handle?.ExecutionId))
+                if (!string.IsNullOrWhiteSpace(executionId))
+                {
+                    await CleanupExecutionAsync(
+                        host.ServiceProvider,
+                        executionId);
+                }
+                else if (!string.IsNullOrWhiteSpace(handle?.ExecutionId))
                 {
                     await CleanupExecutionAsync(
                         host.ServiceProvider,
@@ -237,34 +246,90 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution.Control
         }
 
         /// <summary>
-        /// Waits until the runtime handle exposes a durable execution identifier.
+        /// Creates a minimal execution context snapshot for direct runtime integration tests.
         /// </summary>
+        /// <param name="pipelineName">The pipeline name.</param>
+        /// <returns>The execution context snapshot.</returns>
+        private static ExecutionContextSnapshot CreateExecutionContextSnapshot(
+            string pipelineName)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(pipelineName);
+
+            return new ExecutionContextSnapshot
+            {
+                ContextKey = $"ctx-{pipelineName}",
+                Project = "runtime-integration-tests",
+                UserId = "execution-control-finalization-test",
+                TenantId = "test-tenant",
+                TenantGroupId = "test-tenant",
+                CurrentNamespace = "runtime-integration-tests",
+                Namespaces = new List<NamespaceEntry>
+                {
+                    new()
+                    {
+                        Name = "runtime-integration-tests",
+                        Trns = new HashSet<string>
+                        {
+                            "trn:runtime-integration-tests:execution:run",
+                            "trn:runtime-integration-tests:execution:cancel",
+                            "trn:runtime-integration-tests:execution:read"
+                        }
+                    }
+                }
+            };
+        }
+
+        /// <summary>
+        /// Waits until the controlled step starts, or fails with the runtime completion result
+        /// when the run terminates before the controlled step can signal startup.
+        /// </summary>
+        /// <param name="signalKey">The step signal key.</param>
         /// <param name="handle">The runtime worker run handle.</param>
-        /// <param name="timeout">The timeout.</param>
-        /// <returns>The durable execution identifier.</returns>
-        private static async Task<string> WaitForExecutionIdAsync(
+        /// <param name="timeout">The wait timeout.</param>
+        /// <returns>The durable execution identifier captured when the step starts.</returns>
+        private static async Task<string> WaitForStepStartOrFailAsync(
+            string signalKey,
             AiRuntimeWorkerRunHandle handle,
             TimeSpan timeout)
         {
+            ArgumentException.ThrowIfNullOrWhiteSpace(signalKey);
             ArgumentNullException.ThrowIfNull(handle);
 
-            using var timeoutSource = new CancellationTokenSource(
-                timeout);
+            var startedTask =
+                ExecutionControlFinalizationSignalRegistry.WaitForStartedAsync(
+                    signalKey,
+                    timeout);
 
-            while (!timeoutSource.IsCancellationRequested)
+            var completionTask =
+                handle.Completion;
+
+            var completedTask =
+                await Task.WhenAny(
+                        startedTask,
+                        completionTask,
+                        Task.Delay(timeout))
+                    .ConfigureAwait(false);
+
+            if (completedTask == startedTask)
             {
-                if (!string.IsNullOrWhiteSpace(handle.ExecutionId))
-                {
-                    return handle.ExecutionId;
-                }
+                return await startedTask
+                    .ConfigureAwait(false);
+            }
 
-                await Task.Delay(
-                    TimeSpan.FromMilliseconds(10),
-                    timeoutSource.Token).ConfigureAwait(false);
+            if (completedTask == completionTask)
+            {
+                var result =
+                    await completionTask
+                        .ConfigureAwait(false);
+
+                throw new InvalidOperationException(
+                    $"The runtime run completed before the controlled finalization step started. " +
+                    $"Status='{result.Status}', IsTerminal='{result.IsTerminal}', ExecutionId='{result.ExecutionId}'");
             }
 
             throw new TimeoutException(
-                "The runtime handle did not expose an execution id before the timeout elapsed.");
+                $"The controlled finalization step did not start within '{timeout}'. " +
+                $"HandleExecutionId='{handle.ExecutionId}'.");
         }
 
         /// <summary>
@@ -295,7 +360,7 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution.Control
     /// </summary>
     internal static class ExecutionControlFinalizationSignalRegistry
     {
-        private static readonly ConcurrentDictionary<string, TaskCompletionSource<bool>> StartedSignals =
+        private static readonly ConcurrentDictionary<string, TaskCompletionSource<string>> StartedSignals =
             new(StringComparer.Ordinal);
 
         /// <summary>
@@ -307,7 +372,7 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution.Control
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(signalKey);
 
-            StartedSignals[signalKey] = new TaskCompletionSource<bool>(
+            StartedSignals[signalKey] = new TaskCompletionSource<string>(
                 TaskCreationOptions.RunContinuationsAsynchronously);
         }
 
@@ -315,14 +380,17 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution.Control
         /// Marks the controlled step as started.
         /// </summary>
         /// <param name="signalKey">The signal key.</param>
+        /// <param name="executionId">The durable execution identifier.</param>
         public static void MarkStarted(
-            string signalKey)
+            string signalKey,
+            string executionId)
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(signalKey);
+            ArgumentException.ThrowIfNullOrWhiteSpace(executionId);
 
             if (StartedSignals.TryGetValue(signalKey, out var signal))
             {
-                signal.TrySetResult(true);
+                signal.TrySetResult(executionId);
             }
         }
 
@@ -331,7 +399,8 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution.Control
         /// </summary>
         /// <param name="signalKey">The signal key.</param>
         /// <param name="timeout">The wait timeout.</param>
-        public static async Task WaitForStartedAsync(
+        /// <returns>The durable execution identifier.</returns>
+        public static async Task<string> WaitForStartedAsync(
             string signalKey,
             TimeSpan timeout)
         {
@@ -343,8 +412,9 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution.Control
                     $"No execution-control finalization signal was registered for key '{signalKey}'.");
             }
 
-            await signal.Task.WaitAsync(
-                timeout);
+            return await signal.Task
+                .WaitAsync(timeout)
+                .ConfigureAwait(false);
         }
 
         /// <summary>
@@ -395,7 +465,8 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution.Control
                 cancellationToken).ConfigureAwait(false) ?? 250;
 
             ExecutionControlFinalizationSignalRegistry.MarkStarted(
-                signalKey);
+                signalKey,
+                context.Record.ExecutionId);
 
             await Task.Delay(
                 delayMs,

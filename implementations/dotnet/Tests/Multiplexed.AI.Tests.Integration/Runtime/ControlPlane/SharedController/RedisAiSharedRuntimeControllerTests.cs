@@ -10,6 +10,7 @@ using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Queue;
 using Multiplexed.Abstractions.AI.Execution.Instance.Worker;
 using Multiplexed.Abstractions.AI.Runtime.Execution.Instance.Worker;
 using Multiplexed.AI.Runtime.ControlPlane.Observability;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Isolation;
 using Multiplexed.AI.Runtime.ControlPlane.SharedController;
 using Multiplexed.AI.Runtime.ControlPlane.SharedController.Store;
 using Multiplexed.AI.Runtime.ControlPlane.SharedQueue;
@@ -253,8 +254,12 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedController
                 new FakeSharedRunDispatcher(),
                 new NoopAiRuntimeScaleOutRequestPublisher(),
                 new StaticAiControlPlaneIdResolver(_controlPlaneId),
+                new HardcodedAiTenantRuntimeSettingsProvider(),
                 Options.Create(new AiSharedRuntimeControllerOptions()),
-                new NoopAiControlPlaneObserver());
+                new NoopAiControlPlaneObserver(),
+                new FakeExecutionContextSnapshotProvider(
+                    AiExecutionContextSnapshotTestFactory.Create(
+                        tenantId: "tenant-1")));
 
             var result = await controller.SubmitRunAsync(new AiSharedRuntimeControllerRequest
             {
@@ -277,7 +282,7 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedController
             Assert.Equal(sharedRunId, queueItem!.SharedRunId);
             Assert.Equal(_controlPlaneId, queueItem.ControlPlaneId);
             Assert.Equal(AiSharedQueueItemStatus.Pending, queueItem.Status);
-            Assert.Equal("tenant-1", queueItem.TenantId);
+            Assert.Equal("tenant-1", queueItem.ExecutionContextSnapshot.TenantId);
             Assert.Equal("pipeline-1", queueItem.PipelineKey);
             Assert.Equal("No instance capacity.", queueItem.Reason);
         }
@@ -378,8 +383,12 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedController
                 dispatcher ?? new FakeSharedRunDispatcher(),
                 scaleOutPublisher ?? new NoopAiRuntimeScaleOutRequestPublisher(),
                 resolver,
+                new HardcodedAiTenantRuntimeSettingsProvider(),
                 Options.Create(new AiSharedRuntimeControllerOptions()),
-                new NoopAiControlPlaneObserver());
+                new NoopAiControlPlaneObserver(),
+                new FakeExecutionContextSnapshotProvider(
+                    AiExecutionContextSnapshotTestFactory.Create(
+                        tenantId: "tenant-1")));
         }
 
         private static AiRuntimePipelineRunRequest CreateRunRequest()

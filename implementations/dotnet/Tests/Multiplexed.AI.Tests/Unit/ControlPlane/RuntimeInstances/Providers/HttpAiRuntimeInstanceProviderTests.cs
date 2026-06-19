@@ -6,6 +6,7 @@ using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.SharedInstance;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Store;
 using Multiplexed.Abstractions.AI.Execution.Instance.Worker;
+using Multiplexed.Abstractions.Core.ExecutionContext;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http;
 using System.Net;
 using System.Net.Http.Json;
@@ -467,6 +468,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Providers
                     SharedRunId = "shared-run-1",
                     Status = AiSharedRunStatus.Submitted,
                     RunRequest = runRequest,
+                    ExecutionContextSnapshot = CreateExecutionContextSnapshot(),
                     PipelineKey = "test-pipeline",
                     SubmittedAtUtc = DateTimeOffset.UtcNow,
                     UpdatedAtUtc = DateTimeOffset.UtcNow
@@ -546,6 +548,33 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Providers
                 StartedAtUtc = now,
                 CompletedAtUtc = now,
                 DurationMs = 0
+            };
+        }
+
+        private static ExecutionContextSnapshot CreateExecutionContextSnapshot()
+        {
+            return new ExecutionContextSnapshot
+            {
+                ContextKey = Guid.NewGuid().ToString("N"),
+                Project = "distributed-deterministic-ai-runtime",
+                UserId = "unit-test",
+                TenantId = "tenant-id-xxxx",
+                TenantGroupId = "tenant-group-id-xxx",
+                CurrentNamespace = "mcp-ai-runtime",
+                Namespaces = new List<NamespaceEntry>
+                {
+                    new()
+                    {
+                        Name = "mcp-ai-runtime",
+                        Trns = new HashSet<string>
+                        {
+                            "trn:distributed-deterministic-ai-runtime:shared-run:execution:submit"
+                        }
+                    }
+                },
+                InFlightCount = 0,
+                TtlSeconds = 300,
+                CreatedAtUtc = DateTime.UtcNow
             };
         }
 

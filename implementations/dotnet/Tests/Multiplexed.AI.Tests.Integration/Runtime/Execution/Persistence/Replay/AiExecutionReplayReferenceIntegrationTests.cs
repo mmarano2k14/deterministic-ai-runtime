@@ -73,19 +73,18 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution.Persistence.Replay
             try
             {
                 handle = await controller.EnqueueAsync(
-                    new AiRuntimePipelineRunRequest
-                    {
-                        PipelineName = scenario.PipelineName,
-                        PipelineDefinition = scenario.PipelineDefinition,
-                        Input = new
-                        {
-                            candidateId = scenario.CandidateId,
-                            source = scenario.Name,
-                            stepCount = scenario.StepCount,
-                            workerCount = scenario.WorkerCount,
-                            replayReference = true
-                        }
-                    });
+                 AiRuntimeExecutionContextSnapshotTestFixture.CreateRunRequest(
+                     pipelineName: scenario.PipelineName,
+                     pipelineDefinition: scenario.PipelineDefinition,
+                     input: new
+                     {
+                         candidateId = scenario.CandidateId,
+                         source = scenario.Name,
+                         stepCount = scenario.StepCount,
+                         workerCount = scenario.WorkerCount,
+                         replayReference = true
+                     },
+                     source: scenario.Name));
 
                 Assert.NotNull(handle);
                 Assert.False(string.IsNullOrWhiteSpace(handle.RunId));
@@ -345,17 +344,16 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution.Persistence.Replay
             try
             {
                 handle = await controller.EnqueueAsync(
-                    new AiRuntimePipelineRunRequest
-                    {
-                        PipelineName = scenario.PipelineName,
-                        PipelineDefinition = scenario.PipelineDefinition,
-                        Input = new
+                    AiRuntimeExecutionContextSnapshotTestFixture.CreateRunRequest(
+                        pipelineName: scenario.PipelineName,
+                        pipelineDefinition: scenario.PipelineDefinition,
+                        input: new
                         {
                             candidateId = scenario.CandidateId,
                             source = scenario.Name,
                             auditOnly = true
-                        }
-                    });
+                        },
+                        source: scenario.Name));
 
                 var final = await handle.Completion.WaitAsync(scenario.Timeout);
 
@@ -450,17 +448,16 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution.Persistence.Replay
             try
             {
                 handle = await controller.EnqueueAsync(
-                    new AiRuntimePipelineRunRequest
-                    {
-                        PipelineName = scenario.PipelineName,
-                        PipelineDefinition = scenario.PipelineDefinition,
-                        Input = new
+                    AiRuntimeExecutionContextSnapshotTestFixture.CreateRunRequest(
+                        pipelineName: scenario.PipelineName,
+                        pipelineDefinition: scenario.PipelineDefinition,
+                        input: new
                         {
                             candidateId = scenario.CandidateId,
                             source = scenario.Name,
                             noObservabilityPayload = true
-                        }
-                    });
+                        },
+                        source: scenario.Name));
 
                 var final = await handle.Completion.WaitAsync(scenario.Timeout);
 
@@ -522,17 +519,16 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution.Persistence.Replay
             try
             {
                 handle = await controller.EnqueueAsync(
-                    new AiRuntimePipelineRunRequest
-                    {
-                        PipelineName = scenario.PipelineName,
-                        PipelineDefinition = scenario.PipelineDefinition,
-                        Input = new
-                        {
-                            candidateId = scenario.CandidateId,
-                            source = scenario.Name,
-                            replayDiagnostic = true
-                        }
-                    });
+                     AiRuntimeExecutionContextSnapshotTestFixture.CreateRunRequest(
+                         pipelineName: scenario.PipelineName,
+                         pipelineDefinition: scenario.PipelineDefinition,
+                         input: new
+                         {
+                             candidateId = scenario.CandidateId,
+                             source = scenario.Name,
+                             replayDiagnostic = true
+                         },
+                         source: scenario.Name));
 
                 Assert.NotNull(handle);
 

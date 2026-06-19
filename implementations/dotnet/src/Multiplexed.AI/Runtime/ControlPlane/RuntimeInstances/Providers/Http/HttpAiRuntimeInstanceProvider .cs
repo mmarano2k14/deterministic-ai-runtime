@@ -688,23 +688,36 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http
             string runtimeInstanceId,
             string endpoint)
         {
-            var result = new Dictionary<string, string>(
-                StringComparer.OrdinalIgnoreCase)
-            {
-                [AiRuntimeInstanceProviderMetadataKeys.ProviderName] = ProviderName,
-                [AiRuntimeInstanceCommandTransportMetadataKeys.TransportName] =
-                    AiRuntimeInstanceCommandTransportMetadataKeys.HttpTransportName,
-                [AiRuntimeInstanceCommandTransportMetadataKeys.RuntimeInstanceId] = runtimeInstanceId,
-                [AiRuntimeInstanceCommandTransportMetadataKeys.TransportEndpoint] = endpoint
-            };
+            var result =
+                new Dictionary<string, string>(
+                    StringComparer.OrdinalIgnoreCase);
 
             if (metadata is not null)
             {
                 foreach (var item in metadata)
                 {
-                    result[item.Key] = item.Value;
+                    if (!string.IsNullOrWhiteSpace(item.Key))
+                    {
+                        result[item.Key] =
+                            item.Value ?? string.Empty;
+                    }
                 }
             }
+
+            result[AiRuntimeInstanceProviderMetadataKeys.ProviderName] =
+                ProviderName;
+
+            result["provider"] =
+                ProviderName;
+
+            result[AiRuntimeInstanceCommandTransportMetadataKeys.TransportName] =
+                AiRuntimeInstanceCommandTransportMetadataKeys.HttpTransportName;
+
+            result[AiRuntimeInstanceCommandTransportMetadataKeys.RuntimeInstanceId] =
+                runtimeInstanceId;
+
+            result[AiRuntimeInstanceCommandTransportMetadataKeys.TransportEndpoint] =
+                endpoint;
 
             return result;
         }

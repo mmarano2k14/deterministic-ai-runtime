@@ -487,6 +487,7 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution
                 {
                     PipelineName = "pipeline-1"
                 },
+                ExecutionContextSnapshot = AiExecutionContextSnapshotTestFactory.Create(tenantId: "tenant-1"),
                 FailureReason = failureReason,
                 SubmittedAtUtc = now,
                 UpdatedAtUtc = now,

@@ -1,8 +1,9 @@
-﻿using System.ComponentModel;
-using Microsoft.Extensions.Logging;
+﻿using Microsoft.Extensions.Logging;
 using ModelContextProtocol.Server;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Store;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Activity;
+using Multiplexed.Rbac.Core.Authorization.Attributes;
+using System.ComponentModel;
 
 namespace Multiplexed.AI.McpServer.Tools
 {
@@ -50,6 +51,7 @@ namespace Multiplexed.AI.McpServer.Tools
         /// <returns>The recent shared queue activity.</returns>
         [McpServerTool(Name = "shared_queue.activity")]
         [Description("Lists recent shared queue activity.")]
+        [RequireCapability("shared-queue", "activity", "read")]
         public async Task<AiSharedQueueActivityResult> GetActivityAsync(
             AiSharedQueueActivityRequest request,
             CancellationToken cancellationToken = default)
@@ -97,7 +99,7 @@ namespace Multiplexed.AI.McpServer.Tools
                 filteredRuns =
                     filteredRuns.Where(run =>
                         string.Equals(
-                            run.TenantId,
+                            run.ExecutionContextSnapshot.TenantId,
                             request.TenantId,
                             StringComparison.Ordinal));
             }

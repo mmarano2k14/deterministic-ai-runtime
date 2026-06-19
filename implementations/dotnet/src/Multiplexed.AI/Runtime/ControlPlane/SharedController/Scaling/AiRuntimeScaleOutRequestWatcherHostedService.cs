@@ -265,18 +265,32 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
                 RequestId = request.RequestId,
                 ControlPlaneId = request.ControlPlaneId,
                 SharedRunId = request.SharedRunId,
+
                 TenantId = request.TenantId,
+                TenantGroupId = request.TenantGroupId,
                 PipelineKey = request.PipelineKey,
+
+                IsolationMode = request.IsolationMode,
+                PreferDedicatedCapacity = request.PreferDedicatedCapacity,
+                AllowSharedFallback = request.AllowSharedFallback,
+                MaxRuntimeInstances = request.MaxRuntimeInstances,
+                RuntimeInstanceIdPrefix = request.RuntimeInstanceIdPrefix,
+                WorkerCountPerInstance = request.WorkerCountPerInstance,
+                MaxConcurrentRunsPerInstance = request.MaxConcurrentRunsPerInstance,
+                LocalQueueCapacity = request.LocalQueueCapacity,
+
                 VisibleInstanceCount = request.VisibleInstanceCount,
                 AvailableInstanceCount = request.AvailableInstanceCount,
                 CurrentInstanceCount = request.CurrentInstanceCount,
                 MaxInstanceCount = request.MaxInstanceCount,
                 RequestedTargetInstanceCount = request.RequestedTargetInstanceCount,
+
                 ProviderHint = request.ProviderHint,
                 CorrelationId = request.CorrelationId,
                 RequestedBy = request.RequestedBy,
                 Source = request.Source,
                 Reason = request.Reason,
+
                 Metadata = new Dictionary<string, string>(
                     request.Metadata,
                     StringComparer.OrdinalIgnoreCase)

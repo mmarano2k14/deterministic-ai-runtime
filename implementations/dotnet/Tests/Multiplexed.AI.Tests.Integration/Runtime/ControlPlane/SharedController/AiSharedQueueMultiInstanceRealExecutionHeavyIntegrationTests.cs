@@ -36,6 +36,7 @@ using Multiplexed.AI.Runtime.ControlPlane.Admission.Reservations;
 using Multiplexed.AI.Runtime.ControlPlane.DI;
 using Multiplexed.AI.Runtime.ControlPlane.ExecutionAssistance;
 using Multiplexed.AI.Runtime.ControlPlane.Observability;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Isolation;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Local;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.SharedInstance;
@@ -294,8 +295,12 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedController
                 new NeverCalledSharedRunDispatcher(),
                 new NoopAiRuntimeScaleOutRequestPublisher(),
                 new StaticAiControlPlaneIdResolver("test-control-plane"),
+                new HardcodedAiTenantRuntimeSettingsProvider(),
                 Options.Create(new AiSharedRuntimeControllerOptions()),
-                new NoopAiControlPlaneObserver());
+                new NoopAiControlPlaneObserver(),
+                 new FakeExecutionContextSnapshotProvider(
+                    AiExecutionContextSnapshotTestFactory.Create(
+                        tenantId: "tenant-1")));
 
             var runtimeInstances = new List<RuntimeInstanceHarness>();
 
@@ -554,8 +559,12 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedController
                 new NeverCalledSharedRunDispatcher(),
                 new NoopAiRuntimeScaleOutRequestPublisher(),
                 new StaticAiControlPlaneIdResolver("test-control-plane"),
+                new HardcodedAiTenantRuntimeSettingsProvider(),
                 Options.Create(new AiSharedRuntimeControllerOptions()),
-                new NoopAiControlPlaneObserver());
+                new NoopAiControlPlaneObserver(),
+                new FakeExecutionContextSnapshotProvider(
+                    AiExecutionContextSnapshotTestFactory.Create(
+                        tenantId: "tenant-1")));
 
             var runtimeInstances = new List<RuntimeInstanceHarness>();
 
@@ -855,8 +864,12 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedController
                 new NeverCalledSharedRunDispatcher(),
                 new NoopAiRuntimeScaleOutRequestPublisher(),
                 new StaticAiControlPlaneIdResolver("test-control-plane"),
+                new HardcodedAiTenantRuntimeSettingsProvider(),
                 Options.Create(new AiSharedRuntimeControllerOptions()),
-                new NoopAiControlPlaneObserver());
+                new NoopAiControlPlaneObserver(),
+                new FakeExecutionContextSnapshotProvider(
+                    AiExecutionContextSnapshotTestFactory.Create(
+                        tenantId: "tenant-1")));
 
             var runtimeInstances = new List<RuntimeInstanceHarness>();
 
@@ -1294,6 +1307,7 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedController
                 new FakeRunAdmissionController(
                     assignedRuntimeInstanceId: runtimeInstance.RuntimeInstanceId), 
                 new InMemoryAiRuntimeAdmissionReservationStore(),
+                new FakeExecutionContextAccessor(),
                 NullLogger<AiSharedQueueDispatcher>.Instance);
 
             var pump = new AiSharedQueuePump(

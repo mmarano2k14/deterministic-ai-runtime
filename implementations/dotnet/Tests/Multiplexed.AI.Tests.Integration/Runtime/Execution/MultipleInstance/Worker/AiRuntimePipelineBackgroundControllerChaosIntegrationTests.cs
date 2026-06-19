@@ -219,16 +219,15 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution.MultipleInstance.Wo
             try
             {
                 handle = await controller.EnqueueAsync(
-                    new AiRuntimePipelineRunRequest
-                    {
-                        PipelineName = scenario.PipelineName,
-                        PipelineDefinition = scenario.PipelineDefinition,
-                        Input = new
+                    AiRuntimeExecutionContextSnapshotTestFixture.CreateRunRequest(
+                        pipelineName: scenario.PipelineName,
+                        pipelineDefinition: scenario.PipelineDefinition,
+                        input: new
                         {
                             candidateId = "candidate-replay-001",
                             source = "background-controller-replay-test"
-                        }
-                    });
+                        },
+                        source: scenario.Name));
 
                 Assert.NotNull(handle);
 
@@ -394,16 +393,15 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution.MultipleInstance.Wo
             try
             {
                 handle = await controller.EnqueueAsync(
-                    new AiRuntimePipelineRunRequest
-                    {
-                        PipelineName = scenario.PipelineName,
-                        PipelineDefinition = scenario.PipelineDefinition,
-                        Input = new
+                    AiRuntimeExecutionContextSnapshotTestFixture.CreateRunRequest(
+                        pipelineName: scenario.PipelineName,
+                        pipelineDefinition: scenario.PipelineDefinition,
+                        input: new
                         {
                             candidateId = "candidate-replay-restore-001",
                             source = "background-controller-replay-restore-test"
-                        }
-                    });
+                        },
+                        source: scenario.Name));
 
                 Assert.NotNull(handle);
 
@@ -583,16 +581,15 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution.MultipleInstance.Wo
             try
             {
                 handle = await controller.EnqueueAsync(
-                    new AiRuntimePipelineRunRequest
-                    {
-                        PipelineName = scenario.PipelineName,
-                        PipelineDefinition = scenario.PipelineDefinition,
-                        Input = new
+                    AiRuntimeExecutionContextSnapshotTestFixture.CreateRunRequest(
+                        pipelineName: scenario.PipelineName,
+                        pipelineDefinition: scenario.PipelineDefinition,
+                        input: new
                         {
                             candidateId = "candidate-resolver-diagnostic-001",
                             source = "background-controller-resolver-diagnostic"
-                        }
-                    });
+                        },
+                        source: scenario.Name));
 
                 Assert.NotNull(handle);
 
@@ -704,16 +701,15 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution.MultipleInstance.Wo
             try
             {
                 handle = await controller.EnqueueAsync(
-                    new AiRuntimePipelineRunRequest
-                    {
-                        PipelineName = scenario.PipelineName,
-                        PipelineDefinition = scenario.PipelineDefinition,
-                        Input = new
+                    AiRuntimeExecutionContextSnapshotTestFixture.CreateRunRequest(
+                        pipelineName: scenario.PipelineName,
+                        pipelineDefinition: scenario.PipelineDefinition,
+                        input: new
                         {
                             candidateId = "candidate-replay-deterministic-001",
                             source = "background-controller-replay-deterministic-test"
-                        }
-                    });
+                        },
+                        source: scenario.Name));
 
                 Assert.NotNull(handle);
 
@@ -909,16 +905,15 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution.MultipleInstance.Wo
             try
             {
                 handle = await controller.EnqueueAsync(
-                    new AiRuntimePipelineRunRequest
-                    {
-                        PipelineName = scenario.PipelineName,
-                        PipelineDefinition = scenario.PipelineDefinition,
-                        Input = new
+                    AiRuntimeExecutionContextSnapshotTestFixture.CreateRunRequest(
+                        pipelineName: scenario.PipelineName,
+                        pipelineDefinition: scenario.PipelineDefinition,
+                        input: new
                         {
                             candidateId = "candidate-distributed-001",
                             source = "distributed-runtime-workers"
-                        }
-                    });
+                        },
+                        source: scenario.Name));
 
                 Assert.NotNull(handle);
 
@@ -1052,16 +1047,15 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution.MultipleInstance.Wo
             try
             {
                 handle = await controller.EnqueueAsync(
-                    new AiRuntimePipelineRunRequest
-                    {
-                        PipelineName = scenario.PipelineName,
-                        PipelineDefinition = scenario.PipelineDefinition,
-                        Input = new
+                    AiRuntimeExecutionContextSnapshotTestFixture.CreateRunRequest(
+                        pipelineName: scenario.PipelineName,
+                        pipelineDefinition: scenario.PipelineDefinition,
+                        input: new
                         {
                             candidateId = "candidate-distributed-stop-001",
                             source = "distributed-runtime-workers-stop-terminal"
-                        }
-                    });
+                        },
+                        source: scenario.Name));
 
                 Assert.NotNull(handle);
 
@@ -1204,16 +1198,15 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution.MultipleInstance.Wo
             try
             {
                 handle = await controller.EnqueueAsync(
-                    new AiRuntimePipelineRunRequest
-                    {
-                        PipelineName = scenario.PipelineName,
-                        PipelineDefinition = scenario.PipelineDefinition,
-                        Input = new
+                    AiRuntimeExecutionContextSnapshotTestFixture.CreateRunRequest(
+                        pipelineName: scenario.PipelineName,
+                        pipelineDefinition: scenario.PipelineDefinition,
+                        input: new
                         {
                             candidateId = "candidate-distributed-claim-race-001",
                             source = "distributed-runtime-workers-claim-race"
-                        }
-                    });
+                        },
+                        source: scenario.Name));
 
                 Assert.NotNull(handle);
 
@@ -1316,16 +1309,15 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution.MultipleInstance.Wo
             try
             {
                 handle = await controller.EnqueueAsync(
-                    new AiRuntimePipelineRunRequest
-                    {
-                        PipelineName = scenario.PipelineName,
-                        PipelineDefinition = scenario.PipelineDefinition,
-                        Input = new
+                    AiRuntimeExecutionContextSnapshotTestFixture.CreateRunRequest(
+                        pipelineName: scenario.PipelineName,
+                        pipelineDefinition: scenario.PipelineDefinition,
+                        input: new
                         {
                             candidateId = "candidate-distributed-replay-001",
                             source = "distributed-runtime-workers-replay"
-                        }
-                    });
+                        },
+                        source: scenario.Name));
 
                 Assert.NotNull(handle);
 
@@ -1714,18 +1706,17 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution.MultipleInstance.Wo
             for (var index = 0; index < scenario.RunCount; index++)
             {
                 var handle = await controller.EnqueueAsync(
-                    new AiRuntimePipelineRunRequest
-                    {
-                        PipelineName = scenario.PipelineName,
-                        PipelineDefinition = scenario.PipelineDefinition,
-                        Input = new
+                    AiRuntimeExecutionContextSnapshotTestFixture.CreateRunRequest(
+                        pipelineName: scenario.PipelineName,
+                        pipelineDefinition: scenario.PipelineDefinition,
+                        input: new
                         {
                             candidateId = $"candidate-{index:000}",
                             source = scenario.Name,
                             runIndex = index,
                             chaos = scenario.EnableChaos
-                        }
-                    });
+                        },
+                        source: scenario.Name));
 
                 Assert.NotNull(handle);
 
@@ -2333,16 +2324,15 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution.MultipleInstance.Wo
             try
             {
                 handle = await controller.EnqueueAsync(
-                    new AiRuntimePipelineRunRequest
-                    {
-                        PipelineName = scenario.PipelineName,
-                        PipelineDefinition = scenario.PipelineDefinition,
-                        Input = new
+                    AiRuntimeExecutionContextSnapshotTestFixture.CreateRunRequest(
+                        pipelineName: scenario.PipelineName,
+                        pipelineDefinition: scenario.PipelineDefinition,
+                        input: new
                         {
                             candidateId,
                             source
-                        }
-                    });
+                        },
+                        source: scenario.Name));
 
                 Assert.NotNull(handle);
 

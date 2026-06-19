@@ -8,10 +8,37 @@
         /// <summary>
         /// Atomically enqueues a shared queue item if it does not already exist.
         /// </summary>
+        /// <remarks>
+        /// Expected keys:
+        /// - KEYS[1]: queue item hash key.
+        /// - KEYS[2]: global pending sorted-set index key.
+        /// - KEYS[3]: global all-items sorted-set index key.
+        /// - KEYS[4]: optional tenant pending sorted-set index key.
+        /// - KEYS[5]: optional tenant all-items sorted-set index key.
+        ///
+        /// Expected arguments:
+        /// - ARGV[1]: shared run id.
+        /// - ARGV[2]: queue score.
+        /// - ARGV[3]: expiration in seconds, or 0 when expiration is disabled.
+        /// - ARGV[4..n]: Redis hash field/value pairs.
+        ///
+        /// The script is field-agnostic. The C# store layer provides fields such as
+        /// executionContextSnapshotJson.
+        /// </remarks>
         public const string Enqueue = """
             local itemKey = KEYS[1]
             local pendingIndexKey = KEYS[2]
             local allIndexKey = KEYS[3]
+            local tenantPendingIndexKey = nil
+            local tenantAllIndexKey = nil
+
+            if #KEYS >= 4 then
+                tenantPendingIndexKey = KEYS[4]
+            end
+
+            if #KEYS >= 5 then
+                tenantAllIndexKey = KEYS[5]
+            end
 
             local sharedRunId = ARGV[1]
             local score = tonumber(ARGV[2])
@@ -21,12 +48,24 @@
                 return 'duplicate'
             end
 
+            if ((#ARGV - 3) % 2) ~= 0 then
+                return 'invalid-field-pairs'
+            end
+
             for i = 4, #ARGV, 2 do
                 redis.call('HSET', itemKey, ARGV[i], ARGV[i + 1])
             end
 
             redis.call('ZADD', pendingIndexKey, score, sharedRunId)
             redis.call('ZADD', allIndexKey, score, sharedRunId)
+
+            if tenantPendingIndexKey ~= nil and tenantPendingIndexKey ~= '' then
+                redis.call('ZADD', tenantPendingIndexKey, score, sharedRunId)
+            end
+
+            if tenantAllIndexKey ~= nil and tenantAllIndexKey ~= '' then
+                redis.call('ZADD', tenantAllIndexKey, score, sharedRunId)
+            end
 
             if expireSeconds ~= nil and expireSeconds > 0 then
                 redis.call('EXPIRE', itemKey, expireSeconds)
@@ -36,21 +75,65 @@
             """;
 
         /// <summary>
-        /// Atomically claims the first pending shared queue item.
+        /// Atomically claims the first pending shared queue item matching the optional tenant and pipeline filters.
         /// </summary>
+        /// <remarks>
+        /// Expected keys:
+        /// - KEYS[1]: active pending sorted-set index key. This can be either tenant pending or global pending.
+        /// - KEYS[2]: optional global pending sorted-set index key.
+        /// - KEYS[3]: optional tenant pending sorted-set index key.
+        ///
+        /// Tenant filtering reads executionContextSnapshotJson and uses TenantId from the snapshot.
+        /// The script accepts both PascalCase and camelCase JSON property names.
+        /// </remarks>
         public const string ClaimNext = """
             local pendingIndexKey = KEYS[1]
+            local globalPendingIndexKey = nil
+            local tenantPendingIndexKey = nil
+
+            if #KEYS >= 2 then
+                globalPendingIndexKey = KEYS[2]
+            end
+
+            if #KEYS >= 3 then
+                tenantPendingIndexKey = KEYS[3]
+            end
 
             local runtimeInstanceId = ARGV[1]
             local workerId = ARGV[2]
             local claimToken = ARGV[3]
             local nowUtc = ARGV[4]
             local claimExpiresAtUtc = ARGV[5]
-            local tenantId = ARGV[6]
-            local pipelineKey = ARGV[7]
+            local requestedTenantId = ARGV[6]
+            local requestedPipelineKey = ARGV[7]
             local reason = ARGV[8]
             local keyPrefix = ARGV[9]
             local scanLimit = tonumber(ARGV[10])
+
+            if scanLimit == nil or scanLimit <= 0 then
+                scanLimit = 100
+            end
+
+            local function removeFromPendingIndexes(sharedRunId)
+                redis.call('ZREM', pendingIndexKey, sharedRunId)
+
+                if globalPendingIndexKey ~= nil and globalPendingIndexKey ~= '' then
+                    redis.call('ZREM', globalPendingIndexKey, sharedRunId)
+                end
+
+                if tenantPendingIndexKey ~= nil and tenantPendingIndexKey ~= '' then
+                    redis.call('ZREM', tenantPendingIndexKey, sharedRunId)
+                end
+            end
+
+            local function removeFromActiveTenantIndexWhenForeign(sharedRunId)
+                if requestedTenantId ~= '' and
+                   tenantPendingIndexKey ~= nil and
+                   tenantPendingIndexKey ~= '' and
+                   pendingIndexKey == tenantPendingIndexKey then
+                    redis.call('ZREM', pendingIndexKey, sharedRunId)
+                end
+            end
 
             local ids = redis.call('ZRANGE', pendingIndexKey, 0, scanLimit - 1)
 
@@ -60,28 +143,50 @@
 
                 if redis.call('EXISTS', itemKey) == 1 then
                     local status = redis.call('HGET', itemKey, 'status')
-                    local itemTenantId = redis.call('HGET', itemKey, 'tenantId')
-                    local itemPipelineKey = redis.call('HGET', itemKey, 'pipelineKey')
 
-                    local tenantMatches = tenantId == '' or itemTenantId == tenantId
-                    local pipelineMatches = pipelineKey == '' or itemPipelineKey == pipelineKey
+                    if status ~= 'Pending' then
+                        removeFromPendingIndexes(sharedRunId)
+                    else
+                        local itemPipelineKey = redis.call('HGET', itemKey, 'pipelineKey') or ''
+                        local snapshotJson = redis.call('HGET', itemKey, 'executionContextSnapshotJson')
 
-                    if status == 'Pending' and tenantMatches and pipelineMatches then
-                        redis.call('ZREM', pendingIndexKey, sharedRunId)
+                        if snapshotJson == false or snapshotJson == nil or snapshotJson == '' then
+                            removeFromPendingIndexes(sharedRunId)
+                        else
+                            local ok, snapshot = pcall(cjson.decode, snapshotJson)
 
-                        redis.call('HSET', itemKey, 'status', 'Claimed')
-                        redis.call('HSET', itemKey, 'claimedByRuntimeInstanceId', runtimeInstanceId)
-                        redis.call('HSET', itemKey, 'claimedByWorkerId', workerId)
-                        redis.call('HSET', itemKey, 'claimToken', claimToken)
-                        redis.call('HSET', itemKey, 'claimedAtUtc', nowUtc)
-                        redis.call('HSET', itemKey, 'claimExpiresAtUtc', claimExpiresAtUtc)
-                        redis.call('HSET', itemKey, 'updatedAtUtc', nowUtc)
-                        redis.call('HSET', itemKey, 'reason', reason)
+                            if not ok or snapshot == nil then
+                                removeFromPendingIndexes(sharedRunId)
+                            else
+                                local itemTenantId = snapshot['TenantId'] or snapshot['tenantId'] or ''
 
-                        return sharedRunId
+                                local tenantMatches =
+                                    requestedTenantId == '' or itemTenantId == requestedTenantId
+
+                                local pipelineMatches =
+                                    requestedPipelineKey == '' or itemPipelineKey == requestedPipelineKey
+
+                                if tenantMatches and pipelineMatches then
+                                    removeFromPendingIndexes(sharedRunId)
+
+                                    redis.call('HSET', itemKey, 'status', 'Claimed')
+                                    redis.call('HSET', itemKey, 'claimedByRuntimeInstanceId', runtimeInstanceId)
+                                    redis.call('HSET', itemKey, 'claimedByWorkerId', workerId)
+                                    redis.call('HSET', itemKey, 'claimToken', claimToken)
+                                    redis.call('HSET', itemKey, 'claimedAtUtc', nowUtc)
+                                    redis.call('HSET', itemKey, 'claimExpiresAtUtc', claimExpiresAtUtc)
+                                    redis.call('HSET', itemKey, 'updatedAtUtc', nowUtc)
+                                    redis.call('HSET', itemKey, 'reason', reason)
+
+                                    return sharedRunId
+                                else
+                                    removeFromActiveTenantIndexWhenForeign(sharedRunId)
+                                end
+                            end
+                        end
                     end
                 else
-                    redis.call('ZREM', pendingIndexKey, sharedRunId)
+                    removeFromPendingIndexes(sharedRunId)
                 end
             end
 
@@ -119,9 +224,20 @@
         /// <summary>
         /// Atomically requeues a claimed item when the claim token matches.
         /// </summary>
+        /// <remarks>
+        /// Expected keys:
+        /// - KEYS[1]: queue item hash key.
+        /// - KEYS[2]: global pending sorted-set index key.
+        /// - KEYS[3]: optional tenant pending sorted-set index key.
+        /// </remarks>
         public const string Requeue = """
             local itemKey = KEYS[1]
             local pendingIndexKey = KEYS[2]
+            local tenantPendingIndexKey = nil
+
+            if #KEYS >= 3 then
+                tenantPendingIndexKey = KEYS[3]
+            end
 
             local sharedRunId = ARGV[1]
             local claimToken = ARGV[2]
@@ -151,15 +267,30 @@
 
             redis.call('ZADD', pendingIndexKey, score, sharedRunId)
 
+            if tenantPendingIndexKey ~= nil and tenantPendingIndexKey ~= '' then
+                redis.call('ZADD', tenantPendingIndexKey, score, sharedRunId)
+            end
+
             return 'requeued'
             """;
 
         /// <summary>
         /// Atomically cancels a queue item when it is not already terminal.
         /// </summary>
+        /// <remarks>
+        /// Expected keys:
+        /// - KEYS[1]: queue item hash key.
+        /// - KEYS[2]: global pending sorted-set index key.
+        /// - KEYS[3]: optional tenant pending sorted-set index key.
+        /// </remarks>
         public const string Cancel = """
             local itemKey = KEYS[1]
             local pendingIndexKey = KEYS[2]
+            local tenantPendingIndexKey = nil
+
+            if #KEYS >= 3 then
+                tenantPendingIndexKey = KEYS[3]
+            end
 
             local sharedRunId = ARGV[1]
             local nowUtc = ARGV[2]
@@ -176,6 +307,10 @@
             end
 
             redis.call('ZREM', pendingIndexKey, sharedRunId)
+
+            if tenantPendingIndexKey ~= nil and tenantPendingIndexKey ~= '' then
+                redis.call('ZREM', tenantPendingIndexKey, sharedRunId)
+            end
 
             redis.call('HSET', itemKey, 'status', 'Cancelled')
             redis.call('HSET', itemKey, 'updatedAtUtc', nowUtc)

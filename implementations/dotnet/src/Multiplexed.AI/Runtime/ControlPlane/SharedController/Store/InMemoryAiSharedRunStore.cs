@@ -1,4 +1,5 @@
 ﻿using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Store;
+using Multiplexed.Abstractions.Core.ExecutionContext;
 using System.Collections.Concurrent;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Store
@@ -12,11 +13,35 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Store
     ///
     /// Distributed deployments should use a Redis-backed implementation with atomic
     /// create and cancel transitions.
+    ///
+    /// When an execution-context snapshot provider is available, read operations are
+    /// tenant-filtered using ExecutionContextSnapshot.TenantId.
     /// </remarks>
     public sealed class InMemoryAiSharedRunStore : IAiSharedRunStore
     {
         private readonly ConcurrentDictionary<string, AiSharedRunRecord> _runs =
             new(StringComparer.Ordinal);
+
+        private readonly IExecutionContextSnapshotProvider? _executionContextSnapshotProvider;
+
+        /// <summary>
+        /// Initializes a new instance of the <see cref="InMemoryAiSharedRunStore"/> class.
+        /// </summary>
+        public InMemoryAiSharedRunStore()
+        {
+        }
+
+        /// <summary>
+        /// Initializes a new tenant-aware instance of the <see cref="InMemoryAiSharedRunStore"/> class.
+        /// </summary>
+        /// <param name="executionContextSnapshotProvider">The execution context snapshot provider.</param>
+        public InMemoryAiSharedRunStore(
+            IExecutionContextSnapshotProvider executionContextSnapshotProvider)
+        {
+            _executionContextSnapshotProvider =
+                executionContextSnapshotProvider ??
+                throw new ArgumentNullException(nameof(executionContextSnapshotProvider));
+        }
 
         /// <inheritdoc />
         public Task<AiSharedRunRecord> CreateAsync(
@@ -25,6 +50,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Store
         {
             ArgumentNullException.ThrowIfNull(record);
             ArgumentException.ThrowIfNullOrWhiteSpace(record.SharedRunId);
+            ArgumentException.ThrowIfNullOrWhiteSpace(record.ExecutionContextSnapshot.TenantId);
 
             cancellationToken.ThrowIfCancellationRequested();
 
@@ -48,7 +74,22 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Store
 
             _runs.TryGetValue(sharedRunId, out var record);
 
-            return Task.FromResult(record);
+            if (record is null)
+            {
+                return Task.FromResult<AiSharedRunRecord?>(null);
+            }
+
+            var tenantId =
+                TryResolveTenantId();
+
+            if (!BelongsToTenant(
+                    record,
+                    tenantId))
+            {
+                return Task.FromResult<AiSharedRunRecord?>(null);
+            }
+
+            return Task.FromResult<AiSharedRunRecord?>(record);
         }
 
         /// <inheritdoc />
@@ -60,7 +101,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Store
         {
             cancellationToken.ThrowIfCancellationRequested();
 
+            var tenantId =
+                TryResolveTenantId();
+
             var records = _runs.Values
+                .Where(run => BelongsToTenant(run, tenantId))
                 .Where(run => includeCancelled || run.Status != AiSharedRunStatus.Cancelled)
                 .Where(run => includeCompleted || run.Status != AiSharedRunStatus.Completed)
                 .Where(run => includeFailed || run.Status != AiSharedRunStatus.Failed)
@@ -83,9 +128,19 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Store
 
             cancellationToken.ThrowIfCancellationRequested();
 
+            var tenantId =
+                TryResolveTenantId();
+
             while (true)
             {
                 if (!_runs.TryGetValue(sharedRunId, out var existing))
+                {
+                    return Task.FromResult<AiSharedRunRecord?>(null);
+                }
+
+                if (!BelongsToTenant(
+                        existing,
+                        tenantId))
                 {
                     return Task.FromResult<AiSharedRunRecord?>(null);
                 }
@@ -137,13 +192,14 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Store
                 var updated = new AiSharedRunRecord
                 {
                     SharedRunId = existing.SharedRunId,
+                    ControlPlaneId = existing.ControlPlaneId,
                     Status = AiSharedRunStatus.Dispatched,
                     RunRequest = existing.RunRequest,
                     LocalRunId = localRunId ?? existing.LocalRunId,
                     ExecutionId = executionId ?? existing.ExecutionId,
                     AssignedRuntimeInstanceId = runtimeInstanceId,
                     AdmissionDecision = existing.AdmissionDecision,
-                    TenantId = existing.TenantId,
+                    ExecutionContextSnapshot = existing.ExecutionContextSnapshot,
                     PipelineKey = existing.PipelineKey,
                     CorrelationId = existing.CorrelationId,
                     RequestedBy = existing.RequestedBy,
@@ -160,6 +216,62 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Store
                     return Task.FromResult<AiSharedRunRecord?>(updated);
                 }
             }
+        }
+
+        /// <summary>
+        /// Attempts to resolve the current tenant id from the execution context snapshot provider.
+        /// </summary>
+        /// <returns>The current tenant id, or <c>null</c> when no active context is available.</returns>
+        private string? TryResolveTenantId()
+        {
+            if (_executionContextSnapshotProvider is null)
+            {
+                return null;
+            }
+
+            try
+            {
+                var snapshot =
+                    _executionContextSnapshotProvider
+                        .MapToSnapshot();
+
+                return string.IsNullOrWhiteSpace(snapshot.TenantId)
+                    ? null
+                    : snapshot.TenantId;
+            }
+            catch (InvalidOperationException)
+            {
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// Determines whether a record belongs to the current tenant.
+        /// </summary>
+        /// <param name="record">The shared run record.</param>
+        /// <param name="expectedTenantId">The expected tenant id.</param>
+        /// <returns><c>true</c> when the record belongs to the expected tenant; otherwise, <c>false</c>.</returns>
+        private static bool BelongsToTenant(
+            AiSharedRunRecord record,
+            string? expectedTenantId)
+        {
+            if (string.IsNullOrWhiteSpace(expectedTenantId))
+            {
+                return true;
+            }
+
+            var recordTenantId =
+                record.ExecutionContextSnapshot.TenantId;
+
+            if (string.IsNullOrWhiteSpace(recordTenantId))
+            {
+                return false;
+            }
+
+            return string.Equals(
+                NormalizeKeySegment(recordTenantId),
+                NormalizeKeySegment(expectedTenantId),
+                StringComparison.Ordinal);
         }
 
         /// <summary>
@@ -193,13 +305,14 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Store
             return new AiSharedRunRecord
             {
                 SharedRunId = existing.SharedRunId,
+                ControlPlaneId = existing.ControlPlaneId,
                 Status = AiSharedRunStatus.Cancelled,
                 RunRequest = existing.RunRequest,
                 LocalRunId = existing.LocalRunId,
                 ExecutionId = existing.ExecutionId,
                 AssignedRuntimeInstanceId = existing.AssignedRuntimeInstanceId,
                 AdmissionDecision = existing.AdmissionDecision,
-                TenantId = existing.TenantId,
+                ExecutionContextSnapshot = existing.ExecutionContextSnapshot,
                 PipelineKey = existing.PipelineKey,
                 CorrelationId = existing.CorrelationId,
                 RequestedBy = requestedBy ?? existing.RequestedBy,
@@ -210,6 +323,22 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Store
                 UpdatedAtUtc = DateTimeOffset.UtcNow,
                 Metadata = existing.Metadata
             };
+        }
+
+        /// <summary>
+        /// Normalizes a value so it can be compared like a Redis key segment.
+        /// </summary>
+        /// <param name="value">The value to normalize.</param>
+        /// <returns>The normalized key segment.</returns>
+        private static string NormalizeKeySegment(
+            string value)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(value);
+
+            return value
+                .Trim()
+                .Replace(" ", "-", StringComparison.Ordinal)
+                .Replace("\\", "/", StringComparison.Ordinal);
         }
     }
 }

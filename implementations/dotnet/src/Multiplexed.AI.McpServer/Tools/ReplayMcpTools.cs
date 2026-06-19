@@ -2,6 +2,7 @@
 using Microsoft.Extensions.Logging;
 using ModelContextProtocol.Server;
 using Multiplexed.Abstractions.AI.ControlPlane.Replay;
+using Multiplexed.Rbac.Core.Authorization.Attributes;
 
 namespace Multiplexed.AI.McpServer.Tools
 {
@@ -40,6 +41,7 @@ namespace Multiplexed.AI.McpServer.Tools
         /// <param name="request">The replay control-plane request.</param>
         /// <param name="cancellationToken">A token used to cancel the operation.</param>
         /// <returns>The replay control-plane result.</returns>
+        [RequireCapability("replay", "execution", "run")]
         [McpServerTool(Name = "replay.execution")]
         [Description("Runs deterministic replay validation for an existing execution.")]
         public async Task<AiReplayControlResult> ReplayExecutionAsync(
@@ -66,6 +68,7 @@ namespace Multiplexed.AI.McpServer.Tools
         /// <param name="request">The replay control-plane request.</param>
         /// <param name="cancellationToken">A token used to cancel the operation.</param>
         /// <returns>The replay control-plane result.</returns>
+        [RequireCapability("replay", "audit", "run")]
         [McpServerTool(Name = "replay.audit")]
         [Description("Runs audit-only replay for an existing execution.")]
         public async Task<AiReplayControlResult> AuditExecutionAsync(
@@ -92,6 +95,7 @@ namespace Multiplexed.AI.McpServer.Tools
         /// <param name="request">The replay control-plane request.</param>
         /// <param name="cancellationToken">A token used to cancel the operation.</param>
         /// <returns>The replay control-plane result.</returns>
+        [RequireCapability("replay", "report", "read")]
         [McpServerTool(Name = "replay.report")]
         [Description("Retrieves or builds the replay report for an existing execution.")]
         public async Task<AiReplayControlResult> GetReplayReportAsync(
@@ -118,6 +122,7 @@ namespace Multiplexed.AI.McpServer.Tools
         /// <param name="request">The replay control-plane request.</param>
         /// <param name="cancellationToken">A token used to cancel the operation.</param>
         /// <returns>The replay control-plane result.</returns>
+        [RequireCapability("observability", "ledger", "read")]
         [McpServerTool(Name = "observability.ledger")]
         [Description("Retrieves decision ledger entries associated with an execution.")]
         public async Task<AiReplayControlResult> GetExecutionLedgerAsync(
@@ -144,6 +149,7 @@ namespace Multiplexed.AI.McpServer.Tools
         /// <param name="request">The replay control-plane request.</param>
         /// <param name="cancellationToken">A token used to cancel the operation.</param>
         /// <returns>The replay control-plane result.</returns>
+        [RequireCapability("observability", "trace", "read")]
         [McpServerTool(Name = "observability.trace")]
         [Description("Retrieves trace timeline entries associated with an execution.")]
         public async Task<AiReplayControlResult> GetExecutionTimelineAsync(

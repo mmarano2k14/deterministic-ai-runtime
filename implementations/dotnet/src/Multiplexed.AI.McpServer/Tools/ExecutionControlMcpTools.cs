@@ -1,7 +1,8 @@
-﻿using System.ComponentModel;
-using Microsoft.Extensions.Logging;
+﻿using Microsoft.Extensions.Logging;
 using ModelContextProtocol.Server;
 using Multiplexed.Abstractions.AI.ControlPlane.Execution;
+using Multiplexed.Rbac.Core.Authorization.Attributes;
+using System.ComponentModel;
 
 namespace Multiplexed.AI.McpServer.Tools
 {
@@ -39,6 +40,7 @@ namespace Multiplexed.AI.McpServer.Tools
         /// </summary>
         [McpServerTool(Name = "control.pause")]
         [Description("Requests cooperative pause for an execution.")]
+        [RequireCapability("execution", "control", "pause")]
         public async Task<AiExecutionControlPlaneResult> PauseExecutionAsync(
             AiExecutionControlPlaneRequest request,
             CancellationToken cancellationToken = default)
@@ -61,6 +63,7 @@ namespace Multiplexed.AI.McpServer.Tools
         /// </summary>
         [McpServerTool(Name = "control.resume")]
         [Description("Requests cooperative resume for an execution.")]
+        [RequireCapability("execution", "control", "resume")]
         public async Task<AiExecutionControlPlaneResult> ResumeExecutionAsync(
             AiExecutionControlPlaneRequest request,
             CancellationToken cancellationToken = default)
@@ -83,6 +86,7 @@ namespace Multiplexed.AI.McpServer.Tools
         /// </summary>
         [McpServerTool(Name = "control.cancel")]
         [Description("Requests cooperative cancellation for an execution.")]
+        [RequireCapability("execution", "control", "cancel")]
         public async Task<AiExecutionControlPlaneResult> CancelExecutionAsync(
             AiExecutionControlPlaneRequest request,
             CancellationToken cancellationToken = default)
@@ -105,6 +109,7 @@ namespace Multiplexed.AI.McpServer.Tools
         /// </summary>
         [McpServerTool(Name = "control.status")]
         [Description("Gets the current durable execution control status.")]
+        [RequireCapability("execution", "control", "read")]
         public async Task<AiExecutionControlPlaneResult> GetExecutionStatusAsync(
             AiExecutionControlPlaneRequest request,
             CancellationToken cancellationToken = default)

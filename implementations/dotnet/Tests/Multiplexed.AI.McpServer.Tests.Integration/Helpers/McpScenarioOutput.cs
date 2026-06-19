@@ -60,7 +60,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Helpers
                 builder.AppendLine($"ExecutionId           : {run.ExecutionId}");
                 builder.AppendLine($"AssignedInstanceId    : {run.AssignedRuntimeInstanceId}");
                 builder.AppendLine($"PipelineKey           : {run.PipelineKey}");
-                builder.AppendLine($"TenantId              : {run.TenantId}");
+                builder.AppendLine($"TenantId              : {run.ExecutionContextSnapshot.TenantId}");
                 builder.AppendLine($"CorrelationId         : {run.CorrelationId}");
                 builder.AppendLine($"RequestedBy           : {run.RequestedBy}");
                 builder.AppendLine($"Source                : {run.Source}");
@@ -163,7 +163,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Helpers
                 builder.AppendLine($"LocalRunId            : {run.LocalRunId}");
                 builder.AppendLine($"ExecutionId           : {run.ExecutionId}");
                 builder.AppendLine($"PipelineKey           : {run.PipelineKey}");
-                builder.AppendLine($"TenantId              : {run.TenantId}");
+                builder.AppendLine($"TenantId              : {run.ExecutionContextSnapshot.TenantId}");
                 builder.AppendLine($"CorrelationId         : {run.CorrelationId}");
                 builder.AppendLine($"RequestedBy           : {run.RequestedBy}");
                 builder.AppendLine($"Source                : {run.Source}");
@@ -696,7 +696,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Helpers
                 output.WriteLine($"SharedRunId           : {item.SharedRunId}");
                 output.WriteLine($"Status                : {item.Status}");
                 output.WriteLine($"PipelineKey           : {item.PipelineKey}");
-                output.WriteLine($"TenantId              : {item.TenantId}");
+                output.WriteLine($"TenantId              : {item.ExecutionContextSnapshot.TenantId}");
                 output.WriteLine($"Priority              : {item.Priority}");
                 output.WriteLine($"ClaimedByInstanceId   : {item.ClaimedByRuntimeInstanceId}");
                 output.WriteLine($"ClaimedByWorkerId     : {item.ClaimedByWorkerId}");
@@ -860,7 +860,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Helpers
                         $"PipelineKey           : {run.PipelineKey}");
 
                     output.WriteLine(
-                        $"TenantId              : {run.TenantId}");
+                        $"TenantId              : {run.ExecutionContextSnapshot.TenantId}");
 
                     output.WriteLine(
                         $"AssignedInstanceId    : {run.AssignedRuntimeInstanceId}");

@@ -8,6 +8,7 @@ using Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Scaling;
 using Multiplexed.Abstractions.AI.Execution.Instance.Worker;
 using Multiplexed.AI.ControlPlane.RuntimeInstances.Pool;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.SharedInstance;
 
 namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Pool
 {
@@ -166,6 +167,106 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Pool
                 host => Assert.True(host.Disposed));
         }
 
+        [Fact]
+        public async Task EnsureCapacityAsync_Should_Forward_Pool_Metadata_To_Host_Factory()
+        {
+            var hostFactory =
+                new TestLocalRuntimeInstanceHostFactory();
+
+            var sharedRuntimeInstanceRegistry =
+                new InMemoryAiSharedRuntimeInstanceRegistry();
+
+            var runtimeHostIdentity =
+                new TestRuntimeHostIdentity(
+                    "test-host");
+
+            var options =
+                Options.Create(
+                    new AiLocalRuntimeInstancePoolOptions
+                    {
+                        Enabled = true,
+                        InstanceCount = 1,
+                        WorkerCountPerInstance = 10,
+                        MaxConcurrentRunsPerInstance = 5,
+                        RuntimeInstanceIdPrefix = "test-runtime",
+                        Metadata =
+                        {
+                    ["tenantId"] = "tenant-a",
+                    ["runtime.isolationMode"] = "Dedicated",
+                    ["runtime.allowSharedFallback"] = "false",
+                    ["runtime.preferDedicatedCapacity"] = "true"
+                        }
+                    });
+
+            var configuration =
+                new ConfigurationBuilder()
+                    .AddInMemoryCollection(
+                        new Dictionary<string, string?>
+                        {
+                            ["AiMcpHost:Mode"] = "ControlPlaneWithLocalRuntimeInstances",
+                            ["AiMcpHost:EnableSharedQueuePump"] = "false"
+                        })
+                    .Build();
+
+            var logger =
+                NullLogger<AiLocalRuntimeInstanceScaler>.Instance;
+
+            var scaler =
+                new AiLocalRuntimeInstanceScaler(
+                    hostFactory,
+                    sharedRuntimeInstanceRegistry,
+                    runtimeHostIdentity,
+                    options,
+                    configuration,
+                    logger);
+
+            var result =
+                await scaler
+                    .EnsureCapacityAsync(
+                        new AiRuntimeScaleOutProviderRequest
+                        {
+                            RequestId = $"test-request-{Guid.NewGuid():N}",
+                            SharedRunId = $"test-shared-run-{Guid.NewGuid():N}",
+                            ControlPlaneId = "test-control-plane",
+                            CurrentInstanceCount = 0,
+                            RequestedTargetInstanceCount = 1
+                        })
+                    .ConfigureAwait(false);
+
+            Assert.True(
+                result.Success,
+                result.FailureReason ?? result.Message);
+
+            Assert.False(
+                result.Rejected);
+
+            Assert.Single(
+                hostFactory.CreatedHosts);
+
+            var metadata =
+                Assert.Single(
+                    hostFactory.ReceivedMetadata);
+
+            Assert.NotNull(
+                metadata);
+
+            Assert.Equal(
+                "tenant-a",
+                metadata!["tenantId"]);
+
+            Assert.Equal(
+                "Dedicated",
+                metadata["runtime.isolationMode"]);
+
+            Assert.Equal(
+                "false",
+                metadata["runtime.allowSharedFallback"]);
+
+            Assert.Equal(
+                "true",
+                metadata["runtime.preferDedicatedCapacity"]);
+        }
+
         /// <summary>
         /// Creates a local runtime instance scaler.
         /// </summary>
@@ -267,15 +368,23 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Pool
             /// </summary>
             public List<TestLocalRuntimeInstanceHost> CreatedHosts { get; } = new();
 
+            /// <summary>
+            /// Gets the metadata received by each create call.
+            /// </summary>
+            public List<IReadOnlyDictionary<string, string>?> ReceivedMetadata { get; } = new();
+
             /// <inheritdoc />
             public Task<IAiLocalRuntimeInstanceHost> CreateAsync(
                 string runtimeInstanceId,
                 int workerCount,
                 int maxConcurrentRuns,
                 int? localQueueCapacity,
+                IReadOnlyDictionary<string, string>? metadata = null,
                 CancellationToken cancellationToken = default)
             {
                 cancellationToken.ThrowIfCancellationRequested();
+
+                this.ReceivedMetadata.Add(metadata);
 
                 var host =
                     new TestLocalRuntimeInstanceHost(
