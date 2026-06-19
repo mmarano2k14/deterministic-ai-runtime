@@ -332,6 +332,114 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
                 }));
         }
 
+        /// <summary>
+        /// Verifies that a circuit-open dispatch failure from the shared queue is not marked as dispatched
+        /// and that the dispatch failure reason is persisted on the shared run record.
+        /// </summary>
+        [Fact]
+        public async Task DispatchNextAsync_Should_Requeue_And_Persist_FailureReason_When_Dispatch_Fails_With_CircuitOpen()
+        {
+            var queue =
+                new InMemoryAiSharedQueue();
+
+            var store =
+                new InMemoryAiSharedRunStore();
+
+            await store.CreateAsync(
+                CreateSharedRun(
+                    "shared-run-1",
+                    AiSharedRunStatus.QueuedGlobally));
+
+            await queue.EnqueueAsync(
+                CreateQueueItem(
+                    "shared-run-1"));
+
+            var runDispatcher =
+                new FakeSharedRunDispatcher(
+                    new AiSharedRunDispatchResult
+                    {
+                        Success = false,
+                        SharedRunId = "shared-run-1",
+                        RuntimeInstanceId = "runtime-1",
+                        FailureReason = "http-circuit-open",
+                        Message = "HTTP runtime circuit breaker is open.",
+                        StartedAtUtc = DateTimeOffset.UtcNow,
+                        CompletedAtUtc = DateTimeOffset.UtcNow
+                    });
+
+            var dispatcher =
+                new AiSharedQueueDispatcher(
+                    queue,
+                    store,
+                    runDispatcher,
+                    new FakeRunAdmissionController(),
+                    new InMemoryAiRuntimeAdmissionReservationStore(),
+                    new FakeExecutionContextAccessor(),
+                    NullLogger<AiSharedQueueDispatcher>.Instance);
+
+            var result =
+                await dispatcher.DispatchNextAsync(
+                    new AiSharedQueueDispatchRequest
+                    {
+                        RuntimeInstanceId = "runtime-1",
+                        WorkerId = "worker-1",
+                        CorrelationId = "correlation-1",
+                        RequestedBy = "tester",
+                        Source = "unit-test",
+                        Reason = "dispatch from shared queue"
+                    });
+
+            Assert.False(result.Success);
+            Assert.False(result.NoItemAvailable);
+
+            Assert.Equal(
+                "shared-run-1",
+                result.SharedRunId);
+
+            Assert.Equal(
+                "runtime-1",
+                result.RuntimeInstanceId);
+
+            Assert.Equal(
+                "http-circuit-open",
+                result.FailureReason);
+
+            var queueItem =
+                await queue.GetAsync(
+                    "shared-run-1");
+
+            Assert.NotNull(queueItem);
+
+            Assert.Equal(
+                AiSharedQueueItemStatus.Pending,
+                queueItem!.Status);
+
+            Assert.Equal(
+                "http-circuit-open",
+                queueItem.Reason);
+
+            var sharedRun =
+                await store.GetAsync(
+                    "shared-run-1");
+
+            Assert.NotNull(sharedRun);
+
+            Assert.Equal(
+                AiSharedRunStatus.QueuedGlobally,
+                sharedRun!.Status);
+
+            Assert.Null(sharedRun.LocalRunId);
+            Assert.Null(sharedRun.ExecutionId);
+
+            Assert.Equal(
+                "runtime-1",
+                sharedRun.AssignedRuntimeInstanceId);
+
+            Assert.Equal(
+                "http-circuit-open",
+                sharedRun.FailureReason);
+        }
+
         private static AiSharedRunRecord CreateSharedRun(
             string sharedRunId,
             AiSharedRunStatus status,

@@ -26,6 +26,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
     /// - dispatch the shared run to the selected runtime instance
     /// - mark the queue item as dispatched on success
     /// - mark the shared run record as dispatched on success
+    /// - persist dispatch failure metadata when dispatch fails
     /// - requeue the item when dispatch fails
     /// - release temporary admission reservations after dispatch attempts
     ///
@@ -345,11 +346,20 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                         if (!dispatchResult.Success)
                         {
                             _logger.LogWarning(
-                                "Shared run dispatch failed. Requeuing shared queue item. SharedRunId={SharedRunId}, ControlPlaneId={ControlPlaneId}, RuntimeInstanceId={RuntimeInstanceId}, FailureReason={FailureReason}",
+                                "Shared run dispatch failed. Persisting failure metadata and requeuing shared queue item. SharedRunId={SharedRunId}, ControlPlaneId={ControlPlaneId}, RuntimeInstanceId={RuntimeInstanceId}, FailureReason={FailureReason}",
                                 sharedRun.SharedRunId,
                                 controlPlaneId,
                                 targetRuntimeInstanceId,
                                 dispatchResult.FailureReason);
+
+                            var failedSharedRun = await _sharedRunStore
+                                .MarkDispatchFailedAsync(
+                                    sharedRun.SharedRunId,
+                                    targetRuntimeInstanceId,
+                                    dispatchResult.FailureReason,
+                                    dispatchResult.Message,
+                                    cancellationToken)
+                                .ConfigureAwait(false);
 
                             await RequeueBestEffortAsync(
                                     queueItem,
@@ -365,7 +375,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                                 SharedRunId = queueItem.SharedRunId,
                                 RuntimeInstanceId = targetRuntimeInstanceId,
                                 QueueItem = queueItem,
-                                SharedRun = sharedRun,
+                                SharedRun = failedSharedRun ?? sharedRun,
                                 DispatchResult = dispatchResult,
                                 Message = "Shared queue item dispatch failed and was requeued.",
                                 FailureReason = dispatchResult.FailureReason,
