@@ -6,6 +6,7 @@ using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers.Http;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.SharedInstance;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http.ScaleOut;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.SharedInstance;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.DI
@@ -51,10 +52,16 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
     public static class HttpAiRuntimeInstanceProviderServiceCollectionExtensions
     {
         /// <summary>
-        /// Defines the configuration section used by the HTTP runtime instance provider options.
+        /// Defines the configuration section used by the HTTP runtime instance provider hardening options.
         /// </summary>
         private const string OptionsSectionName =
             "AiHttpRuntimeInstanceProvider";
+
+        /// <summary>
+        /// Defines the configuration section used by the HTTP runtime scale-out technical options.
+        /// </summary>
+        private const string ScaleOutOptionsSectionName =
+            "AiHttpRuntimeScaleOut";
 
         /// <summary>
         /// Registers the HTTP runtime instance provider as an opt-in runtime instance provider.
@@ -74,6 +81,14 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
         /// <para>
         /// Supported hardening settings include dispatch timeout, retry behavior,
         /// timeout retry policy, and circuit breaker settings.
+        /// </para>
+        ///
+        /// <para>
+        /// This method also binds <see cref="AiHttpRuntimeScaleOutOptions"/>
+        /// from the <c>AiHttpRuntimeScaleOut</c> configuration section.
+        /// HTTP scale-out options are technical provider defaults only. Tenant-aware
+        /// runtime settings must be resolved earlier by admission and carried through
+        /// the scale-out provider request.
         /// </para>
         ///
         /// <para>
@@ -119,7 +134,15 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
                 .AddOptions<AiHttpRuntimeInstanceProviderOptions>()
                 .BindConfiguration(OptionsSectionName);
 
+            services
+                .AddOptions<AiHttpRuntimeScaleOutOptions>()
+                .BindConfiguration(ScaleOutOptionsSectionName);
+
             services.AddHttpClient<HttpAiRuntimeInstanceProvider>();
+
+            services.TryAddSingleton<
+                IAiHttpRuntimeScaleOutProvisioner,
+                AiHttpRuntimeScaleOutProvisioner>();
 
             services.TryAddEnumerable(
                 ServiceDescriptor.Transient<

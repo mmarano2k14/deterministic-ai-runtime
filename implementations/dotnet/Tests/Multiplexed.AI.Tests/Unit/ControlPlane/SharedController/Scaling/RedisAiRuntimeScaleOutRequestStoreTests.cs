@@ -1,4 +1,5 @@
 ﻿using Microsoft.Extensions.Options;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Scaling;
 using Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling;
 using Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling.Redis;
@@ -174,6 +175,72 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController.Scaling
             Assert.NotNull(loaded);
             Assert.Equal(AiRuntimeScaleOutRequestStatus.Rejected, loaded.Status);
             Assert.Equal("max capacity reached", loaded.RejectionReason);
+        }
+
+        /// <summary>
+        /// Verifies that tenant-aware runtime scale-out settings are preserved by Redis persistence.
+        /// </summary>
+        [Fact]
+        public async Task CreateAsync_Should_Preserve_Tenant_Aware_Runtime_Settings()
+        {
+            var request =
+                CreateRequest("request-tenant-settings");
+
+            request.TenantGroupId = "tenant-group-a";
+            request.IsolationMode = AiRuntimeInstanceIsolationMode.Dedicated;
+            request.PreferDedicatedCapacity = true;
+            request.AllowSharedFallback = false;
+            request.MaxRuntimeInstances = 5;
+            request.RuntimeInstanceIdPrefix = "tenant-a-http";
+            request.WorkerCountPerInstance = 7;
+            request.MaxConcurrentRunsPerInstance = 3;
+            request.LocalQueueCapacity = 42;
+
+            await this.GetStore()
+                .CreateAsync(request)
+                .ConfigureAwait(false);
+
+            var loaded =
+                await this.GetStore()
+                    .GetAsync("request-tenant-settings")
+                    .ConfigureAwait(false);
+
+            Assert.NotNull(
+                loaded);
+
+            Assert.Equal(
+                "tenant-group-a",
+                loaded!.TenantGroupId);
+
+            Assert.Equal(
+                AiRuntimeInstanceIsolationMode.Dedicated,
+                loaded.IsolationMode);
+
+            Assert.True(
+                loaded.PreferDedicatedCapacity);
+
+            Assert.False(
+                loaded.AllowSharedFallback);
+
+            Assert.Equal(
+                5,
+                loaded.MaxRuntimeInstances);
+
+            Assert.Equal(
+                "tenant-a-http",
+                loaded.RuntimeInstanceIdPrefix);
+
+            Assert.Equal(
+                7,
+                loaded.WorkerCountPerInstance);
+
+            Assert.Equal(
+                3,
+                loaded.MaxConcurrentRunsPerInstance);
+
+            Assert.Equal(
+                42,
+                loaded.LocalQueueCapacity);
         }
 
         /// <summary>

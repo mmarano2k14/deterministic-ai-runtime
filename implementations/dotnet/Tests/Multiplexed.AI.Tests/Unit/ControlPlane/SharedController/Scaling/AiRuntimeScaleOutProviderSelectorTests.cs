@@ -1,9 +1,12 @@
-﻿using Microsoft.Extensions.Options;
+﻿using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Capacity;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Scaling;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http.ScaleOut;
 using Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling;
 
 namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController.Scaling
@@ -80,6 +83,70 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController.Scaling
         }
 
         /// <summary>
+        /// Verifies that the selector resolves the HTTP runtime scale-out provider from the request provider hint.
+        /// </summary>
+        [Fact]
+        public async Task RequestScaleOutAsync_Should_Resolve_Http_Provider_From_Request_ProviderHint()
+        {
+            var provisioner =
+                new TestHttpRuntimeScaleOutProvisioner();
+
+            var httpProvider =
+                new HttpAiRuntimeInstanceProvider(
+                    new HttpClient(),
+                    NullLogger<HttpAiRuntimeInstanceProvider>.Instance,
+                    Options.Create(new AiHttpRuntimeInstanceProviderOptions()),
+                    provisioner);
+
+            var selector =
+                CreateSelector(
+                    httpProvider);
+
+            var result =
+                await selector
+                    .RequestScaleOutAsync(
+                        CreateRequest(providerHint: "http"))
+                    .ConfigureAwait(false);
+
+            Assert.True(
+                result.Success);
+
+            Assert.False(
+                result.Rejected);
+
+            Assert.Equal(
+                "test-http-runtime-1",
+                result.RuntimeInstanceId);
+
+            Assert.Equal(
+                "test-http-scaleout-request-1",
+                result.ProviderOperationId);
+
+            Assert.Equal(
+                1,
+                provisioner.CallCount);
+
+            Assert.NotNull(
+                provisioner.LastRequest);
+
+            Assert.Equal(
+                "tenant-test",
+                provisioner.LastRequest!.TenantId);
+
+            Assert.Equal(
+                "cp-test",
+                provisioner.LastRequest.ControlPlaneId);
+
+            Assert.Equal(
+                "shared-run-1",
+                provisioner.LastRequest.SharedRunId);
+
+            Assert.Equal(
+                "http",
+                provisioner.LastRequest.ProviderHint);
+        }
+
+        /// <summary>
         /// Creates a selector with a test provider.
         /// </summary>
         /// <param name="provider">The test provider.</param>
@@ -138,6 +205,56 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController.Scaling
                     ["test"] = "true"
                 }
             };
+        }
+
+        /// <summary>
+        /// Provides a test HTTP runtime scale-out provisioner.
+        /// </summary>
+        private sealed class TestHttpRuntimeScaleOutProvisioner :
+            IAiHttpRuntimeScaleOutProvisioner
+        {
+            /// <summary>
+            /// Gets the number of calls received by the provisioner.
+            /// </summary>
+            public int CallCount { get; private set; }
+
+            /// <summary>
+            /// Gets the last scale-out request received by the provisioner.
+            /// </summary>
+            public AiRuntimeScaleOutProviderRequest? LastRequest { get; private set; }
+
+            /// <inheritdoc />
+            public Task<AiRuntimeScaleOutProviderResult> ProvisionAsync(
+                AiRuntimeScaleOutProviderRequest request,
+                CancellationToken cancellationToken = default)
+            {
+                ArgumentNullException.ThrowIfNull(request);
+
+                cancellationToken.ThrowIfCancellationRequested();
+
+                this.CallCount++;
+                this.LastRequest = request;
+
+                return Task.FromResult(
+                    new AiRuntimeScaleOutProviderResult
+                    {
+                        Success = true,
+                        Rejected = false,
+                        RuntimeInstanceId = "test-http-runtime-1",
+                        ProviderOperationId = $"test-http-scaleout-{request.RequestId}",
+                        Message = "Test HTTP scale-out fulfilled.",
+                        Metadata = new Dictionary<string, string>(
+                            StringComparer.OrdinalIgnoreCase)
+                        {
+                            [AiRuntimeInstanceProviderMetadataKeys.ProviderName] = "http",
+                            ["provider.name"] = "http",
+                            ["scaleOutRequestId"] = request.RequestId,
+                            ["sharedRunId"] = request.SharedRunId,
+                            ["controlPlaneId"] = request.ControlPlaneId,
+                            ["tenantId"] = request.TenantId ?? string.Empty
+                        }
+                    });
+            }
         }
 
         /// <summary>

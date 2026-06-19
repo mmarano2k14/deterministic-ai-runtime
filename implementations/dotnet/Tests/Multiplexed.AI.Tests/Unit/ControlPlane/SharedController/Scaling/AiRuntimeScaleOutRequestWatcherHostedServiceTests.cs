@@ -1,6 +1,13 @@
-﻿using Microsoft.Extensions.Options;
+﻿using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.ControlPlane.Discovery;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers.Transport;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Scaling;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http.ScaleOut;
 using Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling;
 using Multiplexed.AI.Tests.Fixtures;
 
@@ -238,6 +245,192 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController.Scaling
         }
 
         /// <summary>
+        /// Verifies that a pending HTTP scale-out request is fulfilled by the watcher
+        /// and materializes HTTP runtime capacity.
+        /// </summary>
+        [Fact]
+        public async Task ProcessCycleAsync_Should_Fulfill_Http_Pending_Request_And_Publish_Capacity()
+        {
+            var store = CreateStore();
+
+            var request = CreateRequest("request-http-1");
+
+            request.ProviderHint = "http";
+            request.TenantId = "tenant-a";
+            request.TenantGroupId = "tenant-group-a";
+            request.PipelineKey = "pipeline-http";
+
+            request.IsolationMode = AiRuntimeInstanceIsolationMode.Dedicated;
+            request.PreferDedicatedCapacity = true;
+            request.AllowSharedFallback = false;
+            request.MaxRuntimeInstances = 5;
+            request.RuntimeInstanceIdPrefix = "tenant-a-http";
+            request.WorkerCountPerInstance = 7;
+            request.MaxConcurrentRunsPerInstance = 3;
+            request.LocalQueueCapacity = 42;
+
+            request.Metadata["tenant.id"] = "tenant-a";
+            request.Metadata["tenant.group.id"] = "tenant-group-a";
+            request.Metadata["runtime.isolationMode"] = "Dedicated";
+            request.Metadata["runtime.preferDedicatedCapacity"] = "true";
+            request.Metadata["runtime.allowSharedFallback"] = "false";
+            request.Metadata["runtime.maxRuntimeInstances"] = "5";
+            request.Metadata["runtime.instanceIdPrefix"] = "tenant-a-http";
+            request.Metadata["runtime.workerCountPerInstance"] = "7";
+            request.Metadata["runtime.maxConcurrentRunsPerInstance"] = "3";
+            request.Metadata["runtime.localQueueCapacity"] = "42";
+
+            await store
+                .CreateAsync(
+                    request)
+                .ConfigureAwait(false);
+
+            var registry =
+                new TestRuntimeInstanceRegistry();
+
+            var capacityStore =
+                new TestRuntimeInstanceCapacityStore();
+
+            var provisioner =
+                new AiHttpRuntimeScaleOutProvisioner(
+                    registry,
+                    capacityStore,
+                    Options.Create(
+                        new AiHttpRuntimeScaleOutOptions
+                        {
+                            Enabled = true,
+                            DefaultRuntimeInstanceIdPrefix = "http-runtime",
+                            EndpointTemplate = "http://runtime-host/{runtimeInstanceId}"
+                        }),
+                    NullLogger<AiHttpRuntimeScaleOutProvisioner>.Instance);
+
+            var httpProvider =
+                new HttpAiRuntimeInstanceProvider(
+                    new HttpClient(),
+                    NullLogger<HttpAiRuntimeInstanceProvider>.Instance,
+                    Options.Create(new AiHttpRuntimeInstanceProviderOptions()),
+                    provisioner);
+
+            var watcher =
+                new AiRuntimeScaleOutRequestWatcherHostedService(
+                    store,
+                    new TestScaleOutProviderSelector(
+                        httpProvider),
+                    new TestScaleOutFulfilledRunRequeueService(),
+                    new TestControlPlaneIdResolver("cp-test"),
+                    Options.Create(new AiRuntimeScaleOutRequestWatcherOptions
+                    {
+                        Enabled = true,
+                        ControlPlaneId = "cp-test",
+                        WatcherId = "watcher-test",
+                        Interval = TimeSpan.FromSeconds(1),
+                        MaxRequestsPerCycle = 10,
+                        RejectOnProviderFailure = true
+                    }));
+
+            await watcher
+                .ProcessCycleAsync()
+                .ConfigureAwait(false);
+
+            var loaded =
+                await store
+                    .GetAsync("request-http-1")
+                    .ConfigureAwait(false);
+
+            Assert.NotNull(
+                loaded);
+
+            Assert.Equal(
+                AiRuntimeScaleOutRequestStatus.Fulfilled,
+                loaded!.Status);
+
+            Assert.Equal(
+                "watcher-test",
+                loaded.ObservedBy);
+
+            Assert.Equal(
+                "watcher-test",
+                loaded.FulfilledBy);
+
+            Assert.False(
+                string.IsNullOrWhiteSpace(loaded.FulfilledRuntimeInstanceId));
+
+            var runtimeInstanceId =
+                loaded.FulfilledRuntimeInstanceId!;
+
+            var registered =
+                await registry
+                    .GetAsync(runtimeInstanceId)
+                    .ConfigureAwait(false);
+
+            Assert.NotNull(
+                registered);
+
+            Assert.Equal(
+                runtimeInstanceId,
+                registered!.RuntimeInstanceId);
+
+            Assert.Equal(
+                "http",
+                registered.Metadata[AiRuntimeInstanceProviderMetadataKeys.ProviderName]);
+
+            Assert.Equal(
+                "http",
+                registered.Metadata["provider.name"]);
+
+            Assert.Equal(
+                AiRuntimeInstanceCommandTransportMetadataKeys.HttpTransportName,
+                registered.Metadata[AiRuntimeInstanceCommandTransportMetadataKeys.TransportName]);
+
+            Assert.Equal(
+                "tenant-a",
+                registered.Metadata["tenant.id"]);
+
+            Assert.Equal(
+                "Dedicated",
+                registered.Metadata["runtime.isolationMode"]);
+
+            var capacity =
+                await capacityStore
+                    .GetAsync(runtimeInstanceId)
+                    .ConfigureAwait(false);
+
+            Assert.NotNull(
+                capacity);
+
+            Assert.Equal(
+                runtimeInstanceId,
+                capacity!.RuntimeInstanceId);
+
+            Assert.Equal(
+                AiRuntimeInstanceStatus.Ready,
+                capacity.Status);
+
+            Assert.True(
+                capacity.CanAcceptRun);
+
+            Assert.Equal(
+                "http",
+                capacity.Metadata[AiRuntimeInstanceProviderMetadataKeys.ProviderName]);
+
+            Assert.Equal(
+                "tenant-a",
+                capacity.Metadata["tenant.id"]);
+
+            var pending =
+                await store
+                    .ListPendingAsync(
+                        new AiRuntimeScaleOutRequestQuery
+                        {
+                            ControlPlaneId = "cp-test"
+                        })
+                    .ConfigureAwait(false);
+
+            Assert.Empty(
+                pending);
+        }
+
+        /// <summary>
         /// Creates an in-memory scale-out request store.
         /// </summary>
         /// <returns>The created store.</returns>
@@ -285,6 +478,134 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController.Scaling
                     ["test"] = "true"
                 }
             };
+        }
+
+        /// <summary>
+        /// Test runtime instance registry used by the HTTP scale-out provisioner.
+        /// </summary>
+        private sealed class TestRuntimeInstanceRegistry : IAiRuntimeInstanceRegistry
+        {
+            private readonly Dictionary<string, AiRuntimeInstanceSnapshot> snapshots =
+                new(StringComparer.Ordinal);
+
+            /// <inheritdoc />
+            public Task<AiRuntimeInstanceSnapshot> RegisterAsync(
+                AiRuntimeInstanceRegistration registration,
+                CancellationToken cancellationToken = default)
+            {
+                ArgumentNullException.ThrowIfNull(registration);
+
+                cancellationToken.ThrowIfCancellationRequested();
+
+                var snapshot =
+                    new AiRuntimeInstanceSnapshot
+                    {
+                        RuntimeInstanceId = registration.RuntimeInstanceId,
+                        ControlPlaneId = registration.ControlPlaneId,
+                        ControlPlaneHostId = registration.ControlPlaneHostId,
+                        HostId = registration.HostId,
+                        RuntimeId = registration.RuntimeId,
+                        Role = registration.Role,
+                        Status = AiRuntimeInstanceStatus.Ready,
+                        WorkerCount = registration.WorkerCount,
+                        QueueCapacity = registration.QueueCapacity,
+                        MaxConcurrentRuns = registration.MaxConcurrentRuns,
+                        RegisteredAtUtc = registration.RegisteredAtUtc,
+                        LastHeartbeatAtUtc = DateTimeOffset.UtcNow,
+                        QueuedRunCount = 0,
+                        RunningRunCount = 0,
+                        ActiveRunCount = 0,
+                        AvailableRunSlots = registration.MaxConcurrentRuns,
+                        ActiveWorkerCount = 0,
+                        AvailableWorkerCount = registration.WorkerCount,
+                        MaxLocalWorkersPerExecution = registration.WorkerCount,
+                        IsQueuePaused = false,
+                        CanAcceptRun = true,
+                        Metadata = registration.Metadata
+                    };
+
+                this.snapshots[registration.RuntimeInstanceId] =
+                    snapshot;
+
+                return Task.FromResult(
+                    snapshot);
+            }
+
+            /// <inheritdoc />
+            public Task<AiRuntimeInstanceSnapshot?> HeartbeatAsync(
+                string runtimeInstanceId,
+                int queuedRunCount,
+                int runningRunCount,
+                int activeRunCount,
+                int? availableRunSlots,
+                int? activeWorkerCount,
+                int? availableWorkerCount,
+                int? maxLocalWorkersPerExecution,
+                bool isQueuePaused,
+                bool canAcceptRun,
+                AiRuntimeInstanceStatus status,
+                CancellationToken cancellationToken = default)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                return Task.FromResult<AiRuntimeInstanceSnapshot?>(
+                    null);
+            }
+
+            /// <inheritdoc />
+            public Task<AiRuntimeInstanceSnapshot?> GetAsync(
+                string runtimeInstanceId,
+                CancellationToken cancellationToken = default)
+            {
+                ArgumentException.ThrowIfNullOrWhiteSpace(runtimeInstanceId);
+
+                cancellationToken.ThrowIfCancellationRequested();
+
+                this.snapshots.TryGetValue(
+                    runtimeInstanceId,
+                    out var snapshot);
+
+                return Task.FromResult<AiRuntimeInstanceSnapshot?>(
+                    snapshot);
+            }
+
+            /// <inheritdoc />
+            public Task<IReadOnlyList<AiRuntimeInstanceSnapshot>> ListAsync(
+                bool includeStopped = false,
+                CancellationToken cancellationToken = default)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                IReadOnlyList<AiRuntimeInstanceSnapshot> result =
+                    this.snapshots
+                        .Values
+                        .ToArray();
+
+                return Task.FromResult(
+                    result);
+            }
+
+            /// <inheritdoc />
+            public Task<AiRuntimeInstanceSnapshot?> MarkDrainingAsync(
+                string runtimeInstanceId,
+                CancellationToken cancellationToken = default)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                return Task.FromResult<AiRuntimeInstanceSnapshot?>(
+                    null);
+            }
+
+            /// <inheritdoc />
+            public Task<AiRuntimeInstanceSnapshot?> UnregisterAsync(
+                string runtimeInstanceId,
+                CancellationToken cancellationToken = default)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                return Task.FromResult<AiRuntimeInstanceSnapshot?>(
+                    null);
+            }
         }
 
         /// <summary>

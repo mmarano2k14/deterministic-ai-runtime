@@ -8,6 +8,8 @@ using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers.Transport;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.SharedInstance;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue;
+using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Scaling;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http.ScaleOut;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http
 {
@@ -39,6 +41,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http
         IAiRuntimeInstanceDispatchProvider,
         IAiRuntimeInstanceStatusProvider,
         IAiRuntimeInstanceControlProvider,
+        IAiRuntimeScaleOutProvider,
         IAiRuntimeInstanceControlPlaneContext
     {
         /// <summary>
@@ -67,6 +70,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http
         private readonly AiHttpRuntimeInstanceProviderOptions options;
 
         /// <summary>
+        /// Optional HTTP runtime scale-out provisioner.
+        /// </summary>
+        private readonly IAiHttpRuntimeScaleOutProvisioner? scaleOutProvisioner;
+
+        /// <summary>
         /// In-memory circuit breaker states indexed by HTTP runtime endpoint key.
         /// </summary>
         private readonly ConcurrentDictionary<string, AiHttpRuntimeCircuitBreakerState> circuitBreakerStates =
@@ -83,10 +91,12 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http
         /// <param name="httpClient">The HTTP client.</param>
         /// <param name="logger">The logger.</param>
         /// <param name="options">The HTTP provider hardening options.</param>
+        /// <param name="scaleOutProvisioner">The optional HTTP runtime scale-out provisioner.</param>
         public HttpAiRuntimeInstanceProvider(
             HttpClient httpClient,
             ILogger<HttpAiRuntimeInstanceProvider> logger,
-            IOptions<AiHttpRuntimeInstanceProviderOptions> options)
+            IOptions<AiHttpRuntimeInstanceProviderOptions> options,
+            IAiHttpRuntimeScaleOutProvisioner? scaleOutProvisioner = null)
         {
             this.httpClient =
                 httpClient
@@ -103,6 +113,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http
                 ?? throw new ArgumentException(
                     "HTTP runtime instance provider options must be provided.",
                     nameof(options));
+
+            this.scaleOutProvisioner =
+                scaleOutProvisioner;
         }
 
         /// <inheritdoc />
@@ -137,6 +150,42 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http
                 descriptor.RuntimeInstanceId);
 
             return false;
+        }
+
+        /// <inheritdoc />
+        public Task<AiRuntimeScaleOutProviderResult> RequestScaleOutAsync(
+            AiRuntimeScaleOutProviderRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentNullException.ThrowIfNull(request);
+
+            cancellationToken.ThrowIfCancellationRequested();
+
+            if (this.scaleOutProvisioner is null)
+            {
+                return Task.FromResult(
+                    new AiRuntimeScaleOutProviderResult
+                    {
+                        Success = false,
+                        Rejected = true,
+                        FailureReason = "http-runtime-scaleout-provisioner-not-registered",
+                        Message = "The HTTP runtime instance provider cannot fulfill scale-out because no HTTP runtime scale-out provisioner is registered.",
+                        ProviderOperationId = $"http-scaleout-rejected-{request.RequestId}",
+                        Metadata = new Dictionary<string, string>(
+                            StringComparer.OrdinalIgnoreCase)
+                        {
+                            [AiRuntimeInstanceProviderMetadataKeys.ProviderName] = ProviderName,
+                            ["provider.name"] = ProviderName,
+                            ["scaleOutRequestId"] = request.RequestId,
+                            ["sharedRunId"] = request.SharedRunId,
+                            ["controlPlaneId"] = request.ControlPlaneId
+                        }
+                    });
+            }
+
+            return this.scaleOutProvisioner.ProvisionAsync(
+                request,
+                cancellationToken);
         }
 
         /// <inheritdoc />

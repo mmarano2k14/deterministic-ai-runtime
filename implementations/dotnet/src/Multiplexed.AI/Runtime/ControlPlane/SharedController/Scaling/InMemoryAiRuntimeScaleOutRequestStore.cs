@@ -525,26 +525,44 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
         /// </summary>
         /// <param name="request">The request to clone.</param>
         /// <returns>The cloned request.</returns>
-        private static AiRuntimeScaleOutRequestRecord Clone(AiRuntimeScaleOutRequestRecord request)
+        private static AiRuntimeScaleOutRequestRecord Clone(
+            AiRuntimeScaleOutRequestRecord request)
         {
+            ArgumentNullException.ThrowIfNull(request);
+
             return new AiRuntimeScaleOutRequestRecord
             {
                 RequestId = request.RequestId,
                 ControlPlaneId = request.ControlPlaneId,
                 SharedRunId = request.SharedRunId,
+
                 TenantId = request.TenantId,
+                TenantGroupId = request.TenantGroupId,
                 PipelineKey = request.PipelineKey,
+
+                IsolationMode = request.IsolationMode,
+                PreferDedicatedCapacity = request.PreferDedicatedCapacity,
+                AllowSharedFallback = request.AllowSharedFallback,
+                MaxRuntimeInstances = request.MaxRuntimeInstances,
+                RuntimeInstanceIdPrefix = request.RuntimeInstanceIdPrefix,
+                WorkerCountPerInstance = request.WorkerCountPerInstance,
+                MaxConcurrentRunsPerInstance = request.MaxConcurrentRunsPerInstance,
+                LocalQueueCapacity = request.LocalQueueCapacity,
+
                 Status = request.Status,
                 Reason = request.Reason,
+
                 VisibleInstanceCount = request.VisibleInstanceCount,
                 AvailableInstanceCount = request.AvailableInstanceCount,
                 CurrentInstanceCount = request.CurrentInstanceCount,
                 MaxInstanceCount = request.MaxInstanceCount,
                 RequestedTargetInstanceCount = request.RequestedTargetInstanceCount,
+
                 ProviderHint = request.ProviderHint,
                 RequestedBy = request.RequestedBy,
                 Source = request.Source,
                 CorrelationId = request.CorrelationId,
+
                 CreatedAtUtc = request.CreatedAtUtc,
                 ObservedAtUtc = request.ObservedAtUtc,
                 FulfilledAtUtc = request.FulfilledAtUtc,
@@ -552,11 +570,13 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
                 ExpiredAtUtc = request.ExpiredAtUtc,
                 CancelledAtUtc = request.CancelledAtUtc,
                 ExpiresAtUtc = request.ExpiresAtUtc,
+
                 FulfilledRuntimeInstanceId = request.FulfilledRuntimeInstanceId,
                 ObservedBy = request.ObservedBy,
                 FulfilledBy = request.FulfilledBy,
                 RejectedBy = request.RejectedBy,
                 RejectionReason = request.RejectionReason,
+
                 Metadata = new Dictionary<string, string>(
                     request.Metadata ?? new Dictionary<string, string>(),
                     StringComparer.OrdinalIgnoreCase)

@@ -166,6 +166,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
             AiRuntimeScaleOutRequestRecord request,
             CancellationToken cancellationToken)
         {
+            ArgumentNullException.ThrowIfNull(request);
+
             var observed =
                 await this.store
                     .MarkObservedAsync(
@@ -260,6 +262,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
         private static AiRuntimeScaleOutProviderRequest CreateProviderRequest(
             AiRuntimeScaleOutRequestRecord request)
         {
+            ArgumentNullException.ThrowIfNull(request);
+
             return new AiRuntimeScaleOutProviderRequest
             {
                 RequestId = request.RequestId,

@@ -402,6 +402,103 @@
         }
 
         /// <summary>
+        /// Creates HTTP scale-out-only control-plane settings for a single isolated scenario.
+        /// </summary>
+        /// <remarks>
+        /// PURPOSE:
+        /// - Starts an MCP control-plane host in HTTP runtime-instance mode.
+        /// - Keeps the local runtime instance pool startup disabled.
+        /// - Allows admission to see no initial runtime capacity.
+        /// - Allows the scale-out watcher to fulfill the Redis-backed scale-out request
+        ///   through the HTTP provider and HTTP runtime scale-out provisioner.
+        ///
+        /// IMPORTANT:
+        /// - No real HTTP runtime endpoint is started by this factory.
+        /// - The HTTP scale-out provisioner only materializes registry and capacity metadata.
+        /// - Dispatch/execution against the HTTP runtime endpoint should be tested separately.
+        /// </remarks>
+        /// <param name="controlPlaneId">The logical control-plane identifier shared by the scenario.</param>
+        /// <returns>The HTTP scale-out-only control-plane settings.</returns>
+        public static Dictionary<string, string?> CreateHttpScaleOutOnlyControlPlaneSettings(
+            string controlPlaneId)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(
+                controlPlaneId);
+
+            var controlPlaneRuntimeInstanceId =
+                $"mcp-control-plane-http-scaleout-{Guid.NewGuid():N}";
+
+            var deployment =
+                $"test-http-scaleout-{Guid.NewGuid():N}";
+
+            return CreateMcpSettings(
+                controlPlaneId,
+                new Dictionary<string, string?>
+                {
+                    ["AiMcpHost:Mode"] = "ControlPlaneWithHttpRuntimeInstances",
+                    ["AiMcpHost:EnableSharedQueuePump"] = "true",
+
+                    ["AiSharedQueueBackgroundService:Enabled"] = "true",
+                    ["AiSharedQueueBackgroundService:WaitForRuntimeReadiness"] = "false",
+                    ["AiSharedQueueBackgroundService:RuntimeReadinessPollInterval"] = "00:00:00.100",
+                    ["AiSharedQueueBackgroundService:RuntimeReadinessTimeout"] = "00:01:00",
+
+                    ["AiSharedQueuePump:Enabled"] = "true",
+                    ["AiSharedRuntimeController:SubmitMode"] = "DirectDispatch",
+
+                    ["AiRuntimeInstanceRegistration:ControlPlaneId"] = controlPlaneId,
+                    ["AiRuntimeInstanceRegistration:ProviderName"] = "http",
+                    ["AiRuntimeInstanceRegistration:ProviderMetadata:controlPlaneId"] = controlPlaneId,
+                    ["AiRuntimeInstanceRegistration:ProviderMetadata:provider.name"] = "http",
+                    ["AiRuntimeInstanceRegistration:ProviderMetadata:transport.name"] = "http",
+                    ["AiRuntimeInstanceRegistration:Metadata:controlPlaneId"] = controlPlaneId,
+                    ["AiRuntimeInstanceRegistration:Metadata:provider.name"] = "http",
+                    ["AiRuntimeInstanceRegistration:Metadata:transport.name"] = "http",
+                    ["AiRuntimeInstanceRegistration:Metadata:hostType"] = "control-plane-with-http-scaleout",
+                    ["AiRuntimeInstanceRegistration:Metadata:deployment"] = deployment,
+                    ["AiRuntimeInstanceRegistration:RuntimeInstanceId"] = controlPlaneRuntimeInstanceId,
+                    ["AiRuntimeInstanceRegistration:Role"] = "ControlPlane",
+                    ["AiRuntimeInstanceRegistration:HeartbeatInterval"] = "00:00:02",
+                    ["AiRuntimeInstanceRegistration:RegistryTtl"] = "00:00:30",
+                    ["AiRuntimeInstanceRegistration:CapacityTtl"] = "00:00:30",
+
+                    ["AiLocalRuntimeInstancePool:Enabled"] = "false",
+                    ["AiLocalRuntimeInstancePool:InstanceCount"] = "0",
+                    ["AiLocalRuntimeInstancePool:WorkerCountPerInstance"] = "0",
+                    ["AiLocalRuntimeInstancePool:MaxConcurrentRunsPerInstance"] = "0",
+                    ["AiLocalRuntimeInstancePool:LocalQueueCapacity"] = "0",
+                    ["AiLocalRuntimeInstancePool:RuntimeInstanceIdPrefix"] = "disabled",
+
+                    ["AiRunAdmission:MaxInstanceCount"] = "3",
+                    ["AiRunAdmission:EnableScaleOutRequest"] = "true",
+                    ["AiRunAdmission:EnableGlobalQueueFallback"] = "false",
+                    ["AiRunAdmission:RejectWhenNoCapacity"] = "false",
+
+                    ["AiRuntimeScaleOutRequestWatcher:Enabled"] = "true",
+                    ["AiRuntimeScaleOutRequestWatcher:ControlPlaneId"] = controlPlaneId,
+                    ["AiRuntimeScaleOutRequestWatcher:WatcherId"] = "mcp-scaleout-watcher",
+                    ["AiRuntimeScaleOutRequestWatcher:Interval"] = "00:00:00.200",
+                    ["AiRuntimeScaleOutRequestWatcher:MaxRequestsPerCycle"] = "10",
+                    ["AiRuntimeScaleOutRequestWatcher:RejectOnProviderFailure"] = "true",
+                    ["AiRuntimeScaleOutRequestWatcher:IgnoreWhenControlPlaneIdMissing"] = "true",
+
+                    ["AiHttpRuntimeScaleOut:Enabled"] = "true",
+                    ["AiHttpRuntimeScaleOut:DefaultRuntimeInstanceIdPrefix"] = "http-runtime",
+                    ["AiHttpRuntimeScaleOut:EndpointTemplate"] = "http://runtime-host/{runtimeInstanceId}",
+
+                    ["AiEngine:ControlPlane:ControlPlaneId"] = controlPlaneId,
+                    ["AiEngine:RuntimeInstanceId"] = controlPlaneRuntimeInstanceId,
+                    ["AiEngine:PipelineBackgroundController:RuntimeInstanceId"] = controlPlaneRuntimeInstanceId,
+                    ["AiEngine:PipelineBackgroundController:MaxConcurrentRuns"] = "3",
+                    ["AiEngine:PipelineBackgroundController:QueueCapacity"] = "100",
+                    ["AiEngine:PipelineBackgroundController:Distributed:Enabled"] = "true",
+                    ["AiEngine:PipelineBackgroundController:Distributed:WorkerCount"] = "10",
+                    ["AiEngine:PipelineBackgroundController:MaxLocalWorkersPerExecution"] = "3",
+                    ["AiEngine:RuntimeInstanceWorker:RuntimeInstanceId"] = controlPlaneRuntimeInstanceId
+                });
+        }
+
+        /// <summary>
         /// Applies configuration overrides to a settings dictionary.
         /// </summary>
         /// <param name="settings">The target settings dictionary.</param>
