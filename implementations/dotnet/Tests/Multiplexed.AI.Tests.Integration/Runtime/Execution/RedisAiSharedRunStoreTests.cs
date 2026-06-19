@@ -444,6 +444,74 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution
             Assert.Null(updated);
         }
 
+        [Fact]
+        public async Task MarkDispatchFailedAsync_Should_Persist_Failure_Metadata_Without_Dispatching_Run()
+        {
+            var store = CreateStore();
+
+            var sharedRunId =
+                RunId("shared-run-dispatch-failed");
+
+            await store.CreateAsync(
+                CreateRecord(
+                    sharedRunId,
+                    AiSharedRunStatus.QueuedGlobally));
+
+            var updated = await store.MarkDispatchFailedAsync(
+                sharedRunId,
+                runtimeInstanceId: "runtime-1",
+                failureReason: "http-circuit-open",
+                message: "HTTP runtime circuit breaker is open.");
+
+            Assert.NotNull(updated);
+            Assert.Equal(_controlPlaneId, updated!.ControlPlaneId);
+
+            Assert.Equal(
+                AiSharedRunStatus.QueuedGlobally,
+                updated.Status);
+
+            Assert.Equal(
+                "runtime-1",
+                updated.AssignedRuntimeInstanceId);
+
+            Assert.Equal(
+                "http-circuit-open",
+                updated.FailureReason);
+
+            Assert.Equal(
+                "HTTP runtime circuit breaker is open.",
+                updated.Reason);
+
+            Assert.Null(updated.LocalRunId);
+            Assert.Null(updated.ExecutionId);
+
+            var loaded =
+                await store.GetAsync(
+                    sharedRunId);
+
+            Assert.NotNull(loaded);
+            Assert.Equal(_controlPlaneId, loaded!.ControlPlaneId);
+
+            Assert.Equal(
+                AiSharedRunStatus.QueuedGlobally,
+                loaded.Status);
+
+            Assert.Equal(
+                "runtime-1",
+                loaded.AssignedRuntimeInstanceId);
+
+            Assert.Equal(
+                "http-circuit-open",
+                loaded.FailureReason);
+
+            Assert.Equal(
+                "HTTP runtime circuit breaker is open.",
+                loaded.Reason);
+
+            Assert.Null(loaded.LocalRunId);
+            Assert.Null(loaded.ExecutionId);
+        }
+
         private RedisAiSharedRunStore CreateStore()
         {
             if (_connection is null)
@@ -459,6 +527,64 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution
                     ListScanLimit = 100
                 }),
                 new StaticAiControlPlaneIdResolver(_controlPlaneId));
+        }
+
+        [Theory]
+        [InlineData(AiSharedRunStatus.Completed)]
+        [InlineData(AiSharedRunStatus.Failed)]
+        [InlineData(AiSharedRunStatus.Cancelled)]
+        public async Task MarkDispatchFailedAsync_Should_Return_Terminal_Record_Without_Changing_Status(
+    AiSharedRunStatus terminalStatus)
+        {
+            var store = CreateStore();
+
+            var sharedRunId =
+                RunId($"shared-run-dispatch-failed-{terminalStatus}");
+
+            await store.CreateAsync(
+                CreateRecord(
+                    sharedRunId,
+                    terminalStatus,
+                    failureReason: "existing terminal failure"));
+
+            var updated = await store.MarkDispatchFailedAsync(
+                sharedRunId,
+                runtimeInstanceId: "runtime-1",
+                failureReason: "http-circuit-open",
+                message: "HTTP runtime circuit breaker is open.");
+
+            Assert.NotNull(updated);
+            Assert.Equal(_controlPlaneId, updated!.ControlPlaneId);
+
+            Assert.Equal(
+                terminalStatus,
+                updated.Status);
+
+            Assert.Equal(
+                "existing terminal failure",
+                updated.FailureReason);
+
+            Assert.Null(updated.AssignedRuntimeInstanceId);
+            Assert.Null(updated.LocalRunId);
+            Assert.Null(updated.ExecutionId);
+
+            var loaded =
+                await store.GetAsync(
+                    sharedRunId);
+
+            Assert.NotNull(loaded);
+
+            Assert.Equal(
+                terminalStatus,
+                loaded!.Status);
+
+            Assert.Equal(
+                "existing terminal failure",
+                loaded.FailureReason);
+
+            Assert.Null(loaded.AssignedRuntimeInstanceId);
+            Assert.Null(loaded.LocalRunId);
+            Assert.Null(loaded.ExecutionId);
         }
 
         private AiSharedRunRecord CreateRecord(
