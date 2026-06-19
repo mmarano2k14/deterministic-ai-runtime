@@ -659,6 +659,231 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Providers
         }
 
         /// <summary>
+        /// Verifies that the HTTP circuit breaker opens after the configured failure threshold
+        /// and prevents the next HTTP call from reaching the remote runtime endpoint.
+        /// </summary>
+        [Fact]
+        public async Task DispatchAsync_Should_Return_CircuitOpen_When_CircuitBreaker_Is_Open()
+        {
+            var runtimeInstanceId =
+                "runtime-http-1";
+
+            var handler =
+                new SequenceHttpMessageHandler(
+                    new HttpResponseMessage(HttpStatusCode.InternalServerError),
+                    new HttpResponseMessage(HttpStatusCode.InternalServerError),
+                    new HttpResponseMessage(HttpStatusCode.InternalServerError));
+
+            var provider =
+                CreateProvider(
+                    handler,
+                    new AiHttpRuntimeInstanceProviderOptions
+                    {
+                        EnableRetry = false,
+                        EnableCircuitBreaker = true,
+                        CircuitBreakerFailureThreshold = 2,
+                        CircuitBreakerBreakDuration = TimeSpan.FromMinutes(1),
+                        DispatchTimeout = TimeSpan.FromSeconds(5)
+                    });
+
+            var descriptor =
+                CreateDescriptor(runtimeInstanceId);
+
+            var firstResult =
+                await provider.DispatchAsync(
+                    descriptor,
+                    CreateDispatchRequest(runtimeInstanceId),
+                    CancellationToken.None);
+
+            var secondResult =
+                await provider.DispatchAsync(
+                    descriptor,
+                    CreateDispatchRequest(runtimeInstanceId),
+                    CancellationToken.None);
+
+            var thirdResult =
+                await provider.DispatchAsync(
+                    descriptor,
+                    CreateDispatchRequest(runtimeInstanceId),
+                    CancellationToken.None);
+
+            Assert.False(firstResult.Success);
+
+            Assert.Equal(
+                AiHttpRuntimeDispatchFailureReasons.HttpError,
+                firstResult.FailureReason);
+
+            Assert.False(secondResult.Success);
+
+            Assert.Equal(
+                AiHttpRuntimeDispatchFailureReasons.HttpError,
+                secondResult.FailureReason);
+
+            Assert.False(thirdResult.Success);
+
+            Assert.Equal(
+                AiHttpRuntimeDispatchFailureReasons.CircuitOpen,
+                thirdResult.FailureReason);
+
+            Assert.Equal(
+                2,
+                handler.SendCallCount);
+        }
+
+        /// <summary>
+        /// Verifies that the HTTP circuit breaker does not block calls when it is disabled.
+        /// </summary>
+        [Fact]
+        public async Task DispatchAsync_Should_Not_Return_CircuitOpen_When_CircuitBreaker_Is_Disabled()
+        {
+            var runtimeInstanceId =
+                "runtime-http-1";
+
+            var handler =
+                new SequenceHttpMessageHandler(
+                    new HttpResponseMessage(HttpStatusCode.InternalServerError),
+                    new HttpResponseMessage(HttpStatusCode.InternalServerError),
+                    new HttpResponseMessage(HttpStatusCode.InternalServerError));
+
+            var provider =
+                CreateProvider(
+                    handler,
+                    new AiHttpRuntimeInstanceProviderOptions
+                    {
+                        EnableRetry = false,
+                        EnableCircuitBreaker = false,
+                        CircuitBreakerFailureThreshold = 1,
+                        CircuitBreakerBreakDuration = TimeSpan.FromMinutes(1),
+                        DispatchTimeout = TimeSpan.FromSeconds(5)
+                    });
+
+            var descriptor =
+                CreateDescriptor(runtimeInstanceId);
+
+            var firstResult =
+                await provider.DispatchAsync(
+                    descriptor,
+                    CreateDispatchRequest(runtimeInstanceId),
+                    CancellationToken.None);
+
+            var secondResult =
+                await provider.DispatchAsync(
+                    descriptor,
+                    CreateDispatchRequest(runtimeInstanceId),
+                    CancellationToken.None);
+
+            var thirdResult =
+                await provider.DispatchAsync(
+                    descriptor,
+                    CreateDispatchRequest(runtimeInstanceId),
+                    CancellationToken.None);
+
+            Assert.False(firstResult.Success);
+
+            Assert.Equal(
+                AiHttpRuntimeDispatchFailureReasons.HttpError,
+                firstResult.FailureReason);
+
+            Assert.False(secondResult.Success);
+
+            Assert.Equal(
+                AiHttpRuntimeDispatchFailureReasons.HttpError,
+                secondResult.FailureReason);
+
+            Assert.False(thirdResult.Success);
+
+            Assert.Equal(
+                AiHttpRuntimeDispatchFailureReasons.HttpError,
+                thirdResult.FailureReason);
+
+            Assert.Equal(
+                3,
+                handler.SendCallCount);
+        }
+
+        /// <summary>
+        /// Verifies that a successful HTTP command resets the circuit breaker failure count.
+        /// </summary>
+        [Fact]
+        public async Task DispatchAsync_Should_Reset_CircuitBreaker_Failures_After_Success()
+        {
+            var runtimeInstanceId =
+                "runtime-http-1";
+
+            var handler =
+                new SequenceHttpMessageHandler(
+                    new HttpResponseMessage(HttpStatusCode.InternalServerError),
+                    new HttpResponseMessage(HttpStatusCode.OK)
+                    {
+                        Content = JsonContent.Create(
+                            new AiRuntimeInstanceCommandResult
+                            {
+                                Success = true,
+                                Operation = AiRuntimeInstanceCommandOperation.DispatchRun,
+                                RuntimeInstanceId = runtimeInstanceId,
+                                DispatchResult = CreateDispatchResult(
+                                    runtimeInstanceId,
+                                    success: true),
+                                StartedAtUtc = DateTimeOffset.UtcNow,
+                                CompletedAtUtc = DateTimeOffset.UtcNow,
+                                DurationMs = 0
+                            })
+                    },
+                    new HttpResponseMessage(HttpStatusCode.InternalServerError));
+
+            var provider =
+                CreateProvider(
+                    handler,
+                    new AiHttpRuntimeInstanceProviderOptions
+                    {
+                        EnableRetry = false,
+                        EnableCircuitBreaker = true,
+                        CircuitBreakerFailureThreshold = 2,
+                        CircuitBreakerBreakDuration = TimeSpan.FromMinutes(1),
+                        DispatchTimeout = TimeSpan.FromSeconds(5)
+                    });
+
+            var descriptor =
+                CreateDescriptor(runtimeInstanceId);
+
+            var firstResult =
+                await provider.DispatchAsync(
+                    descriptor,
+                    CreateDispatchRequest(runtimeInstanceId),
+                    CancellationToken.None);
+
+            var secondResult =
+                await provider.DispatchAsync(
+                    descriptor,
+                    CreateDispatchRequest(runtimeInstanceId),
+                    CancellationToken.None);
+
+            var thirdResult =
+                await provider.DispatchAsync(
+                    descriptor,
+                    CreateDispatchRequest(runtimeInstanceId),
+                    CancellationToken.None);
+
+            Assert.False(firstResult.Success);
+
+            Assert.Equal(
+                AiHttpRuntimeDispatchFailureReasons.HttpError,
+                firstResult.FailureReason);
+
+            Assert.True(secondResult.Success);
+
+            Assert.False(thirdResult.Success);
+
+            Assert.Equal(
+                AiHttpRuntimeDispatchFailureReasons.HttpError,
+                thirdResult.FailureReason);
+
+            Assert.Equal(
+                3,
+                handler.SendCallCount);
+        }
+
+        /// <summary>
         /// Test HTTP message handler that returns HTTP responses in sequence.
         /// </summary>
         private sealed class SequenceHttpMessageHandler : HttpMessageHandler

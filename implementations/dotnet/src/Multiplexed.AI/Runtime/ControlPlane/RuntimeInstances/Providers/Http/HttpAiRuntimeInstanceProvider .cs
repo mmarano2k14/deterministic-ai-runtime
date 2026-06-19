@@ -1,4 +1,5 @@
-﻿using System.Net.Http.Json;
+﻿using System.Collections.Concurrent;
+using System.Net.Http.Json;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Capacity;
@@ -64,6 +65,12 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http
         /// HTTP provider hardening options.
         /// </summary>
         private readonly AiHttpRuntimeInstanceProviderOptions options;
+
+        /// <summary>
+        /// In-memory circuit breaker states indexed by HTTP runtime endpoint key.
+        /// </summary>
+        private readonly ConcurrentDictionary<string, AiHttpRuntimeCircuitBreakerState> circuitBreakerStates =
+            new(StringComparer.OrdinalIgnoreCase);
 
         /// <summary>
         /// Gets the control-plane host identity associated with this provider instance.
@@ -479,6 +486,20 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http
             ArgumentNullException.ThrowIfNull(endpoint);
             ArgumentNullException.ThrowIfNull(request);
 
+            var circuitBreakerKey =
+                ResolveCircuitBreakerKey(
+                    request.RuntimeInstanceId,
+                    endpoint);
+
+            if (TryCreateCircuitOpenResult(
+                    circuitBreakerKey,
+                    request,
+                    endpoint,
+                    out var circuitOpenResult))
+            {
+                return circuitOpenResult;
+            }
+
             var maxRetryAttempts =
                 this.options.EnableRetry
                     ? Math.Max(
@@ -514,6 +535,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http
 
                 if (lastResult.Success)
                 {
+                    RecordCircuitBreakerSuccess(
+                        circuitBreakerKey,
+                        request,
+                        endpoint);
+
                     return lastResult;
                 }
 
@@ -521,6 +547,12 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http
                     !IsRetryableCommandFailure(
                         lastResult.FailureReason))
                 {
+                    RecordCircuitBreakerFailure(
+                        circuitBreakerKey,
+                        request,
+                        endpoint,
+                        lastResult.FailureReason);
+
                     return lastResult;
                 }
 
@@ -555,7 +587,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http
             var now =
                 DateTimeOffset.UtcNow;
 
-            return lastResult ??
+            var fallbackResult =
+                lastResult ??
                 new AiRuntimeInstanceCommandResult
                 {
                     Success = false,
@@ -567,6 +600,14 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http
                     CompletedAtUtc = now,
                     DurationMs = 0
                 };
+
+            RecordCircuitBreakerFailure(
+                circuitBreakerKey,
+                request,
+                endpoint,
+                fallbackResult.FailureReason);
+
+            return fallbackResult;
         }
 
         /// <summary>
@@ -942,6 +983,185 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http
             return calculatedDelay <= maxDelay
                 ? calculatedDelay
                 : maxDelay;
+        }
+
+        /// <summary>
+        /// Attempts to create a failed command result when the in-memory circuit breaker is open.
+        /// </summary>
+        /// <param name="circuitBreakerKey">The circuit breaker key.</param>
+        /// <param name="request">The HTTP runtime command request.</param>
+        /// <param name="endpoint">The HTTP command endpoint.</param>
+        /// <param name="result">The circuit-open command result when the circuit is open.</param>
+        /// <returns>
+        /// <c>true</c> when the circuit is open and a result was created; otherwise, <c>false</c>.
+        /// </returns>
+        private bool TryCreateCircuitOpenResult(
+            string circuitBreakerKey,
+            AiRuntimeInstanceCommandRequest request,
+            Uri endpoint,
+            out AiRuntimeInstanceCommandResult result)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(circuitBreakerKey);
+            ArgumentNullException.ThrowIfNull(request);
+            ArgumentNullException.ThrowIfNull(endpoint);
+
+            result =
+                null!;
+
+            if (!this.options.EnableCircuitBreaker)
+            {
+                return false;
+            }
+
+            if (!this.circuitBreakerStates.TryGetValue(
+                    circuitBreakerKey,
+                    out var state))
+            {
+                return false;
+            }
+
+            if (!state.IsOpen)
+            {
+                return false;
+            }
+
+            var now =
+                DateTimeOffset.UtcNow;
+
+            logger.LogWarning(
+                "HTTP RUNTIME CIRCUIT BREAKER OPEN RuntimeInstanceId={RuntimeInstanceId} Operation={Operation} Endpoint={Endpoint} CircuitBreakerKey={CircuitBreakerKey} ConsecutiveFailureCount={ConsecutiveFailureCount} OpenUntilUtc={OpenUntilUtc}",
+                request.RuntimeInstanceId,
+                request.Operation,
+                endpoint,
+                circuitBreakerKey,
+                state.ConsecutiveFailureCount,
+                state.OpenUntilUtc);
+
+            result =
+                new AiRuntimeInstanceCommandResult
+                {
+                    Success = false,
+                    Operation = request.Operation,
+                    RuntimeInstanceId = request.RuntimeInstanceId,
+                    Message = "HTTP runtime circuit breaker is open.",
+                    FailureReason = AiHttpRuntimeDispatchFailureReasons.CircuitOpen,
+                    StartedAtUtc = now,
+                    CompletedAtUtc = now,
+                    DurationMs = 0,
+                    Metadata = new Dictionary<string, string>
+                    {
+                        ["circuit_breaker.key"] = circuitBreakerKey,
+                        ["circuit_breaker.open_until_utc"] =
+                            state.OpenUntilUtc?.ToString("O") ??
+                            string.Empty,
+                        ["circuit_breaker.consecutive_failure_count"] =
+                            state.ConsecutiveFailureCount.ToString()
+                    }
+                };
+
+            return true;
+        }
+
+        /// <summary>
+        /// Records a successful HTTP command in the in-memory circuit breaker state.
+        /// </summary>
+        /// <param name="circuitBreakerKey">The circuit breaker key.</param>
+        /// <param name="request">The HTTP runtime command request.</param>
+        /// <param name="endpoint">The HTTP command endpoint.</param>
+        private void RecordCircuitBreakerSuccess(
+            string circuitBreakerKey,
+            AiRuntimeInstanceCommandRequest request,
+            Uri endpoint)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(circuitBreakerKey);
+            ArgumentNullException.ThrowIfNull(request);
+            ArgumentNullException.ThrowIfNull(endpoint);
+
+            if (!this.options.EnableCircuitBreaker)
+            {
+                return;
+            }
+
+            var state =
+                this.circuitBreakerStates.GetOrAdd(
+                    circuitBreakerKey,
+                    _ => new AiHttpRuntimeCircuitBreakerState());
+
+            state.RecordSuccess();
+
+            logger.LogInformation(
+                "HTTP RUNTIME CIRCUIT BREAKER SUCCESS RuntimeInstanceId={RuntimeInstanceId} Operation={Operation} Endpoint={Endpoint} CircuitBreakerKey={CircuitBreakerKey} ConsecutiveFailureCount={ConsecutiveFailureCount} IsOpen={IsOpen}",
+                request.RuntimeInstanceId,
+                request.Operation,
+                endpoint,
+                circuitBreakerKey,
+                state.ConsecutiveFailureCount,
+                state.IsOpen);
+        }
+
+        /// <summary>
+        /// Records a failed HTTP command in the in-memory circuit breaker state.
+        /// </summary>
+        /// <param name="circuitBreakerKey">The circuit breaker key.</param>
+        /// <param name="request">The HTTP runtime command request.</param>
+        /// <param name="endpoint">The HTTP command endpoint.</param>
+        /// <param name="failureReason">The HTTP command failure reason.</param>
+        private void RecordCircuitBreakerFailure(
+            string circuitBreakerKey,
+            AiRuntimeInstanceCommandRequest request,
+            Uri endpoint,
+            string? failureReason)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(circuitBreakerKey);
+            ArgumentNullException.ThrowIfNull(request);
+            ArgumentNullException.ThrowIfNull(endpoint);
+
+            if (!this.options.EnableCircuitBreaker)
+            {
+                return;
+            }
+
+            var state =
+                this.circuitBreakerStates.GetOrAdd(
+                    circuitBreakerKey,
+                    _ => new AiHttpRuntimeCircuitBreakerState());
+
+            state.RecordFailure(
+                Math.Max(
+                    0,
+                    this.options.CircuitBreakerFailureThreshold),
+                this.options.CircuitBreakerBreakDuration);
+
+            logger.LogWarning(
+                "HTTP RUNTIME CIRCUIT BREAKER FAILURE RuntimeInstanceId={RuntimeInstanceId} Operation={Operation} Endpoint={Endpoint} CircuitBreakerKey={CircuitBreakerKey} FailureReason={FailureReason} ConsecutiveFailureCount={ConsecutiveFailureCount} IsOpen={IsOpen} OpenUntilUtc={OpenUntilUtc}",
+                request.RuntimeInstanceId,
+                request.Operation,
+                endpoint,
+                circuitBreakerKey,
+                failureReason,
+                state.ConsecutiveFailureCount,
+                state.IsOpen,
+                state.OpenUntilUtc);
+        }
+
+        /// <summary>
+        /// Resolves the in-memory circuit breaker key for an HTTP runtime command endpoint.
+        /// </summary>
+        /// <param name="runtimeInstanceId">The runtime instance identifier.</param>
+        /// <param name="endpoint">The HTTP command endpoint.</param>
+        /// <returns>The circuit breaker key.</returns>
+        private static string ResolveCircuitBreakerKey(
+            string runtimeInstanceId,
+            Uri endpoint)
+        {
+            ArgumentNullException.ThrowIfNull(endpoint);
+
+            var normalizedRuntimeInstanceId =
+                string.IsNullOrWhiteSpace(runtimeInstanceId)
+                    ? "unknown-runtime-instance"
+                    : runtimeInstanceId.Trim();
+
+            return $"{normalizedRuntimeInstanceId}|{endpoint.AbsoluteUri}";
         }
 
         /// <summary>
