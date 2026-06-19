@@ -1,4 +1,5 @@
 ﻿using Microsoft.Extensions.Logging.Abstractions;
+using Multiplexed.Abstractions.AI.ControlPlane.Admission.Reservations;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Dispatch;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Store;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue;
@@ -440,6 +441,88 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
                 sharedRun.FailureReason);
         }
 
+        /// <summary>
+        /// Verifies that temporary admission capacity is released when dispatch fails with circuit-open.
+        /// </summary>
+        [Fact]
+        public async Task DispatchNextAsync_Should_Release_Reservation_When_Dispatch_Fails_With_CircuitOpen()
+        {
+            var queue =
+                new InMemoryAiSharedQueue();
+
+            var store =
+                new InMemoryAiSharedRunStore();
+
+            await store.CreateAsync(
+                CreateSharedRun(
+                    "shared-run-1",
+                    AiSharedRunStatus.QueuedGlobally));
+
+            await queue.EnqueueAsync(
+                CreateQueueItem(
+                    "shared-run-1"));
+
+            var reservationStore =
+                new TrackingRuntimeAdmissionReservationStore();
+
+            var runDispatcher =
+                new FakeSharedRunDispatcher(
+                    new AiSharedRunDispatchResult
+                    {
+                        Success = false,
+                        SharedRunId = "shared-run-1",
+                        RuntimeInstanceId = "runtime-1",
+                        FailureReason = "http-circuit-open",
+                        Message = "HTTP runtime circuit breaker is open.",
+                        StartedAtUtc = DateTimeOffset.UtcNow,
+                        CompletedAtUtc = DateTimeOffset.UtcNow
+                    });
+
+            var dispatcher =
+                new AiSharedQueueDispatcher(
+                    queue,
+                    store,
+                    runDispatcher,
+                    new FakeRunAdmissionController(),
+                    reservationStore,
+                    new FakeExecutionContextAccessor(),
+                    NullLogger<AiSharedQueueDispatcher>.Instance);
+
+            var result =
+                await dispatcher.DispatchNextAsync(
+                    new AiSharedQueueDispatchRequest
+                    {
+                        RuntimeInstanceId = "runtime-1",
+                        WorkerId = "worker-1",
+                        CorrelationId = "correlation-1",
+                        RequestedBy = "tester",
+                        Source = "unit-test",
+                        Reason = "dispatch from shared queue"
+                    });
+
+            Assert.False(result.Success);
+
+            Assert.Equal(
+                "http-circuit-open",
+                result.FailureReason);
+
+            Assert.Equal(
+                1,
+                reservationStore.ReserveCallCount);
+
+            Assert.Equal(
+                1,
+                reservationStore.ReleaseCallCount);
+
+            Assert.Equal(
+                "runtime-1",
+                reservationStore.LastReservedRuntimeInstanceId);
+
+            Assert.Equal(
+                "runtime-1",
+                reservationStore.LastReleasedRuntimeInstanceId);
+        }
+
         private static AiSharedRunRecord CreateSharedRun(
             string sharedRunId,
             AiSharedRunStatus status,
@@ -482,6 +565,87 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
                 EnqueuedAtUtc = now,
                 UpdatedAtUtc = now
             };
+        }
+
+        /// <summary>
+        /// Tracks reservation reserve/release calls for shared queue dispatcher tests.
+        /// </summary>
+        private sealed class TrackingRuntimeAdmissionReservationStore : IAiRuntimeAdmissionReservationStore
+        {
+            /// <summary>
+            /// Gets the number of reserve calls.
+            /// </summary>
+            public int ReserveCallCount { get; private set; }
+
+            /// <summary>
+            /// Gets the number of release calls.
+            /// </summary>
+            public int ReleaseCallCount { get; private set; }
+
+            /// <summary>
+            /// Gets the last reserved runtime instance id.
+            /// </summary>
+            public string? LastReservedRuntimeInstanceId { get; private set; }
+
+            /// <summary>
+            /// Gets the last released runtime instance id.
+            /// </summary>
+            public string? LastReleasedRuntimeInstanceId { get; private set; }
+
+            /// <inheritdoc />
+            public Task ReserveAsync(
+                string runtimeInstanceId,
+                int runCount,
+                CancellationToken cancellationToken = default)
+            {
+                ArgumentException.ThrowIfNullOrWhiteSpace(runtimeInstanceId);
+
+                cancellationToken.ThrowIfCancellationRequested();
+
+                this.ReserveCallCount++;
+                this.LastReservedRuntimeInstanceId =
+                    runtimeInstanceId;
+
+                return Task.CompletedTask;
+            }
+
+            /// <inheritdoc />
+            public Task ReleaseAsync(
+                string runtimeInstanceId,
+                int runCount,
+                CancellationToken cancellationToken = default)
+            {
+                ArgumentException.ThrowIfNullOrWhiteSpace(runtimeInstanceId);
+
+                cancellationToken.ThrowIfCancellationRequested();
+
+                this.ReleaseCallCount++;
+                this.LastReleasedRuntimeInstanceId =
+                    runtimeInstanceId;
+
+                return Task.CompletedTask;
+            }
+
+            /// <inheritdoc />
+            public Task<int> GetReservedRunCountAsync(
+                string runtimeInstanceId,
+                CancellationToken cancellationToken = default)
+            {
+                ArgumentException.ThrowIfNullOrWhiteSpace(runtimeInstanceId);
+
+                cancellationToken.ThrowIfCancellationRequested();
+
+                if (string.Equals(
+                        runtimeInstanceId,
+                        this.LastReservedRuntimeInstanceId,
+                        StringComparison.Ordinal))
+                {
+                    return Task.FromResult(
+                        this.ReserveCallCount - this.ReleaseCallCount);
+                }
+
+                return Task.FromResult(0);
+            }
         }
 
         private sealed class FakeSharedRunDispatcher : IAiSharedRunDispatcher
