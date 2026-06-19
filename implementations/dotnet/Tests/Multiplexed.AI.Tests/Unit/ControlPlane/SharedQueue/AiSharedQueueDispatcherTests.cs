@@ -523,6 +523,153 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
                 reservationStore.LastReleasedRuntimeInstanceId);
         }
 
+        /// <summary>
+        /// Verifies that temporary admission capacity is released when dispatch throws an exception.
+        /// </summary>
+        [Fact]
+        public async Task DispatchNextAsync_Should_Release_Reservation_When_Dispatch_Throws()
+        {
+            var queue =
+                new InMemoryAiSharedQueue();
+
+            var store =
+                new InMemoryAiSharedRunStore();
+
+            await store.CreateAsync(
+                CreateSharedRun(
+                    "shared-run-1",
+                    AiSharedRunStatus.QueuedGlobally));
+
+            await queue.EnqueueAsync(
+                CreateQueueItem(
+                    "shared-run-1"));
+
+            var reservationStore =
+                new TrackingRuntimeAdmissionReservationStore();
+
+            var runDispatcher =
+                new ThrowingSharedRunDispatcher(
+                    new InvalidOperationException(
+                        "HTTP runtime dispatch exploded."));
+
+            var dispatcher =
+                new AiSharedQueueDispatcher(
+                    queue,
+                    store,
+                    runDispatcher,
+                    new FakeRunAdmissionController(),
+                    reservationStore,
+                    new FakeExecutionContextAccessor(),
+                    NullLogger<AiSharedQueueDispatcher>.Instance);
+
+            var result =
+                await dispatcher.DispatchNextAsync(
+                    new AiSharedQueueDispatchRequest
+                    {
+                        RuntimeInstanceId = "runtime-1",
+                        WorkerId = "worker-1",
+                        CorrelationId = "correlation-1",
+                        RequestedBy = "tester",
+                        Source = "unit-test",
+                        Reason = "dispatch from shared queue"
+                    });
+
+            Assert.False(result.Success);
+
+            Assert.Equal(
+                "runtime-1",
+                result.RuntimeInstanceId);
+
+            Assert.Equal(
+                "HTTP runtime dispatch exploded.",
+                result.FailureReason);
+
+            Assert.Equal(
+                1,
+                reservationStore.ReserveCallCount);
+
+            Assert.Equal(
+                1,
+                reservationStore.ReleaseCallCount);
+
+            Assert.Equal(
+                "runtime-1",
+                reservationStore.LastReservedRuntimeInstanceId);
+
+            Assert.Equal(
+                "runtime-1",
+                reservationStore.LastReleasedRuntimeInstanceId);
+        }
+
+        /// <summary>
+        /// Verifies that a claimed queue item is requeued when dispatch throws an exception.
+        /// </summary>
+        [Fact]
+        public async Task DispatchNextAsync_Should_Requeue_When_Dispatch_Throws()
+        {
+            var queue =
+                new InMemoryAiSharedQueue();
+
+            var store =
+                new InMemoryAiSharedRunStore();
+
+            await store.CreateAsync(
+                CreateSharedRun(
+                    "shared-run-1",
+                    AiSharedRunStatus.QueuedGlobally));
+
+            await queue.EnqueueAsync(
+                CreateQueueItem(
+                    "shared-run-1"));
+
+            var runDispatcher =
+                new ThrowingSharedRunDispatcher(
+                    new InvalidOperationException(
+                        "HTTP runtime dispatch exploded."));
+
+            var dispatcher =
+                new AiSharedQueueDispatcher(
+                    queue,
+                    store,
+                    runDispatcher,
+                    new FakeRunAdmissionController(),
+                    new InMemoryAiRuntimeAdmissionReservationStore(),
+                    new FakeExecutionContextAccessor(),
+                    NullLogger<AiSharedQueueDispatcher>.Instance);
+
+            var result =
+                await dispatcher.DispatchNextAsync(
+                    new AiSharedQueueDispatchRequest
+                    {
+                        RuntimeInstanceId = "runtime-1",
+                        WorkerId = "worker-1",
+                        CorrelationId = "correlation-1",
+                        RequestedBy = "tester",
+                        Source = "unit-test",
+                        Reason = "dispatch from shared queue"
+                    });
+
+            Assert.False(result.Success);
+
+            Assert.Equal(
+                "HTTP runtime dispatch exploded.",
+                result.FailureReason);
+
+            var queueItem =
+                await queue.GetAsync(
+                    "shared-run-1");
+
+            Assert.NotNull(queueItem);
+
+            Assert.Equal(
+                AiSharedQueueItemStatus.Pending,
+                queueItem!.Status);
+
+            Assert.Equal(
+                "HTTP runtime dispatch exploded.",
+                queueItem.Reason);
+        }
+
         private static AiSharedRunRecord CreateSharedRun(
             string sharedRunId,
             AiSharedRunStatus status,
@@ -565,6 +712,38 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
                 EnqueuedAtUtc = now,
                 UpdatedAtUtc = now
             };
+        }
+
+        /// <summary>
+        /// Shared run dispatcher that throws during dispatch.
+        /// </summary>
+        private sealed class ThrowingSharedRunDispatcher : IAiSharedRunDispatcher
+        {
+            private readonly Exception _exception;
+
+            /// <summary>
+            /// Initializes a new instance of the <see cref="ThrowingSharedRunDispatcher"/> class.
+            /// </summary>
+            /// <param name="exception">The exception to throw.</param>
+            public ThrowingSharedRunDispatcher(
+                Exception exception)
+            {
+                _exception =
+                    exception
+                    ?? throw new ArgumentNullException(nameof(exception));
+            }
+
+            /// <inheritdoc />
+            public Task<AiSharedRunDispatchResult> DispatchAsync(
+                AiSharedRunDispatchRequest request,
+                CancellationToken cancellationToken = default)
+            {
+                ArgumentNullException.ThrowIfNull(request);
+
+                cancellationToken.ThrowIfCancellationRequested();
+
+                throw _exception;
+            }
         }
 
         /// <summary>

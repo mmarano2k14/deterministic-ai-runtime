@@ -27,7 +27,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
     /// - mark the queue item as dispatched on success
     /// - mark the shared run record as dispatched on success
     /// - persist dispatch failure metadata when dispatch fails
-    /// - requeue the item when dispatch fails
+    /// - requeue the item when dispatch fails or throws
     /// - release temporary admission reservations after dispatch attempts
     ///
     /// This service does not scale Kubernetes.
@@ -316,22 +316,69 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                             targetRuntimeInstanceId,
                             queueItem.ClaimToken);
 
-                        var dispatchResult = await _sharedRunDispatcher
-                            .DispatchAsync(
-                                new AiSharedRunDispatchRequest
-                                {
-                                    SharedRun = sharedRun,
-                                    QueueItem = queueItem,
-                                    RuntimeInstanceId = targetRuntimeInstanceId,
-                                    ClaimToken = queueItem.ClaimToken,
-                                    CorrelationId = request.CorrelationId ?? sharedRun.CorrelationId,
-                                    RequestedBy = request.RequestedBy,
-                                    Source = request.Source,
-                                    Reason = request.Reason ?? "Dispatching claimed shared queue item.",
-                                    Metadata = operationMetadata
-                                },
-                                cancellationToken)
-                            .ConfigureAwait(false);
+                        AiSharedRunDispatchResult dispatchResult;
+
+                        try
+                        {
+                            dispatchResult = await _sharedRunDispatcher
+                                .DispatchAsync(
+                                    new AiSharedRunDispatchRequest
+                                    {
+                                        SharedRun = sharedRun,
+                                        QueueItem = queueItem,
+                                        RuntimeInstanceId = targetRuntimeInstanceId,
+                                        ClaimToken = queueItem.ClaimToken,
+                                        CorrelationId = request.CorrelationId ?? sharedRun.CorrelationId,
+                                        RequestedBy = request.RequestedBy,
+                                        Source = request.Source,
+                                        Reason = request.Reason ?? "Dispatching claimed shared queue item.",
+                                        Metadata = operationMetadata
+                                    },
+                                    cancellationToken)
+                                .ConfigureAwait(false);
+                        }
+                        catch (Exception exception)
+                        {
+                            _logger.LogWarning(
+                                exception,
+                                "Shared run dispatch threw an exception. Persisting failure metadata and requeuing shared queue item. SharedRunId={SharedRunId}, ControlPlaneId={ControlPlaneId}, RuntimeInstanceId={RuntimeInstanceId}, ClaimToken={ClaimToken}",
+                                sharedRun.SharedRunId,
+                                controlPlaneId,
+                                targetRuntimeInstanceId,
+                                queueItem.ClaimToken);
+
+                            var failedSharedRun = await _sharedRunStore
+                                .MarkDispatchFailedAsync(
+                                    sharedRun.SharedRunId,
+                                    targetRuntimeInstanceId,
+                                    exception.Message,
+                                    exception.Message,
+                                    cancellationToken)
+                                .ConfigureAwait(false);
+
+                            await RequeueBestEffortAsync(
+                                    queueItem,
+                                    exception.Message,
+                                    cancellationToken)
+                                .ConfigureAwait(false);
+
+                            var completedAtUtc = DateTimeOffset.UtcNow;
+
+                            return new AiSharedQueueDispatchResult
+                            {
+                                Success = false,
+                                SharedRunId = queueItem.SharedRunId,
+                                RuntimeInstanceId = targetRuntimeInstanceId,
+                                QueueItem = queueItem,
+                                SharedRun = failedSharedRun ?? sharedRun,
+                                Message = "Shared queue item dispatch threw an exception and was requeued.",
+                                FailureReason = exception.Message,
+                                StartedAtUtc = startedAtUtc,
+                                CompletedAtUtc = completedAtUtc,
+                                DurationMs = CalculateDurationMs(startedAtUtc, completedAtUtc),
+                                Diagnostics = new[] { exception.Message }
+                            };
+                        }
 
                         _logger.LogInformation(
                             "Shared run dispatch result received. SharedRunId={SharedRunId}, ControlPlaneId={ControlPlaneId}, RuntimeInstanceId={RuntimeInstanceId}, Success={Success}, LocalRunId={LocalRunId}, ExecutionId={ExecutionId}, FailureReason={FailureReason}",
