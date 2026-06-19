@@ -417,6 +417,85 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Store
                 $"Unexpected Redis mark-dispatched result for shared run '{sharedRunId}': '{status}'.");
         }
 
+        /// <inheritdoc />
+        public async Task<AiSharedRunRecord?> MarkDispatchFailedAsync(
+            string sharedRunId,
+            string runtimeInstanceId,
+            string? failureReason,
+            string? message,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(sharedRunId);
+            ArgumentException.ThrowIfNullOrWhiteSpace(runtimeInstanceId);
+
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var controlPlaneId = await ResolveControlPlaneIdAsync(
+                    requestedControlPlaneId: null,
+                    cancellationToken)
+                .ConfigureAwait(false);
+
+            var existing = await GetAsync(
+                    controlPlaneId,
+                    sharedRunId,
+                    cancellationToken)
+                .ConfigureAwait(false);
+
+            if (existing is null)
+            {
+                return null;
+            }
+
+            if (IsTerminal(existing.Status))
+            {
+                return existing;
+            }
+
+            var runKey =
+                BuildRunKey(
+                    controlPlaneId,
+                    sharedRunId);
+
+            var updatedAtUtc =
+                DateTimeOffset.UtcNow.ToString(
+                    "O",
+                    CultureInfo.InvariantCulture);
+
+            await _database
+                .HashSetAsync(
+                    runKey,
+                    new HashEntry[]
+                    {
+                new("assignedRuntimeInstanceId", runtimeInstanceId),
+                new("reason", message ?? existing.Reason ?? string.Empty),
+                new("failureReason", failureReason ?? string.Empty),
+                new("updatedAtUtc", updatedAtUtc)
+                    })
+                .ConfigureAwait(false);
+
+            cancellationToken.ThrowIfCancellationRequested();
+
+            return await GetAsync(
+                    controlPlaneId,
+                    sharedRunId,
+                    cancellationToken)
+                .ConfigureAwait(false);
+        }
+
+        /// <summary>
+        /// Determines whether a shared run status is terminal.
+        /// </summary>
+        /// <param name="status">The shared run status.</param>
+        /// <returns><c>true</c> when the status is terminal; otherwise, <c>false</c>.</returns>
+        private static bool IsTerminal(
+            AiSharedRunStatus status)
+        {
+            return status is
+                AiSharedRunStatus.Completed or
+                AiSharedRunStatus.Failed or
+                AiSharedRunStatus.Cancelled;
+        }
+
         private async Task<AiSharedRunRecord?> GetAsync(
             string controlPlaneId,
             string sharedRunId,

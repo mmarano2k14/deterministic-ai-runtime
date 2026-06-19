@@ -263,7 +263,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController
                     RequestedBy = request.RequestedBy,
                     StartedAtUtc = startedAtUtc,
                     CompletedAtUtc = completedAtUtc,
-                    DurationMs = durationMs
+                    DurationMs = durationMs,
+                    FailureReason = operationResult.Run?.FailureReason
                 };
             }
             catch (Exception exception) when (_options.ReturnFailureResultInsteadOfThrowing)
@@ -488,7 +489,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController
         /// <param name="created">The created shared run record.</param>
         /// <param name="admissionDecision">The admission decision.</param>
         /// <param name="cancellationToken">A token used to cancel the operation.</param>
-        /// <returns>The updated shared run record when dispatch succeeds; otherwise the original record.</returns>
+        /// <returns>The updated shared run record when dispatch succeeds; otherwise the original record with dispatch failure metadata.</returns>
         private async Task<AiSharedRunRecord> DispatchAssignedRunAsync(
             AiSharedRunRecord created,
             AiRunAdmissionDecision admissionDecision,
@@ -511,7 +512,14 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController
 
             if (!dispatchResult.Success)
             {
-                return created;
+                return await _store
+                    .MarkDispatchFailedAsync(
+                        created.SharedRunId,
+                        created.AssignedRuntimeInstanceId!,
+                        dispatchResult.FailureReason,
+                        dispatchResult.Message,
+                        cancellationToken)
+                    .ConfigureAwait(false) ?? created;
             }
 
             return await _store
@@ -841,6 +849,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController
                         ["assignedRuntimeInstanceId"] = operationResult.Run?.AssignedRuntimeInstanceId,
                         ["localRunId"] = operationResult.Run?.LocalRunId,
                         ["executionId"] = operationResult.Run?.ExecutionId,
+                        ["failureReason"] = operationResult.Run?.FailureReason,
                         ["tenantId"] =
                             operationResult.Run?.ExecutionContextSnapshot.TenantId
                             ?? executionContextSnapshot.TenantId,

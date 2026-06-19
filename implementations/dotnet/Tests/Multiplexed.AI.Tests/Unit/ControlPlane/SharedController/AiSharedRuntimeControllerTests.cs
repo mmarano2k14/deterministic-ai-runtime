@@ -605,6 +605,154 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController
             });
         }
 
+        /// <summary>
+        /// Verifies that a circuit-open dispatch failure does not mark the shared run as dispatched.
+        /// </summary>
+        [Fact]
+        public async Task SubmitRunAsync_Should_Not_Mark_Run_Dispatched_When_Dispatch_Fails_With_CircuitOpen()
+        {
+            var admission =
+                new FakeRunAdmissionController(
+                    new AiRunAdmissionDecision
+                    {
+                        DecisionType = AiRunAdmissionDecisionType.AssignToInstance,
+                        AssignedRuntimeInstanceId = "runtime-1",
+                        AssignedInstance = CreateRuntimeInstance("runtime-1"),
+                        Reason = "Runtime instance selected."
+                    });
+
+            var dispatcher =
+                new FakeSharedRunDispatcher(
+                    new AiSharedRunDispatchResult
+                    {
+                        Success = false,
+                        SharedRunId = "shared-run-1",
+                        RuntimeInstanceId = "runtime-1",
+                        FailureReason = "http-circuit-open",
+                        Message = "HTTP runtime circuit breaker is open.",
+                        StartedAtUtc = DateTimeOffset.UtcNow,
+                        CompletedAtUtc = DateTimeOffset.UtcNow
+                    });
+
+            var controller =
+                CreateController(
+                    admission,
+                    dispatcher: dispatcher);
+
+            var result =
+                await controller.SubmitRunAsync(
+                    new AiSharedRuntimeControllerRequest
+                    {
+                        Operation = AiSharedRuntimeControllerOperation.SubmitRun,
+                        RequestedSharedRunId = "shared-run-1",
+                        RunRequest = CreateRunRequest(),
+                        CorrelationId = "correlation-1",
+                        RequestedBy = "tester",
+                        Source = "unit-test"
+                    });
+
+            Assert.True(result.Success);
+            Assert.NotNull(result.Run);
+
+            Assert.Equal(
+                AiSharedRunStatus.AssignedToInstance,
+                result.Run.Status);
+
+            Assert.Equal(
+                "runtime-1",
+                result.Run.AssignedRuntimeInstanceId);
+
+            Assert.Null(result.Run.LocalRunId);
+            Assert.Null(result.Run.ExecutionId);
+
+            Assert.Equal(
+                "http-circuit-open",
+                result.Run.FailureReason);
+
+            Assert.Equal(
+                "http-circuit-open",
+                result.FailureReason);
+        }
+
+        /// <summary>
+        /// Verifies that a circuit-open dispatch failure reason is preserved when the shared run is read back from the store.
+        /// </summary>
+        [Fact]
+        public async Task SubmitRunAsync_Should_Persist_Dispatch_FailureReason_When_Dispatch_Fails_With_CircuitOpen()
+        {
+            var admission =
+                new FakeRunAdmissionController(
+                    new AiRunAdmissionDecision
+                    {
+                        DecisionType = AiRunAdmissionDecisionType.AssignToInstance,
+                        AssignedRuntimeInstanceId = "runtime-1",
+                        AssignedInstance = CreateRuntimeInstance("runtime-1"),
+                        Reason = "Runtime instance selected."
+                    });
+
+            var dispatcher =
+                new FakeSharedRunDispatcher(
+                    new AiSharedRunDispatchResult
+                    {
+                        Success = false,
+                        SharedRunId = "shared-run-1",
+                        RuntimeInstanceId = "runtime-1",
+                        FailureReason = "http-circuit-open",
+                        Message = "HTTP runtime circuit breaker is open.",
+                        StartedAtUtc = DateTimeOffset.UtcNow,
+                        CompletedAtUtc = DateTimeOffset.UtcNow
+                    });
+
+            var controller =
+                CreateController(
+                    admission,
+                    dispatcher: dispatcher);
+
+            var submitResult =
+                await controller.SubmitRunAsync(
+                    new AiSharedRuntimeControllerRequest
+                    {
+                        Operation = AiSharedRuntimeControllerOperation.SubmitRun,
+                        RequestedSharedRunId = "shared-run-1",
+                        RunRequest = CreateRunRequest(),
+                        CorrelationId = "correlation-1",
+                        RequestedBy = "tester",
+                        Source = "unit-test"
+                    });
+
+            var getResult =
+                await controller.GetRunAsync(
+                    new AiSharedRuntimeControllerRequest
+                    {
+                        Operation = AiSharedRuntimeControllerOperation.GetRun,
+                        SharedRunId = "shared-run-1",
+                        CorrelationId = "correlation-1",
+                        RequestedBy = "tester",
+                        Source = "unit-test"
+                    });
+
+            Assert.True(submitResult.Success);
+            Assert.NotNull(submitResult.Run);
+
+            Assert.Equal(
+                "http-circuit-open",
+                submitResult.Run.FailureReason);
+
+            Assert.True(getResult.Success);
+            Assert.NotNull(getResult.Run);
+
+            Assert.Equal(
+                AiSharedRunStatus.AssignedToInstance,
+                getResult.Run.Status);
+
+            Assert.Null(getResult.Run.LocalRunId);
+            Assert.Null(getResult.Run.ExecutionId);
+
+            Assert.Equal(
+                "http-circuit-open",
+                getResult.Run.FailureReason);
+        }
+
         private static AiSharedRuntimeController CreateController(
             IAiRunAdmissionController admissionController,
             AiSharedRuntimeControllerOptions? options = null,

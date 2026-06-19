@@ -218,6 +218,70 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Store
             }
         }
 
+        /// <inheritdoc />
+        public Task<AiSharedRunRecord?> MarkDispatchFailedAsync(
+            string sharedRunId,
+            string runtimeInstanceId,
+            string? failureReason,
+            string? message,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(sharedRunId);
+            ArgumentException.ThrowIfNullOrWhiteSpace(runtimeInstanceId);
+
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var tenantId =
+                TryResolveTenantId();
+
+            while (true)
+            {
+                if (!_runs.TryGetValue(sharedRunId, out var existing))
+                {
+                    return Task.FromResult<AiSharedRunRecord?>(null);
+                }
+
+                if (!BelongsToTenant(
+                        existing,
+                        tenantId))
+                {
+                    return Task.FromResult<AiSharedRunRecord?>(null);
+                }
+
+                if (IsTerminal(existing.Status))
+                {
+                    return Task.FromResult<AiSharedRunRecord?>(existing);
+                }
+
+                var updated = new AiSharedRunRecord
+                {
+                    SharedRunId = existing.SharedRunId,
+                    ControlPlaneId = existing.ControlPlaneId,
+                    Status = existing.Status,
+                    RunRequest = existing.RunRequest,
+                    LocalRunId = existing.LocalRunId,
+                    ExecutionId = existing.ExecutionId,
+                    AssignedRuntimeInstanceId = runtimeInstanceId,
+                    AdmissionDecision = existing.AdmissionDecision,
+                    ExecutionContextSnapshot = existing.ExecutionContextSnapshot,
+                    PipelineKey = existing.PipelineKey,
+                    CorrelationId = existing.CorrelationId,
+                    RequestedBy = existing.RequestedBy,
+                    Source = existing.Source,
+                    Reason = message ?? existing.Reason,
+                    FailureReason = failureReason,
+                    SubmittedAtUtc = existing.SubmittedAtUtc,
+                    UpdatedAtUtc = DateTimeOffset.UtcNow,
+                    Metadata = existing.Metadata
+                };
+
+                if (_runs.TryUpdate(sharedRunId, updated, existing))
+                {
+                    return Task.FromResult<AiSharedRunRecord?>(updated);
+                }
+            }
+        }
+
         /// <summary>
         /// Attempts to resolve the current tenant id from the execution context snapshot provider.
         /// </summary>

@@ -257,7 +257,6 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController
             }
 
             /// <inheritdoc />
-            /// <inheritdoc />
             public Task<AiSharedRunRecord?> MarkDispatchedAsync(
                 string sharedRunId,
                 string runtimeInstanceId,
@@ -273,6 +272,52 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController
                     out var record);
 
                 return Task.FromResult(record);
+            }
+
+            /// <inheritdoc />
+            public Task<AiSharedRunRecord?> MarkDispatchFailedAsync(
+                string sharedRunId,
+                string runtimeInstanceId,
+                string? failureReason,
+                string? message,
+                CancellationToken cancellationToken = default)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                if (!this.Records.TryGetValue(
+                        sharedRunId,
+                        out var existing))
+                {
+                    return Task.FromResult<AiSharedRunRecord?>(null);
+                }
+
+                var updated =
+                    new AiSharedRunRecord
+                    {
+                        SharedRunId = existing.SharedRunId,
+                        ControlPlaneId = existing.ControlPlaneId,
+                        Status = existing.Status,
+                        RunRequest = existing.RunRequest,
+                        LocalRunId = existing.LocalRunId,
+                        ExecutionId = existing.ExecutionId,
+                        AssignedRuntimeInstanceId = runtimeInstanceId,
+                        AdmissionDecision = existing.AdmissionDecision,
+                        ExecutionContextSnapshot = existing.ExecutionContextSnapshot,
+                        PipelineKey = existing.PipelineKey,
+                        CorrelationId = existing.CorrelationId,
+                        RequestedBy = existing.RequestedBy,
+                        Source = existing.Source,
+                        Reason = message ?? existing.Reason,
+                        FailureReason = failureReason,
+                        SubmittedAtUtc = existing.SubmittedAtUtc,
+                        UpdatedAtUtc = DateTimeOffset.UtcNow,
+                        Metadata = existing.Metadata
+                    };
+
+                this.Records[sharedRunId] =
+                    updated;
+
+                return Task.FromResult<AiSharedRunRecord?>(updated);
             }
 
             /// <inheritdoc />

@@ -104,5 +104,21 @@
             string? executionId = null,
             string? reason = null,
             CancellationToken cancellationToken = default);
+
+        /// <summary>
+        /// Marks a shared run dispatch attempt as failed without marking the run as dispatched.
+        /// </summary>
+        /// <param name="sharedRunId">The shared run identifier.</param>
+        /// <param name="runtimeInstanceId">The runtime instance identifier that failed dispatch.</param>
+        /// <param name="failureReason">The dispatch failure reason.</param>
+        /// <param name="message">The dispatch failure message.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <returns>The updated shared run record, or <c>null</c> when the run was not found.</returns>
+        Task<AiSharedRunRecord?> MarkDispatchFailedAsync(
+            string sharedRunId,
+            string runtimeInstanceId,
+            string? failureReason,
+            string? message,
+            CancellationToken cancellationToken = default);
     }
 }
