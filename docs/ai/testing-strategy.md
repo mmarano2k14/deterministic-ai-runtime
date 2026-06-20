@@ -1,1650 +1,1718 @@
-# Runtime Control Plane
+# Testing Strategy
 
-Status: Implemented foundation / validated with shared controller, MCP, Redis stores, Redis scale-out request persistence, local runtime pools, local runtime scale-out, fulfilled-run requeue, HTTP pooled runtime scenarios, and end-to-end MCP scale-out execution.
+Status: Actively validated by a large unit and integration test suite, including MCP, Redis, local runtime pools, Redis-backed scale-out request lifecycle, local runtime scale-out, fulfilled-run requeue, HTTP pooled runtime provider scenarios, HTTP runtime provider hardening, HTTP scale-out provider/provisioner behavior, and tenant-aware HTTP Shared/Dedicated/Hybrid scale-out scenarios.
 
-This document describes the **Runtime Control Plane foundation** used by the Deterministic AI Runtime, including replay, execution control, runtime queues, runtime instance registry/capacity, Redis discovery, shared queue orchestration, provider-based dispatch, and MCP integration.
-
-The complete technical reference is currently preserved in:
-
-- [runtime-internals.md](../runtime-internals.md)
+This document describes the testing strategy used to validate the Deterministic AI Runtime.
 
 ---
 
 ## Purpose
 
-The runtime is no longer only responsible for executing deterministic DAG workflows.
-
-It now also needs a control-plane layer capable of exposing safe runtime operations to external adapters such as:
-
-- HTTP API
-- MCP server
-- CLI
-- Dashboard
-- Kubernetes control-plane pod
-- Shared runtime controller
-
-Production AI systems need more than execution.
-
-They need to answer operational questions such as:
-
-- can an execution be replayed?
-- can an execution be paused, resumed, or cancelled?
-- can a local runtime queue be paused or resumed?
-- can queued work be cancelled before execution starts?
-- can runtime instances register themselves?
-- can runtime instances resolve the active MCP/control-plane identity before registration?
-- can runtime instances publish heartbeat and capacity?
-- can runtime capacity be removed cleanly during shutdown?
-- can a run be assigned to a runtime instance?
-- should a run be globally queued?
-- should scale-out be requested?
-- should a run be rejected?
-- can these decisions be logged and observed?
-
-This is handled by the runtime control-plane foundation.
-
----
-
-## Control Plane Scope
-
-The runtime control plane provides adapter-neutral facades over runtime capabilities.
-
-It does not replace the runtime engine.
-
-It does not execute DAG steps.
-
-It does not claim work.
-
-It does not create Kubernetes pods.
-
-It does not scale deployments directly.
-
-It provides a safe layer between external operators/adapters and runtime internals.
-
-External systems should call the control plane.
-
-Runtime internals remain protected behind focused abstractions.
-
----
-
-## High-Level Model
-
-The control plane separates external commands from runtime internals.
-
-```text
-External Adapters
-    HTTP API
-    MCP Server
-    CLI
-    Dashboard
-    Kubernetes Control Pod
-            ↓
-Runtime Control Plane
-    Replay Control
-    Execution Control
-    Runtime Queue Control
-    Runtime Instance Registry
-    Runtime Instance Capacity
-    Control-Plane Discovery
-    Runtime Instance Control
-    Shared Runtime Controller
-    Shared Queue
-    Provider Dispatch
-    Run Admission
-            ↓
-Runtime Internals
-    DAG Engine
-    Local Queues
-    Workers
-    Worker Groups
-    Execution Store
-    Replay Service
-    Execution Control Service
-```
-
-This separation prevents external systems from depending directly on internal runtime implementation details.
-
----
-
-## Control Plane Areas
-
-The current control-plane foundation includes these areas:
-
-| Area | Responsibility |
-|---|---|
-| Replay | Expose replay and audit operations. |
-| Execution Control | Pause, resume, cancel, human input, and control-state visibility. |
-| Runtime Queue | Control the local runtime queue of one runtime instance. |
-| Runtime Instances | Register, heartbeat, list, drain, and unregister runtime instances. |
-| Runtime Capacity | Publish, list, and remove runtime capacity descriptors. |
-| Control-Plane Discovery | Publish and resolve the logical MCP/control-plane identity used by runtime-only hosts. |
-| Shared Runtime Controller | Create shared runs, queue globally, dispatch directly, request scale-out, and reject. |
-| Shared Queue | Store pending global work and protect dispatch claim ownership. |
-| Provider Dispatch | Deliver assigned shared runs to local or remote runtime instance queues. |
-| Admission | Decide whether a run should be assigned, queued globally, scaled out, or rejected. |
-| Scale-Out Lifecycle | Persist scale-out requests, observe pending requests, resolve scale-out-capable providers, create local runtime capacity, mark requests fulfilled/rejected, and requeue fulfilled shared runs for normal pump dispatch. |
-| Observability | Record started, completed, and failed control-plane operations. |
-
----
-
-## Replay Control Plane
-
-The replay control plane exposes replay and audit operations through an adapter-neutral facade.
-
-It wraps the existing replay service.
-
-It is intended to be called later by:
-
-- HTTP API
-- MCP server
-- CLI
-- Dashboard
-- Kubernetes control-plane layer
-
-Replay control includes:
-
-- replay request handling
-- replay result exposure
-- replay observability
-- structured failure handling
-- safe blocking of unsupported modes
-
-`ReExecuteAll` remains intentionally blocked because it may re-run external providers or side effects before provider replay isolation and side-effect safety are implemented.
-
-Replay control does not execute live runtime work.
-
-It exposes replay and audit behavior safely.
-
----
-
-## Execution Control Plane
-
-The execution control plane exposes durable `ExecutionId`-level control operations.
-
-It supports:
-
-- pause execution
-- resume execution
-- cancel execution
-- submit human input
-- get execution control state
-
-Execution control works at the durable execution lifecycle level.
-
-```text
-ExecutionId
-    pause
-    resume
-    cancel
-    waiting for input
-    submit human input
-    get control state
-```
-
-This control plane wraps the existing execution control service.
-
-It does not execute DAG steps.
-
-It does not claim work.
-
-It does not mutate local queues.
-
-It delegates to the durable execution control service.
-
----
-
-## Runtime Queue Control Plane
-
-The runtime queue control plane exposes local queue operations for one runtime instance.
-
-It operates at the `RunId` level.
-
-It supports:
-
-- enqueue local run
-- cancel local run
-- cancel queued run
-- pause local queue
-- resume local queue
-- get local run status
-- get local queue status
-
-This layer is intentionally local.
-
-It controls the queue owned by one runtime instance.
-
-It is not the future shared/global queue.
-
----
-
-## Runtime Queue vs Execution Control
-
-The runtime separates two identities:
-
-```text
-RunId
-= controller / queue / submitted job lifecycle
-
-ExecutionId
-= durable DAG execution lifecycle
-```
-
-This distinction is critical.
-
-A queued run can exist before an execution exists.
-
-A queued run can be cancelled before any DAG state is created.
-
-Once an execution starts, the run handle receives an `ExecutionId`.
-
-From that point, execution-level operations should use execution control.
-
-```text
-If no ExecutionId exists:
-    handle control at RunId / queue level.
-
-If ExecutionId exists:
-    delegate execution control to ExecutionId-level control state.
-```
-
-This avoids creating fake DAG executions for work that never started.
-
----
-
-## Runtime Queue Visibility
-
-The runtime now exposes immutable snapshots for local queue visibility.
-
-### Run state snapshot
-
-`AiRuntimePipelineRunState` exposes:
-
-- `RunId`
-- `ExecutionId`
-- `PipelineKey`
-- `PipelineName`
-- `RuntimeInstanceId`
-- `Status`
-- `IsQueued`
-- `IsRunning`
-- `CancellationRequested`
-- timestamps when available
-- failure reason when available
-
-### Queue state snapshot
-
-`AiRuntimePipelineQueueState` exposes:
-
-- `RuntimeInstanceId`
-- `IsPaused`
-- `QueuedRunCount`
-- `RunningRunCount`
-- `ActiveRunCount`
-- `QueueCapacity`
-- `MaxConcurrentRuns`
-- `AvailableRunSlots`
-- `CanAcceptRun`
-- `WorkerCount`
-- `ActiveWorkerCount`
-- `AvailableWorkerCount`
-- `MaxLocalWorkersPerExecution`
-- `SnapshotAtUtc`
-
-These snapshots are intended for:
-
-- dashboard
-- HTTP API
-- MCP server
-- CLI
-- diagnostics
-- shared admission
-- Kubernetes visibility
-
----
-
-## Queue Pause and Resume
-
-Queue pause prevents new queued runs from starting.
-
-It does not pause already-running executions.
-
-```text
-PauseQueueAsync
-        ↓
-local queue state = paused
-        ↓
-queued runs remain queued
-        ↓
-already-running executions continue
-```
-
-Queue resume allows queued runs to start again.
-
-```text
-ResumeQueueAsync
-        ↓
-local queue state = active
-        ↓
-queued runs become eligible to start
-        ↓
-runtime executions are created
-```
-
-Queue pause/resume must not be confused with execution pause/resume.
-
-```text
-PauseQueueAsync
-= stop starting queued runs
-
-PauseExecutionAsync
-= stop claims for an existing ExecutionId
-```
-
----
-
-## Queue Pause / Resume Ledger Correlation
-
-Queue pause/resume operations can be called externally.
-
-External calls are not always executed inside the runtime execution async context.
-
-Because the runtime correlation accessor is backed by async-flow context, it may not contain the active `ExecutionId` / `RunId` during external control-plane calls.
-
-Therefore, queue pause/resume ledger correlation is resolved from controller state.
-
-The controller checks:
-
-```text
-1. running runs with ExecutionId
-2. queued runs with RunId
-3. controller fallback identity
-```
-
-This preserves execution-correlated ledger events when a run is active.
-
-It also avoids relying on `AsyncLocal` context where no execution scope exists.
-
----
-
-## Control-Plane Discovery
-
-The runtime control plane now includes Redis-backed control-plane discovery.
-
-The purpose of discovery is to let runtime-only hosts resolve the active logical MCP/control-plane identity before registering runtime instances or publishing capacity.
-
-```text
-MCP Control Plane
-    ↓
-Redis Control-Plane Discovery Store
-    ↓
-ControlPlaneIdResolver
-    ↓
-RuntimeInstanceOnly Host
-    ↓
-Runtime Instance Registration
-    ↓
-Runtime Capacity Publication
-```
-
-This prevents runtime hosts from accidentally registering under a different logical control-plane id than the MCP server.
-
-Important identities:
-
-```text
-ControlPlaneId
-    logical shared Redis/control-plane scope
-
-ControlPlaneHostId
-    control-plane host or process publishing discovery
-
-RuntimeInstanceId
-    dispatchable runtime identity, often host-scoped
-
-RuntimeId
-    local runtime id inside a host or pool
-```
-
-Discovery is used during startup and registration.
-
-Shutdown cleanup should not depend on rediscovery.
-
-Once a runtime instance has registered or published capacity, cleanup should reuse the known resolved control-plane id for that runtime instance.
-
-This is important because discovery descriptors, Redis dependencies, or logging providers may already be disposed during shutdown.
-
----
-
-## Runtime Instance Capacity Store
-
-Runtime capacity descriptors expose live scheduling and visibility information for runtime instances.
-
-The runtime capacity store supports:
-
-- publish capacity descriptor
-- get capacity descriptor
-- list capacity descriptors
-- remove capacity descriptor on shutdown
-
-Capacity descriptors include:
-
-- runtime instance id
-- role
-- provider metadata
-- worker count
-- active worker count
-- available worker count
-- max local workers per execution
-- queued run count
-- running run count
-- active run count
-- queue capacity
-- max concurrent runs
-- available run slots
-- queue paused state
-- can accept run
-- heartbeat / snapshot timestamp
-
-Redis-backed capacity storage is part of the validated runtime control-plane foundation.
-
-The capacity store is used by:
-
-- admission
-- shared queue pump readiness
-- MCP runtime instance tools
-- dashboard/API visibility
-- provider routing
-- future autoscaling decisions.
-
-During shutdown, the capacity descriptor should be removed using the known control-plane id for the runtime instance.
-
-It should not attempt to rediscover the control-plane id after discovery may have already been removed.
-
-
-## Runtime Instance Registry
-
-The runtime instance registry tracks visible runtime instances.
-
-A runtime instance represents one runtime process.
-
-In Kubernetes, a runtime instance usually maps to one pod / replica.
-
-The registry supports:
-
-- register/update runtime instance
-- heartbeat runtime instance
-- get runtime instance
-- list runtime instances
-- mark draining
-- unregister / mark stopped
-
-Runtime instance ids may be host-scoped in pooled provider scenarios.
-
-Example:
-
-```text
-host-7ab6d623500844f88a6a2972d8c5a2e2:runtime-http-1
-```
-
-Registry cleanup should be idempotent and best-effort during shutdown.
-
-The registry stores visibility data such as:
-
-- runtime instance id
-- host name
-- process id
-- Kubernetes namespace
-- Kubernetes pod name
-- Kubernetes node name
-- worker count
-- queued run count
-- running run count
-- active run count
-- queue capacity
-- max concurrent runs
-- available run slots
-- queue paused state
-- can accept run
-- runtime version
-- metadata
-- registered timestamp
-- last heartbeat timestamp
-
-Current implementations include:
-
-- in-memory runtime instance registry
-- Redis-backed runtime instance registry
-
-The in-memory implementation remains useful for:
-
-- local development
-- unit tests
-- single-process demos
-
-The Redis-backed implementation is validated for shared-controller and pooled runtime scenarios.
-
-It supports real multi-instance visibility across MCP/control-plane hosts and runtime-only hosts.
-
----
-
-## Runtime Instance Status
-
-Runtime instances can have the following statuses:
-
-| Status | Meaning |
-|---|---|
-| Unknown | Registered but current health is unknown. |
-| Ready | Alive and able to accept work. |
-| Busy | Alive but under pressure. |
-| Paused | Alive but local queue is paused. |
-| Draining | Should not receive new runs. |
-| Unhealthy | Heartbeat or health is invalid/stale. |
-| Stopped | Explicitly unregistered. |
-
----
-
-## Runtime Instance Control Plane
-
-The runtime instance control plane exposes registry operations through an adapter-neutral facade.
-
-It supports:
-
-- publish control-plane discovery descriptor
-- resolve control-plane id from discovery
-- register runtime instance
-- heartbeat runtime instance
-- publish runtime capacity descriptor
-- remove runtime capacity descriptor
-- get runtime instance
-- list runtime instances
-- mark runtime instance as draining
-- unregister runtime instance
-
-This control plane is intended for:
-
-- dashboard
-- CLI
-- MCP server
-- HTTP API
-- Kubernetes control-plane pod
-- future shared runtime controller
-
-It does not create Kubernetes pods.
-
-It does not scale deployments directly.
-
-It does not execute DAG steps.
-
-It does not claim work.
-
-It exposes visibility and control over registered runtime instances.
-
----
-
-## Run Admission / Slot System V1
-
-Run admission decides what should happen when a new run arrives.
-
-Admission can return:
-
-- assign to runtime instance
-- queue globally
-- request scale-out
-- reject
-
-Admission does not enqueue the run.
-
-Admission does not modify local queues.
-
-Admission does not create Kubernetes replicas.
-
-Admission only produces a decision.
-
----
-
-## Admission Reservations
-
-The runtime control plane now includes a Redis-backed admission reservation foundation.
-
-Admission capacity is based on visible runtime capacity descriptors.
-
-In heavy dispatch scenarios, Redis-backed reservations protect selected runtime capacity during dispatch.
-
-This reduces the risk of multiple dispatchers selecting the same visible capacity before heartbeat/capacity snapshots update.
-
-Conceptual flow:
-
-```text
-Admission lists runtime capacity
-    ↓
-Select candidate runtime instance
-    ↓
-Reserve selected capacity
-    ↓
-Dispatch through provider
-    ↓
-If dispatch succeeds:
-        local queue / heartbeat reflects real usage
-    ↓
-If dispatch fails:
-        release or expire reservation
-```
-
-The current Redis admission reservation store is validated in heavy HTTP dispatch scenarios.
-
-Lua-based reservation refinement can still be added later for stronger atomic slot and worker reservation semantics in production multi-control-plane scheduling.
-
-
-## Admission Decision Flow
-
-```text
-New run request
-        ↓
-Run Admission Controller
-        ↓
-List registered runtime instances
-        ↓
-Filter eligible instances
-        ↓
-Find available capacity
-        ↓
-Decision:
-    AssignToInstance
-    QueueGlobally
-    RequestScaleOut
-    Reject
-```
-
----
-
-## Admission Decision Types
-
-| Decision | Meaning |
-|---|---|
-| AssignToInstance | A runtime instance is available and selected. |
-| QueueGlobally | No local instance is available, but future shared queue fallback is allowed. |
-| RequestScaleOut | No local instance is available, and scale-out should be requested. |
-| Reject | The run should be rejected by admission policy. |
-| Unknown | No final admission decision could be produced. |
-
----
-
-## Admission Policy Options
-
-Run admission supports policy options such as:
-
-- enabled / disabled
-- maximum runtime instance count
-- allow scale-out request
-- allow global queue fallback
-- reject when no capacity exists
-- allow paused instances
-- allow draining instances
-- allow unhealthy instances
-- prefer requested runtime instance
-- duration measurement
-
-This prepares the future shared runtime controller and Kubernetes scaler integration.
-
----
-
-## Runtime Control Plane Observability
-
-The control plane records operation events for supported facades.
-
-Events include:
-
-- operation started
-- operation completed
-- operation failed
-
-Control-plane event fields include:
-
-- event type
-- area
-- operation
-- outcome
-- correlation context
-- duration
-- message
-- failure reason
-- custom properties
-
-Control-plane observability currently supports:
-
-- no-op observer
-- logged observer
-
-Future observers can export to:
-
-- metrics
-- tracing
-- decision ledger
-- Kibana
-- Grafana
-- OpenSearch
-
-The runtime core remains decoupled from specific dashboard tools.
-
----
-
-## Dependency Injection
-
-The control-plane service registration now includes:
-
-- `IAiReplayControlPlane`
-- `IAiExecutionControlPlane`
-- `IAiRuntimeQueueControlPlane`
-- `IAiRuntimeInstanceRegistry`
-- `IAiRuntimeInstanceCapacityStore`
-- `IAiControlPlaneDiscoveryStore`
-- `IAiControlPlaneIdResolver`
-- `IAiRuntimeInstanceControlPlane`
-- `IAiRunAdmissionController`
-- `IAiRuntimeAdmissionReservationStore`
-- `IAiControlPlaneObserver`
-
-Options are registered for:
-
-- replay control
-- execution control-plane
-- runtime queue control-plane
-- runtime instance control-plane
-- run admission
-
-A logging extension can replace the no-op observer with a logged observer.
-
----
-
-## Validated Behavior
-
-The implementation is validated by unit and integration tests covering:
-
-- replay control-plane behavior
-- execution control-plane behavior
-- runtime queue control-plane behavior
-- runtime instance registry behavior
-- Redis runtime instance registry behavior
-- runtime instance capacity store behavior
-- Redis runtime instance capacity store behavior
-- control-plane discovery store behavior
-- control-plane id resolver behavior
-- runtime instance control-plane behavior
-- run admission decisions
+The runtime is built around strong execution guarantees.
+
+Those guarantees cannot be validated only with simple unit tests.
+
+The runtime must prove that it behaves correctly under:
+
+- distributed workers
+- distributed runtime instances
+- concurrent claims
+- retries
+- worker crashes
+- recovery
+- retention and compaction
+- payload externalization
+- resolver rehydration
+- replay restoration
+- queue control
+- execution control
+- concurrency throttling
+- terminal finalization races
+- deterministic convergence under pressure
+- queue-first dispatch behavior
+- shared queue pump/manual drain behavior
+- shared queue pump readiness behavior
+- runtime instance provider dispatch behavior
+- HTTP pooled runtime provider behavior
+- HTTP runtime provider hardening
+- HTTP dispatch timeout, retry, and circuit breaker behavior
+- HTTP structured dispatch failure persistence
+- HTTP runtime scale-out provider/provisioner behavior
+- tenant-aware HTTP Shared/Dedicated/Hybrid scale-out behavior
+- Redis control-plane discovery and id resolution
+- Redis registry and capacity cleanup
 - Redis admission reservation behavior
-- DI registration
-- queue pause/resume ledger correlation
-- execution-correlated queue ledger visibility
-- run-id correlated queue ledger visibility
-- shared runtime controller behavior
-- Redis shared run store behavior
-- Redis shared queue behavior
-- HTTP pooled runtime provider dispatch
-- MCP manual drain and background pump dispatch
-- replay/report/ledger/trace through MCP
-- shutdown cleanup without late rediscovery dependency
-
----
-
-## Current Capabilities
-
-The runtime can now expose or support:
-
-- replay execution
-- audit execution
-- pause execution
-- resume execution
-- cancel execution
-- submit human input
-- get execution control state
-- enqueue local runtime run
-- cancel local runtime run
-- cancel queued local run
-- pause local queue
-- resume local queue
-- get local run status
-- get local queue status
-- publish control-plane discovery descriptor
-- resolve control-plane id from discovery
-- register runtime instance
-- heartbeat runtime instance
-- publish runtime capacity descriptor
-- remove runtime capacity descriptor
-- get runtime instance
-- list runtime instances
-- mark runtime instance draining
-- unregister runtime instance
-- admit run
-- assign run to runtime instance
-- reserve selected runtime capacity
-- queue globally
-- request scale-out
-- reject run
-
----
-
-## Kubernetes Preparation
-
-This work prepares Kubernetes support by introducing:
-
-- runtime instance identity
-- runtime instance registration
-- runtime instance heartbeat
-- local queue visibility
-- run capacity visibility
-- admission decisions
-- Redis-backed scale-out request persistence
-- scale-out request watcher
-- provider-based scale-out selection
-- local runtime scale-out through the existing provider model
-- fulfilled scale-out run requeue
-- local queue control
-- instance draining
-- stopped/unregistered instances
-- observability hooks
-- structured event model
-
-The next Kubernetes-related pieces can now be built on top:
-
-- Shared Runtime Controller
-- Shared Run Queue
-- Redis-backed Runtime Instance Registry
-- Redis-backed Runtime Instance Capacity Store
-- Redis-backed Control-Plane Discovery Store
-- Control-Plane Id Resolver
-- Redis-backed admission reservation logic
-- Scale-out requested events
-- Redis scale-out request lifecycle
-- Local runtime scale-out execution flow
-- Kubernetes deployment scaler adapter
-- MCP/API control-plane endpoints
-- Live observability export to Kibana / Grafana / OpenSearch
-
----
-
-## Responsibilities by Component
-
-| Component | Responsibility |
-|---|---|
-| Replay ControlPlane | Exposes replay/audit operations. |
-| Execution ControlPlane | Exposes `ExecutionId`-level control. |
-| RuntimeQueue ControlPlane | Exposes local `RunId`/queue-level control. |
-| RuntimeInstance Registry | Tracks runtime instance visibility and heartbeat. |
-| RuntimeInstance ControlPlane | Exposes registry operations to adapters. |
-| RunAdmission Controller | Decides assignment, global queue fallback, scale-out, or rejection. |
-| Background Controller | Owns local queue lifecycle and `RunId` state. |
-| DAG Runtime | Executes durable `ExecutionId` workflows. |
-| Observability Layer | Records control-plane operation events. |
-
----
-
-## What This Does Not Do Yet
-
-The current foundation does not yet provide:
-
-- Kubernetes pod scaling adapter
-- actual Kubernetes scale-out execution
-- Redis command queue dispatch
-- gRPC runtime dispatch
-- distributed shared controller election
-- production dashboard UI
-- production security model for external adapters
-
-These are intentionally left for the next phases.
-
----
-
-## Next Step
-
-The Shared Runtime Controller skeleton is now implemented.
-
-The next step is to continue hardening provider-based runtime instance administration and production multi-process coordination.
-
-Expected next work:
-
-```text
-Provider router hardening
-Status provider capability
-Control provider capability
-Redis command queue provider
-gRPC runtime provider
-Kubernetes metadata provider
-Kubernetes scaling provider
-Production multi-control-plane reservation hardening
-Dashboard/API/MCP operational polish
-```
-
-Future work should preserve the same control-plane boundaries:
-
-- external adapters call control-plane facades
-- shared queue coordinates global work
-- providers deliver work to runtime instances
-- local runtime queues own `RunId`
-- DAG engine owns durable `ExecutionId`.
-
----
-
-
----
-
-## Shared Runtime Controller V1
-
-The Shared Runtime Controller is now implemented as the orchestration layer above admission, shared run persistence, shared queue coordination, local runtime dispatch, queue pumping, background queue consumption, and scale-out request publication.
-
-It receives submitted runs and asks `IAiRunAdmissionController` what should happen next.
-
-The controller currently handles all admission outcomes:
-
-- `AssignToInstance`
-- `QueueGlobally`
-- `RequestScaleOut`
-- `Reject`
-
-For every submitted run, the controller creates a durable shared run record.
-
-This makes admission decisions visible, queryable, auditable, and ready for external adapters such as:
-
-- HTTP API
-- MCP server
-- CLI
-- Dashboard
-- Kubernetes control-plane pod
-
-The shared controller does not execute DAG steps.
-
-It does not directly claim shared queue work.
-
-It does not create Kubernetes pods.
-
-It coordinates runtime-control decisions through focused abstractions.
-
----
-
-## Shared Run Store
-
-The shared run store persists shared run records independently from local runtime queue state.
-
-The shared run store abstraction is:
-
-- `IAiSharedRunStore`
-
-Current implementations:
-
-- `InMemoryAiSharedRunStore`
-- `RedisAiSharedRunStore`
-
-The shared run store supports:
-
-- create shared run
-- get shared run
-- list shared runs
-- cancel shared run
-- mark shared run as dispatched
-
-Redis shared run storage uses:
-
-- one Redis hash per shared run
-- one Redis sorted set index for listing
-- Lua atomic create
-- Lua atomic cancel
-- Lua atomic mark-dispatched
-- Lua script SHA caching
-- automatic NOSCRIPT reload
-
-This allows shared run state to remain consistent under concurrent workers and multiple runtime instances.
-
----
-
-## Shared Queue
-
-The shared queue is the global queue used when admission decides that no current runtime instance can accept a run immediately, but the run should not be rejected.
-
-The shared queue abstraction is:
-
-- `IAiSharedQueue`
-
-Current implementations:
-
-- `InMemoryAiSharedQueue`
-- `RedisAiSharedQueue`
-
-The shared queue supports:
-
-- enqueue pending shared run
-- claim next pending shared run
-- mark claimed item as dispatched
-- requeue claimed item
-- cancel queued item
-- get queue item
-- list queue items
-
-Redis shared queue storage uses:
-
-- one Redis hash per queue item
-- pending sorted set
-- all-items sorted set
-- Lua atomic enqueue
-- Lua atomic claim-next
-- Lua atomic mark-dispatched
-- Lua atomic requeue
-- Lua atomic cancel
-- Lua script SHA caching
-- automatic NOSCRIPT reload
-
-The Redis implementation prevents double dispatch by ensuring only one dispatcher can claim a pending queue item atomically.
-
----
-
-## Runtime Provider Dispatch
-
-The runtime control plane now supports provider-oriented dispatch.
-
-Admission decides which runtime instance should receive a run.
-
-The provider layer decides how to contact that runtime instance.
-
-```text
-Admission
-    ↓
-AssignedRuntimeInstanceId
-    ↓
-Capacity descriptor / provider metadata
-    ↓
-Runtime provider
-    ↓
-Target runtime local queue
-```
-
-Validated provider paths include:
-
-- local runtime provider foundation
-- HTTP runtime provider foundation
-- pooled HTTP runtime hosting
-
-The validated HTTP pooled model is:
-
-```text
-MCP Control Plane
-    ↓
-HTTP Runtime Provider
-    ↓
-RuntimeInstanceOnly HTTP Host
-    ↓
-Local Runtime Instance Pool
-    ↓
-runtime-http-1
-runtime-http-2
-runtime-http-3
-```
-
-The HTTP host identity is transport and hosting infrastructure.
-
-The dispatchable runtime identities are the child runtime instances created by the runtime instance pool.
-
-```text
-HTTP host identity != dispatch target
-runtime-http-* child instance == dispatch target
-```
-
-
-## Shared Runtime Controller Flow
-
-```text
-SubmitRun
-  -> IAiRunAdmissionController
-
-  -> AssignToInstance
-      -> IAiSharedRunStore.CreateAsync(...)
-      -> IAiSharedRunDispatcher.DispatchAsync(...)
-      -> IAiSharedRunStore.MarkDispatchedAsync(...)
-      -> SharedRun.Status = Dispatched
-
-  -> QueueGlobally
-      -> IAiSharedRunStore.CreateAsync(...)
-      -> IAiSharedQueue.EnqueueAsync(...)
-      -> SharedRun.Status = QueuedGlobally
-
-  -> RequestScaleOut
-      -> IAiSharedRunStore.CreateAsync(...)
-      -> IAiRuntimeScaleOutRequestPublisher.PublishAsync(...)
-      -> SharedRun.Status = ScaleOutRequested
-      -> Redis scale-out request persisted
-      -> watcher/provider/scaler fulfill capacity
-      -> fulfilled shared run is requeued
-      -> shared queue pump later dispatches it normally
-
-  -> Reject
-      -> IAiSharedRunStore.CreateAsync(...)
-      -> SharedRun.Status = Rejected
-```
-
-This completes the first shared orchestration layer above local runtime queues.
-
----
-
-## Direct Assigned Run Dispatch
-
-When admission returns `AssignToInstance`, the shared controller dispatches the run directly to the selected runtime instance.
-
-The dispatch abstraction is:
-
-- `IAiSharedRunDispatcher`
-
-Current implementation direction includes provider-capable dispatch for local and HTTP runtime scenarios.
-
-The local dispatcher bridges the shared controller to the local runtime queue through:
-
-- `IAiRuntimeQueueControlPlane`
-
-The HTTP provider dispatches through a runtime HTTP command endpoint and ultimately enqueues into a selected child runtime local queue.
-
-The assigned run dispatch flow is:
-
-```text
-AssignToInstance
-  -> create shared run record
-  -> dispatch through IAiSharedRunDispatcher
-  -> enqueue into local runtime queue control plane
-  -> receive LocalRunId
-  -> receive ExecutionId when available
-  -> mark shared run as Dispatched
-```
-
-This keeps the local queue model intact while making assigned dispatch visible at the shared controller level.
-
----
-
-## Global Shared Queue Dispatch
-
-When admission returns `QueueGlobally`, the shared controller creates a shared run record and enqueues a pending item into the shared queue.
-
-Queued work is later consumed by the shared queue dispatcher.
-
-The shared queue dispatcher abstraction is:
-
-- `IAiSharedQueueDispatcher`
-
-Runtime implementation:
-
-- `AiSharedQueueDispatcher`
-
-The queue dispatch flow is:
-
-```text
-IAiSharedQueueDispatcher
-  -> IAiSharedQueue.ClaimNextAsync(...)
-  -> IAiSharedRunStore.GetAsync(...)
-  -> Dispatch-time admission
-  -> Reserve selected capacity when required
-  -> IAiSharedRunDispatcher.DispatchAsync(...)
-  -> IAiSharedQueue.MarkDispatchedAsync(...)
-  -> IAiSharedRunStore.MarkDispatchedAsync(...)
-```
-
-If the shared run record is missing, the queue item is requeued.
-
-If dispatch fails, the queue item is requeued.
-
-If dispatch succeeds, both the queue item and the shared run record are marked as dispatched.
-
----
-
-## Shared Queue Pump
-
-The shared queue pump runs controlled dispatch cycles over the shared queue.
-
-The pump abstraction is:
-
-- `IAiSharedQueuePump`
-
-Runtime implementation:
-
-- `AiSharedQueuePump`
-
-The pump repeatedly calls `IAiSharedQueueDispatcher.DispatchNextAsync(...)` until:
-
-- maximum dispatch count is reached
-- no pending item is available
-- a dispatch failure occurs and options require stopping
-- cancellation is requested
-
-Pump options include:
-
-- enabled flag
-- maximum dispatches per cycle
-- default claim TTL
-- stop when no item is available
-- stop on dispatch failure
-- worker id
-- source label
-
-The pump does not contain queue claim logic directly.
-
-It coordinates dispatch cycles and delegates actual claim/dispatch behavior to the shared queue dispatcher.
-
----
-
-## Shared Queue Background Service
-
-The shared queue background service continuously runs shared queue pump cycles.
-
-Hosted service:
-
-- `AiSharedQueueBackgroundService`
-
-Options:
-
-- `AiSharedQueueBackgroundServiceOptions`
-
-DI registration extension:
-
-- `AddAiSharedQueueBackgroundService(...)`
-
-The background service is intentionally thin.
-
-It delegates business logic to:
-
-- `IAiSharedQueuePump`
-
-It handles:
-
-- start / stop lifecycle
-- runtime instance id resolution
-- worker id resolution
-- runtime readiness gate before dispatch
-- pump cycle execution
-- idle delay
-- active delay
-- error delay
-- logging
-- cancellation-aware shutdown
-
-Background service flow:
-
-```text
-AiSharedQueueBackgroundService
-  -> IAiSharedQueuePump.PumpOnceAsync(...)
-
-IAiSharedQueuePump
-  -> IAiSharedQueueDispatcher.DispatchNextAsync(...)
-```
-
-This allows runtime instances or MCP/control-plane hosts to automatically consume globally queued work.
-
-The background service should wait for visible runtime capacity before dispatching.
-
-```text
-Background service startup
-  -> resolve control-plane identity
-  -> wait for registry/capacity visibility
-  -> start pump cycles
-```
-
----
-
-## Runtime Scale-Out Lifecycle
-
-When admission returns `RequestScaleOut`, the shared controller now persists a scale-out request instead of only acknowledging it.
-
-Scale-out abstractions:
-
-- `IAiRuntimeScaleOutRequestPublisher`
-- `IAiRuntimeScaleOutRequestStore`
-- `IAiRuntimeScaleOutProviderSelector`
-- `IAiRuntimeScaleOutProvider`
-- `IAiScaleOutFulfilledRunRequeueService`
-
-Request/result models:
-
-- `AiRuntimeScaleOutRequest`
-- `AiRuntimeScaleOutRequestResult`
-- `AiRuntimeScaleOutRequestRecord`
-- `AiRuntimeScaleOutProviderRequest`
-- `AiRuntimeScaleOutProviderResult`
-
-Current validated implementations include:
-
-- `StoreBackedAiRuntimeScaleOutRequestPublisher`
-- `RedisAiRuntimeScaleOutRequestStore`
-- `AiRuntimeScaleOutRequestWatcherHostedService`
-- `AiRuntimeScaleOutProviderSelector`
-- `LocalAiRuntimeInstanceProvider`
-- `AiLocalRuntimeInstanceScaler`
-- `AiScaleOutFulfilledRunRequeueService`
-
-The scale-out provider model reuses the existing runtime instance provider router.
-
-`IAiRuntimeScaleOutProvider` extends `IAiRuntimeInstanceProvider`.
-
-This means scale-out is a provider capability, not a separate routing system.
-
-Provider resolution uses:
-
-```text
-request.ProviderHint
-    -> AiRuntimeInstanceRegistrationOptions.ProviderName
-    -> local
-```
-
-The validated Redis/local scale-out flow is:
-
-```text
-SubmitRun
-  -> IAiRunAdmissionController
-  -> no runtime capacity available
-  -> Decision = RequestScaleOut
-  -> IAiSharedRunStore.CreateAsync(...)
-  -> SharedRun.Status = ScaleOutRequested
-  -> StoreBackedAiRuntimeScaleOutRequestPublisher.PublishAsync(...)
-  -> RedisAiRuntimeScaleOutRequestStore creates pending request
-  -> AiRuntimeScaleOutRequestWatcherHostedService observes pending request
-  -> AiRuntimeScaleOutProviderSelector resolves local provider
-  -> LocalAiRuntimeInstanceProvider requests local scale-out
-  -> AiLocalRuntimeInstanceScaler creates local runtime instance
-  -> runtime instance starts/registers/publishes capacity
-  -> scale-out request is marked Fulfilled
-  -> IAiScaleOutFulfilledRunRequeueService requeues the shared run
-  -> IAiSharedQueuePump claims the requeued run
-  -> dispatch-time admission sees new runtime capacity
-  -> run is dispatched to the newly created local runtime instance
-  -> local runtime creates ExecutionId
-  -> runtime run completes
-```
-
-The watcher intentionally does not dispatch directly.
-
-It only processes the scale-out request and requeues the shared run after fulfillment.
-
-The normal shared queue pump remains responsible for claim, admission, dispatch ownership, and queue item lifecycle.
-
-This keeps scale-out and dispatch responsibilities separated.
-
-## Shared Controller Capabilities
-
-The runtime can now expose or support:
-
-- submit shared run
-- get shared run
-- list shared runs
-- cancel shared run
-- assign run to runtime instance
-- dispatch assigned run locally
-- queue run globally
-- claim globally queued run
-- dispatch globally queued run
-- requeue failed dispatch
-- mark shared run dispatched
-- mark shared queue item dispatched
-- publish scale-out request
-- persist Redis-backed scale-out request
-- observe pending scale-out requests
-- fulfill scale-out through provider-capable local runtime scaler
-- requeue fulfilled scale-out shared runs
-- pump shared queue manually
-- consume shared queue through hosted background service
-- coordinate shared queue dispatch through Redis
-- prevent double dispatch through Redis atomic claim
-
----
-
-## Updated Dependency Injection
-
-The control-plane service registration now also includes:
-
-- `IAiSharedRunStore`
-- `IAiSharedQueue`
-- `IAiSharedRunDispatcher`
-- `IAiSharedQueueDispatcher`
-- `IAiSharedQueuePump`
-- `IAiRuntimeScaleOutRequestPublisher`
-- `IAiRuntimeScaleOutRequestStore`
-- `IAiRuntimeScaleOutProviderSelector`
-- `IAiRuntimeScaleOutProvider`
-- `IAiScaleOutFulfilledRunRequeueService`
-- `IAiLocalRuntimeInstanceScaler`
-- `IAiSharedRuntimeController`
-- `IAiRuntimeInstanceCapacityStore`
-- `IAiControlPlaneDiscoveryStore`
-- `IAiControlPlaneIdResolver`
-- `IAiRuntimeAdmissionReservationStore`
-
-Default implementations:
-
-- `InMemoryAiSharedRunStore`
-- `InMemoryAiSharedQueue`
-- `LocalAiSharedRunDispatcher`
-- `AiSharedQueueDispatcher`
-- `AiSharedQueuePump`
-- `NoopAiRuntimeScaleOutRequestPublisher`
-- `StoreBackedAiRuntimeScaleOutRequestPublisher`
-- `AiRuntimeScaleOutRequestWatcherHostedService`
-- `AiRuntimeScaleOutProviderSelector`
-- `LocalAiRuntimeInstanceProvider`
-- `AiLocalRuntimeInstanceScaler`
-- `AiScaleOutFulfilledRunRequeueService`
-- `AiSharedRuntimeController`
-
-Redis-backed validated implementations include:
-
-- `RedisAiSharedRunStore`
-- `RedisAiSharedQueue`
-- `RedisAiRuntimeInstanceRegistry`
-- `RedisAiRuntimeInstanceCapacityStore`
-- `RedisAiRuntimeAdmissionReservationStore`
-- `RedisAiRuntimeScaleOutRequestStore`
-
-The hosted background service is opt-in through:
-
-- `AddAiSharedQueueBackgroundService(...)`
-
----
-
-## Updated Validated Behavior
-
-The implementation is now validated by unit and integration tests covering:
-
-- shared runtime controller behavior
-- Redis shared runtime controller behavior
-- shared run store behavior
-- Redis shared run store behavior
-- shared queue behavior
-- Redis shared queue behavior
-- direct assigned dispatch
-- local shared run dispatcher
-- shared queue dispatcher
-- Redis shared queue dispatcher
-- Redis atomic claim safety
-- Redis concurrent dispatch safety
-- missing shared run requeue
-- dispatch failure requeue
-- shared queue pump behavior
-- shared queue background service lifecycle
-- scale-out request publisher behavior
-- Redis scale-out request store behavior
-- store-backed scale-out request publisher behavior
-- scale-out request watcher behavior
-- scale-out provider selector behavior
-- local runtime scale-out provider behavior
+- Redis scale-out request persistence
+- scale-out watcher behavior
+- provider-based scale-out selector behavior
 - local runtime instance scaler behavior
 - fulfilled scale-out shared run requeue behavior
-- MCP Redis local scale-out request fulfillment
-- MCP Redis local scale-out requeue, dispatch, execution, and completion
-- DI registrations
-- Redis runtime instance registry cleanup
-- Redis runtime capacity cleanup
-- control-plane discovery resolution
+- scale-out dispatch and execution completion
+- worker-capacity saturation
+
+The purpose of the testing strategy is to validate that the runtime behaves like reliable execution infrastructure, not only like isolated application code.
+
+---
+
+## Testing Philosophy
+
+The runtime testing philosophy is based on one principle:
+
+```text
+If the runtime claims a distributed guarantee, there must be a test proving it.
+```
+
+The tests should validate:
+
+- correctness under normal execution
+- correctness under concurrency
+- correctness under failure
+- correctness under replay
+- correctness under memory pressure
+- correctness under control-plane operations
+- correctness under aggressive distributed scenarios
+
+The tests are not only checking that methods return values.
+
+They are checking that runtime guarantees hold.
+
+---
+
+The current repository contains **more than 1000 test cases** across unit, integration, distributed, replay, observability, control-plane, Redis, MCP, provider-hosting, shared queue, runtime orchestration, HTTP hardening, HTTP scale-out, and tenant-aware runtime isolation scenarios.
+
+This number is important because the runtime is not validated only through happy-path execution.
+
+The test suite is used as proof that the runtime can survive:
+
+- concurrency races
+- worker identity propagation
+- multi-runtime-instance execution
+- Redis Lua atomic transitions
+- replay and snapshot reconstruction
+- control-plane operations
+- runtime queue operations
+- shared queue dispatch
+- queue-first submit mode
+- manual shared queue drain
+- background shared queue pump behavior
+- dispatch-time admission
+- runtime provider-hosting scenarios
 - HTTP pooled runtime dispatch
-- heavy HTTP dispatch across pooled child runtime instances
-- MCP replay/report/ledger/trace scenarios
+- HTTP provider timeout/retry/circuit-breaker behavior
+- HTTP dispatch failure persistence
+- HTTP runtime scale-out provider/provisioner behavior
+- tenant-aware HTTP scale-out and fallback policy behavior
+- Redis discovery/registry/capacity lifecycle
+- Redis admission reservations
+- Redis scale-out request lifecycle
+- local runtime scale-out from zero executable capacity
+- fulfilled-run requeue and pump dispatch
+- worker capacity visibility
+- MCP tool execution
+- shutdown and lifecycle races
+
+The goal is not test volume for its own sake.
+
+The goal is broad evidence that the runtime behaves as reliable execution infrastructure.
 
 ---
 
-## Updated Kubernetes Preparation
+## Why Testing Matters
 
-This work extends Kubernetes preparation by introducing:
+The runtime is not a small helper library.
 
-- shared runtime controller
+It coordinates execution state, distributed workers, Redis Lua transitions, policy-driven decisions, retry, recovery, retention, replay, and control-plane behavior.
+
+A bug in this type of system can cause:
+
+- duplicate step execution
+- lost ownership
+- corrupted terminal state
+- retry storms
+- leaked concurrency leases
+- broken replay
+- unbounded Redis memory growth
+- cancelled executions finishing as completed
+- workers advancing work while paused
+- non-deterministic convergence
+
+Testing is therefore part of the architecture.
+
+It is the proof layer for the runtime guarantees.
+
+---
+
+## What Must Be Proven
+
+The runtime should continuously prove answers to the enterprise questions:
+
+| Enterprise Question | Test Evidence Required |
+|---|---|
+| What happens if a worker crashes? | Recovery tests for stale running steps. |
+| How do you prevent duplicate executions? | Atomic claim and claim-token tests. |
+| How do you replay a workflow? | Snapshot restore and deterministic replay tests. |
+| How do you audit an AI decision? | Observability, trace, policy, and future ledger tests. |
+| How do you limit concurrency? | Redis gate and throttling tests. |
+| How do you pause/resume/cancel safely? | Execution control state tests. |
+| How do you control human-in-the-loop? | Waiting-for-input and submit-input tests. |
+| How do you keep memory/state bounded? | Retention, compaction, eviction, resolver tests. |
+| How do you coordinate multiple runtime instances? | Distributed worker/runtime instance tests. |
+| How do you prove deterministic convergence? | Fingerprint and convergence validation tests. |
+
+---
+
+## Test Categories
+
+The test suite should be organized around runtime guarantees.
+
+Main categories include:
+
+- DAG execution tests
+- distributed execution tests
+- multi-runtime-instance tests
+- retry and recovery tests
+- retention and compaction tests
+- distributed concurrency and throttling tests
+- execution control state tests
+- runtime queue control tests
+- replay and snapshot tests
+- observability and tracing tests
+- policy engine tests
+- config-driven runtime tests
+- RAG pipeline tests
+- deterministic convergence tests
+- stress and chaos tests
+- MCP control-plane integration tests
+- shared queue pump/manual drain tests
+- provider-based runtime hosting tests
+- HTTP pooled runtime provider tests
+- HTTP runtime provider hardening tests
+- HTTP runtime scale-out provider tests
+- tenant-aware HTTP scale-out scenario tests
+- Redis discovery and control-plane id resolver tests
+- Redis runtime registry and capacity cleanup tests
+- Redis admission reservation tests
+- Redis scale-out request store tests
+- scale-out watcher tests
+- scale-out provider selector tests
+- local runtime scaler tests
+- fulfilled scale-out run requeue tests
+- MCP Redis local scale-out execution tests
+- runtime worker capacity tests
+
+---
+
+## Unit Tests
+
+Unit tests validate isolated logic.
+
+They are useful for:
+
+- configuration parsing
+- policy resolution
+- retry decision computation
+- retention decision computation
+- concurrency definition merging
+- input binding resolution
+- step executor behavior
+- helper classes
+- validation logic
+
+Unit tests should be fast and deterministic.
+
+They should not depend on Redis, MongoDB, or distributed timing.
+
+---
+
+## Integration Tests
+
+Integration tests validate actual runtime behavior across components.
+
+They are essential because many runtime guarantees only exist when components work together.
+
+Integration tests should cover:
+
+- Redis DAG store behavior
+- MongoDB payload persistence
+- Redis Lua transitions
+- retry state persistence
+- retention and resolver interaction
+- replay from snapshots
+- background controller behavior
+- distributed concurrency gate behavior
+- execution control state behavior
+- queue control behavior
+
+Integration tests provide stronger evidence than isolated unit tests.
+
+---
+## Control-Plane Tests
+
+Control-plane tests validate that external runtime operations are exposed through safe adapter-neutral abstractions.
+
+They should cover:
+
+- replay control-plane operations
+- execution control-plane operations
+- runtime queue control-plane operations
+- runtime instance registry operations
+- runtime instance capacity store operations
+- control-plane discovery store operations
+- control-plane id resolver operations
+- runtime instance control-plane operations
+- run admission decisions
+- admission reservation behavior
+- shared runtime controller behavior
 - shared run persistence
-- Redis-backed shared run store
-- Redis-backed shared queue
-- atomic shared queue claim
-- dispatch ownership
-- queue pump
-- background queue consumption
-- scale-out request publisher abstraction
-- Redis-backed scale-out request persistence
-- scale-out request watcher
-- provider-based scale-out selection
-- local runtime scale-out provider capability
-- local runtime instance scaler
+- shared queue coordination
+- queue pump behavior
+- scale-out request publication
+- Redis scale-out request persistence
+- scale-out watcher processing
+- scale-out provider selector resolution
+- HTTP scale-out provider selector resolution
+- HTTP scale-out provisioner behavior
+- local runtime scale-out provider behavior
 - fulfilled scale-out shared run requeue
-- runtime instance compatible dispatch path
+- provider model preparation
+- control-plane observability
+
+Control-plane tests are especially important because they prove that runtime operations can be controlled without exposing or mutating internal runtime engine state directly.
+
+---
+
+
+## Redis Lua Transition Tests
+
+Redis Lua scripts protect critical distributed transitions.
+
+Tests should validate:
+
+- only one worker can claim a step
+- stale claim tokens are rejected
+- completion requires valid ownership
+- failure requires valid ownership
+- retry scheduling is atomic
+- stale running steps can be recovered
+- retry-ready steps are claimed only after `NextRetryAtUtc`
+- terminal finalization is idempotent
+- concurrency gate admission is atomic
+- expired leases are cleaned safely
+
+Redis Lua tests are critical because they validate the distributed safety boundary.
+
+---
+
+## DAG Execution Tests
+
+DAG tests should validate:
+
+- dependency ordering
+- parallel eligibility
+- step readiness
+- terminal convergence
+- failed step handling
+- completed step preservation
+- dependency-safe execution
+- deterministic final state
+
+Example assertions:
+
+```text
+Step B cannot run before Step A if B depends on A.
+Independent steps can run in parallel.
+Execution completes only when all required steps are completed.
+Execution fails when a non-retryable required step fails.
+```
+
+---
+
+## Distributed Worker Tests
+
+Distributed worker tests should validate execution under multiple workers.
+
+They should prove:
+
+- multiple workers can safely process the same execution
+- steps are not duplicated
+- ownership remains atomic
+- workers can race safely
+- retry-ready steps are claimed safely
+- stale workers cannot overwrite state
+- the final result converges
+- terminal lifecycle is idempotent
+
+These tests should simulate real distributed conditions rather than only sequential execution.
+
+---
+
+## Multi-Runtime-Instance Tests
+
+Multi-runtime-instance tests validate that more than one runtime instance can participate safely.
+
+They should check:
+
+- runtime instance identity is separated from execution identity
+- multiple runtime instances do not corrupt shared state
+- workers coordinate through Redis
+- terminal finalization remains safe
+- retention and replay remain compatible
+- convergence remains deterministic
+- one `ExecutionId` can be advanced safely by distributed workers when configured for distributed execution
+- isolated executions remain isolated when each run has a unique `ExecutionId`
+
+This area is important for future Kubernetes and enterprise demo scenarios.
+
+---
+
+## Runtime Registry and Capacity Descriptor Tests
+
+Runtime registry and capacity descriptor tests validate runtime instance visibility.
+
+They should cover:
+
+- runtime instance registration
+- runtime instance heartbeat
+- runtime instance unregister
+- runtime role separation
+- control-plane role visibility
+- runtime role eligibility
+- Redis-backed runtime instance registry behavior
+- Redis-backed runtime instance registry cleanup
+- control-plane discovery descriptor publication
+- control-plane id resolver behavior
+- runtime capacity descriptor publication
+- runtime capacity descriptor heartbeat updates
+- runtime capacity descriptor removal on unregister
+- runtime capacity descriptor removal during shutdown
+- cleanup without late rediscovery dependency
+- worker count publication
+- active worker count publication
+- available worker count publication
+- max local workers per execution publication
+- max run slot publication
+- available run slot publication
+- queue pressure publication
+- paused queue visibility
+- worker-aware `CanAcceptRun` correctness
+- stale or stopped runtime visibility
+
+Important assertions:
+
+```text
+A control-plane registration must not be treated as a dispatchable runtime instance.
+
+A runtime instance must publish run capacity and worker capacity during registration and heartbeat.
+
+CapacityStore resolution must not register duplicate stores.
+
+Unregister must remove or stop the corresponding capacity descriptor.
+
+Admission should use capacity descriptors and reservation state as primary scheduling inputs in provider-based dispatch scenarios.
+
+Runtime unregister and capacity removal should not depend on rediscovery after the runtime instance has already registered or published capacity.
+```
+
+---
+
+
+## Shared Queue Pump and Queue-First Tests
+
+Shared queue pump tests validate the control-plane path above local runtime queues.
+
+They should cover:
+
+- queue-first shared run submission
+- shared run remains `QueuedGlobally` before dispatch
+- shared queue item remains `Pending` before dispatch
+- background pump dispatch
+- background pump readiness gate
+- manual drain dispatch
+- manual drain while background pump is disabled
+- local runtime dispatch after manual drain
+- HTTP runtime dispatch after manual drain
+- HTTP pooled runtime dispatch after manual drain
+- HTTP pooled runtime dispatch through background pump
+- no automatic dispatch when the hosted pump is disabled
+- queue item marked `Dispatched` only after successful dispatch
+- shared run marked `Dispatched` only after successful dispatch
+- dispatch failure requeues correctly
+- missing shared run requeues correctly
+- pump stops when no item is available
+- pump respects max dispatches per cycle
+- pump waits for visible runtime capacity before automatic dispatch
+
+Important assertions:
+
+```text
+QueueFirst submit must create a shared run and queue item without creating a local RunId.
+
+Manual drain must work when AiSharedQueuePump is enabled even if the background hosted pump is disabled.
+
+A shared queue item must not become Dispatched unless runtime dispatch succeeds.
+
+The background pump must not dispatch before at least one runtime instance is visible, ready, and capacity-published.
+
+A failed dispatch must requeue the shared queue item and preserve the shared run as QueuedGlobally.
+```
+
+---
+
+## Scale-Out Request Lifecycle Tests
+
+Scale-out tests validate the path from admission requesting capacity to the original shared run being executed after capacity is created.
+
+They should cover:
+
+- scale-out request publication when admission returns `RequestScaleOut`
+- store-backed scale-out request publisher behavior
+- Redis-backed scale-out request persistence
+- pending request listing by control-plane id
+- request observed transition
+- request fulfilled transition
+- request rejected transition
+- provider failure handling
+- provider rejection handling
+- provider hint propagation
+- control-plane id propagation
+- shared run id propagation
 - metadata propagation
-- source / requestedBy / reason / correlation propagation
+- watcher id propagation
+- idempotent request observation
+- scale-out provider selector resolution
+- local provider scale-out capability
+- local runtime instance scaler behavior
+- fulfilled scale-out shared run requeue
+- shared queue pump dispatch after scale-out fulfillment
+- runtime execution completion after dynamic capacity creation
+- HTTP provider scale-out request fulfillment
+- HTTP provider metadata/capacity publication
+- tenant-aware HTTP Dedicated no-shared-fallback behavior
+- tenant-aware HTTP Hybrid shared-fallback behavior
 
-The local scale-out lifecycle is now validated end-to-end.
-
-This is not Kubernetes pod scaling yet, but it proves the full control-plane shape required by a future Kubernetes scaler:
+Important assertions:
 
 ```text
-0 visible runtime capacity
-  -> RequestScaleOut
-  -> persisted scale-out request
-  -> watcher fulfills capacity
-  -> shared run requeued
-  -> pump dispatches
-  -> runtime executes
-  -> completed
+A run submitted with DirectDispatch and no runtime capacity should become ScaleOutRequested when scale-out is enabled.
+
+A Redis scale-out request should be persisted with the expected RequestId, SharedRunId, ControlPlaneId, ProviderHint, and metadata.
+
+The watcher should mark a request observed before calling the provider.
+
+The selector should resolve the provider using:
+    request.ProviderHint
+    -> AiRuntimeInstanceRegistrationOptions.ProviderName
+    -> local
+
+Local scale-out should create/register/start a runtime instance.
+
+A fulfilled scale-out request should not dispatch directly from the watcher.
+
+A fulfilled scale-out request should requeue the original shared run.
+
+HTTP scale-out fulfillment should publish registry/capacity metadata through the HTTP provisioner and mark the request fulfilled without bypassing the normal shared queue lifecycle.
+
+A Dedicated tenant scale-out request must create or expose only dedicated tenant-visible HTTP capacity and must not silently fall back to shared HTTP capacity when fallback is disabled.
+
+A Hybrid tenant with shared fallback enabled may use existing shared HTTP capacity when policy allows it.
+
+The shared queue pump should claim the requeued item and perform dispatch-time admission.
+
+After the new runtime instance publishes capacity, admission should select it.
+
+The runtime provider should dispatch into the new instance local queue.
+
+The local run should expose a LocalRunId and eventually an ExecutionId.
+
+The runtime run should reach a terminal completed status.
 ```
 
-The next Kubernetes-related pieces can now be built on top:
-
-- runtime instance heartbeat TTL / expiration
-- runtime instance health visibility
-- remote runtime dispatcher
-- HTTP runtime dispatch adapter hardening
-- gRPC runtime dispatch adapter
-- Kubernetes scale-out adapter
-- Kubernetes pod / deployment scaler
-- dashboard / API / MCP control-plane endpoints
-- real-time logs and observability export
-
----
-
-## Updated What This Does Not Do Yet
-
-The current foundation still does not yet provide:
-
-- Kubernetes pod creation
-- Redis command queue runtime dispatch
-- gRPC runtime dispatch
-- Kubernetes pod/deployment scaling
-- dashboard UI
-- HTTP API controller implementation
-- distributed shared controller election
-- production multi-control-plane leader election
-
-These remain intentionally left for the next phases.
-
----
-
-## Updated Next Step
-
-The Shared Runtime Controller V1 and Redis/local scale-out execution flow are now complete.
-
-The distributed runtime instance layer now has a validated foundation for:
-
-- shared admission
-- Redis-backed queue coordination
-- provider-based dispatch
-- provider-based local scale-out
-- fulfilled scale-out run requeue
-- end-to-end execution after dynamic capacity creation
-
-Expected next work:
-
-- heartbeat TTL / expiration hardening
-- runtime instance health self-healing
-- Redis command queue provider
-- gRPC dispatch adapter
-- provider status/control capabilities
-- Kubernetes scaler adapter
-- Kubernetes pod/deployment scaler
-- control-plane API endpoints
-- Kibana / Grafana / OpenSearch observability export
-- Kubernetes production demo
-
-
-## Current Validated Evidence
-
-The current runtime control-plane foundation has been validated with:
+Validated end-to-end evidence:
 
 ```text
-HTTP pooled QueueFirst dispatch:
-    Runs = 50
-    StepsPerRun = 100
-    RuntimeInstances = runtime-http-1, runtime-http-2, runtime-http-3
-    RedisAiSharedRunStore = validated
-    RedisAiSharedQueue = validated
-    RedisAiRuntimeAdmissionReservationStore = validated
-```
-
-Replay/control-plane evidence:
-
-```text
-Replay = Success
-Replay report = Success
-Ledger = Success
-Trace = Available
-ReplayValid = True
-FingerprintMatches = True
-IssueCount = 0
-```
-
-Runtime lifecycle evidence:
-
-```text
-Redis runtime registry = validated
-Redis runtime capacity store = validated
-Control-plane discovery = validated
-Runtime-only host identity resolution = validated
-Shutdown cleanup without late rediscovery dependency = validated
-```
-
-
-Redis/local scale-out evidence:
-
-```text
-MCP submit = validated
-Initial runtime capacity = 0
-Admission decision = RequestScaleOut
-SharedRunStatus = ScaleOutRequested -> Dispatched
-ScaleOutRequestStatus = Fulfilled
-ScaleOutRuntimeInstanceId = host-*:mcp-scaleout-runtime-1
+Initial ActiveLocalInstances = 0
+Admission = RequestScaleOut
+SharedRun.Status = ScaleOutRequested
+ScaleOutRequest.Status = Fulfilled
+ScaleOutRuntimeInstanceId = host-...:mcp-scaleout-runtime-1
+ActiveLocalInstances = 1
+SharedRun.Status = Dispatched
 QueueStatus = Dispatched
 LocalRunId = available
 ExecutionId = available
 RuntimeRunStatus = completed
-ActiveLocalInstances = 1
 ```
 
-Validated scenario:
+Primary MCP integration scenario:
 
 ```text
 ControlPlaneWithLocalRuntimeInstances_With_No_Runtime_Capacity_Should_ScaleOut_Requeue_Dispatch_And_Execute_Run
 ```
 
+This scenario proves that the local scale-out control loop works before replacing the local scaler with a Kubernetes scaler.
+
+Validated HTTP scale-out evidence:
+
+```text
+ProviderHint = http
+ScaleOutRequest.Status = Pending -> Observed -> Fulfilled
+HTTP provider implements IAiRuntimeScaleOutProvider
+IAiHttpRuntimeScaleOutProvisioner registers runtime metadata
+Redis runtime registry = HTTP provider metadata published
+Redis runtime capacity store = HTTP transport metadata published
+Dedicated tenant = no shared HTTP fallback when disabled
+Hybrid tenant = shared HTTP fallback when enabled
+```
+
+Primary HTTP integration scenarios:
+
+```text
+ControlPlaneWithHttpRuntimeInstances_With_No_Runtime_Capacity_Should_Fulfill_Redis_ScaleOut_Request_Using_Http_Provider
+ControlPlaneWithHttpRuntimeInstances_With_Dedicated_Tenant_Should_Fulfill_Tenant_Aware_Redis_ScaleOut_Request_Using_Http_Provider
+ControlPlaneWithHttpRuntimeInstances_With_Hybrid_Tenant_Should_Fulfill_Tenant_Aware_Redis_ScaleOut_Request_Using_Http_Provider
+ControlPlaneWithHttpRuntimeInstances_With_Dedicated_Tenant_Should_Not_Fallback_To_Shared_Http_Runtime_When_Available
+ControlPlaneWithHttpRuntimeInstances_With_Hybrid_Tenant_Should_Fallback_To_Shared_Http_Runtime_When_Available
+```
+
+These scenarios validate the HTTP control-plane scale-out loop. The current HTTP provisioner materializes registry/capacity metadata and does not yet start a real external runtime process. The production direction is a Remote MCP Runtime Host Manager plus readiness waiter.
+
+---
+
+## Dispatch-Time Admission Tests
+
+Shared queue dispatch now re-evaluates admission at drain time.
+
+Tests should prove:
+
+- pump identity is not automatically the assigned runtime identity
+- `PumpRuntimeInstanceId` identifies who is draining
+- `AssignedRuntimeInstanceId` identifies who receives the run
+- admission can select a different runtime instance during drain
+- fake admission can deterministically assign a runtime target for tests
+- multi-instance pump tests remain deterministic when each pump injects its own assigned target
+- no-double-dispatch behavior still holds after dispatch-time admission
+
+Important assertions:
+
+```text
+PumpRuntimeInstanceId must not be treated as the dispatch target by default.
+
+Dispatch target must come from admission.
+
+Tests that expect pump-local dispatch must explicitly configure admission to assign the pump runtime instance.
+```
+
+---
+
+## Runtime Provider Hosting Tests
+
+Provider-hosting tests validate that control-plane and runtime-instance responsibilities can be separated.
+
+They should cover:
+
+- local runtime instance provider flow
+- HTTP runtime provider flow
+- HTTP pooled runtime provider flow
+- `RuntimeInstanceOnly` host mode
+- `ControlPlaneWithLocalRuntimeInstances` host mode
+- `ControlPlaneWithHttpRuntimeInstances` host mode
+- runtime instance registration with provider metadata
+- control-plane discovery resolution before runtime-only registration
+- provider metadata propagation
+- dispatch through selected runtime instance provider path
+- dispatch to pooled `runtime-http-*` child runtime instances
+- queue-first run completion through local provider
+- queue-first run completion through HTTP provider
+- pump disabled / manual drain behavior with provider-hosted runtime instances
+- local provider scale-out capability
+- local runtime scaler creation path
+- provider-based scale-out selector behavior
+- scale-out request fulfilled/rejected behavior
+
+Important assertions:
+
+```text
+The selected runtime provider must deliver the run into the target runtime instance local queue.
+
+The control-plane host must not execute DAG steps directly when operating as a control-plane-only participant.
+
+Provider-hosted runtime instances must expose local RunId and ExecutionId after dispatch.
+
+For HTTP pooled runtime scenarios, assertions should target the assigned child runtime instance, such as `runtime-http-1`, `runtime-http-2`, or `runtime-http-3`, not the parent HTTP transport host identity.
+```
+
+---
+
+## HTTP Pooled Runtime Provider Tests
+
+HTTP pooled runtime provider tests validate the current production-oriented provider hosting model.
+
+They should cover:
+
+- `ControlPlaneWithHttpRuntimeInstances`
+- `RuntimeInstanceOnly` HTTP host
+- internal local runtime instance pool
+- child runtime identities using the `runtime-http-*` prefix
+- provider metadata for HTTP transport
+- dispatch to assigned child runtime instance
+- local run status through HTTP provider
+- execution id visibility after execution starts
+- queue-first submit with manual drain
+- queue-first submit with background pump
+- long-running execution pause/resume through HTTP provider
+- long-running execution cancellation through HTTP provider
+- runtime queue cancellation routing to the assigned child runtime instance
+- larger pipelines through HTTP provider
+- multiple submitted runs distributed across pooled child runtimes
+
+Important assertions:
+
+```text
+The HTTP host is transport and hosting infrastructure.
+
+The child runtime instances are the dispatch targets.
+
+AssignedRuntimeInstanceId should point to a pooled runtime-http-* child instance.
+
+The provider must route status, queue control, and cancellation to the assigned child runtime instance.
+```
+
+## HTTP Runtime Provider Hardening Tests
+
+HTTP runtime provider hardening tests validate that dispatch failures are bounded, observable, persisted, and safe to retry when appropriate.
+
+They should cover:
+
+- dispatch timeout behavior
+- retry-on-transient-failure behavior
+- retry exhaustion behavior
+- non-retryable HTTP 4xx behavior
+- invalid response behavior
+- provider unavailable behavior
+- circuit breaker open behavior
+- cancellation behavior
+- exception handling behavior
+- structured failure reason mapping
+- shared run dispatch failure persistence
+- queue requeue behavior after provider dispatch failure
+- options binding for timeout, retry, and circuit breaker settings
+
+Important assertions:
+
+```text
+A timeout should return http-dispatch-timeout.
+
+A provider unavailable case should return http-provider-unavailable.
+
+A non-retryable HTTP error should return http-command-non-retryable.
+
+A retryable HTTP error should retry according to configured options.
+
+A circuit-open dispatch should return http-circuit-open without attempting the command again.
+
+A dispatch failure should be persisted through the shared run store.
+
+The shared queue dispatcher should not mark a queue item dispatched when HTTP dispatch fails.
+```
+
+These tests prove that HTTP provider dispatch failure is a controlled runtime outcome, not an unstructured transport exception.
+
+## HTTP Runtime Scale-Out Provider Tests
+
+HTTP runtime scale-out provider tests validate that the HTTP provider participates in the same scale-out capability model as local and future Kubernetes providers.
+
+They should cover:
+
+- `HttpAiRuntimeInstanceProvider` implementing `IAiRuntimeScaleOutProvider`
+- no-provisioner rejection behavior
+- `IAiHttpRuntimeScaleOutProvisioner` registration through DI
+- `AiHttpRuntimeScaleOutOptions` binding
+- HTTP provider selector resolution from `ProviderHint = http`
+- provider request propagation to the HTTP provisioner
+- runtime id prefix propagation
+- worker count propagation
+- max concurrent run slot propagation
+- local queue capacity propagation
+- tenant id propagation
+- tenant group id propagation
+- isolation mode propagation
+- shared fallback flags propagation
+- runtime registry metadata publication
+- runtime capacity metadata publication
+- fulfilled request status transition
+- rejected request status transition when provisioner fails
+- current metadata-only provisioner behavior
+- future Remote MCP Runtime Host Manager direction
+
+Important assertions:
+
+```text
+ProviderHint = http should resolve the HTTP provider through AiRuntimeScaleOutProviderSelector.
+
+HTTP scale-out should preserve TenantId, TenantGroupId, IsolationMode, RuntimeInstanceIdPrefix, WorkerCountPerInstance, MaxConcurrentRunsPerInstance, LocalQueueCapacity, and MaxRuntimeInstances.
+
+The HTTP provisioner should publish registry and capacity descriptors with provider.name = http and HTTP transport metadata.
+
+The HTTP watcher path should mark the Redis scale-out request Fulfilled only after the provider returns success.
+
+The current HTTP provisioner validates the control-plane convergence path but does not start a real remote runtime process yet.
+```
+
+## Tenant-Aware HTTP Scale-Out Scenario Tests
+
+Tenant-aware HTTP scale-out scenario tests validate that HTTP capacity follows the same Shared, Dedicated, and Hybrid rules as local scale-out.
+
+They should cover:
+
+- shared/default HTTP scale-out request fulfillment
+- Dedicated tenant HTTP scale-out request fulfillment
+- Hybrid tenant HTTP scale-out request fulfillment
+- Dedicated tenant visibility through Redis registry and capacity stores
+- Hybrid tenant visibility through Redis registry and capacity stores
+- Dedicated tenant no shared HTTP fallback when fallback is disabled
+- Hybrid tenant shared HTTP fallback when fallback is enabled
+- tenant-aware request fields preserved by Redis scale-out request store
+- tenant-aware request fields preserved by in-memory scale-out request store
+- tenant-aware request fields passed from watcher to provider
+- tenant-aware metadata published by HTTP provisioner
+
+Important assertions:
+
+```text
+A Dedicated tenant must not silently consume shared HTTP runtime capacity when AllowSharedFallback = false.
+
+A Hybrid tenant may consume shared HTTP runtime capacity when AllowSharedFallback = true.
+
+Tenant-aware registry and capacity listing should require an execution context snapshot for tenant-specific visibility checks.
+
+Scale-out request stores must preserve tenant runtime settings when cloning, reading, listing, or passing requests to the watcher.
+```
+
+These tests prevent regressions where HTTP scale-out becomes best-effort multi-tenancy instead of explicit policy-driven isolation.
+
+## Heavy HTTP Dispatch Tests
+
+Heavy HTTP dispatch tests validate Redis-backed shared coordination under pressure.
+
+They should cover:
+
+- Redis shared run store usage
+- Redis shared queue usage
+- Redis admission reservation store usage
+- queue-first submit mode
+- manual or background queue drain
+- 50 shared runs
+- 100 steps per run
+- 3 pooled HTTP runtime child instances
+- multi-runtime distribution
+- assigned runtime identity visibility
+- no duplicate dispatch
+- completion or dispatch success depending on scenario scope
+
+Important evidence:
+
+```text
+Runs = 50
+StepsPerRun = 100
+RuntimeInstances = runtime-http-1, runtime-http-2, runtime-http-3
+RedisAiSharedRunStore = validated
+RedisAiSharedQueue = validated
+RedisAiRuntimeAdmissionReservationStore = validated
+```
+
+The distribution does not need to be perfectly even.
+
+The important guarantee is that work is distributed across valid child runtime instances and does not collapse onto a deprecated single-runtime fixture model.
+
+## Redis Discovery, Registry, Capacity, and Reservation Tests
+
+Redis lifecycle tests validate the runtime visibility and shutdown safety layer.
+
+They should cover:
+
+- Redis control-plane discovery descriptor publication
+- control-plane id resolver behavior
+- runtime-only hosts resolving MCP/control-plane identity before registration
+- Redis runtime instance registry registration
+- Redis runtime instance heartbeat
+- Redis runtime instance listing
+- Redis runtime instance draining
+- Redis runtime instance unregister
+- Redis runtime capacity descriptor publication
+- Redis runtime capacity descriptor listing
+- Redis runtime capacity descriptor cleanup
+- Redis admission reservation create/check/release/expiry behavior
+- cleanup using known resolved control-plane id
+- cleanup without late rediscovery dependency
+
+Important assertions:
+
+```text
+Runtime-only hosts must register under the MCP-published control-plane id.
+
+Registry unregister must not require rediscovery during shutdown.
+
+Capacity descriptor removal must not require rediscovery during shutdown.
+
+Disposed logging, Redis, or discovery dependencies must not fail otherwise successful tests during teardown.
+```
+
+
+## Runtime Worker Capacity Tests
+
+Runtime worker capacity tests validate the worker-aware queue state and runtime instance visibility.
+
+They should cover:
+
+- `WorkerCount` publication
+- `ActiveWorkerCount` publication
+- `AvailableWorkerCount` publication
+- `MaxLocalWorkersPerExecution` publication
+- worker-aware `CanAcceptRun`
+- saturation when all workers are reserved
+- runtime instance list exposes worker capacity fields
+- capacity descriptor uses real queue state values
+- runtime registry heartbeat preserves worker capacity fields
+- Redis registry preserves worker capacity fields
+- in-memory registry preserves worker capacity fields
+
+Important assertions:
+
+```text
+A runtime instance with no available workers should report CanAcceptRun = false when the published queue/capacity snapshot represents true worker saturation.
+
+MaxLocalWorkersPerExecution should cap the number of local workers used by one execution.
+
+Worker capacity values should flow from local queue state to runtime instance snapshots.
+
+Distributed worker participation tests must explicitly configure MaxLocalWorkersPerExecution when they expect all configured workers to participate.
+
+Tests that assert worker saturation must keep the execution active long enough for capacity publication and MCP/runtime instance listing to observe the saturated state.
+```
+
+---
+
+## Retry Tests
+
+Retry tests should validate:
+
+- `config.retry` resolution
+- retry policy execution
+- legacy string retry policies
+- structured retry policy objects
+- retry count increments
+- max retry exhaustion
+- retry delay calculation
+- `WaitingForRetry` state
+- retry-ready claim behavior
+- retry after failure
+- retry success after previous failure
+- retry failure after max retries
+
+Retry tests should also prove that hidden local retry loops are not required.
+
+Retry is runtime state.
+
+---
+
+## Recovery Tests
+
+Recovery tests should validate worker crash behavior.
+
+They should prove:
+
+- a stale running step can return to `Ready`
+- recovery does not consume retry budget
+- another worker can claim recovered work
+- stale worker completion is rejected
+- claim token mismatch protects state
+- recovery works under distributed execution
+
+Recovery tests are different from retry tests.
+
+Retry means logic failed.
+
+Recovery means ownership was abandoned.
+
+---
+
+## Retention and Compaction Tests
+
+Retention tests should prove that hot state can be reduced without breaking execution.
+
+They should cover:
+
+- retention trigger evaluation
+- `config.retention` policy resolution
+- policy-driven retention decisions
+- compaction
+- eviction
+- hybrid retention
+- payload externalization
+- resolver rehydration
+- archive-backed reconstruction
+- completed step accessibility after retention
+- terminal lifecycle compatibility
+- replay compatibility foundations
+
+The most important retention guarantee is:
+
+```text
+Retention must reduce hot state without making required data inaccessible.
+```
+
+---
+
+## Replay and Snapshot Tests
+
+Replay tests should validate:
+
+- terminal snapshot persistence
+- snapshot normalization
+- replay when live state already exists
+- replay after live state deletion
+- restored DAG state
+- restored terminal status
+- deterministic fingerprint comparison
+- retry-count preservation
+- replay compatibility with retention
+- replay compatibility with externalized payloads
+
+A key replay assertion is:
+
+```text
+Original terminal execution fingerprint
+=
+Restored execution fingerprint
+```
+
+Replay tests should not only verify that restore returns success.
+
+They should verify that the restored execution represents the same terminal result.
+
+---
+
+## Execution Control State Tests
+
+Execution control tests should validate `ExecutionId`-level control.
+
+They should cover:
+
+- durable Redis control state
+- optimistic Redis version updates
+- pause execution
+- resume execution
+- cancel execution
+- claim blocking while paused
+- claim blocking while waiting for input
+- claim blocking while cancelling
+- waiting for human input
+- submitting human input
+- `Pausing -> Paused`
+- `Resuming -> Running`
+- cancellation finalization override
+
+Important assertion:
+
+```text
+If cancellation is requested before terminal finalization,
+final execution status must be Cancelled even if the DAG naturally completes.
+```
+
+---
+
+## Runtime Queue Control Tests
+
+Queue control tests should validate `RunId`-level behavior.
+
+They should cover:
+
+- queue pause
+- queue resume
+- queued run cancellation
+- unknown queued run cancellation
+- running run cancellation bridge
+- hot enqueue while controller is running
+- hot enqueue while queue is paused
+- queued run completion task behavior
+- controller shutdown cancellation for queued runs
+- `RunId` / `ExecutionId` separation
+- runtime queue state visibility
+- worker capacity visibility
+- worker-aware `CanAcceptRun`
+- max local workers per execution saturation
+
+Important assertions:
+
+```text
+Cancelled queued run has no ExecutionId.
+Running run cancellation delegates to ExecutionId control.
+RunId must not be treated as ExecutionId.
+Cancelled queued run must complete its completion task.
+```
+
+---
+
+## MCP Control-Plane Tests
+
+MCP tests validate that the runtime can be operated through an external control-plane adapter.
+
+These tests are important because the MCP server is not only a demo surface.
+
+It proves that runtime operations can be exposed safely outside the engine through tool-based control-plane commands.
+
+MCP tests should validate:
+
+- MCP host startup
+- MCP control-plane service registration
+- MCP host mode configuration
+- `ControlPlaneOnly` behavior
+- `ControlPlaneWithLocalRuntimeInstances` behavior
+- `RuntimeInstanceOnly` preparation
+- `ControlPlaneWithHttpRuntimeInstances` behavior
+- HTTP pooled runtime child instance dispatch
+- runtime role separation
+- control-plane host not selected as executable runtime
+- local runtime instance pool startup
+- runtime instance registration and heartbeat
+- Redis-backed runtime registry visibility
+- Redis-backed runtime capacity descriptor publication
+- Redis control-plane discovery descriptor publication
+- control-plane id resolver behavior
+- Redis admission reservation usage
+- Redis scale-out request persistence
+- scale-out watcher behavior
+- provider-based scale-out selector resolution
+- local runtime scaler behavior
+- fulfilled scale-out run requeue
+- shared run submission through MCP tools
+- shared run listing through MCP tools
+- shared queue drain through MCP tools
+- queue-first submit through MCP tools
+- manual queue drain while background pump is disabled
+- local provider queue-first dispatch through MCP
+- HTTP provider queue-first dispatch through MCP
+- HTTP pooled runtime dispatch to `runtime-http-*` child instances through MCP
+- HTTP scale-out request fulfillment through MCP/control-plane scenarios
+- tenant-aware Dedicated HTTP scale-out through MCP/control-plane scenarios
+- tenant-aware Hybrid HTTP scale-out and shared fallback through MCP/control-plane scenarios
+- local scale-out dispatch to `mcp-scaleout-runtime-*` runtime instances through MCP
+- runtime execution completion after scale-out
+- runtime worker capacity visibility through MCP
+- runtime queue run-status polling through MCP tools
+- replay execution through MCP tools
+- replay report retrieval through MCP tools
+- observability ledger retrieval through MCP tools
+- observability trace retrieval through MCP tools
+- execution control operations through MCP tools
+- local runtime queue control through MCP tools
+- idempotent runtime unregister during MCP host shutdown
+- idempotent capacity descriptor cleanup during MCP/runtime host shutdown
+- idempotent local runtime pool shutdown during MCP host shutdown
+- shutdown cleanup without late rediscovery dependency
+
+The MCP test suite validates the control-plane path:
+
+```text
+MCP Tool Call
+    ↓
+MCP Server
+    ↓
+Runtime Control Plane
+    ↓
+Shared Runtime Controller
+    ↓
+Admission
+    ↓
+Runtime Instance Dispatch
+    ↓
+Local Runtime Queue
+    ↓
+Workers
+    ↓
+DAG Execution Engine
+```
+
+Important MCP assertions include:
+
+```text
+The MCP control-plane host must not be selected as a dispatch target.
+
+Only runtime-role instances can receive assigned runs.
+
+A submitted shared run must be visible through MCP shared run tools.
+
+A dispatched shared run must expose a LocalRunId.
+
+A running local run must eventually expose an ExecutionId.
+
+Replay tools must be able to load replay data for the ExecutionId.
+
+Observability tools must be able to return ledger and trace data for the ExecutionId.
+
+MCP host shutdown must unregister runtime instances once.
+
+Repeated StopAsync or host disposal must be idempotent.
+
+The MCP server should publish discovery before runtime-only hosts that require discovery are started.
+
+Runtime-only hosts should resolve the MCP-published control-plane id before registering child runtime instances or publishing capacity.
+
+A direct-dispatch run with no runtime capacity should become ScaleOutRequested when scale-out is enabled.
+
+A fulfilled scale-out request should requeue the shared run and let the shared queue pump dispatch it normally.
+
+An HTTP scale-out request should be fulfilled through the HTTP provider/provisioner path and publish tenant-aware registry/capacity metadata.
+
+A Dedicated HTTP tenant should not fall back to shared HTTP capacity when fallback is disabled.
+
+A Hybrid HTTP tenant may fall back to shared HTTP capacity when fallback is enabled.
+
+A dynamically created local runtime instance should expose LocalRunId, ExecutionId, and completed runtime status.
+```
+
+Example validated local MCP topology:
+
+```text
+mcp-control-plane
+    Role = ControlPlane
+    CanAcceptRun = false
+
+mcp-runtime-1
+    Role = Runtime
+    WorkerCount = 10
+    ActiveWorkerCount = 0
+    AvailableWorkerCount = 10
+    MaxLocalWorkersPerExecution = 4
+    MaxRunSlots = 5
+
+mcp-runtime-2
+    Role = Runtime
+    WorkerCount = 10
+    ActiveWorkerCount = 0
+    AvailableWorkerCount = 10
+    MaxLocalWorkersPerExecution = 4
+    MaxRunSlots = 5
+
+mcp-runtime-3
+    Role = Runtime
+    WorkerCount = 10
+    ActiveWorkerCount = 0
+    AvailableWorkerCount = 10
+    MaxLocalWorkersPerExecution = 4
+    MaxRunSlots = 5
+```
+
+These tests prepare the runtime for future Kubernetes deployments where the MCP server can act as a control-plane pod and runtime instances can run as separate pods.
+
+---
+
+
+## Shared Runtime Controller and Shared Queue Tests
+
+Shared runtime controller tests validate the orchestration layer above local runtime queues.
+
+They should cover:
+
+- shared run creation
+- shared run retrieval
+- shared run listing
+- shared run cancellation
+- admission assignment
+- direct assigned-run dispatch
+- global shared queue enqueue
+- global shared queue claim
+- global shared queue dispatch
+- missing shared run requeue
+- dispatch failure requeue
+- mark shared queue item dispatched
+- mark shared run dispatched
+- queue pump cycles
+- manual queue drain
+- queue-first submit mode
+- dispatch-time admission
+- pump identity vs assigned runtime identity separation
+- background queue service lifecycle
+- background queue readiness gate
+- scale-out request publication
+- Redis-backed scale-out request store behavior
+- scale-out watcher behavior
+- provider-based scale-out selector behavior
+- HTTP provider scale-out selector behavior
+- fulfilled scale-out requeue behavior
+- Redis-backed shared run store behavior
+- Redis-backed shared queue behavior
+- Redis admission reservation behavior
+- Redis atomic queue claim safety
+- concurrent dispatch safety
+
+Important assertions:
+
+```text
+Only one dispatcher can claim a pending shared queue item.
+
+A shared run record must exist independently from local runtime queue state.
+
+Assigned dispatch must preserve the local queue model.
+
+Global queue fallback must not bypass admission.
+
+Dispatch-time admission must select the assigned runtime target.
+
+Pump identity must remain separate from assigned runtime identity.
+
+Dispatch failures must requeue when policy requires it.
+
+A shared run must not be marked dispatched unless dispatch succeeded.
+
+When admission reservations are enabled, selected runtime capacity should be reserved before provider dispatch and released or expired safely if dispatch fails.
+
+When admission returns RequestScaleOut, the shared run should be persisted as ScaleOutRequested and a scale-out request should be published.
+
+Scale-out fulfillment should requeue the shared run rather than dispatching directly from the watcher.
+```
+
+---
+
+## Distributed Concurrency and Throttling Tests
+
+Concurrency tests should validate:
+
+- `config.concurrency` resolution
+- direct values remain authoritative
+- generic `concurrency.throttle` matching
+- provider throttle
+- model throttle
+- operation throttle
+- step throttle
+- step-type throttle
+- pipeline throttle
+- policy admission deny
+- Redis ZSET lease acquisition
+- lease expiration
+- release on failed DAG claim
+- diagnostic denial reasons
+
+Important assertion:
+
+```text
+If Redis capacity is acquired but DAG claim fails,
+the concurrency lease must be released immediately.
+```
+
+This prevents leaked distributed capacity.
+
+---
+
+## Policy Engine Tests
+
+Policy tests should validate the shared policy model.
+
+They should cover:
+
+- legacy string policies
+- structured policy definitions
+- policy kind resolution
+- policy registry lookup
+- retry policy execution
+- retention policy execution
+- concurrency policy execution
+- policy-specific configuration
+- policy denial diagnostics
+
+The runtime should prove that Retry, Retention, and Concurrency all follow the same policy-driven architecture.
+
+---
+
+## Config-Driven Runtime Tests
+
+Configuration tests should validate:
+
+- pipeline definition loading
+- DAG step definition parsing
+- `config.retry`
+- `config.retention`
+- `config.concurrency`
+- provider/model/operation metadata
+- step-level config
+- pipeline-level config
+- step override behavior
+- invalid config rejection
+
+Config-driven tests matter because runtime behavior is declared, not hardcoded.
+
+---
+
+## RAG Pipeline Tests
+
+RAG pipeline tests should validate:
+
+- retrieval step execution
+- multiple provider retrieval
+- providerKey-based retrieval
+- operation-based dispatch
+- merge step execution
+- compose step execution
+- dependency ordering
+- parallel retrieval
+- provider-based retrieval configuration
+- deterministic composition
+- resolver compatibility
+- payload externalization compatibility
+
+RAG tests should prove that AI workflow patterns benefit from the same runtime guarantees as any other DAG.
+
+---
+
+## Observability Tests
+
+Observability tests should validate that runtime activity emits usable signals.
+
+They may cover:
+
+- execution lifecycle metrics
+- retry metrics
+- recovery metrics
+- retention metrics
+- resolver metrics
+- storage metrics
+- hot state metrics
+- concurrency admission diagnostics
+- diagnostic denial reasons
+- trace/timeline events
+- control-plane events
+- runtime worker capacity visibility
+- ledger metadata for max local workers per execution
+- ledger metadata for effective worker count per execution
+
+Observability tests should avoid making execution correctness depend on logs or UI.
+
+The runtime must remain correct even if metrics or dashboards are disabled.
+
+---
+
+## Deterministic Convergence Tests
+
+Deterministic convergence tests prove that final execution state is independent of runtime scheduling.
+
+They should vary:
+
+- worker count
+- runtime instance count
+- execution order
+- batch size
+- retry timing
+- recovery timing
+- retention behavior
+- distributed scheduling
+- concurrency admission timing
+
+The expected result is:
+
+```text
+Same input + same pipeline definition
+        ↓
+same terminal state
+        ↓
+same deterministic fingerprint
+```
+
+This is one of the most important runtime guarantees.
+
+---
+
+## Stress and Chaos Tests
+
+Stress and chaos tests validate runtime behavior under pressure.
+
+They may include:
+
+- large DAG executions
+- many workers
+- repeated runs
+- aggressive distributed scenarios
+- retry-heavy scenarios
+- retention-heavy scenarios
+- replay reconstruction after cleanup
+- convergence validation after distributed execution
+- queue/control operations during distributed execution
+- queue-first shared dispatch under pressure
+- shared queue pump/manual drain under pressure
+- worker capacity saturation scenarios
+- scale-out from zero runtime capacity scenarios
+- fulfilled scale-out requeue scenarios
+- heavy HTTP pooled runtime dispatch scenarios
+- HTTP scale-out provider scenarios
+- tenant-aware HTTP Shared/Dedicated/Hybrid scale-out scenarios
+- Redis-backed shared queue dispatch under pressure
+- shutdown lifecycle races under Redis discovery/registry/capacity
+
+These tests help prove that the runtime model survives more than simple happy paths.
+
+---
+
+## Aggressive Distributed Scenario Evidence
+
+The runtime has been tested under aggressive distributed scenarios.
+
+Examples of evidence may include:
+
+- large DAG executions
+- multi-worker execution
+- repeated execution runs
+- retention and eviction during execution
+- replay reconstruction after cleanup
+- convergence validation after distributed execution
+- queue and execution control operations under distributed execution
+
+These tests are important because production AI execution failures often appear only under concurrency, pressure, timing races, and partial failure.
+
+---
+
+## Test Evidence and Documentation
+
+Tests are part of the project evidence.
+
+Documentation should reference validated behavior carefully.
+
+When a capability is documented, it should be classified as:
+
+- implemented
+- implemented / validated
+- foundation available
+- planned
+
+Avoid presenting roadmap items as finished product capabilities.
+
+This is especially important for:
+
+- official replay API
+- durable decision ledger
+- observability dashboard
+- Kubernetes deployment
+- public SDK polish
+- cost governance
+
+---
+
+## Recommended Test Structure
+
+A useful test structure is:
+
+```text
+Tests/
+  Multiplexed.AI.Tests.Unit/
+    Configuration/
+    Policies/
+    Retry/
+    Retention/
+    Concurrency/
+
+  Multiplexed.AI.Tests.Integration/
+    DagExecution/
+    DistributedExecution/
+    RetryAndRecovery/
+    RetentionAndCompaction/
+    ConcurrencyThrottling/
+    ExecutionControl/
+    RuntimeQueueControl/
+    ReplayAndSnapshots/
+    Observability/
+    RagPipelines/
+```
+
+The exact repository layout may differ, but tests should be grouped around runtime guarantees.
+
+---
+
+## Example Assertions
+
+Useful assertions include:
+
+```text
+Only one worker can claim a ready step.
+
+A stale worker cannot complete a step after ownership has moved.
+
+Recovery does not increment retry count.
+
+Retry exhaustion marks the step failed.
+
+Pause blocks new claims.
+
+Cancel overrides natural completion during finalization.
+
+Queued cancellation does not create an ExecutionId.
+
+Cancelled queued run completes its completion task.
+
+Replay from snapshot restores the same deterministic fingerprint.
+
+Retention does not break required completed step resolution.
+
+Provider throttle denies capacity when the limit is reached.
+
+Lease is released when concurrency admission succeeds but DAG claim fails.
+
+A distributed execution converges to the same terminal fingerprint.
+
+Queue-first submit does not create a local RunId until dispatch.
+
+Manual drain can dispatch queued work while the background pump is disabled.
+
+MaxLocalWorkersPerExecution caps local worker participation.
+
+Runtime instance snapshots expose active and available worker capacity.
+
+HTTP pooled runtime dispatch assigns runs to runtime-http-* child instances.
+
+Runtime-only hosts resolve the MCP-published control-plane id before registration.
+
+Registry and capacity cleanup do not depend on late rediscovery during shutdown.
+
+Heavy HTTP QueueFirst dispatch validates Redis shared run store, Redis shared queue, and Redis admission reservations.
+
+DirectDispatch with no runtime capacity can request scale-out.
+
+A fulfilled scale-out request requeues the shared run.
+
+The shared queue pump dispatches the requeued run after new capacity appears.
+
+A local scale-out-created runtime instance executes the run to completed.
+
+HTTP provider timeout, retry, and circuit breaker behavior produce structured dispatch failure reasons.
+
+HTTP provider dispatch failures are persisted and do not mark queue items as dispatched.
+
+ProviderHint = http resolves the HTTP scale-out provider.
+
+HTTP scale-out preserves tenant runtime settings from request store to watcher to provisioner.
+
+Dedicated HTTP tenants do not fall back to shared HTTP capacity when fallback is disabled.
+
+Hybrid HTTP tenants can fall back to shared HTTP capacity when fallback is enabled.
+```
+
+---
+
+## Current Status
+
+| Test Area | Status |
+|---|---|
+| MCP control-plane tests | Implemented / ongoing |
+| MCP queue-first/manual drain tests | Implemented / validated |
+| Shared runtime controller tests | Implemented / ongoing |
+| Shared queue pump tests | Implemented / validated |
+| Dispatch-time admission tests | Implemented / validated |
+| Redis shared run store tests | Implemented / ongoing |
+| Redis shared queue tests | Implemented / ongoing |
+| Runtime registry and capacity descriptor tests | Implemented / validated |
+| Runtime worker capacity visibility tests | Implemented / validated |
+| Runtime shutdown lifecycle tests | Implemented / validated |
+| Runtime provider model tests | Implemented foundations / validated for local and HTTP pooled providers |
+| DAG execution tests | Implemented / ongoing |
+| Redis Lua claim tests | Implemented / ongoing |
+| Distributed worker tests | Implemented / ongoing |
+| Multi-runtime-instance tests | Implemented / ongoing |
+| Retry and recovery tests | Implemented / ongoing |
+| Retention and resolver tests | Implemented / ongoing |
+| Distributed concurrency tests | Implemented / ongoing |
+| Execution control tests | Implemented / ongoing |
+| Runtime queue control tests | Implemented / ongoing |
+| Replay and snapshot tests | Implemented / validated foundations |
+| Deterministic fingerprint tests | Implemented / validated foundations |
+| Observability tests | Foundation available / ongoing |
+| RAG pipeline tests | Implemented / ongoing |
+| Provider-based local runtime hosting tests | Implemented / validated |
+| Provider-based HTTP runtime hosting tests | Implemented / validated |
+| HTTP pooled runtime provider tests | Implemented / validated |
+| HTTP runtime provider hardening tests | Implemented / validated |
+| HTTP runtime scale-out provider tests | Implemented / validated |
+| Tenant-aware HTTP scale-out scenario tests | Implemented / validated |
+| Heavy HTTP dispatch tests | Implemented / validated |
+| Redis control-plane discovery tests | Implemented / validated |
+| Redis admission reservation tests | Implemented / validated |
+| Redis scale-out request store tests | Implemented / validated |
+| Store-backed scale-out request publisher tests | Implemented / validated |
+| Scale-out watcher tests | Implemented / validated |
+| Scale-out provider selector tests | Implemented / validated |
+| Local runtime scaler tests | Implemented / validated |
+| Local provider scale-out tests | Implemented / validated |
+| Fulfilled scale-out run requeue tests | Implemented / validated |
+| MCP Redis local scale-out execution tests | Implemented / validated |
+| Kubernetes scenario tests | Planned |
+| Full enterprise demo scenario | Planned |
+| Durable decision ledger tests | Implemented foundations / validated through replay ledger scenarios |
+
+---
+
+## Responsibilities by Test Type
+
+| Test Type | Responsibility |
+|---|---|
+| Unit tests | Validate isolated logic quickly. |
+| Integration tests | Validate real runtime component interactions. |
+| Distributed tests | Validate multi-worker and multi-instance behavior. |
+| Chaos tests | Validate behavior under failure and pressure. |
+| Replay tests | Validate restoration and deterministic equivalence. |
+| Observability tests | Validate runtime emits useful diagnostics. |
+| Regression tests | Prevent previously fixed runtime bugs from returning. |
+
+---
+
+## Summary
+
+The testing strategy validates the runtime as execution infrastructure.
+
+It proves that:
+
+- more than 1000 test cases validate the runtime across unit, integration, distributed, Redis, replay, observability, control-plane, MCP, provider-hosting, shared queue, HTTP hardening, HTTP scale-out, and tenant-aware isolation scenarios
+- worker crashes can be recovered
+- retries are deterministic and observable
+- retention reduces hot state without losing required data
+- replay restores equivalent terminal state
+- queue and execution control are separated
+- concurrency limits are enforced before execution
+- policy-driven behavior is testable
+- deterministic convergence holds under distributed execution
+- queue-first and manual drain behavior are validated
+- provider-hosted runtime instance flows are validated
+- HTTP pooled runtime provider flows are validated
+- HTTP runtime provider timeout, retry, circuit breaker, and structured failure behavior are validated
+- HTTP runtime provider scale-out and provisioner behavior are validated
+- tenant-aware HTTP Shared/Dedicated/Hybrid scale-out and fallback policies are validated
+- Redis discovery, registry, capacity, and admission reservation flows are validated
+- heavy HTTP dispatch validates Redis-backed shared coordination under pressure
+- Redis-backed scale-out request lifecycle is validated
+- local runtime scale-out from zero executable capacity is validated
+- fulfilled scale-out shared runs are requeued and dispatched through the normal pump
+- scale-out-created runtime instances execute runs to completion
+- runtime worker capacity is visible and enforceable
+
+The goal is not only to test features.
+
+The goal is to prove runtime guarantees.
+
+---
 
 ## Related Documents
 
 - [Architecture Overview](architecture-overview.md)
-- [Runtime Queue Control](runtime-queue-control.md)
-- [Runtime Instance Provider Model](runtime-instance-provider-model.md)
-- [Shared Queue Pump and Worker Capacity](shared-queue-pump-and-worker-capacity.md)
-- [MCP Server as Runtime Control Plane](mcp-server-control-plane.md)
-- [Execution Control State](execution-control-state.md)
 - [Distributed Execution](distributed-execution.md)
+- [Retry and Recovery](retry-and-recovery.md)
+- [Retention and Compaction](retention-and-compaction.md)
+- [Distributed Concurrency and Throttling](distributed-concurrency-throttling.md)
+- [Execution Control State](execution-control-state.md)
+- [Runtime Queue Control](runtime-queue-control.md)
+- [Shared Runtime Controller / Shared Queue Usage](shared-controller-usage.md)
+- [Runtime Control Plane](runtime-control-plane.md)
+- [MCP Server as Runtime Control Plane](mcp-server-control-plane.md)
+- [Runtime Instance Provider Model](runtime-instance-provider-model.md)
+- [HTTP Runtime Provider](http-runtime-provider.md)
+- [Shared Queue Pump and Worker Capacity](shared-queue-pump-and-worker-capacity.md)
 - [Replay and Audit](replay-and-audit.md)
-- [Observability and Tracing](observability-tracing.md)
-- [Testing Strategy](testing-strategy.md)
+- [Observability](observability.md)
+- [Policy-Driven Execution](policy-driven-execution.md)
+- [Config-Driven Runtime](config-driven-runtime.md)
+- [RAG Pipelines](rag-pipelines.md)
 
----

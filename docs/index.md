@@ -26,6 +26,7 @@ Focused AI runtime documentation is organized under:
 | [`ai/runtime-discovery-registry-capacity.md`](ai/runtime-discovery-registry-capacity.md) | Runtime discovery, registry, and capacity foundation covering Redis control-plane discovery, `ControlPlaneIdResolver`, runtime registration, tenant-filtered capacity descriptors, pump readiness, cleanup, local scale-out, and HTTP pooled runtime identity. |
 | [`ai/mcp-server-control-plane.md`](ai/mcp-server-control-plane.md) | MCP server as a runtime control-plane adapter, including host modes, RBAC integration, MCP tool groups, runtime role separation, local runtime pools, Redis/local scale-out, shared queue dispatch, and Kubernetes direction. |
 | [`ai/runtime-instance-provider-model.md`](ai/runtime-instance-provider-model.md) | Provider-based runtime instance administration for local, Redis command queue, HTTP, gRPC, and Kubernetes providers, including tenant-aware dispatch/status/control/scale-out capabilities and provider routing. |
+| [`ai/http-runtime-provider.md`](ai/http-runtime-provider.md) | HTTP runtime provider reference covering hardened dispatch, timeout/retry/circuit breaker behavior, structured failure reasons, HTTP provider scale-out, tenant-aware Shared/Dedicated/Hybrid policy validation, metadata-only provisioning, and Remote MCP Runtime Host Manager direction. |
 | [`ai/shared-controller-usage.md`](ai/shared-controller-usage.md) | Shared runtime controller usage, queue-first/direct-dispatch modes, Redis stores, scale-out request persistence, tenant snapshot propagation, manual drain, and background pump setup. |
 | [`ai/shared-queue-pump-and-worker-capacity.md`](ai/shared-queue-pump-and-worker-capacity.md) | Shared queue pump, fulfilled-run requeue, dispatch-time admission, context restoration, worker capacity visibility, and `MaxLocalWorkersPerExecution`. |
 | [`ai/testing-strategy.md`](ai/testing-strategy.md) | Testing strategy and validation approach for distributed runtime guarantees, RBAC context propagation, tenant isolation, Redis/local scale-out, requeue, dispatch, and execution evidence. |
@@ -65,16 +66,17 @@ Start with:
 7. [`ai/runtime-discovery-registry-capacity.md`](ai/runtime-discovery-registry-capacity.md)
 8. [`ai/mcp-server-control-plane.md`](ai/mcp-server-control-plane.md)
 9. [`ai/runtime-instance-provider-model.md`](ai/runtime-instance-provider-model.md)
-10. [`ai/shared-controller-usage.md`](ai/shared-controller-usage.md)
-11. [`ai/shared-queue-pump-and-worker-capacity.md`](ai/shared-queue-pump-and-worker-capacity.md)
-12. [`ai/distributed-execution.md`](ai/distributed-execution.md)
-13. [`ai/execution-control-state.md`](ai/execution-control-state.md)
-14. [`ai/observability.md`](ai/observability.md)
-15. [`ai/execution-correlated-ledger.md`](ai/execution-correlated-ledger.md)
-16. [`ai/observability-tracing.md`](ai/observability-tracing.md)
-17. [`ai/runtime-metrics.md`](ai/runtime-metrics.md)
-18. [`ai/replay-and-audit.md`](ai/replay-and-audit.md)
-19. [`runtime-internals.md`](runtime-internals.md)
+10. [`ai/http-runtime-provider.md`](ai/http-runtime-provider.md)
+11. [`ai/shared-controller-usage.md`](ai/shared-controller-usage.md)
+12. [`ai/shared-queue-pump-and-worker-capacity.md`](ai/shared-queue-pump-and-worker-capacity.md)
+13. [`ai/distributed-execution.md`](ai/distributed-execution.md)
+14. [`ai/execution-control-state.md`](ai/execution-control-state.md)
+15. [`ai/observability.md`](ai/observability.md)
+16. [`ai/execution-correlated-ledger.md`](ai/execution-correlated-ledger.md)
+17. [`ai/observability-tracing.md`](ai/observability-tracing.md)
+18. [`ai/runtime-metrics.md`](ai/runtime-metrics.md)
+19. [`ai/replay-and-audit.md`](ai/replay-and-audit.md)
+20. [`runtime-internals.md`](runtime-internals.md)
 
 This path gives both the strategic positioning and the complete technical depth.
 
@@ -93,17 +95,18 @@ Start with:
 9. [`ai/runtime-discovery-registry-capacity.md`](ai/runtime-discovery-registry-capacity.md)
 10. [`ai/mcp-server-control-plane.md`](ai/mcp-server-control-plane.md)
 11. [`ai/runtime-instance-provider-model.md`](ai/runtime-instance-provider-model.md)
-12. [`ai/shared-controller-usage.md`](ai/shared-controller-usage.md)
-13. [`ai/shared-queue-pump-and-worker-capacity.md`](ai/shared-queue-pump-and-worker-capacity.md)
-14. [`ai/distributed-execution.md`](ai/distributed-execution.md)
-15. [`ai/execution-control-state.md`](ai/execution-control-state.md)
-16. [`ai/execution-correlated-ledger.md`](ai/execution-correlated-ledger.md)
-17. [`ai/observability-tracing.md`](ai/observability-tracing.md)
-18. [`ai/runtime-metrics.md`](ai/runtime-metrics.md)
-19. [`ai/replay-and-audit.md`](ai/replay-and-audit.md)
-20. [`ai/testing-strategy.md`](ai/testing-strategy.md)
-21. [`runtime-internals.md`](runtime-internals.md)
-22. [`roadmap.md`](roadmap.md)
+12. [`ai/http-runtime-provider.md`](ai/http-runtime-provider.md)
+13. [`ai/shared-controller-usage.md`](ai/shared-controller-usage.md)
+14. [`ai/shared-queue-pump-and-worker-capacity.md`](ai/shared-queue-pump-and-worker-capacity.md)
+15. [`ai/distributed-execution.md`](ai/distributed-execution.md)
+16. [`ai/execution-control-state.md`](ai/execution-control-state.md)
+17. [`ai/execution-correlated-ledger.md`](ai/execution-correlated-ledger.md)
+18. [`ai/observability-tracing.md`](ai/observability-tracing.md)
+19. [`ai/runtime-metrics.md`](ai/runtime-metrics.md)
+20. [`ai/replay-and-audit.md`](ai/replay-and-audit.md)
+21. [`ai/testing-strategy.md`](ai/testing-strategy.md)
+22. [`runtime-internals.md`](runtime-internals.md)
+23. [`roadmap.md`](roadmap.md)
 
 This path gives the current architecture, configuration model, RBAC/context propagation model, tenant isolation model, control-plane/runtime split, extension model, technical reference, and next planned improvements.
 
@@ -386,6 +389,25 @@ This document explains:
 - descriptor metadata keys for provider routing
 - tenant-aware dispatch and scale-out boundaries
 
+### [`ai/http-runtime-provider.md`](ai/http-runtime-provider.md)
+
+HTTP runtime provider reference.
+
+This document explains:
+
+- HTTP provider responsibilities as both dispatch transport and scale-out-capable provider
+- dispatch hardening with timeout, retry, circuit breaker, and structured failure reasons
+- persisted dispatch failure behavior through shared run records and shared queue dispatch
+- `HttpAiRuntimeInstanceProvider` implementing `IAiRuntimeScaleOutProvider`
+- `IAiHttpRuntimeScaleOutProvisioner` and HTTP scale-out options
+- Redis-backed scale-out request fulfillment through watcher and provider selector
+- tenant-aware HTTP scale-out for Shared, Dedicated, and Hybrid runtime modes
+- Dedicated tenants not silently falling back to shared HTTP capacity
+- Hybrid tenants falling back to shared HTTP capacity when policy allows it
+- metadata and transport keys used for HTTP runtime registry/capacity publication
+- current metadata-only provisioner limitation
+- Remote MCP Runtime Host Manager and readiness-waiter direction
+
 ### [`ai/shared-controller-usage.md`](ai/shared-controller-usage.md)
 
 Shared runtime controller and shared queue usage guide.
@@ -479,6 +501,7 @@ The project roadmap organized into phases:
 | [`ai/runtime-discovery-registry-capacity.md`](ai/runtime-discovery-registry-capacity.md) | Runtime discovery, Redis registry, Redis capacity descriptors, ControlPlaneIdResolver, pump readiness, tenant-filtered visibility, local scale-out capacity visibility, cleanup, and HTTP pooled runtime identity. |
 | [`ai/mcp-server-control-plane.md`](ai/mcp-server-control-plane.md) | MCP server adapter over runtime control-plane foundations, including RBAC integration, host modes, tool groups, role separation, local runtime pool behavior, Redis/local scale-out execution, and Kubernetes direction. |
 | [`ai/runtime-instance-provider-model.md`](ai/runtime-instance-provider-model.md) | Provider-based runtime instance administration, dispatch, and scale-out model for local, Redis command queue, HTTP, gRPC, and Kubernetes providers. |
+| [`ai/http-runtime-provider.md`](ai/http-runtime-provider.md) | HTTP runtime provider hardening and scale-out reference, including failure reasons, retry/timeout/circuit breaker policy, tenant-aware scale-out, registry/capacity metadata publication, and Remote MCP Runtime Host Manager direction. |
 | [`ai/shared-controller-usage.md`](ai/shared-controller-usage.md) | Shared controller setup and usage, Redis shared stores, queue-first/direct-dispatch modes, scale-out lifecycle, and tenant snapshot propagation. |
 | [`ai/shared-queue-pump-and-worker-capacity.md`](ai/shared-queue-pump-and-worker-capacity.md) | Shared queue pump, queue-first submit mode, direct-dispatch scale-out path, fulfilled-run requeue, manual drain, dispatch-time admission, worker capacity visibility, and local worker caps per execution. |
 | [`ai/execution-correlated-ledger.md`](ai/execution-correlated-ledger.md) | Execution-correlated runtime auditability, runtime decision recording, and replay lifecycle event correlation. |
@@ -523,6 +546,7 @@ The project roadmap organized into phases:
 | [`ai/runtime-discovery-registry-capacity.md`](ai/runtime-discovery-registry-capacity.md) | Redis discovery, ControlPlaneIdResolver, runtime registry, tenant-filtered capacity descriptors, scale-out capacity visibility, readiness gate, cleanup lifecycle, and HTTP pooled identity model. |
 | [`ai/mcp-server-control-plane.md`](ai/mcp-server-control-plane.md) | MCP server as control-plane adapter, including RBAC integration, host modes, discovery publication, MCP tool groups, Redis/local scale-out execution, shared queue dispatch, local/HTTP pooled runtime behavior, and runtime role separation. |
 | [`ai/runtime-instance-provider-model.md`](ai/runtime-instance-provider-model.md) | Runtime instance provider model for provider-based dispatch, HTTP pooled runtime hosting, status, control, capacity, scale-out, descriptor metadata, and provider routing. |
+| [`ai/http-runtime-provider.md`](ai/http-runtime-provider.md) | HTTP provider-specific reference for hardened dispatch, HTTP runtime scale-out, Redis scale-out watcher fulfillment, tenant-aware HTTP capacity, and metadata-only versus Remote MCP provisioning. |
 | [`ai/shared-controller-usage.md`](ai/shared-controller-usage.md) | Shared controller usage, Redis store configuration, queue-first/direct-dispatch behavior, tenant snapshot propagation, scale-out lifecycle, manual drain, and background pump setup. |
 | [`ai/shared-queue-pump-and-worker-capacity.md`](ai/shared-queue-pump-and-worker-capacity.md) | Shared queue pump/manual drain, queue-first dispatch, direct-dispatch scale-out, fulfilled-run requeue, readiness gate, dispatch-time admission, pump identity separation, runtime worker capacity visibility, and `MaxLocalWorkersPerExecution`. |
 | [`ai/runtime-queue-control.md`](ai/runtime-queue-control.md) | RunId-level local runtime queue control, hot enqueue, queue pause/resume, and queued/running cancellation behavior. |
@@ -576,6 +600,7 @@ Many focused documents started as documentation split placeholders, but several 
 - runtime control-plane foundations
 - MCP server control-plane usage
 - runtime instance provider architecture direction
+- HTTP runtime provider hardening and tenant-aware scale-out
 - runtime discovery/registry/capacity
 - Redis-backed scale-out request lifecycle
 - fulfilled-run requeue
@@ -618,10 +643,11 @@ When adding new documentation:
 8. Keep observability overview, tracing, runtime metrics, and replay/audit linked together because they describe different layers of the same runtime visibility model.
 9. Keep runtime control-plane documentation linked with runtime queue control, execution control state, instance visibility, admission, shared controller, shared queue pump, and Kubernetes preparation.
 10. Keep MCP server control-plane and runtime instance provider documentation linked with runtime control-plane, shared controller, admission, local runtime queues, runtime capacity descriptors, RBAC authorization, tenant context propagation, and Kubernetes preparation.
-11. Keep shared controller usage linked with shared queue pump, runtime control-plane, MCP control-plane, runtime discovery/registry/capacity, runtime instance provider model, and testing strategy.
-12. Keep shared queue pump and worker capacity documentation linked with shared controller usage, runtime queue control, MCP control-plane, runtime instance provider model, runtime discovery/registry/capacity, multi-tenant isolation, and testing strategy.
-13. Keep runtime discovery, registry, and capacity documentation linked with runtime control-plane, MCP control-plane, runtime instance provider model, shared queue pump readiness, multi-tenant isolation, and testing strategy.
-14. Keep Redis/local scale-out documentation linked across runtime control-plane, MCP control-plane, runtime instance provider model, shared controller usage, shared queue pump, discovery/registry/capacity, config-driven runtime, and testing strategy.
-15. Keep multi-tenant control-plane isolation documentation linked across architecture overview, runtime control-plane, discovery/registry/capacity, MCP server, runtime instance provider model, shared controller usage, shared queue pump, distributed execution, execution control state, testing strategy, README, and product roadmap documents.
-16. Keep RBAC documentation connected to MCP tool authorization, `ExecutionContextSnapshot`, tenant-aware admission, runtime visibility, and all background/distributed hops.
-17. Keep the multi-tenant runtime flow document linked with multi-tenant isolation, runtime control-plane, shared controller usage, shared queue pump, distributed execution, execution control state, testing strategy, and README because it is the operational map of the whole tenant-aware execution path.
+11. Keep HTTP runtime provider documentation linked with runtime instance provider model, runtime control-plane, shared controller, shared queue pump, runtime discovery/registry/capacity, multi-tenant isolation, testing strategy, and future Remote MCP Runtime Host Manager work.
+12. Keep shared controller usage linked with shared queue pump, runtime control-plane, MCP control-plane, runtime discovery/registry/capacity, runtime instance provider model, and testing strategy.
+13. Keep shared queue pump and worker capacity documentation linked with shared controller usage, runtime queue control, MCP control-plane, runtime instance provider model, runtime discovery/registry/capacity, multi-tenant isolation, and testing strategy.
+14. Keep runtime discovery, registry, and capacity documentation linked with runtime control-plane, MCP control-plane, runtime instance provider model, shared queue pump readiness, multi-tenant isolation, and testing strategy.
+15. Keep Redis/local scale-out documentation linked across runtime control-plane, MCP control-plane, runtime instance provider model, shared controller usage, shared queue pump, discovery/registry/capacity, config-driven runtime, and testing strategy.
+16. Keep multi-tenant control-plane isolation documentation linked across architecture overview, runtime control-plane, discovery/registry/capacity, MCP server, runtime instance provider model, shared controller usage, shared queue pump, distributed execution, execution control state, testing strategy, README, and product roadmap documents.
+17. Keep RBAC documentation connected to MCP tool authorization, `ExecutionContextSnapshot`, tenant-aware admission, runtime visibility, and all background/distributed hops.
+18. Keep the multi-tenant runtime flow document linked with multi-tenant isolation, runtime control-plane, shared controller usage, shared queue pump, distributed execution, execution control state, testing strategy, and README because it is the operational map of the whole tenant-aware execution path.

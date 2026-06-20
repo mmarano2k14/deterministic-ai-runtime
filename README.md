@@ -2,11 +2,11 @@
 
 A deterministic AI execution runtime for production-grade AI workloads.
 
-This repository provides a reference implementation of a distributed, state-driven runtime for executing AI workflows with deterministic DAG orchestration, context resolution, Redis Lua coordination, retry/recovery, retention/compaction, distributed concurrency control, execution control state, replay validation, correlated metrics and tracing, execution-correlated decision ledger, shared runtime control-plane orchestration, Redis-backed shared queue coordination, queue-first submission, shared queue pumping/manual drain, dispatch-time admission, runtime instance provider hosting, Redis control-plane discovery, runtime instance registry and capacity stores, admission reservations, HTTP pooled runtime dispatch, runtime worker-capacity visibility, RBAC execution-context propagation, tenant-aware control-plane isolation, end-to-end multi-tenant runtime flow documentation, Shared/Dedicated/Hybrid runtime visibility, Redis-backed scale-out request lifecycle, local runtime scale-out, fulfilled-run requeue, and executable enterprise demo scenarios.
+This repository provides a reference implementation of a distributed, state-driven runtime for executing AI workflows with deterministic DAG orchestration, context resolution, Redis Lua coordination, retry/recovery, retention/compaction, distributed concurrency control, execution control state, replay validation, correlated metrics and tracing, execution-correlated decision ledger, shared runtime control-plane orchestration, Redis-backed shared queue coordination, queue-first submission, shared queue pumping/manual drain, dispatch-time admission, runtime instance provider hosting, Redis control-plane discovery, runtime instance registry and capacity stores, admission reservations, HTTP pooled runtime dispatch, HTTP runtime provider hardening, HTTP provider scale-out foundations, runtime worker-capacity visibility, RBAC execution-context propagation, tenant-aware control-plane isolation, end-to-end multi-tenant runtime flow documentation, Shared/Dedicated/Hybrid runtime visibility, Redis-backed scale-out request lifecycle, local and HTTP runtime scale-out foundations, fulfilled-run requeue, and executable enterprise demo scenarios.
 
 The current runtime foundations are intentionally designed as the base for a broader product platform for deterministic AI execution, runtime control, replay, audit, governance, observability, dashboarding, pipeline building, managed hosting, multi-tenant execution isolation, and enterprise-oriented AI operations.
 
-[![Version](https://img.shields.io/badge/Version-1.0.6.2-blue)](./CHANGELOG.md)
+[![Version](https://img.shields.io/badge/Version-1.0.6.8-blue)](./CHANGELOG.md)
 [![Changelog](https://img.shields.io/badge/Changelog-view-lightgrey)](./CHANGELOG.md)
 ![AI Runtime](https://img.shields.io/badge/AI-Deterministic%20Execution-purple)
 ![Runtime](https://img.shields.io/badge/Runtime-distributed-brightgreen)
@@ -18,7 +18,7 @@ The current runtime foundations are intentionally designed as the base for a bro
 
 ## Latest Updates
 
-The latest major updates focused on tenant-aware control-plane isolation, RBAC execution-context propagation, end-to-end runtime flow documentation, Redis-backed scale-out lifecycle, and provider-hosting validation.
+The latest major updates focused on HTTP runtime provider hardening, tenant-aware HTTP scale-out validation, tenant-aware control-plane isolation, RBAC execution-context propagation, end-to-end runtime flow documentation, Redis-backed scale-out lifecycle, and provider-hosting validation.
 
 | Area | Summary |
 |---|---|
@@ -36,9 +36,12 @@ The latest major updates focused on tenant-aware control-plane isolation, RBAC e
 | Fulfilled-run requeue and pump dispatch | Added fulfilled scale-out shared-run requeue so the watcher creates capacity but the normal shared queue pump still owns claim, dispatch-time admission, provider dispatch, and queue/run state transitions. |
 | MCP Redis local scale-out validation | Validated the full MCP flow: submit with no runtime capacity, request scale-out, fulfill the request, create/register runtime capacity, requeue the run, dispatch through the pump, expose `LocalRunId` and `ExecutionId`, and complete the runtime run. |
 | Enterprise runtime demo validation | Fixed and validated direct demo execution context propagation so the demo runner persists `ExecutionContextSnapshot` before the local background controller restores tenant/user/project context. |
+| HTTP runtime provider hardening | Added timeout, retry, circuit-breaker behavior, structured HTTP dispatch failure reasons, and shared-run dispatch failure persistence for the HTTP runtime provider. |
+| HTTP runtime scale-out foundation | Added HTTP provider scale-out capability through `IAiRuntimeScaleOutProvider` and `IAiHttpRuntimeScaleOutProvisioner`, with Redis-backed scale-out request fulfillment into runtime registry and capacity metadata. |
+| Tenant-aware HTTP scale-out validation | Validated HTTP scale-out for Shared, Dedicated, and Hybrid runtime modes, including Dedicated no shared fallback and Hybrid shared fallback behavior. |
 | Test validation | The current branch has been validated with 1036 green tests covering multi-tenant isolation, RBAC snapshot propagation, registry/capacity filtering, shared queue dispatch, local scale-out, HTTP pooled runtime dispatch, enterprise demo execution, and legacy execution paths. |
 
-For detailed changes, see [`CHANGELOG.md`](./CHANGELOG.md), [`docs/index.md`](docs/index.md), [`docs/ai/multi-tenant-control-plane-isolation.md`](docs/ai/multi-tenant-control-plane-isolation.md), [`docs/ai/multi-tenant-runtime-flow.md`](docs/ai/multi-tenant-runtime-flow.md), and the product roadmap documentation under [`docs/product-roadmap/index.md`](docs/product-roadmap/index.md).
+For detailed changes, see [`CHANGELOG.md`](./CHANGELOG.md), [`docs/index.md`](docs/index.md), [`docs/ai/multi-tenant-control-plane-isolation.md`](docs/ai/multi-tenant-control-plane-isolation.md), [`docs/ai/multi-tenant-runtime-flow.md`](docs/ai/multi-tenant-runtime-flow.md), [`docs/ai/http-runtime-provider.md`](docs/ai/http-runtime-provider.md), and the product roadmap documentation under [`docs/product-roadmap/index.md`](docs/product-roadmap/index.md).
 
 ---
 
@@ -84,6 +87,8 @@ It provides a state-driven execution layer where:
 - MCP/control-plane discovery allows runtime-only hosts to resolve the logical control-plane identity before registration
 - Redis registry, capacity, and admission reservation stores validate shared runtime coordination
 - local and HTTP pooled provider hosting foundations validate the path toward Kubernetes-style runtime instances
+- HTTP runtime provider hardening validates timeout, retry, circuit-breaker behavior, structured failure reasons, and persisted dispatch failure handling
+- HTTP runtime scale-out foundations validate Redis-backed provider selection, provisioner execution, tenant-aware registry/capacity metadata, and Shared/Dedicated/Hybrid policy behavior
 - tenant runtime settings can define the desired isolation mode, fallback behavior, runtime instance prefix, worker count, local queue capacity, max concurrent runs, and max runtime instances
 
 The project should be read as an AI execution infrastructure foundation. The runtime core is already substantial, while the longer-term direction is to evolve toward a broader product platform for deterministic AI execution, operational control, replay/audit, dashboarding, pipeline building, managed hosting, and enterprise AI workflow governance.
@@ -151,6 +156,8 @@ This runtime is designed to fix the operational problems that appear when AI wor
 | Runtime-only hosts can register under the wrong control-plane id | Redis control-plane discovery store and `ControlPlaneIdResolver` allow runtime-only hosts to resolve the MCP-published logical control-plane identity before registration. |
 | Shutdown cleanup can race with disposed discovery/logging/Redis dependencies | Registry unregister and capacity descriptor cleanup reuse the known resolved control-plane id and are best-effort during shutdown. |
 | HTTP dispatch can accidentally target the parent transport host | HTTP pooled runtime model treats `runtime-http-*` child runtime instances as dispatch targets and the HTTP host as transport infrastructure. |
+| HTTP provider failures can become opaque under production pressure | HTTP provider hardening adds timeout, retry, circuit breaker, structured failure reasons, and persisted dispatch failure visibility. |
+| HTTP runtime capacity needs tenant-aware scale-out before real remote provisioning | HTTP scale-out now participates in the same Redis-backed request lifecycle, watcher, selector, provider, registry, capacity, and tenant visibility model as local scale-out. |
 
 The main goal is to make production AI execution controllable, observable, recoverable, auditable, replayable, tenant-isolated, and eventually scalable across runtime instances without turning the runtime core into a transport-specific scheduler.
 
@@ -249,6 +256,9 @@ This project explores what an AI execution runtime should look like when reliabi
 | Redis control-plane discovery | Implemented / validated | MCP/control-plane hosts can publish a logical control-plane discovery descriptor and runtime-only hosts can resolve it before registration. |
 | Redis admission reservations | Implemented / validated | Redis-backed admission reservations protect selected runtime capacity during provider dispatch scenarios. |
 | HTTP pooled runtime dispatch | Implemented / validated | `ControlPlaneWithHttpRuntimeInstances` dispatches through the HTTP provider into `RuntimeInstanceOnly` hosts with pooled `runtime-http-*` child runtime instances. |
+| HTTP runtime provider hardening | Implemented / validated | HTTP dispatch supports provider unavailable handling, dispatch timeout, retry, circuit breaker, non-retryable HTTP failure classification, invalid response handling, and persisted shared-run failure reasons. |
+| HTTP runtime scale-out foundation | Implemented / validated | `HttpAiRuntimeInstanceProvider` participates as an `IAiRuntimeScaleOutProvider` and delegates capacity materialization to `IAiHttpRuntimeScaleOutProvisioner`. |
+| Tenant-aware HTTP scale-out | Implemented / validated | HTTP scale-out preserves tenant runtime settings and validates Shared, Dedicated, Hybrid, Dedicated no shared fallback, and Hybrid shared fallback policy behavior through Redis-backed scale-out requests. |
 | Run admission / slot decisions | Implemented | Admission can assign runs to a tenant-visible runtime instance, request scale-out, queue globally, or reject according to policy. Direct-dispatch mode preserves `RequestScaleOut`; queue-first mode intentionally queues globally first. |
 | Redis-backed scale-out request lifecycle | Implemented / validated | Scale-out requests are persisted in Redis, observed by a watcher, resolved through provider selection, fulfilled or rejected, linked back to the original shared run, and enriched with tenant runtime settings. |
 | Local runtime scale-out and fulfilled-run requeue | Implemented / validated | The local provider/scaler can create tenant-scoped runtime capacity dynamically; fulfilled requests requeue the shared run so the normal pump performs dispatch and execution proceeds through the local queue. |
@@ -310,7 +320,7 @@ Redis Discovery / Registry / Capacity / Reservation / Scale-Out Request Layer
         +--> Scale-out requests
         |
         v
-Runtime Instance Provider / Scale-Out / Local Queue Layer
+Runtime Instance Provider / Scale-Out / HTTP Provider / Local Queue Layer
         |
         v
 Pipeline Definition + DAG Resolution
@@ -384,6 +394,8 @@ The runtime is intentionally split into layers:
 - replay validates deterministic reconstruction from persisted snapshots
 - shared controller coordinates run admission, shared run persistence, queue-first submission, global queue dispatch, queue pumping/manual drain, dispatch-time admission, and scale-out publication
 - runtime instance providers route selected runs to local or HTTP pooled runtime instances while preserving local queues
+- HTTP runtime provider hardening protects remote dispatch with timeout, retry, circuit-breaker, and structured failure reporting
+- HTTP scale-out currently validates the control-plane capacity lifecycle through provider selection, registry/capacity publication, tenant visibility, and Redis-backed scale-out fulfillment
 - runtime capacity snapshots expose run slots, worker pressure, provider metadata, tenant visibility, and worker-aware `CanAcceptRun`
 - correlated observability records runtime behavior across ledger, metrics, traces, workers, tenants, and executions
 
@@ -561,6 +573,8 @@ Pump dispatches using normal tenant-aware admission
 
 This keeps scale-out and dispatch separated while preserving tenant isolation.
 
+The same tenant-aware scale-out contract is now validated for the HTTP provider foundation. The current HTTP provisioner materializes registry and capacity metadata to validate the control-plane loop. The production direction is for HTTP scale-out to call a Remote MCP Runtime Host Manager, wait for runtime self-registration and capacity readiness, and then mark the Redis scale-out request fulfilled.
+
 ### End-to-End Runtime Flow
 
 The complete runtime path is documented in [`docs/ai/multi-tenant-runtime-flow.md`](docs/ai/multi-tenant-runtime-flow.md).
@@ -636,6 +650,8 @@ The project is designed around production questions that enterprise AI systems m
 | How do you execute the run after scale-out succeeds? | The fulfilled scale-out request requeues the original shared run; the normal shared queue pump then performs claim, dispatch-time admission, provider dispatch, and local runtime execution. |
 | How do runtime-only hosts join the correct MCP/control-plane scope? | Redis control-plane discovery and `ControlPlaneIdResolver` allow runtime-only hosts to resolve the MCP-published logical identity before registration. |
 | How do you validate remote-style HTTP runtime dispatch before Kubernetes? | HTTP pooled provider scenarios validate `RuntimeInstanceOnly` HTTP hosts with internal `runtime-http-*` child runtime instances. |
+| How do you harden HTTP runtime dispatch under failure? | HTTP provider dispatch now has timeout, retry, circuit-breaker behavior, structured failure reasons, and persisted shared-run dispatch failure visibility. |
+| How do you validate HTTP runtime scale-out before a real remote host manager? | HTTP scale-out uses the same Redis-backed request, watcher, selector, provider, registry, capacity, and tenant visibility loop as local scale-out, while the current provisioner remains metadata-only. |
 | How do you prove deterministic convergence? | Integration tests and enterprise demo scenarios validate completion, replay fingerprints, distributed execution, throttling, recovery behavior, atomic retention, compaction consistency, ledger visibility, and trace timeline visibility. |
 | How does this evolve toward a product platform? | Runtime foundations are designed to support future AI execution control planes, governance, observability, replay, dashboard, pipeline builder, MCP tools, managed hosting, memory/context governance, and operational workflows. |
 
@@ -684,6 +700,10 @@ The control plane currently exposes foundations for:
 - hosted shared queue background consumption
 - runtime worker-capacity visibility
 - HTTP pooled runtime provider dispatch
+- HTTP runtime provider timeout, retry, and circuit-breaker hardening
+- HTTP runtime provider structured dispatch failure persistence
+- HTTP runtime scale-out provider and provisioner foundation
+- tenant-aware HTTP scale-out for Shared, Dedicated, and Hybrid runtime modes
 - Redis-backed scale-out request publication
 - scale-out watcher/provider selector lifecycle
 - fulfilled scale-out shared-run requeue
@@ -1091,6 +1111,9 @@ The strongest areas today are:
 - dispatch-time admission
 - runtime worker capacity visibility
 - local and HTTP pooled runtime provider hosting foundations
+- HTTP runtime provider dispatch hardening
+- HTTP runtime provider scale-out foundation
+- tenant-aware HTTP Shared/Dedicated/Hybrid scale-out validation
 - Redis-backed scale-out request publication
 - scale-out watcher/provider selector lifecycle
 - fulfilled scale-out shared-run requeue
@@ -1109,10 +1132,11 @@ The strongest areas today are:
 Areas still evolving include:
 
 - public API/SDK polish
-- remote runtime instance dispatch hardening
+- remote runtime instance dispatch hardening beyond the validated HTTP timeout/retry/circuit-breaker foundation
 - provider-based runtime instance administration beyond local/HTTP pooled foundations
 - automatic Kubernetes scaling adapter
 - tenant settings persistence through configuration or database-backed provider
+- Remote MCP Runtime Host Manager provisioning for real HTTP runtime process scale-out
 - HTTP/gRPC/Kubernetes tenant propagation hardening
 - Mongo persistence partitioning and indexes for tenant-aware ledger/replay/correlation
 - HTTP replay/control-plane APIs and controller abstractions
@@ -1209,7 +1233,7 @@ The roadmap is organized into phases.
 | Phase 1 | Enterprise demo | Completed (V1) - controller demo, distributed workers, runtime controls, chaos scenarios, retention/replay, throttling scenario, and context snapshot propagation validated |
 | Phase 2 | Real enterprise sample | Planned |
 | Phase 3 | Correlated observability, tracing, and metrics | Foundations available / active polish |
-| Phase 4 | Kubernetes deployment demo | Planned - shared controller V1, Redis shared queue, Redis discovery/registry/capacity, Redis/local scale-out lifecycle, fulfilled-run requeue, HTTP pooled runtime provider foundations, and multi-tenant isolation foundations completed |
+| Phase 4 | Kubernetes deployment demo | Planned - shared controller V1, Redis shared queue, Redis discovery/registry/capacity, Redis/local scale-out lifecycle, fulfilled-run requeue, HTTP pooled runtime provider foundations, HTTP provider hardening, HTTP scale-out foundation, and multi-tenant isolation foundations completed |
 | Phase 5 | Public API / SDK polish | Planned |
 | Phase 6 | Deterministic Replay Engine and Audit Foundations | Completed (V1) |
 | Phase 7 | Replay Controller, HTTP APIs, Dashboard, and Operational Tooling | Planned |
@@ -1278,6 +1302,7 @@ The full documentation map is available here:
 - [`docs/ai/runtime-discovery-registry-capacity.md`](docs/ai/runtime-discovery-registry-capacity.md) — Runtime discovery, Redis registry, Redis capacity descriptors, ControlPlaneIdResolver, pump readiness, local scale-out capacity visibility, cleanup lifecycle, HTTP pooled runtime identity model, and tenant-aware visibility filtering.
 - [`docs/ai/mcp-server-control-plane.md`](docs/ai/mcp-server-control-plane.md) — MCP server as a runtime control-plane adapter, including host modes, tool groups, RBAC integration, runtime role separation, local runtime pool behavior, Redis/local scale-out execution, shared queue dispatch flow, and Kubernetes direction.
 - [`docs/ai/runtime-instance-provider-model.md`](docs/ai/runtime-instance-provider-model.md) — Provider-based runtime instance administration, dispatch, status/control, and scale-out model for local, Redis command queue, HTTP, gRPC, and Kubernetes providers, including tenant-scoped provider dispatch and scale-out.
+- [`docs/ai/http-runtime-provider.md`](docs/ai/http-runtime-provider.md) — HTTP runtime provider reference covering dispatch hardening, retry, timeout, circuit breaker behavior, structured failure reasons, HTTP scale-out provider capability, tenant-aware Shared/Dedicated/Hybrid scale-out validation, metadata-only provisioner limitations, and the Remote MCP Runtime Host Manager direction.
 - [`docs/ai/shared-controller-usage.md`](docs/ai/shared-controller-usage.md) — Shared runtime controller usage, Redis shared stores, direct-dispatch and queue-first modes, manual drain, background pump setup, tenant snapshot propagation, and scale-out request lifecycle.
 - [`docs/ai/shared-queue-pump-and-worker-capacity.md`](docs/ai/shared-queue-pump-and-worker-capacity.md) — Shared queue pump, queue-first submit mode, direct-dispatch scale-out path, fulfilled-run requeue, manual drain, dispatch-time admission, pump identity separation, runtime worker capacity visibility, `MaxLocalWorkersPerExecution`, and context restoration during dispatch.
 - [`docs/ai/distributed-execution.md`](docs/ai/distributed-execution.md) — Distributed workers, Redis coordination, claims, leases, deterministic convergence, and execution-context restoration across distributed/background runtime hops.
@@ -1299,6 +1324,7 @@ Focused AI runtime documentation:
 - [`docs/ai/runtime-discovery-registry-capacity.md`](docs/ai/runtime-discovery-registry-capacity.md)
 - [`docs/ai/mcp-server-control-plane.md`](docs/ai/mcp-server-control-plane.md)
 - [`docs/ai/runtime-instance-provider-model.md`](docs/ai/runtime-instance-provider-model.md)
+- [`docs/ai/http-runtime-provider.md`](docs/ai/http-runtime-provider.md)
 - [`docs/ai/shared-controller-usage.md`](docs/ai/shared-controller-usage.md)
 - [`docs/ai/shared-queue-pump-and-worker-capacity.md`](docs/ai/shared-queue-pump-and-worker-capacity.md)
 - [`docs/ai/retry-and-recovery.md`](docs/ai/retry-and-recovery.md)
@@ -1350,6 +1376,14 @@ Validated areas include:
 - Redis control-plane discovery
 - Redis admission reservations
 - HTTP pooled runtime provider dispatch
+- HTTP runtime provider dispatch hardening
+- HTTP provider timeout, retry, and circuit breaker behavior
+- HTTP provider structured dispatch failure persistence
+- HTTP runtime scale-out provider and provisioner
+- HTTP Redis-backed scale-out request fulfillment
+- tenant-aware HTTP Shared/Dedicated/Hybrid scale-out scenarios
+- Dedicated tenant no shared HTTP fallback
+- Hybrid tenant shared HTTP fallback
 - Redis-backed scale-out request store
 - store-backed scale-out request publisher
 - scale-out watcher
@@ -1392,6 +1426,22 @@ RuntimeInstances = runtime-http-1, runtime-http-2, runtime-http-3
 RedisAiSharedRunStore = validated
 RedisAiSharedQueue = validated
 RedisAiRuntimeAdmissionReservationStore = validated
+```
+
+Example HTTP provider hardening and scale-out evidence:
+
+```text
+HTTP dispatch timeout = validated
+HTTP retry success = validated
+HTTP retry exhausted = validated
+HTTP circuit open = validated
+HTTP non-retryable failure = validated
+HTTP shared scale-out = validated
+HTTP dedicated scale-out = validated
+HTTP hybrid scale-out = validated
+Dedicated tenant no shared HTTP fallback = validated
+Hybrid tenant shared HTTP fallback = validated
+Redis-backed scale-out request fulfillment through providerHint=http = validated
 ```
 
 Example tenant isolation evidence:

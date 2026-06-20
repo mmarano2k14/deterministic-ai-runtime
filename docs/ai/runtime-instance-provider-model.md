@@ -1,6 +1,6 @@
 # Runtime Instance Provider Model
 
-Status: Implemented foundation / validated for local dispatch, HTTP pooled runtime scenarios, provider-based scale-out, Redis-backed scale-out request persistence, local runtime scale-out, fulfilled-run requeue, end-to-end MCP scale-out execution, and tenant-aware runtime isolation across shared, dedicated, and hybrid runtime modes.
+Status: Implemented foundation / validated for local dispatch, HTTP pooled runtime scenarios, HTTP dispatch hardening, provider-based scale-out, Redis-backed scale-out request persistence, local runtime scale-out, HTTP runtime scale-out, fulfilled-run requeue, end-to-end MCP scale-out execution, and tenant-aware runtime isolation across shared, dedicated, and hybrid runtime modes.
 
 This document describes the **runtime instance provider model** for the Deterministic AI Runtime control plane.
 
@@ -15,6 +15,7 @@ The complete technical reference is currently preserved in:
 - [Runtime Discovery, Registry, and Capacity](runtime-discovery-registry-capacity.md)
 - [MCP Server as Runtime Control Plane](mcp-server-control-plane.md)
 - [Multi-Tenant Control Plane Isolation](multi-tenant-control-plane-isolation.md)
+- [HTTP Runtime Provider](http-runtime-provider.md)
 
 ---
 
@@ -52,6 +53,13 @@ The runtime now has:
 - tenant-visible registry filtering
 - tenant-visible capacity filtering
 - shared, dedicated, and hybrid runtime isolation
+- HTTP runtime provider dispatch hardening
+- HTTP dispatch timeout, retry, and circuit-breaker handling
+- HTTP structured dispatch failure reasons
+- HTTP runtime scale-out provider capability
+- HTTP runtime scale-out provisioner foundation
+- tenant-aware HTTP scale-out request fulfillment
+- HTTP shared/dedicated/hybrid fallback policy validation
 - end-to-end MCP Redis local scale-out execution validation
 
 The provider model exists so the shared controller and admission layer do not become transport-specific.
@@ -1024,6 +1032,64 @@ mark scale-out request fulfilled
 requeue shared run for normal pump dispatch
 ```
 
+Current HTTP scale-out provider resolution flow:
+
+```text
+Shared Runtime Controller
+    ↓
+Admission returns RequestScaleOut
+    ↓
+Tenant runtime settings attached to admission decision
+    ↓
+StoreBackedAiRuntimeScaleOutRequestPublisher
+    ↓
+RedisAiRuntimeScaleOutRequestStore
+    ↓
+AiRuntimeScaleOutRequestWatcherHostedService
+    ↓
+AiRuntimeScaleOutProviderSelector
+    ↓
+resolve provider.name:
+        request.ProviderHint = http
+        AiRuntimeInstanceRegistrationOptions.ProviderName = http
+    ↓
+IAiRuntimeInstanceProviderRouter.TryGetProvider<IAiRuntimeScaleOutProvider>(...)
+    ↓
+HttpAiRuntimeInstanceProvider
+    ↓
+IAiHttpRuntimeScaleOutProvisioner
+    ↓
+materialize tenant-scoped HTTP runtime registry/capacity metadata
+    ↓
+mark scale-out request fulfilled
+    ↓
+requeue shared run for normal pump dispatch when applicable
+```
+
+In the current validated HTTP scale-out foundation, the provisioner materializes registry and capacity descriptors directly.
+
+This validates the provider-based scale-out control loop for HTTP without yet starting a real remote HTTP runtime process.
+
+The production target is:
+
+```text
+HttpAiRuntimeInstanceProvider
+    ↓
+IAiHttpRuntimeScaleOutProvisioner
+    ↓
+Remote MCP Runtime Host Manager
+    ↓
+runtime process starts
+    ↓
+runtime self-registers
+    ↓
+runtime publishes capacity
+    ↓
+readiness waiter confirms usable capacity
+    ↓
+scale-out request fulfilled
+```
+
 Future Redis command queue flow:
 
 ```text
@@ -1205,24 +1271,65 @@ This keeps cross-pod communication simple and resilient.
 
 ## HTTP Provider
 
-The HTTP provider can dispatch or control runtime instances through HTTP endpoints.
+The HTTP provider can dispatch, control, and scale runtime instances through HTTP-oriented runtime infrastructure.
 
-The current provider-based runtime hosting work includes an HTTP runtime provider foundation validated for `RuntimeInstanceOnly` and `ControlPlaneWithHttpRuntimeInstances` scenarios.
+The detailed HTTP-specific reference is documented in [HTTP Runtime Provider](http-runtime-provider.md).
+
+The current HTTP provider has two distinct responsibilities:
+
+```text
+1. Dispatch transport
+   Sends runtime commands to a selected runtime instance through HTTP.
+
+2. Scale-out provider capability
+   Participates in the provider-based scale-out loop by delegating capacity creation
+   to IAiHttpRuntimeScaleOutProvisioner.
+```
+
+The provider-based runtime hosting work includes an HTTP runtime provider foundation validated for `RuntimeInstanceOnly` and `ControlPlaneWithHttpRuntimeInstances` scenarios.
 
 Example metadata:
 
 ```text
 provider.name = http
+transport.name = http
 provider.endpoint = http://runtime-1.ai-runtime.svc.cluster.local
 ```
 
-HTTP provider responsibilities may include:
+HTTP dispatch responsibilities may include:
 
 - dispatch run
 - get run status
 - pause/resume queue
 - cancel run
 - get queue state
+
+HTTP dispatch hardening currently includes:
+
+- dispatch timeout handling
+- configurable retry support
+- retry exhaustion classification
+- non-retryable HTTP error classification
+- circuit-breaker handling
+- provider-unavailable handling
+- invalid endpoint handling
+- structured failure reasons
+- dispatch failure persistence through the shared run store and queue dispatcher
+
+Current HTTP dispatch failure reasons include:
+
+```text
+http-endpoint-missing
+http-endpoint-invalid
+http-provider-unavailable
+http-dispatch-timeout
+http-command-failed
+http-command-non-retryable
+http-command-invalid-response
+http-circuit-open
+http-command-cancelled
+http-command-exception
+```
 
 HTTP pooled runtime hosting currently validates this shape:
 
@@ -1244,7 +1351,88 @@ The HTTP runtime host exposes transport endpoints.
 
 The child runtime instances created by the pool expose the real execution capacity and are used as dispatch targets.
 
-This provider is useful when runtime pods expose an HTTP control endpoint.
+```text
+HTTP host identity != dispatch target
+runtime-http-* child instance == dispatch target
+```
+
+HTTP scale-out currently validates this shape:
+
+```text
+Admission requires more capacity
+    ↓
+Redis scale-out request
+    ↓
+Scale-out watcher
+    ↓
+providerHint = http
+    ↓
+HttpAiRuntimeInstanceProvider as IAiRuntimeScaleOutProvider
+    ↓
+IAiHttpRuntimeScaleOutProvisioner
+    ↓
+tenant-aware registry/capacity descriptors are published
+    ↓
+scale-out request fulfilled
+```
+
+The current HTTP scale-out provisioner is metadata-first.
+
+It validates the control-plane scale-out loop, provider selection, tenant-aware settings propagation, registry/capacity publication, and shared/dedicated/hybrid policy behavior.
+
+It does not yet start a real remote HTTP runtime process.
+
+The production target is a Remote MCP Runtime Host Manager based provisioner:
+
+```text
+HttpAiRuntimeInstanceProvider
+    ↓
+IAiHttpRuntimeScaleOutProvisioner
+    ↓
+Remote MCP Runtime Host Manager
+    ↓
+runtime starts
+    ↓
+runtime self-registers
+    ↓
+capacity becomes ready
+    ↓
+scale-out request fulfilled
+```
+
+Important distinction:
+
+```text
+providerHint=http
+    means the HTTP provider handles the scale-out request.
+
+transport.name=http
+    means the resulting runtime capacity is contacted through HTTP.
+```
+
+These values often match for HTTP, but they are not the same concept.
+
+For Kubernetes, they may diverge:
+
+```text
+providerHint=kubernetes
+transport.name=http or grpc
+```
+
+Validated HTTP tenant behavior includes:
+
+```text
+Shared tenant
+    may use shared HTTP runtime capacity.
+
+Dedicated tenant
+    requests dedicated HTTP capacity and does not silently fall back to shared capacity.
+
+Hybrid tenant
+    may request dedicated HTTP capacity and may fall back to shared HTTP capacity when allowed.
+```
+
+This provider is useful when runtime pods, runtime hosts, or externally managed runtime workers expose an HTTP control endpoint.
 
 ---
 
@@ -1645,6 +1833,17 @@ Current completed or validated pieces:
 36. Local scaler scoped by RuntimeInstanceIdPrefix
 37. Shared queue dispatcher context restore
 38. Runtime local queue ExecutionContextSnapshot requirement
+39. HTTP runtime dispatch timeout handling
+40. HTTP runtime retry handling
+41. HTTP runtime circuit-breaker handling
+42. HTTP structured dispatch failure reasons
+43. HTTP dispatch failure persistence
+44. HTTP runtime scale-out provider capability
+45. HTTP runtime scale-out provisioner foundation
+46. HTTP tenant-aware registry/capacity publication
+47. HTTP shared/dedicated/hybrid scale-out policy validation
+48. HTTP dedicated no-shared-fallback validation
+49. HTTP hybrid shared-fallback validation
 ```
 
 The implementation must continue to preserve existing behavior.
@@ -1659,22 +1858,23 @@ Shared controller behavior should remain stable and delegate transport-specific 
 
 ## Future Implementation Targets
 
-After the local, HTTP pooled, and tenant-aware provider foundations are stable:
+After the local, HTTP pooled, HTTP scale-out, and tenant-aware provider foundations are stable:
 
 ```text
-1. Complete status provider capability.
-2. Complete control provider capability.
-3. Add Redis command queue provider.
-4. Add command consumer in runtime-only host.
-5. Add gRPC runtime provider.
-6. Add Kubernetes metadata provider.
-7. Add Kubernetes scaling provider using the existing IAiRuntimeScaleOutProvider capability model.
-8. Add Kubernetes scale-out request handling that creates/expands runtime pods and waits for registration/capacity.
-9. Refine Redis/Lua slot reservation paths where stronger atomic coordination is required.
-10. Add provider circuit breakers.
-11. Add dispatch timeouts.
-12. Add registry and capacity TTL self-healing.
-13. Continue hardening admission to use capacity descriptors and reservations as primary scheduling inputs.
+1. Add a runtime instance readiness waiter for registry/capacity convergence.
+2. Add Remote MCP Runtime Host Manager abstractions.
+3. Add MCP-backed HTTP runtime scale-out provisioning.
+4. Complete status provider capability.
+5. Complete control provider capability.
+6. Add Redis command queue provider.
+7. Add command consumer in runtime-only host.
+8. Add gRPC runtime provider and gRPC dispatch hardening.
+9. Add Kubernetes metadata provider.
+10. Add Kubernetes scaling provider using the existing IAiRuntimeScaleOutProvider capability model.
+11. Add Kubernetes scale-out request handling that creates/expands runtime pods and waits for registration/capacity.
+12. Refine Redis/Lua slot reservation paths where stronger atomic coordination is required.
+13. Add registry and capacity TTL self-healing.
+14. Continue hardening admission to use capacity descriptors and reservations as primary scheduling inputs.
 ```
 
 ---
@@ -1686,14 +1886,15 @@ The provider model is implemented for the validated local, HTTP dispatch, local 
 Current limitations include:
 
 - provider routing still needs production hardening
+- HTTP scale-out currently materializes registry/capacity metadata directly and does not yet start a real remote HTTP runtime process
+- Remote MCP Runtime Host Manager provisioning is not implemented yet
+- runtime readiness waiting after external provisioning is not implemented yet
 - Redis command queue provider is not implemented yet
 - gRPC provider is not implemented yet
 - Kubernetes provider is not implemented yet
 - Kubernetes pod/deployment scale-out is not implemented yet
 - capability negotiation is not complete yet
 - Lua-based slot reservation refinement is not implemented yet
-- provider circuit breakers are not implemented yet
-- dispatch timeout hardening is not implemented yet
 - registry/capacity TTL self-healing is not complete yet
 - admission uses Redis-backed reservation support in validated scenarios but still needs further production hardening for multi-control-plane scheduling
 - tenant runtime settings are currently foundation/provider-backed and should later become configurable or database-backed
@@ -1724,6 +1925,18 @@ Validated behavior includes:
   - Redis shared run store
   - Redis shared queue
   - Redis admission reservation store.
+- HTTP dispatch timeout handling.
+- HTTP retry success and retry exhaustion behavior.
+- HTTP non-retryable failure classification.
+- HTTP circuit-open failure classification.
+- HTTP provider-unavailable failure persistence.
+- HTTP scale-out request fulfillment through `providerHint = http`.
+- HTTP scale-out registry/capacity metadata publication.
+- HTTP shared tenant scale-out creates `runtime-instance-*` capacity.
+- HTTP dedicated tenant scale-out creates `tenant-a-runtime-*` capacity.
+- HTTP hybrid tenant scale-out creates `tenant-b-runtime-*` capacity.
+- HTTP dedicated tenant does not fall back to shared HTTP capacity when fallback is disabled.
+- HTTP hybrid tenant can fall back to shared HTTP capacity when fallback is allowed.
 - Replay, report, ledger, and trace retrieval through MCP for completed shared runs.
 - Runtime registry and capacity cleanup during shutdown.
 - Discovery-based control-plane id resolution for runtime-only hosts.
@@ -1749,7 +1962,8 @@ Validated behavior includes:
 - Shared queue dispatcher restores `ExecutionContextSnapshot` before admission and dispatch.
 - Runtime queued runs require `ExecutionContextSnapshot`.
 - Visibility evaluator rejects unowned Hybrid runtime instances.
-- 1036 tests green after the tenant-aware runtime isolation update.
+- HTTP provider hardening and tenant-aware HTTP scale-out scenario tests green after the HTTP provider update.
+- 1036+ tests green after the tenant-aware runtime isolation update lineage.
 
 ---
 
@@ -1766,6 +1980,7 @@ Validated behavior includes:
 - [Runtime Metrics](runtime-metrics.md)
 - [Testing Strategy](testing-strategy.md)
 - [Shared Queue Pump and Worker Capacity](shared-queue-pump-and-worker-capacity.md)
+- [HTTP Runtime Provider](http-runtime-provider.md)
 
 ---
 
@@ -1773,7 +1988,7 @@ Validated behavior includes:
 
 This document describes the runtime instance provider model.
 
-Do not present Redis command queue dispatch, gRPC dispatch, Kubernetes pod scaling, or production dashboard features as completed capabilities until they are implemented and validated.
+Do not present Redis command queue dispatch, gRPC dispatch, Kubernetes pod scaling, Remote MCP Runtime Host Manager provisioning, runtime readiness waiting, or production dashboard features as completed capabilities until they are implemented and validated.
 
 Provider dispatch and provider scale-out must continue to preserve the runtime boundaries:
 
