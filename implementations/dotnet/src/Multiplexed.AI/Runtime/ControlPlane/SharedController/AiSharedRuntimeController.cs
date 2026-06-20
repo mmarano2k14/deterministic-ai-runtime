@@ -598,6 +598,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController
                     {
                         SharedRun = created,
                         SharedRunId = created.SharedRunId,
+                        ExecutionContextSnapshot = created.ExecutionContextSnapshot,
 
                         TenantId = tenantId,
                         TenantGroupId = tenantGroupId,

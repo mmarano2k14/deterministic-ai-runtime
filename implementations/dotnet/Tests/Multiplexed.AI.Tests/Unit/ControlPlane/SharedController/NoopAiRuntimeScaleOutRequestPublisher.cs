@@ -103,6 +103,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController
             {
                 SharedRun = sharedRun,
                 SharedRunId = sharedRunId,
+                ExecutionContextSnapshot = sharedRun.ExecutionContextSnapshot,
                 TenantId = "tenant-1",
                 PipelineKey = "pipeline-1",
                 VisibleInstanceCount = currentInstanceCount,

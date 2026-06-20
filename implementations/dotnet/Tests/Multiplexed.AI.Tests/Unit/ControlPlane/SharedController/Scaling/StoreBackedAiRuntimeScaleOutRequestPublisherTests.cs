@@ -261,7 +261,9 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController.Scaling
             {
                 SharedRun = sharedRun,
                 SharedRunId = sharedRun.SharedRunId,
+                ExecutionContextSnapshot = sharedRun.ExecutionContextSnapshot,
                 TenantId = sharedRun.ExecutionContextSnapshot.TenantId,
+                TenantGroupId = sharedRun.ExecutionContextSnapshot.TenantGroupId,
                 PipelineKey = sharedRun.PipelineKey,
                 VisibleInstanceCount = 3,
                 AvailableInstanceCount = 0,

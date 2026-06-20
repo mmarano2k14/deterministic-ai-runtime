@@ -5,6 +5,7 @@ using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Identity;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Pool;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Scaling;
+using Multiplexed.Abstractions.Core.ExecutionContext;
 
 namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
 {
@@ -139,6 +140,8 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
                         {
                             RequestId = $"local-pool-startup-{Guid.NewGuid():N}",
                             ControlPlaneId = this.runtimeHostIdentity.HostId,
+                            ExecutionContextSnapshot = CreateLocalPoolStartupExecutionContextSnapshot(
+                                this.runtimeHostIdentity.HostId),
                             SharedRunId = "local-pool-startup",
                             CurrentInstanceCount = 0,
                             RequestedTargetInstanceCount = this.options.InstanceCount,
@@ -247,6 +250,41 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
                 this.options.RuntimeInstanceIdPrefix);
 
             return ValueTask.CompletedTask;
+        }
+
+        /// <summary>
+        /// Creates the execution context snapshot used for local runtime instance pool startup.
+        /// </summary>
+        /// <param name="hostId">The runtime host identifier.</param>
+        /// <returns>The local runtime instance pool startup execution context snapshot.</returns>
+        private static ExecutionContextSnapshot CreateLocalPoolStartupExecutionContextSnapshot(
+            string hostId)
+        {
+            var safeHostId =
+                string.IsNullOrWhiteSpace(hostId)
+                    ? "unknown-host"
+                    : hostId;
+
+            return new ExecutionContextSnapshot
+            {
+                ContextKey = $"system:local-runtime-instance-pool:{safeHostId}",
+                Project = "system",
+                UserId = "system",
+                TenantId = "system",
+                TenantGroupId = "system",
+                CurrentNamespace = "system",
+                Namespaces = new List<NamespaceEntry>
+                {
+                    new NamespaceEntry
+                    {
+                        Name = "system",
+                        Trns = new HashSet<string>()
+                    }
+                },
+                InFlightCount = 0,
+                TtlSeconds = 0,
+                CreatedAtUtc = DateTime.UtcNow
+            };
         }
 
         /// <summary>

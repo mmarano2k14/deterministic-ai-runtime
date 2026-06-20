@@ -8,6 +8,7 @@ using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http.ScaleOut;
 using Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling;
+using Multiplexed.AI.Tests.Fixtures;
 
 namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController.Scaling
 {
@@ -134,6 +135,18 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController.Scaling
                 provisioner.LastRequest!.TenantId);
 
             Assert.Equal(
+                "tenant-group-test",
+                provisioner.LastRequest.TenantGroupId);
+
+            Assert.Equal(
+                "tenant-test",
+                provisioner.LastRequest.ExecutionContextSnapshot.TenantId);
+
+            Assert.Equal(
+                "tenant-group-test",
+                provisioner.LastRequest.ExecutionContextSnapshot.TenantGroupId);
+
+            Assert.Equal(
                 "cp-test",
                 provisioner.LastRequest.ControlPlaneId);
 
@@ -187,7 +200,15 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController.Scaling
                 RequestId = "request-1",
                 ControlPlaneId = "cp-test",
                 SharedRunId = "shared-run-1",
+                ExecutionContextSnapshot = AiExecutionContextSnapshotTestFactory.Create(
+                    contextKey: "unit-test:tenant-test:context",
+                    project: "unit-test",
+                    userId: "unit-test",
+                    tenantId: "tenant-test",
+                    tenantGroupId: "tenant-group-test",
+                    currentNamespace: "unit-test"),
                 TenantId = "tenant-test",
+                TenantGroupId = "tenant-group-test",
                 PipelineKey = "pipeline-test",
                 VisibleInstanceCount = 0,
                 AvailableInstanceCount = 0,

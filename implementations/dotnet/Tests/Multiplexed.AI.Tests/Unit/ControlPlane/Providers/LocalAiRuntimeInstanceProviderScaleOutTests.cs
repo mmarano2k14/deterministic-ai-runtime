@@ -4,6 +4,7 @@ using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Pool;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.SharedInstance;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Scaling;
+using Multiplexed.Abstractions.Core.ExecutionContext;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Local;
 
 namespace Multiplexed.AI.Tests.Unit.ControlPlane.Providers
@@ -114,6 +115,14 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.Providers
             Assert.Equal(10, scaler.LastRequest.WorkerCountPerInstance);
             Assert.Equal(5, scaler.LastRequest.MaxConcurrentRunsPerInstance);
             Assert.Equal(500, scaler.LastRequest.LocalQueueCapacity);
+
+            Assert.Equal(
+                "tenant-test",
+                scaler.LastRequest.ExecutionContextSnapshot.TenantId);
+
+            Assert.Equal(
+                "tenant-group-test",
+                scaler.LastRequest.ExecutionContextSnapshot.TenantGroupId);
         }
 
         /// <summary>
@@ -127,6 +136,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.Providers
                 RequestId = "request-1",
                 ControlPlaneId = "cp-test",
                 SharedRunId = "shared-run-1",
+                ExecutionContextSnapshot = CreateExecutionContextSnapshot(),
 
                 TenantId = "tenant-test",
                 TenantGroupId = "tenant-group-test",
@@ -168,6 +178,34 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.Providers
                     ["runtime.maxConcurrentRunsPerInstance"] = "5",
                     ["runtime.localQueueCapacity"] = "500"
                 }
+            };
+        }
+
+        /// <summary>
+        /// Creates the execution context snapshot used by scale-out provider tests.
+        /// </summary>
+        /// <returns>The execution context snapshot.</returns>
+        private static ExecutionContextSnapshot CreateExecutionContextSnapshot()
+        {
+            return new ExecutionContextSnapshot
+            {
+                ContextKey = "unit-test:tenant-test:context",
+                Project = "unit-test",
+                UserId = "unit-test",
+                TenantId = "tenant-test",
+                TenantGroupId = "tenant-group-test",
+                CurrentNamespace = "unit-test",
+                Namespaces = new List<NamespaceEntry>
+                {
+                    new NamespaceEntry
+                    {
+                        Name = "unit-test",
+                        Trns = new HashSet<string>()
+                    }
+                },
+                InFlightCount = 0,
+                TtlSeconds = 0,
+                CreatedAtUtc = DateTime.UtcNow
             };
         }
 

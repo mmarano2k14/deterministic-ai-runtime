@@ -1875,36 +1875,37 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
             var publishResult =
                 await scaleOutPublisher
                     .PublishAsync(
-                        new AiRuntimeScaleOutRequest
-                        {
-                            SharedRunId = sharedRunId,
-                            SharedRun = sharedRun,
-                            TenantId = TenantAwareTenantId,
-                            TenantGroupId = tenantRuntimeSettings.TenantGroupId,
-                            PipelineKey = pipelineName,
-                            Reason = "Tenant max instance count cap test.",
-                            RequestedBy = RequestedBy,
-                            Source = Source,
-                            CorrelationId = sharedRun.CorrelationId,
+                       new AiRuntimeScaleOutRequest
+                       {
+                           SharedRunId = sharedRunId,
+                           SharedRun = sharedRun,
+                           ExecutionContextSnapshot = executionContextSnapshot,
+                           TenantId = TenantAwareTenantId,
+                           TenantGroupId = tenantRuntimeSettings.TenantGroupId,
+                           PipelineKey = pipelineName,
+                           Reason = "Tenant max instance count cap test.",
+                           RequestedBy = RequestedBy,
+                           Source = Source,
+                           CorrelationId = sharedRun.CorrelationId,
 
-                            IsolationMode = tenantRuntimeSettings.IsolationMode,
-                            PreferDedicatedCapacity = tenantRuntimeSettings.PreferDedicatedCapacity,
-                            AllowSharedFallback = tenantRuntimeSettings.AllowSharedFallback,
-                            MaxRuntimeInstances = tenantRuntimeSettings.MaxRuntimeInstances,
-                            RuntimeInstanceIdPrefix = tenantRuntimeSettings.RuntimeInstanceIdPrefix,
-                            WorkerCountPerInstance = tenantRuntimeSettings.WorkerCountPerInstance,
-                            MaxConcurrentRunsPerInstance = tenantRuntimeSettings.MaxConcurrentRunsPerInstance,
-                            LocalQueueCapacity = tenantRuntimeSettings.LocalQueueCapacity,
+                           IsolationMode = tenantRuntimeSettings.IsolationMode,
+                           PreferDedicatedCapacity = tenantRuntimeSettings.PreferDedicatedCapacity,
+                           AllowSharedFallback = tenantRuntimeSettings.AllowSharedFallback,
+                           MaxRuntimeInstances = tenantRuntimeSettings.MaxRuntimeInstances,
+                           RuntimeInstanceIdPrefix = tenantRuntimeSettings.RuntimeInstanceIdPrefix,
+                           WorkerCountPerInstance = tenantRuntimeSettings.WorkerCountPerInstance,
+                           MaxConcurrentRunsPerInstance = tenantRuntimeSettings.MaxConcurrentRunsPerInstance,
+                           LocalQueueCapacity = tenantRuntimeSettings.LocalQueueCapacity,
 
-                            VisibleInstanceCount = 3,
-                            AvailableInstanceCount = 0,
-                            CurrentInstanceCount = 3,
-                            MaxInstanceCount = tenantRuntimeSettings.MaxRuntimeInstances,
-                            Metadata = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
-                            {
-                                ["test"] = "tenant-max-scaleout-cap"
-                            }
-                        })
+                           VisibleInstanceCount = 3,
+                           AvailableInstanceCount = 0,
+                           CurrentInstanceCount = 3,
+                           MaxInstanceCount = tenantRuntimeSettings.MaxRuntimeInstances,
+                           Metadata = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                           {
+                               ["test"] = "tenant-max-scaleout-cap"
+                           }
+                       })
                     .ConfigureAwait(false);
 
             Assert.True(
@@ -2200,6 +2201,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
                         {
                             SharedRunId = sharedRunId,
                             SharedRun = sharedRun,
+                            ExecutionContextSnapshot = executionContextSnapshot,
                             TenantId = HybridTenantId,
                             TenantGroupId = tenantRuntimeSettings.TenantGroupId,
                             PipelineKey = pipelineName,
@@ -2532,6 +2534,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
                         {
                             SharedRunId = sharedRunId,
                             SharedRun = sharedRun,
+                            ExecutionContextSnapshot = executionContextSnapshot,
                             TenantId = HybridTenantId,
                             TenantGroupId = tenantRuntimeSettings.TenantGroupId,
                             PipelineKey = pipelineName,

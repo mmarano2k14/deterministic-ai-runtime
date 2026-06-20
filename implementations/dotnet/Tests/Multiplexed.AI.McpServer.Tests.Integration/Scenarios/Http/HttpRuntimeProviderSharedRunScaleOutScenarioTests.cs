@@ -1200,6 +1200,10 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Http
                             RequestId = $"shared-http-bootstrap-{Guid.NewGuid():N}",
                             SharedRunId = $"shared-http-bootstrap-run-{Guid.NewGuid():N}",
                             ControlPlaneId = controlPlaneId,
+                            ExecutionContextSnapshot = CreateRuntimeVisibilityExecutionContextSnapshot(
+                                TenantId,
+                                sharedTenantSettings.TenantGroupId,
+                                "shared-http-bootstrap"),
                             TenantId = TenantId,
                             TenantGroupId = sharedTenantSettings.TenantGroupId,
                             PipelineKey = $"shared-http-bootstrap-pipeline-{Guid.NewGuid():N}",
@@ -1543,6 +1547,10 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Http
                             RequestId = $"shared-http-bootstrap-{Guid.NewGuid():N}",
                             SharedRunId = $"shared-http-bootstrap-run-{Guid.NewGuid():N}",
                             ControlPlaneId = controlPlaneId,
+                            ExecutionContextSnapshot = CreateRuntimeVisibilityExecutionContextSnapshot(
+                                TenantId,
+                                sharedTenantSettings.TenantGroupId,
+                                "shared-http-bootstrap-for-hybrid-fallback"),
                             TenantId = TenantId,
                             TenantGroupId = sharedTenantSettings.TenantGroupId,
                             PipelineKey = $"shared-http-bootstrap-pipeline-{Guid.NewGuid():N}",

@@ -7,6 +7,7 @@ using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.SharedInstance;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Scaling;
 using Multiplexed.Abstractions.AI.Execution.Instance.Worker;
+using Multiplexed.Abstractions.Core.ExecutionContext;
 using Multiplexed.AI.ControlPlane.RuntimeInstances.Pool;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.SharedInstance;
 
@@ -167,6 +168,9 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Pool
                 host => Assert.True(host.Disposed));
         }
 
+        /// <summary>
+        /// Verifies that pool metadata is forwarded to the host factory.
+        /// </summary>
         [Fact]
         public async Task EnsureCapacityAsync_Should_Forward_Pool_Metadata_To_Host_Factory()
         {
@@ -191,10 +195,10 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Pool
                         RuntimeInstanceIdPrefix = "test-runtime",
                         Metadata =
                         {
-                    ["tenantId"] = "tenant-a",
-                    ["runtime.isolationMode"] = "Dedicated",
-                    ["runtime.allowSharedFallback"] = "false",
-                    ["runtime.preferDedicatedCapacity"] = "true"
+                            ["tenantId"] = "tenant-a",
+                            ["runtime.isolationMode"] = "Dedicated",
+                            ["runtime.allowSharedFallback"] = "false",
+                            ["runtime.preferDedicatedCapacity"] = "true"
                         }
                     });
 
@@ -228,6 +232,9 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Pool
                             RequestId = $"test-request-{Guid.NewGuid():N}",
                             SharedRunId = $"test-shared-run-{Guid.NewGuid():N}",
                             ControlPlaneId = "test-control-plane",
+                            ExecutionContextSnapshot = CreateExecutionContextSnapshot(
+                                tenantId: "tenant-a",
+                                tenantGroupId: "tenant-a"),
                             CurrentInstanceCount = 0,
                             RequestedTargetInstanceCount = 1
                         })
@@ -319,6 +326,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Pool
                 RequestId = requestId,
                 ControlPlaneId = "cp-test",
                 SharedRunId = "shared-run-1",
+                ExecutionContextSnapshot = CreateExecutionContextSnapshot(),
                 TenantId = "tenant-test",
                 PipelineKey = "pipeline-test",
                 VisibleInstanceCount = 0,
@@ -336,6 +344,38 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Pool
                 {
                     ["test"] = "true"
                 }
+            };
+        }
+
+        /// <summary>
+        /// Creates the execution context snapshot used by local runtime instance scaler tests.
+        /// </summary>
+        /// <param name="tenantId">The tenant identifier.</param>
+        /// <param name="tenantGroupId">The tenant group identifier.</param>
+        /// <returns>The execution context snapshot.</returns>
+        private static ExecutionContextSnapshot CreateExecutionContextSnapshot(
+            string tenantId = "tenant-test",
+            string tenantGroupId = "tenant-group-test")
+        {
+            return new ExecutionContextSnapshot
+            {
+                ContextKey = $"unit-test:{tenantId}:context",
+                Project = "unit-test",
+                UserId = "unit-test",
+                TenantId = tenantId,
+                TenantGroupId = tenantGroupId,
+                CurrentNamespace = "unit-test",
+                Namespaces = new List<NamespaceEntry>
+                {
+                    new NamespaceEntry
+                    {
+                        Name = "unit-test",
+                        Trns = new HashSet<string>()
+                    }
+                },
+                InFlightCount = 0,
+                TtlSeconds = 0,
+                CreatedAtUtc = DateTime.UtcNow
             };
         }
 

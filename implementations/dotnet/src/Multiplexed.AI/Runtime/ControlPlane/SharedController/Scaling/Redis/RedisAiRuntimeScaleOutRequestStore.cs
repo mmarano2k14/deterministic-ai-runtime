@@ -4,6 +4,7 @@ using System.Text.Json;
 using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Scaling;
+using Multiplexed.Abstractions.Core.ExecutionContext;
 using StackExchange.Redis;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
@@ -759,6 +760,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
                 new HashEntry("requestId", request.RequestId),
                 new HashEntry("controlPlaneId", request.ControlPlaneId),
                 new HashEntry("sharedRunId", request.SharedRunId),
+                new HashEntry("executionContextSnapshot", SerializeExecutionContextSnapshot(request.ExecutionContextSnapshot)),
                 new HashEntry("tenantId", request.TenantId ?? string.Empty),
                 new HashEntry("tenantGroupId", request.TenantGroupId ?? string.Empty),
                 new HashEntry("pipelineKey", request.PipelineKey ?? string.Empty),
@@ -830,6 +832,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
                 RequestId = GetString(fields, "requestId") ?? string.Empty,
                 ControlPlaneId = GetString(fields, "controlPlaneId") ?? string.Empty,
                 SharedRunId = GetString(fields, "sharedRunId") ?? string.Empty,
+                ExecutionContextSnapshot = ParseExecutionContextSnapshot(
+                    GetString(fields, "executionContextSnapshot"),
+                    fields),
                 TenantId = EmptyToNull(GetString(fields, "tenantId")),
                 TenantGroupId = EmptyToNull(GetString(fields, "tenantGroupId")),
                 PipelineKey = EmptyToNull(GetString(fields, "pipelineKey")),
@@ -1021,6 +1026,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
                 RequestId = request.RequestId,
                 ControlPlaneId = request.ControlPlaneId,
                 SharedRunId = request.SharedRunId,
+                ExecutionContextSnapshot = request.ExecutionContextSnapshot,
                 TenantId = request.TenantId,
                 TenantGroupId = request.TenantGroupId,
                 PipelineKey = request.PipelineKey,
@@ -1082,6 +1088,99 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
                 IncludeExpired = query.IncludeExpired,
                 CreatedAfterUtc = query.CreatedAfterUtc,
                 CreatedBeforeUtc = query.CreatedBeforeUtc
+            };
+        }
+
+        /// <summary>
+        /// Serializes an execution context snapshot for Redis persistence.
+        /// </summary>
+        /// <param name="snapshot">The execution context snapshot.</param>
+        /// <returns>The serialized execution context snapshot.</returns>
+        private static string SerializeExecutionContextSnapshot(
+            ExecutionContextSnapshot snapshot)
+        {
+            return JsonSerializer.Serialize(
+                snapshot,
+                JsonOptions);
+        }
+
+        /// <summary>
+        /// Parses a persisted execution context snapshot.
+        /// </summary>
+        /// <param name="value">The persisted JSON value.</param>
+        /// <param name="fields">The Redis hash fields used to create a compatibility fallback.</param>
+        /// <returns>The parsed execution context snapshot.</returns>
+        private static ExecutionContextSnapshot ParseExecutionContextSnapshot(
+            string? value,
+            IReadOnlyDictionary<string, string> fields)
+        {
+            if (!string.IsNullOrWhiteSpace(value))
+            {
+                try
+                {
+                    var parsed =
+                        JsonSerializer.Deserialize<ExecutionContextSnapshot>(
+                            value,
+                            JsonOptions);
+
+                    if (parsed is not null)
+                    {
+                        return parsed;
+                    }
+                }
+                catch (JsonException)
+                {
+                    // Fall through to compatibility fallback for older persisted records.
+                }
+            }
+
+            return CreateFallbackExecutionContextSnapshot(fields);
+        }
+
+        /// <summary>
+        /// Creates a compatibility execution context snapshot for older Redis records that do not contain one.
+        /// </summary>
+        /// <param name="fields">The Redis hash fields.</param>
+        /// <returns>The fallback execution context snapshot.</returns>
+        private static ExecutionContextSnapshot CreateFallbackExecutionContextSnapshot(
+            IReadOnlyDictionary<string, string> fields)
+        {
+            var controlPlaneId =
+                GetString(fields, "controlPlaneId") ?? "unknown-control-plane";
+
+            var sharedRunId =
+                GetString(fields, "sharedRunId") ?? "unknown-shared-run";
+
+            var tenantId =
+                EmptyToNull(GetString(fields, "tenantId")) ?? "system";
+
+            var tenantGroupId =
+                EmptyToNull(GetString(fields, "tenantGroupId")) ?? tenantId;
+
+            var requestedBy =
+                EmptyToNull(GetString(fields, "requestedBy")) ?? "system";
+
+            const string fallbackNamespace = "system";
+
+            return new ExecutionContextSnapshot
+            {
+                ContextKey = $"scaleout:{controlPlaneId}:{sharedRunId}",
+                Project = "ai-runtime",
+                UserId = requestedBy,
+                TenantId = tenantId,
+                TenantGroupId = tenantGroupId,
+                CurrentNamespace = fallbackNamespace,
+                Namespaces = new List<NamespaceEntry>
+                {
+                    new NamespaceEntry
+                    {
+                        Name = fallbackNamespace,
+                        Trns = new HashSet<string>()
+                    }
+                },
+                InFlightCount = 0,
+                TtlSeconds = 0,
+                CreatedAtUtc = DateTime.UtcNow
             };
         }
 

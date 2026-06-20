@@ -66,6 +66,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
         {
             ArgumentNullException.ThrowIfNull(request);
             ArgumentNullException.ThrowIfNull(request.SharedRun);
+            ArgumentNullException.ThrowIfNull(request.ExecutionContextSnapshot);
             ArgumentException.ThrowIfNullOrWhiteSpace(request.SharedRunId);
 
             cancellationToken.ThrowIfCancellationRequested();
@@ -88,6 +89,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
                 RequestId = CreateRequestId(request),
                 ControlPlaneId = controlPlaneId,
                 SharedRunId = request.SharedRunId,
+                ExecutionContextSnapshot = request.ExecutionContextSnapshot,
 
                 TenantId = request.TenantId,
                 TenantGroupId = request.TenantGroupId,

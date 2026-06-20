@@ -3,6 +3,7 @@ using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Scaling;
 using Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling;
 using Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling.Redis;
+using Multiplexed.AI.Tests.Fixtures;
 using StackExchange.Redis;
 
 namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController.Scaling
@@ -274,7 +275,15 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController.Scaling
                 RequestId = requestId,
                 ControlPlaneId = "cp-test",
                 SharedRunId = "shared-run-1",
+                ExecutionContextSnapshot = AiExecutionContextSnapshotTestFactory.Create(
+                    contextKey: "unit-test:tenant-test:context",
+                    project: "unit-test",
+                    userId: "unit-test",
+                    tenantId: "tenant-test",
+                    tenantGroupId: "tenant-group-test",
+                    currentNamespace: "unit-test"),
                 TenantId = "tenant-test",
+                TenantGroupId = "tenant-group-test",
                 PipelineKey = "pipeline-test",
                 Status = AiRuntimeScaleOutRequestStatus.Pending,
                 Reason = "No runtime capacity was available for admission.",

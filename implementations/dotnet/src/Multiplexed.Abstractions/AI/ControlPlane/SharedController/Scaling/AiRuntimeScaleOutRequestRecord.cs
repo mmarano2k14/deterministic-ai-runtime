@@ -1,4 +1,5 @@
 ﻿using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
+using Multiplexed.Abstractions.Core.ExecutionContext;
 
 namespace Multiplexed.Abstractions.AI.ControlPlane.SharedController.Scaling
 {
@@ -26,6 +27,16 @@ namespace Multiplexed.Abstractions.AI.ControlPlane.SharedController.Scaling
         /// Gets or sets the shared run identifier that triggered the scale-out request.
         /// </summary>
         public string SharedRunId { get; set; } = string.Empty;
+
+        /// <summary>
+        /// Gets or sets the execution context snapshot that caused the scale-out request.
+        /// </summary>
+        /// <remarks>
+        /// The execution context snapshot is the durable authority for tenant/runtime isolation.
+        /// Persisted scale-out requests must carry it so providers and host managers do not
+        /// derive tenant ownership from metadata.
+        /// </remarks>
+        public required ExecutionContextSnapshot ExecutionContextSnapshot { get; set; }
 
         /// <summary>
         /// Gets or sets the tenant identifier associated with the request, when available.

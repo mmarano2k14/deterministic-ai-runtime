@@ -1,6 +1,8 @@
 ﻿using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Capacity;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager.Readiness;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers.Transport;
@@ -63,6 +65,16 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http.Sc
         private readonly IAiRuntimeInstanceCapacityStore capacityStore;
 
         /// <summary>
+        /// Runtime host manager used by host-manager scale-out mode.
+        /// </summary>
+        private readonly IAiRuntimeHostManager runtimeHostManager;
+
+        /// <summary>
+        /// Runtime instance readiness waiter used by host-manager scale-out mode.
+        /// </summary>
+        private readonly IAiRuntimeInstanceReadinessWaiter readinessWaiter;
+
+        /// <summary>
         /// HTTP scale-out technical options.
         /// </summary>
         private readonly AiHttpRuntimeScaleOutOptions options;
@@ -77,11 +89,15 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http.Sc
         /// </summary>
         /// <param name="registry">The runtime instance registry.</param>
         /// <param name="capacityStore">The runtime instance capacity store.</param>
+        /// <param name="runtimeHostManager">The runtime host manager.</param>
+        /// <param name="readinessWaiter">The runtime instance readiness waiter.</param>
         /// <param name="options">The HTTP scale-out technical options.</param>
         /// <param name="logger">The logger.</param>
         public AiHttpRuntimeScaleOutProvisioner(
             IAiRuntimeInstanceRegistry registry,
             IAiRuntimeInstanceCapacityStore capacityStore,
+            IAiRuntimeHostManager runtimeHostManager,
+            IAiRuntimeInstanceReadinessWaiter readinessWaiter,
             IOptions<AiHttpRuntimeScaleOutOptions> options,
             ILogger<AiHttpRuntimeScaleOutProvisioner> logger)
         {
@@ -92,6 +108,14 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http.Sc
             this.capacityStore =
                 capacityStore
                 ?? throw new ArgumentNullException(nameof(capacityStore));
+
+            this.runtimeHostManager =
+                runtimeHostManager
+                ?? throw new ArgumentNullException(nameof(runtimeHostManager));
+
+            this.readinessWaiter =
+                readinessWaiter
+                ?? throw new ArgumentNullException(nameof(readinessWaiter));
 
             ArgumentNullException.ThrowIfNull(options);
 
@@ -140,6 +164,16 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http.Sc
                     request,
                     "http-runtime-scaleout-control-plane-id-missing",
                     "HTTP runtime scale-out control-plane id is missing.");
+            }
+
+            if (IsHostManagerMode(this.options.Mode))
+            {
+                return await this
+                    .ProvisionWithHostManagerAsync(
+                        request,
+                        startedAtUtc,
+                        cancellationToken)
+                    .ConfigureAwait(false);
             }
 
             var runtimeInstanceIdPrefix =
@@ -265,6 +299,161 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http.Sc
                     ["sharedRunId"] = request.SharedRunId,
                     ["controlPlaneId"] = request.ControlPlaneId
                 }
+            };
+        }
+
+        /// <summary>
+        /// Provisions HTTP runtime capacity by delegating runtime lifecycle to the runtime host manager.
+        /// </summary>
+        /// <param name="request">The scale-out provider request.</param>
+        /// <param name="startedAtUtc">The UTC timestamp when provisioning started.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <returns>The scale-out provider result.</returns>
+        private async Task<AiRuntimeScaleOutProviderResult> ProvisionWithHostManagerAsync(
+            AiRuntimeScaleOutProviderRequest request,
+            DateTimeOffset startedAtUtc,
+            CancellationToken cancellationToken)
+        {
+            var runtimeInstanceIdPrefix =
+                ResolveRuntimeInstanceIdPrefix(
+                    request);
+
+            var runtimeInstanceId =
+                ResolveRuntimeInstanceId(
+                    request,
+                    runtimeInstanceIdPrefix);
+
+            var endpoint =
+                ResolveEndpoint(
+                    request,
+                    runtimeInstanceId);
+
+            var workerCount =
+                ResolvePositiveOrDefault(
+                    request.WorkerCountPerInstance,
+                    DefaultWorkerCountPerInstance);
+
+            var maxConcurrentRuns =
+                ResolvePositiveOrDefault(
+                    request.MaxConcurrentRunsPerInstance,
+                    DefaultMaxConcurrentRunsPerInstance);
+
+            var queueCapacity =
+                ResolvePositiveOrDefault(
+                    request.LocalQueueCapacity,
+                    DefaultQueueCapacity);
+
+            logger.LogInformation(
+                "HTTP SCALE-OUT HOST-MANAGER START RequestId={RequestId} SharedRunId={SharedRunId} RuntimeInstanceId={RuntimeInstanceId} Endpoint={Endpoint} TenantId={TenantId} TenantGroupId={TenantGroupId} IsolationMode={IsolationMode} WorkerCount={WorkerCount} MaxConcurrentRuns={MaxConcurrentRuns} QueueCapacity={QueueCapacity}",
+                request.RequestId,
+                request.SharedRunId,
+                runtimeInstanceId,
+                endpoint,
+                request.TenantId,
+                request.TenantGroupId,
+                request.IsolationMode,
+                workerCount,
+                maxConcurrentRuns,
+                queueCapacity);
+
+            var startResult =
+                await this.runtimeHostManager
+                    .StartRuntimeAsync(
+                        new AiRuntimeHostStartRequest
+                        {
+                            RequestId = request.RequestId,
+                            ControlPlaneId = request.ControlPlaneId,
+                            ExecutionContextSnapshot = request.ExecutionContextSnapshot,
+                            RuntimeInstanceId = runtimeInstanceId,
+                            RuntimeInstanceIdPrefix = runtimeInstanceIdPrefix,
+                            ProviderName = ProviderName,
+                            TransportName = AiRuntimeInstanceCommandTransportMetadataKeys.HttpTransportName,
+                            TransportEndpoint = endpoint,
+                            TenantId = request.TenantId,
+                            TenantGroupId = request.TenantGroupId,
+                            IsolationMode = request.IsolationMode.ToString(),
+                            PreferDedicatedCapacity = request.PreferDedicatedCapacity,
+                            AllowSharedFallback = request.AllowSharedFallback,
+                            WorkerCountPerInstance = workerCount,
+                            MaxConcurrentRunsPerInstance = maxConcurrentRuns,
+                            LocalQueueCapacity = queueCapacity,
+                            MaxRuntimeInstances = request.MaxRuntimeInstances
+                        },
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+            if (!startResult.Success)
+            {
+                logger.LogWarning(
+                    "HTTP SCALE-OUT HOST-MANAGER REJECTED RequestId={RequestId} SharedRunId={SharedRunId} RuntimeInstanceId={RuntimeInstanceId} FailureReason={FailureReason}",
+                    request.RequestId,
+                    request.SharedRunId,
+                    runtimeInstanceId,
+                    startResult.FailureReason);
+
+                return CreateRejectedResult(
+                    request,
+                    startResult.FailureReason ?? "runtime-host-start-failed",
+                    "HTTP runtime scale-out host manager start failed.");
+            }
+
+            if (this.options.RequireReadiness)
+            {
+                var readinessResult =
+                    await this.readinessWaiter
+                        .WaitUntilReadyAsync(
+                            new AiRuntimeInstanceReadinessRequest
+                            {
+                                ControlPlaneId = request.ControlPlaneId,
+                                ExecutionContextSnapshot = request.ExecutionContextSnapshot,
+                                RuntimeInstanceId = startResult.RuntimeInstanceId,
+                                ProviderName = ProviderName,
+                                TransportName = AiRuntimeInstanceCommandTransportMetadataKeys.HttpTransportName,
+                                RequireTransportEndpoint = true,
+                                Timeout = TimeSpan.FromSeconds(
+                                    Math.Max(
+                                        1,
+                                        this.options.ReadinessTimeoutSeconds)),
+                                PollInterval = TimeSpan.FromMilliseconds(
+                                    Math.Max(
+                                        1,
+                                        this.options.ReadinessPollIntervalMilliseconds))
+                            },
+                            cancellationToken)
+                        .ConfigureAwait(false);
+
+                if (!readinessResult.Success)
+                {
+                    logger.LogWarning(
+                        "HTTP SCALE-OUT HOST-MANAGER READINESS FAILED RequestId={RequestId} SharedRunId={SharedRunId} RuntimeInstanceId={RuntimeInstanceId} FailureReason={FailureReason} TimedOut={TimedOut}",
+                        request.RequestId,
+                        request.SharedRunId,
+                        startResult.RuntimeInstanceId,
+                        readinessResult.FailureReason,
+                        readinessResult.TimedOut);
+
+                    return CreateRejectedResult(
+                        request,
+                        readinessResult.FailureReason ?? "runtime-readiness-failed",
+                        "HTTP runtime scale-out readiness check failed.");
+                }
+            }
+
+            logger.LogInformation(
+                "HTTP SCALE-OUT HOST-MANAGER FULFILLED RequestId={RequestId} SharedRunId={SharedRunId} RuntimeInstanceId={RuntimeInstanceId} Endpoint={Endpoint} DurationMs={DurationMs}",
+                request.RequestId,
+                request.SharedRunId,
+                startResult.RuntimeInstanceId,
+                startResult.TransportEndpoint ?? endpoint,
+                (DateTimeOffset.UtcNow - startedAtUtc).TotalMilliseconds);
+
+            return new AiRuntimeScaleOutProviderResult
+            {
+                Success = true,
+                Rejected = false,
+                RuntimeInstanceId = startResult.RuntimeInstanceId,
+                ProviderOperationId = $"http-host-manager-scaleout-{request.RequestId}",
+                Message = "HTTP runtime scale-out request was fulfilled by the runtime host manager."
             };
         }
 
@@ -401,6 +590,20 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http.Sc
             }
 
             return hardDefault;
+        }
+
+        /// <summary>
+        /// Determines whether the configured HTTP scale-out mode uses the runtime host manager.
+        /// </summary>
+        /// <param name="mode">The configured scale-out mode.</param>
+        /// <returns><c>true</c> when host-manager mode is enabled; otherwise, <c>false</c>.</returns>
+        private static bool IsHostManagerMode(
+            string? mode)
+        {
+            return string.Equals(
+                mode,
+                AiHttpRuntimeScaleOutModes.HostManager,
+                StringComparison.OrdinalIgnoreCase);
         }
 
         /// <summary>

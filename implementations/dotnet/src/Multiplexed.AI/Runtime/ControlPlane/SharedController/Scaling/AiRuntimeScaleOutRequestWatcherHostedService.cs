@@ -268,6 +268,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
             {
                 RequestId = request.RequestId,
                 ControlPlaneId = request.ControlPlaneId,
+                ExecutionContextSnapshot = request.ExecutionContextSnapshot,
                 SharedRunId = request.SharedRunId,
 
                 TenantId = request.TenantId,

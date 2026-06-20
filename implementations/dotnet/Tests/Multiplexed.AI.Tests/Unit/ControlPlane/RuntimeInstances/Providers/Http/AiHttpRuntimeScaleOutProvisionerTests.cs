@@ -1,11 +1,14 @@
 ﻿using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Capacity;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager.Readiness;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers.Transport;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Scaling;
+using Multiplexed.Abstractions.Core.ExecutionContext;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http.ScaleOut;
 using Xunit;
 
@@ -32,10 +35,13 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Providers.Http
                 new AiHttpRuntimeScaleOutProvisioner(
                     registry,
                     capacityStore,
+                    new NoopAiRuntimeHostManager(),
+                    new TestRuntimeInstanceReadinessWaiter(),
                     Options.Create(
                         new AiHttpRuntimeScaleOutOptions
                         {
                             Enabled = true,
+                            Mode = AiHttpRuntimeScaleOutModes.MetadataOnly,
                             DefaultRuntimeInstanceIdPrefix = "http-runtime",
                             EndpointTemplate = "http://{runtimeInstanceId}:8080"
                         }),
@@ -47,6 +53,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Providers.Http
                     RequestId = "scaleout-1",
                     SharedRunId = "shared-run-1",
                     ControlPlaneId = "control-plane-1",
+                    ExecutionContextSnapshot = CreateExecutionContextSnapshot(),
                     TenantId = "tenant-a",
                     TenantGroupId = "group-a",
                     IsolationMode = AiRuntimeInstanceIsolationMode.Dedicated,
@@ -189,6 +196,34 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Providers.Http
         }
 
         /// <summary>
+        /// Creates the execution context snapshot used by HTTP scale-out provisioner tests.
+        /// </summary>
+        /// <returns>The execution context snapshot.</returns>
+        private static ExecutionContextSnapshot CreateExecutionContextSnapshot()
+        {
+            return new ExecutionContextSnapshot
+            {
+                ContextKey = "unit-test:tenant-a:context",
+                Project = "unit-test",
+                UserId = "unit-test",
+                TenantId = "tenant-a",
+                TenantGroupId = "group-a",
+                CurrentNamespace = "unit-test",
+                Namespaces = new List<NamespaceEntry>
+                {
+                    new NamespaceEntry
+                    {
+                        Name = "unit-test",
+                        Trns = new HashSet<string>()
+                    }
+                },
+                InFlightCount = 0,
+                TtlSeconds = 0,
+                CreatedAtUtc = DateTime.UtcNow
+            };
+        }
+
+        /// <summary>
         /// Test runtime instance registry.
         /// </summary>
         private sealed class TestRuntimeInstanceRegistry : IAiRuntimeInstanceRegistry
@@ -196,6 +231,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Providers.Http
             private readonly Dictionary<string, AiRuntimeInstanceSnapshot> registrations =
                 new(StringComparer.Ordinal);
 
+            /// <inheritdoc />
             public Task<AiRuntimeInstanceSnapshot> RegisterAsync(
                 AiRuntimeInstanceRegistration registration,
                 CancellationToken cancellationToken = default)
@@ -236,6 +272,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Providers.Http
                     snapshot);
             }
 
+            /// <inheritdoc />
             public Task<AiRuntimeInstanceSnapshot?> HeartbeatAsync(
                 string runtimeInstanceId,
                 int queuedRunCount,
@@ -254,6 +291,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Providers.Http
                     null);
             }
 
+            /// <inheritdoc />
             public Task<AiRuntimeInstanceSnapshot?> GetAsync(
                 string runtimeInstanceId,
                 CancellationToken cancellationToken = default)
@@ -266,6 +304,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Providers.Http
                     snapshot);
             }
 
+            /// <inheritdoc />
             public Task<IReadOnlyList<AiRuntimeInstanceSnapshot>> ListAsync(
                 bool includeStopped = false,
                 CancellationToken cancellationToken = default)
@@ -274,6 +313,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Providers.Http
                     registrations.Values.ToArray());
             }
 
+            /// <inheritdoc />
             public Task<AiRuntimeInstanceSnapshot?> MarkDrainingAsync(
                 string runtimeInstanceId,
                 CancellationToken cancellationToken = default)
@@ -282,6 +322,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Providers.Http
                     null);
             }
 
+            /// <inheritdoc />
             public Task<AiRuntimeInstanceSnapshot?> UnregisterAsync(
                 string runtimeInstanceId,
                 CancellationToken cancellationToken = default)
@@ -299,6 +340,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Providers.Http
             private readonly Dictionary<string, AiRuntimeInstanceCapacityDescriptor> descriptors =
                 new(StringComparer.Ordinal);
 
+            /// <inheritdoc />
             public Task PublishAsync(
                 AiRuntimeInstanceCapacityDescriptor descriptor,
                 CancellationToken cancellationToken = default)
@@ -311,6 +353,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Providers.Http
                 return Task.CompletedTask;
             }
 
+            /// <inheritdoc />
             public Task<AiRuntimeInstanceCapacityDescriptor?> GetAsync(
                 string runtimeInstanceId,
                 CancellationToken cancellationToken = default)
@@ -323,6 +366,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Providers.Http
                     descriptor);
             }
 
+            /// <inheritdoc />
             public Task<IReadOnlyList<AiRuntimeInstanceCapacityDescriptor>> ListAsync(
                 CancellationToken cancellationToken = default)
             {
@@ -330,12 +374,39 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Providers.Http
                     descriptors.Values.ToArray());
             }
 
+            /// <inheritdoc />
             public Task<bool> RemoveAsync(
                 string runtimeInstanceId,
                 CancellationToken cancellationToken = default)
             {
                 return Task.FromResult(
                     descriptors.Remove(runtimeInstanceId));
+            }
+        }
+
+        /// <summary>
+        /// Test runtime instance readiness waiter.
+        /// </summary>
+        private sealed class TestRuntimeInstanceReadinessWaiter : IAiRuntimeInstanceReadinessWaiter
+        {
+            /// <inheritdoc />
+            public Task<AiRuntimeInstanceReadinessResult> WaitUntilReadyAsync(
+                AiRuntimeInstanceReadinessRequest request,
+                CancellationToken cancellationToken = default)
+            {
+                ArgumentNullException.ThrowIfNull(request);
+
+                cancellationToken.ThrowIfCancellationRequested();
+
+                return Task.FromResult(
+                    new AiRuntimeInstanceReadinessResult
+                    {
+                        Success = true,
+                        ExecutionContextSnapshot = request.ExecutionContextSnapshot,
+                        RuntimeInstanceId = request.RuntimeInstanceId,
+                        ProviderName = request.ProviderName,
+                        TransportName = request.TransportName
+                    });
             }
         }
     }

@@ -1,11 +1,15 @@
 ﻿using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.ControlPlane.Discovery;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Capacity;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager.Readiness;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers.Transport;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Scaling;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http.ScaleOut;
 using Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling;
@@ -149,10 +153,10 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController.Scaling
                 .ConfigureAwait(false);
 
             var second =
-                CreateRequest("request-2");
-
-            second.SharedRunId = "shared-run-2";
-            second.PipelineKey = "pipeline-2";
+                CreateRequest(
+                    requestId: "request-2",
+                    sharedRunId: "shared-run-2",
+                    pipelineKey: "pipeline-2");
 
             await store
                 .CreateAsync(
@@ -251,14 +255,17 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController.Scaling
         [Fact]
         public async Task ProcessCycleAsync_Should_Fulfill_Http_Pending_Request_And_Publish_Capacity()
         {
-            var store = CreateStore();
+            var store =
+                CreateStore();
 
-            var request = CreateRequest("request-http-1");
-
-            request.ProviderHint = "http";
-            request.TenantId = "tenant-a";
-            request.TenantGroupId = "tenant-group-a";
-            request.PipelineKey = "pipeline-http";
+            var request =
+                CreateRequest(
+                    requestId: "request-http-1",
+                    sharedRunId: "shared-run-1",
+                    tenantId: "tenant-a",
+                    tenantGroupId: "tenant-group-a",
+                    pipelineKey: "pipeline-http",
+                    providerHint: "http");
 
             request.IsolationMode = AiRuntimeInstanceIsolationMode.Dedicated;
             request.PreferDedicatedCapacity = true;
@@ -295,10 +302,13 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController.Scaling
                 new AiHttpRuntimeScaleOutProvisioner(
                     registry,
                     capacityStore,
+                    new NoopAiRuntimeHostManager(),
+                    new TestRuntimeInstanceReadinessWaiter(),
                     Options.Create(
                         new AiHttpRuntimeScaleOutOptions
                         {
                             Enabled = true,
+                            Mode = AiHttpRuntimeScaleOutModes.MetadataOnly,
                             DefaultRuntimeInstanceIdPrefix = "http-runtime",
                             EndpointTemplate = "http://runtime-host/{runtimeInstanceId}"
                         }),
@@ -450,17 +460,35 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController.Scaling
         /// Creates a valid scale-out request record for tests.
         /// </summary>
         /// <param name="requestId">The request identifier.</param>
+        /// <param name="sharedRunId">The shared run identifier.</param>
+        /// <param name="tenantId">The tenant identifier.</param>
+        /// <param name="tenantGroupId">The tenant group identifier.</param>
+        /// <param name="pipelineKey">The pipeline key.</param>
+        /// <param name="providerHint">The provider hint.</param>
         /// <returns>The created request record.</returns>
         private static AiRuntimeScaleOutRequestRecord CreateRequest(
-            string requestId)
+            string requestId,
+            string sharedRunId = "shared-run-1",
+            string tenantId = "tenant-test",
+            string tenantGroupId = "tenant-group-test",
+            string pipelineKey = "pipeline-test",
+            string providerHint = "simulated")
         {
             return new AiRuntimeScaleOutRequestRecord
             {
                 RequestId = requestId,
                 ControlPlaneId = "cp-test",
-                SharedRunId = "shared-run-1",
-                TenantId = "tenant-test",
-                PipelineKey = "pipeline-test",
+                SharedRunId = sharedRunId,
+                ExecutionContextSnapshot = AiExecutionContextSnapshotTestFactory.Create(
+                    contextKey: $"unit-test:{tenantId}:context",
+                    project: "unit-test",
+                    userId: "unit-test",
+                    tenantId: tenantId,
+                    tenantGroupId: tenantGroupId,
+                    currentNamespace: "unit-test"),
+                TenantId = tenantId,
+                TenantGroupId = tenantGroupId,
+                PipelineKey = pipelineKey,
                 Status = AiRuntimeScaleOutRequestStatus.Pending,
                 Reason = "No runtime capacity was available for admission.",
                 VisibleInstanceCount = 0,
@@ -468,7 +496,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController.Scaling
                 CurrentInstanceCount = 0,
                 MaxInstanceCount = 3,
                 RequestedTargetInstanceCount = 1,
-                ProviderHint = "simulated",
+                ProviderHint = providerHint,
                 RequestedBy = "unit-test",
                 Source = "unit-test",
                 CorrelationId = "correlation-test",
@@ -605,6 +633,101 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController.Scaling
 
                 return Task.FromResult<AiRuntimeInstanceSnapshot?>(
                     null);
+            }
+        }
+
+        /// <summary>
+        /// Test runtime instance capacity store used by the HTTP scale-out provisioner.
+        /// </summary>
+        private sealed class TestRuntimeInstanceCapacityStore : IAiRuntimeInstanceCapacityStore
+        {
+            private readonly Dictionary<string, AiRuntimeInstanceCapacityDescriptor> descriptors =
+                new(StringComparer.Ordinal);
+
+            /// <inheritdoc />
+            public Task PublishAsync(
+                AiRuntimeInstanceCapacityDescriptor descriptor,
+                CancellationToken cancellationToken = default)
+            {
+                ArgumentNullException.ThrowIfNull(descriptor);
+
+                cancellationToken.ThrowIfCancellationRequested();
+
+                this.descriptors[descriptor.RuntimeInstanceId] =
+                    descriptor;
+
+                return Task.CompletedTask;
+            }
+
+            /// <inheritdoc />
+            public Task<AiRuntimeInstanceCapacityDescriptor?> GetAsync(
+                string runtimeInstanceId,
+                CancellationToken cancellationToken = default)
+            {
+                ArgumentException.ThrowIfNullOrWhiteSpace(runtimeInstanceId);
+
+                cancellationToken.ThrowIfCancellationRequested();
+
+                this.descriptors.TryGetValue(
+                    runtimeInstanceId,
+                    out var descriptor);
+
+                return Task.FromResult<AiRuntimeInstanceCapacityDescriptor?>(
+                    descriptor);
+            }
+
+            /// <inheritdoc />
+            public Task<IReadOnlyList<AiRuntimeInstanceCapacityDescriptor>> ListAsync(
+                CancellationToken cancellationToken = default)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                IReadOnlyList<AiRuntimeInstanceCapacityDescriptor> result =
+                    this.descriptors
+                        .Values
+                        .ToArray();
+
+                return Task.FromResult(
+                    result);
+            }
+
+            /// <inheritdoc />
+            public Task<bool> RemoveAsync(
+                string runtimeInstanceId,
+                CancellationToken cancellationToken = default)
+            {
+                ArgumentException.ThrowIfNullOrWhiteSpace(runtimeInstanceId);
+
+                cancellationToken.ThrowIfCancellationRequested();
+
+                return Task.FromResult(
+                    this.descriptors.Remove(runtimeInstanceId));
+            }
+        }
+
+        /// <summary>
+        /// Test runtime instance readiness waiter.
+        /// </summary>
+        private sealed class TestRuntimeInstanceReadinessWaiter : IAiRuntimeInstanceReadinessWaiter
+        {
+            /// <inheritdoc />
+            public Task<AiRuntimeInstanceReadinessResult> WaitUntilReadyAsync(
+                AiRuntimeInstanceReadinessRequest request,
+                CancellationToken cancellationToken = default)
+            {
+                ArgumentNullException.ThrowIfNull(request);
+
+                cancellationToken.ThrowIfCancellationRequested();
+
+                return Task.FromResult(
+                    new AiRuntimeInstanceReadinessResult
+                    {
+                        Success = true,
+                        ExecutionContextSnapshot = request.ExecutionContextSnapshot,
+                        RuntimeInstanceId = request.RuntimeInstanceId,
+                        ProviderName = request.ProviderName,
+                        TransportName = request.TransportName
+                    });
             }
         }
 

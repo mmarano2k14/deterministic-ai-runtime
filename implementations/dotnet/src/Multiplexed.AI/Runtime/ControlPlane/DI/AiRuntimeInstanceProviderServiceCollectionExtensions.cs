@@ -1,9 +1,13 @@
-﻿using System.Reflection;
-using Microsoft.Extensions.DependencyInjection;
+﻿using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager.Readiness;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Readiness;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Local;
+using System.Reflection;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.DI
 {
@@ -34,6 +38,14 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
             services.TryAddSingleton<
                 IAiRuntimeInstanceProviderCapabilityResolver,
                 AiRuntimeInstanceProviderCapabilityResolver>();
+
+            services.TryAddSingleton<
+                IAiRuntimeHostManager,
+                NoopAiRuntimeHostManager>();
+
+            services.TryAddSingleton<
+                IAiRuntimeInstanceReadinessWaiter,
+                AiRuntimeInstanceReadinessWaiter>();
 
             return services;
         }
@@ -77,6 +89,14 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
             services.TryAddSingleton<
                 IAiRuntimeInstanceProviderCapabilityResolver,
                 AiRuntimeInstanceProviderCapabilityResolver>();
+
+            services.TryAddSingleton<
+                IAiRuntimeHostManager,
+                NoopAiRuntimeHostManager>();
+
+            services.TryAddSingleton<
+                IAiRuntimeInstanceReadinessWaiter,
+                AiRuntimeInstanceReadinessWaiter>();
 
             return services;
         }
