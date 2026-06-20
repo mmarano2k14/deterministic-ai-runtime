@@ -1785,6 +1785,138 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Http
                 $"VisibleCapacityIds='{string.Join(" | ", visibleCapacityIds)}'.");
         }
 
+        [Fact]
+        public async Task ControlPlaneWithHttpRuntimeInstances_With_HostManager_Mode_Should_Fulfill_Redis_ScaleOut_Request_Using_Http_Provider()
+        {
+            var controlPlaneId =
+                GenericMcpServerTestSettings.CreateControlPlaneId(
+                    "http-hostmanager-scaleout-request");
+
+            var controlPlaneSettings =
+                GenericMcpServerTestSettings.CreateHttpScaleOutOnlyControlPlaneSettings(
+                    controlPlaneId,
+                    useHostManagerMode: true);
+
+            await using var host =
+                new GenericMcpServerTestHost(
+                    controlPlaneSettings);
+
+            using var client =
+                host.CreateClient();
+
+            AssertRedisStoresPublisherWatcherAndHttpProvider(
+                host.Services);
+
+            var mcp =
+                await McpRbacTestClientHelper
+                    .CreateConfiguredClientAsync(
+                        host,
+                        client,
+                        RequestedBy,
+                        tenantId: TenantId)
+                    .ConfigureAwait(false);
+
+            var sharedRunStore =
+                host.Services.GetRequiredService<IAiSharedRunStore>();
+
+            var scaleOutRequestStore =
+                host.Services.GetRequiredService<IAiRuntimeScaleOutRequestStore>();
+
+            var runtimeInstanceRegistry =
+                host.Services.GetRequiredService<IAiRuntimeInstanceRegistry>();
+
+            var runtimeInstanceCapacityStore =
+                host.Services.GetRequiredService<IAiRuntimeInstanceCapacityStore>();
+
+            var pipelineName =
+                $"mcp-http-hostmanager-scaleout-{Guid.NewGuid():N}";
+
+            var result =
+                await SubmitSingleRunAndWaitForFulfilledScaleOutAsync(
+                        mcp,
+                        sharedRunStore,
+                        scaleOutRequestStore,
+                        controlPlaneId,
+                        pipelineName,
+                        TenantId,
+                        TimeSpan.FromSeconds(15))
+                    .ConfigureAwait(false);
+
+            Assert.Equal(AiRuntimeInstanceIsolationMode.Shared, result.ScaleOutRequest.IsolationMode);
+            Assert.False(result.ScaleOutRequest.PreferDedicatedCapacity);
+            Assert.True(result.ScaleOutRequest.AllowSharedFallback);
+            Assert.Equal(1, result.ScaleOutRequest.MaxRuntimeInstances);
+            Assert.Equal(SharedRuntimeInstanceIdPrefix, result.ScaleOutRequest.RuntimeInstanceIdPrefix);
+            Assert.Equal(10, result.ScaleOutRequest.WorkerCountPerInstance);
+            Assert.Equal(3, result.ScaleOutRequest.MaxConcurrentRunsPerInstance);
+
+            var fulfilledRuntimeInstanceId =
+                result.ScaleOutRequest.FulfilledRuntimeInstanceId!;
+
+            Assert.Contains(
+                $":{SharedRuntimeInstanceIdPrefix}-1",
+                fulfilledRuntimeInstanceId,
+                StringComparison.Ordinal);
+
+            var registered =
+                await runtimeInstanceRegistry
+                    .GetAsync(fulfilledRuntimeInstanceId)
+                    .ConfigureAwait(false);
+
+            var capacity =
+                await runtimeInstanceCapacityStore
+                    .GetAsync(fulfilledRuntimeInstanceId)
+                    .ConfigureAwait(false);
+
+            Assert.NotNull(registered);
+            Assert.NotNull(capacity);
+            Assert.Equal(fulfilledRuntimeInstanceId, registered!.RuntimeInstanceId);
+            Assert.Equal(fulfilledRuntimeInstanceId, capacity!.RuntimeInstanceId);
+            Assert.Equal("http", registered.Metadata[AiRuntimeInstanceProviderMetadataKeys.ProviderName]);
+            Assert.Equal("http", capacity.Metadata[AiRuntimeInstanceProviderMetadataKeys.ProviderName]);
+            Assert.Equal("http", registered.Metadata["provider.name"]);
+            Assert.Equal("http", capacity.Metadata["provider.name"]);
+            Assert.Equal(AiRuntimeInstanceCommandTransportMetadataKeys.HttpTransportName, registered.Metadata[AiRuntimeInstanceCommandTransportMetadataKeys.TransportName]);
+            Assert.Equal(AiRuntimeInstanceCommandTransportMetadataKeys.HttpTransportName, capacity.Metadata[AiRuntimeInstanceCommandTransportMetadataKeys.TransportName]);
+            Assert.Equal("Shared", registered.Metadata["runtime.isolationMode"]);
+            Assert.Equal("Shared", capacity.Metadata["runtime.isolationMode"]);
+
+            output.WriteLine(
+                $"Redis HTTP HostManager scale-out request fulfilled. ControlPlaneId='{controlPlaneId}', " +
+                $"SharedRunId='{result.SharedRunId}', RequestId='{result.ScaleOutRequest.RequestId}', " +
+                $"RuntimeInstanceId='{fulfilledRuntimeInstanceId}', PipelineKey='{pipelineName}'.");
+        }
+
+        private static async Task WaitUntilAsync(
+            Func<Task<bool>> condition,
+            TimeSpan timeout,
+            TimeSpan? delay = null)
+        {
+            ArgumentNullException.ThrowIfNull(condition);
+
+            var stopAt =
+                DateTimeOffset.UtcNow.Add(timeout);
+
+            var pollDelay =
+                delay
+                ?? TimeSpan.FromMilliseconds(200);
+
+            while (DateTimeOffset.UtcNow < stopAt)
+            {
+                if (await condition().ConfigureAwait(false))
+                {
+                    return;
+                }
+
+                await Task
+                    .Delay(pollDelay)
+                    .ConfigureAwait(false);
+            }
+
+            throw new TimeoutException(
+                "Condition was not reached in time.");
+        }
+
         /// <summary>
         /// Waits until a scale-out request reaches the expected status.
         /// </summary>
@@ -2054,6 +2186,74 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Http
                     ?? throw new InvalidOperationException(
                         "No execution context snapshot is currently configured for the test.");
             }
+        }
+
+        private static async Task<(string SharedRunId, AiSharedRunRecord SharedRun, AiRuntimeScaleOutRequestRecord ScaleOutRequest)> SubmitSingleRunAndWaitForFulfilledScaleOutAsync(
+            McpTestClient mcp,
+            IAiSharedRunStore sharedRunStore,
+            IAiRuntimeScaleOutRequestStore scaleOutRequestStore,
+            string controlPlaneId,
+            string pipelineName,
+            string tenantId,
+            TimeSpan timeout)
+        {
+            ArgumentNullException.ThrowIfNull(mcp);
+            ArgumentNullException.ThrowIfNull(sharedRunStore);
+            ArgumentNullException.ThrowIfNull(scaleOutRequestStore);
+            ArgumentException.ThrowIfNullOrWhiteSpace(controlPlaneId);
+            ArgumentException.ThrowIfNullOrWhiteSpace(pipelineName);
+            ArgumentException.ThrowIfNullOrWhiteSpace(tenantId);
+
+            var submittedSharedRunIds =
+                await SubmitRunsAsync(
+                        mcp,
+                        pipelineName,
+                        count: 1,
+                        stepCount: 3,
+                        flakyStepInterval: 0,
+                        tenantId: tenantId)
+                    .ConfigureAwait(false);
+
+            var sharedRunId =
+                Assert.Single(submittedSharedRunIds);
+
+            var sharedRun =
+                await sharedRunStore
+                    .GetAsync(sharedRunId)
+                    .ConfigureAwait(false);
+
+            Assert.NotNull(sharedRun);
+            Assert.Equal(AiSharedRunStatus.ScaleOutRequested, sharedRun!.Status);
+            Assert.Equal(controlPlaneId, sharedRun.ControlPlaneId);
+            Assert.Equal(pipelineName, sharedRun.PipelineKey);
+            Assert.Equal(tenantId, sharedRun.ExecutionContextSnapshot.TenantId);
+            Assert.Equal(tenantId, sharedRun.RunRequest.ExecutionContextSnapshot?.TenantId);
+            Assert.NotNull(sharedRun.AdmissionDecision);
+            Assert.Equal(AiRunAdmissionDecisionType.RequestScaleOut, sharedRun.AdmissionDecision.DecisionType);
+            Assert.Equal(tenantId, sharedRun.AdmissionDecision.TenantId);
+
+            var expectedScaleOutRequestId =
+                $"scale-out-{sharedRunId}";
+
+            var scaleOutRequest =
+                await WaitForScaleOutRequestStatusAsync(
+                        scaleOutRequestStore,
+                        expectedScaleOutRequestId,
+                        AiRuntimeScaleOutRequestStatus.Fulfilled,
+                        timeout)
+                    .ConfigureAwait(false);
+
+            Assert.Equal(expectedScaleOutRequestId, scaleOutRequest.RequestId);
+            Assert.Equal(sharedRunId, scaleOutRequest.SharedRunId);
+            Assert.Equal(controlPlaneId, scaleOutRequest.ControlPlaneId);
+            Assert.Equal(tenantId, scaleOutRequest.TenantId);
+            Assert.Equal(pipelineName, scaleOutRequest.PipelineKey);
+            Assert.Equal(AiRuntimeScaleOutRequestStatus.Fulfilled, scaleOutRequest.Status);
+            Assert.Equal("http", scaleOutRequest.ProviderHint);
+            Assert.Equal("http", scaleOutRequest.Metadata["providerHint"]);
+            Assert.False(string.IsNullOrWhiteSpace(scaleOutRequest.FulfilledRuntimeInstanceId));
+
+            return (sharedRunId, sharedRun, scaleOutRequest);
         }
     }
 }

@@ -312,19 +312,6 @@
         /// <summary>
         /// Creates local scale-out-only control-plane settings for a single isolated scenario.
         /// </summary>
-        /// <remarks>
-        /// PURPOSE:
-        /// - Starts an MCP control-plane host in local runtime-instance mode.
-        /// - Keeps the local runtime instance pool startup disabled.
-        /// - Allows admission to see no initial runtime capacity.
-        /// - Allows the scale-out watcher to fulfill the Redis-backed scale-out request
-        ///   through the local provider and local runtime instance scaler.
-        ///
-        /// IMPORTANT:
-        /// - AiLocalRuntimeInstancePool:Enabled is intentionally false.
-        /// - The pool service/scaler is still registered by the local MCP host mode.
-        /// - Runtime instances are created on demand by the scale-out watcher.
-        /// </remarks>
         /// <param name="controlPlaneId">The logical control-plane identifier shared by the scenario.</param>
         /// <returns>The local scale-out-only control-plane settings.</returns>
         public static Dictionary<string, string?> CreateLocalScaleOutOnlyControlPlaneSettings(
@@ -405,22 +392,16 @@
         /// Creates HTTP scale-out-only control-plane settings for a single isolated scenario.
         /// </summary>
         /// <remarks>
-        /// PURPOSE:
-        /// - Starts an MCP control-plane host in HTTP runtime-instance mode.
-        /// - Keeps the local runtime instance pool startup disabled.
-        /// - Allows admission to see no initial runtime capacity.
-        /// - Allows the scale-out watcher to fulfill the Redis-backed scale-out request
-        ///   through the HTTP provider and HTTP runtime scale-out provisioner.
-        ///
-        /// IMPORTANT:
-        /// - No real HTTP runtime endpoint is started by this factory.
-        /// - The HTTP scale-out provisioner only materializes registry and capacity metadata.
-        /// - Dispatch/execution against the HTTP runtime endpoint should be tested separately.
+        /// By default this factory keeps the historical metadata-only HTTP scale-out behavior.
+        /// Set <paramref name="useHostManagerMode" /> to <c>true</c> only for scenarios that explicitly
+        /// validate the runtime host manager lifecycle boundary.
         /// </remarks>
         /// <param name="controlPlaneId">The logical control-plane identifier shared by the scenario.</param>
+        /// <param name="useHostManagerMode">Whether HTTP scale-out should delegate host startup to IAiRuntimeHostManager.</param>
         /// <returns>The HTTP scale-out-only control-plane settings.</returns>
         public static Dictionary<string, string?> CreateHttpScaleOutOnlyControlPlaneSettings(
-            string controlPlaneId)
+            string controlPlaneId,
+            bool useHostManagerMode = false)
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(
                 controlPlaneId);
@@ -430,6 +411,11 @@
 
             var deployment =
                 $"test-http-scaleout-{Guid.NewGuid():N}";
+
+            var httpScaleOutMode =
+                useHostManagerMode
+                    ? "HostManager"
+                    : "MetadataOnly";
 
             return CreateMcpSettings(
                 controlPlaneId,
@@ -483,6 +469,10 @@
                     ["AiRuntimeScaleOutRequestWatcher:IgnoreWhenControlPlaneIdMissing"] = "true",
 
                     ["AiHttpRuntimeScaleOut:Enabled"] = "true",
+                    ["AiHttpRuntimeScaleOut:Mode"] = httpScaleOutMode,
+                    ["AiHttpRuntimeScaleOut:RequireReadiness"] = useHostManagerMode ? "true" : "false",
+                    ["AiHttpRuntimeScaleOut:ReadinessTimeoutSeconds"] = "15",
+                    ["AiHttpRuntimeScaleOut:ReadinessPollIntervalMilliseconds"] = "100",
                     ["AiHttpRuntimeScaleOut:DefaultRuntimeInstanceIdPrefix"] = "http-runtime",
                     ["AiHttpRuntimeScaleOut:EndpointTemplate"] = "http://runtime-host/{runtimeInstanceId}",
 

@@ -3,9 +3,17 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Capacity;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers.Transport;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
 using Multiplexed.AI.McpServer.Host;
 using Multiplexed.AI.McpServer.Tests.Integration.Auth;
 using Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Http;
+using System.Globalization;
 
 namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic
 {
@@ -30,11 +38,17 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic
         private const string HostModeSettingKey =
             "AiMcpHost:Mode";
 
+        private const string HttpScaleOutModeSettingKey =
+            "AiHttpRuntimeScaleOut:Mode";
+
         private const string HttpControlPlaneMode =
             "ControlPlaneWithHttpRuntimeInstances";
 
         private const string LocalControlPlaneMode =
             "ControlPlaneWithLocalRuntimeInstances";
+
+        private const string HttpScaleOutHostManagerMode =
+            "HostManager";
 
         private readonly IReadOnlyDictionary<string, string?> settings;
         private readonly HttpClient? runtimeClient;
@@ -166,6 +180,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic
                         _ => { });
 
                 services.AddAuthorization();
+
+                RegisterHostManagerModeTestServices(
+                    services);
             });
 
             builder.ConfigureServices(services =>
@@ -199,6 +216,22 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic
                 Console.WriteLine(
                     $"[TEST MCP HOST] Runtime HTTP client factory injected into control-plane host. RuntimeClientCount='{runtimeClientsByRuntimeInstanceId.Count}', RuntimeInstances='{string.Join(", ", runtimeClientsByRuntimeInstanceId.Keys)}'.");
             });
+        }
+
+        private void RegisterHostManagerModeTestServices(
+            IServiceCollection services)
+        {
+            if (!settings.TryGetValue(HttpScaleOutModeSettingKey, out var mode) ||
+                !string.Equals(mode, HttpScaleOutHostManagerMode, StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            services.RemoveAll<IAiRuntimeHostManager>();
+            services.AddSingleton<IAiRuntimeHostManager, RegisteringTestRuntimeHostManager>();
+
+            Console.WriteLine(
+                "[TEST MCP HOST] HTTP HostManager scale-out mode enabled. Test runtime host manager registered.");
         }
 
         private static void ValidateSettings(
@@ -297,6 +330,145 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic
                 .Trim()
                 .Replace(" ", "-", StringComparison.Ordinal)
                 .Replace("\\", "/", StringComparison.Ordinal);
+        }
+
+        private sealed class RegisteringTestRuntimeHostManager : IAiRuntimeHostManager
+        {
+            private readonly IAiRuntimeInstanceRegistry registry;
+            private readonly IAiRuntimeInstanceCapacityStore capacityStore;
+
+            public RegisteringTestRuntimeHostManager(
+                IAiRuntimeInstanceRegistry registry,
+                IAiRuntimeInstanceCapacityStore capacityStore)
+            {
+                this.registry =
+                    registry
+                    ?? throw new ArgumentNullException(nameof(registry));
+
+                this.capacityStore =
+                    capacityStore
+                    ?? throw new ArgumentNullException(nameof(capacityStore));
+            }
+
+            public async Task<AiRuntimeHostStartResult> StartRuntimeAsync(
+                AiRuntimeHostStartRequest request,
+                CancellationToken cancellationToken = default)
+            {
+                ArgumentNullException.ThrowIfNull(request);
+                cancellationToken.ThrowIfCancellationRequested();
+
+                var metadata =
+                    CreateRuntimeMetadata(
+                        request);
+
+                await registry
+                    .RegisterAsync(
+                        new AiRuntimeInstanceRegistration
+                        {
+                            RuntimeInstanceId = request.RuntimeInstanceId,
+                            ControlPlaneId = request.ControlPlaneId,
+                            ControlPlaneHostId = $"control-plane-host-{request.ControlPlaneId}",
+                            HostId = request.RuntimeInstanceId,
+                            RuntimeId = request.RuntimeInstanceId,
+                            Role = AiRuntimeInstanceRole.Runtime,
+                            WorkerCount = request.WorkerCountPerInstance,
+                            QueueCapacity = request.LocalQueueCapacity,
+                            MaxConcurrentRuns = request.MaxConcurrentRunsPerInstance,
+                            RegisteredAtUtc = DateTimeOffset.UtcNow,
+                            Metadata = metadata
+                        },
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+                await capacityStore
+                    .PublishAsync(
+                        new AiRuntimeInstanceCapacityDescriptor
+                        {
+                            RuntimeInstanceId = request.RuntimeInstanceId,
+                            ControlPlaneId = request.ControlPlaneId,
+                            ControlPlaneHostId = $"control-plane-host-{request.ControlPlaneId}",
+                            Role = AiRuntimeInstanceRole.Runtime,
+                            Status = AiRuntimeInstanceStatus.Ready,
+                            WorkerCount = request.WorkerCountPerInstance,
+                            ActiveWorkerCount = 0,
+                            AvailableWorkerCount = request.WorkerCountPerInstance,
+                            MaxWorkersPerRun = request.WorkerCountPerInstance,
+                            MinWorkersRequiredPerRun = 1,
+                            QueuedRunCount = 0,
+                            RunningRunCount = 0,
+                            ActiveRunCount = 0,
+                            MaxConcurrentRuns = request.MaxConcurrentRunsPerInstance,
+                            MaxRunSlots = request.MaxConcurrentRunsPerInstance,
+                            AvailableRunSlots = request.MaxConcurrentRunsPerInstance,
+                            ReservedRunSlots = 0,
+                            EffectiveAvailableRunSlots = request.MaxConcurrentRunsPerInstance,
+                            IsQueuePaused = false,
+                            CanAcceptRun = true,
+                            LastHeartbeatAtUtc = DateTimeOffset.UtcNow,
+                            Metadata = metadata
+                        },
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+                return new AiRuntimeHostStartResult
+                {
+                    Success = true,
+                    RuntimeInstanceId = request.RuntimeInstanceId,
+                    ProviderName = request.ProviderName,
+                    TransportName = request.TransportName,
+                    TransportEndpoint = request.TransportEndpoint,
+                    ExecutionContextSnapshot = request.ExecutionContextSnapshot,
+                    Metadata = metadata
+                };
+            }
+
+            private static Dictionary<string, string> CreateRuntimeMetadata(
+                AiRuntimeHostStartRequest request)
+            {
+                var metadata =
+                    new Dictionary<string, string>(
+                        request.Metadata,
+                        StringComparer.OrdinalIgnoreCase)
+                    {
+                        [AiRuntimeInstanceProviderMetadataKeys.ProviderName] = request.ProviderName,
+                        ["provider.name"] = request.ProviderName,
+                        [AiRuntimeInstanceCommandTransportMetadataKeys.TransportName] = request.TransportName,
+                        [AiRuntimeInstanceCommandTransportMetadataKeys.TransportEndpoint] = request.TransportEndpoint ?? string.Empty,
+                        ["runtime.instance.id"] = request.RuntimeInstanceId,
+                        ["runtime.localQueueCapacity"] = request.LocalQueueCapacity.ToString(CultureInfo.InvariantCulture),
+                        ["queueCapacity"] = request.LocalQueueCapacity.ToString(CultureInfo.InvariantCulture),
+                        ["controlPlaneId"] = request.ControlPlaneId
+                    };
+
+                if (!string.IsNullOrWhiteSpace(request.TenantId))
+                {
+                    metadata[AiRuntimeInstanceIsolationMetadataKeys.TenantId] =
+                        request.TenantId;
+
+                    metadata["tenant.id"] =
+                        request.TenantId;
+                }
+
+                if (!string.IsNullOrWhiteSpace(request.TenantGroupId))
+                {
+                    metadata[AiRuntimeInstanceIsolationMetadataKeys.TenantGroupId] =
+                        request.TenantGroupId;
+                }
+
+                if (!string.IsNullOrWhiteSpace(request.IsolationMode))
+                {
+                    metadata[AiRuntimeInstanceIsolationMetadataKeys.IsolationMode] =
+                        request.IsolationMode;
+                }
+
+                metadata[AiRuntimeInstanceIsolationMetadataKeys.PreferDedicatedCapacity] =
+                    request.PreferDedicatedCapacity.ToString();
+
+                metadata[AiRuntimeInstanceIsolationMetadataKeys.AllowSharedFallback] =
+                    request.AllowSharedFallback.ToString();
+
+                return metadata;
+            }
         }
 
         private sealed class MultiRuntimeHttpClientFactory : IHttpClientFactory
