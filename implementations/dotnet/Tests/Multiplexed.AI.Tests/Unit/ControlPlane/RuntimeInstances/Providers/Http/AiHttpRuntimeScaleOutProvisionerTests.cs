@@ -1,6 +1,7 @@
 ﻿using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Capacity;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager.Readiness;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers;
@@ -10,6 +11,7 @@ using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Scaling;
 using Multiplexed.Abstractions.Core.ExecutionContext;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http.ScaleOut;
+using Multiplexed.AI.Tests.Fixtures;
 using Xunit;
 
 namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Providers.Http
@@ -193,6 +195,152 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Providers.Http
             Assert.Equal(
                 "42",
                 capacity.Metadata["runtime.localQueueCapacity"]);
+        }
+
+        /// <summary>
+        /// Verifies that HTTP scale-out can delegate runtime startup to the runtime host manager
+        /// and wait for runtime readiness before fulfilling the provider request.
+        /// </summary>
+        [Fact]
+        public async Task ProvisionAsync_With_HostManager_Mode_Should_Start_Runtime_And_Wait_For_Readiness()
+        {
+            var registry =
+                new TestRuntimeInstanceRegistry();
+
+            var capacityStore =
+                new TestRuntimeInstanceCapacityStore();
+
+            var hostManager =
+                new TestRuntimeHostManager();
+
+            var readinessWaiter =
+                new TestRuntimeInstanceReadinessWaiter();
+
+            var provisioner =
+                new AiHttpRuntimeScaleOutProvisioner(
+                    registry,
+                    capacityStore,
+                    hostManager,
+                    readinessWaiter,
+                    Options.Create(
+                        new AiHttpRuntimeScaleOutOptions
+                        {
+                            Enabled = true,
+                            Mode = AiHttpRuntimeScaleOutModes.HostManager,
+                            RequireReadiness = true,
+                            ReadinessTimeoutSeconds = 5,
+                            ReadinessPollIntervalMilliseconds = 50,
+                            DefaultRuntimeInstanceIdPrefix = "http-runtime",
+                            EndpointTemplate = "http://{runtimeInstanceId}:8080"
+                        }),
+                    NullLogger<AiHttpRuntimeScaleOutProvisioner>.Instance);
+
+            var request =
+                new AiRuntimeScaleOutProviderRequest
+                {
+                    RequestId = "scaleout-hostmanager-1",
+                    SharedRunId = "shared-run-hostmanager-1",
+                    ControlPlaneId = "control-plane-1",
+                    ExecutionContextSnapshot = CreateExecutionContextSnapshot(),
+                    TenantId = "tenant-a",
+                    TenantGroupId = "group-a",
+                    IsolationMode = AiRuntimeInstanceIsolationMode.Dedicated,
+                    PreferDedicatedCapacity = true,
+                    AllowSharedFallback = false,
+                    RuntimeInstanceIdPrefix = "tenant-a-http",
+                    CurrentInstanceCount = 0,
+                    RequestedTargetInstanceCount = 1,
+                    WorkerCountPerInstance = 7,
+                    MaxConcurrentRunsPerInstance = 3,
+                    LocalQueueCapacity = 42,
+                    MaxRuntimeInstances = 5,
+                    Metadata = new Dictionary<string, string>
+                    {
+                        ["source"] = "unit-test"
+                    }
+                };
+
+            var result =
+                await provisioner
+                    .ProvisionAsync(request)
+                    .ConfigureAwait(false);
+
+            Assert.True(
+                result.Success);
+
+            Assert.False(
+                result.Rejected);
+
+            Assert.Equal(
+                "control-plane-1:tenant-a-http-1",
+                result.RuntimeInstanceId);
+
+            Assert.StartsWith("http-host-manager-scaleout-", result.ProviderOperationId);
+            Assert.EndsWith("scaleout-hostmanager-1", result.ProviderOperationId);
+
+            Assert.Equal(
+                1,
+                hostManager.CallCount);
+
+            Assert.NotNull(
+                hostManager.LastRequest);
+
+            Assert.Equal(
+                "scaleout-hostmanager-1",
+                hostManager.LastRequest!.RequestId);
+
+            Assert.Equal(
+                "control-plane-1",
+                hostManager.LastRequest.ControlPlaneId);
+
+            Assert.Equal(
+                "control-plane-1:tenant-a-http-1",
+                hostManager.LastRequest.RuntimeInstanceId);
+
+            Assert.Equal(
+                "tenant-a",
+                hostManager.LastRequest.TenantId);
+
+            Assert.Equal(
+                "group-a",
+                hostManager.LastRequest.TenantGroupId);
+
+            Assert.Equal(
+                "tenant-a",
+                hostManager.LastRequest.ExecutionContextSnapshot.TenantId);
+
+            Assert.Equal(
+                "group-a",
+                hostManager.LastRequest.ExecutionContextSnapshot.TenantGroupId);
+
+            Assert.Equal(1, hostManager.CallCount);
+            var hostStartRequest = Assert.IsType<AiRuntimeHostStartRequest>(hostManager.LastRequest);
+            Assert.True(hostStartRequest.IsolationMode.ToString() == AiRuntimeInstanceIsolationMode.Dedicated.ToString());
+            Assert.Equal(5, hostStartRequest.MaxRuntimeInstances);
+            Assert.True(hostStartRequest.PreferDedicatedCapacity);
+            Assert.False(hostStartRequest.AllowSharedFallback);
+
+            Assert.True(
+                hostManager.LastRequest.PreferDedicatedCapacity);
+
+            Assert.False(
+                hostManager.LastRequest.AllowSharedFallback);
+
+            Assert.Equal(
+                7,
+                hostManager.LastRequest.WorkerCountPerInstance);
+
+            Assert.Equal(
+                3,
+                hostManager.LastRequest.MaxConcurrentRunsPerInstance);
+
+            Assert.Equal(
+                42,
+                hostManager.LastRequest.LocalQueueCapacity);
+
+            Assert.Equal(
+                5,
+                hostManager.LastRequest.MaxRuntimeInstances);
         }
 
         /// <summary>
