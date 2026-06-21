@@ -215,6 +215,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
 
             startInfo.Environment["AiMcpHost__Mode"] = "RuntimeInstanceOnly";
             startInfo.Environment["AiMcpHost__Port"] = port.ToString(CultureInfo.InvariantCulture);
+            startInfo.Environment["ASPNETCORE_URLS"] = endpoint;
+            startInfo.Environment["DOTNET_URLS"] = endpoint;
             startInfo.Environment["AiMcpHost__EnableSharedQueuePump"] = "false";
             startInfo.Environment["AiMcpHost__EnableReplayTools"] = "false";
             startInfo.Environment["AiMcpHost__EnableObservabilityTools"] = "false";
@@ -227,6 +229,13 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
             startInfo.Environment["AiLocalRuntimeInstancePool__RuntimeInstanceIdPrefix"] = "disabled";
 
             startInfo.Environment["AiEngine__ControlPlane__ControlPlaneId"] = request.ControlPlaneId;
+            startInfo.Environment["AiEngine__ControlPlane__RedisDiscoveryKey"] = $"multiplexed-ai:{request.ControlPlaneId}";
+            startInfo.Environment["AiEngine__ControlPlane__EnableDiscovery"] = "true";
+            startInfo.Environment["AiEngine__ControlPlane__PublishDiscovery"] = "false";
+            startInfo.Environment["AiEngine__ControlPlane__RequireDiscovery"] = "true";
+            startInfo.Environment["AiEngine__ControlPlane__DiscoveryResolutionTimeout"] = "00:00:10";
+            startInfo.Environment["AiEngine__ControlPlane__DiscoveryResolutionPollInterval"] = "00:00:00.100";
+
             startInfo.Environment["AiEngine__RuntimeInstanceId"] = request.RuntimeInstanceId;
             startInfo.Environment["AiEngine__PipelineBackgroundController__RuntimeInstanceId"] = request.RuntimeInstanceId;
             startInfo.Environment["AiEngine__PipelineBackgroundController__MaxConcurrentRuns"] = request.MaxConcurrentRunsPerInstance.ToString(CultureInfo.InvariantCulture);
@@ -262,10 +271,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
             startInfo.Environment["RuntimeInstanceId"] = request.RuntimeInstanceId;
             startInfo.Environment["AI_RUNTIME_INSTANCE_ID"] = request.RuntimeInstanceId;
             startInfo.Environment["MULTIPLEXED_AI_RUNTIME_INSTANCE_ID"] = request.RuntimeInstanceId;
-            startInfo.Environment["AiRuntimeHostIdentity__RuntimeInstanceId"] = request.RuntimeInstanceId;
-            startInfo.Environment["AiRuntimeHostIdentity__RuntimeId"] = request.RuntimeInstanceId;
-            startInfo.Environment["AiRuntimeHostIdentity__HostId"] = request.RuntimeInstanceId;
-            startInfo.Environment["AiRuntimeHostIdentity__ControlPlaneHostId"] = request.ControlPlaneId;
 
             foreach (var pair in metadata)
             {
@@ -274,6 +279,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
                     startInfo.Environment[$"AiRuntimeInstanceRegistration__Metadata__{pair.Key}"] = pair.Value ?? string.Empty;
                 }
             }
+
+            startInfo.Environment["AiRuntimeInstanceRegistration__Metadata__hostCreation.mode"] = AiRuntimeHostCreationMode.Process.ToString();
         }
 
         /// <summary>
