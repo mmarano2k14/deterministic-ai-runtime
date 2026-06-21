@@ -1,4 +1,5 @@
-﻿using Microsoft.Extensions.DependencyInjection;
+﻿using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
@@ -36,6 +37,7 @@ using Multiplexed.AI.Runtime.ControlPlane.Replay;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Capacity;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Environment;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strategy.Process;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Identity;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Isolation;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry;
@@ -72,6 +74,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
         /// <param name="configureSharedQueue">Optional shared queue options configuration.</param>
         /// <param name="configureSharedQueuePump">Optional shared queue pump options configuration.</param>
         /// <param name="configureExecutionAssistance">Optional execution assistance options configuration.</param>
+        /// <param name="configuration">Optional configuration used to bind runtime host creation options.</param>
         /// <returns>The same service collection for chaining.</returns>
         public static IServiceCollection AddAiControlPlane(
             this IServiceCollection services,
@@ -83,7 +86,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
             Action<AiSharedRuntimeControllerOptions>? configureSharedController = null,
             Action<AiSharedQueueOptions>? configureSharedQueue = null,
             Action<AiSharedQueuePumpOptions>? configureSharedQueuePump = null,
-            Action<AiExecutionAssistanceOptions>? configureExecutionAssistance = null)
+            Action<AiExecutionAssistanceOptions>? configureExecutionAssistance = null,
+            IConfiguration? configuration = null)
         {
             ArgumentNullException.ThrowIfNull(services);
 
@@ -166,6 +170,16 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
             else
             {
                 services.Configure(configureExecutionAssistance);
+            }
+
+            if (configuration is null)
+            {
+                services.AddOptions<AiRuntimeProcessHostCreationOptions>();
+            }
+            else
+            {
+                services.Configure<AiRuntimeProcessHostCreationOptions>(
+                    configuration.GetSection("AiRuntimeProcessHostCreation"));
             }
 
             services.AddOptions<AiRuntimeScaleOutRequestStoreOptions>();
@@ -264,7 +278,14 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
             services.TryAddSingleton<IAiRuntimeHostIdentity, AiRuntimeHostIdentity>();
             services.TryAddSingleton<IAiControlPlaneHostIdentity, AiControlPlaneHostIdentity>();
 
-            services.AddAiRuntimeInstanceProviders();
+            if (configuration is null)
+            {
+                services.AddAiRuntimeInstanceProviders();
+            }
+            else
+            {
+                services.AddAiRuntimeInstanceProviders(configuration);
+            }
 
             return services;
         }

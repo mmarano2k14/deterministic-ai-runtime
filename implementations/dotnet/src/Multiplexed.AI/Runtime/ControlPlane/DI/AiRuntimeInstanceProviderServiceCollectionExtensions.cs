@@ -1,12 +1,17 @@
-﻿using Microsoft.Extensions.DependencyInjection;
+﻿using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager.Readiness;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Readiness;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strategy;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strategy.Process;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Local;
+using System;
+using System.Linq;
 using System.Reflection;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.DI
@@ -39,15 +44,44 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
                 IAiRuntimeInstanceProviderCapabilityResolver,
                 AiRuntimeInstanceProviderCapabilityResolver>();
 
+            services.TryAddEnumerable(
+                ServiceDescriptor.Singleton<
+                    IAiRuntimeHostCreationStrategy,
+                    FixtureAiRuntimeHostCreationStrategy>());
+
+            services.TryAddEnumerable(
+                ServiceDescriptor.Singleton<
+                    IAiRuntimeHostCreationStrategy,
+                    ProcessAiRuntimeHostCreationStrategy>());
+
             services.TryAddSingleton<
                 IAiRuntimeHostManager,
-                NoopAiRuntimeHostManager>();
+                AiRuntimeHostCreationManager>();
 
             services.TryAddSingleton<
                 IAiRuntimeInstanceReadinessWaiter,
                 AiRuntimeInstanceReadinessWaiter>();
 
             return services;
+        }
+
+        /// <summary>
+        /// Registers the built-in runtime instance providers.
+        /// </summary>
+        /// <param name="services">The service collection.</param>
+        /// <param name="configuration">The configuration used to bind runtime instance provider options.</param>
+        /// <returns>The same service collection for chaining.</returns>
+        public static IServiceCollection AddAiRuntimeInstanceProviders(
+            this IServiceCollection services,
+            IConfiguration configuration)
+        {
+            ArgumentNullException.ThrowIfNull(services);
+            ArgumentNullException.ThrowIfNull(configuration);
+
+            services.Configure<AiRuntimeProcessHostCreationOptions>(
+                configuration.GetSection("AiRuntimeProcessHostCreation"));
+
+            return services.AddAiRuntimeInstanceProviders();
         }
 
         /// <summary>
@@ -90,15 +124,47 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
                 IAiRuntimeInstanceProviderCapabilityResolver,
                 AiRuntimeInstanceProviderCapabilityResolver>();
 
+            services.TryAddEnumerable(
+                ServiceDescriptor.Singleton<
+                    IAiRuntimeHostCreationStrategy,
+                    FixtureAiRuntimeHostCreationStrategy>());
+
+            services.TryAddEnumerable(
+                ServiceDescriptor.Singleton<
+                    IAiRuntimeHostCreationStrategy,
+                    ProcessAiRuntimeHostCreationStrategy>());
+
             services.TryAddSingleton<
                 IAiRuntimeHostManager,
-                NoopAiRuntimeHostManager>();
+                AiRuntimeHostCreationManager>();
 
             services.TryAddSingleton<
                 IAiRuntimeInstanceReadinessWaiter,
                 AiRuntimeInstanceReadinessWaiter>();
 
             return services;
+        }
+
+        /// <summary>
+        /// Registers runtime instance providers discovered from the supplied assemblies.
+        /// </summary>
+        /// <param name="services">The service collection.</param>
+        /// <param name="configuration">The configuration used to bind runtime instance provider options.</param>
+        /// <param name="assemblies">The assemblies to scan for runtime instance providers.</param>
+        /// <returns>The same service collection for chaining.</returns>
+        public static IServiceCollection AddAiRuntimeInstanceProvidersFromAssemblies(
+            this IServiceCollection services,
+            IConfiguration configuration,
+            params Assembly[] assemblies)
+        {
+            ArgumentNullException.ThrowIfNull(services);
+            ArgumentNullException.ThrowIfNull(configuration);
+            ArgumentNullException.ThrowIfNull(assemblies);
+
+            services.Configure<AiRuntimeProcessHostCreationOptions>(
+                configuration.GetSection("AiRuntimeProcessHostCreation"));
+
+            return services.AddAiRuntimeInstanceProvidersFromAssemblies(assemblies);
         }
     }
 }

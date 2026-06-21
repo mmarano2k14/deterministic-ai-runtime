@@ -2,8 +2,10 @@
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Capacity;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
@@ -13,6 +15,8 @@ using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
 using Multiplexed.AI.McpServer.Host;
 using Multiplexed.AI.McpServer.Tests.Integration.Auth;
 using Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Http;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strategy.Process;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http.ScaleOut;
 using System.Globalization;
 
 namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic
@@ -23,50 +27,46 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic
     public sealed class GenericMcpServerTestHost
         : WebApplicationFactory<Program>
     {
-        private const string ControlPlaneIdSettingKey =
-            "AiEngine:ControlPlane:ControlPlaneId";
+        private const string ControlPlaneIdSettingKey = "AiEngine:ControlPlane:ControlPlaneId";
+        private const string RegistrationControlPlaneIdSettingKey = "AiRuntimeInstanceRegistration:ControlPlaneId";
+        private const string RuntimeInstanceIdSettingKey = "AiRuntimeInstanceRegistration:RuntimeInstanceId";
+        private const string EngineRuntimeInstanceIdSettingKey = "AiEngine:RuntimeInstanceId";
+        private const string HostModeSettingKey = "AiMcpHost:Mode";
+        private const string HttpScaleOutModeSettingKey = "AiHttpRuntimeScaleOut:Mode";
+        private const string UseRegisteringTestRuntimeHostManagerSettingKey = "Tests:UseRegisteringTestRuntimeHostManager";
+        private const string HttpControlPlaneMode = "ControlPlaneWithHttpRuntimeInstances";
+        private const string LocalControlPlaneMode = "ControlPlaneWithLocalRuntimeInstances";
+        private const string HttpScaleOutHostManagerMode = "HostManager";
 
-        private const string RegistrationControlPlaneIdSettingKey =
-            "AiRuntimeInstanceRegistration:ControlPlaneId";
-
-        private const string RuntimeInstanceIdSettingKey =
-            "AiRuntimeInstanceRegistration:RuntimeInstanceId";
-
-        private const string EngineRuntimeInstanceIdSettingKey =
-            "AiEngine:RuntimeInstanceId";
-
-        private const string HostModeSettingKey =
-            "AiMcpHost:Mode";
-
-        private const string HttpScaleOutModeSettingKey =
-            "AiHttpRuntimeScaleOut:Mode";
-
-        private const string HttpControlPlaneMode =
-            "ControlPlaneWithHttpRuntimeInstances";
-
-        private const string LocalControlPlaneMode =
-            "ControlPlaneWithLocalRuntimeInstances";
-
-        private const string HttpScaleOutHostManagerMode =
-            "HostManager";
-
+        /// <summary>
+        /// The configuration settings used to start the test host.
+        /// </summary>
         private readonly IReadOnlyDictionary<string, string?> settings;
+
+        /// <summary>
+        /// The optional single runtime HTTP client used by HTTP provider tests.
+        /// </summary>
         private readonly HttpClient? runtimeClient;
+
+        /// <summary>
+        /// The runtime HTTP clients indexed by runtime instance identifier.
+        /// </summary>
         private readonly IReadOnlyDictionary<string, HttpClient> runtimeClientsByRuntimeInstanceId;
 
+        /// <summary>
+        /// Initializes a new instance of the <see cref="GenericMcpServerTestHost"/> class.
+        /// </summary>
+        /// <param name="settings">The configuration settings used to start the test host.</param>
+        /// <param name="runtimeClient">The optional runtime HTTP client.</param>
         public GenericMcpServerTestHost(
             IReadOnlyDictionary<string, string?> settings,
             HttpClient? runtimeClient = null)
         {
-            this.settings =
-                settings
-                ?? throw new ArgumentNullException(nameof(settings));
+            this.settings = settings ?? throw new ArgumentNullException(nameof(settings));
 
-            ValidateSettings(
-                this.settings);
+            ValidateSettings(this.settings);
 
-            this.runtimeClient =
-                runtimeClient;
+            this.runtimeClient = runtimeClient;
 
             runtimeClientsByRuntimeInstanceId =
                 runtimeClient is null
@@ -77,23 +77,22 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic
                     };
         }
 
+        /// <summary>
+        /// Initializes a new instance of the <see cref="GenericMcpServerTestHost"/> class.
+        /// </summary>
+        /// <param name="settings">The configuration settings used to start the test host.</param>
+        /// <param name="runtimeClients">The runtime HTTP clients.</param>
         public GenericMcpServerTestHost(
             IReadOnlyDictionary<string, string?> settings,
             IReadOnlyList<HttpClient> runtimeClients)
         {
-            this.settings =
-                settings
-                ?? throw new ArgumentNullException(nameof(settings));
+            this.settings = settings ?? throw new ArgumentNullException(nameof(settings));
 
-            ValidateSettings(
-                this.settings);
+            ValidateSettings(this.settings);
 
             ArgumentNullException.ThrowIfNull(runtimeClients);
 
-            runtimeClient =
-                runtimeClients.Count == 0
-                    ? null
-                    : runtimeClients[0];
+            runtimeClient = runtimeClients.Count == 0 ? null : runtimeClients[0];
 
             var clients =
                 runtimeClients
@@ -110,24 +109,24 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic
 
             if (runtimeClient is not null)
             {
-                clients["default"] =
-                    runtimeClient;
+                clients["default"] = runtimeClient;
             }
 
-            runtimeClientsByRuntimeInstanceId =
-                clients;
+            runtimeClientsByRuntimeInstanceId = clients;
         }
 
+        /// <summary>
+        /// Initializes a new instance of the <see cref="GenericMcpServerTestHost"/> class.
+        /// </summary>
+        /// <param name="settings">The configuration settings used to start the test host.</param>
+        /// <param name="runtimeClientsByRuntimeInstanceId">The runtime HTTP clients indexed by runtime instance identifier.</param>
         public GenericMcpServerTestHost(
             IReadOnlyDictionary<string, string?> settings,
             IReadOnlyDictionary<string, HttpClient> runtimeClientsByRuntimeInstanceId)
         {
-            this.settings =
-                settings
-                ?? throw new ArgumentNullException(nameof(settings));
+            this.settings = settings ?? throw new ArgumentNullException(nameof(settings));
 
-            ValidateSettings(
-                this.settings);
+            ValidateSettings(this.settings);
 
             this.runtimeClientsByRuntimeInstanceId =
                 runtimeClientsByRuntimeInstanceId
@@ -145,10 +144,10 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic
                 ArgumentNullException.ThrowIfNull(pair.Value);
             }
 
-            runtimeClient =
-                runtimeClientsByRuntimeInstanceId.Values.FirstOrDefault();
+            runtimeClient = runtimeClientsByRuntimeInstanceId.Values.FirstOrDefault();
         }
 
+        /// <inheritdoc />
         protected override void ConfigureWebHost(
             IWebHostBuilder builder)
         {
@@ -156,9 +155,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic
 
             foreach (var setting in settings)
             {
-                builder.UseSetting(
-                    setting.Key,
-                    setting.Value);
+                builder.UseSetting(setting.Key, setting.Value);
             }
 
             builder.ConfigureTestServices(services =>
@@ -166,14 +163,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic
                 services
                     .AddAuthentication(options =>
                     {
-                        options.DefaultAuthenticateScheme =
-                            FakeAuthHandler.AuthenticationScheme;
-
-                        options.DefaultChallengeScheme =
-                            FakeAuthHandler.AuthenticationScheme;
-
-                        options.DefaultScheme =
-                            FakeAuthHandler.AuthenticationScheme;
+                        options.DefaultAuthenticateScheme = FakeAuthHandler.AuthenticationScheme;
+                        options.DefaultChallengeScheme = FakeAuthHandler.AuthenticationScheme;
+                        options.DefaultScheme = FakeAuthHandler.AuthenticationScheme;
                     })
                     .AddScheme<AuthenticationSchemeOptions, FakeAuthHandler>(
                         FakeAuthHandler.AuthenticationScheme,
@@ -181,8 +173,20 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic
 
                 services.AddAuthorization();
 
-                RegisterHostManagerModeTestServices(
-                    services);
+                var testConfiguration =
+                    new ConfigurationBuilder()
+                        .AddInMemoryCollection(settings)
+                        .Build();
+
+                services.RemoveAll<IConfigureOptions<AiHttpRuntimeScaleOutOptions>>();
+                services.Configure<AiHttpRuntimeScaleOutOptions>(
+                    testConfiguration.GetSection("AiHttpRuntimeScaleOut"));
+
+                services.RemoveAll<IConfigureOptions<AiRuntimeProcessHostCreationOptions>>();
+                services.Configure<AiRuntimeProcessHostCreationOptions>(
+                    testConfiguration.GetSection("AiRuntimeProcessHostCreation"));
+
+                RegisterHostManagerModeTestServices(services);
             });
 
             builder.ConfigureServices(services =>
@@ -190,12 +194,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic
                 if (runtimeClientsByRuntimeInstanceId.Count == 1 &&
                     runtimeClient is not null)
                 {
-                    services.AddSingleton(
-                        runtimeClient);
-
-                    services.AddSingleton<IHttpClientFactory>(
-                        new TestRuntimeHttpClientFactory(
-                            runtimeClient));
+                    services.AddSingleton(runtimeClient);
+                    services.AddSingleton<IHttpClientFactory>(new TestRuntimeHttpClientFactory(runtimeClient));
 
                     Console.WriteLine(
                         "[TEST MCP HOST] Single runtime HTTP client injected into control-plane host.");
@@ -203,27 +203,37 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic
                     return;
                 }
 
-                services.AddSingleton(
-                    runtimeClientsByRuntimeInstanceId);
-
-                services.AddSingleton<IReadOnlyDictionary<string, HttpClient>>(
-                    runtimeClientsByRuntimeInstanceId);
-
-                services.AddSingleton<IHttpClientFactory>(
-                    new MultiRuntimeHttpClientFactory(
-                        runtimeClientsByRuntimeInstanceId));
+                services.AddSingleton(runtimeClientsByRuntimeInstanceId);
+                services.AddSingleton<IReadOnlyDictionary<string, HttpClient>>(runtimeClientsByRuntimeInstanceId);
+                services.AddSingleton<IHttpClientFactory>(new MultiRuntimeHttpClientFactory(runtimeClientsByRuntimeInstanceId));
 
                 Console.WriteLine(
                     $"[TEST MCP HOST] Runtime HTTP client factory injected into control-plane host. RuntimeClientCount='{runtimeClientsByRuntimeInstanceId.Count}', RuntimeInstances='{string.Join(", ", runtimeClientsByRuntimeInstanceId.Keys)}'.");
             });
         }
 
+        /// <summary>
+        /// Registers test-only runtime host manager services when HTTP HostManager mode is enabled.
+        /// </summary>
+        /// <param name="services">The service collection.</param>
         private void RegisterHostManagerModeTestServices(
             IServiceCollection services)
         {
             if (!settings.TryGetValue(HttpScaleOutModeSettingKey, out var mode) ||
                 !string.Equals(mode, HttpScaleOutHostManagerMode, StringComparison.OrdinalIgnoreCase))
             {
+                return;
+            }
+
+            var useRegisteringTestRuntimeHostManager =
+                !settings.TryGetValue(UseRegisteringTestRuntimeHostManagerSettingKey, out var value) ||
+                bool.Parse(value ?? "true");
+
+            if (!useRegisteringTestRuntimeHostManager)
+            {
+                Console.WriteLine(
+                    "[TEST MCP HOST] HTTP HostManager scale-out mode enabled. Default runtime host manager preserved.");
+
                 return;
             }
 
@@ -234,13 +244,14 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic
                 "[TEST MCP HOST] HTTP HostManager scale-out mode enabled. Test runtime host manager registered.");
         }
 
+        /// <summary>
+        /// Validates the required MCP control-plane test host settings.
+        /// </summary>
+        /// <param name="settings">The settings to validate.</param>
         private static void ValidateSettings(
             IReadOnlyDictionary<string, string?> settings)
         {
-            var mode =
-                GetRequiredSetting(
-                    settings,
-                    HostModeSettingKey);
+            var mode = GetRequiredSetting(settings, HostModeSettingKey);
 
             if (!IsSupportedControlPlaneMode(mode))
             {
@@ -250,20 +261,10 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic
                     nameof(settings));
             }
 
-            var controlPlaneId =
-                GetRequiredSetting(
-                    settings,
-                    ControlPlaneIdSettingKey);
+            var controlPlaneId = GetRequiredSetting(settings, ControlPlaneIdSettingKey);
+            var registrationControlPlaneId = GetRequiredSetting(settings, RegistrationControlPlaneIdSettingKey);
 
-            var registrationControlPlaneId =
-                GetRequiredSetting(
-                    settings,
-                    RegistrationControlPlaneIdSettingKey);
-
-            if (!string.Equals(
-                    NormalizeKeySegment(controlPlaneId),
-                    NormalizeKeySegment(registrationControlPlaneId),
-                    StringComparison.Ordinal))
+            if (!string.Equals(NormalizeKeySegment(controlPlaneId), NormalizeKeySegment(registrationControlPlaneId), StringComparison.Ordinal))
             {
                 throw new ArgumentException(
                     $"Control-plane id mismatch. Setting '{ControlPlaneIdSettingKey}' is '{controlPlaneId}', " +
@@ -271,20 +272,10 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic
                     nameof(settings));
             }
 
-            var registrationRuntimeInstanceId =
-                GetRequiredSetting(
-                    settings,
-                    RuntimeInstanceIdSettingKey);
+            var registrationRuntimeInstanceId = GetRequiredSetting(settings, RuntimeInstanceIdSettingKey);
+            var engineRuntimeInstanceId = GetRequiredSetting(settings, EngineRuntimeInstanceIdSettingKey);
 
-            var engineRuntimeInstanceId =
-                GetRequiredSetting(
-                    settings,
-                    EngineRuntimeInstanceIdSettingKey);
-
-            if (!string.Equals(
-                    NormalizeKeySegment(registrationRuntimeInstanceId),
-                    NormalizeKeySegment(engineRuntimeInstanceId),
-                    StringComparison.Ordinal))
+            if (!string.Equals(NormalizeKeySegment(registrationRuntimeInstanceId), NormalizeKeySegment(engineRuntimeInstanceId), StringComparison.Ordinal))
             {
                 throw new ArgumentException(
                     $"Runtime instance id mismatch. Setting '{RuntimeInstanceIdSettingKey}' is '{registrationRuntimeInstanceId}', " +
@@ -293,19 +284,24 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic
             }
         }
 
+        /// <summary>
+        /// Determines whether the supplied MCP host mode is supported by this generic test host.
+        /// </summary>
+        /// <param name="mode">The host mode.</param>
+        /// <returns><c>true</c> when the mode is supported; otherwise, <c>false</c>.</returns>
         private static bool IsSupportedControlPlaneMode(
             string mode)
         {
-            return string.Equals(
-                    mode,
-                    HttpControlPlaneMode,
-                    StringComparison.Ordinal)
-                || string.Equals(
-                    mode,
-                    LocalControlPlaneMode,
-                    StringComparison.Ordinal);
+            return string.Equals(mode, HttpControlPlaneMode, StringComparison.Ordinal)
+                || string.Equals(mode, LocalControlPlaneMode, StringComparison.Ordinal);
         }
 
+        /// <summary>
+        /// Gets a required setting value.
+        /// </summary>
+        /// <param name="settings">The settings dictionary.</param>
+        /// <param name="key">The required setting key.</param>
+        /// <returns>The required setting value.</returns>
         private static string GetRequiredSetting(
             IReadOnlyDictionary<string, string?> settings,
             string key)
@@ -321,6 +317,11 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic
             return value;
         }
 
+        /// <summary>
+        /// Normalizes a setting value for key segment comparison.
+        /// </summary>
+        /// <param name="value">The setting value.</param>
+        /// <returns>The normalized value.</returns>
         private static string NormalizeKeySegment(
             string value)
         {
@@ -332,6 +333,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic
                 .Replace("\\", "/", StringComparison.Ordinal);
         }
 
+        /// <summary>
+        /// Test runtime host manager that directly registers runtime capacity for legacy HostManager tests.
+        /// </summary>
         private sealed class RegisteringTestRuntimeHostManager : IAiRuntimeHostManager
         {
             private readonly IAiRuntimeInstanceRegistry registry;
@@ -341,15 +345,11 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic
                 IAiRuntimeInstanceRegistry registry,
                 IAiRuntimeInstanceCapacityStore capacityStore)
             {
-                this.registry =
-                    registry
-                    ?? throw new ArgumentNullException(nameof(registry));
-
-                this.capacityStore =
-                    capacityStore
-                    ?? throw new ArgumentNullException(nameof(capacityStore));
+                this.registry = registry ?? throw new ArgumentNullException(nameof(registry));
+                this.capacityStore = capacityStore ?? throw new ArgumentNullException(nameof(capacityStore));
             }
 
+            /// <inheritdoc />
             public async Task<AiRuntimeHostStartResult> StartRuntimeAsync(
                 AiRuntimeHostStartRequest request,
                 CancellationToken cancellationToken = default)
@@ -357,9 +357,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic
                 ArgumentNullException.ThrowIfNull(request);
                 cancellationToken.ThrowIfCancellationRequested();
 
-                var metadata =
-                    CreateRuntimeMetadata(
-                        request);
+                var metadata = CreateRuntimeMetadata(request);
 
                 await registry
                     .RegisterAsync(
@@ -422,6 +420,11 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic
                 };
             }
 
+            /// <summary>
+            /// Creates metadata for the registered test runtime host.
+            /// </summary>
+            /// <param name="request">The runtime host start request.</param>
+            /// <returns>The metadata dictionary.</returns>
             private static Dictionary<string, string> CreateRuntimeMetadata(
                 AiRuntimeHostStartRequest request)
             {
@@ -442,23 +445,18 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic
 
                 if (!string.IsNullOrWhiteSpace(request.TenantId))
                 {
-                    metadata[AiRuntimeInstanceIsolationMetadataKeys.TenantId] =
-                        request.TenantId;
-
-                    metadata["tenant.id"] =
-                        request.TenantId;
+                    metadata[AiRuntimeInstanceIsolationMetadataKeys.TenantId] = request.TenantId;
+                    metadata["tenant.id"] = request.TenantId;
                 }
 
                 if (!string.IsNullOrWhiteSpace(request.TenantGroupId))
                 {
-                    metadata[AiRuntimeInstanceIsolationMetadataKeys.TenantGroupId] =
-                        request.TenantGroupId;
+                    metadata[AiRuntimeInstanceIsolationMetadataKeys.TenantGroupId] = request.TenantGroupId;
                 }
 
                 if (!string.IsNullOrWhiteSpace(request.IsolationMode))
                 {
-                    metadata[AiRuntimeInstanceIsolationMetadataKeys.IsolationMode] =
-                        request.IsolationMode;
+                    metadata[AiRuntimeInstanceIsolationMetadataKeys.IsolationMode] = request.IsolationMode;
                 }
 
                 metadata[AiRuntimeInstanceIsolationMetadataKeys.PreferDedicatedCapacity] =
@@ -471,6 +469,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic
             }
         }
 
+        /// <summary>
+        /// HTTP client factory that resolves runtime clients by runtime instance identifier.
+        /// </summary>
         private sealed class MultiRuntimeHttpClientFactory : IHttpClientFactory
         {
             private readonly IReadOnlyDictionary<string, HttpClient> clientsByRuntimeInstanceId;
@@ -492,13 +493,12 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic
                     };
             }
 
+            /// <inheritdoc />
             public HttpClient CreateClient(
                 string name)
             {
                 if (!string.IsNullOrWhiteSpace(name) &&
-                    clientsByRuntimeInstanceId.TryGetValue(
-                        name,
-                        out var client))
+                    clientsByRuntimeInstanceId.TryGetValue(name, out var client))
                 {
                     return client;
                 }
@@ -508,9 +508,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic
                     var matchingClient =
                         clientsByRuntimeInstanceId
                             .FirstOrDefault(pair =>
-                                name.Contains(
-                                    pair.Key,
-                                    StringComparison.Ordinal));
+                                name.Contains(pair.Key, StringComparison.Ordinal));
 
                     if (matchingClient.Value is not null)
                     {
@@ -518,15 +516,12 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic
                     }
                 }
 
-                if (clientsByRuntimeInstanceId.TryGetValue(
-                        "default",
-                        out var defaultClient))
+                if (clientsByRuntimeInstanceId.TryGetValue("default", out var defaultClient))
                 {
                     return defaultClient;
                 }
 
-                var fallbackClient =
-                    clientsByRuntimeInstanceId.Values.FirstOrDefault();
+                var fallbackClient = clientsByRuntimeInstanceId.Values.FirstOrDefault();
 
                 if (fallbackClient is not null)
                 {
@@ -536,6 +531,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic
                 return startupRoutingClient;
             }
 
+            /// <summary>
+            /// Routes outgoing HTTP requests to the currently available runtime client.
+            /// </summary>
             private sealed class RuntimeClientRoutingHandler : HttpMessageHandler
             {
                 private readonly IReadOnlyDictionary<string, HttpClient> clientsByRuntimeInstanceId;
@@ -548,50 +546,38 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic
                         ?? throw new ArgumentNullException(nameof(clientsByRuntimeInstanceId));
                 }
 
+                /// <inheritdoc />
                 protected override async Task<HttpResponseMessage> SendAsync(
                     HttpRequestMessage request,
                     CancellationToken cancellationToken)
                 {
-                    var client =
-                        ResolveClient();
+                    var client = ResolveClient();
 
                     var forwardedRequest =
-                        await CloneRequestAsync(
-                                request,
-                                cancellationToken)
+                        await CloneRequestAsync(request, cancellationToken)
                             .ConfigureAwait(false);
 
                     if (forwardedRequest.RequestUri is not null &&
                         forwardedRequest.RequestUri.IsAbsoluteUri &&
-                        string.Equals(
-                            forwardedRequest.RequestUri.Host,
-                            "localhost",
-                            StringComparison.OrdinalIgnoreCase))
+                        string.Equals(forwardedRequest.RequestUri.Host, "localhost", StringComparison.OrdinalIgnoreCase))
                     {
                         forwardedRequest.RequestUri =
-                            new Uri(
-                                forwardedRequest.RequestUri.PathAndQuery,
-                                UriKind.Relative);
+                            new Uri(forwardedRequest.RequestUri.PathAndQuery, UriKind.Relative);
                     }
 
                     return await client
-                        .SendAsync(
-                            forwardedRequest,
-                            cancellationToken)
+                        .SendAsync(forwardedRequest, cancellationToken)
                         .ConfigureAwait(false);
                 }
 
                 private HttpClient ResolveClient()
                 {
-                    if (clientsByRuntimeInstanceId.TryGetValue(
-                            "default",
-                            out var defaultClient))
+                    if (clientsByRuntimeInstanceId.TryGetValue("default", out var defaultClient))
                     {
                         return defaultClient;
                     }
 
-                    var fallbackClient =
-                        clientsByRuntimeInstanceId.Values.FirstOrDefault();
+                    var fallbackClient = clientsByRuntimeInstanceId.Values.FirstOrDefault();
 
                     if (fallbackClient is not null)
                     {
@@ -606,23 +592,16 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic
                     HttpRequestMessage request,
                     CancellationToken cancellationToken)
                 {
-                    var clone =
-                        new HttpRequestMessage(
-                            request.Method,
-                            request.RequestUri);
+                    var clone = new HttpRequestMessage(request.Method, request.RequestUri);
 
                     foreach (var header in request.Headers)
                     {
-                        clone.Headers.TryAddWithoutValidation(
-                            header.Key,
-                            header.Value);
+                        clone.Headers.TryAddWithoutValidation(header.Key, header.Value);
                     }
 
                     foreach (var option in request.Options)
                     {
-                        clone.Options.TryAdd(
-                            option.Key,
-                            option.Value);
+                        clone.Options.TryAdd(option.Key, option.Value);
                     }
 
                     if (request.Content is not null)
@@ -632,14 +611,11 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic
                                 .ReadAsByteArrayAsync(cancellationToken)
                                 .ConfigureAwait(false);
 
-                        clone.Content =
-                            new ByteArrayContent(contentBytes);
+                        clone.Content = new ByteArrayContent(contentBytes);
 
                         foreach (var header in request.Content.Headers)
                         {
-                            clone.Content.Headers.TryAddWithoutValidation(
-                                header.Key,
-                                header.Value);
+                            clone.Content.Headers.TryAddWithoutValidation(header.Key, header.Value);
                         }
                     }
 

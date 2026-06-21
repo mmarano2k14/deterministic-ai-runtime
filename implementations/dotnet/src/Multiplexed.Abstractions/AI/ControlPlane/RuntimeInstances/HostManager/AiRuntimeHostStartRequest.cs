@@ -29,6 +29,11 @@ namespace Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager
         public required ExecutionContextSnapshot ExecutionContextSnapshot { get; init; }
 
         /// <summary>
+        /// Gets the physical host creation mode requested by the provider.
+        /// </summary>
+        public AiRuntimeHostCreationMode HostCreationMode { get; init; } = AiRuntimeHostCreationMode.Fixture;
+
+        /// <summary>
         /// Gets the runtime instance identifier to start or attach.
         /// </summary>
         public string RuntimeInstanceId { get; init; } = string.Empty;

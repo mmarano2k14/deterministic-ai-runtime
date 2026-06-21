@@ -344,11 +344,12 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http.Sc
                     DefaultQueueCapacity);
 
             logger.LogInformation(
-                "HTTP SCALE-OUT HOST-MANAGER START RequestId={RequestId} SharedRunId={SharedRunId} RuntimeInstanceId={RuntimeInstanceId} Endpoint={Endpoint} TenantId={TenantId} TenantGroupId={TenantGroupId} IsolationMode={IsolationMode} WorkerCount={WorkerCount} MaxConcurrentRuns={MaxConcurrentRuns} QueueCapacity={QueueCapacity}",
+                "HTTP SCALE-OUT HOST-MANAGER START RequestId={RequestId} SharedRunId={SharedRunId} RuntimeInstanceId={RuntimeInstanceId} Endpoint={Endpoint} HostCreationMode={HostCreationMode} TenantId={TenantId} TenantGroupId={TenantGroupId} IsolationMode={IsolationMode} WorkerCount={WorkerCount} MaxConcurrentRuns={MaxConcurrentRuns} QueueCapacity={QueueCapacity}",
                 request.RequestId,
                 request.SharedRunId,
                 runtimeInstanceId,
                 endpoint,
+                this.options.HostCreationMode,
                 request.TenantId,
                 request.TenantGroupId,
                 request.IsolationMode,
@@ -369,6 +370,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http.Sc
                             ProviderName = ProviderName,
                             TransportName = AiRuntimeInstanceCommandTransportMetadataKeys.HttpTransportName,
                             TransportEndpoint = endpoint,
+                            HostCreationMode = this.options.HostCreationMode,
                             TenantId = request.TenantId,
                             TenantGroupId = request.TenantGroupId,
                             IsolationMode = request.IsolationMode.ToString(),
@@ -385,10 +387,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http.Sc
             if (!startResult.Success)
             {
                 logger.LogWarning(
-                    "HTTP SCALE-OUT HOST-MANAGER REJECTED RequestId={RequestId} SharedRunId={SharedRunId} RuntimeInstanceId={RuntimeInstanceId} FailureReason={FailureReason}",
+                    "HTTP SCALE-OUT HOST-MANAGER REJECTED RequestId={RequestId} SharedRunId={SharedRunId} RuntimeInstanceId={RuntimeInstanceId} HostCreationMode={HostCreationMode} FailureReason={FailureReason}",
                     request.RequestId,
                     request.SharedRunId,
                     runtimeInstanceId,
+                    this.options.HostCreationMode,
                     startResult.FailureReason);
 
                 return CreateRejectedResult(
@@ -425,10 +428,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http.Sc
                 if (!readinessResult.Success)
                 {
                     logger.LogWarning(
-                        "HTTP SCALE-OUT HOST-MANAGER READINESS FAILED RequestId={RequestId} SharedRunId={SharedRunId} RuntimeInstanceId={RuntimeInstanceId} FailureReason={FailureReason} TimedOut={TimedOut}",
+                        "HTTP SCALE-OUT HOST-MANAGER READINESS FAILED RequestId={RequestId} SharedRunId={SharedRunId} RuntimeInstanceId={RuntimeInstanceId} HostCreationMode={HostCreationMode} FailureReason={FailureReason} TimedOut={TimedOut}",
                         request.RequestId,
                         request.SharedRunId,
                         startResult.RuntimeInstanceId,
+                        this.options.HostCreationMode,
                         readinessResult.FailureReason,
                         readinessResult.TimedOut);
 
@@ -440,11 +444,12 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http.Sc
             }
 
             logger.LogInformation(
-                "HTTP SCALE-OUT HOST-MANAGER FULFILLED RequestId={RequestId} SharedRunId={SharedRunId} RuntimeInstanceId={RuntimeInstanceId} Endpoint={Endpoint} DurationMs={DurationMs}",
+                "HTTP SCALE-OUT HOST-MANAGER FULFILLED RequestId={RequestId} SharedRunId={SharedRunId} RuntimeInstanceId={RuntimeInstanceId} Endpoint={Endpoint} HostCreationMode={HostCreationMode} DurationMs={DurationMs}",
                 request.RequestId,
                 request.SharedRunId,
                 startResult.RuntimeInstanceId,
                 startResult.TransportEndpoint ?? endpoint,
+                this.options.HostCreationMode,
                 (DateTimeOffset.UtcNow - startedAtUtc).TotalMilliseconds);
 
             return new AiRuntimeScaleOutProviderResult
@@ -626,96 +631,45 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http.Sc
             int maxConcurrentRuns,
             int queueCapacity)
         {
-            var metadata =
-                new Dictionary<string, string>(
-                    StringComparer.OrdinalIgnoreCase);
+            var metadata = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
             if (request.Metadata is not null)
             {
-                foreach (var item in request.Metadata)
+                foreach (var item in request.Metadata.Where(item => !string.IsNullOrWhiteSpace(item.Key)))
                 {
-                    if (!string.IsNullOrWhiteSpace(item.Key))
-                    {
-                        metadata[item.Key] =
-                            item.Value ?? string.Empty;
-                    }
+                    metadata[item.Key] = item.Value ?? string.Empty;
                 }
             }
 
-            metadata[AiRuntimeInstanceProviderMetadataKeys.ProviderName] =
-                ProviderName;
+            metadata[AiRuntimeInstanceProviderMetadataKeys.ProviderName] = ProviderName;
+            metadata["provider.name"] = ProviderName;
+            metadata["provider"] = ProviderName;
 
-            metadata["provider.name"] =
-                ProviderName;
+            metadata[AiRuntimeInstanceCommandTransportMetadataKeys.TransportName] = AiRuntimeInstanceCommandTransportMetadataKeys.HttpTransportName;
+            metadata[AiRuntimeInstanceCommandTransportMetadataKeys.RuntimeInstanceId] = runtimeInstanceId;
+            metadata[AiRuntimeInstanceCommandTransportMetadataKeys.TransportEndpoint] = endpoint;
 
-            metadata["provider"] =
-                ProviderName;
+            metadata[AiRuntimeInstanceIsolationMetadataKeys.TenantId] = request.TenantId ?? string.Empty;
+            metadata[AiRuntimeInstanceIsolationMetadataKeys.TenantGroupId] = request.TenantGroupId ?? string.Empty;
+            metadata[AiRuntimeInstanceIsolationMetadataKeys.IsolationMode] = request.IsolationMode.ToString();
+            metadata[AiRuntimeInstanceIsolationMetadataKeys.PreferDedicatedCapacity] = request.PreferDedicatedCapacity.ToString();
+            metadata[AiRuntimeInstanceIsolationMetadataKeys.AllowSharedFallback] = request.AllowSharedFallback.ToString();
 
-            metadata[AiRuntimeInstanceCommandTransportMetadataKeys.TransportName] =
-                AiRuntimeInstanceCommandTransportMetadataKeys.HttpTransportName;
+            metadata["tenant.id"] = request.TenantId ?? string.Empty;
+            metadata["tenant.group.id"] = request.TenantGroupId ?? string.Empty;
+            metadata["runtime.isolationMode"] = request.IsolationMode.ToString();
+            metadata["runtime.preferDedicatedCapacity"] = request.PreferDedicatedCapacity.ToString();
+            metadata["runtime.allowSharedFallback"] = request.AllowSharedFallback.ToString();
+            metadata["runtime.maxRuntimeInstances"] = request.MaxRuntimeInstances?.ToString() ?? string.Empty;
+            metadata["runtime.instanceIdPrefix"] = runtimeInstanceIdPrefix;
+            metadata["runtime.workerCountPerInstance"] = workerCount.ToString();
+            metadata["runtime.maxConcurrentRunsPerInstance"] = maxConcurrentRuns.ToString();
+            metadata["runtime.localQueueCapacity"] = queueCapacity.ToString();
 
-            metadata[AiRuntimeInstanceCommandTransportMetadataKeys.RuntimeInstanceId] =
-                runtimeInstanceId;
-
-            metadata[AiRuntimeInstanceCommandTransportMetadataKeys.TransportEndpoint] =
-                endpoint;
-
-            metadata[AiRuntimeInstanceIsolationMetadataKeys.TenantId] =
-                request.TenantId ?? string.Empty;
-
-            metadata[AiRuntimeInstanceIsolationMetadataKeys.TenantGroupId] =
-                request.TenantGroupId ?? string.Empty;
-
-            metadata[AiRuntimeInstanceIsolationMetadataKeys.IsolationMode] =
-                request.IsolationMode.ToString();
-
-            metadata[AiRuntimeInstanceIsolationMetadataKeys.PreferDedicatedCapacity] =
-                request.PreferDedicatedCapacity.ToString();
-
-            metadata[AiRuntimeInstanceIsolationMetadataKeys.AllowSharedFallback] =
-                request.AllowSharedFallback.ToString();
-
-            metadata["tenant.id"] =
-                request.TenantId ?? string.Empty;
-
-            metadata["tenant.group.id"] =
-                request.TenantGroupId ?? string.Empty;
-
-            metadata["runtime.isolationMode"] =
-                request.IsolationMode.ToString();
-
-            metadata["runtime.preferDedicatedCapacity"] =
-                request.PreferDedicatedCapacity.ToString();
-
-            metadata["runtime.allowSharedFallback"] =
-                request.AllowSharedFallback.ToString();
-
-            metadata["runtime.maxRuntimeInstances"] =
-                request.MaxRuntimeInstances?.ToString() ?? string.Empty;
-
-            metadata["runtime.instanceIdPrefix"] =
-                runtimeInstanceIdPrefix;
-
-            metadata["runtime.workerCountPerInstance"] =
-                workerCount.ToString();
-
-            metadata["runtime.maxConcurrentRunsPerInstance"] =
-                maxConcurrentRuns.ToString();
-
-            metadata["runtime.localQueueCapacity"] =
-                queueCapacity.ToString();
-
-            metadata["scaleout.provider"] =
-                ProviderName;
-
-            metadata["scaleout.requestId"] =
-                request.RequestId;
-
-            metadata["scaleout.sharedRunId"] =
-                request.SharedRunId;
-
-            metadata["controlPlaneId"] =
-                request.ControlPlaneId;
+            metadata["scaleout.provider"] = ProviderName;
+            metadata["scaleout.requestId"] = request.RequestId;
+            metadata["scaleout.sharedRunId"] = request.SharedRunId;
+            metadata["controlPlaneId"] = request.ControlPlaneId;
 
             return metadata;
         }

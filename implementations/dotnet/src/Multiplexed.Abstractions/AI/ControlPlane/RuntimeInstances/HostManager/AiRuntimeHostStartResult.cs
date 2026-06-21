@@ -58,5 +58,57 @@ namespace Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager
         /// </summary>
         public IReadOnlyDictionary<string, string> Metadata { get; init; } =
             new Dictionary<string, string>();
+
+
+        /// <summary>
+        /// Creates a successful runtime host start result.
+        /// </summary>
+        public static AiRuntimeHostStartResult Started(
+            ExecutionContextSnapshot executionContextSnapshot,
+            string runtimeInstanceId,
+            string providerName,
+            string? transportName,
+            string? transportEndpoint,
+            IReadOnlyDictionary<string, string>? metadata = null)
+        {
+            return new AiRuntimeHostStartResult
+            {
+                Success = true,
+                ExecutionContextSnapshot = executionContextSnapshot,
+                RuntimeInstanceId = runtimeInstanceId,
+                ProviderName = providerName,
+                TransportName = transportName,
+                TransportEndpoint = transportEndpoint,
+                Retryable = false,
+                Metadata = metadata ?? new Dictionary<string, string>()
+            };
+        }
+
+        /// <summary>
+        /// Creates a rejected runtime host start result.
+        /// </summary>
+        public static AiRuntimeHostStartResult Rejected(
+            ExecutionContextSnapshot executionContextSnapshot,
+            string runtimeInstanceId,
+            string providerName,
+            string? transportName,
+            string? transportEndpoint,
+            string failureReason,
+            bool retryable = false,
+            IReadOnlyDictionary<string, string>? metadata = null)
+        {
+            return new AiRuntimeHostStartResult
+            {
+                Success = false,
+                ExecutionContextSnapshot = executionContextSnapshot,
+                RuntimeInstanceId = runtimeInstanceId,
+                ProviderName = providerName,
+                TransportName = transportName,
+                TransportEndpoint = transportEndpoint,
+                FailureReason = failureReason,
+                Retryable = retryable,
+                Metadata = metadata ?? new Dictionary<string, string>()
+            };
+        }
     }
 }

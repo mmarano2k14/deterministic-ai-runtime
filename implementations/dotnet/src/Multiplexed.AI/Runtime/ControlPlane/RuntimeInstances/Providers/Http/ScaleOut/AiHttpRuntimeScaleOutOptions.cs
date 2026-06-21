@@ -1,4 +1,6 @@
-﻿namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http.ScaleOut
+﻿using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager;
+
+namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http.ScaleOut
 {
     /// <summary>
     /// Defines HTTP runtime scale-out technical options.
@@ -48,5 +50,10 @@
         /// Gets or sets the readiness poll interval in milliseconds.
         /// </summary>
         public int ReadinessPollIntervalMilliseconds { get; set; } = 250;
+
+        /// <summary>
+        /// Gets or sets the physical host creation mode used when HTTP scale-out mode is HostManager.
+        /// </summary>
+        public AiRuntimeHostCreationMode HostCreationMode { get; set; } = AiRuntimeHostCreationMode.Fixture;
     }
 }

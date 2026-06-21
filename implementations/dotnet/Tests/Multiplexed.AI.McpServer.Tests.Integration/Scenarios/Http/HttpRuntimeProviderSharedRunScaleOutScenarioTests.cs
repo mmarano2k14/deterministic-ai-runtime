@@ -5,6 +5,7 @@ using Multiplexed.Abstractions.AI.ControlPlane.Admission;
 using Multiplexed.Abstractions.AI.ControlPlane.Admission.Reservations;
 using Multiplexed.Abstractions.AI.ControlPlane.Discovery;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Capacity;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers.Transport;
@@ -21,6 +22,9 @@ using Multiplexed.AI.Runtime.ControlPlane.Admission;
 using Multiplexed.AI.Runtime.ControlPlane.Admission.Reservations;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Capacity;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strategy;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strategy.Process;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http.ScaleOut;
 using Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling;
@@ -124,12 +128,12 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Http
                 GenericMcpServerTestSettings.CreateHttpScaleOutOnlyControlPlaneSettings(
                     controlPlaneId);
 
-            await using var host =
-                new GenericMcpServerTestHost(
-                    controlPlaneSettings);
+            await using var host = new GenericMcpServerTestHost(controlPlaneSettings);
 
-            using var client =
-                host.CreateClient();
+            var hostManager = host.Services.GetRequiredService<IAiRuntimeHostManager>();
+            Assert.IsType<AiRuntimeHostCreationManager>(hostManager);
+
+            using var client = host.CreateClient();
 
             AssertRedisStoresPublisherWatcherAndHttpProvider(
                 host.Services);
@@ -442,12 +446,12 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Http
                 GenericMcpServerTestSettings.CreateHttpScaleOutOnlyControlPlaneSettings(
                     controlPlaneId);
 
-            await using var host =
-                new GenericMcpServerTestHost(
-                    controlPlaneSettings);
+            await using var host = new GenericMcpServerTestHost(controlPlaneSettings);
 
-            using var client =
-                host.CreateClient();
+            var hostManager = host.Services.GetRequiredService<IAiRuntimeHostManager>();
+            Assert.IsType<AiRuntimeHostCreationManager>(hostManager);
+
+            using var client = host.CreateClient();
 
             AssertRedisStoresPublisherWatcherAndHttpProvider(
                 host.Services);
@@ -857,6 +861,18 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Http
             Assert.Contains(
                 hostedServices,
                 service => service.GetType() == typeof(AiRuntimeScaleOutRequestWatcherHostedService));
+
+            var hostManager = services.GetRequiredService<IAiRuntimeHostManager>();
+            var strategies = services.GetServices<IAiRuntimeHostCreationStrategy>().ToArray();
+
+            output.WriteLine($"Redis HTTP scale-out assert: IAiRuntimeHostManager='{hostManager.GetType().FullName}'.");
+            output.WriteLine("Redis HTTP scale-out assert: IAiRuntimeHostCreationStrategy registrations: " + string.Join(" | ", strategies.Select(strategy => $"{strategy.Mode}:{strategy.GetType().FullName}")));
+
+            Assert.NotNull(hostManager);
+
+            Assert.Contains(
+                strategies,
+                strategy => strategy.GetType() == typeof(FixtureAiRuntimeHostCreationStrategy));
         }
 
         /// <summary>
@@ -874,12 +890,12 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Http
                 GenericMcpServerTestSettings.CreateHttpScaleOutOnlyControlPlaneSettings(
                     controlPlaneId);
 
-            await using var host =
-                new GenericMcpServerTestHost(
-                    controlPlaneSettings);
+            await using var host = new GenericMcpServerTestHost(controlPlaneSettings);
 
-            using var client =
-                host.CreateClient();
+            var hostManager = host.Services.GetRequiredService<IAiRuntimeHostManager>();
+            Assert.IsType<AiRuntimeHostCreationManager>(hostManager);
+
+            using var client = host.CreateClient();
 
             AssertRedisStoresPublisherWatcherAndHttpProvider(
                 host.Services);
@@ -1156,12 +1172,12 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Http
                 GenericMcpServerTestSettings.CreateHttpScaleOutOnlyControlPlaneSettings(
                     controlPlaneId);
 
-            await using var host =
-                new GenericMcpServerTestHost(
-                    controlPlaneSettings);
+            await using var host = new GenericMcpServerTestHost(controlPlaneSettings);
 
-            using var client =
-                host.CreateClient();
+            var hostManager = host.Services.GetRequiredService<IAiRuntimeHostManager>();
+            Assert.IsType<AiRuntimeHostCreationManager>(hostManager);
+
+            using var client = host.CreateClient();
 
             AssertRedisStoresPublisherWatcherAndHttpProvider(
                 host.Services);
@@ -1499,12 +1515,12 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Http
                 GenericMcpServerTestSettings.CreateHttpScaleOutOnlyControlPlaneSettings(
                     controlPlaneId);
 
-            await using var host =
-                new GenericMcpServerTestHost(
-                    controlPlaneSettings);
+            await using var host = new GenericMcpServerTestHost(controlPlaneSettings);
 
-            using var client =
-                host.CreateClient();
+            var hostManager = host.Services.GetRequiredService<IAiRuntimeHostManager>();
+            Assert.IsType<AiRuntimeHostCreationManager>(hostManager);
+
+            using var client = host.CreateClient();
 
             AssertRedisStoresPublisherWatcherAndHttpProvider(
                 host.Services);
@@ -1788,59 +1804,42 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Http
         [Fact]
         public async Task ControlPlaneWithHttpRuntimeInstances_With_HostManager_Mode_Should_Fulfill_Redis_ScaleOut_Request_Using_Http_Provider()
         {
-            var controlPlaneId =
-                GenericMcpServerTestSettings.CreateControlPlaneId(
-                    "http-hostmanager-scaleout-request");
+            var controlPlaneId = GenericMcpServerTestSettings.CreateControlPlaneId("http-hostmanager-scaleout-request");
 
-            var controlPlaneSettings =
-                GenericMcpServerTestSettings.CreateHttpScaleOutOnlyControlPlaneSettings(
+            var controlPlaneSettings = GenericMcpServerTestSettings.CreateHttpScaleOutOnlyControlPlaneSettings(
+                controlPlaneId,
+                useHostManagerMode: true,
+                useRegisteringTestRuntimeHostManager: false);
+
+            await using var host = new GenericMcpServerTestHost(controlPlaneSettings);
+
+            var hostManager = host.Services.GetRequiredService<IAiRuntimeHostManager>();
+            Assert.IsType<AiRuntimeHostCreationManager>(hostManager);
+
+            using var client = host.CreateClient();
+
+            AssertRedisStoresPublisherWatcherAndHttpProvider(host.Services);
+
+            var mcp = await McpRbacTestClientHelper
+                .CreateConfiguredClientAsync(host, client, RequestedBy, tenantId: TenantId)
+                .ConfigureAwait(false);
+
+            var sharedRunStore = host.Services.GetRequiredService<IAiSharedRunStore>();
+            var scaleOutRequestStore = host.Services.GetRequiredService<IAiRuntimeScaleOutRequestStore>();
+            var runtimeInstanceRegistry = host.Services.GetRequiredService<IAiRuntimeInstanceRegistry>();
+            var runtimeInstanceCapacityStore = host.Services.GetRequiredService<IAiRuntimeInstanceCapacityStore>();
+
+            var pipelineName = $"mcp-http-hostmanager-scaleout-{Guid.NewGuid():N}";
+
+            var result = await SubmitSingleRunAndWaitForFulfilledScaleOutAsync(
+                    mcp,
+                    sharedRunStore,
+                    scaleOutRequestStore,
                     controlPlaneId,
-                    useHostManagerMode: true);
-
-            await using var host =
-                new GenericMcpServerTestHost(
-                    controlPlaneSettings);
-
-            using var client =
-                host.CreateClient();
-
-            AssertRedisStoresPublisherWatcherAndHttpProvider(
-                host.Services);
-
-            var mcp =
-                await McpRbacTestClientHelper
-                    .CreateConfiguredClientAsync(
-                        host,
-                        client,
-                        RequestedBy,
-                        tenantId: TenantId)
-                    .ConfigureAwait(false);
-
-            var sharedRunStore =
-                host.Services.GetRequiredService<IAiSharedRunStore>();
-
-            var scaleOutRequestStore =
-                host.Services.GetRequiredService<IAiRuntimeScaleOutRequestStore>();
-
-            var runtimeInstanceRegistry =
-                host.Services.GetRequiredService<IAiRuntimeInstanceRegistry>();
-
-            var runtimeInstanceCapacityStore =
-                host.Services.GetRequiredService<IAiRuntimeInstanceCapacityStore>();
-
-            var pipelineName =
-                $"mcp-http-hostmanager-scaleout-{Guid.NewGuid():N}";
-
-            var result =
-                await SubmitSingleRunAndWaitForFulfilledScaleOutAsync(
-                        mcp,
-                        sharedRunStore,
-                        scaleOutRequestStore,
-                        controlPlaneId,
-                        pipelineName,
-                        TenantId,
-                        TimeSpan.FromSeconds(15))
-                    .ConfigureAwait(false);
+                    pipelineName,
+                    TenantId,
+                    TimeSpan.FromSeconds(15))
+                .ConfigureAwait(false);
 
             Assert.Equal(AiRuntimeInstanceIsolationMode.Shared, result.ScaleOutRequest.IsolationMode);
             Assert.False(result.ScaleOutRequest.PreferDedicatedCapacity);
@@ -1850,23 +1849,12 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Http
             Assert.Equal(10, result.ScaleOutRequest.WorkerCountPerInstance);
             Assert.Equal(3, result.ScaleOutRequest.MaxConcurrentRunsPerInstance);
 
-            var fulfilledRuntimeInstanceId =
-                result.ScaleOutRequest.FulfilledRuntimeInstanceId!;
+            var fulfilledRuntimeInstanceId = result.ScaleOutRequest.FulfilledRuntimeInstanceId!;
 
-            Assert.Contains(
-                $":{SharedRuntimeInstanceIdPrefix}-1",
-                fulfilledRuntimeInstanceId,
-                StringComparison.Ordinal);
+            Assert.Contains($":{SharedRuntimeInstanceIdPrefix}-1", fulfilledRuntimeInstanceId, StringComparison.Ordinal);
 
-            var registered =
-                await runtimeInstanceRegistry
-                    .GetAsync(fulfilledRuntimeInstanceId)
-                    .ConfigureAwait(false);
-
-            var capacity =
-                await runtimeInstanceCapacityStore
-                    .GetAsync(fulfilledRuntimeInstanceId)
-                    .ConfigureAwait(false);
+            var registered = await runtimeInstanceRegistry.GetAsync(fulfilledRuntimeInstanceId).ConfigureAwait(false);
+            var capacity = await runtimeInstanceCapacityStore.GetAsync(fulfilledRuntimeInstanceId).ConfigureAwait(false);
 
             Assert.NotNull(registered);
             Assert.NotNull(capacity);
@@ -1880,11 +1868,211 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Http
             Assert.Equal(AiRuntimeInstanceCommandTransportMetadataKeys.HttpTransportName, capacity.Metadata[AiRuntimeInstanceCommandTransportMetadataKeys.TransportName]);
             Assert.Equal("Shared", registered.Metadata["runtime.isolationMode"]);
             Assert.Equal("Shared", capacity.Metadata["runtime.isolationMode"]);
+            Assert.Equal("Fixture", registered.Metadata["hostCreation.mode"]);
+            Assert.Equal("Fixture", capacity.Metadata["hostCreation.mode"]);
 
             output.WriteLine(
                 $"Redis HTTP HostManager scale-out request fulfilled. ControlPlaneId='{controlPlaneId}', " +
                 $"SharedRunId='{result.SharedRunId}', RequestId='{result.ScaleOutRequest.RequestId}', " +
                 $"RuntimeInstanceId='{fulfilledRuntimeInstanceId}', PipelineKey='{pipelineName}'.");
+        }
+
+        /// <summary>
+        /// Verifies that the default runtime host manager registration uses the host creation manager
+        /// and exposes the fixture host creation strategy.
+        /// </summary>
+        [Fact]
+        public async Task ControlPlaneWithHttpRuntimeInstances_Should_Register_Default_HostCreation_Manager_And_Fixture_Strategy()
+        {
+            var controlPlaneId = GenericMcpServerTestSettings.CreateControlPlaneId("http-hostcreation-di");
+            var controlPlaneSettings = GenericMcpServerTestSettings.CreateHttpScaleOutOnlyControlPlaneSettings(controlPlaneId, useHostManagerMode: false, useRegisteringTestRuntimeHostManager: false);
+
+            await using var host = new GenericMcpServerTestHost(controlPlaneSettings);
+
+            var hostManager = host.Services.GetRequiredService<IAiRuntimeHostManager>();
+            var strategies = host.Services.GetServices<IAiRuntimeHostCreationStrategy>().ToArray();
+
+            output.WriteLine($"Host creation DI assert: IAiRuntimeHostManager='{hostManager.GetType().FullName}'.");
+            output.WriteLine("Host creation DI assert: IAiRuntimeHostCreationStrategy registrations: " + string.Join(" | ", strategies.Select(strategy => $"{strategy.Mode}:{strategy.GetType().FullName}")));
+
+            Assert.IsType<AiRuntimeHostCreationManager>(hostManager);
+            Assert.Contains(strategies, strategy => strategy.GetType() == typeof(FixtureAiRuntimeHostCreationStrategy));
+        }
+
+        /// <summary>
+        /// Verifies that the default host creation manager can start a fixture runtime host
+        /// and publish registry and capacity records.
+        /// </summary>
+        [Fact]
+        public async Task Default_HostCreation_Manager_With_Fixture_Mode_Should_Register_Runtime_And_Capacity()
+        {
+            var controlPlaneId = GenericMcpServerTestSettings.CreateControlPlaneId("http-hostcreation-fixture");
+            var controlPlaneSettings = GenericMcpServerTestSettings.CreateHttpScaleOutOnlyControlPlaneSettings(controlPlaneId, useHostManagerMode: false, useRegisteringTestRuntimeHostManager: false);
+
+            await using var host = new GenericMcpServerTestHost(controlPlaneSettings);
+
+            var hostManager = host.Services.GetRequiredService<IAiRuntimeHostManager>();
+            var runtimeInstanceRegistry = host.Services.GetRequiredService<IAiRuntimeInstanceRegistry>();
+            var runtimeInstanceCapacityStore = host.Services.GetRequiredService<IAiRuntimeInstanceCapacityStore>();
+
+            Assert.IsType<AiRuntimeHostCreationManager>(hostManager);
+
+            var tenantGroupId = "test-tenant-group";
+            var runtimeInstanceId = $"{controlPlaneId}:fixture-runtime-1";
+            var executionContextSnapshot = CreateRuntimeVisibilityExecutionContextSnapshot(TenantId, tenantGroupId, "http-hostcreation-fixture");
+
+            var result = await hostManager.StartRuntimeAsync(
+                new AiRuntimeHostStartRequest
+                {
+                    RequestId = $"fixture-host-start-{Guid.NewGuid():N}",
+                    ControlPlaneId = controlPlaneId,
+                    ExecutionContextSnapshot = executionContextSnapshot,
+                    RuntimeInstanceId = runtimeInstanceId,
+                    RuntimeInstanceIdPrefix = "fixture-runtime",
+                    ProviderName = "http",
+                    TransportName = AiRuntimeInstanceCommandTransportMetadataKeys.HttpTransportName,
+                    TransportEndpoint = $"http://runtime-host/{runtimeInstanceId}",
+                    HostCreationMode = AiRuntimeHostCreationMode.Fixture,
+                    TenantId = TenantId,
+                    TenantGroupId = tenantGroupId,
+                    IsolationMode = AiRuntimeInstanceIsolationMode.Shared.ToString(),
+                    PreferDedicatedCapacity = false,
+                    AllowSharedFallback = true,
+                    WorkerCountPerInstance = 10,
+                    MaxConcurrentRunsPerInstance = 3,
+                    LocalQueueCapacity = 100,
+                    MaxRuntimeInstances = 1
+                }).ConfigureAwait(false);
+
+            Assert.True(result.Success, result.FailureReason);
+            Assert.Equal(runtimeInstanceId, result.RuntimeInstanceId);
+            Assert.Equal("http", result.ProviderName);
+            Assert.Equal(AiRuntimeInstanceCommandTransportMetadataKeys.HttpTransportName, result.TransportName);
+            Assert.Equal(TenantId, result.ExecutionContextSnapshot.TenantId);
+
+            var registered = await runtimeInstanceRegistry.GetAsync(runtimeInstanceId).ConfigureAwait(false);
+            var capacity = await runtimeInstanceCapacityStore.GetAsync(runtimeInstanceId).ConfigureAwait(false);
+
+            Assert.NotNull(registered);
+            Assert.NotNull(capacity);
+            Assert.Equal(runtimeInstanceId, registered!.RuntimeInstanceId);
+            Assert.Equal(runtimeInstanceId, capacity!.RuntimeInstanceId);
+            Assert.Equal(10, registered.WorkerCount);
+            Assert.Equal(10, capacity.WorkerCount);
+            Assert.Equal(3, registered.MaxConcurrentRuns);
+            Assert.Equal(3, capacity.MaxConcurrentRuns);
+            Assert.True(capacity.CanAcceptRun);
+            Assert.Equal(AiRuntimeInstanceStatus.Ready, capacity.Status);
+            Assert.Equal("http", registered.Metadata[AiRuntimeInstanceProviderMetadataKeys.ProviderName]);
+            Assert.Equal("http", capacity.Metadata[AiRuntimeInstanceProviderMetadataKeys.ProviderName]);
+            Assert.Equal("Fixture", registered.Metadata["hostCreation.mode"]);
+            Assert.Equal("Fixture", capacity.Metadata["hostCreation.mode"]);
+            Assert.Equal(TenantId, registered.Metadata["tenant.id"]);
+            Assert.Equal(TenantId, capacity.Metadata["tenant.id"]);
+        }
+
+        /// <summary>
+        /// Verifies that HTTP HostManager scale-out can fulfill a Redis scale-out request by starting
+        /// a real RuntimeInstanceOnly host process.
+        /// </summary>
+        [Fact]
+        public async Task ControlPlaneWithHttpRuntimeInstances_With_Process_HostCreation_Mode_Should_Fulfill_Redis_ScaleOut_Request_Using_Real_Runtime_Process()
+        {
+            var controlPlaneId = GenericMcpServerTestSettings.CreateControlPlaneId("http-process-scaleout-request");
+            var runtimeHostAssemblyPath = GenericMcpRuntimeHostAssemblyResolver.ResolveRuntimeHostAssemblyPath();
+
+            output.WriteLine($"Resolved runtime host assembly path: '{runtimeHostAssemblyPath}'.");
+
+            var controlPlaneSettings = GenericMcpServerTestSettings.CreateHttpProcessHostScaleOutOnlyControlPlaneSettings(controlPlaneId, runtimeHostAssemblyPath);
+
+            output.WriteLine($"TEST SETTING AiHttpRuntimeScaleOut:Mode='{controlPlaneSettings["AiHttpRuntimeScaleOut:Mode"]}'.");
+            output.WriteLine($"TEST SETTING AiHttpRuntimeScaleOut:HostCreationMode='{controlPlaneSettings["AiHttpRuntimeScaleOut:HostCreationMode"]}'.");
+            output.WriteLine($"TEST SETTING AiRuntimeProcessHostCreation:RuntimeHostAssemblyPath='{controlPlaneSettings["AiRuntimeProcessHostCreation:RuntimeHostAssemblyPath"]}'.");
+
+            await using var host = new GenericMcpServerTestHost(controlPlaneSettings);
+            using var client = host.CreateClient();
+
+            AssertRedisStoresPublisherWatcherAndHttpProvider(host.Services);
+
+            var hostManager = host.Services.GetRequiredService<IAiRuntimeHostManager>();
+            var strategies = host.Services.GetServices<IAiRuntimeHostCreationStrategy>().ToArray();
+
+            output.WriteLine($"Process scale-out DI assert: IAiRuntimeHostManager='{hostManager.GetType().FullName}'.");
+            output.WriteLine("Process scale-out DI assert: IAiRuntimeHostCreationStrategy registrations: " + string.Join(" | ", strategies.Select(strategy => $"{strategy.Mode}:{strategy.GetType().FullName}")));
+
+            Assert.IsType<AiRuntimeHostCreationManager>(hostManager);
+            Assert.Contains(strategies, strategy => strategy.GetType() == typeof(ProcessAiRuntimeHostCreationStrategy));
+
+            var processOptions = host.Services.GetRequiredService<IOptions<AiRuntimeProcessHostCreationOptions>>().Value;
+            var httpScaleOutOptions = host.Services.GetRequiredService<IOptions<AiHttpRuntimeScaleOutOptions>>().Value;
+
+            output.WriteLine($"RESOLVED AiHttpRuntimeScaleOutOptions.Mode='{httpScaleOutOptions.Mode}'.");
+            output.WriteLine($"RESOLVED AiHttpRuntimeScaleOutOptions.HostCreationMode='{httpScaleOutOptions.HostCreationMode}'.");
+            output.WriteLine($"RESOLVED AiRuntimeProcessHostCreationOptions.RuntimeHostAssemblyPath='{processOptions.RuntimeHostAssemblyPath}'.");
+
+            Assert.Equal(AiRuntimeHostCreationMode.Process, httpScaleOutOptions.HostCreationMode);
+            Assert.Equal(runtimeHostAssemblyPath, processOptions.RuntimeHostAssemblyPath);
+            Assert.True(processOptions.Enabled);
+
+            var mcp = await McpRbacTestClientHelper.CreateConfiguredClientAsync(host, client, RequestedBy, tenantId: TenantId).ConfigureAwait(false);
+
+            var sharedRunStore = host.Services.GetRequiredService<IAiSharedRunStore>();
+            var scaleOutRequestStore = host.Services.GetRequiredService<IAiRuntimeScaleOutRequestStore>();
+            var runtimeInstanceRegistry = host.Services.GetRequiredService<IAiRuntimeInstanceRegistry>();
+            var runtimeInstanceCapacityStore = host.Services.GetRequiredService<IAiRuntimeInstanceCapacityStore>();
+
+            var pipelineName = $"mcp-http-process-scaleout-{Guid.NewGuid():N}";
+
+            var result = await SubmitSingleRunAndWaitForFulfilledScaleOutAsync(
+                    mcp,
+                    sharedRunStore,
+                    scaleOutRequestStore,
+                    controlPlaneId,
+                    pipelineName,
+                    TenantId,
+                    TimeSpan.FromSeconds(45))
+                .ConfigureAwait(false);
+
+            Assert.Equal(AiRuntimeInstanceIsolationMode.Shared, result.ScaleOutRequest.IsolationMode);
+            Assert.False(result.ScaleOutRequest.PreferDedicatedCapacity);
+            Assert.True(result.ScaleOutRequest.AllowSharedFallback);
+            Assert.Equal(1, result.ScaleOutRequest.MaxRuntimeInstances);
+            Assert.Equal(SharedRuntimeInstanceIdPrefix, result.ScaleOutRequest.RuntimeInstanceIdPrefix);
+            Assert.Equal(10, result.ScaleOutRequest.WorkerCountPerInstance);
+            Assert.Equal(3, result.ScaleOutRequest.MaxConcurrentRunsPerInstance);
+
+            var fulfilledRuntimeInstanceId = result.ScaleOutRequest.FulfilledRuntimeInstanceId!;
+
+            Assert.Contains($":{SharedRuntimeInstanceIdPrefix}-1", fulfilledRuntimeInstanceId, StringComparison.Ordinal);
+
+            var registered = await runtimeInstanceRegistry.GetAsync(fulfilledRuntimeInstanceId).ConfigureAwait(false);
+            var capacity = await runtimeInstanceCapacityStore.GetAsync(fulfilledRuntimeInstanceId).ConfigureAwait(false);
+
+            Assert.NotNull(registered);
+            Assert.NotNull(capacity);
+            Assert.Equal(fulfilledRuntimeInstanceId, registered!.RuntimeInstanceId);
+            Assert.Equal(fulfilledRuntimeInstanceId, capacity!.RuntimeInstanceId);
+
+            Assert.Equal("http", registered.Metadata[AiRuntimeInstanceProviderMetadataKeys.ProviderName]);
+            Assert.Equal("http", capacity.Metadata[AiRuntimeInstanceProviderMetadataKeys.ProviderName]);
+            Assert.Equal("http", registered.Metadata["provider.name"]);
+            Assert.Equal("http", capacity.Metadata["provider.name"]);
+
+            Assert.Equal(AiRuntimeInstanceCommandTransportMetadataKeys.HttpTransportName, registered.Metadata[AiRuntimeInstanceCommandTransportMetadataKeys.TransportName]);
+            Assert.Equal(AiRuntimeInstanceCommandTransportMetadataKeys.HttpTransportName, capacity.Metadata[AiRuntimeInstanceCommandTransportMetadataKeys.TransportName]);
+
+            Assert.Equal("Process", registered.Metadata["hostCreation.mode"]);
+            Assert.Equal("Process", capacity.Metadata["hostCreation.mode"]);
+            Assert.Equal("Shared", registered.Metadata["runtime.isolationMode"]);
+            Assert.Equal("Shared", capacity.Metadata["runtime.isolationMode"]);
+            Assert.Equal(TenantId, registered.Metadata["tenant.id"]);
+            Assert.Equal(TenantId, capacity.Metadata["tenant.id"]);
+
+            output.WriteLine(
+                $"Redis HTTP Process HostManager scale-out request fulfilled. ControlPlaneId='{controlPlaneId}', " +
+                $"SharedRunId='{result.SharedRunId}', RequestId='{result.ScaleOutRequest.RequestId}', " +
+                $"RuntimeInstanceId='{fulfilledRuntimeInstanceId}', PipelineKey='{pipelineName}', " +
+                $"RuntimeHostAssemblyPath='{runtimeHostAssemblyPath}'.");
         }
 
         private static async Task WaitUntilAsync(
@@ -1965,7 +2153,20 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Http
             }
 
             throw new TimeoutException(
-                $"Scale-out request '{requestId}' did not reach status '{expectedStatus}' within '{timeout}'. LastStatus='{last?.Status.ToString() ?? "missing"}'.");
+                $"Scale-out request '{requestId}' did not reach status '{expectedStatus}' within '{timeout}'. " +
+                $"LastStatus='{last?.Status}', RejectionReason='{last?.RejectionReason}', RejectedBy='{last?.RejectedBy}', " +
+                $"FulfilledRuntimeInstanceId='{last?.FulfilledRuntimeInstanceId}', FulfilledBy='{last?.FulfilledBy}', " +
+                $"Metadata='{FormatMetadata(last?.Metadata)}'.");
+        }
+
+        private static string FormatMetadata(IEnumerable<KeyValuePair<string, string>>? metadata)
+        {
+            if (metadata is null)
+            {
+                return string.Empty;
+            }
+
+            return string.Join(" | ", metadata.OrderBy(pair => pair.Key, StringComparer.Ordinal).Select(pair => $"{pair.Key}={pair.Value}"));
         }
 
         /// <summary>

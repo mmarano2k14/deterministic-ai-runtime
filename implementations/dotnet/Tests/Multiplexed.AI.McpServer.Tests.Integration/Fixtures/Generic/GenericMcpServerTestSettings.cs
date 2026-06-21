@@ -5,25 +5,18 @@
     /// </summary>
     public static class GenericMcpServerTestSettings
     {
-        private const string RedisConnectionString =
-            "localhost:6379";
+        private const string RedisConnectionString = "localhost:6379";
+        private const string MongoConnectionString = "mongodb://localhost:27017";
+        private const string DatabaseName = "multiplexed-ai-mcp-http-tests";
 
-        private const string MongoConnectionString =
-            "mongodb://localhost:27017";
-
-        private const string DatabaseName =
-            "multiplexed-ai-mcp-http-tests";
-
-        private static readonly string DefaultControlPlaneId =
-            CreateControlPlaneId("mcp-http-tests");
+        private static readonly string DefaultControlPlaneId = CreateControlPlaneId("mcp-http-tests");
 
         /// <summary>
         /// Creates a unique logical control-plane identifier for one MCP integration test scope.
         /// </summary>
         /// <param name="prefix">The control-plane identifier prefix.</param>
         /// <returns>A unique logical control-plane identifier.</returns>
-        public static string CreateControlPlaneId(
-            string prefix = "mcp-integration")
+        public static string CreateControlPlaneId(string prefix = "mcp-integration")
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(prefix);
 
@@ -35,12 +28,9 @@
         /// </summary>
         /// <param name="overrides">Optional configuration overrides.</param>
         /// <returns>The startup settings.</returns>
-        public static Dictionary<string, string?> CreateMcpSettings(
-            IReadOnlyDictionary<string, string?>? overrides)
+        public static Dictionary<string, string?> CreateMcpSettings(IReadOnlyDictionary<string, string?>? overrides)
         {
-            return CreateMcpSettings(
-                controlPlaneId: null,
-                overrides: overrides);
+            return CreateMcpSettings(controlPlaneId: null, overrides: overrides);
         }
 
         /// <summary>
@@ -53,69 +43,63 @@
             string? controlPlaneId = null,
             IReadOnlyDictionary<string, string?>? overrides = null)
         {
-            var effectiveControlPlaneId =
-                string.IsNullOrWhiteSpace(controlPlaneId)
-                    ? DefaultControlPlaneId
-                    : controlPlaneId;
+            var effectiveControlPlaneId = string.IsNullOrWhiteSpace(controlPlaneId) ? DefaultControlPlaneId : controlPlaneId;
 
-            var settings =
-                new Dictionary<string, string?>
-                {
-                    ["AiMcpHost:Mode"] = "ControlPlaneWithHttpRuntimeInstances",
-                    ["AiMcpHost:Port"] = "5001",
-                    ["AiMcpHost:EnableSharedQueuePump"] = "false",
-                    ["AiMcpHost:SharedQueuePumpIntervalSeconds"] = "1",
-                    ["AiMcpHost:EnableReplayTools"] = "true",
-                    ["AiMcpHost:EnableObservabilityTools"] = "true",
+            var settings = new Dictionary<string, string?>
+            {
+                ["AiMcpHost:Mode"] = "ControlPlaneWithHttpRuntimeInstances",
+                ["AiMcpHost:Port"] = "5001",
+                ["AiMcpHost:EnableSharedQueuePump"] = "false",
+                ["AiMcpHost:SharedQueuePumpIntervalSeconds"] = "1",
+                ["AiMcpHost:EnableReplayTools"] = "true",
+                ["AiMcpHost:EnableObservabilityTools"] = "true",
 
-                    ["AiEngine:ControlPlane:ControlPlaneId"] = effectiveControlPlaneId,
-                    ["AiEngine:ControlPlane:RedisDiscoveryKey"] = $"multiplexed-ai:{effectiveControlPlaneId}",
-                    ["AiEngine:ControlPlane:EnableDiscovery"] = "true",
-                    ["AiEngine:ControlPlane:PublishDiscovery"] = "true",
-                    ["AiEngine:ControlPlane:RequireDiscovery"] = "false",
+                ["AiEngine:ControlPlane:ControlPlaneId"] = effectiveControlPlaneId,
+                ["AiEngine:ControlPlane:RedisDiscoveryKey"] = $"multiplexed-ai:{effectiveControlPlaneId}",
+                ["AiEngine:ControlPlane:EnableDiscovery"] = "true",
+                ["AiEngine:ControlPlane:PublishDiscovery"] = "true",
+                ["AiEngine:ControlPlane:RequireDiscovery"] = "false",
 
-                    ["AiSharedQueueBackgroundService:WaitForRuntimeReadiness"] = "false",
+                ["AiSharedQueueBackgroundService:WaitForRuntimeReadiness"] = "false",
 
-                    ["AiRuntimeInstanceRegistration:Enabled"] = "true",
-                    ["AiRuntimeInstanceRegistration:ControlPlaneId"] = effectiveControlPlaneId,
-                    ["AiRuntimeInstanceRegistration:RuntimeInstanceId"] = "mcp-control-plane-http",
-                    ["AiRuntimeInstanceRegistration:ProviderName"] = "local",
-                    ["AiRuntimeInstanceRegistration:Role"] = "ControlPlane",
-                    ["AiRuntimeInstanceRegistration:WorkerCount"] = "30",
-                    ["AiRuntimeInstanceRegistration:MaxConcurrentRuns"] = "30",
-                    ["AiRuntimeInstanceRegistration:QueueCapacity"] = "100",
-                    ["AiRuntimeInstanceRegistration:RuntimeVersion"] = "test",
-                    ["AiRuntimeInstanceRegistration:HeartbeatInterval"] = "00:00:02",
+                ["AiRuntimeInstanceRegistration:Enabled"] = "true",
+                ["AiRuntimeInstanceRegistration:ControlPlaneId"] = effectiveControlPlaneId,
+                ["AiRuntimeInstanceRegistration:RuntimeInstanceId"] = "mcp-control-plane-http",
+                ["AiRuntimeInstanceRegistration:ProviderName"] = "local",
+                ["AiRuntimeInstanceRegistration:Role"] = "ControlPlane",
+                ["AiRuntimeInstanceRegistration:WorkerCount"] = "30",
+                ["AiRuntimeInstanceRegistration:MaxConcurrentRuns"] = "30",
+                ["AiRuntimeInstanceRegistration:QueueCapacity"] = "100",
+                ["AiRuntimeInstanceRegistration:RuntimeVersion"] = "test",
+                ["AiRuntimeInstanceRegistration:HeartbeatInterval"] = "00:00:02",
 
-                    ["AiRuntimeInstanceRegistration:ProviderMetadata:provider.name"] = "local",
-                    ["AiRuntimeInstanceRegistration:ProviderMetadata:controlPlaneId"] = effectiveControlPlaneId,
+                ["AiRuntimeInstanceRegistration:ProviderMetadata:provider.name"] = "local",
+                ["AiRuntimeInstanceRegistration:ProviderMetadata:controlPlaneId"] = effectiveControlPlaneId,
 
-                    ["AiRuntimeInstanceRegistration:Metadata:controlPlaneId"] = effectiveControlPlaneId,
-                    ["AiRuntimeInstanceRegistration:Metadata:provider.name"] = "local",
-                    ["AiRuntimeInstanceRegistration:Metadata:hostType"] = "control-plane-with-http-runtime",
-                    ["AiRuntimeInstanceRegistration:Metadata:deployment"] = "test-http",
+                ["AiRuntimeInstanceRegistration:Metadata:controlPlaneId"] = effectiveControlPlaneId,
+                ["AiRuntimeInstanceRegistration:Metadata:provider.name"] = "local",
+                ["AiRuntimeInstanceRegistration:Metadata:hostType"] = "control-plane-with-http-runtime",
+                ["AiRuntimeInstanceRegistration:Metadata:deployment"] = "test-http",
 
-                    ["AiLocalRuntimeInstancePool:Enabled"] = "false",
-                    ["AiLocalRuntimeInstancePool:InstanceCount"] = "0",
-                    ["AiLocalRuntimeInstancePool:WorkerCountPerInstance"] = "0",
-                    ["AiLocalRuntimeInstancePool:MaxConcurrentRunsPerInstance"] = "0",
-                    ["AiLocalRuntimeInstancePool:RuntimeInstanceIdPrefix"] = "disabled",
+                ["AiLocalRuntimeInstancePool:Enabled"] = "false",
+                ["AiLocalRuntimeInstancePool:InstanceCount"] = "0",
+                ["AiLocalRuntimeInstancePool:WorkerCountPerInstance"] = "0",
+                ["AiLocalRuntimeInstancePool:MaxConcurrentRunsPerInstance"] = "0",
+                ["AiLocalRuntimeInstancePool:RuntimeInstanceIdPrefix"] = "disabled",
 
-                    ["ConnectionStrings:Redis"] = RedisConnectionString,
-                    ["ConnectionStrings:Mongo"] = MongoConnectionString,
-                    ["Mongo:DatabaseName"] = DatabaseName,
+                ["ConnectionStrings:Redis"] = RedisConnectionString,
+                ["ConnectionStrings:Mongo"] = MongoConnectionString,
+                ["Mongo:DatabaseName"] = DatabaseName,
 
-                    ["AiEngine:RuntimeInstanceId"] = "mcp-control-plane-http",
+                ["AiEngine:RuntimeInstanceId"] = "mcp-control-plane-http",
 
-                    ["AiEngine:Snapshots:Enabled"] = "true",
-                    ["AiEngine:Snapshots:Mongo:Enabled"] = "true",
-                    ["AiEngine:Snapshots:Mongo:ConnectionString"] = MongoConnectionString,
-                    ["AiEngine:Snapshots:Mongo:DatabaseName"] = DatabaseName
-                };
+                ["AiEngine:Snapshots:Enabled"] = "true",
+                ["AiEngine:Snapshots:Mongo:Enabled"] = "true",
+                ["AiEngine:Snapshots:Mongo:ConnectionString"] = MongoConnectionString,
+                ["AiEngine:Snapshots:Mongo:DatabaseName"] = DatabaseName
+            };
 
-            ApplyOverrides(
-                settings,
-                overrides);
+            ApplyOverrides(settings, overrides);
 
             return settings;
         }
@@ -125,14 +109,9 @@
         /// </summary>
         /// <param name="overrides">Optional configuration overrides.</param>
         /// <returns>The startup settings.</returns>
-        public static Dictionary<string, string?> CreateRuntimeInstanceSettings(
-            IReadOnlyDictionary<string, string?>? overrides)
+        public static Dictionary<string, string?> CreateRuntimeInstanceSettings(IReadOnlyDictionary<string, string?>? overrides)
         {
-            return CreateRuntimeInstanceSettings(
-                controlPlaneId: null,
-                runtimeInstanceId: "runtime-http-1",
-                port: 5002,
-                overrides: overrides);
+            return CreateRuntimeInstanceSettings(controlPlaneId: null, runtimeInstanceId: "runtime-http-1", port: 5002, overrides: overrides);
         }
 
         /// <summary>
@@ -151,95 +130,87 @@
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(runtimeInstanceId);
 
-            var effectiveControlPlaneId =
-                string.IsNullOrWhiteSpace(controlPlaneId)
-                    ? DefaultControlPlaneId
-                    : controlPlaneId;
+            var effectiveControlPlaneId = string.IsNullOrWhiteSpace(controlPlaneId) ? DefaultControlPlaneId : controlPlaneId;
+            var endpoint = $"http://localhost:{port}";
 
-            var endpoint =
-                $"http://localhost:{port}";
+            var settings = new Dictionary<string, string?>
+            {
+                ["AiMcpHost:Mode"] = "RuntimeInstanceOnly",
+                ["AiMcpHost:Port"] = port.ToString(),
+                ["AiMcpHost:EnableSharedQueuePump"] = "false",
+                ["AiMcpHost:SharedQueuePumpIntervalSeconds"] = "1",
+                ["AiMcpHost:EnableReplayTools"] = "false",
+                ["AiMcpHost:EnableObservabilityTools"] = "false",
 
-            var settings =
-                new Dictionary<string, string?>
-                {
-                    ["AiMcpHost:Mode"] = "RuntimeInstanceOnly",
-                    ["AiMcpHost:Port"] = port.ToString(),
-                    ["AiMcpHost:EnableSharedQueuePump"] = "false",
-                    ["AiMcpHost:SharedQueuePumpIntervalSeconds"] = "1",
-                    ["AiMcpHost:EnableReplayTools"] = "false",
-                    ["AiMcpHost:EnableObservabilityTools"] = "false",
+                ["AiEngine:ControlPlane:ControlPlaneId"] = effectiveControlPlaneId,
+                ["AiEngine:ControlPlane:RedisDiscoveryKey"] = $"multiplexed-ai:{effectiveControlPlaneId}",
+                ["AiEngine:ControlPlane:EnableDiscovery"] = "true",
+                ["AiEngine:ControlPlane:PublishDiscovery"] = "false",
+                ["AiEngine:ControlPlane:RequireDiscovery"] = "false",
 
-                    ["AiEngine:ControlPlane:ControlPlaneId"] = effectiveControlPlaneId,
-                    ["AiEngine:ControlPlane:RedisDiscoveryKey"] = $"multiplexed-ai:{effectiveControlPlaneId}",
-                    ["AiEngine:ControlPlane:EnableDiscovery"] = "true",
-                    ["AiEngine:ControlPlane:PublishDiscovery"] = "false",
-                    ["AiEngine:ControlPlane:RequireDiscovery"] = "false",
+                ["AiSharedQueueBackgroundService:WaitForRuntimeReadiness"] = "false",
 
-                    ["AiSharedQueueBackgroundService:WaitForRuntimeReadiness"] = "false",
+                ["AiRuntimeInstanceRegistration:Enabled"] = "true",
+                ["AiRuntimeInstanceRegistration:ControlPlaneId"] = effectiveControlPlaneId,
+                ["AiRuntimeInstanceRegistration:RuntimeInstanceId"] = runtimeInstanceId,
+                ["AiRuntimeInstanceRegistration:ProviderName"] = "http",
+                ["AiRuntimeInstanceRegistration:Role"] = "Runtime",
+                ["AiRuntimeInstanceRegistration:WorkerCount"] = "10",
+                ["AiRuntimeInstanceRegistration:MaxConcurrentRuns"] = "5",
+                ["AiRuntimeInstanceRegistration:QueueCapacity"] = "100",
+                ["AiRuntimeInstanceRegistration:RuntimeVersion"] = "test",
+                ["AiRuntimeInstanceRegistration:HeartbeatInterval"] = "00:00:02",
 
-                    ["AiRuntimeInstanceRegistration:Enabled"] = "true",
-                    ["AiRuntimeInstanceRegistration:ControlPlaneId"] = effectiveControlPlaneId,
-                    ["AiRuntimeInstanceRegistration:RuntimeInstanceId"] = runtimeInstanceId,
-                    ["AiRuntimeInstanceRegistration:ProviderName"] = "http",
-                    ["AiRuntimeInstanceRegistration:Role"] = "Runtime",
-                    ["AiRuntimeInstanceRegistration:WorkerCount"] = "10",
-                    ["AiRuntimeInstanceRegistration:MaxConcurrentRuns"] = "5",
-                    ["AiRuntimeInstanceRegistration:QueueCapacity"] = "100",
-                    ["AiRuntimeInstanceRegistration:RuntimeVersion"] = "test",
-                    ["AiRuntimeInstanceRegistration:HeartbeatInterval"] = "00:00:02",
+                ["AiRuntimeInstanceRegistration:ProviderMetadata:controlPlaneId"] = effectiveControlPlaneId,
+                ["AiRuntimeInstanceRegistration:ProviderMetadata:provider.name"] = "http",
+                ["AiRuntimeInstanceRegistration:ProviderMetadata:transport.name"] = "http",
+                ["AiRuntimeInstanceRegistration:ProviderMetadata:transport.endpoint"] = endpoint,
+                ["AiRuntimeInstanceRegistration:ProviderMetadata:runtime.instance.id"] = runtimeInstanceId,
 
-                    ["AiRuntimeInstanceRegistration:ProviderMetadata:controlPlaneId"] = effectiveControlPlaneId,
-                    ["AiRuntimeInstanceRegistration:ProviderMetadata:provider.name"] = "http",
-                    ["AiRuntimeInstanceRegistration:ProviderMetadata:transport.name"] = "http",
-                    ["AiRuntimeInstanceRegistration:ProviderMetadata:transport.endpoint"] = endpoint,
-                    ["AiRuntimeInstanceRegistration:ProviderMetadata:runtime.instance.id"] = runtimeInstanceId,
+                ["AiRuntimeInstanceRegistration:Metadata:controlPlaneId"] = effectiveControlPlaneId,
+                ["AiRuntimeInstanceRegistration:Metadata:provider.name"] = "http",
+                ["AiRuntimeInstanceRegistration:Metadata:transport.name"] = "http",
+                ["AiRuntimeInstanceRegistration:Metadata:transport.endpoint"] = endpoint,
+                ["AiRuntimeInstanceRegistration:Metadata:runtime.instance.id"] = runtimeInstanceId,
+                ["AiRuntimeInstanceRegistration:Metadata:hostType"] = "runtime-instance-only",
+                ["AiRuntimeInstanceRegistration:Metadata:deployment"] = "test-http",
 
-                    ["AiRuntimeInstanceRegistration:Metadata:controlPlaneId"] = effectiveControlPlaneId,
-                    ["AiRuntimeInstanceRegistration:Metadata:provider.name"] = "http",
-                    ["AiRuntimeInstanceRegistration:Metadata:transport.name"] = "http",
-                    ["AiRuntimeInstanceRegistration:Metadata:transport.endpoint"] = endpoint,
-                    ["AiRuntimeInstanceRegistration:Metadata:runtime.instance.id"] = runtimeInstanceId,
-                    ["AiRuntimeInstanceRegistration:Metadata:hostType"] = "runtime-instance-only",
-                    ["AiRuntimeInstanceRegistration:Metadata:deployment"] = "test-http",
+                ["AiLocalRuntimeInstancePool:Enabled"] = "false",
+                ["AiLocalRuntimeInstancePool:InstanceCount"] = "0",
+                ["AiLocalRuntimeInstancePool:WorkerCountPerInstance"] = "0",
+                ["AiLocalRuntimeInstancePool:MaxConcurrentRunsPerInstance"] = "0",
+                ["AiLocalRuntimeInstancePool:RuntimeInstanceIdPrefix"] = "disabled",
 
-                    ["AiLocalRuntimeInstancePool:Enabled"] = "false",
-                    ["AiLocalRuntimeInstancePool:InstanceCount"] = "0",
-                    ["AiLocalRuntimeInstancePool:WorkerCountPerInstance"] = "0",
-                    ["AiLocalRuntimeInstancePool:MaxConcurrentRunsPerInstance"] = "0",
-                    ["AiLocalRuntimeInstancePool:RuntimeInstanceIdPrefix"] = "disabled",
+                ["ConnectionStrings:Redis"] = RedisConnectionString,
+                ["ConnectionStrings:Mongo"] = MongoConnectionString,
+                ["Mongo:DatabaseName"] = DatabaseName,
 
-                    ["ConnectionStrings:Redis"] = RedisConnectionString,
-                    ["ConnectionStrings:Mongo"] = MongoConnectionString,
-                    ["Mongo:DatabaseName"] = DatabaseName,
+                ["AiEngine:RuntimeInstanceId"] = runtimeInstanceId,
 
-                    ["AiEngine:RuntimeInstanceId"] = runtimeInstanceId,
+                ["AiEngine:Snapshots:Enabled"] = "true",
+                ["AiEngine:Snapshots:Mongo:Enabled"] = "true",
+                ["AiEngine:Snapshots:Mongo:ConnectionString"] = MongoConnectionString,
+                ["AiEngine:Snapshots:Mongo:DatabaseName"] = DatabaseName,
 
-                    ["AiEngine:Snapshots:Enabled"] = "true",
-                    ["AiEngine:Snapshots:Mongo:Enabled"] = "true",
-                    ["AiEngine:Snapshots:Mongo:ConnectionString"] = MongoConnectionString,
-                    ["AiEngine:Snapshots:Mongo:DatabaseName"] = DatabaseName,
+                ["AiEngine:PipelineBackgroundController:RuntimeInstanceId"] = runtimeInstanceId,
+                ["AiEngine:PipelineBackgroundController:MaxConcurrentRuns"] = "5",
+                ["AiEngine:PipelineBackgroundController:QueueCapacity"] = "1000",
+                ["AiEngine:PipelineBackgroundController:RejectEnqueueWhenStopped"] = "false",
+                ["AiEngine:PipelineBackgroundController:StopOnFirstFailure"] = "false",
 
-                    ["AiEngine:PipelineBackgroundController:RuntimeInstanceId"] = runtimeInstanceId,
-                    ["AiEngine:PipelineBackgroundController:MaxConcurrentRuns"] = "5",
-                    ["AiEngine:PipelineBackgroundController:QueueCapacity"] = "1000",
-                    ["AiEngine:PipelineBackgroundController:RejectEnqueueWhenStopped"] = "false",
-                    ["AiEngine:PipelineBackgroundController:StopOnFirstFailure"] = "false",
+                ["AiEngine:PipelineBackgroundController:Distributed:Enabled"] = "true",
+                ["AiEngine:PipelineBackgroundController:Distributed:WorkerCount"] = "10",
+                ["AiEngine:PipelineBackgroundController:Distributed:StopOnFirstTerminal"] = "true",
+                ["AiEngine:PipelineBackgroundController:Distributed:TerminalObservationTimeout"] = "00:00:30",
 
-                    ["AiEngine:PipelineBackgroundController:Distributed:Enabled"] = "true",
-                    ["AiEngine:PipelineBackgroundController:Distributed:WorkerCount"] = "10",
-                    ["AiEngine:PipelineBackgroundController:Distributed:StopOnFirstTerminal"] = "true",
-                    ["AiEngine:PipelineBackgroundController:Distributed:TerminalObservationTimeout"] = "00:00:30",
+                ["AiEngine:RuntimeInstanceWorker:RuntimeInstanceId"] = runtimeInstanceId,
+                ["AiEngine:RuntimeInstanceWorker:MaxCycles"] = "-1",
+                ["AiEngine:RuntimeInstanceWorker:MaxStepsPerCycle"] = "10",
+                ["AiEngine:RuntimeInstanceWorker:IdleDelay"] = "00:00:00.025",
+                ["AiEngine:RuntimeInstanceWorker:IgnoreConcurrencyConflicts"] = "true"
+            };
 
-                    ["AiEngine:RuntimeInstanceWorker:RuntimeInstanceId"] = runtimeInstanceId,
-                    ["AiEngine:RuntimeInstanceWorker:MaxCycles"] = "-1",
-                    ["AiEngine:RuntimeInstanceWorker:MaxStepsPerCycle"] = "10",
-                    ["AiEngine:RuntimeInstanceWorker:IdleDelay"] = "00:00:00.025",
-                    ["AiEngine:RuntimeInstanceWorker:IgnoreConcurrencyConflicts"] = "true"
-                };
-
-            ApplyOverrides(
-                settings,
-                overrides);
+            ApplyOverrides(settings, overrides);
 
             return settings;
         }
@@ -250,16 +221,13 @@
         /// </summary>
         /// <param name="controlPlaneId">The logical control-plane identifier shared by the scenario.</param>
         /// <returns>The control-plane scale-out request settings.</returns>
-        public static Dictionary<string, string?> CreateScaleOutOnlyControlPlaneSettings(
-            string controlPlaneId)
+        public static Dictionary<string, string?> CreateScaleOutOnlyControlPlaneSettings(string controlPlaneId)
         {
-            ArgumentException.ThrowIfNullOrWhiteSpace(
-                controlPlaneId);
+            ArgumentException.ThrowIfNullOrWhiteSpace(controlPlaneId);
 
-            var controlPlaneRuntimeInstanceId =
-                $"mcp-control-plane-scaleout-{Guid.NewGuid():N}";
+            var controlPlaneRuntimeInstanceId = $"mcp-control-plane-scaleout-{Guid.NewGuid():N}";
 
-            return GenericMcpServerTestSettings.CreateMcpSettings(
+            return CreateMcpSettings(
                 controlPlaneId,
                 new Dictionary<string, string?>
                 {
@@ -314,18 +282,12 @@
         /// </summary>
         /// <param name="controlPlaneId">The logical control-plane identifier shared by the scenario.</param>
         /// <returns>The local scale-out-only control-plane settings.</returns>
-        public static Dictionary<string, string?> CreateLocalScaleOutOnlyControlPlaneSettings(
-            string controlPlaneId)
+        public static Dictionary<string, string?> CreateLocalScaleOutOnlyControlPlaneSettings(string controlPlaneId)
         {
-            ArgumentException.ThrowIfNullOrWhiteSpace(
-                controlPlaneId);
+            ArgumentException.ThrowIfNullOrWhiteSpace(controlPlaneId);
 
-            var controlPlaneRuntimeInstanceId =
-                $"mcp-control-plane-local-scaleout-{Guid.NewGuid():N}";
-
-            var deployment =
-                $"test-local-scaleout-{Guid.NewGuid():N}";
-
+            var controlPlaneRuntimeInstanceId = $"mcp-control-plane-local-scaleout-{Guid.NewGuid():N}";
+            var deployment = $"test-local-scaleout-{Guid.NewGuid():N}";
             const string runtimeInstanceIdPrefix = "mcp-scaleout-runtime";
 
             return CreateMcpSettings(
@@ -398,29 +360,28 @@
         /// </remarks>
         /// <param name="controlPlaneId">The logical control-plane identifier shared by the scenario.</param>
         /// <param name="useHostManagerMode">Whether HTTP scale-out should delegate host startup to IAiRuntimeHostManager.</param>
+        /// <param name="useRegisteringTestRuntimeHostManager">Whether the generic test host should override IAiRuntimeHostManager with the legacy registering test host manager. When null, it follows <paramref name="useHostManagerMode" /> for backward compatibility.</param>
+        /// <param name="overrides">Optional configuration overrides.</param>
         /// <returns>The HTTP scale-out-only control-plane settings.</returns>
         public static Dictionary<string, string?> CreateHttpScaleOutOnlyControlPlaneSettings(
             string controlPlaneId,
-            bool useHostManagerMode = false)
+            bool useHostManagerMode = false,
+            bool? useRegisteringTestRuntimeHostManager = null,
+            IReadOnlyDictionary<string, string?>? overrides = null)
         {
-            ArgumentException.ThrowIfNullOrWhiteSpace(
-                controlPlaneId);
+            ArgumentException.ThrowIfNullOrWhiteSpace(controlPlaneId);
 
-            var controlPlaneRuntimeInstanceId =
-                $"mcp-control-plane-http-scaleout-{Guid.NewGuid():N}";
+            var controlPlaneRuntimeInstanceId = $"mcp-control-plane-http-scaleout-{Guid.NewGuid():N}";
+            var deployment = $"test-http-scaleout-{Guid.NewGuid():N}";
+            var httpScaleOutMode = useHostManagerMode ? "HostManager" : "MetadataOnly";
+            var useRegisteringHostManager = useRegisteringTestRuntimeHostManager ?? useHostManagerMode;
 
-            var deployment =
-                $"test-http-scaleout-{Guid.NewGuid():N}";
-
-            var httpScaleOutMode =
-                useHostManagerMode
-                    ? "HostManager"
-                    : "MetadataOnly";
-
-            return CreateMcpSettings(
+            var settings = CreateMcpSettings(
                 controlPlaneId,
                 new Dictionary<string, string?>
                 {
+                    ["Tests:UseRegisteringTestRuntimeHostManager"] = useRegisteringHostManager.ToString(),
+
                     ["AiMcpHost:Mode"] = "ControlPlaneWithHttpRuntimeInstances",
                     ["AiMcpHost:EnableSharedQueuePump"] = "true",
 
@@ -470,6 +431,7 @@
 
                     ["AiHttpRuntimeScaleOut:Enabled"] = "true",
                     ["AiHttpRuntimeScaleOut:Mode"] = httpScaleOutMode,
+                    ["AiHttpRuntimeScaleOut:HostCreationMode"] = "Fixture",
                     ["AiHttpRuntimeScaleOut:RequireReadiness"] = useHostManagerMode ? "true" : "false",
                     ["AiHttpRuntimeScaleOut:ReadinessTimeoutSeconds"] = "15",
                     ["AiHttpRuntimeScaleOut:ReadinessPollIntervalMilliseconds"] = "100",
@@ -485,6 +447,51 @@
                     ["AiEngine:PipelineBackgroundController:Distributed:WorkerCount"] = "10",
                     ["AiEngine:PipelineBackgroundController:MaxLocalWorkersPerExecution"] = "3",
                     ["AiEngine:RuntimeInstanceWorker:RuntimeInstanceId"] = controlPlaneRuntimeInstanceId
+                });
+
+            ApplyOverrides(settings, overrides);
+
+            return settings;
+        }
+
+        /// <summary>
+        /// Creates HTTP process-host scale-out control-plane settings for a single isolated scenario.
+        /// </summary>
+        /// <param name="controlPlaneId">The logical control-plane identifier shared by the scenario.</param>
+        /// <param name="runtimeHostAssemblyPath">The real Multiplexed.AI.McpServer.Host.dll path to start as RuntimeInstanceOnly.</param>
+        /// <returns>The HTTP process-host scale-out control-plane settings.</returns>
+        public static Dictionary<string, string?> CreateHttpProcessHostScaleOutOnlyControlPlaneSettings(
+            string controlPlaneId,
+            string runtimeHostAssemblyPath)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(controlPlaneId);
+            ArgumentException.ThrowIfNullOrWhiteSpace(runtimeHostAssemblyPath);
+
+            return CreateHttpScaleOutOnlyControlPlaneSettings(
+                controlPlaneId,
+                useHostManagerMode: true,
+                useRegisteringTestRuntimeHostManager: false,
+                overrides: new Dictionary<string, string?>
+                {
+                    ["AiHttpRuntimeScaleOut:HostCreationMode"] = "Process",
+                    ["AiHttpRuntimeScaleOut:RequireReadiness"] = "true",
+
+                    ["AiRuntimeProcessHostCreation:Enabled"] = "true",
+                    ["AiRuntimeProcessHostCreation:DotnetExecutablePath"] = "dotnet",
+                    ["AiRuntimeProcessHostCreation:RuntimeHostAssemblyPath"] = runtimeHostAssemblyPath,
+                    ["AiRuntimeProcessHostCreation:BasePort"] = "5800",
+                    ["AiRuntimeProcessHostCreation:MaxPort"] = "5899",
+                    ["AiRuntimeProcessHostCreation:StartupTimeoutSeconds"] = "30",
+                    ["AiRuntimeProcessHostCreation:RedirectOutput"] = "true",
+                    ["AiRuntimeProcessHostCreation:KillOnDispose"] = "true",
+
+                    ["AiRuntimeProcessHostCreation:EnvironmentVariables:ConnectionStrings__Redis"] = RedisConnectionString,
+                    ["AiRuntimeProcessHostCreation:EnvironmentVariables:ConnectionStrings__Mongo"] = MongoConnectionString,
+                    ["AiRuntimeProcessHostCreation:EnvironmentVariables:Mongo__DatabaseName"] = DatabaseName,
+                    ["AiRuntimeProcessHostCreation:EnvironmentVariables:AiEngine__Snapshots__Enabled"] = "true",
+                    ["AiRuntimeProcessHostCreation:EnvironmentVariables:AiEngine__Snapshots__Mongo__Enabled"] = "true",
+                    ["AiRuntimeProcessHostCreation:EnvironmentVariables:AiEngine__Snapshots__Mongo__ConnectionString"] = MongoConnectionString,
+                    ["AiRuntimeProcessHostCreation:EnvironmentVariables:AiEngine__Snapshots__Mongo__DatabaseName"] = DatabaseName
                 });
         }
 
@@ -504,8 +511,7 @@
 
             foreach (var overrideValue in overrides)
             {
-                settings[overrideValue.Key] =
-                    overrideValue.Value;
+                settings[overrideValue.Key] = overrideValue.Value;
             }
         }
     }
