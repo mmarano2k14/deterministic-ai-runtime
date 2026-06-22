@@ -543,13 +543,11 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
             if (!string.IsNullOrWhiteSpace(request.TenantId))
             {
                 metadata[AiRuntimeInstanceIsolationMetadataKeys.TenantId] = request.TenantId;
-                metadata[AiRuntimeInstanceIsolationMetadataKeys.TenantId] = request.TenantId;
             }
 
             if (!string.IsNullOrWhiteSpace(request.TenantGroupId))
             {
                 metadata[AiRuntimeInstanceIsolationMetadataKeys.TenantGroupId] = request.TenantGroupId;
-                metadata["tenant.groupId"] = request.TenantGroupId;
             }
 
             if (HasExplicitTenantRuntimeSettings(request))

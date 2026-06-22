@@ -271,6 +271,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
             }
 
             startInfo.Environment["AiRuntimeInstanceRegistration__Metadata__hostCreation.mode"] = AiRuntimeHostCreationMode.Process.ToString();
+
+
+            startInfo.Environment["AiDecisionLedger__Provider"] = "mongo";
+            startInfo.Environment["AiObservability__Ledger__Provider"] = "mongo";
         }
 
         private void AttachOutputLogging(

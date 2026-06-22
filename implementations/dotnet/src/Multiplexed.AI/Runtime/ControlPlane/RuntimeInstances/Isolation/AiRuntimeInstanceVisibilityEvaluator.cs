@@ -7,9 +7,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Isolation
     /// </summary>
     public sealed class AiRuntimeInstanceVisibilityEvaluator : IAiRuntimeInstanceVisibilityEvaluator
     {
-        private const string TenantIdAlias = AiRuntimeInstanceIsolationMetadataKeys.TenantId;
-
-        private const string TenantGroupIdAlias = AiRuntimeInstanceIsolationMetadataKeys.TenantGroupId;
+        private const string LegacyTenantIdKey = "tenantId";
+        private const string LegacyTenantGroupIdKey = "tenantGroupId";
+        private const string LegacyTenantGroupDottedCamelKey = "tenant.groupId";
 
         private readonly IAiTenantRuntimeSettingsProvider tenantRuntimeSettingsProvider;
 
@@ -46,17 +46,15 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Isolation
 
             if (descriptor.IsolationMode == AiRuntimeInstanceIsolationMode.Dedicated)
             {
-                return IsDedicatedMatch(
+                return IsOwnedRuntimeVisibleForTenant(
                     tenantId,
-                    tenantGroupId,
                     descriptor);
             }
 
             if (descriptor.IsolationMode == AiRuntimeInstanceIsolationMode.Hybrid)
             {
-                return IsDedicatedMatch(
+                return IsOwnedRuntimeVisibleForTenant(
                     tenantId,
-                    tenantGroupId,
                     descriptor);
             }
 
@@ -77,11 +75,12 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Isolation
                 TenantId = GetFirstValue(
                     safeMetadata,
                     AiRuntimeInstanceIsolationMetadataKeys.TenantId,
-                    TenantIdAlias),
+                    LegacyTenantIdKey),
                 TenantGroupId = GetFirstValue(
                     safeMetadata,
                     AiRuntimeInstanceIsolationMetadataKeys.TenantGroupId,
-                    TenantGroupIdAlias),
+                    LegacyTenantGroupIdKey,
+                    LegacyTenantGroupDottedCamelKey),
                 IsolationMode = ParseIsolationMode(
                     GetValue(
                         safeMetadata,
@@ -127,38 +126,29 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Isolation
         }
 
         /// <summary>
-        /// Determines whether a tenant identity matches a dedicated or hybrid runtime resource owner.
+        /// Determines whether a dedicated or hybrid runtime resource is visible for its owning tenant.
         /// </summary>
         /// <param name="tenantId">The current tenant identifier.</param>
-        /// <param name="tenantGroupId">The current tenant group identifier.</param>
         /// <param name="descriptor">The runtime resource visibility descriptor.</param>
-        /// <returns><see langword="true" /> when the runtime resource belongs to the tenant; otherwise, <see langword="false" />.</returns>
-        private static bool IsDedicatedMatch(
+        /// <returns><see langword="true" /> when the runtime resource belongs to the exact tenant; otherwise, <see langword="false" />.</returns>
+        private static bool IsOwnedRuntimeVisibleForTenant(
             string? tenantId,
-            string? tenantGroupId,
             AiRuntimeInstanceVisibilityDescriptor descriptor)
         {
-            if (!string.IsNullOrWhiteSpace(tenantId) &&
-                !string.IsNullOrWhiteSpace(descriptor.TenantId) &&
-                string.Equals(
-                    tenantId,
-                    descriptor.TenantId,
-                    StringComparison.OrdinalIgnoreCase))
+            if (string.IsNullOrWhiteSpace(tenantId))
             {
-                return true;
+                return false;
             }
 
-            if (!string.IsNullOrWhiteSpace(tenantGroupId) &&
-                !string.IsNullOrWhiteSpace(descriptor.TenantGroupId) &&
-                string.Equals(
-                    tenantGroupId,
-                    descriptor.TenantGroupId,
-                    StringComparison.OrdinalIgnoreCase))
+            if (string.IsNullOrWhiteSpace(descriptor.TenantId))
             {
-                return true;
+                return false;
             }
 
-            return false;
+            return string.Equals(
+                tenantId,
+                descriptor.TenantId,
+                StringComparison.OrdinalIgnoreCase);
         }
 
         /// <summary>

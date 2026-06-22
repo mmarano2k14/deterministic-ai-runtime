@@ -6,7 +6,733 @@ This project follows a deterministic runtime and observability model designed fo
 
 ---
 
-## [1.0.6.8] - 2026-06-20 — MCP Runtime Host Manager / HTTP Remote Runtime Scale-Out
+## [1.0.6.9] - 2026-06-23 — MCP Production Runtime Scenario Framework
+
+## Scope
+
+This changelog summarizes the work completed after the previous MCP runtime host manager / process-host changelogs.
+
+The focus of this iteration was to turn the MCP integration test framework into a real production-style scenario framework, validate end-to-end process-host execution, and fix all persistence boundaries required for replay, ledger, and tracing across multiple runtime processes.
+
+---
+
+## 1. Production MCP test framework foundation
+
+### Added a provider-agnostic production scenario model
+
+Added the foundation for production-grade scenario tests under the MCP integration test project.
+
+Core concepts introduced:
+
+- `ProductionRuntimeScenarioDefinition`
+- `ProductionTenantScenarioDefinition`
+- `ProductionRunScenarioDefinition`
+- `ProductionRuntimeScenarioResult`
+- `ProductionTenantScenarioResult`
+- `ProductionRunScenarioResult`
+- `ProductionScaleOutScenarioResult`
+- `IProductionRuntimeScenarioRunner`
+
+The goal is to describe production scenarios independently from the provider implementation, then run the same scenario against HTTP process hosts, and later HTTP attach, gRPC, Kubernetes, or other providers.
+
+### Added HTTP process-host production scenario runner
+
+Added the HTTP process-host runner:
+
+```text
+HttpProcessHostProductionScenarioRunner
+```
+
+This runner validates the real end-to-end flow:
+
+```text
+Submit
+→ tenant-aware admission
+→ Redis scale-out request
+→ scale-out watcher
+→ HTTP provider
+→ process HostManager
+→ real RuntimeInstanceOnly process
+→ runtime registration + heartbeat + capacity
+→ shared queue dispatch
+→ HTTP runtime command dispatch
+→ DAG execution
+→ ledger / replay / trace validation
+```
+
+This is intentionally stronger than fixture-only testing because it proves that runtime hosts can be launched as real external processes in local development.
+
+### Added production multi-tenant process-host scenario
+
+Added the production scenario:
+
+```text
+Http_ProcessHost_Should_Run_MultiTenant_Capacity_Replay_Ledger_Production_Scenario
+```
+
+The scenario validates:
+
+- multiple tenants
+- dedicated runtime capacity
+- hybrid runtime capacity
+- tenant-specific runtime instance prefixes
+- scale-out from zero capacity
+- real process-host creation
+- runtime registration and capacity publishing
+- shared run dispatch
+- final runtime completion
+- ledger visibility
+- trace visibility
+- replay report
+- replay ledger
+- replay timeline
+
+---
+
+## 2. Multi-tenant process-host isolation fixes
+
+### Fixed tenant runtime visibility issue
+
+During the production scenario, tenant B could temporarily see tenant A's runtime instance because the visibility evaluator allowed tenant group matching for dedicated/hybrid runtimes.
+
+Observed issue:
+
+```text
+tenant-b workload was dispatched to tenant-a-runtime-1
+```
+
+Root cause:
+
+```text
+Dedicated / Hybrid runtime visibility allowed TenantGroupId match.
+```
+
+Fix:
+
+- Dedicated runtime instances are visible only to their owning `TenantId`.
+- Hybrid runtime instances are visible only to their owning `TenantId`.
+- Tenant group matching is not used for owned dedicated/hybrid runtimes.
+- Shared fallback remains explicit and policy-driven.
+
+Result:
+
+```text
+tenant-a → tenant-a-runtime-1
+tenant-b → tenant-b-runtime-1
+```
+
+### Standardized tenant isolation metadata keys
+
+Fixed metadata key mismatch between runtime registration and visibility evaluation.
+
+Moved from legacy-style keys such as:
+
+```text
+tenantId
+tenantGroupId
+tenant.groupId
+```
+
+to canonical metadata keys:
+
+```text
+tenant.id
+tenant.group.id
+runtime.isolationMode
+runtime.allowSharedFallback
+runtime.preferDedicatedCapacity
+```
+
+This ensured that process-host runtime registration, capacity metadata, and visibility evaluation use the same key contract.
+
+---
+
+## 3. Process-host configuration and environment propagation
+
+### Confirmed process-host runtime configuration path
+
+Validated that `ProcessAiRuntimeHostCreationStrategy` launches runtime hosts with:
+
+- `AiMcpHost__Mode=RuntimeInstanceOnly`
+- runtime instance id
+- control-plane id
+- runtime registration options
+- provider metadata
+- transport endpoint
+- tenant metadata
+- capacity limits
+- worker count
+- queue capacity
+
+### Confirmed RuntimeInstanceOnly mode execution
+
+The process-host scenario now proves that child runtime processes:
+
+- start successfully
+- expose the HTTP runtime command endpoint
+- register themselves into the control plane
+- publish capacity
+- receive dispatched runs
+- execute DAG workloads
+- complete runs successfully
+
+---
+
+## 4. Replay-safe payload store propagation
+
+### Fixed replay-safe payload store configuration for child runtime processes
+
+Earlier process-host executions failed when retention/replay-safe payloads required a durable payload store but the runtime child process still resolved an in-memory payload store.
+
+Added/validated child process environment variables for payload storage:
+
+```text
+AiPayloadStore__Enabled=true
+AiPayloadStore__Provider=mongo-redis
+AiPayloadStore__RequireReplaySafePayloads=true
+
+AiEngine__PayloadStore__Enabled=true
+AiEngine__PayloadStore__Provider=mongo-redis
+AiEngine__PayloadStore__RequireReplaySafePayloads=true
+
+AiEngine__Payloads__Enabled=true
+AiEngine__Payloads__Provider=mongo-redis
+AiEngine__Payloads__RequireReplaySafePayloads=true
+```
+
+This fixed the replay-safe payload boundary for process-hosted runtime instances.
+
+---
+
+## 5. Decision ledger persistence across processes
+
+### Problem
+
+The production scenario initially completed executions, but ledger validation failed:
+
+```text
+HasLedger = false
+LedgerCount = 0
+```
+
+Root cause:
+
+```text
+IAiDecisionLedger was always forced to InMemoryAiDecisionLedger.
+```
+
+This meant:
+
+```text
+runtime child process writes ledger → child process memory
+parent MCP reads ledger → parent process memory
+result → empty ledger
+```
+
+### Fix
+
+Updated `AiRuntimeServiceRegistration` to configure the decision ledger conditionally.
+
+Added support for:
+
+```text
+AiDecisionLedger:Provider=mongo
+AiObservability:Ledger:Provider=mongo
+```
+
+When Mongo is selected:
+
+- register `IMongoClient`
+- register Mongo-backed decision ledger
+- use shared Mongo database and collections
+
+### Test settings updated
+
+Added parent and child process configuration:
+
+```text
+AiDecisionLedger:Provider=mongo
+AiObservability:Ledger:Provider=mongo
+
+AiRuntimeProcessHostCreation:EnvironmentVariables:AiDecisionLedger__Provider=mongo
+AiRuntimeProcessHostCreation:EnvironmentVariables:AiObservability__Ledger__Provider=mongo
+```
+
+### Result
+
+Ledger became visible from the parent MCP process:
+
+```text
+LedgerCount = 500+
+HasLedger = true
+```
+
+---
+
+## 6. Replay metadata persistence across processes
+
+### Problem
+
+After ledger was fixed, replay still failed with:
+
+```text
+Replay fingerprint metadata not found.
+```
+
+Root cause:
+
+```text
+IAiExecutionReplayMetadataStore was still InMemoryAiExecutionReplayMetadataStore.
+```
+
+This meant:
+
+```text
+runtime child process writes replay metadata → child process memory
+parent MCP replay reads replay metadata → parent process memory
+result → fingerprint metadata not found
+```
+
+### Added Mongo replay metadata store
+
+Added a durable Mongo-backed implementation:
+
+```text
+MongoAiExecutionReplayMetadataStore
+```
+
+The store persists replay metadata by execution id and allows parent and child processes to share the same replay fingerprint metadata.
+
+### Fixed Mongo document mapping
+
+An initial version stored `AiExecutionReplayMetadata` directly in Mongo, which caused deserialization issues because Mongo adds `_id` and the model did not define an `_id` field.
+
+Observed error:
+
+```text
+Element '_id' does not match any field or property of class AiExecutionReplayMetadata.
+```
+
+Fix:
+
+- added a Mongo document wrapper
+- used `[BsonId]` on the wrapper id
+- stored `AiExecutionReplayMetadata` inside the wrapper document
+- used `ExecutionId` as the document id
+
+### Updated runtime registration
+
+Updated `AiRuntimeServiceRegistration` to configure replay metadata store conditionally.
+
+Supported settings:
+
+```text
+AiExecutionReplay:MetadataStore:Provider=mongo
+AiReplay:MetadataStore:Provider=mongo
+AiExecutionReplay:MetadataStore:Mongo:CollectionName=ai_execution_replay_metadata
+```
+
+### Test settings updated
+
+Added parent and child process configuration:
+
+```text
+AiExecutionReplay:MetadataStore:Provider=mongo
+AiExecutionReplay:MetadataStore:Mongo:CollectionName=ai_execution_replay_metadata
+
+AiRuntimeProcessHostCreation:EnvironmentVariables:AiExecutionReplay__MetadataStore__Provider=mongo
+AiRuntimeProcessHostCreation:EnvironmentVariables:AiExecutionReplay__MetadataStore__Mongo__CollectionName=ai_execution_replay_metadata
+```
+
+### Result
+
+Replay metadata became visible across processes:
+
+```text
+ReplaySuccess = true
+ReportSuccess = true
+ReplayLedgerSuccess = true
+ReplayTraceSuccess = true
+```
+
+---
+
+## 7. Trace query persistence and MCP observability fix
+
+### Problem
+
+After ledger and replay were fixed, direct trace validation still failed:
+
+```text
+TraceCount = 0
+HasTrace = false
+```
+
+At the same time replay timeline succeeded:
+
+```text
+ReplayTraceSuccess = true
+```
+
+This proved that replay timeline and direct observability trace were using different paths.
+
+### Root cause
+
+`ObservabilityMcpTools` read traces directly from:
+
+```text
+IAiTraceTimeline
+```
+
+But `IAiTraceTimeline` is process-local and in-memory.
+
+In process-host mode:
+
+```text
+runtime child writes timeline → child process memory
+parent MCP reads timeline → parent process memory
+result → TraceCount = 0
+```
+
+The durable trace persistence already existed through:
+
+```text
+IAiRuntimeTraceStore
+MongoAiRuntimeTraceStore
+AiRuntimeTraceStoreFactory
+```
+
+So the persistence was not missing; the MCP tool was reading the wrong abstraction for multi-process scenarios.
+
+### Added async trace timeline query abstraction
+
+Added:
+
+```text
+IAiTraceTimelineQuery
+```
+
+Purpose:
+
+```text
+Query trace events from the process-local timeline first, then fall back to the durable runtime trace store.
+```
+
+### Added default implementation
+
+Added:
+
+```text
+DefaultAiTraceTimelineQuery
+```
+
+Behavior:
+
+```text
+1. Read IAiTraceTimeline in-memory.
+2. If events exist, return them.
+3. Otherwise read IAiRuntimeTraceStore.
+4. Map durable AiTraceRecord values to AiTraceEvent values.
+5. Return ordered trace events.
+```
+
+This preserves local single-process behavior while enabling multi-process / process-host observability.
+
+### Updated Observability MCP tools
+
+Updated `ObservabilityMcpTools` from:
+
+```text
+ObservabilityMcpTools -> IAiTraceTimeline
+```
+
+to:
+
+```text
+ObservabilityMcpTools -> IAiTraceTimelineQuery
+```
+
+The MCP method now uses an async query path:
+
+```text
+observability.trace.get_by_execution
+```
+
+### Updated DI
+
+Added registration:
+
+```text
+IAiTraceTimelineQuery -> DefaultAiTraceTimelineQuery
+```
+
+### Result
+
+Direct trace observability now works in process-host mode:
+
+```text
+TraceCount = 300+
+HasTrace = true
+```
+
+---
+
+## 8. Test runner result construction fix
+
+### Problem
+
+The first production runner implementation created `ProductionRunScenarioResult` objects with fixed false observability values:
+
+```text
+HasLedger=false
+HasTrace=false
+HasReplayReport=false
+HasReplayLedger=false
+HasReplayTrace=false
+```
+
+This meant the assertions would fail even if the underlying tools were working.
+
+### Fix
+
+Replaced static result construction with real MCP queries:
+
+- `GetLedgerByExecutionAsync`
+- `GetTraceByExecutionAsync`
+- `ReplayExecutionAsync`
+- `GetReplayReportAsync`
+- `GetReplayLedgerAsync`
+- `GetReplayTraceAsync`
+
+Added replay debug output to show:
+
+```text
+LedgerCount
+TraceCount
+ReplaySuccess
+ReportSuccess
+ReplayLedgerSuccess
+ReplayTraceSuccess
+FailureReason / Message
+```
+
+This made the production scenario diagnostics actionable and allowed each persistence boundary to be fixed one by one.
+
+---
+
+## 9. Final validated production flow
+
+The final run validated:
+
+```text
+Tenant A → tenant-a-runtime-1
+Tenant B → tenant-b-runtime-1
+LedgerCount > 500
+TraceCount > 300
+ReplaySuccess = true
+ReportSuccess = true
+ReplayLedgerSuccess = true
+ReplayTraceSuccess = true
+```
+
+This proves the following production-grade chain:
+
+```text
+MCP submit
+→ RBAC/tenant context
+→ tenant-aware admission
+→ Redis scale-out request
+→ scale-out watcher
+→ HTTP provider
+→ process HostManager
+→ real RuntimeInstanceOnly host process
+→ runtime registration
+→ capacity publishing
+→ shared run dispatch
+→ HTTP runtime command execution
+→ DAG completion
+→ shared Mongo decision ledger
+→ shared Mongo replay metadata
+→ replay report/ledger/timeline
+→ durable trace query fallback
+```
+
+---
+
+## 10. Bugs fixed in this iteration
+
+### Fixed: process-host scenario could not validate ledger
+
+Cause:
+
+```text
+IAiDecisionLedger was in-memory per process.
+```
+
+Fix:
+
+```text
+Mongo-backed decision ledger selected by configuration.
+```
+
+### Fixed: replay fingerprint metadata not found
+
+Cause:
+
+```text
+IAiExecutionReplayMetadataStore was in-memory per process.
+```
+
+Fix:
+
+```text
+MongoAiExecutionReplayMetadataStore added and wired by configuration.
+```
+
+### Fixed: Mongo replay metadata deserialization failure
+
+Cause:
+
+```text
+AiExecutionReplayMetadata was stored directly and Mongo injected _id.
+```
+
+Fix:
+
+```text
+Document wrapper with [BsonId] and Metadata payload.
+```
+
+### Fixed: direct trace query returned no events in process-host mode
+
+Cause:
+
+```text
+ObservabilityMcpTools read IAiTraceTimeline, which is process-local memory.
+```
+
+Fix:
+
+```text
+Added IAiTraceTimelineQuery with fallback from IAiTraceTimeline to IAiRuntimeTraceStore.
+```
+
+### Fixed: production runner hardcoded observability result flags
+
+Cause:
+
+```text
+ProductionRunScenarioResult was built with false observability flags.
+```
+
+Fix:
+
+```text
+BuildRunResultsAsync now calls real MCP ledger, trace, and replay tools.
+```
+
+### Fixed: tenant B could use tenant A runtime capacity
+
+Cause:
+
+```text
+Dedicated/hybrid visibility allowed tenant group matching.
+```
+
+Fix:
+
+```text
+Dedicated/hybrid runtime instances are visible only to owning TenantId.
+```
+
+### Fixed: process-host replay-safe payload store mismatch
+
+Cause:
+
+```text
+Runtime child process could resolve an in-memory payload store while replay-safe payloads required durable storage.
+```
+
+Fix:
+
+```text
+Propagated payload store environment variables to RuntimeInstanceOnly child processes.
+```
+
+---
+
+## 11. Architecture lessons confirmed
+
+### In-memory is only safe inside a single process
+
+This iteration confirmed a key production rule:
+
+```text
+Anything written by a runtime child process and read by the parent MCP control plane must use a shared durable store.
+```
+
+Stores fixed accordingly:
+
+```text
+Decision ledger → Mongo
+Replay metadata → Mongo
+Trace query → IAiRuntimeTraceStore fallback
+```
+
+### Replay and observability are not the same path
+
+Replay timeline and direct trace observability are separate paths:
+
+```text
+Replay timeline → replay/snapshot/replay metadata flow
+Direct trace → IAiTraceTimeline / IAiRuntimeTraceStore flow
+```
+
+Both now work in process-host mode.
+
+### Local queue can remain in-memory
+
+The current architecture keeps local runtime queues in-memory, which is acceptable as long as the durable source of truth remains outside the process:
+
+```text
+Shared run store
+Shared queue
+Runtime registry/capacity
+Snapshots
+Ledger
+Replay metadata
+Trace store
+```
+
+The next resilience step should be a health/recovery reconciler, not immediately moving all local runtime queues to Redis.
+
+---
+
+## 12. Next recommended step
+
+After final HTTP process-host cleanup, the next production-hardening step should be:
+
+```text
+RuntimeInstanceHealthReconciler
+```
+
+Responsibilities:
+
+- detect expired runtime heartbeat/capacity TTL
+- mark unhealthy instances as draining/unavailable
+- stop routing new runs to unhealthy instances
+- reconcile shared runs assigned to dead runtime instances
+- requeue non-started runs safely
+- inspect durable execution snapshots for started runs
+- patch terminal shared runs when execution already completed
+- avoid duplicate execution after runtime loss
+
+This fits naturally after the process-host production scenario because the system now has the durable stores required for safe recovery decisions.
+
+
+---
+
+## [1.0.6.8] - 2026-06-22 — MCP Runtime Host Manager / HTTP Remote Runtime Scale-Out
 
 ## Scope
 

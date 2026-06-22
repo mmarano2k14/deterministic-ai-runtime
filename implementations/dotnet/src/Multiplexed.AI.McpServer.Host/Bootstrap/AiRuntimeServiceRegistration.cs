@@ -1,4 +1,6 @@
 ﻿using Microsoft.Extensions.DependencyInjection.Extensions;
+using MongoDB.Driver;
+using Multiplexed.Abstractions.AI.Execution.Persistence.Replay.Metadata;
 using Multiplexed.Abstractions.AI.Observability.Ledger;
 using Multiplexed.Abstractions.Core.ExecutionContext;
 using Multiplexed.AI.Configuration;
@@ -13,6 +15,7 @@ using Multiplexed.AI.Runtime;
 using Multiplexed.AI.Runtime.AI.Providers.Llm.OpenAI.DI;
 using Multiplexed.AI.Runtime.AI.Rag.DI;
 using Multiplexed.AI.Runtime.DependencyInjection;
+using Multiplexed.AI.Runtime.Execution.Persistence.Replay.Metadata;
 using Multiplexed.AI.Runtime.Execution.Retention.Policies;
 using Multiplexed.AI.Runtime.Observability.Ledger.DI;
 using Multiplexed.AI.Runtime.Pipeline.Steps.Test;
@@ -71,8 +74,9 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
 
             services.AddMultiplexAI(options);
 
-            services.RemoveAll<IAiDecisionLedger>();
-            services.AddInMemoryAiDecisionLedger();
+            ConfigureDecisionLedger(
+                services,
+                configuration);
 
             services.AddAiPoliciesFromAssemblies(
                 typeof(AiRuntimeAssemblyMarker).Assembly,
@@ -131,6 +135,90 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
             }
 
             services.AddAiExecutionReplay();
+
+            ConfigureReplayMetadataStore(
+                services,
+                configuration);
+        }
+
+        private static void ConfigureDecisionLedger(
+            IServiceCollection services,
+            IConfiguration configuration)
+        {
+            var provider =
+                configuration["AiDecisionLedger:Provider"]
+                ?? configuration["AiObservability:Ledger:Provider"]
+                ?? "inmemory";
+
+            services.RemoveAll<IAiDecisionLedger>();
+
+            if (!string.Equals(provider, "mongo", StringComparison.OrdinalIgnoreCase) &&
+                !string.Equals(provider, "mongodb", StringComparison.OrdinalIgnoreCase))
+            {
+                services.AddInMemoryAiDecisionLedger();
+                return;
+            }
+
+            var connectionString =
+                configuration.GetConnectionString("Mongo")
+                ?? configuration["Mongo:ConnectionString"]
+                ?? "mongodb://localhost:27017";
+
+            var databaseName =
+                configuration["Mongo:DatabaseName"]
+                ?? "multiplexed-ai";
+
+            services.TryAddSingleton<IMongoClient>(
+                _ => new MongoClient(connectionString));
+
+            services.AddMongoAiDecisionLedger(options =>
+            {
+                options.DatabaseName = databaseName;
+                options.CollectionName = "ai_decision_ledger_entries";
+                options.SequenceCollectionName = "ai_decision_ledger_sequences";
+                options.CreateIndexes = true;
+            });
+        }
+
+        private static void ConfigureReplayMetadataStore(
+            IServiceCollection services,
+            IConfiguration configuration)
+        {
+            var provider =
+                configuration["AiExecutionReplay:MetadataStore:Provider"]
+                ?? configuration["AiReplay:MetadataStore:Provider"]
+                ?? "inmemory";
+
+            if (!string.Equals(provider, "mongo", StringComparison.OrdinalIgnoreCase) &&
+                !string.Equals(provider, "mongodb", StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            var connectionString =
+                configuration.GetConnectionString("Mongo")
+                ?? configuration["Mongo:ConnectionString"]
+                ?? "mongodb://localhost:27017";
+
+            var databaseName =
+                configuration["Mongo:DatabaseName"]
+                ?? "multiplexed-ai";
+
+            var collectionName =
+                configuration["AiExecutionReplay:MetadataStore:Mongo:CollectionName"]
+                ?? "ai_execution_replay_metadata";
+
+            services.RemoveAll<IAiExecutionReplayMetadataStore>();
+
+            services.TryAddSingleton<IMongoClient>(
+                _ => new MongoClient(connectionString));
+
+            services.AddSingleton<IAiExecutionReplayMetadataStore>(
+                serviceProvider =>
+                    new MongoAiExecutionReplayMetadataStore(
+                        serviceProvider.GetRequiredService<IMongoClient>(),
+                        databaseName,
+                        collectionName));
         }
 
         private static void EnsureSnapshotOptions(

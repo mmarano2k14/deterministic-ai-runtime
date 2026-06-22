@@ -413,10 +413,12 @@ namespace Multiplexed.AI.DI
             // ------------------------------------------------------------
 
             services.AddSingleton<IAiTraceTimeline, InMemoryAiTraceTimeline>();
+            services.TryAddSingleton<IAiTraceTimelineQuery, DefaultAiTraceTimelineQuery>();
 
             services.AddSingleton<NoOpAiRuntimeTraceStore>();
             services.AddSingleton<InMemoryAiRuntimeTraceStore>();
             services.AddSingleton<MongoAiRuntimeTraceStore>();
+
 
             services.AddSingleton<IAiRuntimeTraceStore>(
                 AiRuntimeTraceStoreFactory.Create);

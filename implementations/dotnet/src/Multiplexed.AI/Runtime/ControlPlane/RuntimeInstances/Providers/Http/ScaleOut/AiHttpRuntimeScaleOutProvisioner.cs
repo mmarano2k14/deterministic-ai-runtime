@@ -439,7 +439,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http.Sc
                                 ProviderName = ProviderName,
                                 TransportName = AiRuntimeInstanceCommandTransportMetadataKeys.HttpTransportName,
                                 TransportEndpoint = fulfilledTransportEndpoint,
-                                RequireTransportEndpoint = true,
+                                RequireTransportEndpoint = this.options.HostCreationMode != AiRuntimeHostCreationMode.Fixture,
                                 Timeout = TimeSpan.FromSeconds(
                                     Math.Max(
                                         1,
@@ -702,11 +702,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http.Sc
             metadata[AiRuntimeInstanceIsolationMetadataKeys.PreferDedicatedCapacity] = request.PreferDedicatedCapacity.ToString();
             metadata[AiRuntimeInstanceIsolationMetadataKeys.AllowSharedFallback] = request.AllowSharedFallback.ToString();
 
-            metadata[AiRuntimeInstanceIsolationMetadataKeys.TenantId] = request.TenantId ?? string.Empty;
-            metadata[AiRuntimeInstanceIsolationMetadataKeys.TenantGroupId] = request.TenantGroupId ?? string.Empty;
-            metadata[AiRuntimeInstanceIsolationMetadataKeys.IsolationMode] = request.IsolationMode.ToString();
-            metadata[AiRuntimeInstanceIsolationMetadataKeys.PreferDedicatedCapacity] = request.PreferDedicatedCapacity.ToString();
-            metadata[AiRuntimeInstanceIsolationMetadataKeys.AllowSharedFallback] = request.AllowSharedFallback.ToString();
             metadata["runtime.maxRuntimeInstances"] = request.MaxRuntimeInstances?.ToString() ?? string.Empty;
             metadata["runtime.instanceIdPrefix"] = runtimeInstanceIdPrefix;
             metadata["runtime.workerCountPerInstance"] = workerCount.ToString();

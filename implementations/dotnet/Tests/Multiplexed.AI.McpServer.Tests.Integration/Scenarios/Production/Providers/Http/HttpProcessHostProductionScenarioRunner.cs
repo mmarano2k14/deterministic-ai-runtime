@@ -1,4 +1,5 @@
 ﻿using Microsoft.Extensions.DependencyInjection;
+using Multiplexed.Abstractions.AI.ControlPlane.Replay;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Controller;
@@ -213,9 +214,12 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                     .ConfigureAwait(false);
 
             var runResults =
-                BuildRunResults(
-                    dispatchedRuns,
-                    finalStatuses);
+                await BuildRunResultsAsync(
+                        mcp,
+                        dispatchedRuns,
+                        finalStatuses,
+                        assertReplayLedgerTrace: true)
+                    .ConfigureAwait(false);
 
             var runtimeInstanceIds =
                 runResults
@@ -288,9 +292,33 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             settings["AiEngine:Snapshots:Enabled"] = "true";
             settings["AiEngine:Snapshots:Mongo:Enabled"] = "true";
 
+            // Parent control-plane ledger reader.
+            settings["AiDecisionLedger:Provider"] = "mongo";
+            settings["AiObservability:Ledger:Provider"] = "mongo";
+
+            // Child process runtime ledger writer.
+            settings["AiRuntimeProcessHostCreation:EnvironmentVariables:AiDecisionLedger__Provider"] = "mongo";
+            settings["AiRuntimeProcessHostCreation:EnvironmentVariables:AiObservability__Ledger__Provider"] = "mongo";
+
             settings["AiRuntimeProcessHostCreation:EnvironmentVariables:AiPayloadStore__Enabled"] = "true";
             settings["AiRuntimeProcessHostCreation:EnvironmentVariables:AiPayloadStore__Provider"] = "mongo-redis";
             settings["AiRuntimeProcessHostCreation:EnvironmentVariables:AiPayloadStore__RequireReplaySafePayloads"] = "true";
+
+            settings["AiExecutionReplay:MetadataStore:Provider"] = "mongo";
+            settings["AiExecutionReplay:MetadataStore:Mongo:CollectionName"] = "ai_execution_replay_metadata";
+
+            settings["AiRuntimeProcessHostCreation:EnvironmentVariables:AiExecutionReplay__MetadataStore__Provider"] = "mongo";
+            settings["AiRuntimeProcessHostCreation:EnvironmentVariables:AiExecutionReplay__MetadataStore__Mongo__CollectionName"] = "ai_execution_replay_metadata";
+
+            settings["AiEngine:Observability:EnableTracing"] = "true";
+            settings["AiEngine:Observability:EnableInMemoryRecording"] = "true";
+            settings["AiEngine:Observability:Tracing:Mode"] = "Mongo";
+            settings["AiEngine:Observability:Tracing:MongoCollectionName"] = "ai_runtime_traces";
+
+            settings["AiRuntimeProcessHostCreation:EnvironmentVariables:AiEngine__Observability__EnableTracing"] = "true";
+            settings["AiRuntimeProcessHostCreation:EnvironmentVariables:AiEngine__Observability__EnableInMemoryRecording"] = "true";
+            settings["AiRuntimeProcessHostCreation:EnvironmentVariables:AiEngine__Observability__Tracing__Mode"] = "Mongo";
+            settings["AiRuntimeProcessHostCreation:EnvironmentVariables:AiEngine__Observability__Tracing__MongoCollectionName"] = "ai_runtime_traces";
 
             return settings;
         }
@@ -560,12 +588,16 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
         /// <summary>
         /// Builds run results from dispatched shared runs and terminal runtime statuses.
         /// </summary>
+        /// <param name="mcp">The tenant-scoped MCP client.</param>
         /// <param name="dispatchedRuns">The dispatched shared runs.</param>
         /// <param name="finalStatuses">The terminal runtime statuses.</param>
+        /// <param name="assertReplayLedgerTrace">Whether replay, ledger, and trace should be queried.</param>
         /// <returns>The run results.</returns>
-        private static IReadOnlyList<ProductionRunScenarioResult> BuildRunResults(
+        private async Task<IReadOnlyList<ProductionRunScenarioResult>> BuildRunResultsAsync(
+            McpTestClient mcp,
             IReadOnlyList<AiSharedRunRecord> dispatchedRuns,
-            IReadOnlyList<AiRuntimeQueueControlPlaneResult> finalStatuses)
+            IReadOnlyList<AiRuntimeQueueControlPlaneResult> finalStatuses,
+            bool assertReplayLedgerTrace)
         {
             var results =
                 new List<ProductionRunScenarioResult>();
@@ -581,7 +613,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                     status.Success,
                     FormatRuntimeStatusFailure(
                         matchingSharedRun,
-                        status));
+                        status,
+                        ledgerDump: null));
 
                 var executionId =
                     status.ExecutionId ??
@@ -591,16 +624,105 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                     string.IsNullOrWhiteSpace(executionId),
                     FormatRuntimeStatusFailure(
                         matchingSharedRun,
-                        status));
+                        status,
+                        ledgerDump: null));
 
-                Assert.True(
-                    string.Equals(
+                if (!string.Equals(
                         "completed",
                         status.RunState?.Status,
-                        StringComparison.OrdinalIgnoreCase),
-                    FormatRuntimeStatusFailure(
-                        matchingSharedRun,
-                        status));
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    var ledgerDump =
+                        await BuildLedgerDumpAsync(
+                                mcp,
+                                executionId!)
+                            .ConfigureAwait(false);
+
+                    Assert.Fail(
+                        FormatRuntimeStatusFailure(
+                            matchingSharedRun,
+                            status,
+                            ledgerDump));
+                }
+
+                var hasLedger = false;
+                var hasTrace = false;
+                var hasReplayReport = false;
+                var hasReplayLedger = false;
+                var hasReplayTrace = false;
+
+                if (assertReplayLedgerTrace)
+                {
+                    var ledgerEntries =
+                        await mcp.GetLedgerByExecutionAsync(
+                                executionId!)
+                            .ConfigureAwait(false);
+
+                    var traceEvents =
+                        await mcp.GetTraceByExecutionAsync(
+                                executionId!)
+                            .ConfigureAwait(false);
+
+                    hasLedger =
+                        ledgerEntries.Count > 0;
+
+                    hasTrace =
+                        traceEvents.Count > 0;
+
+                    var replayRequest =
+                        new AiReplayControlRequest
+                        {
+                            ExecutionId = executionId!,
+                            CorrelationId = $"production-replay-{Guid.NewGuid():N}",
+                            RequestedBy = RequestedBy,
+                            Source = Source,
+                            Operation = AiReplayOperation.Replay
+                        };
+
+                    var replayResult =
+                        await mcp.ReplayExecutionAsync(
+                                replayRequest)
+                            .ConfigureAwait(false);
+
+                    replayRequest.Operation = AiReplayOperation.GetReport;
+
+                    var replayReport =
+                        await mcp.GetReplayReportAsync(
+                                replayRequest)
+                            .ConfigureAwait(false);
+
+                    replayRequest.Operation = AiReplayOperation.GetLedger;
+
+                    var replayLedger =
+                        await mcp.GetReplayLedgerAsync(
+                                replayRequest)
+                            .ConfigureAwait(false);
+
+                    replayRequest.Operation = AiReplayOperation.GetTimeline;
+
+                    var replayTrace =
+                        await mcp.GetReplayTraceAsync(
+                                replayRequest)
+                            .ConfigureAwait(false);
+
+                    hasReplayReport =
+                        replayResult.Success &&
+                        replayReport.Success;
+
+                    hasReplayLedger =
+                        replayLedger.Success;
+
+                    hasReplayTrace =
+                        replayTrace.Success;
+
+                    this.output.WriteLine(
+                        $"[HTTP PROCESS PRODUCTION][REPLAY DEBUG] ExecutionId='{executionId}', " +
+                        $"LedgerCount='{ledgerEntries.Count}', TraceCount='{traceEvents.Count}', " +
+                        $"ReplaySuccess='{replayResult.Success}', ReplayFailure='{replayResult.FailureReason ?? replayResult.Message}', " +
+                        $"ReportSuccess='{replayReport.Success}', ReportFailure='{replayReport.FailureReason ?? replayReport.Message}', " +
+                        $"ReplayLedgerSuccess='{replayLedger.Success}', ReplayLedgerFailure='{replayLedger.FailureReason ?? replayLedger.Message}', " +
+                        $"ReplayTraceSuccess='{replayTrace.Success}', ReplayTraceFailure='{replayTrace.FailureReason ?? replayTrace.Message}'.");
+                }
 
                 results.Add(
                     new ProductionRunScenarioResult
@@ -610,11 +732,11 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                         LocalRunId = matchingSharedRun.LocalRunId ?? status.RunId,
                         ExecutionId = executionId,
                         FinalStatus = status.RunState?.Status,
-                        HasLedger = false,
-                        HasTrace = false,
-                        HasReplayReport = false,
-                        HasReplayLedger = false,
-                        HasReplayTrace = false
+                        HasLedger = hasLedger,
+                        HasTrace = hasTrace,
+                        HasReplayReport = hasReplayReport,
+                        HasReplayLedger = hasReplayLedger,
+                        HasReplayTrace = hasReplayTrace
                     });
             }
 
@@ -679,14 +801,48 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
         }
 
         /// <summary>
+        /// Builds a compact ledger dump for diagnostics.
+        /// </summary>
+        /// <param name="mcp">The tenant-scoped MCP client.</param>
+        /// <param name="executionId">The execution id.</param>
+        /// <returns>The formatted ledger dump.</returns>
+        private static async Task<string> BuildLedgerDumpAsync(
+            McpTestClient mcp,
+            string executionId)
+        {
+            if (string.IsNullOrWhiteSpace(executionId))
+            {
+                return "<missing execution id>";
+            }
+
+            var entries =
+                await mcp.GetLedgerByExecutionAsync(
+                        executionId)
+                    .ConfigureAwait(false);
+
+            if (entries.Count == 0)
+            {
+                return "<empty>";
+            }
+
+            return string.Join(
+                " || ",
+                entries
+                    .TakeLast(10)
+                    .Select(entry => JsonSerializer.Serialize(entry)));
+        }
+
+        /// <summary>
         /// Formats a runtime status failure for diagnostics.
         /// </summary>
         /// <param name="sharedRun">The matching shared run.</param>
         /// <param name="status">The runtime queue control-plane status.</param>
+        /// <param name="ledgerDump">The optional ledger dump.</param>
         /// <returns>The formatted failure message.</returns>
         private static string FormatRuntimeStatusFailure(
             AiSharedRunRecord sharedRun,
-            AiRuntimeQueueControlPlaneResult status)
+            AiRuntimeQueueControlPlaneResult status,
+            string? ledgerDump)
         {
             var statusJson =
                 JsonSerializer.Serialize(
@@ -728,6 +884,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 $"RunStateExecutionId='{status.RunState?.ExecutionId}'." +
                 Environment.NewLine +
                 $"Diagnostics='{string.Join(" | ", status.Diagnostics)}'." +
+                Environment.NewLine +
+                $"Ledger='{ledgerDump ?? "<not loaded>"}'." +
                 Environment.NewLine +
                 "RawStatusJson=" +
                 Environment.NewLine +

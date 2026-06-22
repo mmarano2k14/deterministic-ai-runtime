@@ -19,25 +19,25 @@ namespace Multiplexed.AI.McpServer.Tools
     public sealed class ObservabilityMcpTools
     {
         private readonly IAiDecisionLedger decisionLedger;
-        private readonly IAiTraceTimeline traceTimeline;
+        private readonly IAiTraceTimelineQuery traceTimelineQuery;
         private readonly ILogger<ObservabilityMcpTools> logger;
 
         /// <summary>
         /// Initializes a new instance of the <see cref="ObservabilityMcpTools"/> class.
         /// </summary>
         /// <param name="decisionLedger">The decision ledger.</param>
-        /// <param name="traceTimeline">The trace timeline.</param>
+        /// <param name="traceTimelineQuery">The trace timeline query service.</param>
         /// <param name="logger">The logger.</param>
         public ObservabilityMcpTools(
             IAiDecisionLedger decisionLedger,
-            IAiTraceTimeline traceTimeline,
+            IAiTraceTimelineQuery traceTimelineQuery,
             ILogger<ObservabilityMcpTools> logger)
         {
             this.decisionLedger = decisionLedger
                 ?? throw new ArgumentNullException(nameof(decisionLedger));
 
-            this.traceTimeline = traceTimeline
-                ?? throw new ArgumentNullException(nameof(traceTimeline));
+            this.traceTimelineQuery = traceTimelineQuery
+                ?? throw new ArgumentNullException(nameof(traceTimelineQuery));
 
             this.logger = logger
                 ?? throw new ArgumentNullException(nameof(logger));
@@ -94,12 +94,14 @@ namespace Multiplexed.AI.McpServer.Tools
         /// Gets trace timeline events for an execution.
         /// </summary>
         /// <param name="executionId">The execution identifier.</param>
+        /// <param name="cancellationToken">A token used to cancel the operation.</param>
         /// <returns>The ordered trace events for the execution.</returns>
         [McpServerTool(Name = "observability.trace.get_by_execution")]
         [Description("Gets trace timeline events for a specific execution.")]
         [RequireCapability("observability", "trace", "read")]
-        public IReadOnlyList<AiTraceEvent> GetTraceByExecution(
-            string executionId)
+        public async Task<IReadOnlyList<AiTraceEvent>> GetTraceByExecutionAsync(
+            string executionId,
+            CancellationToken cancellationToken = default)
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(executionId);
 
@@ -107,7 +109,9 @@ namespace Multiplexed.AI.McpServer.Tools
                 "MCP observability.trace.get_by_execution called. ExecutionId={ExecutionId}",
                 executionId);
 
-            return traceTimeline.Get(executionId);
+            return await traceTimelineQuery
+                .GetByExecutionAsync(executionId, cancellationToken)
+                .ConfigureAwait(false);
         }
 
         /// <summary>

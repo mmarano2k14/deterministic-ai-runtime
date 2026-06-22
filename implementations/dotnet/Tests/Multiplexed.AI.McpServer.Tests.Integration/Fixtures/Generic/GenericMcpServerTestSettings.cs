@@ -493,6 +493,9 @@
                     ["AiRuntimeProcessHostCreation:EnvironmentVariables:AiEngine__Snapshots__Mongo__ConnectionString"] = MongoConnectionString,
                     ["AiRuntimeProcessHostCreation:EnvironmentVariables:AiEngine__Snapshots__Mongo__DatabaseName"] = DatabaseName,
 
+                    ["AiDecisionLedger:Provider"] = "mongo",
+                    ["AiRuntimeProcessHostCreation:EnvironmentVariables:AiDecisionLedger__Provider"] = "mongo",
+
                 });
         }
 
