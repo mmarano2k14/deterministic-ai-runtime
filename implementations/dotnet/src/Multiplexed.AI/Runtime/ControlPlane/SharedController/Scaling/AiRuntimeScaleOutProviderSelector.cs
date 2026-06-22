@@ -1,5 +1,6 @@
 ﻿using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Capacity;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Scaling;
@@ -152,13 +153,13 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
 
             if (!string.IsNullOrWhiteSpace(request.TenantId))
             {
-                metadata["tenant.id"] =
+                metadata[AiRuntimeInstanceIsolationMetadataKeys.TenantId] =
                     request.TenantId;
             }
 
             if (!string.IsNullOrWhiteSpace(request.TenantGroupId))
             {
-                metadata["tenant.group.id"] =
+                metadata[AiRuntimeInstanceIsolationMetadataKeys.TenantGroupId] =
                     request.TenantGroupId;
             }
 

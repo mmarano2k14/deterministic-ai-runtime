@@ -167,11 +167,11 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.Providers
                     StringComparer.OrdinalIgnoreCase)
                 {
                     ["test"] = "true",
-                    ["tenantId"] = "tenant-test",
-                    ["tenantGroupId"] = "tenant-group-test",
-                    ["runtime.isolationMode"] = "Dedicated",
-                    ["runtime.preferDedicatedCapacity"] = "true",
-                    ["runtime.allowSharedFallback"] = "false",
+                    [AiRuntimeInstanceIsolationMetadataKeys.TenantId] = "tenant-test",
+                    [AiRuntimeInstanceIsolationMetadataKeys.TenantGroupId] = "tenant-group-test",
+                    [AiRuntimeInstanceIsolationMetadataKeys.IsolationMode] = "Dedicated",
+                    [AiRuntimeInstanceIsolationMetadataKeys.PreferDedicatedCapacity] = "true",
+                    [AiRuntimeInstanceIsolationMetadataKeys.AllowSharedFallback] = "false",
                     ["runtime.maxRuntimeInstances"] = "3",
                     ["runtime.instanceIdPrefix"] = "tenant-test-runtime",
                     ["runtime.workerCountPerInstance"] = "10",
@@ -302,8 +302,8 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.Providers
                             ["scaleOutRequestId"] = request.RequestId,
                             ["sharedRunId"] = request.SharedRunId,
                             ["controlPlaneId"] = request.ControlPlaneId,
-                            ["tenantId"] = request.TenantId ?? string.Empty,
-                            ["tenantGroupId"] = request.TenantGroupId ?? string.Empty,
+                            [AiRuntimeInstanceIsolationMetadataKeys.TenantId] = request.TenantId ?? string.Empty,
+                            [AiRuntimeInstanceIsolationMetadataKeys.TenantGroupId] = request.TenantGroupId ?? string.Empty,
                             ["provider"] = "local"
                         }
                     });

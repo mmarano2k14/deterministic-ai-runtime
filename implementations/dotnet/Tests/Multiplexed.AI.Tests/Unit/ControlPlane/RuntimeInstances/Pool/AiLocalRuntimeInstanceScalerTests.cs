@@ -2,6 +2,7 @@
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Identity;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Pool;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.SharedInstance;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue;
@@ -195,10 +196,10 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Pool
                         RuntimeInstanceIdPrefix = "test-runtime",
                         Metadata =
                         {
-                            ["tenantId"] = "tenant-a",
-                            ["runtime.isolationMode"] = "Dedicated",
-                            ["runtime.allowSharedFallback"] = "false",
-                            ["runtime.preferDedicatedCapacity"] = "true"
+                            [AiRuntimeInstanceIsolationMetadataKeys.TenantId] = "tenant-a",
+                            [AiRuntimeInstanceIsolationMetadataKeys.IsolationMode] = "Dedicated",
+                            [AiRuntimeInstanceIsolationMetadataKeys.AllowSharedFallback] = "false",
+                            [AiRuntimeInstanceIsolationMetadataKeys.PreferDedicatedCapacity] = "true"
                         }
                     });
 
@@ -259,19 +260,19 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Pool
 
             Assert.Equal(
                 "tenant-a",
-                metadata!["tenantId"]);
+                metadata![AiRuntimeInstanceIsolationMetadataKeys.TenantId]);
 
             Assert.Equal(
                 "Dedicated",
-                metadata["runtime.isolationMode"]);
+                metadata[AiRuntimeInstanceIsolationMetadataKeys.IsolationMode]);
 
             Assert.Equal(
                 "false",
-                metadata["runtime.allowSharedFallback"]);
+                metadata[AiRuntimeInstanceIsolationMetadataKeys.AllowSharedFallback]);
 
             Assert.Equal(
                 "true",
-                metadata["runtime.preferDedicatedCapacity"]);
+                metadata[AiRuntimeInstanceIsolationMetadataKeys.PreferDedicatedCapacity]);
         }
 
         /// <summary>

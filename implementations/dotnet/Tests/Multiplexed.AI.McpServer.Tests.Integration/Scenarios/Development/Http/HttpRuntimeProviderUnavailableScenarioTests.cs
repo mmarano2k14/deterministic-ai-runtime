@@ -1,5 +1,6 @@
 ﻿using Microsoft.Extensions.DependencyInjection;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Capacity;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Controller;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Store;
@@ -11,10 +12,10 @@ using Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic;
 using Multiplexed.AI.McpServer.Tests.Integration.Helpers;
 using Xunit.Abstractions;
 
-namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Http
+namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Development.Http
 {
     /// <summary>
-    /// Contains MCP scenarios that validate HTTP runtime provider circuit-open behavior.
+    /// Contains MCP scenarios that validate HTTP runtime provider unavailable behavior.
     /// </summary>
     /// <remarks>
     /// This class intentionally does not start a real runtime-instance HTTP host.
@@ -22,34 +23,32 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Http
     /// HTTP runtime instance in the control-plane registry, publishes its capacity
     /// descriptor, and injects an HTTP client that always fails for that runtime instance.
     ///
-    /// The first dispatch attempt should fail with provider unavailable and open the
-    /// HTTP circuit because the circuit breaker threshold is configured to one.
-    /// The second dispatch attempt, in the same drain operation, should observe the
-    /// open circuit and persist <c>http-circuit-open</c>.
+    /// This validates the production-safe MCP/control-plane behavior:
+    /// failed HTTP dispatch is requeued and the failure reason is persisted without
+    /// marking the shared run as dispatched.
     ///
-    /// This avoids changing the generic HTTP runtime fixtures and prevents regressions
-    /// in the existing successful HTTP provider scenarios.
+    /// Circuit-open behavior itself is covered by HTTP provider unit tests because
+    /// the MCP integration flow observes the first unavailable-provider failure.
     /// </remarks>
-    public sealed class HttpRuntimeProviderCircuitOpenScenarioTests
+    public sealed class HttpRuntimeProviderUnavailableScenarioTests
     {
-        private const string RequestedBy = "mcp-http-circuit-open-test";
-        private const string Source = "mcp-http-circuit-open";
+        private const string RequestedBy = "mcp-http-provider-unavailable-test";
+        private const string Source = "mcp-http-provider-unavailable";
         private const string TenantId = "test-tenant";
-        private const string WorkerId = "mcp-http-circuit-open-worker";
-        private const string PumpRuntimeInstanceId = "mcp-http-circuit-open-pump";
-        private const string RuntimeInstanceHostId = "runtime-http-circuit-open-host";
-        private const string ControlPlaneRuntimeInstanceId = "mcp-control-plane-http-circuit-open";
-        private const string FailureReason = "http-circuit-open";
-        private const string ProviderUnavailableFailureReason = "http-provider-unavailable";
+        private const string WorkerId = "mcp-http-provider-unavailable-worker";
+        private const string PumpRuntimeInstanceId = "mcp-http-provider-unavailable-pump";
+        private const string RuntimeInstanceHostId = "runtime-http-provider-unavailable-host";
+        private const string ControlPlaneRuntimeInstanceId = "mcp-control-plane-http-provider-unavailable";
+        private const string FailureReason = "http-provider-unavailable";
         private const string FailureMessage = "Simulated unreachable HTTP runtime endpoint.";
 
         private readonly ITestOutputHelper output;
 
         /// <summary>
-        /// Initializes a new instance of the <see cref="HttpRuntimeProviderCircuitOpenScenarioTests"/> class.
+        /// Initializes a new instance of the <see cref="HttpRuntimeProviderUnavailableScenarioTests"/> class.
         /// </summary>
         /// <param name="output">The test output helper.</param>
-        public HttpRuntimeProviderCircuitOpenScenarioTests(
+        public HttpRuntimeProviderUnavailableScenarioTests(
             ITestOutputHelper output)
         {
             this.output =
@@ -57,10 +56,10 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Http
         }
 
         /// <summary>
-        /// Verifies that an HTTP circuit-open dispatch failure is requeued and persisted through the MCP control-plane path.
+        /// Verifies that an unavailable HTTP runtime dispatch failure is requeued and persisted through the MCP control-plane path.
         /// </summary>
         [Fact]
-        public async Task Submit_One_Run_Then_Drain_Should_Requeue_And_Persist_CircuitOpen_Failure()
+        public async Task Submit_One_Run_Then_Drain_Should_Requeue_And_Persist_HttpProviderUnavailable_Failure()
         {
             await using var fixture =
                 await CreateBrokenHttpRuntimeFixtureAsync()
@@ -110,11 +109,11 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Http
             var drainResult =
                 await DrainBrokenHttpRuntimeAsync(
                         mcp,
-                        maxDispatches: 2)
+                        maxDispatches: 1)
                     .ConfigureAwait(false);
 
             output.WriteLine(
-                $"Drain Success='{drainResult.Success}', FailureReason='{drainResult.FailureReason}'.");
+                $"Drain Success='{drainResult.Success}', FailureReason='{drainResult.FailureReason}'");
 
             Assert.True(
                 drainResult.Success,
@@ -165,6 +164,10 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Http
                 FailureReason,
                 run.FailureReason);
 
+            Assert.Equal(
+                FailureMessage,
+                run.Reason);
+
             Assert.Null(
                 run.LocalRunId);
 
@@ -187,7 +190,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Http
                 queueItem.Reason);
 
             output.WriteLine(
-                $"HTTP circuit-open failure persisted. SharedRunId='{run.SharedRunId}', RuntimeInstanceId='{run.AssignedRuntimeInstanceId}', FailureReason='{run.FailureReason}'.");
+                $"HTTP provider-unavailable failure persisted. SharedRunId='{run.SharedRunId}', RuntimeInstanceId='{run.AssignedRuntimeInstanceId}', FailureReason='{run.FailureReason}'.");
         }
 
         /// <summary>
@@ -198,7 +201,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Http
         {
             var controlPlaneId =
                 GenericMcpServerTestSettings.CreateControlPlaneId(
-                    "http-circuit-open");
+                    "http-provider-unavailable");
 
             var runtimeClients =
                 new Dictionary<string, HttpClient>(
@@ -235,7 +238,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Http
         }
 
         /// <summary>
-        /// Creates MCP control-plane host settings for the HTTP circuit-open scenario.
+        /// Creates MCP control-plane host settings for the HTTP provider-unavailable scenario.
         /// </summary>
         /// <param name="controlPlaneId">The logical control-plane identifier shared by the scenario hosts.</param>
         /// <returns>The MCP control-plane host settings.</returns>
@@ -277,7 +280,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Http
                     ["AiRuntimeInstanceRegistration:Metadata:transport.endpoint"] = "http://localhost",
                     ["AiRuntimeInstanceRegistration:Metadata:runtime.instance.id"] = RuntimeInstanceHostId,
                     ["AiRuntimeInstanceRegistration:Metadata:hostType"] = "control-plane-with-broken-http-runtime",
-                    ["AiRuntimeInstanceRegistration:Metadata:deployment"] = "test-http-circuit-open",
+                    ["AiRuntimeInstanceRegistration:Metadata:deployment"] = "test-http-provider-unavailable",
 
                     ["AiEngine:ControlPlane:ControlPlaneId"] = controlPlaneId,
                     ["AiEngine:RuntimeInstanceId"] = ControlPlaneRuntimeInstanceId
@@ -290,7 +293,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Http
         /// <returns>The unique pipeline name.</returns>
         private static string CreatePipelineName()
         {
-            return $"mcp-http-circuit-open-pipeline-{Guid.NewGuid():N}";
+            return $"mcp-http-provider-unavailable-pipeline-{Guid.NewGuid():N}";
         }
 
         /// <summary>
@@ -539,9 +542,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Http
                     ["transport.name"] = "http",
                     ["transport.endpoint"] = "http://localhost",
                     ["runtime.instance.id"] = RuntimeInstanceHostId,
-                    ["tenantId"] = TenantId,
+                    [AiRuntimeInstanceIsolationMetadataKeys.TenantId] = TenantId,
                     ["hostType"] = "manual-broken-http-runtime",
-                    ["deployment"] = "test-http-circuit-open"
+                    ["deployment"] = "test-http-provider-unavailable"
                 };
             }
 

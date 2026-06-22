@@ -1,4 +1,5 @@
-﻿using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.SharedInstance;
+﻿using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.SharedInstance;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue;
 using Multiplexed.Abstractions.AI.Execution.Instance.Worker;
 using Multiplexed.Abstractions.Core.ExecutionContext;
@@ -192,8 +193,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.SharedInstance
                                 ["runtime.instance.id"] = RuntimeInstanceId,
                                 ["shared.run.id"] = request.SharedRun.SharedRunId,
                                 ["local.run.id"] = localRunId,
-                                ["tenant.id"] = request.SharedRun.ExecutionContextSnapshot.TenantId,
-                                ["tenant.group.id"] = request.SharedRun.ExecutionContextSnapshot.TenantGroupId,
+                                [AiRuntimeInstanceIsolationMetadataKeys.TenantId] = request.SharedRun.ExecutionContextSnapshot.TenantId,
+                                [AiRuntimeInstanceIsolationMetadataKeys.TenantGroupId] = request.SharedRun.ExecutionContextSnapshot.TenantGroupId,
                                 ["context.key"] = request.SharedRun.ExecutionContextSnapshot.ContextKey
                             }
                         },
@@ -268,8 +269,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.SharedInstance
                     {
                         ["runtime.instance.id"] = RuntimeInstanceId,
                         ["shared.run.id"] = request.SharedRun.SharedRunId,
-                        ["tenant.id"] = request.SharedRun.ExecutionContextSnapshot.TenantId,
-                        ["tenant.group.id"] = request.SharedRun.ExecutionContextSnapshot.TenantGroupId,
+                        [AiRuntimeInstanceIsolationMetadataKeys.TenantId] = request.SharedRun.ExecutionContextSnapshot.TenantId,
+                        [AiRuntimeInstanceIsolationMetadataKeys.TenantGroupId] = request.SharedRun.ExecutionContextSnapshot.TenantGroupId,
                         ["context.key"] = request.SharedRun.ExecutionContextSnapshot.ContextKey,
                         ["exception.type"] = exception.GetType().FullName ?? exception.GetType().Name,
                         ["exception.message"] = exception.Message,
@@ -334,8 +335,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.SharedInstance
 
             if (executionContextSnapshot is not null)
             {
-                metadata["tenant.id"] = executionContextSnapshot.TenantId;
-                metadata["tenant.group.id"] = executionContextSnapshot.TenantGroupId;
+                metadata[AiRuntimeInstanceIsolationMetadataKeys.TenantId] = executionContextSnapshot.TenantId;
+                metadata[AiRuntimeInstanceIsolationMetadataKeys.TenantGroupId] = executionContextSnapshot.TenantGroupId;
                 metadata["project"] = executionContextSnapshot.Project;
                 metadata["user.id"] = executionContextSnapshot.UserId;
                 metadata["context.key"] = executionContextSnapshot.ContextKey;
@@ -367,8 +368,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.SharedInstance
                 ["result.success"] = result.Success.ToString(),
                 ["result.message"] = result.Message ?? string.Empty,
                 ["result.failure"] = result.FailureReason ?? string.Empty,
-                ["tenant.id"] = request.SharedRun.ExecutionContextSnapshot.TenantId,
-                ["tenant.group.id"] = request.SharedRun.ExecutionContextSnapshot.TenantGroupId,
+                [AiRuntimeInstanceIsolationMetadataKeys.TenantId] = request.SharedRun.ExecutionContextSnapshot.TenantId,
+                [AiRuntimeInstanceIsolationMetadataKeys.TenantGroupId] = request.SharedRun.ExecutionContextSnapshot.TenantGroupId,
                 ["project"] = request.SharedRun.ExecutionContextSnapshot.Project,
                 ["user.id"] = request.SharedRun.ExecutionContextSnapshot.UserId,
                 ["context.key"] = request.SharedRun.ExecutionContextSnapshot.ContextKey,

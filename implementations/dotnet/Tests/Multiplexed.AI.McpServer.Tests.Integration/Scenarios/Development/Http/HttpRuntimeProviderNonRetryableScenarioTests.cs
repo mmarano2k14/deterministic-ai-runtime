@@ -1,5 +1,6 @@
 ﻿using Microsoft.Extensions.DependencyInjection;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Capacity;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Controller;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Store;
@@ -13,7 +14,7 @@ using System.Net;
 using System.Text;
 using Xunit.Abstractions;
 
-namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Http
+namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Development.Http
 {
     /// <summary>
     /// Contains MCP scenarios that validate non-retryable HTTP runtime provider failure behavior.
@@ -548,7 +549,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Http
                     ["transport.name"] = "http",
                     ["transport.endpoint"] = "http://localhost",
                     ["runtime.instance.id"] = RuntimeInstanceHostId,
-                    ["tenantId"] = TenantId,
+                    [AiRuntimeInstanceIsolationMetadataKeys.TenantId] = TenantId,
                     ["hostType"] = "manual-non-retryable-http-runtime",
                     ["deployment"] = "test-http-non-retryable"
                 };

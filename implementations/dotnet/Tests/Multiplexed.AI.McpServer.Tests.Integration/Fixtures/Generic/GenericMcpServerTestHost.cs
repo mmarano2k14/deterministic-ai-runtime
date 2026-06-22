@@ -477,7 +477,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic
                 if (!string.IsNullOrWhiteSpace(request.TenantId))
                 {
                     metadata[AiRuntimeInstanceIsolationMetadataKeys.TenantId] = request.TenantId;
-                    metadata["tenant.id"] = request.TenantId;
+                    metadata[AiRuntimeInstanceIsolationMetadataKeys.TenantId] = request.TenantId;
                 }
 
                 if (!string.IsNullOrWhiteSpace(request.TenantGroupId))

@@ -32,7 +32,7 @@ using StackExchange.Redis;
 using System.Globalization;
 using Xunit.Abstractions;
 
-namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
+namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Development
 {
     /// <summary>
     /// Contains MCP integration tests for runtime scale-out request orchestration.
@@ -358,15 +358,15 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
 
             Assert.Equal(
                 "Shared",
-                scaleOutRequest.Metadata["runtime.isolationMode"]);
+                scaleOutRequest.Metadata[AiRuntimeInstanceIsolationMetadataKeys.IsolationMode]);
 
             Assert.Equal(
                 "False",
-                scaleOutRequest.Metadata["runtime.preferDedicatedCapacity"]);
+                scaleOutRequest.Metadata[AiRuntimeInstanceIsolationMetadataKeys.PreferDedicatedCapacity]);
 
             Assert.Equal(
                 "True",
-                scaleOutRequest.Metadata["runtime.allowSharedFallback"]);
+                scaleOutRequest.Metadata[AiRuntimeInstanceIsolationMetadataKeys.AllowSharedFallback]);
 
             Assert.Equal(
                 "1",
@@ -641,15 +641,15 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
 
             Assert.Equal(
                 "Shared",
-                scaleOutRequest.Metadata["runtime.isolationMode"]);
+                scaleOutRequest.Metadata[AiRuntimeInstanceIsolationMetadataKeys.IsolationMode]);
 
             Assert.Equal(
                 "False",
-                scaleOutRequest.Metadata["runtime.preferDedicatedCapacity"]);
+                scaleOutRequest.Metadata[AiRuntimeInstanceIsolationMetadataKeys.PreferDedicatedCapacity]);
 
             Assert.Equal(
                 "True",
-                scaleOutRequest.Metadata["runtime.allowSharedFallback"]);
+                scaleOutRequest.Metadata[AiRuntimeInstanceIsolationMetadataKeys.AllowSharedFallback]);
 
             Assert.Equal(
                 "1",
@@ -994,15 +994,15 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
 
             Assert.Equal(
                 "Dedicated",
-                scaleOutRequest.Metadata["runtime.isolationMode"]);
+                scaleOutRequest.Metadata[AiRuntimeInstanceIsolationMetadataKeys.IsolationMode]);
 
             Assert.Equal(
                 "True",
-                scaleOutRequest.Metadata["runtime.preferDedicatedCapacity"]);
+                scaleOutRequest.Metadata[AiRuntimeInstanceIsolationMetadataKeys.PreferDedicatedCapacity]);
 
             Assert.Equal(
                 "False",
-                scaleOutRequest.Metadata["runtime.allowSharedFallback"]);
+                scaleOutRequest.Metadata[AiRuntimeInstanceIsolationMetadataKeys.AllowSharedFallback]);
 
             Assert.Equal(
                 "3",
@@ -1424,15 +1424,15 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
 
             Assert.Equal(
                 "Hybrid",
-                scaleOutRequest.Metadata["runtime.isolationMode"]);
+                scaleOutRequest.Metadata[AiRuntimeInstanceIsolationMetadataKeys.IsolationMode]);
 
             Assert.Equal(
                 "True",
-                scaleOutRequest.Metadata["runtime.preferDedicatedCapacity"]);
+                scaleOutRequest.Metadata[AiRuntimeInstanceIsolationMetadataKeys.PreferDedicatedCapacity]);
 
             Assert.Equal(
                 "True",
-                scaleOutRequest.Metadata["runtime.allowSharedFallback"]);
+                scaleOutRequest.Metadata[AiRuntimeInstanceIsolationMetadataKeys.AllowSharedFallback]);
 
             Assert.Equal(
                 "2",
@@ -1690,15 +1690,15 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
 
             Assert.Equal(
                 "Shared",
-                scaleOutRequest.Metadata["runtime.isolationMode"]);
+                scaleOutRequest.Metadata[AiRuntimeInstanceIsolationMetadataKeys.IsolationMode]);
 
             Assert.Equal(
                 "False",
-                scaleOutRequest.Metadata["runtime.preferDedicatedCapacity"]);
+                scaleOutRequest.Metadata[AiRuntimeInstanceIsolationMetadataKeys.PreferDedicatedCapacity]);
 
             Assert.Equal(
                 "True",
-                scaleOutRequest.Metadata["runtime.allowSharedFallback"]);
+                scaleOutRequest.Metadata[AiRuntimeInstanceIsolationMetadataKeys.AllowSharedFallback]);
 
             Assert.Equal(
                 "1",
@@ -2020,15 +2020,15 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
 
             Assert.Equal(
                 "Dedicated",
-                persisted.Metadata["runtime.isolationMode"]);
+                persisted.Metadata[AiRuntimeInstanceIsolationMetadataKeys.IsolationMode]);
 
             Assert.Equal(
                 "True",
-                persisted.Metadata["runtime.preferDedicatedCapacity"]);
+                persisted.Metadata[AiRuntimeInstanceIsolationMetadataKeys.PreferDedicatedCapacity]);
 
             Assert.Equal(
                 "False",
-                persisted.Metadata["runtime.allowSharedFallback"]);
+                persisted.Metadata[AiRuntimeInstanceIsolationMetadataKeys.AllowSharedFallback]);
 
             Assert.Equal(
                 "3",
@@ -2342,15 +2342,15 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
 
             Assert.Equal(
                 "Hybrid",
-                persisted.Metadata["runtime.isolationMode"]);
+                persisted.Metadata[AiRuntimeInstanceIsolationMetadataKeys.IsolationMode]);
 
             Assert.Equal(
                 "True",
-                persisted.Metadata["runtime.preferDedicatedCapacity"]);
+                persisted.Metadata[AiRuntimeInstanceIsolationMetadataKeys.PreferDedicatedCapacity]);
 
             Assert.Equal(
                 "True",
-                persisted.Metadata["runtime.allowSharedFallback"]);
+                persisted.Metadata[AiRuntimeInstanceIsolationMetadataKeys.AllowSharedFallback]);
 
             Assert.Equal(
                 "2",
@@ -2683,15 +2683,15 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
 
             Assert.Equal(
                 "Hybrid",
-                fulfilled.Metadata["runtime.isolationMode"]);
+                fulfilled.Metadata[AiRuntimeInstanceIsolationMetadataKeys.IsolationMode]);
 
             Assert.Equal(
                 "True",
-                fulfilled.Metadata["runtime.preferDedicatedCapacity"]);
+                fulfilled.Metadata[AiRuntimeInstanceIsolationMetadataKeys.PreferDedicatedCapacity]);
 
             Assert.Equal(
                 "True",
-                fulfilled.Metadata["runtime.allowSharedFallback"]);
+                fulfilled.Metadata[AiRuntimeInstanceIsolationMetadataKeys.AllowSharedFallback]);
 
             Assert.Equal(
                 "2",
@@ -3841,7 +3841,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
 
             Assert.Equal(
                 "Dedicated",
-                tenantADecision.Metadata["runtime.isolationMode"]);
+                tenantADecision.Metadata[AiRuntimeInstanceIsolationMetadataKeys.IsolationMode]);
 
             executionContextProvider.Current =
                 CreateRuntimeVisibilityExecutionContextSnapshot(
@@ -3885,7 +3885,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
 
             Assert.Equal(
                 "Hybrid",
-                tenantBDecision.Metadata["runtime.isolationMode"]);
+                tenantBDecision.Metadata[AiRuntimeInstanceIsolationMetadataKeys.IsolationMode]);
 
             executionContextProvider.Current =
                 CreateRuntimeVisibilityExecutionContextSnapshot(
@@ -3929,7 +3929,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
 
             Assert.Equal(
                 "Shared",
-                sharedDecision.Metadata["runtime.isolationMode"]);
+                sharedDecision.Metadata[AiRuntimeInstanceIsolationMetadataKeys.IsolationMode]);
 
             output.WriteLine(
                 $"Tenant-aware admission validated. TenantA assigned='{tenantADecision.AssignedRuntimeInstanceId}', TenantB assigned='{tenantBDecision.AssignedRuntimeInstanceId}', Shared assigned='{sharedDecision.AssignedRuntimeInstanceId}'.");
@@ -4280,23 +4280,23 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
 
             Assert.Equal(
                 TenantAwareTenantId,
-                decision.Metadata["tenant.id"]);
+                decision.Metadata[AiRuntimeInstanceIsolationMetadataKeys.TenantId]);
 
             Assert.Equal(
                 dedicatedTenantSettings.TenantGroupId ?? string.Empty,
-                decision.Metadata["tenant.group.id"]);
+                decision.Metadata[AiRuntimeInstanceIsolationMetadataKeys.TenantGroupId]);
 
             Assert.Equal(
                 "Dedicated",
-                decision.Metadata["runtime.isolationMode"]);
+                decision.Metadata[AiRuntimeInstanceIsolationMetadataKeys.IsolationMode]);
 
             Assert.Equal(
                 "True",
-                decision.Metadata["runtime.preferDedicatedCapacity"]);
+                decision.Metadata[AiRuntimeInstanceIsolationMetadataKeys.PreferDedicatedCapacity]);
 
             Assert.Equal(
                 "False",
-                decision.Metadata["runtime.allowSharedFallback"]);
+                decision.Metadata[AiRuntimeInstanceIsolationMetadataKeys.AllowSharedFallback]);
 
             Assert.Equal(
                 "3",
@@ -4605,15 +4605,15 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
 
             Assert.Equal(
                 "Dedicated",
-                scaleOutRequest.Metadata["runtime.isolationMode"]);
+                scaleOutRequest.Metadata[AiRuntimeInstanceIsolationMetadataKeys.IsolationMode]);
 
             Assert.Equal(
                 "True",
-                scaleOutRequest.Metadata["runtime.preferDedicatedCapacity"]);
+                scaleOutRequest.Metadata[AiRuntimeInstanceIsolationMetadataKeys.PreferDedicatedCapacity]);
 
             Assert.Equal(
                 "False",
-                scaleOutRequest.Metadata["runtime.allowSharedFallback"]);
+                scaleOutRequest.Metadata[AiRuntimeInstanceIsolationMetadataKeys.AllowSharedFallback]);
 
             Assert.Equal(
                 "3",
@@ -4680,8 +4680,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
                     $"Direct registry target snapshot. RuntimeInstanceId='{directRuntimeSnapshot.RuntimeInstanceId}', " +
                     $"Role='{directRuntimeSnapshot.Role}', Status='{directRuntimeSnapshot.Status}', " +
                     $"CanAcceptRun='{directRuntimeSnapshot.CanAcceptRun}', AvailableRunSlots='{directRuntimeSnapshot.AvailableRunSlots}', " +
-                    $"TenantId='{directRuntimeSnapshot.Metadata.GetValueOrDefault("tenant.id")}', " +
-                    $"IsolationMode='{directRuntimeSnapshot.Metadata.GetValueOrDefault("runtime.isolationMode")}'.");
+                    $"TenantId='{directRuntimeSnapshot.Metadata.GetValueOrDefault(AiRuntimeInstanceIsolationMetadataKeys.TenantId)}', " +
+                    $"IsolationMode='{directRuntimeSnapshot.Metadata.GetValueOrDefault(AiRuntimeInstanceIsolationMetadataKeys.IsolationMode)}'.");
             }
 
             var directCapacityDescriptor =
@@ -4709,7 +4709,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
                     $"Role='{directCapacityDescriptor.Role}', Status='{directCapacityDescriptor.Status}', " +
                     $"CanAcceptRun='{directCapacityDescriptor.CanAcceptRun}', AvailableRunSlots='{directCapacityDescriptor.AvailableRunSlots}', " +
                     $"AvailableWorkerCount='{directCapacityDescriptor.AvailableWorkerCount}', " +
-                    $"TenantId='{directCapacityDescriptor.Metadata.GetValueOrDefault("tenant.id")}', " +
+                    $"TenantId='{directCapacityDescriptor.Metadata.GetValueOrDefault(AiRuntimeInstanceIsolationMetadataKeys.TenantId)}', " +
                     $"IsolationMode='{directCapacityDescriptor.Metadata.GetValueOrDefault("runtime.isolationMode")}'.");
             }
 
@@ -5211,15 +5211,15 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
 
             Assert.Equal(
                 "Hybrid",
-                scaleOutRequest.Metadata["runtime.isolationMode"]);
+                scaleOutRequest.Metadata[AiRuntimeInstanceIsolationMetadataKeys.IsolationMode]);
 
             Assert.Equal(
                 "True",
-                scaleOutRequest.Metadata["runtime.preferDedicatedCapacity"]);
+                scaleOutRequest.Metadata[AiRuntimeInstanceIsolationMetadataKeys.PreferDedicatedCapacity]);
 
             Assert.Equal(
                 "True",
-                scaleOutRequest.Metadata["runtime.allowSharedFallback"]);
+                scaleOutRequest.Metadata[AiRuntimeInstanceIsolationMetadataKeys.AllowSharedFallback]);
 
             Assert.Equal(
                 "2",
@@ -5286,8 +5286,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
                     $"Direct registry target snapshot. RuntimeInstanceId='{directRuntimeSnapshot.RuntimeInstanceId}', " +
                     $"Role='{directRuntimeSnapshot.Role}', Status='{directRuntimeSnapshot.Status}', " +
                     $"CanAcceptRun='{directRuntimeSnapshot.CanAcceptRun}', AvailableRunSlots='{directRuntimeSnapshot.AvailableRunSlots}', " +
-                    $"TenantId='{directRuntimeSnapshot.Metadata.GetValueOrDefault("tenant.id")}', " +
-                    $"IsolationMode='{directRuntimeSnapshot.Metadata.GetValueOrDefault("runtime.isolationMode")}'.");
+                    $"TenantId='{directRuntimeSnapshot.Metadata.GetValueOrDefault(AiRuntimeInstanceIsolationMetadataKeys.TenantId)}', " +
+                    $"IsolationMode='{directRuntimeSnapshot.Metadata.GetValueOrDefault(AiRuntimeInstanceIsolationMetadataKeys.IsolationMode)}'.");
             }
 
             var directCapacityDescriptor =
@@ -5315,8 +5315,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
                     $"Role='{directCapacityDescriptor.Role}', Status='{directCapacityDescriptor.Status}', " +
                     $"CanAcceptRun='{directCapacityDescriptor.CanAcceptRun}', AvailableRunSlots='{directCapacityDescriptor.AvailableRunSlots}', " +
                     $"AvailableWorkerCount='{directCapacityDescriptor.AvailableWorkerCount}', " +
-                    $"TenantId='{directCapacityDescriptor.Metadata.GetValueOrDefault("tenant.id")}', " +
-                    $"IsolationMode='{directCapacityDescriptor.Metadata.GetValueOrDefault("runtime.isolationMode")}'.");
+                    $"TenantId='{directCapacityDescriptor.Metadata.GetValueOrDefault(AiRuntimeInstanceIsolationMetadataKeys.TenantId)}', " +
+                    $"IsolationMode='{directCapacityDescriptor.Metadata.GetValueOrDefault(AiRuntimeInstanceIsolationMetadataKeys.IsolationMode)}'.");
             }
 
             var queueItemAfterScaleOut =
@@ -6335,15 +6335,15 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
 
             Assert.Equal(
                 "Dedicated",
-                dedicatedScaleOutRequest.Metadata["runtime.isolationMode"]);
+                dedicatedScaleOutRequest.Metadata[AiRuntimeInstanceIsolationMetadataKeys.IsolationMode]);
 
             Assert.Equal(
                 "True",
-                dedicatedScaleOutRequest.Metadata["runtime.preferDedicatedCapacity"]);
+                dedicatedScaleOutRequest.Metadata[AiRuntimeInstanceIsolationMetadataKeys.PreferDedicatedCapacity]);
 
             Assert.Equal(
                 "False",
-                dedicatedScaleOutRequest.Metadata["runtime.allowSharedFallback"]);
+                dedicatedScaleOutRequest.Metadata[AiRuntimeInstanceIsolationMetadataKeys.AllowSharedFallback]);
 
             Assert.Equal(
                 TenantAwareRuntimeInstanceIdPrefix,

@@ -484,8 +484,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http.Sc
                     ["scaleOutRequestId"] = request.RequestId,
                     ["sharedRunId"] = request.SharedRunId,
                     ["controlPlaneId"] = request.ControlPlaneId,
-                    ["tenant.id"] = request.TenantId ?? string.Empty,
-                    ["tenant.group.id"] = request.TenantGroupId ?? string.Empty,
+                    [AiRuntimeInstanceIsolationMetadataKeys.TenantId] = request.TenantId ?? string.Empty,
+                    [AiRuntimeInstanceIsolationMetadataKeys.TenantGroupId] = request.TenantGroupId ?? string.Empty,
                     ["hostCreation.mode"] = this.options.HostCreationMode.ToString()
                 };
 
@@ -540,8 +540,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http.Sc
                     ["scaleOutRequestId"] = request.RequestId,
                     ["sharedRunId"] = request.SharedRunId,
                     ["controlPlaneId"] = request.ControlPlaneId,
-                    ["tenant.id"] = request.TenantId ?? string.Empty,
-                    ["tenant.group.id"] = request.TenantGroupId ?? string.Empty
+                    [AiRuntimeInstanceIsolationMetadataKeys.TenantId] = request.TenantId ?? string.Empty,
+                    [AiRuntimeInstanceIsolationMetadataKeys.TenantGroupId] = request.TenantGroupId ?? string.Empty
                 }
             };
         }
@@ -702,11 +702,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http.Sc
             metadata[AiRuntimeInstanceIsolationMetadataKeys.PreferDedicatedCapacity] = request.PreferDedicatedCapacity.ToString();
             metadata[AiRuntimeInstanceIsolationMetadataKeys.AllowSharedFallback] = request.AllowSharedFallback.ToString();
 
-            metadata["tenant.id"] = request.TenantId ?? string.Empty;
-            metadata["tenant.group.id"] = request.TenantGroupId ?? string.Empty;
-            metadata["runtime.isolationMode"] = request.IsolationMode.ToString();
-            metadata["runtime.preferDedicatedCapacity"] = request.PreferDedicatedCapacity.ToString();
-            metadata["runtime.allowSharedFallback"] = request.AllowSharedFallback.ToString();
+            metadata[AiRuntimeInstanceIsolationMetadataKeys.TenantId] = request.TenantId ?? string.Empty;
+            metadata[AiRuntimeInstanceIsolationMetadataKeys.TenantGroupId] = request.TenantGroupId ?? string.Empty;
+            metadata[AiRuntimeInstanceIsolationMetadataKeys.IsolationMode] = request.IsolationMode.ToString();
+            metadata[AiRuntimeInstanceIsolationMetadataKeys.PreferDedicatedCapacity] = request.PreferDedicatedCapacity.ToString();
+            metadata[AiRuntimeInstanceIsolationMetadataKeys.AllowSharedFallback] = request.AllowSharedFallback.ToString();
             metadata["runtime.maxRuntimeInstances"] = request.MaxRuntimeInstances?.ToString() ?? string.Empty;
             metadata["runtime.instanceIdPrefix"] = runtimeInstanceIdPrefix;
             metadata["runtime.workerCountPerInstance"] = workerCount.ToString();

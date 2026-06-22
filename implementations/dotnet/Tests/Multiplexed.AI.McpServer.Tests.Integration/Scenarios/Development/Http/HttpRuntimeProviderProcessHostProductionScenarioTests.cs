@@ -38,7 +38,7 @@ using StackExchange.Redis;
 using Xunit;
 using Xunit.Abstractions;
 
-namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Http
+namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Development.Http
 {
     /// <summary>
     /// Contains production-oriented HTTP runtime provider tests for process-based runtime host scale-out.
@@ -860,8 +860,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Http
             Assert.Equal(expectedRuntimeInstanceId, registered!.RuntimeInstanceId);
             Assert.Equal(expectedRuntimeInstanceId, capacity!.RuntimeInstanceId);
 
-            Assert.Equal(DedicatedTenantId, registered.Metadata["tenant.id"]);
-            Assert.Equal(DedicatedTenantId, capacity.Metadata["tenant.id"]);
+            Assert.Equal(DedicatedTenantId, registered.Metadata[AiRuntimeInstanceIsolationMetadataKeys.TenantId]);
+            Assert.Equal(DedicatedTenantId, capacity.Metadata[AiRuntimeInstanceIsolationMetadataKeys.TenantId]);
 
             Assert.Equal("Process", registered.Metadata["hostCreation.mode"]);
             Assert.Equal("Process", capacity.Metadata["hostCreation.mode"]);
@@ -985,8 +985,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Http
             Assert.Equal(expectedRuntimeInstanceId, registered!.RuntimeInstanceId);
             Assert.Equal(expectedRuntimeInstanceId, capacity!.RuntimeInstanceId);
 
-            Assert.Equal(DedicatedTenantId, registered.Metadata["tenant.id"]);
-            Assert.Equal(DedicatedTenantId, capacity.Metadata["tenant.id"]);
+            Assert.Equal(DedicatedTenantId, registered.Metadata[AiRuntimeInstanceIsolationMetadataKeys.TenantId]);
+            Assert.Equal(DedicatedTenantId, capacity.Metadata[AiRuntimeInstanceIsolationMetadataKeys.TenantId]);
             Assert.Equal("Process", registered.Metadata["hostCreation.mode"]);
             Assert.Equal("Process", capacity.Metadata["hostCreation.mode"]);
 
@@ -1181,14 +1181,14 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Http
             if (registered is not null)
             {
                 Assert.Equal(expectedRuntimeInstanceId, registered.RuntimeInstanceId);
-                Assert.Equal(DedicatedTenantId, registered.Metadata["tenant.id"]);
+                Assert.Equal(DedicatedTenantId, registered.Metadata[AiRuntimeInstanceIsolationMetadataKeys.TenantId]);
                 Assert.Equal("Process", registered.Metadata["hostCreation.mode"]);
             }
 
             if (capacity is not null)
             {
                 Assert.Equal(expectedRuntimeInstanceId, capacity.RuntimeInstanceId);
-                Assert.Equal(DedicatedTenantId, capacity.Metadata["tenant.id"]);
+                Assert.Equal(DedicatedTenantId, capacity.Metadata[AiRuntimeInstanceIsolationMetadataKeys.TenantId]);
                 Assert.Equal("Process", capacity.Metadata["hostCreation.mode"]);
             }
 
@@ -1461,9 +1461,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Http
             Assert.Equal("mcp-scaleout-watcher", scaleOutRequest.FulfilledBy);
             Assert.False(string.IsNullOrWhiteSpace(scaleOutRequest.FulfilledRuntimeInstanceId));
 
-            Assert.Equal(isolationMode.ToString(), scaleOutRequest.Metadata["runtime.isolationMode"]);
-            Assert.Equal(preferDedicatedCapacity.ToString(), scaleOutRequest.Metadata["runtime.preferDedicatedCapacity"]);
-            Assert.Equal(allowSharedFallback.ToString(), scaleOutRequest.Metadata["runtime.allowSharedFallback"]);
+            Assert.Equal(isolationMode.ToString(), scaleOutRequest.Metadata[AiRuntimeInstanceIsolationMetadataKeys.IsolationMode]);
+            Assert.Equal(preferDedicatedCapacity.ToString(), scaleOutRequest.Metadata[AiRuntimeInstanceIsolationMetadataKeys.PreferDedicatedCapacity]);
+            Assert.Equal(allowSharedFallback.ToString(), scaleOutRequest.Metadata[AiRuntimeInstanceIsolationMetadataKeys.AllowSharedFallback]);
             Assert.Equal(maxRuntimeInstances.ToString(), scaleOutRequest.Metadata["runtime.maxRuntimeInstances"]);
             Assert.Equal(workerCountPerInstance.ToString(), scaleOutRequest.Metadata["runtime.workerCountPerInstance"]);
             Assert.Equal(maxConcurrentRunsPerInstance.ToString(), scaleOutRequest.Metadata["runtime.maxConcurrentRunsPerInstance"]);
@@ -1534,21 +1534,21 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Http
             Assert.Equal("Process", registered.Metadata["hostCreation.mode"]);
             Assert.Equal("Process", capacity.Metadata["hostCreation.mode"]);
 
-            Assert.Equal(tenantId, registered.Metadata["tenant.id"]);
-            Assert.Equal(tenantId, capacity.Metadata["tenant.id"]);
+            Assert.Equal(tenantId, registered.Metadata[AiRuntimeInstanceIsolationMetadataKeys.TenantId]);
+            Assert.Equal(tenantId, capacity.Metadata[AiRuntimeInstanceIsolationMetadataKeys.TenantId]);
 
             if (!string.IsNullOrWhiteSpace(tenantGroupId))
             {
-                Assert.Equal(tenantGroupId, registered.Metadata["tenant.group.id"]);
-                Assert.Equal(tenantGroupId, capacity.Metadata["tenant.group.id"]);
+                Assert.Equal(tenantGroupId, registered.Metadata[AiRuntimeInstanceIsolationMetadataKeys.TenantGroupId]);
+                Assert.Equal(tenantGroupId, capacity.Metadata[AiRuntimeInstanceIsolationMetadataKeys.TenantGroupId]);
             }
 
-            Assert.Equal(isolationMode.ToString(), registered.Metadata["runtime.isolationMode"]);
-            Assert.Equal(isolationMode.ToString(), capacity.Metadata["runtime.isolationMode"]);
-            Assert.Equal(preferDedicatedCapacity.ToString(), registered.Metadata["runtime.preferDedicatedCapacity"]);
-            Assert.Equal(preferDedicatedCapacity.ToString(), capacity.Metadata["runtime.preferDedicatedCapacity"]);
-            Assert.Equal(allowSharedFallback.ToString(), registered.Metadata["runtime.allowSharedFallback"]);
-            Assert.Equal(allowSharedFallback.ToString(), capacity.Metadata["runtime.allowSharedFallback"]);
+            Assert.Equal(isolationMode.ToString(), registered.Metadata[AiRuntimeInstanceIsolationMetadataKeys.IsolationMode]);
+            Assert.Equal(isolationMode.ToString(), capacity.Metadata[AiRuntimeInstanceIsolationMetadataKeys.IsolationMode]);
+            Assert.Equal(preferDedicatedCapacity.ToString(), registered.Metadata[AiRuntimeInstanceIsolationMetadataKeys.PreferDedicatedCapacity]);
+            Assert.Equal(preferDedicatedCapacity.ToString(), capacity.Metadata[AiRuntimeInstanceIsolationMetadataKeys.PreferDedicatedCapacity]);
+            Assert.Equal(allowSharedFallback.ToString(), registered.Metadata[AiRuntimeInstanceIsolationMetadataKeys.AllowSharedFallback]);
+            Assert.Equal(allowSharedFallback.ToString(), capacity.Metadata[AiRuntimeInstanceIsolationMetadataKeys.AllowSharedFallback]);
             Assert.Equal(maxRuntimeInstances.ToString(), registered.Metadata["runtime.maxRuntimeInstances"]);
             Assert.Equal(maxRuntimeInstances.ToString(), capacity.Metadata["runtime.maxRuntimeInstances"]);
             Assert.Equal(workerCountPerInstance.ToString(), registered.Metadata["runtime.workerCountPerInstance"]);

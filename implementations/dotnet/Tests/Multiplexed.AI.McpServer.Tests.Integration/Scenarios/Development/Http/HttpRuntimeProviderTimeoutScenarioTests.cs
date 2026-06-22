@@ -1,5 +1,6 @@
 ﻿using Microsoft.Extensions.DependencyInjection;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Capacity;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Controller;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Store;
@@ -11,43 +12,40 @@ using Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic;
 using Multiplexed.AI.McpServer.Tests.Integration.Helpers;
 using Xunit.Abstractions;
 
-namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Http
+namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Development.Http
 {
     /// <summary>
-    /// Contains MCP scenarios that validate HTTP runtime provider unavailable behavior.
+    /// Contains MCP scenarios that validate HTTP runtime provider timeout behavior.
     /// </summary>
     /// <remarks>
     /// This class intentionally does not start a real runtime-instance HTTP host.
     /// Instead, it starts only the MCP control-plane host, manually registers one
     /// HTTP runtime instance in the control-plane registry, publishes its capacity
-    /// descriptor, and injects an HTTP client that always fails for that runtime instance.
+    /// descriptor, and injects an HTTP client that delays longer than the configured
+    /// HTTP dispatch timeout.
     ///
     /// This validates the production-safe MCP/control-plane behavior:
-    /// failed HTTP dispatch is requeued and the failure reason is persisted without
+    /// timed-out HTTP dispatch is requeued and the failure reason is persisted without
     /// marking the shared run as dispatched.
-    ///
-    /// Circuit-open behavior itself is covered by HTTP provider unit tests because
-    /// the MCP integration flow observes the first unavailable-provider failure.
     /// </remarks>
-    public sealed class HttpRuntimeProviderUnavailableScenarioTests
+    public sealed class HttpRuntimeProviderTimeoutScenarioTests
     {
-        private const string RequestedBy = "mcp-http-provider-unavailable-test";
-        private const string Source = "mcp-http-provider-unavailable";
+        private const string RequestedBy = "mcp-http-timeout-test";
+        private const string Source = "mcp-http-timeout";
         private const string TenantId = "test-tenant";
-        private const string WorkerId = "mcp-http-provider-unavailable-worker";
-        private const string PumpRuntimeInstanceId = "mcp-http-provider-unavailable-pump";
-        private const string RuntimeInstanceHostId = "runtime-http-provider-unavailable-host";
-        private const string ControlPlaneRuntimeInstanceId = "mcp-control-plane-http-provider-unavailable";
-        private const string FailureReason = "http-provider-unavailable";
-        private const string FailureMessage = "Simulated unreachable HTTP runtime endpoint.";
+        private const string WorkerId = "mcp-http-timeout-worker";
+        private const string PumpRuntimeInstanceId = "mcp-http-timeout-pump";
+        private const string RuntimeInstanceHostId = "runtime-http-timeout-host";
+        private const string ControlPlaneRuntimeInstanceId = "mcp-control-plane-http-timeout";
+        private const string FailureReason = "http-dispatch-timeout";
 
         private readonly ITestOutputHelper output;
 
         /// <summary>
-        /// Initializes a new instance of the <see cref="HttpRuntimeProviderUnavailableScenarioTests"/> class.
+        /// Initializes a new instance of the <see cref="HttpRuntimeProviderTimeoutScenarioTests"/> class.
         /// </summary>
         /// <param name="output">The test output helper.</param>
-        public HttpRuntimeProviderUnavailableScenarioTests(
+        public HttpRuntimeProviderTimeoutScenarioTests(
             ITestOutputHelper output)
         {
             this.output =
@@ -55,13 +53,13 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Http
         }
 
         /// <summary>
-        /// Verifies that an unavailable HTTP runtime dispatch failure is requeued and persisted through the MCP control-plane path.
+        /// Verifies that an HTTP dispatch timeout failure is requeued and persisted through the MCP control-plane path.
         /// </summary>
         [Fact]
-        public async Task Submit_One_Run_Then_Drain_Should_Requeue_And_Persist_HttpProviderUnavailable_Failure()
+        public async Task Submit_One_Run_Then_Drain_Should_Requeue_And_Persist_HttpDispatchTimeout_Failure()
         {
             await using var fixture =
-                await CreateBrokenHttpRuntimeFixtureAsync()
+                await CreateTimeoutHttpRuntimeFixtureAsync()
                     .ConfigureAwait(false);
 
             var mcp =
@@ -106,13 +104,13 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Http
                 submitResults[0].FailureReason ?? submitResults[0].Message);
 
             var drainResult =
-                await DrainBrokenHttpRuntimeAsync(
+                await DrainTimeoutHttpRuntimeAsync(
                         mcp,
                         maxDispatches: 1)
                     .ConfigureAwait(false);
 
             output.WriteLine(
-                $"Drain Success='{drainResult.Success}', FailureReason='{drainResult.FailureReason}'");
+                $"Drain Success='{drainResult.Success}', FailureReason='{drainResult.FailureReason}'.");
 
             Assert.True(
                 drainResult.Success,
@@ -163,10 +161,6 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Http
                 FailureReason,
                 run.FailureReason);
 
-            Assert.Equal(
-                FailureMessage,
-                run.Reason);
-
             Assert.Null(
                 run.LocalRunId);
 
@@ -189,18 +183,18 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Http
                 queueItem.Reason);
 
             output.WriteLine(
-                $"HTTP provider-unavailable failure persisted. SharedRunId='{run.SharedRunId}', RuntimeInstanceId='{run.AssignedRuntimeInstanceId}', FailureReason='{run.FailureReason}'.");
+                $"HTTP dispatch-timeout failure persisted. SharedRunId='{run.SharedRunId}', RuntimeInstanceId='{run.AssignedRuntimeInstanceId}', FailureReason='{run.FailureReason}'.");
         }
 
         /// <summary>
-        /// Creates an MCP control-plane host with a deliberately failing HTTP runtime client.
+        /// Creates an MCP control-plane host with a deliberately slow HTTP runtime client.
         /// </summary>
-        /// <returns>The initialized broken HTTP runtime test fixture.</returns>
-        private static async Task<BrokenHttpRuntimeMcpFixture> CreateBrokenHttpRuntimeFixtureAsync()
+        /// <returns>The initialized timeout HTTP runtime test fixture.</returns>
+        private static async Task<TimeoutHttpRuntimeMcpFixture> CreateTimeoutHttpRuntimeFixtureAsync()
         {
             var controlPlaneId =
                 GenericMcpServerTestSettings.CreateControlPlaneId(
-                    "http-provider-unavailable");
+                    "http-dispatch-timeout");
 
             var runtimeClients =
                 new Dictionary<string, HttpClient>(
@@ -208,21 +202,21 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Http
                 {
                     [RuntimeInstanceHostId] =
                         new HttpClient(
-                            new BrokenRuntimeHttpMessageHandler())
+                            new TimeoutRuntimeHttpMessageHandler())
                         {
                             BaseAddress = new Uri("http://localhost")
                         },
 
                     ["default"] =
                         new HttpClient(
-                            new BrokenRuntimeHttpMessageHandler())
+                            new TimeoutRuntimeHttpMessageHandler())
                         {
                             BaseAddress = new Uri("http://localhost")
                         }
                 };
 
             var fixture =
-                new BrokenHttpRuntimeMcpFixture(
+                new TimeoutHttpRuntimeMcpFixture(
                     CreateHttpControlPlaneSettings(
                         controlPlaneId),
                     runtimeClients,
@@ -237,7 +231,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Http
         }
 
         /// <summary>
-        /// Creates MCP control-plane host settings for the HTTP provider-unavailable scenario.
+        /// Creates MCP control-plane host settings for the HTTP dispatch-timeout scenario.
         /// </summary>
         /// <param name="controlPlaneId">The logical control-plane identifier shared by the scenario hosts.</param>
         /// <returns>The MCP control-plane host settings.</returns>
@@ -258,10 +252,11 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Http
                     ["AiSharedRuntimeController:SubmitMode"] = "QueueFirst",
 
                     ["AiHttpRuntimeInstanceProvider:EnableRetry"] = "false",
+                    ["AiHttpRuntimeInstanceProvider:RetryTimeouts"] = "false",
                     ["AiHttpRuntimeInstanceProvider:EnableCircuitBreaker"] = "true",
-                    ["AiHttpRuntimeInstanceProvider:CircuitBreakerFailureThreshold"] = "1",
+                    ["AiHttpRuntimeInstanceProvider:CircuitBreakerFailureThreshold"] = "5",
                     ["AiHttpRuntimeInstanceProvider:CircuitBreakerBreakDuration"] = "00:01:00",
-                    ["AiHttpRuntimeInstanceProvider:DispatchTimeout"] = "00:00:02",
+                    ["AiHttpRuntimeInstanceProvider:DispatchTimeout"] = "00:00:00.100",
 
                     ["AiRuntimeInstanceRegistration:ControlPlaneId"] = controlPlaneId,
                     ["AiRuntimeInstanceRegistration:RuntimeInstanceId"] = ControlPlaneRuntimeInstanceId,
@@ -278,8 +273,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Http
                     ["AiRuntimeInstanceRegistration:Metadata:transport.name"] = "http",
                     ["AiRuntimeInstanceRegistration:Metadata:transport.endpoint"] = "http://localhost",
                     ["AiRuntimeInstanceRegistration:Metadata:runtime.instance.id"] = RuntimeInstanceHostId,
-                    ["AiRuntimeInstanceRegistration:Metadata:hostType"] = "control-plane-with-broken-http-runtime",
-                    ["AiRuntimeInstanceRegistration:Metadata:deployment"] = "test-http-provider-unavailable",
+                    ["AiRuntimeInstanceRegistration:Metadata:hostType"] = "control-plane-with-timeout-http-runtime",
+                    ["AiRuntimeInstanceRegistration:Metadata:deployment"] = "test-http-dispatch-timeout",
 
                     ["AiEngine:ControlPlane:ControlPlaneId"] = controlPlaneId,
                     ["AiEngine:RuntimeInstanceId"] = ControlPlaneRuntimeInstanceId
@@ -292,7 +287,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Http
         /// <returns>The unique pipeline name.</returns>
         private static string CreatePipelineName()
         {
-            return $"mcp-http-provider-unavailable-pipeline-{Guid.NewGuid():N}";
+            return $"mcp-http-timeout-pipeline-{Guid.NewGuid():N}";
         }
 
         /// <summary>
@@ -318,12 +313,12 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Http
         }
 
         /// <summary>
-        /// Drains the shared queue for the broken HTTP runtime provider scenario.
+        /// Drains the shared queue for the timeout HTTP runtime provider scenario.
         /// </summary>
         /// <param name="mcp">The MCP test client.</param>
         /// <param name="maxDispatches">The maximum number of dispatches to perform.</param>
         /// <returns>The shared queue pump result.</returns>
-        private static async Task<AiSharedQueuePumpResult> DrainBrokenHttpRuntimeAsync(
+        private static async Task<AiSharedQueuePumpResult> DrainTimeoutHttpRuntimeAsync(
             McpTestClient mcp,
             int maxDispatches)
         {
@@ -363,7 +358,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Http
         /// <summary>
         /// Provides an MCP control-plane-only fixture with injected runtime HTTP clients.
         /// </summary>
-        private sealed class BrokenHttpRuntimeMcpFixture : IAsyncDisposable
+        private sealed class TimeoutHttpRuntimeMcpFixture : IAsyncDisposable
         {
             private readonly IReadOnlyDictionary<string, string?> settings;
             private readonly IReadOnlyDictionary<string, HttpClient> runtimeClientsByRuntimeInstanceId;
@@ -386,13 +381,13 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Http
             public McpTestClient Mcp { get; private set; } = default!;
 
             /// <summary>
-            /// Initializes a new instance of the <see cref="BrokenHttpRuntimeMcpFixture"/> class.
+            /// Initializes a new instance of the <see cref="TimeoutHttpRuntimeMcpFixture"/> class.
             /// </summary>
             /// <param name="settings">The MCP host settings.</param>
             /// <param name="runtimeClientsByRuntimeInstanceId">The runtime HTTP clients keyed by runtime instance identifier.</param>
             /// <param name="controlPlaneId">The logical control-plane identifier.</param>
             /// <param name="rbacTenantId">The RBAC tenant identifier.</param>
-            public BrokenHttpRuntimeMcpFixture(
+            public TimeoutHttpRuntimeMcpFixture(
                 IReadOnlyDictionary<string, string?> settings,
                 IReadOnlyDictionary<string, HttpClient> runtimeClientsByRuntimeInstanceId,
                 string controlPlaneId,
@@ -413,7 +408,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Http
             }
 
             /// <summary>
-            /// Initializes the MCP control-plane host, registers the broken runtime instance, publishes capacity, and creates the MCP test client.
+            /// Initializes the MCP control-plane host, registers the timeout runtime instance, publishes capacity, and creates the MCP test client.
             /// </summary>
             /// <returns>A task representing the asynchronous initialization operation.</returns>
             public async Task InitializeAsync()
@@ -426,7 +421,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Http
                 Client =
                     Host.CreateClient();
 
-                await RegisterBrokenRuntimeInstanceAsync()
+                await RegisterTimeoutRuntimeInstanceAsync()
                     .ConfigureAwait(false);
 
                 Mcp =
@@ -441,10 +436,10 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Http
             }
 
             /// <summary>
-            /// Registers a ready HTTP runtime instance whose HTTP client always fails.
+            /// Registers a ready HTTP runtime instance whose HTTP client always times out.
             /// </summary>
             /// <returns>A task representing the asynchronous registration operation.</returns>
-            private async Task RegisterBrokenRuntimeInstanceAsync()
+            private async Task RegisterTimeoutRuntimeInstanceAsync()
             {
                 if (Host is null)
                 {
@@ -470,7 +465,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Http
                             RuntimeId = RuntimeInstanceHostId,
                             ControlPlaneHostId = ControlPlaneRuntimeInstanceId,
                             ControlPlaneId = controlPlaneId,
-                            HostName = "broken-http-runtime",
+                            HostName = "timeout-http-runtime",
                             WorkerCount = 1,
                             MaxConcurrentRuns = 1,
                             QueueCapacity = 10,
@@ -529,7 +524,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Http
             }
 
             /// <summary>
-            /// Creates metadata used by the manual broken HTTP runtime registration and capacity descriptor.
+            /// Creates metadata used by the manual timeout HTTP runtime registration and capacity descriptor.
             /// </summary>
             /// <returns>The runtime metadata.</returns>
             private Dictionary<string, string> CreateRuntimeMetadata()
@@ -541,9 +536,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Http
                     ["transport.name"] = "http",
                     ["transport.endpoint"] = "http://localhost",
                     ["runtime.instance.id"] = RuntimeInstanceHostId,
-                    ["tenantId"] = TenantId,
-                    ["hostType"] = "manual-broken-http-runtime",
-                    ["deployment"] = "test-http-provider-unavailable"
+                    [AiRuntimeInstanceIsolationMetadataKeys.TenantId] = TenantId,
+                    ["hostType"] = "manual-timeout-http-runtime",
+                    ["deployment"] = "test-http-dispatch-timeout"
                 };
             }
 
@@ -567,19 +562,23 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Http
         }
 
         /// <summary>
-        /// HTTP message handler that always simulates an unreachable runtime endpoint.
+        /// HTTP message handler that always delays longer than the provider dispatch timeout.
         /// </summary>
-        private sealed class BrokenRuntimeHttpMessageHandler : HttpMessageHandler
+        private sealed class TimeoutRuntimeHttpMessageHandler : HttpMessageHandler
         {
             /// <inheritdoc />
-            protected override Task<HttpResponseMessage> SendAsync(
+            protected override async Task<HttpResponseMessage> SendAsync(
                 HttpRequestMessage request,
                 CancellationToken cancellationToken)
             {
-                cancellationToken.ThrowIfCancellationRequested();
+                await Task
+                    .Delay(
+                        TimeSpan.FromSeconds(10),
+                        cancellationToken)
+                    .ConfigureAwait(false);
 
-                throw new HttpRequestException(
-                    FailureMessage);
+                return new HttpResponseMessage(
+                    System.Net.HttpStatusCode.OK);
             }
         }
     }

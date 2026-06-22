@@ -1,8 +1,7 @@
 ﻿using Microsoft.Extensions.DependencyInjection;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Capacity;
-using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers.Transport;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
-using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.SharedInstance;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Controller;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Store;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Pump;
@@ -12,44 +11,42 @@ using Multiplexed.AI.McpServer.Tests.Integration.Fixtures;
 using Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic;
 using Multiplexed.AI.McpServer.Tests.Integration.Helpers;
 using System.Net;
-using System.Net.Http.Json;
 using System.Text;
 using Xunit.Abstractions;
 
-namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Http
+namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Development.Http
 {
     /// <summary>
-    /// Contains MCP scenarios that validate HTTP runtime provider retry behavior.
+    /// Contains MCP scenarios that validate exhausted HTTP runtime provider retry behavior.
     /// </summary>
     /// <remarks>
     /// This class intentionally does not start a real runtime-instance HTTP host.
     /// Instead, it starts only the MCP control-plane host, manually registers one
     /// HTTP runtime instance in the control-plane registry, publishes its capacity
-    /// descriptor, and injects an HTTP client that fails once before succeeding.
+    /// descriptor, and injects an HTTP client that always returns HTTP 500.
     ///
-    /// This validates that a transient HTTP provider failure can be retried and
-    /// still result in one correctly dispatched shared run without requeueing or
-    /// persisting a failure reason.
+    /// This validates that exhausted HTTP retry does not mark the shared run as
+    /// dispatched, requeues the queue item, and persists the final dispatch failure
+    /// reason.
     /// </remarks>
-    public sealed class HttpRuntimeProviderRetryScenarioTests
+    public sealed class HttpRuntimeProviderRetryExhaustedScenarioTests
     {
-        private const string RequestedBy = "mcp-http-retry-test";
-        private const string Source = "mcp-http-retry";
+        private const string RequestedBy = "mcp-http-retry-exhausted-test";
+        private const string Source = "mcp-http-retry-exhausted";
         private const string TenantId = "test-tenant";
-        private const string WorkerId = "mcp-http-retry-worker";
-        private const string PumpRuntimeInstanceId = "mcp-http-retry-pump";
-        private const string RuntimeInstanceHostId = "runtime-http-retry-host";
-        private const string ControlPlaneRuntimeInstanceId = "mcp-control-plane-http-retry";
-        private const string LocalRunId = "local-run-retry-1";
-        private const string ExecutionId = "execution-retry-1";
+        private const string WorkerId = "mcp-http-retry-exhausted-worker";
+        private const string PumpRuntimeInstanceId = "mcp-http-retry-exhausted-pump";
+        private const string RuntimeInstanceHostId = "runtime-http-retry-exhausted-host";
+        private const string ControlPlaneRuntimeInstanceId = "mcp-control-plane-http-retry-exhausted";
+        private const string FailureReason = "http-command-failed";
 
         private readonly ITestOutputHelper output;
 
         /// <summary>
-        /// Initializes a new instance of the <see cref="HttpRuntimeProviderRetryScenarioTests"/> class.
+        /// Initializes a new instance of the <see cref="HttpRuntimeProviderRetryExhaustedScenarioTests"/> class.
         /// </summary>
         /// <param name="output">The test output helper.</param>
-        public HttpRuntimeProviderRetryScenarioTests(
+        public HttpRuntimeProviderRetryExhaustedScenarioTests(
             ITestOutputHelper output)
         {
             this.output =
@@ -57,16 +54,16 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Http
         }
 
         /// <summary>
-        /// Verifies that a transient HTTP dispatch failure is retried and eventually dispatched through the MCP control-plane path.
+        /// Verifies that exhausted HTTP retry requeues the shared run and persists the final HTTP failure.
         /// </summary>
         [Fact]
-        public async Task Submit_One_Run_Then_Drain_Should_Retry_And_Dispatch_After_Transient_HttpFailure()
+        public async Task Submit_One_Run_Then_Drain_Should_Requeue_And_Persist_HttpFailure_When_Retry_Is_Exhausted()
         {
             var handler =
-                new TransientFailureThenSuccessHttpMessageHandler();
+                new AlwaysFailingHttpMessageHandler();
 
             await using var fixture =
-                await CreateRetryHttpRuntimeFixtureAsync(
+                await CreateRetryExhaustedHttpRuntimeFixtureAsync(
                         handler)
                     .ConfigureAwait(false);
 
@@ -112,7 +109,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Http
                 submitResults[0].FailureReason ?? submitResults[0].Message);
 
             var drainResult =
-                await DrainRetryHttpRuntimeAsync(
+                await DrainRetryExhaustedHttpRuntimeAsync(
                         mcp,
                         maxDispatches: 1)
                     .ConfigureAwait(false);
@@ -158,7 +155,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Http
                         StringComparison.Ordinal));
 
             Assert.Equal(
-                AiSharedRunStatus.Dispatched,
+                AiSharedRunStatus.QueuedGlobally,
                 run.Status);
 
             Assert.Equal(
@@ -166,16 +163,14 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Http
                 run.AssignedRuntimeInstanceId);
 
             Assert.Equal(
-                LocalRunId,
+                FailureReason,
+                run.FailureReason);
+
+            Assert.Null(
                 run.LocalRunId);
 
-            Assert.Equal(
-                ExecutionId,
+            Assert.Null(
                 run.ExecutionId);
-
-            Assert.True(
-                string.IsNullOrWhiteSpace(run.FailureReason),
-                $"Expected empty failure reason, but found '{run.FailureReason}'.");
 
             var queueItem =
                 queueItems.Single(item =>
@@ -185,37 +180,34 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Http
                         StringComparison.Ordinal));
 
             Assert.Equal(
-                AiSharedQueueItemStatus.Dispatched,
+                AiSharedQueueItemStatus.Pending,
                 queueItem.Status);
 
-            Assert.True(
-                string.IsNullOrWhiteSpace(queueItem.Reason) ||
-                queueItem.Reason.Contains(
-                    "completed successfully",
-                    StringComparison.OrdinalIgnoreCase),
-                $"Expected no failure reason on dispatched queue item, but found '{queueItem.Reason}'.");
+            Assert.Equal(
+                FailureReason,
+                queueItem.Reason);
 
             Assert.Equal(
                 2,
                 handler.CallCount);
 
             output.WriteLine(
-                $"HTTP retry dispatch succeeded. SharedRunId='{run.SharedRunId}', RuntimeInstanceId='{run.AssignedRuntimeInstanceId}', LocalRunId='{run.LocalRunId}', ExecutionId='{run.ExecutionId}', HttpCallCount='{handler.CallCount}'.");
+                $"HTTP retry exhausted failure persisted. SharedRunId='{run.SharedRunId}', RuntimeInstanceId='{run.AssignedRuntimeInstanceId}', FailureReason='{run.FailureReason}', HttpCallCount='{handler.CallCount}'.");
         }
 
         /// <summary>
-        /// Creates an MCP control-plane host with an HTTP runtime client that fails once and then succeeds.
+        /// Creates an MCP control-plane host with an HTTP runtime client that always returns HTTP 500.
         /// </summary>
-        /// <param name="handler">The transient failure HTTP message handler.</param>
-        /// <returns>The initialized retry HTTP runtime test fixture.</returns>
-        private static async Task<RetryHttpRuntimeMcpFixture> CreateRetryHttpRuntimeFixtureAsync(
-            TransientFailureThenSuccessHttpMessageHandler handler)
+        /// <param name="handler">The always failing HTTP message handler.</param>
+        /// <returns>The initialized retry-exhausted HTTP runtime test fixture.</returns>
+        private static async Task<RetryExhaustedHttpRuntimeMcpFixture> CreateRetryExhaustedHttpRuntimeFixtureAsync(
+            AlwaysFailingHttpMessageHandler handler)
         {
             ArgumentNullException.ThrowIfNull(handler);
 
             var controlPlaneId =
                 GenericMcpServerTestSettings.CreateControlPlaneId(
-                    "http-retry");
+                    "http-retry-exhausted");
 
             var runtimeClient =
                 new HttpClient(
@@ -233,7 +225,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Http
                 };
 
             var fixture =
-                new RetryHttpRuntimeMcpFixture(
+                new RetryExhaustedHttpRuntimeMcpFixture(
                     CreateHttpControlPlaneSettings(
                         controlPlaneId),
                     runtimeClients,
@@ -248,7 +240,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Http
         }
 
         /// <summary>
-        /// Creates MCP control-plane host settings for the HTTP retry scenario.
+        /// Creates MCP control-plane host settings for the HTTP retry-exhausted scenario.
         /// </summary>
         /// <param name="controlPlaneId">The logical control-plane identifier shared by the scenario hosts.</param>
         /// <returns>The MCP control-plane host settings.</returns>
@@ -293,8 +285,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Http
                     ["AiRuntimeInstanceRegistration:Metadata:transport.name"] = "http",
                     ["AiRuntimeInstanceRegistration:Metadata:transport.endpoint"] = "http://localhost",
                     ["AiRuntimeInstanceRegistration:Metadata:runtime.instance.id"] = RuntimeInstanceHostId,
-                    ["AiRuntimeInstanceRegistration:Metadata:hostType"] = "control-plane-with-retry-http-runtime",
-                    ["AiRuntimeInstanceRegistration:Metadata:deployment"] = "test-http-retry",
+                    ["AiRuntimeInstanceRegistration:Metadata:hostType"] = "control-plane-with-retry-exhausted-http-runtime",
+                    ["AiRuntimeInstanceRegistration:Metadata:deployment"] = "test-http-retry-exhausted",
 
                     ["AiEngine:ControlPlane:ControlPlaneId"] = controlPlaneId,
                     ["AiEngine:RuntimeInstanceId"] = ControlPlaneRuntimeInstanceId
@@ -307,7 +299,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Http
         /// <returns>The unique pipeline name.</returns>
         private static string CreatePipelineName()
         {
-            return $"mcp-http-retry-pipeline-{Guid.NewGuid():N}";
+            return $"mcp-http-retry-exhausted-pipeline-{Guid.NewGuid():N}";
         }
 
         /// <summary>
@@ -333,12 +325,12 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Http
         }
 
         /// <summary>
-        /// Drains the shared queue for the retry HTTP runtime provider scenario.
+        /// Drains the shared queue for the retry-exhausted HTTP runtime provider scenario.
         /// </summary>
         /// <param name="mcp">The MCP test client.</param>
         /// <param name="maxDispatches">The maximum number of dispatches to perform.</param>
         /// <returns>The shared queue pump result.</returns>
-        private static async Task<AiSharedQueuePumpResult> DrainRetryHttpRuntimeAsync(
+        private static async Task<AiSharedQueuePumpResult> DrainRetryExhaustedHttpRuntimeAsync(
             McpTestClient mcp,
             int maxDispatches)
         {
@@ -378,7 +370,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Http
         /// <summary>
         /// Provides an MCP control-plane-only fixture with injected runtime HTTP clients.
         /// </summary>
-        private sealed class RetryHttpRuntimeMcpFixture : IAsyncDisposable
+        private sealed class RetryExhaustedHttpRuntimeMcpFixture : IAsyncDisposable
         {
             private readonly IReadOnlyDictionary<string, string?> settings;
             private readonly IReadOnlyDictionary<string, HttpClient> runtimeClientsByRuntimeInstanceId;
@@ -401,13 +393,13 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Http
             public McpTestClient Mcp { get; private set; } = default!;
 
             /// <summary>
-            /// Initializes a new instance of the <see cref="RetryHttpRuntimeMcpFixture"/> class.
+            /// Initializes a new instance of the <see cref="RetryExhaustedHttpRuntimeMcpFixture"/> class.
             /// </summary>
             /// <param name="settings">The MCP host settings.</param>
             /// <param name="runtimeClientsByRuntimeInstanceId">The runtime HTTP clients keyed by runtime instance identifier.</param>
             /// <param name="controlPlaneId">The logical control-plane identifier.</param>
             /// <param name="rbacTenantId">The RBAC tenant identifier.</param>
-            public RetryHttpRuntimeMcpFixture(
+            public RetryExhaustedHttpRuntimeMcpFixture(
                 IReadOnlyDictionary<string, string?> settings,
                 IReadOnlyDictionary<string, HttpClient> runtimeClientsByRuntimeInstanceId,
                 string controlPlaneId,
@@ -428,7 +420,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Http
             }
 
             /// <summary>
-            /// Initializes the MCP control-plane host, registers the retry runtime instance, publishes capacity, and creates the MCP test client.
+            /// Initializes the MCP control-plane host, registers the retry-exhausted runtime instance, publishes capacity, and creates the MCP test client.
             /// </summary>
             /// <returns>A task representing the asynchronous initialization operation.</returns>
             public async Task InitializeAsync()
@@ -441,7 +433,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Http
                 Client =
                     Host.CreateClient();
 
-                await RegisterRetryRuntimeInstanceAsync()
+                await RegisterRetryExhaustedRuntimeInstanceAsync()
                     .ConfigureAwait(false);
 
                 Mcp =
@@ -456,10 +448,10 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Http
             }
 
             /// <summary>
-            /// Registers a ready HTTP runtime instance whose HTTP client fails once and then succeeds.
+            /// Registers a ready HTTP runtime instance whose HTTP client always returns HTTP 500.
             /// </summary>
             /// <returns>A task representing the asynchronous registration operation.</returns>
-            private async Task RegisterRetryRuntimeInstanceAsync()
+            private async Task RegisterRetryExhaustedRuntimeInstanceAsync()
             {
                 if (Host is null)
                 {
@@ -485,7 +477,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Http
                             RuntimeId = RuntimeInstanceHostId,
                             ControlPlaneHostId = ControlPlaneRuntimeInstanceId,
                             ControlPlaneId = controlPlaneId,
-                            HostName = "retry-http-runtime",
+                            HostName = "retry-exhausted-http-runtime",
                             WorkerCount = 1,
                             MaxConcurrentRuns = 1,
                             QueueCapacity = 10,
@@ -544,7 +536,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Http
             }
 
             /// <summary>
-            /// Creates metadata used by the manual retry HTTP runtime registration and capacity descriptor.
+            /// Creates metadata used by the manual retry-exhausted HTTP runtime registration and capacity descriptor.
             /// </summary>
             /// <returns>The runtime metadata.</returns>
             private Dictionary<string, string> CreateRuntimeMetadata()
@@ -556,9 +548,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Http
                     ["transport.name"] = "http",
                     ["transport.endpoint"] = "http://localhost",
                     ["runtime.instance.id"] = RuntimeInstanceHostId,
-                    ["tenantId"] = TenantId,
-                    ["hostType"] = "manual-retry-http-runtime",
-                    ["deployment"] = "test-http-retry"
+                    [AiRuntimeInstanceIsolationMetadataKeys.TenantId] = TenantId,
+                    ["hostType"] = "manual-retry-exhausted-http-runtime",
+                    ["deployment"] = "test-http-retry-exhausted"
                 };
             }
 
@@ -582,9 +574,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Http
         }
 
         /// <summary>
-        /// HTTP message handler that returns one transient HTTP 500 response before returning a successful dispatch response.
+        /// HTTP message handler that always returns HTTP 500 to exhaust retry attempts.
         /// </summary>
-        private sealed class TransientFailureThenSuccessHttpMessageHandler : HttpMessageHandler
+        private sealed class AlwaysFailingHttpMessageHandler : HttpMessageHandler
         {
             private int callCount;
 
@@ -602,70 +594,18 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Http
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
-                var currentCall =
-                    Interlocked.Increment(
-                        ref callCount);
-
-                if (currentCall == 1)
-                {
-                    return Task.FromResult(
-                        new HttpResponseMessage(
-                            HttpStatusCode.InternalServerError)
-                        {
-                            Content =
-                                new StringContent(
-                                    "transient runtime failure",
-                                    Encoding.UTF8,
-                                    "text/plain")
-                        });
-                }
-
-                var now = DateTimeOffset.UtcNow;
+                Interlocked.Increment(
+                    ref callCount);
 
                 return Task.FromResult(
                     new HttpResponseMessage(
-                        HttpStatusCode.OK)
+                        HttpStatusCode.InternalServerError)
                     {
                         Content =
-                            JsonContent.Create(
-                                new AiRuntimeInstanceCommandResult
-                                {
-                                    Operation = AiRuntimeInstanceCommandOperation.DispatchRun,
-                                    Success = true,
-                                    RuntimeInstanceId = RuntimeInstanceHostId,
-                                    Message = "Runtime dispatch command completed successfully.",
-                                    FailureReason = null,
-                                    StartedAtUtc = now,
-                                    CompletedAtUtc = now,
-                                    DurationMs = 0,
-                                    Metadata = new Dictionary<string, string>
-                                    {
-                                        ["provider.name"] = "http",
-                                        ["transport.name"] = "http",
-                                        ["runtime.instance.id"] = RuntimeInstanceHostId
-                                    },
-                                    DispatchResult =
-                                        new AiSharedRuntimeInstanceDispatchResult
-                                        {
-                                            Success = true,
-                                            RuntimeInstanceId = RuntimeInstanceHostId,
-                                            SharedRunId = "shared-run-retry-1",
-                                            LocalRunId = LocalRunId,
-                                            ExecutionId = ExecutionId,
-                                            ClaimToken = "claim-retry-1",
-                                            Message = "Runtime dispatch completed successfully.",
-                                            FailureReason = null,
-                                            StartedAtUtc = now,
-                                            CompletedAtUtc = now,
-                                            DurationMs = 0,
-                                            Metadata = new Dictionary<string, string>
-                                            {
-                                                ["provider.name"] = "http",
-                                                ["transport.name"] = "http",
-                                                ["runtime.instance.id"] = RuntimeInstanceHostId
-                                            }
-                                        }
-                                })
+                            new StringContent(
+                                "persistent transient runtime failure",
+                                Encoding.UTF8,
+                                "text/plain")
                     });
             }
         }

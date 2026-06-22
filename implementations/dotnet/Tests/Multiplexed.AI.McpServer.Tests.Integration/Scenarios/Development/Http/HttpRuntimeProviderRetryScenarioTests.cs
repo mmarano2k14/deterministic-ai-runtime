@@ -1,6 +1,9 @@
 ﻿using Microsoft.Extensions.DependencyInjection;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Capacity;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers.Transport;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.SharedInstance;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Controller;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Store;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Pump;
@@ -9,42 +12,45 @@ using Multiplexed.AI.McpServer.Tests.Integration.Auth;
 using Multiplexed.AI.McpServer.Tests.Integration.Fixtures;
 using Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic;
 using Multiplexed.AI.McpServer.Tests.Integration.Helpers;
+using System.Net;
+using System.Net.Http.Json;
+using System.Text;
 using Xunit.Abstractions;
 
-namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Http
+namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Development.Http
 {
     /// <summary>
-    /// Contains MCP scenarios that validate HTTP runtime provider timeout behavior.
+    /// Contains MCP scenarios that validate HTTP runtime provider retry behavior.
     /// </summary>
     /// <remarks>
     /// This class intentionally does not start a real runtime-instance HTTP host.
     /// Instead, it starts only the MCP control-plane host, manually registers one
     /// HTTP runtime instance in the control-plane registry, publishes its capacity
-    /// descriptor, and injects an HTTP client that delays longer than the configured
-    /// HTTP dispatch timeout.
+    /// descriptor, and injects an HTTP client that fails once before succeeding.
     ///
-    /// This validates the production-safe MCP/control-plane behavior:
-    /// timed-out HTTP dispatch is requeued and the failure reason is persisted without
-    /// marking the shared run as dispatched.
+    /// This validates that a transient HTTP provider failure can be retried and
+    /// still result in one correctly dispatched shared run without requeueing or
+    /// persisting a failure reason.
     /// </remarks>
-    public sealed class HttpRuntimeProviderTimeoutScenarioTests
+    public sealed class HttpRuntimeProviderRetryScenarioTests
     {
-        private const string RequestedBy = "mcp-http-timeout-test";
-        private const string Source = "mcp-http-timeout";
+        private const string RequestedBy = "mcp-http-retry-test";
+        private const string Source = "mcp-http-retry";
         private const string TenantId = "test-tenant";
-        private const string WorkerId = "mcp-http-timeout-worker";
-        private const string PumpRuntimeInstanceId = "mcp-http-timeout-pump";
-        private const string RuntimeInstanceHostId = "runtime-http-timeout-host";
-        private const string ControlPlaneRuntimeInstanceId = "mcp-control-plane-http-timeout";
-        private const string FailureReason = "http-dispatch-timeout";
+        private const string WorkerId = "mcp-http-retry-worker";
+        private const string PumpRuntimeInstanceId = "mcp-http-retry-pump";
+        private const string RuntimeInstanceHostId = "runtime-http-retry-host";
+        private const string ControlPlaneRuntimeInstanceId = "mcp-control-plane-http-retry";
+        private const string LocalRunId = "local-run-retry-1";
+        private const string ExecutionId = "execution-retry-1";
 
         private readonly ITestOutputHelper output;
 
         /// <summary>
-        /// Initializes a new instance of the <see cref="HttpRuntimeProviderTimeoutScenarioTests"/> class.
+        /// Initializes a new instance of the <see cref="HttpRuntimeProviderRetryScenarioTests"/> class.
         /// </summary>
         /// <param name="output">The test output helper.</param>
-        public HttpRuntimeProviderTimeoutScenarioTests(
+        public HttpRuntimeProviderRetryScenarioTests(
             ITestOutputHelper output)
         {
             this.output =
@@ -52,13 +58,17 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Http
         }
 
         /// <summary>
-        /// Verifies that an HTTP dispatch timeout failure is requeued and persisted through the MCP control-plane path.
+        /// Verifies that a transient HTTP dispatch failure is retried and eventually dispatched through the MCP control-plane path.
         /// </summary>
         [Fact]
-        public async Task Submit_One_Run_Then_Drain_Should_Requeue_And_Persist_HttpDispatchTimeout_Failure()
+        public async Task Submit_One_Run_Then_Drain_Should_Retry_And_Dispatch_After_Transient_HttpFailure()
         {
+            var handler =
+                new TransientFailureThenSuccessHttpMessageHandler();
+
             await using var fixture =
-                await CreateTimeoutHttpRuntimeFixtureAsync()
+                await CreateRetryHttpRuntimeFixtureAsync(
+                        handler)
                     .ConfigureAwait(false);
 
             var mcp =
@@ -103,7 +113,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Http
                 submitResults[0].FailureReason ?? submitResults[0].Message);
 
             var drainResult =
-                await DrainTimeoutHttpRuntimeAsync(
+                await DrainRetryHttpRuntimeAsync(
                         mcp,
                         maxDispatches: 1)
                     .ConfigureAwait(false);
@@ -149,7 +159,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Http
                         StringComparison.Ordinal));
 
             Assert.Equal(
-                AiSharedRunStatus.QueuedGlobally,
+                AiSharedRunStatus.Dispatched,
                 run.Status);
 
             Assert.Equal(
@@ -157,14 +167,16 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Http
                 run.AssignedRuntimeInstanceId);
 
             Assert.Equal(
-                FailureReason,
-                run.FailureReason);
-
-            Assert.Null(
+                LocalRunId,
                 run.LocalRunId);
 
-            Assert.Null(
+            Assert.Equal(
+                ExecutionId,
                 run.ExecutionId);
+
+            Assert.True(
+                string.IsNullOrWhiteSpace(run.FailureReason),
+                $"Expected empty failure reason, but found '{run.FailureReason}'.");
 
             var queueItem =
                 queueItems.Single(item =>
@@ -174,48 +186,55 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Http
                         StringComparison.Ordinal));
 
             Assert.Equal(
-                AiSharedQueueItemStatus.Pending,
+                AiSharedQueueItemStatus.Dispatched,
                 queueItem.Status);
 
+            Assert.True(
+                string.IsNullOrWhiteSpace(queueItem.Reason) ||
+                queueItem.Reason.Contains(
+                    "completed successfully",
+                    StringComparison.OrdinalIgnoreCase),
+                $"Expected no failure reason on dispatched queue item, but found '{queueItem.Reason}'.");
+
             Assert.Equal(
-                FailureReason,
-                queueItem.Reason);
+                2,
+                handler.CallCount);
 
             output.WriteLine(
-                $"HTTP dispatch-timeout failure persisted. SharedRunId='{run.SharedRunId}', RuntimeInstanceId='{run.AssignedRuntimeInstanceId}', FailureReason='{run.FailureReason}'.");
+                $"HTTP retry dispatch succeeded. SharedRunId='{run.SharedRunId}', RuntimeInstanceId='{run.AssignedRuntimeInstanceId}', LocalRunId='{run.LocalRunId}', ExecutionId='{run.ExecutionId}', HttpCallCount='{handler.CallCount}'.");
         }
 
         /// <summary>
-        /// Creates an MCP control-plane host with a deliberately slow HTTP runtime client.
+        /// Creates an MCP control-plane host with an HTTP runtime client that fails once and then succeeds.
         /// </summary>
-        /// <returns>The initialized timeout HTTP runtime test fixture.</returns>
-        private static async Task<TimeoutHttpRuntimeMcpFixture> CreateTimeoutHttpRuntimeFixtureAsync()
+        /// <param name="handler">The transient failure HTTP message handler.</param>
+        /// <returns>The initialized retry HTTP runtime test fixture.</returns>
+        private static async Task<RetryHttpRuntimeMcpFixture> CreateRetryHttpRuntimeFixtureAsync(
+            TransientFailureThenSuccessHttpMessageHandler handler)
         {
+            ArgumentNullException.ThrowIfNull(handler);
+
             var controlPlaneId =
                 GenericMcpServerTestSettings.CreateControlPlaneId(
-                    "http-dispatch-timeout");
+                    "http-retry");
+
+            var runtimeClient =
+                new HttpClient(
+                    handler)
+                {
+                    BaseAddress = new Uri("http://localhost")
+                };
 
             var runtimeClients =
                 new Dictionary<string, HttpClient>(
                     StringComparer.Ordinal)
                 {
-                    [RuntimeInstanceHostId] =
-                        new HttpClient(
-                            new TimeoutRuntimeHttpMessageHandler())
-                        {
-                            BaseAddress = new Uri("http://localhost")
-                        },
-
-                    ["default"] =
-                        new HttpClient(
-                            new TimeoutRuntimeHttpMessageHandler())
-                        {
-                            BaseAddress = new Uri("http://localhost")
-                        }
+                    [RuntimeInstanceHostId] = runtimeClient,
+                    ["default"] = runtimeClient
                 };
 
             var fixture =
-                new TimeoutHttpRuntimeMcpFixture(
+                new RetryHttpRuntimeMcpFixture(
                     CreateHttpControlPlaneSettings(
                         controlPlaneId),
                     runtimeClients,
@@ -230,7 +249,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Http
         }
 
         /// <summary>
-        /// Creates MCP control-plane host settings for the HTTP dispatch-timeout scenario.
+        /// Creates MCP control-plane host settings for the HTTP retry scenario.
         /// </summary>
         /// <param name="controlPlaneId">The logical control-plane identifier shared by the scenario hosts.</param>
         /// <returns>The MCP control-plane host settings.</returns>
@@ -250,12 +269,15 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Http
                     ["AiSharedQueuePump:Enabled"] = "true",
                     ["AiSharedRuntimeController:SubmitMode"] = "QueueFirst",
 
-                    ["AiHttpRuntimeInstanceProvider:EnableRetry"] = "false",
+                    ["AiHttpRuntimeInstanceProvider:EnableRetry"] = "true",
+                    ["AiHttpRuntimeInstanceProvider:MaxRetryAttempts"] = "1",
+                    ["AiHttpRuntimeInstanceProvider:RetryBaseDelay"] = "00:00:00.010",
+                    ["AiHttpRuntimeInstanceProvider:RetryMaxDelay"] = "00:00:00.050",
                     ["AiHttpRuntimeInstanceProvider:RetryTimeouts"] = "false",
                     ["AiHttpRuntimeInstanceProvider:EnableCircuitBreaker"] = "true",
                     ["AiHttpRuntimeInstanceProvider:CircuitBreakerFailureThreshold"] = "5",
                     ["AiHttpRuntimeInstanceProvider:CircuitBreakerBreakDuration"] = "00:01:00",
-                    ["AiHttpRuntimeInstanceProvider:DispatchTimeout"] = "00:00:00.100",
+                    ["AiHttpRuntimeInstanceProvider:DispatchTimeout"] = "00:00:05",
 
                     ["AiRuntimeInstanceRegistration:ControlPlaneId"] = controlPlaneId,
                     ["AiRuntimeInstanceRegistration:RuntimeInstanceId"] = ControlPlaneRuntimeInstanceId,
@@ -272,8 +294,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Http
                     ["AiRuntimeInstanceRegistration:Metadata:transport.name"] = "http",
                     ["AiRuntimeInstanceRegistration:Metadata:transport.endpoint"] = "http://localhost",
                     ["AiRuntimeInstanceRegistration:Metadata:runtime.instance.id"] = RuntimeInstanceHostId,
-                    ["AiRuntimeInstanceRegistration:Metadata:hostType"] = "control-plane-with-timeout-http-runtime",
-                    ["AiRuntimeInstanceRegistration:Metadata:deployment"] = "test-http-dispatch-timeout",
+                    ["AiRuntimeInstanceRegistration:Metadata:hostType"] = "control-plane-with-retry-http-runtime",
+                    ["AiRuntimeInstanceRegistration:Metadata:deployment"] = "test-http-retry",
 
                     ["AiEngine:ControlPlane:ControlPlaneId"] = controlPlaneId,
                     ["AiEngine:RuntimeInstanceId"] = ControlPlaneRuntimeInstanceId
@@ -286,7 +308,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Http
         /// <returns>The unique pipeline name.</returns>
         private static string CreatePipelineName()
         {
-            return $"mcp-http-timeout-pipeline-{Guid.NewGuid():N}";
+            return $"mcp-http-retry-pipeline-{Guid.NewGuid():N}";
         }
 
         /// <summary>
@@ -312,12 +334,12 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Http
         }
 
         /// <summary>
-        /// Drains the shared queue for the timeout HTTP runtime provider scenario.
+        /// Drains the shared queue for the retry HTTP runtime provider scenario.
         /// </summary>
         /// <param name="mcp">The MCP test client.</param>
         /// <param name="maxDispatches">The maximum number of dispatches to perform.</param>
         /// <returns>The shared queue pump result.</returns>
-        private static async Task<AiSharedQueuePumpResult> DrainTimeoutHttpRuntimeAsync(
+        private static async Task<AiSharedQueuePumpResult> DrainRetryHttpRuntimeAsync(
             McpTestClient mcp,
             int maxDispatches)
         {
@@ -357,7 +379,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Http
         /// <summary>
         /// Provides an MCP control-plane-only fixture with injected runtime HTTP clients.
         /// </summary>
-        private sealed class TimeoutHttpRuntimeMcpFixture : IAsyncDisposable
+        private sealed class RetryHttpRuntimeMcpFixture : IAsyncDisposable
         {
             private readonly IReadOnlyDictionary<string, string?> settings;
             private readonly IReadOnlyDictionary<string, HttpClient> runtimeClientsByRuntimeInstanceId;
@@ -380,13 +402,13 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Http
             public McpTestClient Mcp { get; private set; } = default!;
 
             /// <summary>
-            /// Initializes a new instance of the <see cref="TimeoutHttpRuntimeMcpFixture"/> class.
+            /// Initializes a new instance of the <see cref="RetryHttpRuntimeMcpFixture"/> class.
             /// </summary>
             /// <param name="settings">The MCP host settings.</param>
             /// <param name="runtimeClientsByRuntimeInstanceId">The runtime HTTP clients keyed by runtime instance identifier.</param>
             /// <param name="controlPlaneId">The logical control-plane identifier.</param>
             /// <param name="rbacTenantId">The RBAC tenant identifier.</param>
-            public TimeoutHttpRuntimeMcpFixture(
+            public RetryHttpRuntimeMcpFixture(
                 IReadOnlyDictionary<string, string?> settings,
                 IReadOnlyDictionary<string, HttpClient> runtimeClientsByRuntimeInstanceId,
                 string controlPlaneId,
@@ -407,7 +429,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Http
             }
 
             /// <summary>
-            /// Initializes the MCP control-plane host, registers the timeout runtime instance, publishes capacity, and creates the MCP test client.
+            /// Initializes the MCP control-plane host, registers the retry runtime instance, publishes capacity, and creates the MCP test client.
             /// </summary>
             /// <returns>A task representing the asynchronous initialization operation.</returns>
             public async Task InitializeAsync()
@@ -420,7 +442,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Http
                 Client =
                     Host.CreateClient();
 
-                await RegisterTimeoutRuntimeInstanceAsync()
+                await RegisterRetryRuntimeInstanceAsync()
                     .ConfigureAwait(false);
 
                 Mcp =
@@ -435,10 +457,10 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Http
             }
 
             /// <summary>
-            /// Registers a ready HTTP runtime instance whose HTTP client always times out.
+            /// Registers a ready HTTP runtime instance whose HTTP client fails once and then succeeds.
             /// </summary>
             /// <returns>A task representing the asynchronous registration operation.</returns>
-            private async Task RegisterTimeoutRuntimeInstanceAsync()
+            private async Task RegisterRetryRuntimeInstanceAsync()
             {
                 if (Host is null)
                 {
@@ -464,7 +486,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Http
                             RuntimeId = RuntimeInstanceHostId,
                             ControlPlaneHostId = ControlPlaneRuntimeInstanceId,
                             ControlPlaneId = controlPlaneId,
-                            HostName = "timeout-http-runtime",
+                            HostName = "retry-http-runtime",
                             WorkerCount = 1,
                             MaxConcurrentRuns = 1,
                             QueueCapacity = 10,
@@ -523,7 +545,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Http
             }
 
             /// <summary>
-            /// Creates metadata used by the manual timeout HTTP runtime registration and capacity descriptor.
+            /// Creates metadata used by the manual retry HTTP runtime registration and capacity descriptor.
             /// </summary>
             /// <returns>The runtime metadata.</returns>
             private Dictionary<string, string> CreateRuntimeMetadata()
@@ -535,9 +557,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Http
                     ["transport.name"] = "http",
                     ["transport.endpoint"] = "http://localhost",
                     ["runtime.instance.id"] = RuntimeInstanceHostId,
-                    ["tenantId"] = TenantId,
-                    ["hostType"] = "manual-timeout-http-runtime",
-                    ["deployment"] = "test-http-dispatch-timeout"
+                    [AiRuntimeInstanceIsolationMetadataKeys.TenantId] = TenantId,
+                    ["hostType"] = "manual-retry-http-runtime",
+                    ["deployment"] = "test-http-retry"
                 };
             }
 
@@ -561,23 +583,91 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Http
         }
 
         /// <summary>
-        /// HTTP message handler that always delays longer than the provider dispatch timeout.
+        /// HTTP message handler that returns one transient HTTP 500 response before returning a successful dispatch response.
         /// </summary>
-        private sealed class TimeoutRuntimeHttpMessageHandler : HttpMessageHandler
+        private sealed class TransientFailureThenSuccessHttpMessageHandler : HttpMessageHandler
         {
+            private int callCount;
+
+            /// <summary>
+            /// Gets the number of HTTP calls received by this handler.
+            /// </summary>
+            public int CallCount =>
+                Volatile.Read(
+                    ref callCount);
+
             /// <inheritdoc />
-            protected override async Task<HttpResponseMessage> SendAsync(
+            protected override Task<HttpResponseMessage> SendAsync(
                 HttpRequestMessage request,
                 CancellationToken cancellationToken)
             {
-                await Task
-                    .Delay(
-                        TimeSpan.FromSeconds(10),
-                        cancellationToken)
-                    .ConfigureAwait(false);
+                cancellationToken.ThrowIfCancellationRequested();
 
-                return new HttpResponseMessage(
-                    System.Net.HttpStatusCode.OK);
+                var currentCall =
+                    Interlocked.Increment(
+                        ref callCount);
+
+                if (currentCall == 1)
+                {
+                    return Task.FromResult(
+                        new HttpResponseMessage(
+                            HttpStatusCode.InternalServerError)
+                        {
+                            Content =
+                                new StringContent(
+                                    "transient runtime failure",
+                                    Encoding.UTF8,
+                                    "text/plain")
+                        });
+                }
+
+                var now = DateTimeOffset.UtcNow;
+
+                return Task.FromResult(
+                    new HttpResponseMessage(
+                        HttpStatusCode.OK)
+                    {
+                        Content =
+                            JsonContent.Create(
+                                new AiRuntimeInstanceCommandResult
+                                {
+                                    Operation = AiRuntimeInstanceCommandOperation.DispatchRun,
+                                    Success = true,
+                                    RuntimeInstanceId = RuntimeInstanceHostId,
+                                    Message = "Runtime dispatch command completed successfully.",
+                                    FailureReason = null,
+                                    StartedAtUtc = now,
+                                    CompletedAtUtc = now,
+                                    DurationMs = 0,
+                                    Metadata = new Dictionary<string, string>
+                                    {
+                                        ["provider.name"] = "http",
+                                        ["transport.name"] = "http",
+                                        ["runtime.instance.id"] = RuntimeInstanceHostId
+                                    },
+                                    DispatchResult =
+                                        new AiSharedRuntimeInstanceDispatchResult
+                                        {
+                                            Success = true,
+                                            RuntimeInstanceId = RuntimeInstanceHostId,
+                                            SharedRunId = "shared-run-retry-1",
+                                            LocalRunId = LocalRunId,
+                                            ExecutionId = ExecutionId,
+                                            ClaimToken = "claim-retry-1",
+                                            Message = "Runtime dispatch completed successfully.",
+                                            FailureReason = null,
+                                            StartedAtUtc = now,
+                                            CompletedAtUtc = now,
+                                            DurationMs = 0,
+                                            Metadata = new Dictionary<string, string>
+                                            {
+                                                ["provider.name"] = "http",
+                                                ["transport.name"] = "http",
+                                                ["runtime.instance.id"] = RuntimeInstanceHostId
+                                            }
+                                        }
+                                })
+                    });
             }
         }
     }

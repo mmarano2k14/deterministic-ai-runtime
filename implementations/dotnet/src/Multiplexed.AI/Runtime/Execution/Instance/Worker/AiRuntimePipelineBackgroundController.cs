@@ -1,5 +1,6 @@
 ﻿using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.ControlPlane.ExecutionAssistance;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue;
 using Multiplexed.Abstractions.AI.Execution;
 using Multiplexed.Abstractions.AI.Execution.Control;
@@ -1024,8 +1025,8 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
                             ["run.id"] = handle.RunId,
                             ["execution.id"] = created.ExecutionId,
                             ["pipeline.name"] = request.PipelineName,
-                            ["tenant.id"] = request.ExecutionContextSnapshot?.TenantId ?? string.Empty,
-                            ["tenant.group.id"] = request.ExecutionContextSnapshot?.TenantGroupId ?? string.Empty,
+                            [AiRuntimeInstanceIsolationMetadataKeys.TenantId] = request.ExecutionContextSnapshot?.TenantId ?? string.Empty,
+                            [AiRuntimeInstanceIsolationMetadataKeys.TenantGroupId] = request.ExecutionContextSnapshot?.TenantGroupId ?? string.Empty,
                             ["context.key"] = request.ExecutionContextSnapshot?.ContextKey ?? string.Empty,
                             ["distributed.enabled"] = _options.Distributed.Enabled.ToString(),
                             ["distributed.worker.count"] = _options.Distributed.WorkerCount.ToString(),

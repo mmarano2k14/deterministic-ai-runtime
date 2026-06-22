@@ -16,7 +16,7 @@ using Multiplexed.Rbac.Core.ExecutionContext;
 using Multiplexed.Rbac.Core.Runtime;
 using Xunit.Abstractions;
 
-namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
+namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Development
 {
     /// <summary>
     /// Contains end-to-end shared run MCP scenarios.

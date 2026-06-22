@@ -1,4 +1,5 @@
-﻿using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Scaling;
+﻿using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
+using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Scaling;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Store;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Queue;
 
@@ -10,6 +11,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
     public sealed class AiScaleOutFulfilledRunRequeueService :
         IAiScaleOutFulfilledRunRequeueService
     {
+        private const int MaxBacklogRequeueCount = 100;
+
         private readonly IAiSharedRunStore sharedRunStore;
         private readonly IAiSharedQueue sharedQueue;
 
@@ -41,28 +44,122 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
 
             cancellationToken.ThrowIfCancellationRequested();
 
-            if (string.IsNullOrWhiteSpace(request.SharedRunId))
-            {
-                return;
-            }
-
-            var sharedRun =
-                await this.sharedRunStore
-                    .GetAsync(
-                        request.SharedRunId,
+            var candidateSharedRuns =
+                await this.GetCandidateSharedRunsAsync(
+                        request,
                         cancellationToken)
                     .ConfigureAwait(false);
 
-            if (sharedRun is null)
+            foreach (var sharedRun in candidateSharedRuns)
             {
-                return;
-            }
+                cancellationToken.ThrowIfCancellationRequested();
 
+                await this.RequeueSingleRunAsync(
+                        request,
+                        sharedRun,
+                        runtimeInstanceId,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+            }
+        }
+
+        /// <summary>
+        /// Gets shared runs that are still waiting for scale-out in the same tenant and pipeline scope.
+        /// </summary>
+        /// <param name="request">The fulfilled scale-out request.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <returns>The shared runs to requeue.</returns>
+        private async Task<IReadOnlyList<AiSharedRunRecord>> GetCandidateSharedRunsAsync(
+            AiRuntimeScaleOutRequestRecord request,
+            CancellationToken cancellationToken)
+        {
+            var allRuns =
+                await this.sharedRunStore
+                    .ListAsync(
+                        includeCancelled: false,
+                        includeCompleted: false,
+                        includeFailed: false,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+            return allRuns
+                .Where(sharedRun => IsRequeueCandidateSharedRun(request, sharedRun))
+                .OrderBy(sharedRun => sharedRun.SubmittedAtUtc)
+                .ThenBy(sharedRun => sharedRun.SharedRunId, StringComparer.Ordinal)
+                .Take(MaxBacklogRequeueCount)
+                .ToArray();
+        }
+
+        /// <summary>
+        /// Determines whether a shared run belongs to the same scale-out requeue scope.
+        /// </summary>
+        /// <param name="request">The fulfilled scale-out request.</param>
+        /// <param name="sharedRun">The shared run.</param>
+        /// <returns><see langword="true" /> when the run should be requeued; otherwise, <see langword="false" />.</returns>
+        private static bool IsRequeueCandidateSharedRun(
+            AiRuntimeScaleOutRequestRecord request,
+            AiSharedRunRecord sharedRun)
+        {
             if (sharedRun.Status != AiSharedRunStatus.ScaleOutRequested)
             {
-                return;
+                return false;
             }
 
+            if (!string.IsNullOrWhiteSpace(sharedRun.AssignedRuntimeInstanceId) ||
+                !string.IsNullOrWhiteSpace(sharedRun.LocalRunId) ||
+                !string.IsNullOrWhiteSpace(sharedRun.ExecutionId))
+            {
+                return false;
+            }
+
+            if (!string.Equals(
+                    sharedRun.ControlPlaneId,
+                    request.ControlPlaneId,
+                    StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            if (!string.Equals(
+                    sharedRun.PipelineKey,
+                    request.PipelineKey,
+                    StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            if (!string.Equals(
+                    sharedRun.ExecutionContextSnapshot.TenantId,
+                    request.TenantId,
+                    StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            if (!string.Equals(
+                    sharedRun.ExecutionContextSnapshot.TenantGroupId,
+                    request.TenantGroupId,
+                    StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// Requeues a single shared run when it is still waiting for scale-out.
+        /// </summary>
+        /// <param name="request">The fulfilled scale-out request.</param>
+        /// <param name="sharedRun">The shared run to requeue.</param>
+        /// <param name="runtimeInstanceId">The runtime instance id created by scale-out.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        private async Task RequeueSingleRunAsync(
+            AiRuntimeScaleOutRequestRecord request,
+            AiSharedRunRecord sharedRun,
+            string? runtimeInstanceId,
+            CancellationToken cancellationToken)
+        {
             var existingQueueItem =
                 await this.sharedQueue
                     .GetAsync(
@@ -85,8 +182,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
                 {
                     ["scaleOutRequestId"] = request.RequestId,
                     ["scaleOutRequeued"] = "true",
-                    ["tenant.id"] = sharedRun.ExecutionContextSnapshot.TenantId ?? string.Empty,
-                    ["tenant.group.id"] = sharedRun.ExecutionContextSnapshot.TenantGroupId ?? string.Empty,
+                    [AiRuntimeInstanceIsolationMetadataKeys.TenantId] = sharedRun.ExecutionContextSnapshot.TenantId ?? string.Empty,
+                    [AiRuntimeInstanceIsolationMetadataKeys.TenantGroupId] = sharedRun.ExecutionContextSnapshot.TenantGroupId ?? string.Empty,
                     ["pipelineKey"] = sharedRun.PipelineKey ?? string.Empty
                 };
 

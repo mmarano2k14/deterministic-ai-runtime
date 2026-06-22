@@ -1,5 +1,6 @@
 ﻿using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.ControlPlane.Discovery;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Scaling;
 using System.Globalization;
@@ -273,12 +274,12 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
 
             if (!string.IsNullOrWhiteSpace(request.TenantId))
             {
-                metadata["tenantId"] = request.TenantId;
+                metadata[AiRuntimeInstanceIsolationMetadataKeys.TenantId] = request.TenantId;
             }
 
             if (!string.IsNullOrWhiteSpace(request.TenantGroupId))
             {
-                metadata["tenantGroupId"] = request.TenantGroupId;
+                metadata[AiRuntimeInstanceIsolationMetadataKeys.TenantGroupId] = request.TenantGroupId;
             }
 
             if (!string.IsNullOrWhiteSpace(request.PipelineKey))
@@ -286,9 +287,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
                 metadata["pipelineKey"] = request.PipelineKey;
             }
 
-            metadata["runtime.isolationMode"] = request.IsolationMode.ToString();
-            metadata["runtime.preferDedicatedCapacity"] = request.PreferDedicatedCapacity.ToString();
-            metadata["runtime.allowSharedFallback"] = request.AllowSharedFallback.ToString();
+            metadata[AiRuntimeInstanceIsolationMetadataKeys.IsolationMode] = request.IsolationMode.ToString();
+            metadata[AiRuntimeInstanceIsolationMetadataKeys.PreferDedicatedCapacity] = request.PreferDedicatedCapacity.ToString();
+            metadata[AiRuntimeInstanceIsolationMetadataKeys.AllowSharedFallback] = request.AllowSharedFallback.ToString();
 
             if (request.MaxRuntimeInstances.HasValue)
             {

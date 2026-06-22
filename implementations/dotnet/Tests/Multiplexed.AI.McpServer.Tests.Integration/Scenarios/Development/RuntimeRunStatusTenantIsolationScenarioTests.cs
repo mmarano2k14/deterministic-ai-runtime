@@ -1,4 +1,5 @@
 ﻿using Microsoft.Extensions.DependencyInjection;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Controller;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Store;
@@ -10,7 +11,7 @@ using Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue.Redis;
 using StackExchange.Redis;
 using Xunit.Abstractions;
 
-namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
+namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Development
 {
     /// <summary>
     /// Contains end-to-end Redis-backed MCP tenant-isolation scenarios for runtime run status.
@@ -449,7 +450,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
                 IncludeDiagnostics = true,
                 Metadata = new Dictionary<string, string>
                 {
-                    ["tenantId"] = tenantId,
+                    [AiRuntimeInstanceIsolationMetadataKeys.TenantId] = tenantId,
                     ["scenario"] = "runtime-run-cancel-tenant-isolation"
                 }
             };
@@ -515,7 +516,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
                 IncludeDiagnostics = true,
                 Metadata = new Dictionary<string, string>
                 {
-                    ["tenantId"] = tenantId,
+                    [AiRuntimeInstanceIsolationMetadataKeys.TenantId] = tenantId,
                     ["scenario"] = "runtime-run-status-tenant-isolation"
                 }
             };
@@ -577,10 +578,10 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
                     ["AiLocalRuntimeInstancePool:WorkerCountPerInstance"] = "10",
                     ["AiLocalRuntimeInstancePool:MaxConcurrentRunsPerInstance"] = "5",
                     ["AiLocalRuntimeInstancePool:RuntimeInstanceIdPrefix"] = RuntimeInstancePrefix,
-                    ["AiLocalRuntimeInstancePool:Metadata:tenantId"] = TenantA,
-                    ["AiLocalRuntimeInstancePool:Metadata:runtime.isolationMode"] = "Dedicated",
-                    ["AiLocalRuntimeInstancePool:Metadata:runtime.allowSharedFallback"] = "false",
-                    ["AiLocalRuntimeInstancePool:Metadata:runtime.preferDedicatedCapacity"] = "true",
+                    [$"AiLocalRuntimeInstancePool:Metadata:{AiRuntimeInstanceIsolationMetadataKeys.TenantId}"] = TenantA,
+                    [$"AiLocalRuntimeInstancePool:Metadata:{AiRuntimeInstanceIsolationMetadataKeys.IsolationMode}"] = "Dedicated",
+                    [$"AiLocalRuntimeInstancePool:Metadata:{AiRuntimeInstanceIsolationMetadataKeys.AllowSharedFallback}"] = "false",
+                    [$"AiLocalRuntimeInstancePool:Metadata:{AiRuntimeInstanceIsolationMetadataKeys.PreferDedicatedCapacity}"] = "true",
 
                     ["AiEngine:ControlPlane:ControlPlaneId"] = controlPlaneId,
                     ["AiEngine:RuntimeInstanceId"] = controlPlaneRuntimeInstanceId,

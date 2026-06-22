@@ -5,7 +5,7 @@ using Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic;
 using Multiplexed.AI.McpServer.Tests.Integration.Helpers;
 using Xunit.Abstractions;
 
-namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
+namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Development
 {
     /// <summary>
     /// Contains end-to-end Redis-backed MCP tenant-isolation scenarios for shared runs.

@@ -14,7 +14,7 @@ using Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis;
 using System.Text.RegularExpressions;
 using Xunit.Abstractions;
 
-namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios
+namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Development
 {
     /// <summary>
     /// Contains heavy integration tests for queue-first shared run dispatch across

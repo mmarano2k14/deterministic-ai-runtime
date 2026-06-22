@@ -143,19 +143,19 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Providers.Http
 
             Assert.Equal(
                 "tenant-a",
-                registration.Metadata["tenant.id"]);
+                registration.Metadata[AiRuntimeInstanceIsolationMetadataKeys.TenantId]);
 
             Assert.Equal(
                 AiRuntimeInstanceIsolationMode.Dedicated.ToString(),
-                registration.Metadata["runtime.isolationMode"]);
+                registration.Metadata[AiRuntimeInstanceIsolationMetadataKeys.IsolationMode]);
 
             Assert.Equal(
                 "True",
-                registration.Metadata["runtime.preferDedicatedCapacity"]);
+                registration.Metadata[AiRuntimeInstanceIsolationMetadataKeys.PreferDedicatedCapacity]);
 
             Assert.Equal(
                 "False",
-                registration.Metadata["runtime.allowSharedFallback"]);
+                registration.Metadata[AiRuntimeInstanceIsolationMetadataKeys.AllowSharedFallback]);
 
             var capacity =
                 await capacityStore

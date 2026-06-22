@@ -798,8 +798,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController
                         ["reason"] = request.Reason,
                         ["sharedRunId"] = request.SharedRunId ?? request.RequestedSharedRunId,
                         ["preferredRuntimeInstanceId"] = request.PreferredRuntimeInstanceId,
-                        ["tenantId"] = executionContextSnapshot.TenantId,
-                        ["tenantGroupId"] = executionContextSnapshot.TenantGroupId,
+                        [AiRuntimeInstanceIsolationMetadataKeys.TenantId] = executionContextSnapshot.TenantId,
+                        [AiRuntimeInstanceIsolationMetadataKeys.TenantGroupId] = executionContextSnapshot.TenantGroupId,
                         ["project"] = executionContextSnapshot.Project,
                         ["userId"] = executionContextSnapshot.UserId,
                         ["contextKey"] = executionContextSnapshot.ContextKey,
@@ -851,10 +851,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController
                         ["localRunId"] = operationResult.Run?.LocalRunId,
                         ["executionId"] = operationResult.Run?.ExecutionId,
                         ["failureReason"] = operationResult.Run?.FailureReason,
-                        ["tenantId"] =
+                        [AiRuntimeInstanceIsolationMetadataKeys.TenantId] =
                             operationResult.Run?.ExecutionContextSnapshot.TenantId
                             ?? executionContextSnapshot.TenantId,
-                        ["tenantGroupId"] =
+                        [AiRuntimeInstanceIsolationMetadataKeys.TenantGroupId] =
                             operationResult.Run?.ExecutionContextSnapshot.TenantGroupId
                             ?? executionContextSnapshot.TenantGroupId,
                         ["project"] =

@@ -276,11 +276,11 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController.Scaling
             request.MaxConcurrentRunsPerInstance = 3;
             request.LocalQueueCapacity = 42;
 
-            request.Metadata["tenant.id"] = "tenant-a";
-            request.Metadata["tenant.group.id"] = "tenant-group-a";
-            request.Metadata["runtime.isolationMode"] = "Dedicated";
-            request.Metadata["runtime.preferDedicatedCapacity"] = "true";
-            request.Metadata["runtime.allowSharedFallback"] = "false";
+            request.Metadata[AiRuntimeInstanceIsolationMetadataKeys.TenantId] = "tenant-a";
+            request.Metadata[AiRuntimeInstanceIsolationMetadataKeys.TenantGroupId] = "tenant-group-a";
+            request.Metadata[AiRuntimeInstanceIsolationMetadataKeys.IsolationMode] = "Dedicated";
+            request.Metadata[AiRuntimeInstanceIsolationMetadataKeys.PreferDedicatedCapacity] = "true";
+            request.Metadata[AiRuntimeInstanceIsolationMetadataKeys.AllowSharedFallback] = "false";
             request.Metadata["runtime.maxRuntimeInstances"] = "5";
             request.Metadata["runtime.instanceIdPrefix"] = "tenant-a-http";
             request.Metadata["runtime.workerCountPerInstance"] = "7";
@@ -394,11 +394,11 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController.Scaling
 
             Assert.Equal(
                 "tenant-a",
-                registered.Metadata["tenant.id"]);
+                registered.Metadata[AiRuntimeInstanceIsolationMetadataKeys.TenantId]);
 
             Assert.Equal(
                 "Dedicated",
-                registered.Metadata["runtime.isolationMode"]);
+                registered.Metadata[AiRuntimeInstanceIsolationMetadataKeys.IsolationMode]);
 
             var capacity =
                 await capacityStore
@@ -425,7 +425,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController.Scaling
 
             Assert.Equal(
                 "tenant-a",
-                capacity.Metadata["tenant.id"]);
+                capacity.Metadata[AiRuntimeInstanceIsolationMetadataKeys.TenantId]);
 
             var pending =
                 await store

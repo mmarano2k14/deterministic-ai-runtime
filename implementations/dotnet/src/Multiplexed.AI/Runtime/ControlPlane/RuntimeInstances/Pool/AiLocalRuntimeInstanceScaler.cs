@@ -542,25 +542,25 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
 
             if (!string.IsNullOrWhiteSpace(request.TenantId))
             {
-                metadata["tenantId"] = request.TenantId;
-                metadata["tenant.id"] = request.TenantId;
+                metadata[AiRuntimeInstanceIsolationMetadataKeys.TenantId] = request.TenantId;
+                metadata[AiRuntimeInstanceIsolationMetadataKeys.TenantId] = request.TenantId;
             }
 
             if (!string.IsNullOrWhiteSpace(request.TenantGroupId))
             {
-                metadata["tenantGroupId"] = request.TenantGroupId;
+                metadata[AiRuntimeInstanceIsolationMetadataKeys.TenantGroupId] = request.TenantGroupId;
                 metadata["tenant.groupId"] = request.TenantGroupId;
             }
 
             if (HasExplicitTenantRuntimeSettings(request))
             {
-                metadata["runtime.isolationMode"] =
+                metadata[AiRuntimeInstanceIsolationMetadataKeys.IsolationMode] =
                     request.IsolationMode.ToString();
 
-                metadata["runtime.preferDedicatedCapacity"] =
+                metadata[AiRuntimeInstanceIsolationMetadataKeys.PreferDedicatedCapacity] =
                     request.PreferDedicatedCapacity.ToString();
 
-                metadata["runtime.allowSharedFallback"] =
+                metadata[AiRuntimeInstanceIsolationMetadataKeys.AllowSharedFallback] =
                     request.AllowSharedFallback.ToString();
 
                 if (request.MaxRuntimeInstances.HasValue)
@@ -727,25 +727,25 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
 
             if (!string.IsNullOrWhiteSpace(request.TenantId))
             {
-                metadata["tenantId"] = request.TenantId;
-                metadata["tenant.id"] = request.TenantId;
+                metadata[AiRuntimeInstanceIsolationMetadataKeys.TenantId] = request.TenantId;
+                metadata[AiRuntimeInstanceIsolationMetadataKeys.TenantId] = request.TenantId;
             }
 
             if (!string.IsNullOrWhiteSpace(request.TenantGroupId))
             {
-                metadata["tenantGroupId"] = request.TenantGroupId;
+                metadata[AiRuntimeInstanceIsolationMetadataKeys.TenantGroupId] = request.TenantGroupId;
                 metadata["tenant.groupId"] = request.TenantGroupId;
             }
 
             if (HasExplicitTenantRuntimeSettings(request))
             {
-                metadata["runtime.isolationMode"] =
+                metadata[AiRuntimeInstanceIsolationMetadataKeys.IsolationMode] =
                     request.IsolationMode.ToString();
 
-                metadata["runtime.preferDedicatedCapacity"] =
+                metadata[AiRuntimeInstanceIsolationMetadataKeys.PreferDedicatedCapacity] =
                     request.PreferDedicatedCapacity.ToString();
 
-                metadata["runtime.allowSharedFallback"] =
+                metadata[AiRuntimeInstanceIsolationMetadataKeys.AllowSharedFallback] =
                     request.AllowSharedFallback.ToString();
 
                 if (request.MaxRuntimeInstances.HasValue)

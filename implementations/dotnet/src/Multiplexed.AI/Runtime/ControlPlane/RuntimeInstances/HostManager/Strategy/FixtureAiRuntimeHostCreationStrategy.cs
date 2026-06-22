@@ -4,6 +4,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Capacity;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers.Transport;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
@@ -112,9 +113,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
                 ["runtime.status"] = AiRuntimeInstanceStatus.Ready.ToString(),
                 ["hostCreation.mode"] = request.HostCreationMode.ToString(),
                 ["hostCreation.strategy"] = nameof(FixtureAiRuntimeHostCreationStrategy),
-                ["runtime.isolationMode"] = request.IsolationMode,
-                ["runtime.preferDedicatedCapacity"] = request.PreferDedicatedCapacity.ToString(),
-                ["runtime.allowSharedFallback"] = request.AllowSharedFallback.ToString(),
+                [AiRuntimeInstanceIsolationMetadataKeys.IsolationMode] = request.IsolationMode,
+                [AiRuntimeInstanceIsolationMetadataKeys.PreferDedicatedCapacity] = request.PreferDedicatedCapacity.ToString(),
+                [AiRuntimeInstanceIsolationMetadataKeys.AllowSharedFallback] = request.AllowSharedFallback.ToString(),
                 ["runtime.maxRuntimeInstances"] = request.MaxRuntimeInstances?.ToString() ?? string.Empty,
                 ["runtime.instanceIdPrefix"] = request.RuntimeInstanceIdPrefix,
                 ["runtime.workerCountPerInstance"] = request.WorkerCountPerInstance.ToString(),
@@ -134,12 +135,12 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
 
             if (!string.IsNullOrWhiteSpace(request.TenantId))
             {
-                metadata["tenant.id"] = request.TenantId;
+                metadata[AiRuntimeInstanceIsolationMetadataKeys.TenantId] = request.TenantId;
             }
 
             if (!string.IsNullOrWhiteSpace(request.TenantGroupId))
             {
-                metadata["tenant.group.id"] = request.TenantGroupId;
+                metadata[AiRuntimeInstanceIsolationMetadataKeys.TenantGroupId] = request.TenantGroupId;
             }
 
             return metadata;

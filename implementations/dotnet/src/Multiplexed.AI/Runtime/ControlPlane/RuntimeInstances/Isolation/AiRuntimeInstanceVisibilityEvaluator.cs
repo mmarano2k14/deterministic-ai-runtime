@@ -7,9 +7,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Isolation
     /// </summary>
     public sealed class AiRuntimeInstanceVisibilityEvaluator : IAiRuntimeInstanceVisibilityEvaluator
     {
-        private const string TenantIdAlias = "tenant.id";
+        private const string TenantIdAlias = AiRuntimeInstanceIsolationMetadataKeys.TenantId;
 
-        private const string TenantGroupIdAlias = "tenant.group.id";
+        private const string TenantGroupIdAlias = AiRuntimeInstanceIsolationMetadataKeys.TenantGroupId;
 
         private readonly IAiTenantRuntimeSettingsProvider tenantRuntimeSettingsProvider;
 

@@ -1,5 +1,6 @@
 ﻿using Microsoft.Extensions.DependencyInjection;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Capacity;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Controller;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Store;
@@ -9,43 +10,47 @@ using Multiplexed.AI.McpServer.Tests.Integration.Auth;
 using Multiplexed.AI.McpServer.Tests.Integration.Fixtures;
 using Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic;
 using Multiplexed.AI.McpServer.Tests.Integration.Helpers;
-using System.Net;
-using System.Text;
 using Xunit.Abstractions;
 
-namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Http
+namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Development.Http
 {
     /// <summary>
-    /// Contains MCP scenarios that validate exhausted HTTP runtime provider retry behavior.
+    /// Contains MCP scenarios that validate HTTP runtime provider circuit-open behavior.
     /// </summary>
     /// <remarks>
     /// This class intentionally does not start a real runtime-instance HTTP host.
     /// Instead, it starts only the MCP control-plane host, manually registers one
     /// HTTP runtime instance in the control-plane registry, publishes its capacity
-    /// descriptor, and injects an HTTP client that always returns HTTP 500.
+    /// descriptor, and injects an HTTP client that always fails for that runtime instance.
     ///
-    /// This validates that exhausted HTTP retry does not mark the shared run as
-    /// dispatched, requeues the queue item, and persists the final dispatch failure
-    /// reason.
+    /// The first dispatch attempt should fail with provider unavailable and open the
+    /// HTTP circuit because the circuit breaker threshold is configured to one.
+    /// The second dispatch attempt, in the same drain operation, should observe the
+    /// open circuit and persist <c>http-circuit-open</c>.
+    ///
+    /// This avoids changing the generic HTTP runtime fixtures and prevents regressions
+    /// in the existing successful HTTP provider scenarios.
     /// </remarks>
-    public sealed class HttpRuntimeProviderRetryExhaustedScenarioTests
+    public sealed class HttpRuntimeProviderCircuitOpenScenarioTests
     {
-        private const string RequestedBy = "mcp-http-retry-exhausted-test";
-        private const string Source = "mcp-http-retry-exhausted";
+        private const string RequestedBy = "mcp-http-circuit-open-test";
+        private const string Source = "mcp-http-circuit-open";
         private const string TenantId = "test-tenant";
-        private const string WorkerId = "mcp-http-retry-exhausted-worker";
-        private const string PumpRuntimeInstanceId = "mcp-http-retry-exhausted-pump";
-        private const string RuntimeInstanceHostId = "runtime-http-retry-exhausted-host";
-        private const string ControlPlaneRuntimeInstanceId = "mcp-control-plane-http-retry-exhausted";
-        private const string FailureReason = "http-command-failed";
+        private const string WorkerId = "mcp-http-circuit-open-worker";
+        private const string PumpRuntimeInstanceId = "mcp-http-circuit-open-pump";
+        private const string RuntimeInstanceHostId = "runtime-http-circuit-open-host";
+        private const string ControlPlaneRuntimeInstanceId = "mcp-control-plane-http-circuit-open";
+        private const string FailureReason = "http-circuit-open";
+        private const string ProviderUnavailableFailureReason = "http-provider-unavailable";
+        private const string FailureMessage = "Simulated unreachable HTTP runtime endpoint.";
 
         private readonly ITestOutputHelper output;
 
         /// <summary>
-        /// Initializes a new instance of the <see cref="HttpRuntimeProviderRetryExhaustedScenarioTests"/> class.
+        /// Initializes a new instance of the <see cref="HttpRuntimeProviderCircuitOpenScenarioTests"/> class.
         /// </summary>
         /// <param name="output">The test output helper.</param>
-        public HttpRuntimeProviderRetryExhaustedScenarioTests(
+        public HttpRuntimeProviderCircuitOpenScenarioTests(
             ITestOutputHelper output)
         {
             this.output =
@@ -53,17 +58,13 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Http
         }
 
         /// <summary>
-        /// Verifies that exhausted HTTP retry requeues the shared run and persists the final HTTP failure.
+        /// Verifies that an HTTP circuit-open dispatch failure is requeued and persisted through the MCP control-plane path.
         /// </summary>
         [Fact]
-        public async Task Submit_One_Run_Then_Drain_Should_Requeue_And_Persist_HttpFailure_When_Retry_Is_Exhausted()
+        public async Task Submit_One_Run_Then_Drain_Should_Requeue_And_Persist_CircuitOpen_Failure()
         {
-            var handler =
-                new AlwaysFailingHttpMessageHandler();
-
             await using var fixture =
-                await CreateRetryExhaustedHttpRuntimeFixtureAsync(
-                        handler)
+                await CreateBrokenHttpRuntimeFixtureAsync()
                     .ConfigureAwait(false);
 
             var mcp =
@@ -108,9 +109,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Http
                 submitResults[0].FailureReason ?? submitResults[0].Message);
 
             var drainResult =
-                await DrainRetryExhaustedHttpRuntimeAsync(
+                await DrainBrokenHttpRuntimeAsync(
                         mcp,
-                        maxDispatches: 1)
+                        maxDispatches: 2)
                     .ConfigureAwait(false);
 
             output.WriteLine(
@@ -186,45 +187,41 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Http
                 FailureReason,
                 queueItem.Reason);
 
-            Assert.Equal(
-                2,
-                handler.CallCount);
-
             output.WriteLine(
-                $"HTTP retry exhausted failure persisted. SharedRunId='{run.SharedRunId}', RuntimeInstanceId='{run.AssignedRuntimeInstanceId}', FailureReason='{run.FailureReason}', HttpCallCount='{handler.CallCount}'.");
+                $"HTTP circuit-open failure persisted. SharedRunId='{run.SharedRunId}', RuntimeInstanceId='{run.AssignedRuntimeInstanceId}', FailureReason='{run.FailureReason}'.");
         }
 
         /// <summary>
-        /// Creates an MCP control-plane host with an HTTP runtime client that always returns HTTP 500.
+        /// Creates an MCP control-plane host with a deliberately failing HTTP runtime client.
         /// </summary>
-        /// <param name="handler">The always failing HTTP message handler.</param>
-        /// <returns>The initialized retry-exhausted HTTP runtime test fixture.</returns>
-        private static async Task<RetryExhaustedHttpRuntimeMcpFixture> CreateRetryExhaustedHttpRuntimeFixtureAsync(
-            AlwaysFailingHttpMessageHandler handler)
+        /// <returns>The initialized broken HTTP runtime test fixture.</returns>
+        private static async Task<BrokenHttpRuntimeMcpFixture> CreateBrokenHttpRuntimeFixtureAsync()
         {
-            ArgumentNullException.ThrowIfNull(handler);
-
             var controlPlaneId =
                 GenericMcpServerTestSettings.CreateControlPlaneId(
-                    "http-retry-exhausted");
-
-            var runtimeClient =
-                new HttpClient(
-                    handler)
-                {
-                    BaseAddress = new Uri("http://localhost")
-                };
+                    "http-circuit-open");
 
             var runtimeClients =
                 new Dictionary<string, HttpClient>(
                     StringComparer.Ordinal)
                 {
-                    [RuntimeInstanceHostId] = runtimeClient,
-                    ["default"] = runtimeClient
+                    [RuntimeInstanceHostId] =
+                        new HttpClient(
+                            new BrokenRuntimeHttpMessageHandler())
+                        {
+                            BaseAddress = new Uri("http://localhost")
+                        },
+
+                    ["default"] =
+                        new HttpClient(
+                            new BrokenRuntimeHttpMessageHandler())
+                        {
+                            BaseAddress = new Uri("http://localhost")
+                        }
                 };
 
             var fixture =
-                new RetryExhaustedHttpRuntimeMcpFixture(
+                new BrokenHttpRuntimeMcpFixture(
                     CreateHttpControlPlaneSettings(
                         controlPlaneId),
                     runtimeClients,
@@ -239,7 +236,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Http
         }
 
         /// <summary>
-        /// Creates MCP control-plane host settings for the HTTP retry-exhausted scenario.
+        /// Creates MCP control-plane host settings for the HTTP circuit-open scenario.
         /// </summary>
         /// <param name="controlPlaneId">The logical control-plane identifier shared by the scenario hosts.</param>
         /// <returns>The MCP control-plane host settings.</returns>
@@ -259,15 +256,11 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Http
                     ["AiSharedQueuePump:Enabled"] = "true",
                     ["AiSharedRuntimeController:SubmitMode"] = "QueueFirst",
 
-                    ["AiHttpRuntimeInstanceProvider:EnableRetry"] = "true",
-                    ["AiHttpRuntimeInstanceProvider:MaxRetryAttempts"] = "1",
-                    ["AiHttpRuntimeInstanceProvider:RetryBaseDelay"] = "00:00:00.010",
-                    ["AiHttpRuntimeInstanceProvider:RetryMaxDelay"] = "00:00:00.050",
-                    ["AiHttpRuntimeInstanceProvider:RetryTimeouts"] = "false",
+                    ["AiHttpRuntimeInstanceProvider:EnableRetry"] = "false",
                     ["AiHttpRuntimeInstanceProvider:EnableCircuitBreaker"] = "true",
-                    ["AiHttpRuntimeInstanceProvider:CircuitBreakerFailureThreshold"] = "5",
+                    ["AiHttpRuntimeInstanceProvider:CircuitBreakerFailureThreshold"] = "1",
                     ["AiHttpRuntimeInstanceProvider:CircuitBreakerBreakDuration"] = "00:01:00",
-                    ["AiHttpRuntimeInstanceProvider:DispatchTimeout"] = "00:00:05",
+                    ["AiHttpRuntimeInstanceProvider:DispatchTimeout"] = "00:00:02",
 
                     ["AiRuntimeInstanceRegistration:ControlPlaneId"] = controlPlaneId,
                     ["AiRuntimeInstanceRegistration:RuntimeInstanceId"] = ControlPlaneRuntimeInstanceId,
@@ -284,8 +277,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Http
                     ["AiRuntimeInstanceRegistration:Metadata:transport.name"] = "http",
                     ["AiRuntimeInstanceRegistration:Metadata:transport.endpoint"] = "http://localhost",
                     ["AiRuntimeInstanceRegistration:Metadata:runtime.instance.id"] = RuntimeInstanceHostId,
-                    ["AiRuntimeInstanceRegistration:Metadata:hostType"] = "control-plane-with-retry-exhausted-http-runtime",
-                    ["AiRuntimeInstanceRegistration:Metadata:deployment"] = "test-http-retry-exhausted",
+                    ["AiRuntimeInstanceRegistration:Metadata:hostType"] = "control-plane-with-broken-http-runtime",
+                    ["AiRuntimeInstanceRegistration:Metadata:deployment"] = "test-http-circuit-open",
 
                     ["AiEngine:ControlPlane:ControlPlaneId"] = controlPlaneId,
                     ["AiEngine:RuntimeInstanceId"] = ControlPlaneRuntimeInstanceId
@@ -298,7 +291,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Http
         /// <returns>The unique pipeline name.</returns>
         private static string CreatePipelineName()
         {
-            return $"mcp-http-retry-exhausted-pipeline-{Guid.NewGuid():N}";
+            return $"mcp-http-circuit-open-pipeline-{Guid.NewGuid():N}";
         }
 
         /// <summary>
@@ -324,12 +317,12 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Http
         }
 
         /// <summary>
-        /// Drains the shared queue for the retry-exhausted HTTP runtime provider scenario.
+        /// Drains the shared queue for the broken HTTP runtime provider scenario.
         /// </summary>
         /// <param name="mcp">The MCP test client.</param>
         /// <param name="maxDispatches">The maximum number of dispatches to perform.</param>
         /// <returns>The shared queue pump result.</returns>
-        private static async Task<AiSharedQueuePumpResult> DrainRetryExhaustedHttpRuntimeAsync(
+        private static async Task<AiSharedQueuePumpResult> DrainBrokenHttpRuntimeAsync(
             McpTestClient mcp,
             int maxDispatches)
         {
@@ -369,7 +362,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Http
         /// <summary>
         /// Provides an MCP control-plane-only fixture with injected runtime HTTP clients.
         /// </summary>
-        private sealed class RetryExhaustedHttpRuntimeMcpFixture : IAsyncDisposable
+        private sealed class BrokenHttpRuntimeMcpFixture : IAsyncDisposable
         {
             private readonly IReadOnlyDictionary<string, string?> settings;
             private readonly IReadOnlyDictionary<string, HttpClient> runtimeClientsByRuntimeInstanceId;
@@ -392,13 +385,13 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Http
             public McpTestClient Mcp { get; private set; } = default!;
 
             /// <summary>
-            /// Initializes a new instance of the <see cref="RetryExhaustedHttpRuntimeMcpFixture"/> class.
+            /// Initializes a new instance of the <see cref="BrokenHttpRuntimeMcpFixture"/> class.
             /// </summary>
             /// <param name="settings">The MCP host settings.</param>
             /// <param name="runtimeClientsByRuntimeInstanceId">The runtime HTTP clients keyed by runtime instance identifier.</param>
             /// <param name="controlPlaneId">The logical control-plane identifier.</param>
             /// <param name="rbacTenantId">The RBAC tenant identifier.</param>
-            public RetryExhaustedHttpRuntimeMcpFixture(
+            public BrokenHttpRuntimeMcpFixture(
                 IReadOnlyDictionary<string, string?> settings,
                 IReadOnlyDictionary<string, HttpClient> runtimeClientsByRuntimeInstanceId,
                 string controlPlaneId,
@@ -419,7 +412,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Http
             }
 
             /// <summary>
-            /// Initializes the MCP control-plane host, registers the retry-exhausted runtime instance, publishes capacity, and creates the MCP test client.
+            /// Initializes the MCP control-plane host, registers the broken runtime instance, publishes capacity, and creates the MCP test client.
             /// </summary>
             /// <returns>A task representing the asynchronous initialization operation.</returns>
             public async Task InitializeAsync()
@@ -432,7 +425,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Http
                 Client =
                     Host.CreateClient();
 
-                await RegisterRetryExhaustedRuntimeInstanceAsync()
+                await RegisterBrokenRuntimeInstanceAsync()
                     .ConfigureAwait(false);
 
                 Mcp =
@@ -447,10 +440,10 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Http
             }
 
             /// <summary>
-            /// Registers a ready HTTP runtime instance whose HTTP client always returns HTTP 500.
+            /// Registers a ready HTTP runtime instance whose HTTP client always fails.
             /// </summary>
             /// <returns>A task representing the asynchronous registration operation.</returns>
-            private async Task RegisterRetryExhaustedRuntimeInstanceAsync()
+            private async Task RegisterBrokenRuntimeInstanceAsync()
             {
                 if (Host is null)
                 {
@@ -476,7 +469,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Http
                             RuntimeId = RuntimeInstanceHostId,
                             ControlPlaneHostId = ControlPlaneRuntimeInstanceId,
                             ControlPlaneId = controlPlaneId,
-                            HostName = "retry-exhausted-http-runtime",
+                            HostName = "broken-http-runtime",
                             WorkerCount = 1,
                             MaxConcurrentRuns = 1,
                             QueueCapacity = 10,
@@ -535,7 +528,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Http
             }
 
             /// <summary>
-            /// Creates metadata used by the manual retry-exhausted HTTP runtime registration and capacity descriptor.
+            /// Creates metadata used by the manual broken HTTP runtime registration and capacity descriptor.
             /// </summary>
             /// <returns>The runtime metadata.</returns>
             private Dictionary<string, string> CreateRuntimeMetadata()
@@ -547,9 +540,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Http
                     ["transport.name"] = "http",
                     ["transport.endpoint"] = "http://localhost",
                     ["runtime.instance.id"] = RuntimeInstanceHostId,
-                    ["tenantId"] = TenantId,
-                    ["hostType"] = "manual-retry-exhausted-http-runtime",
-                    ["deployment"] = "test-http-retry-exhausted"
+                    [AiRuntimeInstanceIsolationMetadataKeys.TenantId] = TenantId,
+                    ["hostType"] = "manual-broken-http-runtime",
+                    ["deployment"] = "test-http-circuit-open"
                 };
             }
 
@@ -573,19 +566,10 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Http
         }
 
         /// <summary>
-        /// HTTP message handler that always returns HTTP 500 to exhaust retry attempts.
+        /// HTTP message handler that always simulates an unreachable runtime endpoint.
         /// </summary>
-        private sealed class AlwaysFailingHttpMessageHandler : HttpMessageHandler
+        private sealed class BrokenRuntimeHttpMessageHandler : HttpMessageHandler
         {
-            private int callCount;
-
-            /// <summary>
-            /// Gets the number of HTTP calls received by this handler.
-            /// </summary>
-            public int CallCount =>
-                Volatile.Read(
-                    ref callCount);
-
             /// <inheritdoc />
             protected override Task<HttpResponseMessage> SendAsync(
                 HttpRequestMessage request,
@@ -593,19 +577,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Http
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
-                Interlocked.Increment(
-                    ref callCount);
-
-                return Task.FromResult(
-                    new HttpResponseMessage(
-                        HttpStatusCode.InternalServerError)
-                    {
-                        Content =
-                            new StringContent(
-                                "persistent transient runtime failure",
-                                Encoding.UTF8,
-                                "text/plain")
-                    });
+                throw new HttpRequestException(
+                    FailureMessage);
             }
         }
     }

@@ -785,19 +785,19 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission
             IDictionary<string, string> metadata,
             AiTenantRuntimeSettings tenantRuntimeSettings)
         {
-            metadata["tenant.id"] =
+            metadata[AiRuntimeInstanceIsolationMetadataKeys.TenantId] =
                 tenantRuntimeSettings.TenantId ?? string.Empty;
 
-            metadata["tenant.group.id"] =
+            metadata[AiRuntimeInstanceIsolationMetadataKeys.TenantGroupId] =
                 tenantRuntimeSettings.TenantGroupId ?? string.Empty;
 
-            metadata["runtime.isolationMode"] =
+            metadata[AiRuntimeInstanceIsolationMetadataKeys.IsolationMode] =
                 tenantRuntimeSettings.IsolationMode.ToString();
 
-            metadata["runtime.preferDedicatedCapacity"] =
+            metadata[AiRuntimeInstanceIsolationMetadataKeys.PreferDedicatedCapacity] =
                 tenantRuntimeSettings.PreferDedicatedCapacity.ToString();
 
-            metadata["runtime.allowSharedFallback"] =
+            metadata[AiRuntimeInstanceIsolationMetadataKeys.AllowSharedFallback] =
                 tenantRuntimeSettings.AllowSharedFallback.ToString();
 
             metadata["runtime.maxRuntimeInstances"] =

@@ -2,6 +2,7 @@
 using Multiplexed.Abstractions.AI.ControlPlane.Observability;
 using Multiplexed.Abstractions.AI.ControlPlane.Observability.Area;
 using Multiplexed.Abstractions.AI.ControlPlane.Observability.Events;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue;
 using Multiplexed.Abstractions.AI.Execution.Instance.Worker;
 using Multiplexed.Abstractions.AI.Observability.Context;
@@ -340,7 +341,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue
                                 ["requestedBy"] = request.RequestedBy ?? string.Empty,
                                 ["reason"] = request.Reason ?? string.Empty,
                                 ["correlationId"] = request.CorrelationId ?? string.Empty,
-                                ["tenantId"] = executionContextSnapshot?.TenantId ?? string.Empty
+                                [AiRuntimeInstanceIsolationMetadataKeys.TenantId] = executionContextSnapshot?.TenantId ?? string.Empty
                             })
                     },
                     cancellationToken)

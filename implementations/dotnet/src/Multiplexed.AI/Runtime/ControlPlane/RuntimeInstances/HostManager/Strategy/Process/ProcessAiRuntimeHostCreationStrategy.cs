@@ -11,6 +11,7 @@ using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers.Transport;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strategy.Process
@@ -20,36 +21,12 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
     /// </summary>
     public sealed class ProcessAiRuntimeHostCreationStrategy : IAiRuntimeHostCreationStrategy, IAsyncDisposable
     {
-        /// <summary>
-        /// The process host creation options.
-        /// </summary>
         private readonly AiRuntimeProcessHostCreationOptions options;
-
-        /// <summary>
-        /// The logger used by the process host creation strategy.
-        /// </summary>
         private readonly ILogger<ProcessAiRuntimeHostCreationStrategy> logger;
-
-        /// <summary>
-        /// The runtime host processes started by this strategy, indexed by runtime instance id.
-        /// </summary>
         private readonly ConcurrentDictionary<string, System.Diagnostics.Process> processesByRuntimeInstanceId = new(StringComparer.OrdinalIgnoreCase);
-
-        /// <summary>
-        /// The lock used to serialize TCP port allocation.
-        /// </summary>
         private readonly SemaphoreSlim portAllocationLock = new(1, 1);
-
-        /// <summary>
-        /// The next preferred TCP port.
-        /// </summary>
         private int nextPort;
 
-        /// <summary>
-        /// Initializes a new instance of the <see cref="ProcessAiRuntimeHostCreationStrategy"/> class.
-        /// </summary>
-        /// <param name="options">The process host creation options.</param>
-        /// <param name="logger">The logger.</param>
         public ProcessAiRuntimeHostCreationStrategy(
             IOptions<AiRuntimeProcessHostCreationOptions> options,
             ILogger<ProcessAiRuntimeHostCreationStrategy> logger)
@@ -59,10 +36,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
             this.nextPort = this.options.BasePort;
         }
 
-        /// <inheritdoc />
         public AiRuntimeHostCreationMode Mode => AiRuntimeHostCreationMode.Process;
 
-        /// <inheritdoc />
         public async Task<AiRuntimeHostStartResult> StartAsync(
             AiRuntimeHostStartRequest request,
             CancellationToken cancellationToken = default)
@@ -126,13 +101,16 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
             }
             catch (Exception exception) when (exception is not OperationCanceledException)
             {
-                this.logger.LogError(exception, "Failed to start runtime host process. RuntimeInstanceId={RuntimeInstanceId}, Endpoint={Endpoint}.", request.RuntimeInstanceId, endpoint);
+                this.logger.LogError(
+                    exception,
+                    "Failed to start runtime host process. RuntimeInstanceId={RuntimeInstanceId}, Endpoint={Endpoint}.",
+                    request.RuntimeInstanceId,
+                    endpoint);
 
                 return AiRuntimeHostStartResult.Rejected(request.ExecutionContextSnapshot, request.RuntimeInstanceId, request.ProviderName, request.TransportName, endpoint, $"process-start-failed:{exception.GetType().Name}", retryable: true, metadata);
             }
         }
 
-        /// <inheritdoc />
         public async ValueTask DisposeAsync()
         {
             this.portAllocationLock.Dispose();
@@ -150,14 +128,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
             this.processesByRuntimeInstanceId.Clear();
         }
 
-        /// <summary>
-        /// Creates the process start information.
-        /// </summary>
-        /// <param name="request">The runtime host start request.</param>
-        /// <param name="endpoint">The resolved runtime HTTP endpoint.</param>
-        /// <param name="port">The resolved runtime HTTP port.</param>
-        /// <param name="metadata">The runtime metadata.</param>
-        /// <returns>The process start information.</returns>
         private ProcessStartInfo CreateStartInfo(
             AiRuntimeHostStartRequest request,
             string endpoint,
@@ -190,14 +160,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
             return startInfo;
         }
 
-        /// <summary>
-        /// Applies environment variables required by the runtime host process.
-        /// </summary>
-        /// <param name="startInfo">The process start information.</param>
-        /// <param name="request">The runtime host start request.</param>
-        /// <param name="endpoint">The runtime endpoint.</param>
-        /// <param name="port">The runtime port.</param>
-        /// <param name="metadata">The runtime metadata.</param>
         private void ApplyEnvironment(
             ProcessStartInfo startInfo,
             AiRuntimeHostStartRequest request,
@@ -272,17 +234,33 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
             startInfo.Environment["AI_RUNTIME_INSTANCE_ID"] = request.RuntimeInstanceId;
             startInfo.Environment["MULTIPLEXED_AI_RUNTIME_INSTANCE_ID"] = request.RuntimeInstanceId;
 
-            startInfo.Environment["AiRuntimeInstanceRegistration__Metadata__tenant.id"] = request.TenantId ?? string.Empty;
-            startInfo.Environment["AiRuntimeInstanceRegistration__Metadata__tenant.group.id"] = request.TenantGroupId ?? string.Empty;
-            startInfo.Environment["AiRuntimeInstanceRegistration__Metadata__runtime.isolationMode"] = request.IsolationMode ?? string.Empty;
-            startInfo.Environment["AiRuntimeInstanceRegistration__Metadata__runtime.preferDedicatedCapacity"] = request.PreferDedicatedCapacity.ToString();
-            startInfo.Environment["AiRuntimeInstanceRegistration__Metadata__runtime.allowSharedFallback"] = request.AllowSharedFallback.ToString();
+            startInfo.Environment[$"AiRuntimeInstanceRegistration__Metadata__{AiRuntimeInstanceIsolationMetadataKeys.TenantId}"] = request.TenantId ?? string.Empty;
+            startInfo.Environment[$"AiRuntimeInstanceRegistration__Metadata__{AiRuntimeInstanceIsolationMetadataKeys.TenantGroupId}"] = request.TenantGroupId ?? string.Empty;
+            startInfo.Environment[$"AiRuntimeInstanceRegistration__Metadata__{AiRuntimeInstanceIsolationMetadataKeys.IsolationMode}"] = request.IsolationMode ?? string.Empty;
+            startInfo.Environment[$"AiRuntimeInstanceRegistration__Metadata__{AiRuntimeInstanceIsolationMetadataKeys.PreferDedicatedCapacity}"] = request.PreferDedicatedCapacity.ToString();
+            startInfo.Environment[$"AiRuntimeInstanceRegistration__Metadata__{AiRuntimeInstanceIsolationMetadataKeys.AllowSharedFallback}"] = request.AllowSharedFallback.ToString();
+
             startInfo.Environment["AiRuntimeInstanceRegistration__Metadata__runtime.maxRuntimeInstances"] = request.MaxRuntimeInstances?.ToString(CultureInfo.InvariantCulture) ?? string.Empty;
             startInfo.Environment["AiRuntimeInstanceRegistration__Metadata__runtime.instanceIdPrefix"] = request.RuntimeInstanceIdPrefix ?? string.Empty;
             startInfo.Environment["AiRuntimeInstanceRegistration__Metadata__runtime.workerCountPerInstance"] = request.WorkerCountPerInstance.ToString(CultureInfo.InvariantCulture);
             startInfo.Environment["AiRuntimeInstanceRegistration__Metadata__runtime.maxConcurrentRunsPerInstance"] = request.MaxConcurrentRunsPerInstance.ToString(CultureInfo.InvariantCulture);
             startInfo.Environment["AiRuntimeInstanceRegistration__Metadata__runtime.localQueueCapacity"] = request.LocalQueueCapacity.ToString(CultureInfo.InvariantCulture);
             startInfo.Environment["AiRuntimeInstanceRegistration__Metadata__hostCreation.mode"] = AiRuntimeHostCreationMode.Process.ToString();
+
+            startInfo.Environment["ASPNETCORE_ENVIRONMENT"] = "Test";
+            startInfo.Environment["DOTNET_ENVIRONMENT"] = "Test";
+
+            startInfo.Environment["AiPayloadStore__Enabled"] = "true";
+            startInfo.Environment["AiPayloadStore__Provider"] = "mongo-redis";
+            startInfo.Environment["AiPayloadStore__RequireReplaySafePayloads"] = "true";
+
+            startInfo.Environment["AiEngine__PayloadStore__Enabled"] = "true";
+            startInfo.Environment["AiEngine__PayloadStore__Provider"] = "mongo-redis";
+            startInfo.Environment["AiEngine__PayloadStore__RequireReplaySafePayloads"] = "true";
+
+            startInfo.Environment["AiEngine__Payloads__Enabled"] = "true";
+            startInfo.Environment["AiEngine__Payloads__Provider"] = "mongo-redis";
+            startInfo.Environment["AiEngine__Payloads__RequireReplaySafePayloads"] = "true";
 
             foreach (var pair in metadata)
             {
@@ -295,11 +273,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
             startInfo.Environment["AiRuntimeInstanceRegistration__Metadata__hostCreation.mode"] = AiRuntimeHostCreationMode.Process.ToString();
         }
 
-        /// <summary>
-        /// Attaches stdout and stderr logging to the started process.
-        /// </summary>
-        /// <param name="request">The runtime host start request.</param>
-        /// <param name="process">The started process.</param>
         private void AttachOutputLogging(
             AiRuntimeHostStartRequest request,
             System.Diagnostics.Process process)
@@ -329,13 +302,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
             process.BeginErrorReadLine();
         }
 
-        /// <summary>
-        /// Creates runtime metadata returned by the process strategy.
-        /// </summary>
-        /// <param name="request">The runtime host start request.</param>
-        /// <param name="endpoint">The runtime endpoint.</param>
-        /// <param name="port">The runtime port.</param>
-        /// <returns>The runtime metadata.</returns>
         private static IReadOnlyDictionary<string, string> CreateMetadata(
             AiRuntimeHostStartRequest request,
             string endpoint,
@@ -350,9 +316,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
                 ["hostCreation.mode"] = AiRuntimeHostCreationMode.Process.ToString(),
                 ["hostCreation.strategy"] = nameof(ProcessAiRuntimeHostCreationStrategy),
                 ["process.port"] = port.ToString(CultureInfo.InvariantCulture),
-                ["runtime.isolationMode"] = request.IsolationMode,
-                ["runtime.preferDedicatedCapacity"] = request.PreferDedicatedCapacity.ToString(),
-                ["runtime.allowSharedFallback"] = request.AllowSharedFallback.ToString(),
+                [AiRuntimeInstanceIsolationMetadataKeys.IsolationMode] = request.IsolationMode,
+                [AiRuntimeInstanceIsolationMetadataKeys.PreferDedicatedCapacity] = request.PreferDedicatedCapacity.ToString(),
+                [AiRuntimeInstanceIsolationMetadataKeys.AllowSharedFallback] = request.AllowSharedFallback.ToString(),
                 ["runtime.maxRuntimeInstances"] = request.MaxRuntimeInstances?.ToString(CultureInfo.InvariantCulture) ?? string.Empty,
                 ["runtime.instanceIdPrefix"] = request.RuntimeInstanceIdPrefix,
                 ["runtime.workerCountPerInstance"] = request.WorkerCountPerInstance.ToString(CultureInfo.InvariantCulture),
@@ -362,22 +328,17 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
 
             if (!string.IsNullOrWhiteSpace(request.TenantId))
             {
-                metadata["tenant.id"] = request.TenantId;
+                metadata[AiRuntimeInstanceIsolationMetadataKeys.TenantId] = request.TenantId;
             }
 
             if (!string.IsNullOrWhiteSpace(request.TenantGroupId))
             {
-                metadata["tenant.group.id"] = request.TenantGroupId;
+                metadata[AiRuntimeInstanceIsolationMetadataKeys.TenantGroupId] = request.TenantGroupId;
             }
 
             return metadata;
         }
 
-        /// <summary>
-        /// Allocates a currently available TCP port.
-        /// </summary>
-        /// <param name="cancellationToken">The cancellation token.</param>
-        /// <returns>The allocated TCP port.</returns>
         private async Task<int> AllocatePortAsync(
             CancellationToken cancellationToken)
         {
@@ -404,11 +365,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
             }
         }
 
-        /// <summary>
-        /// Determines whether a TCP port is currently available.
-        /// </summary>
-        /// <param name="port">The TCP port.</param>
-        /// <returns><c>true</c> when the port is available; otherwise, <c>false</c>.</returns>
         private static bool IsPortAvailable(
             int port)
         {
@@ -424,14 +380,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
             }
         }
 
-        /// <summary>
-        /// Ensures the started process did not exit immediately.
-        /// </summary>
-        /// <param name="request">The runtime host start request.</param>
-        /// <param name="process">The started process.</param>
-        /// <param name="endpoint">The runtime endpoint.</param>
-        /// <param name="metadata">The runtime metadata.</param>
-        /// <param name="cancellationToken">The cancellation token.</param>
         private async Task EnsureProcessDidNotExitImmediatelyAsync(
             AiRuntimeHostStartRequest request,
             System.Diagnostics.Process process,
@@ -452,11 +400,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
                 $"Runtime host process exited immediately. RuntimeInstanceId='{request.RuntimeInstanceId}', Endpoint='{endpoint}', ExitCode='{process.ExitCode}', MetadataCount='{metadata.Count}'.");
         }
 
-        /// <summary>
-        /// Stops a process started by this strategy.
-        /// </summary>
-        /// <param name="runtimeInstanceId">The runtime instance identifier.</param>
-        /// <param name="process">The process to stop.</param>
         private async Task StopProcessAsync(
             string runtimeInstanceId,
             System.Diagnostics.Process process)
@@ -481,10 +424,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
             }
         }
 
-        /// <summary>
-        /// Attempts to kill a process that could not be tracked.
-        /// </summary>
-        /// <param name="process">The process.</param>
         private static void TryKillProcess(
             System.Diagnostics.Process process)
         {

@@ -8,12 +8,12 @@
         /// <summary>
         /// Metadata key containing the tenant identifier owning a dedicated runtime instance.
         /// </summary>
-        public const string TenantId = "tenantId";
+        public const string TenantId = "tenant.id";
 
         /// <summary>
         /// Metadata key containing the tenant group identifier owning a dedicated runtime instance.
         /// </summary>
-        public const string TenantGroupId = "tenantGroupId";
+        public const string TenantGroupId = "tenant.group.id";
 
         /// <summary>
         /// Metadata key containing the runtime isolation mode.

@@ -1,6 +1,7 @@
 ﻿using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Capacity;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Scaling;
@@ -272,7 +273,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController.Scaling
                             ["scaleOutRequestId"] = request.RequestId,
                             ["sharedRunId"] = request.SharedRunId,
                             ["controlPlaneId"] = request.ControlPlaneId,
-                            ["tenantId"] = request.TenantId ?? string.Empty
+                            [AiRuntimeInstanceIsolationMetadataKeys.TenantId] = request.TenantId ?? string.Empty
                         }
                     });
             }
