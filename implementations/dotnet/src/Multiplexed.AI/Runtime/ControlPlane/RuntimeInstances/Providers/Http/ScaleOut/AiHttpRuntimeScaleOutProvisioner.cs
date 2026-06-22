@@ -215,7 +215,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http.Sc
                     maxConcurrentRuns,
                     queueCapacity);
 
-            logger.LogInformation(
+            this.logger.LogInformation(
                 "HTTP SCALE-OUT PROVISION START RequestId={RequestId} SharedRunId={SharedRunId} RuntimeInstanceId={RuntimeInstanceId} Endpoint={Endpoint} TenantId={TenantId} TenantGroupId={TenantGroupId} IsolationMode={IsolationMode} WorkerCount={WorkerCount} MaxConcurrentRuns={MaxConcurrentRuns} QueueCapacity={QueueCapacity}",
                 request.RequestId,
                 request.SharedRunId,
@@ -277,7 +277,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http.Sc
                     cancellationToken)
                 .ConfigureAwait(false);
 
-            logger.LogInformation(
+            this.logger.LogInformation(
                 "HTTP SCALE-OUT PROVISION FULFILLED RequestId={RequestId} SharedRunId={SharedRunId} RuntimeInstanceId={RuntimeInstanceId} Endpoint={Endpoint}",
                 request.RequestId,
                 request.SharedRunId,
@@ -343,7 +343,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http.Sc
                     request.LocalQueueCapacity,
                     DefaultQueueCapacity);
 
-            logger.LogInformation(
+            this.logger.LogInformation(
                 "HTTP SCALE-OUT HOST-MANAGER START RequestId={RequestId} SharedRunId={SharedRunId} RuntimeInstanceId={RuntimeInstanceId} Endpoint={Endpoint} HostCreationMode={HostCreationMode} TenantId={TenantId} TenantGroupId={TenantGroupId} IsolationMode={IsolationMode} WorkerCount={WorkerCount} MaxConcurrentRuns={MaxConcurrentRuns} QueueCapacity={QueueCapacity}",
                 request.RequestId,
                 request.SharedRunId,
@@ -386,7 +386,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http.Sc
 
             if (!startResult.Success)
             {
-                logger.LogWarning(
+                this.logger.LogWarning(
                     "HTTP SCALE-OUT HOST-MANAGER REJECTED RequestId={RequestId} SharedRunId={SharedRunId} RuntimeInstanceId={RuntimeInstanceId} HostCreationMode={HostCreationMode} FailureReason={FailureReason}",
                     request.RequestId,
                     request.SharedRunId,
@@ -400,6 +400,32 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http.Sc
                     "HTTP runtime scale-out host manager start failed.");
             }
 
+            var fulfilledRuntimeInstanceId =
+                !string.IsNullOrWhiteSpace(startResult.RuntimeInstanceId)
+                    ? startResult.RuntimeInstanceId
+                    : runtimeInstanceId;
+
+            var fulfilledTransportEndpoint =
+                !string.IsNullOrWhiteSpace(startResult.TransportEndpoint)
+                    ? startResult.TransportEndpoint
+                    : endpoint;
+
+            if (string.IsNullOrWhiteSpace(fulfilledRuntimeInstanceId))
+            {
+                this.logger.LogWarning(
+                    "HTTP SCALE-OUT HOST-MANAGER REJECTED RequestId={RequestId} SharedRunId={SharedRunId} RuntimeInstanceId={RuntimeInstanceId} HostCreationMode={HostCreationMode} FailureReason={FailureReason}",
+                    request.RequestId,
+                    request.SharedRunId,
+                    runtimeInstanceId,
+                    this.options.HostCreationMode,
+                    "runtime-host-started-without-runtime-instance-id");
+
+                return CreateRejectedResult(
+                    request,
+                    "runtime-host-started-without-runtime-instance-id",
+                    "HTTP runtime scale-out host manager returned success without a runtime instance id.");
+            }
+
             if (this.options.RequireReadiness)
             {
                 var readinessResult =
@@ -409,10 +435,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http.Sc
                             {
                                 ControlPlaneId = request.ControlPlaneId,
                                 ExecutionContextSnapshot = request.ExecutionContextSnapshot,
-                                RuntimeInstanceId = startResult.RuntimeInstanceId,
+                                RuntimeInstanceId = fulfilledRuntimeInstanceId,
                                 ProviderName = ProviderName,
                                 TransportName = AiRuntimeInstanceCommandTransportMetadataKeys.HttpTransportName,
-                                TransportEndpoint = startResult.TransportEndpoint ?? endpoint,
+                                TransportEndpoint = fulfilledTransportEndpoint,
                                 RequireTransportEndpoint = true,
                                 Timeout = TimeSpan.FromSeconds(
                                     Math.Max(
@@ -428,11 +454,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http.Sc
 
                 if (!readinessResult.Success)
                 {
-                    logger.LogWarning(
+                    this.logger.LogWarning(
                         "HTTP SCALE-OUT HOST-MANAGER READINESS FAILED RequestId={RequestId} SharedRunId={SharedRunId} RuntimeInstanceId={RuntimeInstanceId} HostCreationMode={HostCreationMode} FailureReason={FailureReason} TimedOut={TimedOut}",
                         request.RequestId,
                         request.SharedRunId,
-                        startResult.RuntimeInstanceId,
+                        fulfilledRuntimeInstanceId,
                         this.options.HostCreationMode,
                         readinessResult.FailureReason,
                         readinessResult.TimedOut);
@@ -444,12 +470,31 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http.Sc
                 }
             }
 
-            logger.LogInformation(
+            var metadata =
+                new Dictionary<string, string>(
+                    startResult.Metadata ?? new Dictionary<string, string>(),
+                    StringComparer.OrdinalIgnoreCase)
+                {
+                    [AiRuntimeInstanceProviderMetadataKeys.ProviderName] = ProviderName,
+                    ["provider.name"] = ProviderName,
+                    ["provider"] = ProviderName,
+                    [AiRuntimeInstanceCommandTransportMetadataKeys.TransportName] = AiRuntimeInstanceCommandTransportMetadataKeys.HttpTransportName,
+                    [AiRuntimeInstanceCommandTransportMetadataKeys.RuntimeInstanceId] = fulfilledRuntimeInstanceId,
+                    [AiRuntimeInstanceCommandTransportMetadataKeys.TransportEndpoint] = fulfilledTransportEndpoint,
+                    ["scaleOutRequestId"] = request.RequestId,
+                    ["sharedRunId"] = request.SharedRunId,
+                    ["controlPlaneId"] = request.ControlPlaneId,
+                    ["tenant.id"] = request.TenantId ?? string.Empty,
+                    ["tenant.group.id"] = request.TenantGroupId ?? string.Empty,
+                    ["hostCreation.mode"] = this.options.HostCreationMode.ToString()
+                };
+
+            this.logger.LogInformation(
                 "HTTP SCALE-OUT HOST-MANAGER FULFILLED RequestId={RequestId} SharedRunId={SharedRunId} RuntimeInstanceId={RuntimeInstanceId} Endpoint={Endpoint} HostCreationMode={HostCreationMode} DurationMs={DurationMs}",
                 request.RequestId,
                 request.SharedRunId,
-                startResult.RuntimeInstanceId,
-                startResult.TransportEndpoint ?? endpoint,
+                fulfilledRuntimeInstanceId,
+                fulfilledTransportEndpoint,
                 this.options.HostCreationMode,
                 (DateTimeOffset.UtcNow - startedAtUtc).TotalMilliseconds);
 
@@ -457,9 +502,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http.Sc
             {
                 Success = true,
                 Rejected = false,
-                RuntimeInstanceId = startResult.RuntimeInstanceId,
+                RuntimeInstanceId = fulfilledRuntimeInstanceId,
                 ProviderOperationId = $"http-host-manager-scaleout-{request.RequestId}",
-                Message = "HTTP runtime scale-out request was fulfilled by the runtime host manager."
+                Message = "HTTP runtime scale-out request was fulfilled by the runtime host manager.",
+                Metadata = metadata
             };
         }
 

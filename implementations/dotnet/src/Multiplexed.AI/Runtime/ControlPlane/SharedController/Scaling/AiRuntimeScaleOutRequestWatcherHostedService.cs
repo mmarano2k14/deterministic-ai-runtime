@@ -192,18 +192,36 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
 
                 if (providerResult.Success)
                 {
+                    var fulfilledRuntimeInstanceId =
+                        providerResult.RuntimeInstanceId;
+
+                    if (string.IsNullOrWhiteSpace(fulfilledRuntimeInstanceId))
+                    {
+                        await this.store
+                            .MarkRejectedAsync(
+                                request.RequestId,
+                                this.options.WatcherId,
+                                providerResult.FailureReason ??
+                                providerResult.Message ??
+                                "Scale-out provider returned success without a fulfilled runtime instance id.",
+                                cancellationToken)
+                            .ConfigureAwait(false);
+
+                        return;
+                    }
+
                     await this.store
                         .MarkFulfilledAsync(
                             request.RequestId,
                             this.options.WatcherId,
-                            providerResult.RuntimeInstanceId,
+                            fulfilledRuntimeInstanceId,
                             cancellationToken)
                         .ConfigureAwait(false);
 
                     await this.fulfilledRunRequeueService
                         .RequeueAsync(
                             request,
-                            providerResult.RuntimeInstanceId,
+                            fulfilledRuntimeInstanceId,
                             cancellationToken)
                         .ConfigureAwait(false);
 

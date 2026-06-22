@@ -52,8 +52,22 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
                     break;
 
                 case AiMcpHostMode.RuntimeInstanceOnly:
-                    Console.WriteLine("[APP CONFIG] Mapping runtime command endpoint '/runtime-instance/commands'.");
+                    var disableRuntimeCommandEndpoint =
+                        app.Configuration.GetValue<bool>("Tests:DisableRuntimeCommandEndpoint");
+
+                    if (disableRuntimeCommandEndpoint)
+                    {
+                        Console.WriteLine(
+                            "[APP CONFIG] Runtime command endpoint '/runtime-instance/commands' disabled by Tests:DisableRuntimeCommandEndpoint.");
+
+                        break;
+                    }
+
+                    Console.WriteLine(
+                        "[APP CONFIG] Mapping runtime command endpoint '/runtime-instance/commands'.");
+
                     app.MapAiRuntimeInstanceHttpCommandEndpoint();
+
                     break;
 
                 default:
