@@ -7,6 +7,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Isolation
     /// </summary>
     public sealed class AiRuntimeInstanceVisibilityEvaluator : IAiRuntimeInstanceVisibilityEvaluator
     {
+        private const string TenantIdAlias = "tenant.id";
+
+        private const string TenantGroupIdAlias = "tenant.group.id";
+
         private readonly IAiTenantRuntimeSettingsProvider tenantRuntimeSettingsProvider;
 
         /// <summary>
@@ -70,12 +74,14 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Isolation
             return new AiRuntimeInstanceVisibilityDescriptor
             {
                 RuntimeInstanceId = runtimeInstanceId,
-                TenantId = GetValue(
+                TenantId = GetFirstValue(
                     safeMetadata,
-                    AiRuntimeInstanceIsolationMetadataKeys.TenantId),
-                TenantGroupId = GetValue(
+                    AiRuntimeInstanceIsolationMetadataKeys.TenantId,
+                    TenantIdAlias),
+                TenantGroupId = GetFirstValue(
                     safeMetadata,
-                    AiRuntimeInstanceIsolationMetadataKeys.TenantGroupId),
+                    AiRuntimeInstanceIsolationMetadataKeys.TenantGroupId,
+                    TenantGroupIdAlias),
                 IsolationMode = ParseIsolationMode(
                     GetValue(
                         safeMetadata,
@@ -153,6 +159,32 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Isolation
             }
 
             return false;
+        }
+
+        /// <summary>
+        /// Gets the first available metadata value using case-insensitive key matching.
+        /// </summary>
+        /// <param name="metadata">The metadata dictionary.</param>
+        /// <param name="keys">The metadata keys to try in order.</param>
+        /// <returns>The first metadata value found, or <see langword="null" /> when missing.</returns>
+        private static string? GetFirstValue(
+            IReadOnlyDictionary<string, string> metadata,
+            params string[] keys)
+        {
+            foreach (var key in keys)
+            {
+                var value =
+                    GetValue(
+                        metadata,
+                        key);
+
+                if (!string.IsNullOrWhiteSpace(value))
+                {
+                    return value;
+                }
+            }
+
+            return null;
         }
 
         /// <summary>

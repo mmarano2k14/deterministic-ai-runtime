@@ -6,6 +6,543 @@ This project follows a deterministic runtime and observability model designed fo
 
 ---
 
+## [1.0.6.8] - 2026-06-20 — MCP Runtime Host Manager / Remote Runtime Scale-Out
+
+The goal of this phase was to evolve the control plane from simulated or fixture-only scale-out toward a real runtime host creation model.
+
+The target architecture is:
+
+```text
+Submit run
+-> admission detects no available capacity
+-> Redis scale-out request is created
+-> scale-out watcher observes the request
+-> provider receives RequestScaleOutAsync
+-> provider asks the runtime host manager to create or attach a runtime host
+-> real RuntimeInstanceOnly host starts
+-> runtime registers heartbeat and capacity
+-> readiness succeeds
+-> scale-out request is fulfilled
+-> shared queue can dispatch normally
+```
+
+This keeps the architecture clean:
+
+- The watcher never dispatches.
+- The host manager never dispatches.
+- The provider remains the transport and scale-out owner.
+- Runtime hosts self-register.
+- Readiness is based on real registry/capacity state.
+- No fake capacity is used for the process-host path.
+
+---
+
+## 1. Host creation model introduced
+
+Added a first-class runtime host creation mode model.
+
+Supported modes:
+
+- `Fixture`
+- `Process`
+- `Kubernetes`
+- `Attach`
+
+Current implemented modes:
+
+- `Fixture`
+- `Process`
+
+Planned modes:
+
+- `Kubernetes`
+- `Attach`
+
+The important separation is now:
+
+- Provider: `http`, `grpc`, `local`
+- Transport: `http`, `grpc`, `local`
+- Host creation mode: `Fixture`, `Process`, `Kubernetes`, `Attach`
+
+This allows combinations such as:
+
+- HTTP provider + Process host creation
+- HTTP provider + Kubernetes host creation
+- HTTP provider + Attach host creation
+- Future gRPC provider + Process/Kubernetes/Attach
+
+---
+
+## 2. Runtime host manager abstraction
+
+Added a host manager layer responsible for starting or attaching runtime hosts.
+
+Main concepts:
+
+- `IAiRuntimeHostManager`
+- `AiRuntimeHostStartRequest`
+- `AiRuntimeHostStartResult`
+- `IAiRuntimeHostCreationStrategy`
+- `AiRuntimeHostCreationManager`
+- `NoopAiRuntimeHostManager`
+
+The host manager routes host creation to the correct strategy based on `HostCreationMode`.
+
+The design keeps the provider as the main scale-out entry point. The provider still receives `RequestScaleOutAsync`, then delegates physical host creation to the host manager.
+
+---
+
+## 3. Host creation strategies
+
+Added strategy-based host creation.
+
+Implemented strategies:
+
+- `FixtureAiRuntimeHostCreationStrategy`
+- `ProcessAiRuntimeHostCreationStrategy`
+
+### Fixture strategy
+
+Used for integration tests and existing fixture-based scale-out scenarios.
+
+It registers a runtime instance and capacity directly into the registry/capacity stores.
+
+This mode remains useful for fast tests, but it is not the final production proof.
+
+### Process strategy
+
+Starts a real external `.NET` runtime host process using:
+
+```text
+dotnet Multiplexed.AI.McpServer.Host.dll
+```
+
+The process is started as:
+
+```text
+AiMcpHost:Mode = RuntimeInstanceOnly
+```
+
+It receives runtime identity, registration, transport, discovery, Redis/Mongo, worker, queue, and capacity settings through environment variables.
+
+This is the first real local-dev E2E scale-out path.
+
+---
+
+## 4. Process host creation options
+
+Added process host creation options.
+
+Important options:
+
+- `Enabled`
+- `DotnetExecutablePath`
+- `RuntimeHostAssemblyPath`
+- `WorkingDirectory`
+- `BasePort`
+- `MaxPort`
+- `StartupTimeoutSeconds`
+- `RedirectOutput`
+- `KillOnDispose`
+- `EnvironmentVariables`
+
+This allows the control plane to launch real runtime processes during integration tests or local development.
+
+The process strategy also tracks launched processes and kills them on dispose when configured.
+
+---
+
+## 5. Runtime process environment propagation
+
+The process strategy now injects the required environment variables for a real `RuntimeInstanceOnly` process.
+
+### MCP host mode
+
+```text
+AiMcpHost__Mode=RuntimeInstanceOnly
+AiMcpHost__Port={port}
+ASPNETCORE_URLS=http://localhost:{port}
+DOTNET_URLS=http://localhost:{port}
+AiMcpHost__EnableSharedQueuePump=false
+AiMcpHost__EnableReplayTools=false
+AiMcpHost__EnableObservabilityTools=false
+```
+
+### Disable local pool inside runtime instance process
+
+```text
+AiLocalRuntimeInstancePool__Enabled=false
+AiLocalRuntimeInstancePool__InstanceCount=0
+AiLocalRuntimeInstancePool__WorkerCountPerInstance=0
+AiLocalRuntimeInstancePool__MaxConcurrentRunsPerInstance=0
+AiLocalRuntimeInstancePool__LocalQueueCapacity=0
+AiLocalRuntimeInstancePool__RuntimeInstanceIdPrefix=disabled
+```
+
+This prevents a runtime instance process from creating its own local pool.
+
+### Runtime identity
+
+```text
+AiEngine__RuntimeInstanceId={runtimeInstanceId}
+AiEngine__PipelineBackgroundController__RuntimeInstanceId={runtimeInstanceId}
+AiEngine__RuntimeInstanceWorker__RuntimeInstanceId={runtimeInstanceId}
+```
+
+### Control-plane discovery
+
+```text
+AiEngine__ControlPlane__ControlPlaneId={controlPlaneId}
+AiEngine__ControlPlane__RedisDiscoveryKey=multiplexed-ai:{controlPlaneId}
+AiEngine__ControlPlane__EnableDiscovery=true
+AiEngine__ControlPlane__PublishDiscovery=false
+AiEngine__ControlPlane__RequireDiscovery=true
+```
+
+This allows the launched runtime instance to discover the correct control plane instead of hanging on a wrong/default discovery key.
+
+### Runtime registration
+
+```text
+AiRuntimeInstanceRegistration__Enabled=true
+AiRuntimeInstanceRegistration__ControlPlaneId={controlPlaneId}
+AiRuntimeInstanceRegistration__RuntimeInstanceId={runtimeInstanceId}
+AiRuntimeInstanceRegistration__ProviderName={providerName}
+AiRuntimeInstanceRegistration__Role=Runtime
+AiRuntimeInstanceRegistration__WorkerCount={workerCount}
+AiRuntimeInstanceRegistration__MaxConcurrentRuns={maxConcurrentRuns}
+AiRuntimeInstanceRegistration__QueueCapacity={localQueueCapacity}
+AiRuntimeInstanceRegistration__RuntimeVersion=process-host
+AiRuntimeInstanceRegistration__HeartbeatInterval=00:00:02
+```
+
+### Transport metadata
+
+```text
+AiRuntimeInstanceRegistration__Metadata__provider.name=http
+AiRuntimeInstanceRegistration__Metadata__transport.name=http
+AiRuntimeInstanceRegistration__Metadata__transport.endpoint=http://localhost:{port}
+AiRuntimeInstanceRegistration__Metadata__runtime.instance.id={runtimeInstanceId}
+AiRuntimeInstanceRegistration__Metadata__hostType=runtime-instance-process
+AiRuntimeInstanceRegistration__Metadata__deployment=process-host
+AiRuntimeInstanceRegistration__Metadata__hostCreation.mode=Process
+```
+
+---
+
+## 6. Runtime identity fix
+
+Fixed the local runtime environment identity issue.
+
+Before the fix, the process runtime could start with an internally generated fallback identity like:
+
+```text
+MSI:{processId}:{guid}
+```
+
+or:
+
+```text
+host-xxx:local-runtime-to-assign
+```
+
+That was wrong for externally created runtime instances.
+
+The runtime process now respects the configured runtime instance identity from registration/config.
+
+Expected identity:
+
+```text
+{controlPlaneId}:runtime-instance-1
+```
+
+This ensures that pipeline controller identity, runtime registration identity, capacity identity, and provider dispatch target identity all refer to the same runtime instance.
+
+---
+
+## 7. HTTP scale-out provisioner updated
+
+Updated the HTTP runtime scale-out provisioner to support HostManager mode and pass the selected host creation mode into `AiRuntimeHostStartRequest`.
+
+Important fix:
+
+```text
+HostCreationMode = options.HostCreationMode
+```
+
+Without this, the process test configured `Process`, but the actual host start request still used the default `Fixture`.
+
+The provisioner now builds host start requests containing:
+
+- ControlPlaneId
+- RuntimeInstanceId
+- ProviderName
+- TransportName
+- TransportEndpoint
+- TenantId
+- TenantGroupId
+- IsolationMode
+- PreferDedicatedCapacity
+- AllowSharedFallback
+- MaxRuntimeInstances
+- WorkerCountPerInstance
+- MaxConcurrentRunsPerInstance
+- LocalQueueCapacity
+- RuntimeInstanceIdPrefix
+- HostCreationMode
+- Metadata
+- ExecutionContextSnapshot
+
+---
+
+## 8. Runtime readiness integration
+
+Added readiness flow for host-manager scale-out.
+
+The provider can require readiness before fulfilling a scale-out request.
+
+Readiness checks real control-plane state:
+
+- runtime instance exists in registry
+- runtime capacity exists
+- runtime metadata is present
+- runtime can accept runs
+
+Failure reason examples:
+
+- `runtime-readiness-registry-missing`
+- `runtime-readiness-capacity-missing`
+- readiness timeout
+
+The successful process path now proves that the real process registered and published capacity before the scale-out request is fulfilled.
+
+---
+
+## 9. Test host assembly resolver
+
+Added a test-only resolver for the real MCP server host assembly.
+
+It resolves:
+
+```text
+Multiplexed.AI.McpServer.Host.dll
+```
+
+from the source build output.
+
+This is intentionally test-only. Production process mode must use an explicit configured `RuntimeHostAssemblyPath`.
+
+The resolver rejects invalid test paths and ensures the launched assembly is the real runtime host, not a test assembly.
+
+---
+
+## 10. Integration test settings updated
+
+Added process-host scale-out test settings.
+
+The test configuration now supports:
+
+```text
+AiHttpRuntimeScaleOut:Mode=HostManager
+AiHttpRuntimeScaleOut:HostCreationMode=Process
+AiHttpRuntimeScaleOut:RequireReadiness=true
+AiRuntimeProcessHostCreation:Enabled=true
+AiRuntimeProcessHostCreation:RuntimeHostAssemblyPath={resolvedHostAssembly}
+AiRuntimeProcessHostCreation:BasePort=5800
+AiRuntimeProcessHostCreation:MaxPort=5899
+```
+
+The process also receives Redis/Mongo settings through configured environment variables.
+
+---
+
+## 11. Generic MCP server test host updated
+
+Updated the integration test host to bind/rebind the new options correctly:
+
+- `AiHttpRuntimeScaleOutOptions`
+- `AiRuntimeProcessHostCreationOptions`
+
+The test host now preserves the real host manager when configured, instead of replacing it with a registering test host manager.
+
+This allowed the real `AiRuntimeHostCreationManager` and `ProcessAiRuntimeHostCreationStrategy` to run in the integration test.
+
+---
+
+## 12. Successful real process scale-out scenario
+
+Validated the key integration test:
+
+```text
+ControlPlaneWithHttpRuntimeInstances_With_Process_HostCreation_Mode_Should_Fulfill_Redis_ScaleOut_Request_Using_Real_Runtime_Process
+```
+
+Validated flow:
+
+```text
+Submit run
+-> no visible capacity
+-> Redis scale-out request created
+-> watcher observes request
+-> HTTP scale-out provider selected
+-> HostManager mode used
+-> Process host creation mode used
+-> real RuntimeInstanceOnly process started
+-> runtime process registers itself
+-> runtime capacity appears
+-> readiness succeeds
+-> Redis scale-out request fulfilled
+```
+
+The successful log confirms:
+
+```text
+Redis HTTP Process HostManager scale-out request fulfilled.
+```
+
+This is the first proof that local development can scale out by launching real runtime host processes.
+
+---
+
+## 13. Tenant runtime settings scan
+
+Confirmed that tenant runtime settings already exist through:
+
+```text
+HardcodedAiTenantRuntimeSettingsProvider
+```
+
+The provider already supports dedicated tenants, shared tenants, hybrid tenants, and fallback shared/default behavior.
+
+Settings include:
+
+- IsolationMode
+- PreferDedicatedCapacity
+- AllowSharedFallback
+- MaxRuntimeInstances
+- WorkerCountPerInstance
+- MaxConcurrentRunsPerInstance
+- LocalQueueCapacity
+- RuntimeInstanceIdPrefix
+- Metadata
+
+Confirmed that admission already reads tenant runtime settings and writes effective values into scale-out metadata/records.
+
+Confirmed that the watcher copies these values into the provider request.
+
+Confirmed that the HTTP provisioner copies these values into the host start request.
+
+Next step is to add process-host tests proving tenant settings drive the physical runtime process setup end-to-end.
+
+---
+
+## 14. Current architecture decisions
+
+Confirmed decisions:
+
+- The watcher must never dispatch runs directly.
+- The host manager must never dispatch runs directly.
+- The provider remains the transport and scale-out owner.
+- The runtime process must self-register.
+- Readiness must observe registry/capacity state.
+- Fixture mode stays available for fast tests.
+- Process mode is required for real local-dev E2E testing.
+- Circuit breaker open must not directly kill/restart a runtime instance.
+- Circuit breaker open is an endpoint health signal.
+- Health/draining/replacement decisions belong to the control plane / lifecycle owner.
+- Dedicated tenants must not silently fall back to shared capacity.
+- Shared/hybrid fallback must be explicit, observable, and policy-driven.
+- Before gRPC, Kubernetes, or Attach, the HTTP + Process path must be production-tested.
+
+---
+
+## 15. Next phase
+
+Before implementing gRPC, Kubernetes, or Attach, the next phase is production hardening of the HTTP + Process path.
+
+### Tenant settings end-to-end
+
+```text
+Tenant settings
+-> admission
+-> Redis scale-out request
+-> watcher
+-> provider request
+-> host start request
+-> process env vars
+-> runtime registration/capacity
+```
+
+### Dispatch after process scale-out
+
+```text
+submit run
+-> no capacity
+-> process scale-out
+-> runtime readiness fulfilled
+-> shared queue dispatches to real process runtime
+-> run completes
+```
+
+### Instance health
+
+Statuses to validate:
+
+- Healthy
+- Draining
+- Unhealthy
+- Offline
+
+Rules:
+
+- unhealthy instances must not receive new runs
+- draining instances must not receive new runs
+- capacity > 0 is ignored if instance is unhealthy
+- missing heartbeat/offline capacity must be ignored
+
+### Circuit breaker production scenarios
+
+Rules:
+
+- circuit open requeues the run
+- circuit open does not restart the runtime directly
+- circuit open marks endpoint/instance unhealthy or draining
+- dispatcher stops selecting unhealthy capacity
+- replacement scale-out is requested if no healthy capacity remains
+
+### Failure matrix
+
+Cases to validate:
+
+- host manager disabled
+- process strategy disabled
+- assembly path missing
+- assembly not found
+- process exits immediately
+- readiness registry missing
+- readiness capacity missing
+- readiness timeout
+- provider unavailable
+- scale-out request rejected
+- scale-out request expired
+- scale-out deduplicated
+- max runtime instances reached
+- dedicated tenant fallback denied
+- hybrid tenant fallback allowed and observable
+
+---
+
+## Summary
+
+This phase introduced the runtime host manager architecture and validated the first real host creation mode.
+
+The control plane can now scale out by launching a real external `RuntimeInstanceOnly` process, wait for real readiness through Redis registry/capacity, and fulfill the Redis scale-out request without fake capacity or fixture-only behavior.
+
+The next objective is to harden the HTTP + Process path across tenant settings, dispatch, health, circuit breaker, and production failure scenarios before moving to gRPC, Kubernetes, and Attach.
+
+
+---
+
 ## [1.0.6.8] - 2026-06-20 - HTTP Runtime Provider Hardening and Tenant-Aware Scale-Out 
 
 Scope: HTTP runtime provider hardening, HTTP scale-out provider integration, Redis scale-out request flow, tenant-aware isolation validation, and preparation for Remote MCP Runtime Host Manager.

@@ -24,7 +24,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.DI
         /// Verifies that HTTP provider registration is opt-in and not included in the default provider registration.
         /// </summary>
         [Fact]
-        public void AddAiRuntimeInstanceProviders_WithoutHttpProvider_ShouldNotRegisterHttpProvider()
+        public async Task AddAiRuntimeInstanceProviders_WithoutHttpProvider_ShouldNotRegisterHttpProvider()
         {
             var services = new ServiceCollection();
 
@@ -32,7 +32,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.DI
 
             services.AddAiRuntimeInstanceProviders();
 
-            using var provider =
+            await using var provider =
                 services.BuildServiceProvider();
 
             var providers =
@@ -47,7 +47,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.DI
         /// Verifies that the HTTP runtime instance provider can be registered explicitly.
         /// </summary>
         [Fact]
-        public void AddAiHttpRuntimeInstanceProvider_ShouldRegisterHttpProvider()
+        public async Task AddAiHttpRuntimeInstanceProvider_ShouldRegisterHttpProvider()
         {
             var services = new ServiceCollection();
 
@@ -56,7 +56,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.DI
             services.AddAiRuntimeInstanceProviders();
             services.AddAiHttpRuntimeInstanceProvider();
 
-            using var provider =
+            await using var provider =
                 services.BuildServiceProvider();
 
             var providers =
@@ -71,7 +71,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.DI
         /// Verifies that the provider router can resolve the HTTP provider after opt-in registration.
         /// </summary>
         [Fact]
-        public void AddAiHttpRuntimeInstanceProvider_ShouldAllowRouterToResolveHttpProvider()
+        public async Task AddAiHttpRuntimeInstanceProvider_ShouldAllowRouterToResolveHttpProvider()
         {
             var services = new ServiceCollection();
 
@@ -80,7 +80,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.DI
             services.AddAiRuntimeInstanceProviders();
             services.AddAiHttpRuntimeInstanceProvider();
 
-            using var provider =
+            await using var provider =
                 services.BuildServiceProvider();
 
             var router =
@@ -112,7 +112,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.DI
         /// Verifies that the HTTP runtime instance provider exposes the scale-out provider capability.
         /// </summary>
         [Fact]
-        public void AddAiHttpRuntimeInstanceProvider_ShouldAllowRouterToResolveHttpScaleOutProvider()
+        public async Task AddAiHttpRuntimeInstanceProvider_ShouldAllowRouterToResolveHttpScaleOutProvider()
         {
             var services =
                 new ServiceCollection();
@@ -123,7 +123,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.DI
             services.AddAiRuntimeInstanceProviders();
             services.AddAiHttpRuntimeInstanceProvider();
 
-            using var provider =
+            await using var provider =
                 services.BuildServiceProvider();
 
             var router =
@@ -158,7 +158,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.DI
         /// Verifies that the HTTP runtime scale-out provisioner is registered.
         /// </summary>
         [Fact]
-        public void AddAiHttpRuntimeInstanceProvider_ShouldRegisterHttpRuntimeScaleOutProvisioner()
+        public async Task AddAiHttpRuntimeInstanceProvider_ShouldRegisterHttpRuntimeScaleOutProvisioner()
         {
             var services =
                 new ServiceCollection();
@@ -169,7 +169,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.DI
             services.AddAiRuntimeInstanceProviders();
             services.AddAiHttpRuntimeInstanceProvider();
 
-            using var provider =
+            await using var provider =
                 services.BuildServiceProvider();
 
             var provisioner =
@@ -183,7 +183,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.DI
         /// Verifies that HTTP runtime scale-out options are bound from configuration.
         /// </summary>
         [Fact]
-        public void AddAiHttpRuntimeInstanceProvider_ShouldBindHttpRuntimeScaleOutOptionsFromConfiguration()
+        public async Task AddAiHttpRuntimeInstanceProvider_ShouldBindHttpRuntimeScaleOutOptionsFromConfiguration()
         {
             var services =
                 new ServiceCollection();
@@ -194,7 +194,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.DI
             services.AddAiRuntimeInstanceProviders();
             services.AddAiHttpRuntimeInstanceProvider();
 
-            using var provider =
+            await using var provider =
                 services.BuildServiceProvider();
 
             var options =
@@ -218,7 +218,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.DI
         /// Verifies that resolving the HTTP provider also injects the HTTP runtime scale-out provisioner.
         /// </summary>
         [Fact]
-        public void AddAiHttpRuntimeInstanceProvider_ShouldResolveHttpProviderWithScaleOutProvisioner()
+        public async Task AddAiHttpRuntimeInstanceProvider_ShouldResolveHttpProviderWithScaleOutProvisioner()
         {
             var services =
                 new ServiceCollection();
@@ -229,7 +229,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.DI
             services.AddAiRuntimeInstanceProviders();
             services.AddAiHttpRuntimeInstanceProvider();
 
-            using var provider =
+            await using var provider =
                 services.BuildServiceProvider();
 
             var runtimeProvider =

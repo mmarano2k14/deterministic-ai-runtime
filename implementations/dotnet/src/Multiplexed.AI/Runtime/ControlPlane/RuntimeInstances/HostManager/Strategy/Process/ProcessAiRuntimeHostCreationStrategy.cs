@@ -272,6 +272,18 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
             startInfo.Environment["AI_RUNTIME_INSTANCE_ID"] = request.RuntimeInstanceId;
             startInfo.Environment["MULTIPLEXED_AI_RUNTIME_INSTANCE_ID"] = request.RuntimeInstanceId;
 
+            startInfo.Environment["AiRuntimeInstanceRegistration__Metadata__tenant.id"] = request.TenantId ?? string.Empty;
+            startInfo.Environment["AiRuntimeInstanceRegistration__Metadata__tenant.group.id"] = request.TenantGroupId ?? string.Empty;
+            startInfo.Environment["AiRuntimeInstanceRegistration__Metadata__runtime.isolationMode"] = request.IsolationMode ?? string.Empty;
+            startInfo.Environment["AiRuntimeInstanceRegistration__Metadata__runtime.preferDedicatedCapacity"] = request.PreferDedicatedCapacity.ToString();
+            startInfo.Environment["AiRuntimeInstanceRegistration__Metadata__runtime.allowSharedFallback"] = request.AllowSharedFallback.ToString();
+            startInfo.Environment["AiRuntimeInstanceRegistration__Metadata__runtime.maxRuntimeInstances"] = request.MaxRuntimeInstances?.ToString(CultureInfo.InvariantCulture) ?? string.Empty;
+            startInfo.Environment["AiRuntimeInstanceRegistration__Metadata__runtime.instanceIdPrefix"] = request.RuntimeInstanceIdPrefix ?? string.Empty;
+            startInfo.Environment["AiRuntimeInstanceRegistration__Metadata__runtime.workerCountPerInstance"] = request.WorkerCountPerInstance.ToString(CultureInfo.InvariantCulture);
+            startInfo.Environment["AiRuntimeInstanceRegistration__Metadata__runtime.maxConcurrentRunsPerInstance"] = request.MaxConcurrentRunsPerInstance.ToString(CultureInfo.InvariantCulture);
+            startInfo.Environment["AiRuntimeInstanceRegistration__Metadata__runtime.localQueueCapacity"] = request.LocalQueueCapacity.ToString(CultureInfo.InvariantCulture);
+            startInfo.Environment["AiRuntimeInstanceRegistration__Metadata__hostCreation.mode"] = AiRuntimeHostCreationMode.Process.ToString();
+
             foreach (var pair in metadata)
             {
                 if (!string.IsNullOrWhiteSpace(pair.Key))

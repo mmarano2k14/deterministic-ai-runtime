@@ -343,13 +343,18 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Capacity
         {
             var currentSnapshot = TryResolveSnapshot();
 
+            if (currentSnapshot is null)
+            {
+                return true;
+            }
+
             var visibilityDescriptor = visibilityEvaluator.CreateDescriptor(
                 descriptor.RuntimeInstanceId,
                 descriptor.Metadata);
 
             return visibilityEvaluator.IsVisible(
-                currentSnapshot?.TenantId,
-                currentSnapshot?.TenantGroupId,
+                currentSnapshot.TenantId,
+                currentSnapshot.TenantGroupId,
                 visibilityDescriptor);
         }
 
