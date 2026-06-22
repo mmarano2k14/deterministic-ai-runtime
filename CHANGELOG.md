@@ -6,6 +6,318 @@ This project follows a deterministic runtime and observability model designed fo
 
 ---
 
+## [1.0.6.8] - 2026-06-20 — MCP Runtime Host Manager / HTTP Remote Runtime Scale-Out
+
+## Scope
+
+This changelog covers only the fixes completed in the last debugging sequence around the failing test:
+
+```text
+HttpRuntimeProviderProcessHostProductionScenarioTests
+ControlPlaneWithHttpRuntimeInstances_With_Process_HostCreation_Mode_Should_Dispatch_Dedicated_Tenant_Run_After_Runtime_Process_Becomes_Ready
+```
+
+This is not the full Host Manager changelog. It only documents the concrete corrections made after the process-host happy path was close but dispatch still failed.
+
+---
+
+## Initial Failure
+
+The test failed with the shared run stuck in:
+
+```text
+Status=ScaleOutRequested
+AssignedRuntimeInstanceId=...:tenant-a-runtime-1
+FailureReason=http-circuit-open
+```
+
+The process host had been created and had registered itself, but the run never moved to `Dispatched`.
+
+---
+
+## Fix 1 — Readiness Was Too Weak
+
+### Problem
+
+Readiness validated only the base HTTP endpoint:
+
+```text
+http://localhost:5800
+```
+
+That could succeed even if the real dispatch endpoint was not usable.
+
+The HTTP provider dispatches to:
+
+```text
+http://localhost:5800/runtime-instance/commands
+```
+
+So readiness had to validate the real command route, not only the base endpoint.
+
+### Change
+
+Updated `AiRuntimeInstanceReadinessWaiter` so HTTP readiness probes:
+
+```text
+GET /runtime-instance/commands
+```
+
+Behavior:
+
+```text
+404 -> runtime-readiness-command-endpoint-missing
+405 -> accepted, because route exists but GET is not allowed
+```
+
+### Result
+
+The logs proved the command endpoint existed:
+
+```text
+GET http://localhost:5800/runtime-instance/commands
+-> 405 Method Not Allowed
+```
+
+So the route was present and the failure was not endpoint mapping.
+
+---
+
+## Fix 2 — Test Host Was Still Using Fixture HTTP Routing
+
+### Problem
+
+After readiness was correct, the real error appeared:
+
+```text
+System.InvalidOperationException: No runtime HTTP client is available yet.
+```
+
+Root cause:
+
+`GenericMcpServerTestHost` still injected the fixture/test HTTP routing factory:
+
+```text
+MultiRuntimeHttpClientFactory
+RuntimeClientRoutingHandler
+```
+
+That handler is correct for WebApplicationFactory fixture runtime hosts, but wrong for `Process` mode.
+
+In `Process` mode, the HTTP provider must use a real network `HttpClient` and call:
+
+```text
+http://localhost:{port}/runtime-instance/commands
+```
+
+### Change
+
+Updated `GenericMcpServerTestHost` so when:
+
+```text
+AiHttpRuntimeScaleOut:Mode = HostManager
+Tests:UseRegisteringTestRuntimeHostManager = false
+```
+
+it skips the fixture HTTP client factory override.
+
+Expected diagnostic log:
+
+```text
+[TEST MCP HOST] HTTP HostManager Process mode detected. Runtime HTTP client factory override skipped. Real network HttpClient preserved.
+```
+
+### Result
+
+The control plane started calling the real process over HTTP instead of the in-memory fixture routing handler.
+
+---
+
+## Fix 3 — RuntimeInstanceOnly Did Not Register the HTTP Command Handler
+
+### Problem
+
+After real network HTTP was enabled, the runtime process received the POST, but failed with:
+
+```text
+No service for type
+'IAiRuntimeInstanceHttpCommandHandler'
+has been registered.
+```
+
+Root cause:
+
+`ControlPlaneWithHttpRuntimeInstances` called:
+
+```csharp
+services.AddAiHttpRuntimeInstanceProvider();
+```
+
+That extension already registered the HTTP command handler.
+
+But `RuntimeInstanceOnly` did not call it, and it should not call it because that would also register control-plane HTTP provider and scale-out services inside a runtime-only worker process.
+
+### Change
+
+Split runtime-side command handling into a separate DI extension:
+
+```csharp
+services.AddAiRuntimeInstanceHttpCommandHandling();
+```
+
+This registers only the runtime-side services required by:
+
+```text
+POST /runtime-instance/commands
+```
+
+Registered services:
+
+```text
+IAiSharedRuntimeInstance -> LocalAiSharedRuntimeInstance
+AiRuntimeInstanceHttpCommandHandler
+IAiRuntimeInstanceHttpCommandHandler -> AiRuntimeInstanceHttpCommandHandler
+```
+
+### Updated `AddAiHttpRuntimeInstanceProvider`
+
+`AddAiHttpRuntimeInstanceProvider()` now still registers the provider and scale-out services, but delegates the command handler part to:
+
+```csharp
+services.AddAiRuntimeInstanceHttpCommandHandling();
+```
+
+This preserves all previous HTTP scenarios.
+
+### Updated `ConfigureRuntimeInstanceOnly`
+
+Added:
+
+```csharp
+services.AddAiRuntimeInstanceHttpCommandHandling();
+
+Console.WriteLine(
+    "[RUNTIME INSTANCE ONLY] Registered runtime HTTP command handling services.");
+```
+
+right after:
+
+```csharp
+services.AddAiControlPlane();
+
+services.AddAiControlPlaneDiscoveryCore();
+```
+
+### Result
+
+The `RuntimeInstanceOnly` process can now handle incoming HTTP runtime commands without registering the full control-plane HTTP provider.
+
+---
+
+## Final Validation
+
+The failing test now passes.
+
+Final output:
+
+```text
+PROCESS HOST DEDICATED DISPATCH END-TO-END VALIDATED.
+SharedRunStatus='Dispatched'
+RuntimeInstanceId='...:tenant-a-runtime-1'
+```
+
+Validated flow:
+
+```text
+submit run
+-> admission sees no capacity
+-> Redis scale-out request
+-> watcher
+-> HTTP provider RequestScaleOutAsync
+-> HostManager
+-> Process host creation
+-> real RuntimeInstanceOnly process
+-> runtime self-registers registry/capacity
+-> readiness verifies command endpoint
+-> shared queue pump dispatches
+-> HTTP provider posts command
+-> runtime command handler accepts command
+-> shared run becomes Dispatched
+```
+
+---
+
+## Files Touched
+
+### `AiRuntimeInstanceReadinessWaiter`
+
+Updated HTTP readiness to validate the command endpoint:
+
+```text
+/runtime-instance/commands
+```
+
+instead of only the base endpoint.
+
+### `GenericMcpServerTestHost`
+
+Changed test HTTP client factory override behavior:
+
+```text
+Fixture mode -> keep test routing handler
+Process mode -> preserve real network HttpClient
+```
+
+### `HttpAiRuntimeInstanceProviderServiceCollectionExtensions`
+
+Split runtime-side command handling into:
+
+```csharp
+AddAiRuntimeInstanceHttpCommandHandling()
+```
+
+and kept `AddAiHttpRuntimeInstanceProvider()` backward compatible.
+
+### `ServiceRegistration.ConfigureRuntimeInstanceOnly`
+
+Added runtime-side HTTP command handling registration.
+
+---
+
+## Why Previous HTTP Scenarios Worked
+
+Previous HTTP scenarios worked because they ran through:
+
+```text
+ControlPlaneWithHttpRuntimeInstances
+```
+
+which calls:
+
+```csharp
+services.AddAiHttpRuntimeInstanceProvider();
+```
+
+That registered both the provider and the command handler.
+
+The new process-host scenario runs the child process as:
+
+```text
+RuntimeInstanceOnly
+```
+
+That mode did not call the HTTP provider extension, so it exposed the endpoint but did not have the handler registered.
+
+The fix separates provider registration from runtime command handling, so both worlds are correct:
+
+```text
+Control plane HTTP host -> AddAiHttpRuntimeInstanceProvider()
+Runtime-only process   -> AddAiRuntimeInstanceHttpCommandHandling()
+```
+
+
+---
+
 ## [1.0.6.8] - 2026-06-20 — MCP Runtime Host Manager / Remote Runtime Scale-Out
 
 The goal of this phase was to evolve the control plane from simulated or fixture-only scale-out toward a real runtime host creation model.

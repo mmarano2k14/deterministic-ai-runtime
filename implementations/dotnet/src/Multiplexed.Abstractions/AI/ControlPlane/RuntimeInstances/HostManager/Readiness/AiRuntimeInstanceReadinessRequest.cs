@@ -53,5 +53,10 @@ namespace Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager.
         /// Gets the delay between readiness checks.
         /// </summary>
         public TimeSpan PollInterval { get; init; } = TimeSpan.FromMilliseconds(250);
+
+        /// <summary>
+        /// Gets the optional transport endpoint that must become reachable before the runtime instance is considered ready.
+        /// </summary>
+        public string? TransportEndpoint { get; init; }
     }
 }

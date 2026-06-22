@@ -412,6 +412,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http.Sc
                                 RuntimeInstanceId = startResult.RuntimeInstanceId,
                                 ProviderName = ProviderName,
                                 TransportName = AiRuntimeInstanceCommandTransportMetadataKeys.HttpTransportName,
+                                TransportEndpoint = startResult.TransportEndpoint ?? endpoint,
                                 RequireTransportEndpoint = true,
                                 Timeout = TimeSpan.FromSeconds(
                                     Math.Max(

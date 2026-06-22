@@ -516,5 +516,57 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Helpers
                 $"LastMaxLocalWorkersPerExecution='{lastInstance?.MaxLocalWorkersPerExecution}', " +
                 $"LastCanAcceptRun='{lastInstance?.CanAcceptRun}'.");
         }
+
+
+        /// <summary>
+        /// Waits until a shared run is assigned to the expected runtime instance.
+        /// </summary>
+        /// <param name="sharedRunStore">The shared run store.</param>
+        /// <param name="sharedRunId">The shared run identifier.</param>
+        /// <param name="expectedRuntimeInstanceId">The expected runtime instance identifier.</param>
+        /// <param name="timeout">The maximum wait duration.</param>
+        /// <returns>The shared run record assigned to the expected runtime instance.</returns>
+        /// <exception cref="TimeoutException">Thrown when the shared run is not assigned to the expected runtime instance in time.</exception>
+        public static async Task<AiSharedRunRecord> WaitForSharedRunAssignedToRuntimeAsync(
+            IAiSharedRunStore sharedRunStore,
+            string sharedRunId,
+            string expectedRuntimeInstanceId,
+            TimeSpan timeout)
+        {
+            ArgumentNullException.ThrowIfNull(sharedRunStore);
+            ArgumentException.ThrowIfNullOrWhiteSpace(sharedRunId);
+            ArgumentException.ThrowIfNullOrWhiteSpace(expectedRuntimeInstanceId);
+
+            var startedAt =
+                DateTimeOffset.UtcNow;
+
+            AiSharedRunRecord? lastRun = null;
+
+            while (DateTimeOffset.UtcNow - startedAt < timeout)
+            {
+                lastRun =
+                    await sharedRunStore
+                        .GetAsync(sharedRunId)
+                        .ConfigureAwait(false);
+
+                if (lastRun is not null &&
+                    string.Equals(
+                        lastRun.AssignedRuntimeInstanceId,
+                        expectedRuntimeInstanceId,
+                        StringComparison.Ordinal))
+                {
+                    return lastRun;
+                }
+
+                await Task
+                    .Delay(TimeSpan.FromMilliseconds(100))
+                    .ConfigureAwait(false);
+            }
+
+            throw new TimeoutException(
+                $"Shared run '{sharedRunId}' was not assigned to runtime instance '{expectedRuntimeInstanceId}' within '{timeout}'. " +
+                $"LastStatus='{lastRun?.Status.ToString() ?? "<null>"}', " +
+                $"LastAssignedRuntimeInstanceId='{lastRun?.AssignedRuntimeInstanceId ?? "<null>"}'.");
+        }
     }
 }

@@ -12,12 +12,12 @@ using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.SharedInstance;
 namespace Multiplexed.AI.Runtime.ControlPlane.DI
 {
     /// <summary>
-    /// Provides dependency injection registration for the HTTP runtime instance provider.
+    /// Provides dependency injection registration for the HTTP runtime instance provider and runtime-side HTTP command handling.
     /// </summary>
     /// <remarks>
     /// <para>
     /// IMPORTANT:
-    /// This registration is intentionally opt-in and must not be part of the default
+    /// The HTTP runtime instance provider registration is intentionally opt-in and must not be part of the default
     /// local runtime instance provider registration.
     /// </para>
     ///
@@ -31,22 +31,21 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
     /// </code>
     ///
     /// <para>
-    /// The HTTP provider should only be registered when runtime instances are
+    /// The HTTP provider should only be registered when the control plane dispatches to runtime instances
     /// addressable through HTTP endpoints.
     /// </para>
     ///
     /// <para>
-    /// This provider is selected when a runtime instance capacity descriptor contains:
+    /// Runtime-side HTTP command handling is separated from the control-plane HTTP provider registration so
+    /// <c>RuntimeInstanceOnly</c> hosts can expose:
     /// </para>
     ///
     /// <code>
-    /// provider.name = http
-    /// transport.endpoint = http://runtime-instance-1:8080
+    /// POST /runtime-instance/commands
     /// </code>
     ///
     /// <para>
-    /// The HTTP provider does not replace local runtime queues. It sends commands to
-    /// the runtime instance that owns its own local queue, worker pool, and DAG engine.
+    /// without also registering control-plane HTTP dispatch provider or scale-out provider services.
     /// </para>
     /// </remarks>
     public static class HttpAiRuntimeInstanceProviderServiceCollectionExtensions
@@ -64,7 +63,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
             "AiHttpRuntimeScaleOut";
 
         /// <summary>
-        /// Registers the HTTP runtime instance provider as an opt-in runtime instance provider.
+        /// Registers the HTTP runtime instance provider as an opt-in control-plane runtime instance provider.
         /// </summary>
         /// <remarks>
         /// <para>
@@ -74,11 +73,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
         /// </para>
         ///
         /// <para>
-        /// This method also binds <see cref="AiHttpRuntimeInstanceProviderOptions"/>
+        /// This method binds <see cref="AiHttpRuntimeInstanceProviderOptions"/>
         /// from the <c>AiHttpRuntimeInstanceProvider</c> configuration section.
-        /// </para>
-        ///
-        /// <para>
         /// Supported hardening settings include dispatch timeout, retry behavior,
         /// timeout retry policy, and circuit breaker settings.
         /// </para>
@@ -92,13 +88,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
         /// </para>
         ///
         /// <para>
-        /// This method also registers the runtime-side HTTP command handler:
+        /// This method also calls <see cref="AddAiRuntimeInstanceHttpCommandHandling(IServiceCollection)"/>
+        /// so HTTP fixture/runtime scenarios that host the command endpoint in the same service collection
+        /// continue to work.
         /// </para>
-        ///
-        /// <code>
-        /// IAiRuntimeInstanceHttpCommandHandler
-        ///     -> AiRuntimeInstanceHttpCommandHandler
-        /// </code>
         ///
         /// <para>
         /// The provider router can then resolve descriptors with:
@@ -149,11 +142,46 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
                     IAiRuntimeInstanceProvider,
                     HttpAiRuntimeInstanceProvider>());
 
+            services.AddAiRuntimeInstanceHttpCommandHandling();
+
+            return services;
+        }
+
+        /// <summary>
+        /// Registers runtime-side HTTP command handling services.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// This method is intended for runtime hosts that expose:
+        /// </para>
+        ///
+        /// <code>
+        /// POST /runtime-instance/commands
+        /// </code>
+        ///
+        /// <para>
+        /// without registering the control-plane HTTP provider, scale-out provisioner, or HTTP dispatch provider.
+        /// This is required by <c>RuntimeInstanceOnly</c> process hosts.
+        /// </para>
+        ///
+        /// <para>
+        /// The command handler dispatches incoming HTTP commands to the local runtime instance abstraction owned
+        /// by the runtime process.
+        /// </para>
+        /// </remarks>
+        /// <param name="services">The service collection.</param>
+        /// <returns>The same service collection for chaining.</returns>
+        public static IServiceCollection AddAiRuntimeInstanceHttpCommandHandling(
+            this IServiceCollection services)
+        {
+            ArgumentNullException.ThrowIfNull(services);
+
             services.TryAddSingleton<IAiSharedRuntimeInstance>(serviceProvider =>
             {
-                var options = serviceProvider
-                    .GetRequiredService<IOptions<AiRuntimeInstanceRegistrationOptions>>()
-                    .Value;
+                var options =
+                    serviceProvider
+                        .GetRequiredService<IOptions<AiRuntimeInstanceRegistrationOptions>>()
+                        .Value;
 
                 var runtimeInstanceId =
                     !string.IsNullOrWhiteSpace(options.RuntimeInstanceId)
@@ -165,13 +193,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
                     runtimeInstanceId);
             });
 
-            services.TryAddSingleton<
-                AiRuntimeInstanceHttpCommandHandler>();
+            services.TryAddSingleton<AiRuntimeInstanceHttpCommandHandler>();
 
-            services.TryAddSingleton<
-                IAiRuntimeInstanceHttpCommandHandler>(
-                    serviceProvider =>
-                        serviceProvider.GetRequiredService<AiRuntimeInstanceHttpCommandHandler>());
+            services.TryAddSingleton<IAiRuntimeInstanceHttpCommandHandler>(
+                serviceProvider =>
+                    serviceProvider.GetRequiredService<AiRuntimeInstanceHttpCommandHandler>());
 
             return services;
         }

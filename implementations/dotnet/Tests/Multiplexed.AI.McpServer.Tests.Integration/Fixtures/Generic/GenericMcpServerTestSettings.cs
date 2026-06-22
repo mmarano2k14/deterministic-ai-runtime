@@ -491,7 +491,8 @@
                     ["AiRuntimeProcessHostCreation:EnvironmentVariables:AiEngine__Snapshots__Enabled"] = "true",
                     ["AiRuntimeProcessHostCreation:EnvironmentVariables:AiEngine__Snapshots__Mongo__Enabled"] = "true",
                     ["AiRuntimeProcessHostCreation:EnvironmentVariables:AiEngine__Snapshots__Mongo__ConnectionString"] = MongoConnectionString,
-                    ["AiRuntimeProcessHostCreation:EnvironmentVariables:AiEngine__Snapshots__Mongo__DatabaseName"] = DatabaseName
+                    ["AiRuntimeProcessHostCreation:EnvironmentVariables:AiEngine__Snapshots__Mongo__DatabaseName"] = DatabaseName,
+
                 });
         }
 

@@ -1223,15 +1223,19 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http
         {
             ArgumentNullException.ThrowIfNull(descriptor);
 
-            if (descriptor.Metadata is null ||
-                !descriptor.Metadata.TryGetValue(
-                    AiRuntimeInstanceCommandTransportMetadataKeys.TransportEndpoint,
-                    out var endpoint) ||
-                string.IsNullOrWhiteSpace(endpoint))
+            var endpoint =
+                GetMetadataValue(
+                    descriptor.Metadata,
+                    AiRuntimeInstanceCommandTransportMetadataKeys.TransportEndpoint) ??
+                GetMetadataValue(
+                    descriptor.Metadata,
+                    "transport.endpoint");
+
+            if (string.IsNullOrWhiteSpace(endpoint))
             {
                 return HttpCommandEndpointResolution.Failed(
                     AiHttpRuntimeDispatchFailureReasons.EndpointMissing,
-                    $"Runtime instance descriptor '{descriptor.RuntimeInstanceId}' does not define '{AiRuntimeInstanceCommandTransportMetadataKeys.TransportEndpoint}'.");
+                    $"Runtime instance descriptor '{descriptor.RuntimeInstanceId}' does not define '{AiRuntimeInstanceCommandTransportMetadataKeys.TransportEndpoint}' or 'transport.endpoint'.");
             }
 
             var endpointText =
@@ -1253,6 +1257,40 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http
 
             return HttpCommandEndpointResolution.Succeeded(
                 commandEndpoint);
+        }
+
+        /// <summary>
+        /// Gets a metadata value using case-insensitive key matching.
+        /// </summary>
+        /// <param name="metadata">The metadata dictionary.</param>
+        /// <param name="key">The metadata key.</param>
+        /// <returns>The metadata value, or <see langword="null" /> when missing.</returns>
+        private static string? GetMetadataValue(
+            IReadOnlyDictionary<string, string>? metadata,
+            string key)
+        {
+            if (metadata is null)
+            {
+                return null;
+            }
+
+            if (metadata.TryGetValue(key, out var value))
+            {
+                return value;
+            }
+
+            foreach (var item in metadata)
+            {
+                if (string.Equals(
+                        item.Key,
+                        key,
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    return item.Value;
+                }
+            }
+
+            return null;
         }
 
         /// <summary>

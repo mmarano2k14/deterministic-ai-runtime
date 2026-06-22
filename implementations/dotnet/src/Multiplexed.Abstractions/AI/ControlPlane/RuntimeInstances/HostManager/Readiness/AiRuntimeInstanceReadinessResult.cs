@@ -46,5 +46,10 @@ namespace Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager.
         /// Gets a value indicating whether the readiness operation timed out.
         /// </summary>
         public bool TimedOut { get; init; }
+
+        /// <summary>
+        /// Gets the optional transport endpoint checked by the readiness waiter.
+        /// </summary>
+        public string? TransportEndpoint { get; init; }
     }
 }

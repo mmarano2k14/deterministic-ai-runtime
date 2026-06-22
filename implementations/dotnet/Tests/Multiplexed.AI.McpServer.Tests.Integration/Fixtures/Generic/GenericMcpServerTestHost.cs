@@ -191,6 +191,14 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic
 
             builder.ConfigureServices(services =>
             {
+                if (ShouldUseRealNetworkHttpClient(settings))
+                {
+                    Console.WriteLine(
+                        "[TEST MCP HOST] HTTP HostManager Process mode detected. Runtime HTTP client factory override skipped. Real network HttpClient preserved.");
+
+                    return;
+                }
+
                 if (runtimeClientsByRuntimeInstanceId.Count == 1 &&
                     runtimeClient is not null)
                 {
@@ -210,6 +218,29 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic
                 Console.WriteLine(
                     $"[TEST MCP HOST] Runtime HTTP client factory injected into control-plane host. RuntimeClientCount='{runtimeClientsByRuntimeInstanceId.Count}', RuntimeInstances='{string.Join(", ", runtimeClientsByRuntimeInstanceId.Keys)}'.");
             });
+        }
+
+        /// <summary>
+        /// Determines whether the test host must preserve the real network HTTP client instead of installing fixture routing clients.
+        /// </summary>
+        /// <param name="settings">The test host settings.</param>
+        /// <returns><c>true</c> when real process hosts are used; otherwise, <c>false</c>.</returns>
+        private static bool ShouldUseRealNetworkHttpClient(
+            IReadOnlyDictionary<string, string?> settings)
+        {
+            if (!settings.TryGetValue(HttpScaleOutModeSettingKey, out var scaleOutMode) ||
+                !string.Equals(scaleOutMode, HttpScaleOutHostManagerMode, StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            if (!settings.TryGetValue(UseRegisteringTestRuntimeHostManagerSettingKey, out var value))
+            {
+                return false;
+            }
+
+            return bool.TryParse(value, out var parsed) &&
+                !parsed;
         }
 
         /// <summary>

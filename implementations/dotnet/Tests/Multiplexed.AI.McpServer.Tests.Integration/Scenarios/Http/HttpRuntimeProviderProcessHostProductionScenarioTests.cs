@@ -376,6 +376,128 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Http
         }
 
         /// <summary>
+        /// Verifies that a queued dedicated tenant run is dispatched to the real process-based runtime instance after scale-out completes.
+        /// </summary>
+        /// <returns>A task representing the asynchronous test operation.</returns>
+        [Fact]
+        public async Task ControlPlaneWithHttpRuntimeInstances_With_Process_HostCreation_Mode_Should_Dispatch_Dedicated_Tenant_Run_After_Runtime_Process_Becomes_Ready()
+        {
+            var controlPlaneId = GenericMcpServerTestSettings.CreateControlPlaneId("http-process-dedicated-dispatch-production");
+            var runtimeHostAssemblyPath = GenericMcpRuntimeHostAssemblyResolver.ResolveRuntimeHostAssemblyPath();
+            var controlPlaneSettings = GenericMcpServerTestSettings.CreateHttpProcessHostScaleOutOnlyControlPlaneSettings(controlPlaneId, runtimeHostAssemblyPath);
+
+            controlPlaneSettings["AiMcpHost:EnableSharedQueuePump"] = "true";
+            controlPlaneSettings["AiSharedQueueBackgroundService:Enabled"] = "true";
+            controlPlaneSettings["AiSharedQueuePump:Enabled"] = "true";
+            controlPlaneSettings["AiSharedQueueBackgroundService:IntervalSeconds"] = "1";
+            controlPlaneSettings["AiSharedQueueBackgroundService:MaxDispatchesPerCycle"] = "10";
+
+            controlPlaneSettings["AiHttpRuntimeInstanceProvider:EnableCircuitBreaker"] = "false";
+            controlPlaneSettings["AiHttpRuntimeInstanceProvider:CircuitBreakerFailureThreshold"] = "100";
+
+            this.output.WriteLine("Tenant runtime settings source: HardcodedAiTenantRuntimeSettingsProvider.");
+            this.output.WriteLine($"Resolved runtime host assembly path: '{runtimeHostAssemblyPath}'.");
+            this.output.WriteLine($"TEST SETTING AiHttpRuntimeScaleOut:Mode='{controlPlaneSettings["AiHttpRuntimeScaleOut:Mode"]}'.");
+            this.output.WriteLine($"TEST SETTING AiHttpRuntimeScaleOut:HostCreationMode='{controlPlaneSettings["AiHttpRuntimeScaleOut:HostCreationMode"]}'.");
+            this.output.WriteLine($"TEST SETTING AiRuntimeProcessHostCreation:RuntimeHostAssemblyPath='{controlPlaneSettings["AiRuntimeProcessHostCreation:RuntimeHostAssemblyPath"]}'.");
+
+            await using var host = new GenericMcpServerTestHost(controlPlaneSettings);
+            using var client = host.CreateClient();
+
+            AssertRedisStoresPublisherWatcherHttpProviderAndProcessHostManager(host.Services, runtimeHostAssemblyPath);
+
+            var tenantRuntimeSettingsProvider = host.Services.GetRequiredService<IAiTenantRuntimeSettingsProvider>();
+            var tenantRuntimeSettings = tenantRuntimeSettingsProvider.GetSettings(DedicatedTenantId, null);
+
+            Assert.Equal(DedicatedTenantId, tenantRuntimeSettings.TenantId);
+            Assert.Equal(AiRuntimeInstanceIsolationMode.Dedicated, tenantRuntimeSettings.IsolationMode);
+            Assert.True(tenantRuntimeSettings.PreferDedicatedCapacity);
+            Assert.False(tenantRuntimeSettings.AllowSharedFallback);
+            Assert.Equal(DedicatedRuntimeInstanceIdPrefix, tenantRuntimeSettings.RuntimeInstanceIdPrefix);
+
+            var mcp = await McpRbacTestClientHelper
+                .CreateConfiguredClientAsync(host, client, RequestedBy, tenantId: DedicatedTenantId)
+                .ConfigureAwait(false);
+
+            var sharedRunStore = host.Services.GetRequiredService<IAiSharedRunStore>();
+            var scaleOutRequestStore = host.Services.GetRequiredService<IAiRuntimeScaleOutRequestStore>();
+
+            var pipelineName = $"mcp-http-process-dedicated-dispatch-{Guid.NewGuid():N}";
+
+            var result = await SubmitSingleRunAndWaitForFulfilledScaleOutAsync(
+                    mcp,
+                    sharedRunStore,
+                    scaleOutRequestStore,
+                    controlPlaneId,
+                    pipelineName,
+                    DedicatedTenantId,
+                    TimeSpan.FromSeconds(45))
+                .ConfigureAwait(false);
+
+            Assert.NotNull(result.ScaleOutRequest.FulfilledRuntimeInstanceId);
+
+            var fulfilledRuntimeInstanceId = result.ScaleOutRequest.FulfilledRuntimeInstanceId!;
+
+            Assert.Contains($":{DedicatedRuntimeInstanceIdPrefix}-1", fulfilledRuntimeInstanceId, StringComparison.Ordinal);
+            Assert.DoesNotContain($":{SharedRuntimeInstanceIdPrefix}-1", fulfilledRuntimeInstanceId, StringComparison.Ordinal);
+
+            var expectedTenantGroupId = result.SharedRun.ExecutionContextSnapshot.TenantGroupId;
+
+            Assert.False(string.IsNullOrWhiteSpace(expectedTenantGroupId));
+
+            var stores = CreateTenantVisibleRedisRuntimeStores(
+                host.Services,
+                DedicatedTenantId,
+                expectedTenantGroupId,
+                "http-process-dedicated-dispatch-production");
+
+            var registered = await stores.Registry.GetAsync(fulfilledRuntimeInstanceId).ConfigureAwait(false);
+            var capacity = await stores.CapacityStore.GetAsync(fulfilledRuntimeInstanceId).ConfigureAwait(false);
+
+
+            Assert.NotNull(registered);
+            Assert.NotNull(capacity);
+            Assert.Equal(AiRuntimeInstanceStatus.Ready, registered!.Status);
+            Assert.True(registered.CanAcceptRun);
+            Assert.Equal(AiRuntimeInstanceStatus.Ready, capacity!.Status);
+            Assert.True(capacity.CanAcceptRun);
+
+            this.output.WriteLine($"REGISTERED transport.endpoint='{registered!.Metadata.GetValueOrDefault("transport.endpoint")}'.");
+            this.output.WriteLine($"REGISTERED command.transport.endpoint='{registered.Metadata.GetValueOrDefault(AiRuntimeInstanceCommandTransportMetadataKeys.TransportEndpoint)}'.");
+            this.output.WriteLine($"CAPACITY transport.endpoint='{capacity!.Metadata.GetValueOrDefault("transport.endpoint")}'.");
+            this.output.WriteLine($"CAPACITY command.transport.endpoint='{capacity.Metadata.GetValueOrDefault(AiRuntimeInstanceCommandTransportMetadataKeys.TransportEndpoint)}'.");
+
+            Assert.StartsWith("http://localhost:", capacity.Metadata.GetValueOrDefault(AiRuntimeInstanceCommandTransportMetadataKeys.TransportEndpoint), StringComparison.OrdinalIgnoreCase);
+
+            var dispatchedRuns = await McpTestWaitHelpers
+                .WaitForDispatchedRunsAsync(
+                    mcp,
+                    pipelineName,
+                    new HashSet<string>(StringComparer.Ordinal)
+                    {
+                result.SharedRunId
+                    },
+                    expectedCount: 1,
+                    timeout: TimeSpan.FromSeconds(60))
+                .ConfigureAwait(false);
+
+            var dispatchedRun = Assert.Single(dispatchedRuns);
+
+            Assert.Equal(result.SharedRunId, dispatchedRun.SharedRunId);
+            Assert.Equal(fulfilledRuntimeInstanceId, dispatchedRun.AssignedRuntimeInstanceId);
+            Assert.NotEqual(AiSharedRunStatus.ScaleOutRequested, dispatchedRun.Status);
+            Assert.NotEqual(AiSharedRunStatus.QueuedGlobally, dispatchedRun.Status);
+
+            this.output.WriteLine(
+                $"PROCESS HOST DEDICATED DISPATCH END-TO-END VALIDATED. " +
+                $"ControlPlaneId='{controlPlaneId}', SharedRunId='{result.SharedRunId}', " +
+                $"RequestId='{result.ScaleOutRequest.RequestId}', TenantId='{DedicatedTenantId}', " +
+                $"TenantGroupId='{expectedTenantGroupId}', RuntimeInstanceId='{fulfilledRuntimeInstanceId}', " +
+                $"SharedRunStatus='{dispatchedRun.Status}', PipelineKey='{pipelineName}', " +
+                $"RuntimeHostAssemblyPath='{runtimeHostAssemblyPath}'.");
+        }
+
+        /// <summary>
         /// Asserts that Redis stores, HTTP provider, watcher, and process host manager are correctly wired.
         /// </summary>
         /// <param name="services">The service provider.</param>

@@ -507,6 +507,11 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
 
             services.AddAiControlPlaneDiscoveryCore();
 
+            services.AddAiRuntimeInstanceHttpCommandHandling();
+
+            Console.WriteLine(
+                "[RUNTIME INSTANCE ONLY] Registered runtime HTTP command handling services.");
+
             LogHostedServiceRegistrations(
                 services,
                 "[RUNTIME INSTANCE ONLY][AFTER AddAiControlPlane]");
