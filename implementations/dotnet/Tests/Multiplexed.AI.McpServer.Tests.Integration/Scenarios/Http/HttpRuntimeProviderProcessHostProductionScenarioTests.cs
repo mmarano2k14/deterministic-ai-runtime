@@ -1080,6 +1080,167 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Http
         }
 
         /// <summary>
+        /// Verifies that process-based HTTP scale-out is rejected when the runtime process starts but the HTTP command endpoint is not available.
+        /// </summary>
+        /// <returns>A task representing the asynchronous test operation.</returns>
+        [Fact]
+        public async Task ControlPlaneWithHttpRuntimeInstances_With_Process_HostCreation_Mode_Should_Not_Fulfill_When_Runtime_Command_Endpoint_Is_Missing()
+        {
+            var controlPlaneId = GenericMcpServerTestSettings.CreateControlPlaneId("http-process-command-endpoint-missing-production");
+            var runtimeHostAssemblyPath = GenericMcpRuntimeHostAssemblyResolver.ResolveRuntimeHostAssemblyPath();
+
+            var controlPlaneSettings = GenericMcpServerTestSettings.CreateHttpProcessHostScaleOutOnlyControlPlaneSettings(
+                controlPlaneId,
+                runtimeHostAssemblyPath);
+
+            controlPlaneSettings["AiRuntimeProcessHostCreation:EnvironmentVariables:Tests__DisableRuntimeCommandEndpoint"] = "true";
+
+            this.output.WriteLine("Process readiness failure scenario: runtime process starts but command endpoint is disabled.");
+            this.output.WriteLine($"Runtime host assembly path: '{runtimeHostAssemblyPath}'.");
+            this.output.WriteLine($"TEST SETTING AiHttpRuntimeScaleOut:Mode='{controlPlaneSettings["AiHttpRuntimeScaleOut:Mode"]}'.");
+            this.output.WriteLine($"TEST SETTING AiHttpRuntimeScaleOut:HostCreationMode='{controlPlaneSettings["AiHttpRuntimeScaleOut:HostCreationMode"]}'.");
+            this.output.WriteLine($"TEST SETTING AiRuntimeProcessHostCreation:RuntimeHostAssemblyPath='{controlPlaneSettings["AiRuntimeProcessHostCreation:RuntimeHostAssemblyPath"]}'.");
+            this.output.WriteLine($"TEST SETTING AiRuntimeProcessHostCreation:EnvironmentVariables:Tests__DisableRuntimeCommandEndpoint='{controlPlaneSettings["AiRuntimeProcessHostCreation:EnvironmentVariables:Tests__DisableRuntimeCommandEndpoint"]}'.");
+
+            await using var host = new GenericMcpServerTestHost(controlPlaneSettings);
+            using var client = host.CreateClient();
+
+            AssertRedisStoresPublisherWatcherHttpProviderAndProcessHostManager(
+                host.Services,
+                runtimeHostAssemblyPath);
+
+            var mcp = await McpRbacTestClientHelper
+                .CreateConfiguredClientAsync(
+                    host,
+                    client,
+                    RequestedBy,
+                    tenantId: DedicatedTenantId)
+                .ConfigureAwait(false);
+
+            var sharedRunStore = host.Services.GetRequiredService<IAiSharedRunStore>();
+            var sharedQueue = host.Services.GetRequiredService<IAiSharedQueue>();
+            var scaleOutRequestStore = host.Services.GetRequiredService<IAiRuntimeScaleOutRequestStore>();
+            var runtimeInstanceRegistry = host.Services.GetRequiredService<IAiRuntimeInstanceRegistry>();
+            var runtimeInstanceCapacityStore = host.Services.GetRequiredService<IAiRuntimeInstanceCapacityStore>();
+
+            var pipelineName = $"mcp-http-process-command-endpoint-missing-{Guid.NewGuid():N}";
+
+            var submittedSharedRunIds = await SubmitRunsAsync(
+                    mcp,
+                    pipelineName,
+                    count: 1,
+                    stepCount: 3,
+                    flakyStepInterval: 0,
+                    tenantId: DedicatedTenantId)
+                .ConfigureAwait(false);
+
+            var sharedRunId = Assert.Single(submittedSharedRunIds);
+            var expectedScaleOutRequestId = $"scale-out-{sharedRunId}";
+            var expectedRuntimeInstanceId = $"{controlPlaneId}:{DedicatedRuntimeInstanceIdPrefix}-1";
+            var unexpectedDuplicateRuntimeInstanceId = $"{controlPlaneId}:{DedicatedRuntimeInstanceIdPrefix}-2";
+
+            var rejectedScaleOutRequest = await WaitForScaleOutRequestStatusAsync(
+                    scaleOutRequestStore,
+                    expectedScaleOutRequestId,
+                    AiRuntimeScaleOutRequestStatus.Rejected,
+                    TimeSpan.FromSeconds(60))
+                .ConfigureAwait(false);
+
+            Assert.Equal(expectedScaleOutRequestId, rejectedScaleOutRequest.RequestId);
+            Assert.Equal(sharedRunId, rejectedScaleOutRequest.SharedRunId);
+            Assert.Equal(controlPlaneId, rejectedScaleOutRequest.ControlPlaneId);
+            Assert.Equal(DedicatedTenantId, rejectedScaleOutRequest.TenantId);
+            Assert.Equal(pipelineName, rejectedScaleOutRequest.PipelineKey);
+            Assert.Equal(AiRuntimeScaleOutRequestStatus.Rejected, rejectedScaleOutRequest.Status);
+            Assert.Equal("mcp-scaleout-watcher", rejectedScaleOutRequest.RejectedBy);
+            Assert.Equal("runtime-readiness-command-endpoint-missing", rejectedScaleOutRequest.RejectionReason);
+            Assert.True(string.IsNullOrWhiteSpace(rejectedScaleOutRequest.FulfilledRuntimeInstanceId));
+
+            var sharedRunAfterRejection = await sharedRunStore
+                .GetAsync(sharedRunId)
+                .ConfigureAwait(false);
+
+            Assert.NotNull(sharedRunAfterRejection);
+            Assert.Equal(AiSharedRunStatus.ScaleOutRequested, sharedRunAfterRejection!.Status);
+            Assert.True(string.IsNullOrWhiteSpace(sharedRunAfterRejection.AssignedRuntimeInstanceId));
+
+            var queueItemAfterRejection = await sharedQueue
+                .GetAsync(sharedRunId)
+                .ConfigureAwait(false);
+
+            Assert.Null(queueItemAfterRejection);
+
+            var registered = await runtimeInstanceRegistry
+                .GetAsync(expectedRuntimeInstanceId)
+                .ConfigureAwait(false);
+
+            var capacity = await runtimeInstanceCapacityStore
+                .GetAsync(expectedRuntimeInstanceId)
+                .ConfigureAwait(false);
+
+            if (registered is not null)
+            {
+                Assert.Equal(expectedRuntimeInstanceId, registered.RuntimeInstanceId);
+                Assert.Equal(DedicatedTenantId, registered.Metadata["tenant.id"]);
+                Assert.Equal("Process", registered.Metadata["hostCreation.mode"]);
+            }
+
+            if (capacity is not null)
+            {
+                Assert.Equal(expectedRuntimeInstanceId, capacity.RuntimeInstanceId);
+                Assert.Equal(DedicatedTenantId, capacity.Metadata["tenant.id"]);
+                Assert.Equal("Process", capacity.Metadata["hostCreation.mode"]);
+            }
+
+            var duplicateRegistered = await runtimeInstanceRegistry
+                .GetAsync(unexpectedDuplicateRuntimeInstanceId)
+                .ConfigureAwait(false);
+
+            var duplicateCapacity = await runtimeInstanceCapacityStore
+                .GetAsync(unexpectedDuplicateRuntimeInstanceId)
+                .ConfigureAwait(false);
+
+            Assert.Null(duplicateRegistered);
+            Assert.Null(duplicateCapacity);
+
+            await Task.Delay(TimeSpan.FromSeconds(2)).ConfigureAwait(false);
+
+            var requestAfterAdditionalWatcherCycles = await scaleOutRequestStore
+                .GetAsync(expectedScaleOutRequestId)
+                .ConfigureAwait(false);
+
+            Assert.NotNull(requestAfterAdditionalWatcherCycles);
+            Assert.Equal(AiRuntimeScaleOutRequestStatus.Rejected, requestAfterAdditionalWatcherCycles!.Status);
+            Assert.Equal("runtime-readiness-command-endpoint-missing", requestAfterAdditionalWatcherCycles.RejectionReason);
+            Assert.True(string.IsNullOrWhiteSpace(requestAfterAdditionalWatcherCycles.FulfilledRuntimeInstanceId));
+            Assert.Equal(rejectedScaleOutRequest.RejectedAtUtc, requestAfterAdditionalWatcherCycles.RejectedAtUtc);
+
+            var finalSharedRun = await sharedRunStore
+                .GetAsync(sharedRunId)
+                .ConfigureAwait(false);
+
+            Assert.NotNull(finalSharedRun);
+            Assert.Equal(AiSharedRunStatus.ScaleOutRequested, finalSharedRun!.Status);
+            Assert.True(string.IsNullOrWhiteSpace(finalSharedRun.AssignedRuntimeInstanceId));
+            Assert.NotEqual(unexpectedDuplicateRuntimeInstanceId, finalSharedRun.AssignedRuntimeInstanceId);
+
+            var finalQueueItem = await sharedQueue
+                .GetAsync(sharedRunId)
+                .ConfigureAwait(false);
+
+            Assert.Null(finalQueueItem);
+
+            this.output.WriteLine(
+                $"PROCESS HOST READINESS FAILURE VALIDATED. " +
+                $"ControlPlaneId='{controlPlaneId}', SharedRunId='{sharedRunId}', " +
+                $"RequestId='{rejectedScaleOutRequest.RequestId}', TenantId='{DedicatedTenantId}', " +
+                $"ExpectedRuntimeInstanceId='{expectedRuntimeInstanceId}', " +
+                $"UnexpectedDuplicateRuntimeInstanceId='{unexpectedDuplicateRuntimeInstanceId}', " +
+                $"RejectionReason='{rejectedScaleOutRequest.RejectionReason}', " +
+                $"RuntimeHostAssemblyPath='{runtimeHostAssemblyPath}'.");
+        }
+
+        /// <summary>
         /// Asserts the valid states after a scale-out request has been fulfilled and the linked shared run has been requeued.
         /// </summary>
         /// <param name="sharedRun">The shared run.</param>
