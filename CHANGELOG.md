@@ -6,6 +6,184 @@ This project follows a deterministic runtime and observability model designed fo
 
 ---
 
+## Tenant runtime mode production scenario
+
+### Added dedicated / shared / hybrid tenant runtime mode scenario
+
+Added a new HTTP process-host production scenario:
+
+```text
+Http_ProcessHost_Should_Respect_Dedicated_Shared_Hybrid_Tenant_Runtime_Modes
+```
+
+The scenario validates that tenant runtime settings are not only configuration values, but are actually propagated through the full production execution path:
+
+```text
+MCP submit
+→ tenant-aware admission
+→ Redis scale-out request
+→ scale-out watcher
+→ HTTP provider
+→ process HostManager
+→ real RuntimeInstanceOnly process
+→ runtime registration
+→ capacity publishing
+→ visibility filtering
+→ shared queue dispatch
+→ HTTP runtime command execution
+→ DAG completion
+```
+
+The scenario covers three tenant runtime modes:
+
+```text
+tenant-dedicated → Dedicated runtime mode
+tenant-shared    → Shared runtime mode
+tenant-hybrid    → Hybrid runtime mode
+```
+
+Validated output:
+
+```text
+tenant-dedicated → tenant-dedicated-runtime-1
+tenant-shared    → tenant-shared-runtime-1
+tenant-hybrid    → tenant-hybrid-runtime-1
+```
+
+This proves that runtime mode, tenant id, tenant group id, runtime instance prefix, capacity limits, and scale-out behavior are carried end-to-end across the control plane and real runtime host processes.
+
+---
+
+## Tenant runtime settings propagation fixes
+
+### Fixed tenant group propagation from MCP submit to shared run metadata
+
+The dedicated / shared / hybrid scenario initially blocked with shared runs stuck in:
+
+```text
+ScaleOutRequested
+```
+
+Root cause:
+
+```text
+Scale-out request used the tenant runtime settings TenantGroupId.
+Shared run used the default MCP context TenantGroupId.
+Requeue scope validation rejected the run with ScopeMismatch.
+```
+
+Observed mismatch:
+
+```text
+RequestTenantGroupId=tenant-mode-group-*
+SharedRunTenantGroupId=tenant-group-id-xxx
+```
+
+Fix:
+
+- Added tenant isolation metadata to the production scenario submit request metadata.
+- Ensured `tenant.id` and `tenant.group.id` are propagated with the submitted shared run.
+- Kept business input metadata intact, but made the control-plane metadata the source for routing / isolation scope.
+
+Result:
+
+```text
+SharedRunTenantGroupId == ScaleOutRequestTenantGroupId
+```
+
+After this fix, scale-out fulfillment requeue matched the correct tenant scope and dispatch resumed successfully.
+
+### Fixed tenant-aware HTTP scale-out prefix resolution
+
+The HTTP scale-out provisioner was updated so tenant runtime settings can drive the runtime instance id prefix.
+
+This prevents different tenants from colliding on generic runtime ids such as:
+
+```text
+runtime-instance-1
+```
+
+Validated generated runtime instance ids:
+
+```text
+production-tenant-runtime-mode-*:tenant-dedicated-runtime-1
+production-tenant-runtime-mode-*:tenant-shared-runtime-1
+production-tenant-runtime-mode-*:tenant-hybrid-runtime-1
+```
+
+The provisioner now keeps provider-level HTTP scale-out options as technical defaults, while tenant runtime settings can define tenant-specific runtime capacity and runtime id prefixes.
+
+---
+
+## Runtime visibility and HTTP provider DI fixes
+
+### Fixed dedicated runtime visibility by tenant group
+
+The runtime instance visibility evaluator was updated so owned runtime instances can be visible by exact tenant ownership or tenant-group ownership when the descriptor is explicitly group-scoped.
+
+Fixed scenario:
+
+```text
+Dedicated descriptor TenantGroupId=enterprise-group
+Request TenantGroupId=enterprise-group
+→ visible = true
+```
+
+This supports dedicated capacity that belongs to a tenant group instead of one exact tenant, while still preserving tenant isolation for tenant-owned runtimes.
+
+### Fixed HTTP provider dependency registration
+
+`AiHttpRuntimeScaleOutProvisioner` now depends on:
+
+```text
+IAiTenantRuntimeSettingsProvider
+```
+
+The HTTP provider DI registration was updated to provide a safe default tenant runtime settings provider using `TryAddSingleton`.
+
+This keeps the HTTP provider opt-in registration self-contained for unit tests and simple provider setups, while still allowing production scenarios to override it with the configuration-backed provider.
+
+Fix:
+
+```text
+IAiTenantRuntimeSettingsProvider → HardcodedAiTenantRuntimeSettingsProvider
+```
+
+registered only when no tenant runtime settings provider already exists.
+
+### Updated HTTP scale-out provisioner unit tests
+
+The direct provisioner unit tests were updated with a request-compatible tenant runtime settings provider so test expectations remain driven by the explicit scale-out request values.
+
+This avoids accidentally mixing hardcoded tenant defaults into provisioner unit tests that verify request-specific values such as:
+
+```text
+RuntimeInstanceIdPrefix
+WorkerCountPerInstance
+MaxConcurrentRunsPerInstance
+LocalQueueCapacity
+AllowSharedFallback
+PreferDedicatedCapacity
+```
+
+---
+
+## Final validated tests
+
+The following tests are now green:
+
+```text
+Http_ProcessHost_Should_Run_MultiTenant_Capacity_Replay_Ledger_Production_Scenario
+Http_ProcessHost_Should_Respect_Dedicated_Shared_Hybrid_Tenant_Runtime_Modes
+AiHttpRuntimeScaleOutProvisionerTests
+AiRuntimeInstanceVisibilityEvaluatorTests
+HttpAiRuntimeInstanceProviderServiceCollectionExtensionsTests
+```
+
+This confirms that the production scenario framework now validates both durable multi-process observability/replay and tenant runtime mode behavior across real HTTP process-host runtime instances.
+
+---
+
 ## [1.0.6.9] - 2026-06-23 — MCP Production Runtime Scenario Framework
 
 ## Scope
