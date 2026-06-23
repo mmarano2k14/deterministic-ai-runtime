@@ -196,10 +196,142 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Isolation
             Assert.True(descriptor.PreferDedicatedCapacity);
         }
 
+        /// <summary>
+        /// Verifies that a Dedicated tenant cannot see shared runtime capacity when shared fallback is disabled.
+        /// </summary>
+        [Fact]
+        public void IsVisible_Should_Return_False_For_Shared_Instance_When_Dedicated_Fallback_Is_Disabled()
+        {
+            var evaluator =
+                new AiRuntimeInstanceVisibilityEvaluator(
+                    new FixedTenantRuntimeSettingsProvider(
+                        isolationMode: AiRuntimeInstanceIsolationMode.Dedicated,
+                        allowSharedFallback: false));
+
+            var descriptor =
+                new AiRuntimeInstanceVisibilityDescriptor
+                {
+                    RuntimeInstanceId = "shared-runtime-1",
+                    TenantId = null,
+                    TenantGroupId = null,
+                    IsolationMode = AiRuntimeInstanceIsolationMode.Shared
+                };
+
+            var visible =
+                evaluator.IsVisible(
+                    tenantId: "tenant-dedicated-a",
+                    tenantGroupId: "tenant-group-dedicated-a",
+                    descriptor: descriptor);
+
+            Assert.False(visible);
+        }
+
+        /// <summary>
+        /// Verifies that a Hybrid tenant behaves like Dedicated when shared fallback is disabled.
+        /// </summary>
+        [Fact]
+        public void IsVisible_Should_Return_False_For_Shared_Instance_When_Hybrid_Fallback_Is_Disabled()
+        {
+            var evaluator =
+                new AiRuntimeInstanceVisibilityEvaluator(
+                    new FixedTenantRuntimeSettingsProvider(
+                        isolationMode: AiRuntimeInstanceIsolationMode.Hybrid,
+                        allowSharedFallback: false));
+
+            var descriptor =
+                new AiRuntimeInstanceVisibilityDescriptor
+                {
+                    RuntimeInstanceId = "shared-runtime-1",
+                    TenantId = null,
+                    TenantGroupId = null,
+                    IsolationMode = AiRuntimeInstanceIsolationMode.Shared
+                };
+
+            var visible =
+                evaluator.IsVisible(
+                    tenantId: "tenant-hybrid-a",
+                    tenantGroupId: "tenant-group-hybrid-a",
+                    descriptor: descriptor);
+
+            Assert.False(visible);
+        }
+
+        /// <summary>
+        /// Verifies that a Hybrid tenant can see shared runtime capacity when shared fallback is enabled.
+        /// </summary>
+        [Fact]
+        public void IsVisible_Should_Return_True_For_Shared_Instance_When_Hybrid_Fallback_Is_Enabled()
+        {
+            var evaluator =
+                new AiRuntimeInstanceVisibilityEvaluator(
+                    new FixedTenantRuntimeSettingsProvider(
+                        isolationMode: AiRuntimeInstanceIsolationMode.Hybrid,
+                        allowSharedFallback: true));
+
+            var descriptor =
+                new AiRuntimeInstanceVisibilityDescriptor
+                {
+                    RuntimeInstanceId = "shared-runtime-1",
+                    TenantId = null,
+                    TenantGroupId = null,
+                    IsolationMode = AiRuntimeInstanceIsolationMode.Shared
+                };
+
+            var visible =
+                evaluator.IsVisible(
+                    tenantId: "tenant-hybrid-a",
+                    tenantGroupId: "tenant-group-hybrid-a",
+                    descriptor: descriptor);
+
+            Assert.True(visible);
+        }
+
         private static AiRuntimeInstanceVisibilityEvaluator CreateEvaluator()
         {
             return new AiRuntimeInstanceVisibilityEvaluator(
                 new HardcodedAiTenantRuntimeSettingsProvider());
+        }
+
+        /// <summary>
+        /// Provides fixed tenant runtime settings for visibility evaluator tests.
+        /// </summary>
+        private sealed class FixedTenantRuntimeSettingsProvider : IAiTenantRuntimeSettingsProvider
+        {
+            private readonly AiRuntimeInstanceIsolationMode isolationMode;
+            private readonly bool allowSharedFallback;
+
+            /// <summary>
+            /// Initializes a new instance of the <see cref="FixedTenantRuntimeSettingsProvider"/> class.
+            /// </summary>
+            /// <param name="isolationMode">The tenant isolation mode to return.</param>
+            /// <param name="allowSharedFallback">Whether shared fallback is allowed.</param>
+            public FixedTenantRuntimeSettingsProvider(
+                AiRuntimeInstanceIsolationMode isolationMode,
+                bool allowSharedFallback)
+            {
+                this.isolationMode = isolationMode;
+                this.allowSharedFallback = allowSharedFallback;
+            }
+
+            /// <inheritdoc />
+            public AiTenantRuntimeSettings GetSettings(
+                string? tenantId,
+                string? tenantGroupId)
+            {
+                return new AiTenantRuntimeSettings
+                {
+                    TenantId = tenantId,
+                    TenantGroupId = tenantGroupId,
+                    IsolationMode = this.isolationMode,
+                    PreferDedicatedCapacity = this.isolationMode is AiRuntimeInstanceIsolationMode.Dedicated or AiRuntimeInstanceIsolationMode.Hybrid,
+                    AllowSharedFallback = this.allowSharedFallback,
+                    MaxRuntimeInstances = 1,
+                    WorkerCountPerInstance = 1,
+                    MaxConcurrentRunsPerInstance = 1,
+                    LocalQueueCapacity = 10,
+                    RuntimeInstanceIdPrefix = "test-runtime"
+                };
+            }
         }
     }
 }
