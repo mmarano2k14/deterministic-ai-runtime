@@ -1,6 +1,6 @@
 # HTTP Runtime Provider
 
-Status: Implemented foundation / validated for hardened HTTP dispatch, provider-based HTTP scale-out, Redis-backed scale-out request fulfillment, and tenant-aware shared, dedicated, and hybrid scale-out policies.
+Status: Implemented and validated for hardened HTTP dispatch, provider-based HTTP scale-out, Runtime Host Manager process-host provisioning, Redis-backed scale-out request fulfillment, and tenant-aware Shared / Dedicated / Hybrid runtime policies.
 
 This document describes the **HTTP runtime provider** for the Deterministic AI Runtime control plane.
 
@@ -12,6 +12,7 @@ The general provider model is described in:
 - [Runtime Discovery, Registry, and Capacity](runtime-discovery-registry-capacity.md)
 - [Multi-Tenant Control Plane Isolation](multi-tenant-control-plane-isolation.md)
 - [MCP Server as Runtime Control Plane](mcp-server-control-plane.md)
+- [MCP Production Runtime Scenario Framework](mcp-production-runtime-scenario-framework.md)
 
 ---
 
@@ -19,21 +20,25 @@ The general provider model is described in:
 
 The HTTP runtime provider exists to support runtime instances that are reachable through HTTP endpoints.
 
-It currently supports or prepares the following responsibilities:
+It currently supports the following responsibilities:
 
-- dispatching shared runs to HTTP runtime instances
-- querying runtime status through HTTP transport
-- sending runtime control operations through HTTP transport
-- applying HTTP dispatch timeout protection
-- applying retry and backoff behavior
-- applying circuit breaker protection
-- returning structured dispatch failure reasons
-- persisting dispatch failure state through the shared run store
-- participating in provider-based scale-out
-- delegating HTTP scale-out to `IAiHttpRuntimeScaleOutProvisioner`
-- publishing HTTP runtime registry and capacity metadata during scale-out foundation scenarios
-- preserving tenant-aware runtime settings during HTTP scale-out
-- validating shared, dedicated, and hybrid runtime isolation behavior
+- dispatching shared runs to HTTP runtime instances;
+- querying runtime status through HTTP transport;
+- sending runtime control operations through HTTP transport;
+- applying HTTP dispatch timeout protection;
+- applying retry and backoff behavior;
+- applying circuit breaker protection;
+- returning structured dispatch failure reasons;
+- preserving queued-run state when dispatch cannot proceed;
+- persisting dispatch failure state through the shared run store;
+- participating in provider-based scale-out;
+- delegating HTTP scale-out to `IAiHttpRuntimeScaleOutProvisioner`;
+- delegating runtime host creation to the Runtime Host Manager when host-manager mode is enabled;
+- launching real `RuntimeInstanceOnly` host processes in process-host scenarios;
+- waiting for runtime registration / capacity readiness;
+- preserving tenant-aware runtime settings during HTTP scale-out;
+- validating Shared, Dedicated, and Hybrid runtime isolation behavior;
+- validating ledger, trace, replay, and retention across process boundaries.
 
 The HTTP provider must not execute DAG steps directly.
 
@@ -60,7 +65,7 @@ The HTTP provider can dispatch a run to an already registered runtime instance w
 ```text
 Shared queue dispatcher
     ↓
-Admission assigns runtime instance
+Admission selects tenant-visible runtime capacity
     ↓
 Capacity descriptor contains provider.name=http
     ↓
@@ -91,7 +96,7 @@ The provider delegates scale-out to:
 IAiHttpRuntimeScaleOutProvisioner
 ```
 
-Current foundation flow:
+Current validated process-host flow:
 
 ```text
 AiRuntimeScaleOutRequestWatcherHostedService
@@ -104,10 +109,24 @@ HttpAiRuntimeInstanceProvider
     ↓
 IAiHttpRuntimeScaleOutProvisioner
     ↓
-HTTP runtime registry/capacity metadata materialized
+IAiRuntimeHostManager
+    ↓
+ProcessAiRuntimeHostCreationStrategy
+    ↓
+RuntimeInstanceOnly process starts
+    ↓
+runtime self-registers
+    ↓
+runtime publishes heartbeat / capacity
+    ↓
+readiness is observed
     ↓
 ScaleOutRequest.Status = Fulfilled
+    ↓
+queued run is dispatched through HTTP
 ```
+
+This proves that HTTP is no longer only a dispatch transport. It can also participate in provider-based runtime capacity creation through the Runtime Host Manager.
 
 ---
 
@@ -127,7 +146,7 @@ transport.name=http
 
 means the resulting runtime capacity is contacted through HTTP.
 
-For the current HTTP provider foundation, these values are usually the same.
+For the current HTTP provider process-host flow, these values are usually the same.
 
 For Kubernetes, they may diverge:
 
@@ -143,7 +162,7 @@ providerHint=kubernetes
 transport.name=grpc
 ```
 
-This separation allows Kubernetes, Docker, ECS, Nomad, or a remote MCP host manager to create runtime capacity while dispatch still uses HTTP or gRPC.
+This separation allows Kubernetes, Docker, ECS, Nomad, local process launchers, or a remote MCP host manager to create runtime capacity while dispatch still uses HTTP or gRPC.
 
 ---
 
@@ -179,7 +198,7 @@ CircuitBreakerFailureThreshold = 5
 CircuitBreakerBreakDuration = 30 seconds
 ```
 
-The provider should fail fast and return structured failure results when an HTTP runtime endpoint is unavailable, invalid, timing out, repeatedly failing, or circuit-open.
+The provider fails fast and returns structured failure results when an HTTP runtime endpoint is unavailable, invalid, timing out, repeatedly failing, or circuit-open.
 
 ---
 
@@ -213,9 +232,9 @@ trace timeline
 future dashboards
 ```
 
-The HTTP provider should report endpoint failure reasons, but it should not directly mark runtime instances unhealthy or restart instances.
+The HTTP provider reports endpoint and command failure reasons, but it must not directly kill, restart, or replace runtime instances.
 
-Health management and runtime restart policy should remain provider-agnostic or be handled by a higher-level health manager.
+Health management and runtime replacement policy belong to a higher-level health reconciler or to the lifecycle owner of the runtime instance.
 
 ---
 
@@ -246,7 +265,7 @@ failure reason mapped
     ↓
 result returned to dispatcher
     ↓
-shared run failure persisted when dispatch cannot proceed
+shared run failure reason persisted when dispatch cannot proceed
 ```
 
 Timeout, retry, and circuit breaker behavior must remain transport-level hardening.
@@ -255,9 +274,46 @@ They must not bypass admission, shared queue state, runtime local queue ownershi
 
 ---
 
-## HTTP Scale-Out Foundation
+## Circuit Open Semantics
 
-The HTTP provider now participates in provider-based scale-out.
+A circuit breaker open event is an endpoint health signal.
+
+It is not a runtime lifecycle command.
+
+Expected behavior:
+
+```text
+HTTP dispatch detects circuit open
+    ↓
+provider returns http-circuit-open
+    ↓
+shared controller / dispatcher keeps the shared run safe
+    ↓
+run can remain queued or be requeued depending on dispatcher policy
+    ↓
+future health reconciler may mark runtime unhealthy or draining
+    ↓
+replacement capacity may be requested if needed
+```
+
+The HTTP command provider should not restart or close the runtime instance directly.
+
+Only the lifecycle owner should restart or replace runtime instances.
+
+Examples of lifecycle owners:
+
+```text
+Runtime Host Manager
+local process provider
+Kubernetes provider
+external supervisor
+```
+
+---
+
+## HTTP Scale-Out with Runtime Host Manager
+
+The HTTP provider now supports process-host scale-out through the Runtime Host Manager.
 
 The provider implements:
 
@@ -271,57 +327,20 @@ and delegates to:
 IAiHttpRuntimeScaleOutProvisioner
 ```
 
-Current foundation behavior:
+The provisioner can then delegate host creation to:
 
 ```text
-RequestScaleOutAsync(request)
-    ↓
-IAiHttpRuntimeScaleOutProvisioner.ProvisionAsync(request)
-    ↓
-runtime instance registration is created
-    ↓
-runtime capacity descriptor is published
-    ↓
-HTTP transport metadata is attached
-    ↓
-scale-out provider result is returned
+IAiRuntimeHostManager
 ```
 
-This validates the control-plane scale-out loop for HTTP.
-
-It proves that HTTP is no longer only a dispatch transport. It can also participate in scale-out provider routing.
-
----
-
-## Current HTTP Scale-Out Provisioner
-
-The current HTTP scale-out provisioner is a metadata-first foundation.
-
-It publishes registry and capacity metadata directly.
-
-It does not yet start a real remote HTTP runtime process.
-
-This is intentional for the current phase.
-
-It validates:
-
-- provider selector resolution
-- `providerHint=http`
-- watcher-to-provider flow
-- Redis scale-out request fulfillment
-- tenant-aware runtime settings propagation
-- registry/capacity publication
-- tenant visibility filtering
-- shared, dedicated, and hybrid runtime policies
-
-Current foundation flow:
+The process-host validated flow is:
 
 ```text
 MCP submit
     ↓
 Admission sees no tenant-visible capacity
     ↓
-SharedRun.Status = ScaleOutRequested
+SharedRun.Status = ScaleOutRequested / queued globally
     ↓
 Redis scale-out request created
     ↓
@@ -331,70 +350,108 @@ Selector resolves HTTP provider
     ↓
 HTTP provider delegates to provisioner
     ↓
-Provisioner publishes HTTP registry/capacity
+Provisioner resolves tenant runtime settings
+    ↓
+Provisioner calls Runtime Host Manager
+    ↓
+Process host creation strategy starts RuntimeInstanceOnly process
+    ↓
+Runtime self-registers and publishes capacity
+    ↓
+Readiness is observed
     ↓
 Scale-out request marked Fulfilled
+    ↓
+Queued run becomes dispatchable
+    ↓
+Shared queue dispatcher dispatches run over HTTP
 ```
+
+This validates the complete HTTP scale-out loop with a real process-hosted runtime instance.
 
 ---
 
-## Production Direction: Remote MCP Runtime Host Manager
+## Runtime Host Manager
 
-The production direction is not for the HTTP provisioner to be only metadata-first.
+The Runtime Host Manager separates provider selection from host lifecycle mechanics.
 
-For non-Kubernetes HTTP runtime scale-out, the control plane should call a remote MCP host manager.
+The HTTP provider remains responsible for:
 
-Target flow:
+- selecting and handling the HTTP provider scale-out path;
+- resolving effective runtime settings;
+- producing runtime instance identity and endpoint metadata;
+- dispatching runs over HTTP;
+- reporting HTTP transport failures.
 
-```text
-MCP Control Plane
-    ↓
-Admission requests scale-out
-    ↓
-Scale-out watcher
-    ↓
-HTTP provider
-    ↓
-MCP HTTP runtime scale-out provisioner
-    ↓
-Remote MCP Runtime Host Manager
-    ↓
-RuntimeInstanceOnly HTTP runtime starts
-    ↓
-Runtime self-registers in Redis
-    ↓
-Runtime publishes capacity heartbeat
-    ↓
-Readiness waiter observes registry/capacity Ready
-    ↓
-Scale-out request marked Fulfilled
-    ↓
-Shared run requeued
-    ↓
-Normal dispatch through HTTP provider
-```
+The Runtime Host Manager is responsible for:
 
-In this model, MCP is the remote host-management control interface.
+- creating or attaching runtime hosts;
+- passing runtime identity and tenant context to the host;
+- returning host startup information;
+- supporting multiple host creation modes.
 
-A remote MCP runtime host manager may expose tools such as:
+Supported or planned host creation modes:
 
 ```text
-runtime.host.createInstance
-runtime.host.stopInstance
-runtime.host.listInstances
-runtime.host.getInstanceStatus
-runtime.host.getCapacity
+Fixture
+Process
+Attach
+Kubernetes
 ```
 
-The runtime instance should self-register.
+### Fixture
 
-The provisioner should not mark a scale-out request fulfilled until the runtime is visible and ready.
+Fixture mode uses test-host infrastructure.
+
+It is useful for integration tests but does not prove process-boundary behavior.
+
+### Process
+
+Process mode starts a real runtime host executable or DLL.
+
+This mode is validated by the production scenario framework.
+
+Example process-host target:
+
+```text
+Multiplexed.AI.McpServer.Host.dll
+```
+
+configured as:
+
+```text
+RuntimeInstanceOnly
+```
+
+### Attach
+
+Attach mode is intended for connecting to an already running runtime host.
+
+The host manager does not create the process. It attaches to an existing endpoint and validates that the runtime can be used.
+
+### Kubernetes
+
+Kubernetes mode is intended for future cluster-based runtime capacity creation.
+
+Expected future flow:
+
+```text
+HTTP or Kubernetes provider
+    ↓
+Host manager / Kubernetes creation strategy
+    ↓
+RuntimeInstanceOnly pod
+    ↓
+service endpoint readiness
+    ↓
+runtime registration and capacity heartbeat
+```
 
 ---
 
 ## Readiness Requirement
 
-The HTTP scale-out provider should eventually wait for readiness before reporting fulfillment.
+HTTP process-host scale-out should not be considered fulfilled until the runtime is visible and usable.
 
 Readiness should require:
 
@@ -412,9 +469,9 @@ runtime instance prefix matches request
 
 This readiness behavior should be provider-reusable.
 
-A future abstraction can support HTTP, gRPC, Kubernetes, ECS, Docker, Nomad, and other providers.
+The readiness model can support HTTP, gRPC, Kubernetes, ECS, Docker, Nomad, and other providers.
 
-Example target abstraction:
+Example abstraction:
 
 ```csharp
 public interface IAiRuntimeInstanceReadinessWaiter
@@ -431,7 +488,7 @@ public interface IAiRuntimeInstanceReadinessWaiter
 
 HTTP scale-out requests preserve tenant runtime settings.
 
-The following fields must flow from admission into the Redis scale-out request, watcher provider request, HTTP provisioner, registry metadata, and capacity metadata:
+The following fields must flow from admission into the Redis scale-out request, watcher provider request, HTTP provisioner, host manager request, registry metadata, and capacity metadata:
 
 ```text
 TenantId
@@ -444,39 +501,26 @@ RuntimeInstanceIdPrefix
 WorkerCountPerInstance
 MaxConcurrentRunsPerInstance
 LocalQueueCapacity
+ExecutionContextSnapshot
 ```
 
 Validated runtime modes:
 
 ```text
-default/test-tenant
-    IsolationMode = Shared
-    PreferDedicatedCapacity = false
-    AllowSharedFallback = true
-    RuntimeInstanceIdPrefix = runtime-instance
-    MaxRuntimeInstances = 1
-    WorkerCountPerInstance = 10
-    MaxConcurrentRunsPerInstance = 3
-
-tenant-a
+Dedicated
     IsolationMode = Dedicated
     PreferDedicatedCapacity = true
     AllowSharedFallback = false
-    RuntimeInstanceIdPrefix = tenant-a-runtime
-    MaxRuntimeInstances = 3
-    WorkerCountPerInstance = 10
-    MaxConcurrentRunsPerInstance = 5
-    LocalQueueCapacity = 500
 
-tenant-b
+Shared
+    IsolationMode = Shared
+    PreferDedicatedCapacity = false
+    AllowSharedFallback = true
+
+Hybrid
     IsolationMode = Hybrid
     PreferDedicatedCapacity = true
     AllowSharedFallback = true
-    RuntimeInstanceIdPrefix = tenant-b-runtime
-    MaxRuntimeInstances = 2
-    WorkerCountPerInstance = 5
-    MaxConcurrentRunsPerInstance = 3
-    LocalQueueCapacity = 250
 ```
 
 Important behavior:
@@ -484,22 +528,44 @@ Important behavior:
 ```text
 Dedicated tenants must not silently use shared HTTP capacity.
 
-Hybrid tenants may use shared HTTP capacity when shared fallback is enabled.
+Hybrid tenants may use shared HTTP capacity only when shared fallback is enabled.
 ```
+
+---
+
+## Tenant Runtime Settings Precedence
+
+`AiHttpRuntimeScaleOutProvisioner` resolves effective runtime settings using this precedence:
+
+```text
+tenant runtime settings
+    >
+scale-out request values
+    >
+HTTP provider technical defaults
+```
+
+This applies to:
+
+```text
+RuntimeInstanceIdPrefix
+WorkerCountPerInstance
+MaxConcurrentRunsPerInstance
+LocalQueueCapacity
+MaxRuntimeInstances
+```
+
+Request values remain compatibility fallbacks for older request paths.
+
+HTTP provider options remain technical defaults only.
+
+They should not override tenant runtime policy.
 
 ---
 
 ## Tenant Visibility and HTTP Capacity
 
 HTTP capacity descriptors are filtered by the same tenant visibility rules as local capacity.
-
-Shared HTTP runtime capacity is visible to:
-
-```text
-Shared tenants
-Hybrid tenants when shared fallback is enabled
-Dedicated tenants only if shared fallback is enabled
-```
 
 Dedicated HTTP runtime capacity is visible only to:
 
@@ -513,6 +579,21 @@ Hybrid HTTP runtime capacity is visible only to:
 ```text
 matching TenantId
 or matching TenantGroupId
+```
+
+Shared HTTP runtime capacity is visible to tenants whose runtime settings allow shared usage.
+
+Examples:
+
+```text
+Dedicated + AllowSharedFallback = false
+    → cannot see shared runtime
+
+Hybrid + AllowSharedFallback = false
+    → cannot see shared runtime
+
+Hybrid + AllowSharedFallback = true
+    → can see shared runtime
 ```
 
 Hybrid fallback means:
@@ -533,7 +614,7 @@ This prevents cross-tenant capacity leakage.
 
 ## Metadata and Transport Keys
 
-HTTP provisioned registry and capacity descriptors should include provider metadata, transport metadata, tenant metadata, and scale-out metadata.
+HTTP provisioned registry and capacity descriptors should include provider metadata, transport metadata, tenant metadata, runtime mode metadata, and scale-out metadata.
 
 Provider metadata:
 
@@ -600,9 +681,12 @@ HTTP scale-out options:
 AiHttpRuntimeScaleOut:Enabled
 AiHttpRuntimeScaleOut:DefaultRuntimeInstanceIdPrefix
 AiHttpRuntimeScaleOut:EndpointTemplate
+AiHttpRuntimeScaleOut:HostCreationMode
+AiHttpRuntimeScaleOut:ReadinessTimeoutSeconds
+AiHttpRuntimeScaleOut:HeartbeatIntervalSeconds
 ```
 
-Example test configuration:
+Example process-host test configuration:
 
 ```text
 AiMcpHost:Mode = ControlPlaneWithHttpRuntimeInstances
@@ -613,7 +697,8 @@ AiRunAdmission:RejectWhenNoCapacity = false
 AiRuntimeScaleOutRequestWatcher:Enabled = true
 AiRuntimeScaleOutRequestWatcher:WatcherId = mcp-scaleout-watcher
 AiHttpRuntimeScaleOut:Enabled = true
-AiHttpRuntimeScaleOut:EndpointTemplate = http://runtime-host/{runtimeInstanceId}
+AiHttpRuntimeScaleOut:HostCreationMode = Process
+AiHttpRuntimeScaleOut:EndpointTemplate = http://127.0.0.1:{port}
 ```
 
 ---
@@ -631,68 +716,142 @@ circuit open -> http-circuit-open
 retry success -> dispatch succeeds
 retry exhausted -> http-command-failed
 non-retryable HTTP 4xx -> http-command-non-retryable
+invalid endpoint -> http-endpoint-invalid
+missing endpoint -> http-endpoint-missing
+invalid response -> http-command-invalid-response
 options binding -> configured provider options loaded
 ```
 
-Validated scale-out behavior:
-
-```text
-Shared HTTP scale-out -> runtime-instance-* capacity
-Dedicated HTTP scale-out -> tenant-a-runtime-* capacity
-Hybrid HTTP scale-out -> tenant-b-runtime-* capacity
-Dedicated tenant does not fallback to shared HTTP capacity
-Hybrid tenant falls back to shared HTTP capacity when shared fallback is enabled
-```
-
-Validated control-plane flow:
+Validated scale-out and process-host behavior:
 
 ```text
 MCP submit
     ↓
-RBAC tenant context
-    ↓
-admission tenant-aware
+tenant-aware admission
     ↓
 no tenant-visible capacity
     ↓
-SharedRun.Status = ScaleOutRequested
-    ↓
 Redis scale-out request
-    ↓
-providerHint = http
     ↓
 scale-out watcher
     ↓
-provider selector
+providerHint = http
     ↓
-HttpAiRuntimeInstanceProvider
+HTTP provider
     ↓
-IAiHttpRuntimeScaleOutProvisioner
+HTTP scale-out provisioner
     ↓
-registry/capacity HTTP metadata
+Runtime Host Manager
     ↓
-tenant visibility
+ProcessAiRuntimeHostCreationStrategy
     ↓
-ScaleOutRequest.Status = Fulfilled
+RuntimeInstanceOnly process
+    ↓
+runtime registration / capacity
+    ↓
+scale-out fulfilled
+    ↓
+HTTP dispatch
+    ↓
+DAG execution
+```
+
+Validated tenant runtime behavior:
+
+```text
+Dedicated process-host scale-out -> dedicated tenant runtime capacity
+Shared process-host scale-out -> shared-mode tenant runtime capacity
+Hybrid process-host scale-out -> hybrid-mode tenant runtime capacity
+Dedicated tenant does not reuse another tenant's dedicated runtime
+Hybrid tenant visibility respects shared fallback rules
+Tenant settings override request-level runtime sizing
+TenantGroupId is preserved for scale-out and requeue scope matching
+```
+
+Validated production scenario behavior:
+
+```text
+Dedicated + Shared + Hybrid tenants
+multiple runs per tenant
+many DAG steps per run
+real RuntimeInstanceOnly processes
+retention enabled
+ledger enabled
+trace enabled
+replay enabled
+replay report enabled
+replay ledger enabled
+replay trace enabled
+Mongo / Redis durable observability
+```
+
+---
+
+## Production Scenario Framework
+
+The MCP production runtime scenario framework validates the full HTTP process-host path.
+
+The most important scenario is:
+
+```text
+Http_ProcessHost_Should_Run_MixedTenant_Full_Production_Validation_Scenario
+```
+
+Representative validation scale:
+
+```text
+3 tenants
+4 runs per tenant
+35 DAG steps per run
+
+Total:
+12 runs
+420 DAG steps
+real RuntimeInstanceOnly processes
+durable Mongo / Redis observability
+```
+
+This scenario validates:
+
+- MCP submission;
+- tenant-aware admission;
+- Redis scale-out request creation;
+- scale-out watcher processing;
+- HTTP provider scale-out;
+- Runtime Host Manager process launch;
+- runtime registration and capacity publication;
+- HTTP dispatch;
+- DAG execution;
+- retention;
+- ledger;
+- trace;
+- replay;
+- replay report;
+- replay ledger;
+- replay trace.
+
+For the full framework details, see:
+
+```text
+mcp-production-runtime-scenario-framework.md
 ```
 
 ---
 
 ## Current Limitations
 
-The current HTTP scale-out foundation is not yet the final production runtime lifecycle.
+The HTTP provider process-host path is validated, but some production lifecycle concerns remain separate future work.
 
 Current limitations:
 
-- current HTTP scale-out provisioner publishes registry/capacity metadata directly
-- current HTTP scale-out provisioner does not yet start a real remote HTTP runtime process
-- readiness waiter is not implemented yet
-- Remote MCP Runtime Host Manager client is not implemented yet
-- runtime self-registration is not yet part of HTTP scale-out fulfillment
-- HTTP scale-out followed by real HTTP dispatch is not yet validated as one end-to-end lifecycle
-- provider health management is still separate from endpoint dispatch failure reporting
+- final shared runtime pooling semantics are not decided yet;
+- Shared mode currently validates shared-mode propagation and execution, not a forced global shared runtime pool;
+- Hybrid fallback to a shared process-host pool should be tested after shared pooling semantics are finalized;
+- provider health reconciliation is still separate from endpoint dispatch failure reporting;
+- circuit-open does not yet automatically mark a runtime unhealthy or request replacement;
+- Kubernetes host creation remains a future provider/host-manager mode.
 
-These limitations are intentional boundaries for the current phase.
+These limitations are intentional boundaries.
 
 ---
 
@@ -701,59 +860,43 @@ These limitations are intentional boundaries for the current phase.
 Recommended next steps:
 
 ```text
-1. Add runtime instance readiness waiter.
-2. Add Remote MCP Runtime Host Manager contract.
-3. Add MCP-backed HTTP runtime scale-out provisioner.
-4. Keep metadata-only HTTP provisioner for tests/dev foundation.
-5. Wait for runtime self-registration and capacity readiness before fulfillment.
-6. Validate HTTP scale-out followed by real HTTP dispatch.
-7. Reuse the same readiness model for gRPC and Kubernetes.
+1. Add RuntimeInstanceHealthReconciler.
+2. Mark stale / unhealthy / circuit-open runtime endpoints as draining or unhealthy.
+3. Stop routing new work to unhealthy runtime instances.
+4. Request replacement capacity when needed.
+5. Finalize shared runtime pooling semantics.
+6. Add Hybrid shared fallback process-host validation after shared pooling is explicit.
+7. Reuse the Host Manager readiness model for gRPC and Kubernetes.
 ```
 
-Future production flow:
+Future health flow:
 
 ```text
-ScaleOutRequested
+HTTP circuit open
     ↓
-providerHint = http
+failure reason = http-circuit-open
     ↓
-MCP-backed HTTP provisioner
+runtime endpoint health signal emitted
     ↓
-Remote MCP host manager starts RuntimeInstanceOnly HTTP runtime
+health reconciler marks runtime unhealthy or draining
     ↓
-runtime self-registers
+dispatcher stops selecting the runtime
     ↓
-capacity heartbeat Ready
+scale-out replacement requested if required
     ↓
-readiness waiter succeeds
-    ↓
-scale-out request Fulfilled
-    ↓
-shared run requeued
-    ↓
-normal HTTP dispatch
-    ↓
-runtime local queue
-    ↓
-DAG execution
+lifecycle owner replaces runtime
 ```
 
 ---
 
 ## Documentation Rule
 
-Do not present the current HTTP scale-out provisioner as a production runtime launcher.
+Do not treat the HTTP command provider as the runtime lifecycle owner.
 
 Current completed capability:
 
 ```text
-HTTP provider can participate in provider-based scale-out and materialize tenant-aware HTTP registry/capacity metadata.
-```
-
-Future capability:
-
-```text
-HTTP provider can call a Remote MCP Runtime Host Manager, wait for runtime self-registration/readiness, and then mark scale-out fulfilled.
+HTTP provider can participate in provider-based scale-out, use the Runtime Host Manager, launch real RuntimeInstanceOnly processes in process-host mode, wait for runtime registration/capacity readiness, and dispatch queued runs over HTTP.
 ```
 
 The runtime boundaries must remain unchanged:
@@ -761,9 +904,10 @@ The runtime boundaries must remain unchanged:
 ```text
 Admission decides.
 Providers transport or scale.
-Remote MCP host manager starts runtime instances.
+Runtime Host Manager creates or attaches runtime hosts.
 Runtime instances self-register.
 Registry/capacity stores expose readiness.
+Shared queue owns queued shared run dispatch.
 Local runtime queues own RunId.
 DAG engine owns ExecutionId.
 ExecutionContextSnapshot carries durable tenant context.

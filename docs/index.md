@@ -26,7 +26,8 @@ Focused AI runtime documentation is organized under:
 | [`ai/runtime-discovery-registry-capacity.md`](ai/runtime-discovery-registry-capacity.md) | Runtime discovery, registry, and capacity foundation covering Redis control-plane discovery, `ControlPlaneIdResolver`, runtime registration, tenant-filtered capacity descriptors, pump readiness, cleanup, local scale-out, and HTTP pooled runtime identity. |
 | [`ai/mcp-server-control-plane.md`](ai/mcp-server-control-plane.md) | MCP server as a runtime control-plane adapter, including host modes, RBAC integration, MCP tool groups, runtime role separation, local runtime pools, Redis/local scale-out, shared queue dispatch, and Kubernetes direction. |
 | [`ai/runtime-instance-provider-model.md`](ai/runtime-instance-provider-model.md) | Provider-based runtime instance administration for local, Redis command queue, HTTP, gRPC, and Kubernetes providers, including tenant-aware dispatch/status/control/scale-out capabilities and provider routing. |
-| [`ai/http-runtime-provider.md`](ai/http-runtime-provider.md) | HTTP runtime provider reference covering hardened dispatch, timeout/retry/circuit breaker behavior, structured failure reasons, HTTP provider scale-out, tenant-aware Shared/Dedicated/Hybrid policy validation, metadata-only provisioning, and Remote MCP Runtime Host Manager direction. |
+| [`ai/http-runtime-provider.md`](ai/http-runtime-provider.md) | HTTP runtime provider reference covering hardened dispatch, timeout/retry/circuit breaker behavior, structured failure reasons, HTTP provider scale-out, Runtime Host Manager process-host provisioning, real `RuntimeInstanceOnly` process launch, tenant-aware Shared/Dedicated/Hybrid policy validation, and process-boundary observability. |
+| [`ai/mcp-production-runtime-scenario-framework.md`](ai/mcp-production-runtime-scenario-framework.md) | MCP production runtime scenario framework covering Runtime Host Manager modes, HTTP process-host scale-out, real `RuntimeInstanceOnly` child processes, Dedicated/Shared/Hybrid tenant scenarios, retention, ledger, trace, and replay validation across process boundaries. |
 | [`ai/shared-controller-usage.md`](ai/shared-controller-usage.md) | Shared runtime controller usage, queue-first/direct-dispatch modes, Redis stores, scale-out request persistence, tenant snapshot propagation, manual drain, and background pump setup. |
 | [`ai/shared-queue-pump-and-worker-capacity.md`](ai/shared-queue-pump-and-worker-capacity.md) | Shared queue pump, fulfilled-run requeue, dispatch-time admission, context restoration, worker capacity visibility, and `MaxLocalWorkersPerExecution`. |
 | [`ai/testing-strategy.md`](ai/testing-strategy.md) | Testing strategy and validation approach for distributed runtime guarantees, RBAC context propagation, tenant isolation, Redis/local scale-out, requeue, dispatch, and execution evidence. |
@@ -67,16 +68,17 @@ Start with:
 8. [`ai/mcp-server-control-plane.md`](ai/mcp-server-control-plane.md)
 9. [`ai/runtime-instance-provider-model.md`](ai/runtime-instance-provider-model.md)
 10. [`ai/http-runtime-provider.md`](ai/http-runtime-provider.md)
-11. [`ai/shared-controller-usage.md`](ai/shared-controller-usage.md)
-12. [`ai/shared-queue-pump-and-worker-capacity.md`](ai/shared-queue-pump-and-worker-capacity.md)
-13. [`ai/distributed-execution.md`](ai/distributed-execution.md)
-14. [`ai/execution-control-state.md`](ai/execution-control-state.md)
-15. [`ai/observability.md`](ai/observability.md)
-16. [`ai/execution-correlated-ledger.md`](ai/execution-correlated-ledger.md)
-17. [`ai/observability-tracing.md`](ai/observability-tracing.md)
-18. [`ai/runtime-metrics.md`](ai/runtime-metrics.md)
-19. [`ai/replay-and-audit.md`](ai/replay-and-audit.md)
-20. [`runtime-internals.md`](runtime-internals.md)
+11. [`ai/mcp-production-runtime-scenario-framework.md`](ai/mcp-production-runtime-scenario-framework.md)
+12. [`ai/shared-controller-usage.md`](ai/shared-controller-usage.md)
+13. [`ai/shared-queue-pump-and-worker-capacity.md`](ai/shared-queue-pump-and-worker-capacity.md)
+14. [`ai/distributed-execution.md`](ai/distributed-execution.md)
+15. [`ai/execution-control-state.md`](ai/execution-control-state.md)
+16. [`ai/observability.md`](ai/observability.md)
+17. [`ai/execution-correlated-ledger.md`](ai/execution-correlated-ledger.md)
+18. [`ai/observability-tracing.md`](ai/observability-tracing.md)
+19. [`ai/runtime-metrics.md`](ai/runtime-metrics.md)
+20. [`ai/replay-and-audit.md`](ai/replay-and-audit.md)
+21. [`runtime-internals.md`](runtime-internals.md)
 
 This path gives both the strategic positioning and the complete technical depth.
 
@@ -96,17 +98,18 @@ Start with:
 10. [`ai/mcp-server-control-plane.md`](ai/mcp-server-control-plane.md)
 11. [`ai/runtime-instance-provider-model.md`](ai/runtime-instance-provider-model.md)
 12. [`ai/http-runtime-provider.md`](ai/http-runtime-provider.md)
-13. [`ai/shared-controller-usage.md`](ai/shared-controller-usage.md)
-14. [`ai/shared-queue-pump-and-worker-capacity.md`](ai/shared-queue-pump-and-worker-capacity.md)
-15. [`ai/distributed-execution.md`](ai/distributed-execution.md)
-16. [`ai/execution-control-state.md`](ai/execution-control-state.md)
-17. [`ai/execution-correlated-ledger.md`](ai/execution-correlated-ledger.md)
-18. [`ai/observability-tracing.md`](ai/observability-tracing.md)
-19. [`ai/runtime-metrics.md`](ai/runtime-metrics.md)
-20. [`ai/replay-and-audit.md`](ai/replay-and-audit.md)
-21. [`ai/testing-strategy.md`](ai/testing-strategy.md)
-22. [`runtime-internals.md`](runtime-internals.md)
-23. [`roadmap.md`](roadmap.md)
+13. [`ai/mcp-production-runtime-scenario-framework.md`](ai/mcp-production-runtime-scenario-framework.md)
+14. [`ai/shared-controller-usage.md`](ai/shared-controller-usage.md)
+15. [`ai/shared-queue-pump-and-worker-capacity.md`](ai/shared-queue-pump-and-worker-capacity.md)
+16. [`ai/distributed-execution.md`](ai/distributed-execution.md)
+17. [`ai/execution-control-state.md`](ai/execution-control-state.md)
+18. [`ai/execution-correlated-ledger.md`](ai/execution-correlated-ledger.md)
+19. [`ai/observability-tracing.md`](ai/observability-tracing.md)
+20. [`ai/runtime-metrics.md`](ai/runtime-metrics.md)
+21. [`ai/replay-and-audit.md`](ai/replay-and-audit.md)
+22. [`ai/testing-strategy.md`](ai/testing-strategy.md)
+23. [`runtime-internals.md`](runtime-internals.md)
+24. [`roadmap.md`](roadmap.md)
 
 This path gives the current architecture, configuration model, RBAC/context propagation model, tenant isolation model, control-plane/runtime split, extension model, technical reference, and next planned improvements.
 
@@ -405,8 +408,28 @@ This document explains:
 - Dedicated tenants not silently falling back to shared HTTP capacity
 - Hybrid tenants falling back to shared HTTP capacity when policy allows it
 - metadata and transport keys used for HTTP runtime registry/capacity publication
-- current metadata-only provisioner limitation
-- Remote MCP Runtime Host Manager and readiness-waiter direction
+- Runtime Host Manager process-host provisioning
+- real `RuntimeInstanceOnly` process launch and readiness
+- process-boundary ledger, trace, replay, and retention validation
+
+### [`ai/mcp-production-runtime-scenario-framework.md`](ai/mcp-production-runtime-scenario-framework.md)
+
+MCP production runtime scenario framework and HTTP process-host validation reference.
+
+This document explains:
+
+- MCP Runtime Host Manager purpose and lifecycle boundary
+- host creation modes: Fixture, Process, Attach, and Kubernetes
+- HTTP process-host scale-out flow
+- `ProcessAiRuntimeHostCreationStrategy`
+- real `RuntimeInstanceOnly` process launch
+- runtime registration, heartbeat, capacity, and readiness
+- tenant runtime settings precedence during HTTP scale-out
+- Dedicated, Shared, and Hybrid process-host scenarios
+- adversarial multi-tenant Dedicated isolation validation
+- mixed-tenant full production validation scenario
+- retention, ledger, trace, replay report, replay ledger, and replay trace validation across process boundaries
+- remaining boundaries around shared pooling, Hybrid fallback, Kubernetes, and runtime health reconciliation
 
 ### [`ai/shared-controller-usage.md`](ai/shared-controller-usage.md)
 
@@ -501,7 +524,8 @@ The project roadmap organized into phases:
 | [`ai/runtime-discovery-registry-capacity.md`](ai/runtime-discovery-registry-capacity.md) | Runtime discovery, Redis registry, Redis capacity descriptors, ControlPlaneIdResolver, pump readiness, tenant-filtered visibility, local scale-out capacity visibility, cleanup, and HTTP pooled runtime identity. |
 | [`ai/mcp-server-control-plane.md`](ai/mcp-server-control-plane.md) | MCP server adapter over runtime control-plane foundations, including RBAC integration, host modes, tool groups, role separation, local runtime pool behavior, Redis/local scale-out execution, and Kubernetes direction. |
 | [`ai/runtime-instance-provider-model.md`](ai/runtime-instance-provider-model.md) | Provider-based runtime instance administration, dispatch, and scale-out model for local, Redis command queue, HTTP, gRPC, and Kubernetes providers. |
-| [`ai/http-runtime-provider.md`](ai/http-runtime-provider.md) | HTTP runtime provider hardening and scale-out reference, including failure reasons, retry/timeout/circuit breaker policy, tenant-aware scale-out, registry/capacity metadata publication, and Remote MCP Runtime Host Manager direction. |
+| [`ai/http-runtime-provider.md`](ai/http-runtime-provider.md) | HTTP runtime provider hardening and scale-out reference, including failure reasons, retry/timeout/circuit breaker policy, tenant-aware scale-out, Runtime Host Manager process-host provisioning, real runtime launch, and readiness. |
+| [`ai/mcp-production-runtime-scenario-framework.md`](ai/mcp-production-runtime-scenario-framework.md) | MCP production runtime scenario framework, HTTP process-host flow, Host Manager modes, real `RuntimeInstanceOnly` processes, mixed-tenant production validation, and durable observability/replay evidence. |
 | [`ai/shared-controller-usage.md`](ai/shared-controller-usage.md) | Shared controller setup and usage, Redis shared stores, queue-first/direct-dispatch modes, scale-out lifecycle, and tenant snapshot propagation. |
 | [`ai/shared-queue-pump-and-worker-capacity.md`](ai/shared-queue-pump-and-worker-capacity.md) | Shared queue pump, queue-first submit mode, direct-dispatch scale-out path, fulfilled-run requeue, manual drain, dispatch-time admission, worker capacity visibility, and local worker caps per execution. |
 | [`ai/execution-correlated-ledger.md`](ai/execution-correlated-ledger.md) | Execution-correlated runtime auditability, runtime decision recording, and replay lifecycle event correlation. |
@@ -531,7 +555,8 @@ The project roadmap organized into phases:
 | [`ai/observability-tracing.md`](ai/observability-tracing.md) | Runtime tracing, trace timelines, trace records, Mongo trace persistence, Memory/Mongo/MemoryAndMongo modes, and tracing improvements. |
 | [`ai/runtime-metrics.md`](ai/runtime-metrics.md) | Runtime metric domains, metric storage modes, worker/retention/storage/resolver/hot-state/policy metrics, and metrics improvements. |
 | [`ai/execution-correlated-ledger.md`](ai/execution-correlated-ledger.md) | Execution-correlated decision ledger, runtime audit visibility, and structured runtime lifecycle evidence. |
-| [`ai/testing-strategy.md`](ai/testing-strategy.md) | Integration testing strategy and validation approach for distributed runtime guarantees, RBAC context propagation, tenant isolation, Redis/local scale-out request, requeue, dispatch, and execution evidence. |
+| [`ai/testing-strategy.md`](ai/testing-strategy.md) | Integration testing strategy and validation approach for distributed runtime guarantees, RBAC context propagation, tenant isolation, HTTP hardening, Runtime Host Manager process-host provisioning, Redis/local scale-out request, requeue, dispatch, and execution evidence. |
+| [`ai/mcp-production-runtime-scenario-framework.md`](ai/mcp-production-runtime-scenario-framework.md) | Production scenario evidence for HTTP process-host execution, mixed tenant runtime modes, durable ledger/trace/replay, and real process-boundary validation. |
 | [`ai/multi-tenant-runtime-flow.md`](ai/multi-tenant-runtime-flow.md) | Operational context/audit map tying tenant context, correlation ids, shared run ids, local run ids, execution ids, runtime instances, workers, ledger, tracing, metrics, and replay together. |
 
 ---
@@ -546,7 +571,8 @@ The project roadmap organized into phases:
 | [`ai/runtime-discovery-registry-capacity.md`](ai/runtime-discovery-registry-capacity.md) | Redis discovery, ControlPlaneIdResolver, runtime registry, tenant-filtered capacity descriptors, scale-out capacity visibility, readiness gate, cleanup lifecycle, and HTTP pooled identity model. |
 | [`ai/mcp-server-control-plane.md`](ai/mcp-server-control-plane.md) | MCP server as control-plane adapter, including RBAC integration, host modes, discovery publication, MCP tool groups, Redis/local scale-out execution, shared queue dispatch, local/HTTP pooled runtime behavior, and runtime role separation. |
 | [`ai/runtime-instance-provider-model.md`](ai/runtime-instance-provider-model.md) | Runtime instance provider model for provider-based dispatch, HTTP pooled runtime hosting, status, control, capacity, scale-out, descriptor metadata, and provider routing. |
-| [`ai/http-runtime-provider.md`](ai/http-runtime-provider.md) | HTTP provider-specific reference for hardened dispatch, HTTP runtime scale-out, Redis scale-out watcher fulfillment, tenant-aware HTTP capacity, and metadata-only versus Remote MCP provisioning. |
+| [`ai/http-runtime-provider.md`](ai/http-runtime-provider.md) | HTTP provider-specific reference for hardened dispatch, HTTP runtime scale-out, Redis scale-out watcher fulfillment, tenant-aware HTTP capacity, Runtime Host Manager process-host provisioning, and readiness. |
+| [`ai/mcp-production-runtime-scenario-framework.md`](ai/mcp-production-runtime-scenario-framework.md) | End-to-end MCP production scenario reference covering Host Manager modes, HTTP process-host scale-out, real runtime processes, Dedicated/Shared/Hybrid tenants, retention, ledger, trace, and replay. |
 | [`ai/shared-controller-usage.md`](ai/shared-controller-usage.md) | Shared controller usage, Redis store configuration, queue-first/direct-dispatch behavior, tenant snapshot propagation, scale-out lifecycle, manual drain, and background pump setup. |
 | [`ai/shared-queue-pump-and-worker-capacity.md`](ai/shared-queue-pump-and-worker-capacity.md) | Shared queue pump/manual drain, queue-first dispatch, direct-dispatch scale-out, fulfilled-run requeue, readiness gate, dispatch-time admission, pump identity separation, runtime worker capacity visibility, and `MaxLocalWorkersPerExecution`. |
 | [`ai/runtime-queue-control.md`](ai/runtime-queue-control.md) | RunId-level local runtime queue control, hot enqueue, queue pause/resume, and queued/running cancellation behavior. |
@@ -601,6 +627,9 @@ Many focused documents started as documentation split placeholders, but several 
 - MCP server control-plane usage
 - runtime instance provider architecture direction
 - HTTP runtime provider hardening and tenant-aware scale-out
+- Runtime Host Manager process-host provisioning
+- MCP production runtime scenario framework
+- mixed-tenant production validation
 - runtime discovery/registry/capacity
 - Redis-backed scale-out request lifecycle
 - fulfilled-run requeue
@@ -651,3 +680,4 @@ When adding new documentation:
 16. Keep multi-tenant control-plane isolation documentation linked across architecture overview, runtime control-plane, discovery/registry/capacity, MCP server, runtime instance provider model, shared controller usage, shared queue pump, distributed execution, execution control state, testing strategy, README, and product roadmap documents.
 17. Keep RBAC documentation connected to MCP tool authorization, `ExecutionContextSnapshot`, tenant-aware admission, runtime visibility, and all background/distributed hops.
 18. Keep the multi-tenant runtime flow document linked with multi-tenant isolation, runtime control-plane, shared controller usage, shared queue pump, distributed execution, execution control state, testing strategy, and README because it is the operational map of the whole tenant-aware execution path.
+19. Keep the MCP production runtime scenario framework linked with HTTP runtime provider, runtime instance provider model, MCP server control-plane, runtime discovery/registry/capacity, multi-tenant isolation, shared controller usage, shared queue pump, testing strategy, replay/audit, ledger, and observability docs because it proves the full HTTP process-host production path across these boundaries.

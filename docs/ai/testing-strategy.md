@@ -1,6 +1,6 @@
 # Testing Strategy
 
-Status: Actively validated by a large unit and integration test suite, including MCP, Redis, local runtime pools, Redis-backed scale-out request lifecycle, local runtime scale-out, fulfilled-run requeue, HTTP pooled runtime provider scenarios, HTTP runtime provider hardening, HTTP scale-out provider/provisioner behavior, and tenant-aware HTTP Shared/Dedicated/Hybrid scale-out scenarios.
+Status: Actively validated by a large unit and integration test suite, including MCP, Redis, local runtime pools, Redis-backed scale-out request lifecycle, local runtime scale-out, fulfilled-run requeue, HTTP pooled runtime provider scenarios, HTTP runtime provider hardening, HTTP scale-out provider/provisioner behavior, Runtime Host Manager process-host provisioning, MCP production runtime scenario framework, durable replay / ledger / trace validation across process boundaries, and tenant-aware HTTP Shared/Dedicated/Hybrid runtime scenarios.
 
 This document describes the testing strategy used to validate the Deterministic AI Runtime.
 
@@ -38,7 +38,11 @@ The runtime must prove that it behaves correctly under:
 - HTTP dispatch timeout, retry, and circuit breaker behavior
 - HTTP structured dispatch failure persistence
 - HTTP runtime scale-out provider/provisioner behavior
+- Runtime Host Manager host creation behavior
+- process-host `RuntimeInstanceOnly` scale-out behavior
+- MCP production runtime scenario framework behavior
 - tenant-aware HTTP Shared/Dedicated/Hybrid scale-out behavior
+- durable replay / ledger / trace validation across process boundaries
 - Redis control-plane discovery and id resolution
 - Redis registry and capacity cleanup
 - Redis admission reservation behavior
@@ -101,7 +105,10 @@ The test suite is used as proof that the runtime can survive:
 - HTTP provider timeout/retry/circuit-breaker behavior
 - HTTP dispatch failure persistence
 - HTTP runtime scale-out provider/provisioner behavior
+- Runtime Host Manager process-host provisioning
 - tenant-aware HTTP scale-out and fallback policy behavior
+- Dedicated / Shared / Hybrid process-host production scenarios
+- durable replay / ledger / trace validation across process boundaries
 - Redis discovery/registry/capacity lifecycle
 - Redis admission reservations
 - Redis scale-out request lifecycle
@@ -188,7 +195,10 @@ Main categories include:
 - HTTP pooled runtime provider tests
 - HTTP runtime provider hardening tests
 - HTTP runtime scale-out provider tests
+- Runtime Host Manager process-host tests
+- MCP production runtime scenario framework tests
 - tenant-aware HTTP scale-out scenario tests
+- durable process-boundary observability tests
 - Redis discovery and control-plane id resolver tests
 - Redis runtime registry and capacity cleanup tests
 - Redis admission reservation tests
@@ -272,6 +282,8 @@ They should cover:
 - scale-out provider selector resolution
 - HTTP scale-out provider selector resolution
 - HTTP scale-out provisioner behavior
+- Runtime Host Manager provisioning behavior
+- process-host runtime readiness behavior
 - local runtime scale-out provider behavior
 - fulfilled scale-out shared run requeue
 - provider model preparation
@@ -557,11 +569,15 @@ Validated HTTP scale-out evidence:
 ProviderHint = http
 ScaleOutRequest.Status = Pending -> Observed -> Fulfilled
 HTTP provider implements IAiRuntimeScaleOutProvider
-IAiHttpRuntimeScaleOutProvisioner registers runtime metadata
-Redis runtime registry = HTTP provider metadata published
+IAiHttpRuntimeScaleOutProvisioner resolves effective tenant runtime settings
+Runtime Host Manager receives the scale-out request
+HostCreationMode = Process launches a real RuntimeInstanceOnly process
+RuntimeInstanceOnly process self-registers
+Redis runtime registry = HTTP provider/runtime metadata published
 Redis runtime capacity store = HTTP transport metadata published
+Readiness confirms usable capacity
 Dedicated tenant = no shared HTTP fallback when disabled
-Hybrid tenant = shared HTTP fallback when enabled
+Hybrid tenant = shared fallback only when allowed
 ```
 
 Primary HTTP integration scenarios:
@@ -572,9 +588,10 @@ ControlPlaneWithHttpRuntimeInstances_With_Dedicated_Tenant_Should_Fulfill_Tenant
 ControlPlaneWithHttpRuntimeInstances_With_Hybrid_Tenant_Should_Fulfill_Tenant_Aware_Redis_ScaleOut_Request_Using_Http_Provider
 ControlPlaneWithHttpRuntimeInstances_With_Dedicated_Tenant_Should_Not_Fallback_To_Shared_Http_Runtime_When_Available
 ControlPlaneWithHttpRuntimeInstances_With_Hybrid_Tenant_Should_Fallback_To_Shared_Http_Runtime_When_Available
+Http_ProcessHost_Should_Run_MixedTenant_Full_Production_Validation_Scenario
 ```
 
-These scenarios validate the HTTP control-plane scale-out loop. The current HTTP provisioner materializes registry/capacity metadata and does not yet start a real external runtime process. The production direction is a Remote MCP Runtime Host Manager plus readiness waiter.
+These scenarios validate both the HTTP control-plane scale-out loop and the stronger process-host production path through the Runtime Host Manager.
 
 ---
 
@@ -789,6 +806,130 @@ Scale-out request stores must preserve tenant runtime settings when cloning, rea
 ```
 
 These tests prevent regressions where HTTP scale-out becomes best-effort multi-tenancy instead of explicit policy-driven isolation.
+
+
+## Runtime Host Manager and Process-Host Tests
+
+Runtime Host Manager tests validate that provider scale-out can create or attach runtime hosts without making the provider own host lifecycle directly.
+
+They should cover:
+
+- Runtime Host Manager mode selection;
+- Fixture host creation mode;
+- Process host creation mode;
+- Attach host creation mode preparation;
+- Kubernetes host creation mode preparation;
+- HTTP provider delegating scale-out to `IAiRuntimeHostManager`;
+- `ProcessAiRuntimeHostCreationStrategy` launching a real host process;
+- `RuntimeInstanceOnly` host startup;
+- runtime registration after process launch;
+- capacity publication after process launch;
+- readiness waiting before scale-out fulfillment;
+- tenant id propagation;
+- tenant group id propagation;
+- isolation mode propagation;
+- runtime instance prefix propagation;
+- worker count propagation;
+- max concurrent run propagation;
+- local queue capacity propagation;
+- `ExecutionContextSnapshot` propagation into host start requests.
+
+Important assertions:
+
+```text
+The HTTP provider should not directly own process creation.
+
+The HTTP provider should delegate host lifecycle to the Runtime Host Manager.
+
+HostCreationMode = Process should launch a real RuntimeInstanceOnly process.
+
+Scale-out should not be considered fulfilled until runtime registration and capacity are visible.
+
+The runtime process should self-register instead of being treated as fake capacity.
+
+Tenant runtime settings should be preserved from scale-out request to host start request.
+```
+
+## MCP Production Runtime Scenario Framework Tests
+
+MCP production runtime scenario framework tests validate the full production-like path.
+
+They should cover:
+
+- parent MCP server test host;
+- tenant-scoped MCP clients;
+- Redis-backed shared run store;
+- Redis-backed shared queue;
+- Redis-backed scale-out request store;
+- HTTP provider scale-out;
+- Runtime Host Manager process launch;
+- real `RuntimeInstanceOnly` child process;
+- runtime registration / heartbeat / capacity;
+- HTTP dispatch to the created runtime;
+- DAG execution;
+- retention;
+- decision ledger;
+- trace timeline;
+- replay operation;
+- replay report;
+- replay ledger;
+- replay trace;
+- Dedicated tenant process-host scenario;
+- Shared tenant process-host scenario;
+- Hybrid tenant process-host scenario;
+- adversarial multi-tenant Dedicated isolation;
+- mixed-tenant full production validation.
+
+Important assertions:
+
+```text
+Submit should work from zero executable runtime capacity.
+
+The scale-out request should be persisted in Redis.
+
+The watcher should call the HTTP provider.
+
+The HTTP provider should use the Runtime Host Manager.
+
+A real RuntimeInstanceOnly process should start.
+
+The runtime should register and publish capacity.
+
+The dispatcher should use normal HTTP dispatch after capacity becomes visible.
+
+The run should complete through the DAG engine.
+
+Ledger, trace, replay report, replay ledger, and replay trace should be visible from the parent MCP process.
+
+Dedicated tenants must not reuse another tenant's dedicated runtime.
+
+The mixed-tenant production scenario should validate Dedicated, Shared, and Hybrid tenants together.
+```
+
+Representative full production validation:
+
+```text
+3 tenants
+4 runs per tenant
+35 DAG steps per run
+
+Total:
+12 runs
+420 DAG steps
+real RuntimeInstanceOnly processes
+retention enabled
+ledger enabled
+trace enabled
+replay enabled
+Mongo / Redis durable observability
+```
+
+Primary scenario:
+
+```text
+Http_ProcessHost_Should_Run_MixedTenant_Full_Production_Validation_Scenario
+```
+
 
 ## Heavy HTTP Dispatch Tests
 
@@ -1094,6 +1235,8 @@ MCP tests should validate:
 - HTTP provider queue-first dispatch through MCP
 - HTTP pooled runtime dispatch to `runtime-http-*` child instances through MCP
 - HTTP scale-out request fulfillment through MCP/control-plane scenarios
+- Runtime Host Manager process-host provisioning through MCP production scenarios
+- real `RuntimeInstanceOnly` process launch through HTTP scale-out
 - tenant-aware Dedicated HTTP scale-out through MCP/control-plane scenarios
 - tenant-aware Hybrid HTTP scale-out and shared fallback through MCP/control-plane scenarios
 - local scale-out dispatch to `mcp-scaleout-runtime-*` runtime instances through MCP
@@ -1102,6 +1245,8 @@ MCP tests should validate:
 - runtime queue run-status polling through MCP tools
 - replay execution through MCP tools
 - replay report retrieval through MCP tools
+- replay ledger retrieval through MCP tools
+- replay trace retrieval through MCP tools
 - observability ledger retrieval through MCP tools
 - observability trace retrieval through MCP tools
 - execution control operations through MCP tools
@@ -1591,6 +1736,10 @@ HTTP scale-out preserves tenant runtime settings from request store to watcher t
 Dedicated HTTP tenants do not fall back to shared HTTP capacity when fallback is disabled.
 
 Hybrid HTTP tenants can fall back to shared HTTP capacity when fallback is enabled.
+
+Runtime Host Manager process mode launches a real RuntimeInstanceOnly process.
+
+The mixed-tenant full production scenario validates Dedicated, Shared, and Hybrid tenants with retention, ledger, trace, and replay enabled.
 ```
 
 ---
@@ -1629,6 +1778,10 @@ Hybrid HTTP tenants can fall back to shared HTTP capacity when fallback is enabl
 | HTTP runtime provider hardening tests | Implemented / validated |
 | HTTP runtime scale-out provider tests | Implemented / validated |
 | Tenant-aware HTTP scale-out scenario tests | Implemented / validated |
+| Runtime Host Manager process-host tests | Implemented / validated |
+| MCP production runtime scenario framework tests | Implemented / validated |
+| Mixed-tenant full production validation scenario | Implemented / validated |
+| Durable replay / ledger / trace process-boundary tests | Implemented / validated |
 | Heavy HTTP dispatch tests | Implemented / validated |
 | Redis control-plane discovery tests | Implemented / validated |
 | Redis admission reservation tests | Implemented / validated |
@@ -1680,7 +1833,10 @@ It proves that:
 - HTTP pooled runtime provider flows are validated
 - HTTP runtime provider timeout, retry, circuit breaker, and structured failure behavior are validated
 - HTTP runtime provider scale-out and provisioner behavior are validated
+- Runtime Host Manager process-host provisioning is validated
+- real `RuntimeInstanceOnly` processes can be launched from HTTP scale-out
 - tenant-aware HTTP Shared/Dedicated/Hybrid scale-out and fallback policies are validated
+- mixed-tenant production validation proves Dedicated, Shared, and Hybrid execution with retention, ledger, trace, and replay enabled
 - Redis discovery, registry, capacity, and admission reservation flows are validated
 - heavy HTTP dispatch validates Redis-backed shared coordination under pressure
 - Redis-backed scale-out request lifecycle is validated
@@ -1709,6 +1865,7 @@ The goal is to prove runtime guarantees.
 - [MCP Server as Runtime Control Plane](mcp-server-control-plane.md)
 - [Runtime Instance Provider Model](runtime-instance-provider-model.md)
 - [HTTP Runtime Provider](http-runtime-provider.md)
+- [MCP Production Runtime Scenario Framework](mcp-production-runtime-scenario-framework.md)
 - [Shared Queue Pump and Worker Capacity](shared-queue-pump-and-worker-capacity.md)
 - [Replay and Audit](replay-and-audit.md)
 - [Observability](observability.md)
