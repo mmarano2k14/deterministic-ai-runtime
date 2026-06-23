@@ -317,6 +317,144 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Defini
         }
 
         /// <summary>
+        /// Creates a full mixed-tenant production scenario that validates Dedicated, Shared, and Hybrid
+        /// runtime modes with retention, ledger, trace, and replay assertions enabled.
+        /// </summary>
+        /// <returns>The production runtime scenario definition.</returns>
+        /// <remarks>
+        /// This scenario is intentionally heavier than focused runtime mode tests.
+        /// It is meant to be used as a final production validation before closing the workstream.
+        /// </remarks>
+        public static ProductionRuntimeScenarioDefinition CreateMixedTenantFullProductionValidationScenario()
+        {
+            return new ProductionRuntimeScenarioDefinition
+            {
+                Name = "mixed-tenant-full-production-validation",
+                ControlPlaneIdPrefix = "production-mixed-tenant-full",
+
+                PersistenceProfile = ProductionRuntimePersistenceProfile.MongoRedis,
+                ObservabilityProfile = ProductionRuntimeObservabilityProfile.DurableMongo,
+                HostCreationMode = ProductionRuntimeHostCreationMode.Process,
+                SubmitMode = ProductionRuntimeSubmitMode.DirectDispatch,
+
+                AssertReplayLedgerTrace = true,
+                AssertRetention = true,
+                AssertMaxRuntimeInstances = true,
+                AssertTenantIsolation = true,
+
+                ScaleOutTimeout = TimeSpan.FromMinutes(3),
+                DispatchTimeout = TimeSpan.FromMinutes(3),
+                CompletionTimeout = TimeSpan.FromMinutes(6),
+
+                Assertions = new ProductionRuntimeScenarioAssertionOptions
+                {
+                    AssertAllRunsCompleted = true,
+                    AssertTenantIsolation = true,
+                    AssertScaleOut = true,
+                    AssertMaxRuntimeInstances = true,
+                    AssertLedger = true,
+                    AssertTrace = true,
+                    AssertReplayReport = true,
+                    AssertReplayLedger = true,
+                    AssertReplayTrace = true
+                },
+
+                Tenants =
+                [
+                    new ProductionTenantScenarioDefinition
+            {
+                TenantId = "tenant-production-dedicated",
+                TenantGroupId = "tenant-production-group-dedicated",
+                RuntimeMode = ProductionTenantRuntimeMode.Dedicated,
+                RuntimeInstanceIdPrefix = "tenant-production-dedicated-runtime",
+                MaxRuntimeInstances = 2,
+                WorkerCountPerInstance = 2,
+                MaxConcurrentRunsPerInstance = 2,
+                LocalQueueCapacity = 50,
+                ExpectDedicatedRuntimePrefix = true,
+                ExpectCapacityOverflow = false,
+                Run = new ProductionRunScenarioDefinition
+                {
+                    RunCount = 4,
+                    StepCount = 35,
+                    DelayMs = 10,
+                    FlakyStepInterval = 0,
+                    EnableRetention = true,
+                    Input = new Dictionary<string, object?>
+                    {
+                        ["scenario"] = "mixed-tenant-full-production-validation",
+                        ["tenant"] = "tenant-production-dedicated",
+                        ["tenantRuntimeMode"] = ProductionTenantRuntimeMode.Dedicated.ToString(),
+                        ["retention"] = true,
+                        ["delayMs"] = 10
+                    }
+                }
+            },
+
+            new ProductionTenantScenarioDefinition
+            {
+                TenantId = "tenant-production-shared",
+                TenantGroupId = "tenant-production-group-shared",
+                RuntimeMode = ProductionTenantRuntimeMode.Shared,
+                RuntimeInstanceIdPrefix = "tenant-production-shared-runtime",
+                MaxRuntimeInstances = 2,
+                WorkerCountPerInstance = 2,
+                MaxConcurrentRunsPerInstance = 2,
+                LocalQueueCapacity = 50,
+                ExpectDedicatedRuntimePrefix = false,
+                ExpectCapacityOverflow = false,
+                Run = new ProductionRunScenarioDefinition
+                {
+                    RunCount = 4,
+                    StepCount = 35,
+                    DelayMs = 10,
+                    FlakyStepInterval = 0,
+                    EnableRetention = true,
+                    Input = new Dictionary<string, object?>
+                    {
+                        ["scenario"] = "mixed-tenant-full-production-validation",
+                        ["tenant"] = "tenant-production-shared",
+                        ["tenantRuntimeMode"] = ProductionTenantRuntimeMode.Shared.ToString(),
+                        ["retention"] = true,
+                        ["delayMs"] = 10
+                    }
+                }
+            },
+
+            new ProductionTenantScenarioDefinition
+            {
+                TenantId = "tenant-production-hybrid",
+                TenantGroupId = "tenant-production-group-hybrid",
+                RuntimeMode = ProductionTenantRuntimeMode.Hybrid,
+                RuntimeInstanceIdPrefix = "tenant-production-hybrid-runtime",
+                MaxRuntimeInstances = 2,
+                WorkerCountPerInstance = 2,
+                MaxConcurrentRunsPerInstance = 2,
+                LocalQueueCapacity = 50,
+                ExpectDedicatedRuntimePrefix = true,
+                ExpectCapacityOverflow = false,
+                Run = new ProductionRunScenarioDefinition
+                {
+                    RunCount = 4,
+                    StepCount = 35,
+                    DelayMs = 10,
+                    FlakyStepInterval = 0,
+                    EnableRetention = true,
+                    Input = new Dictionary<string, object?>
+                    {
+                        ["scenario"] = "mixed-tenant-full-production-validation",
+                        ["tenant"] = "tenant-production-hybrid",
+                        ["tenantRuntimeMode"] = ProductionTenantRuntimeMode.Hybrid.ToString(),
+                        ["retention"] = true,
+                        ["delayMs"] = 10
+                    }
+                }
+            }
+                ]
+            };
+        }
+
+        /// <summary>
         /// Creates one tenant definition for the runtime mode scenario.
         /// </summary>
         /// <param name="tenantId">The tenant id.</param>
