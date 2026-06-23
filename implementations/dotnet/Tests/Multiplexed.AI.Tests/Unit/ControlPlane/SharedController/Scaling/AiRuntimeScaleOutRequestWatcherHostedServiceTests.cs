@@ -10,6 +10,7 @@ using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers.Transp
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Scaling;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Isolation;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http.ScaleOut;
 using Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling;
@@ -298,12 +299,15 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController.Scaling
             var capacityStore =
                 new TestRuntimeInstanceCapacityStore();
 
+            var tenantRuntimeSettingsProvider = new HardcodedAiTenantRuntimeSettingsProvider();
+
             var provisioner =
                 new AiHttpRuntimeScaleOutProvisioner(
                     registry,
                     capacityStore,
                     new NoopAiRuntimeHostManager(),
                     new TestRuntimeInstanceReadinessWaiter(),
+                    tenantRuntimeSettingsProvider,
                     Options.Create(
                         new AiHttpRuntimeScaleOutOptions
                         {

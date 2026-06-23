@@ -32,12 +32,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
         /// Initializes a new instance of the <see cref="HttpProcessHostProductionScenarioRunner"/> class.
         /// </summary>
         /// <param name="output">The test output helper.</param>
-        public HttpProcessHostProductionScenarioRunner(
-            ITestOutputHelper output)
+        public HttpProcessHostProductionScenarioRunner(ITestOutputHelper output)
         {
-            this.output =
-                output
-                ?? throw new ArgumentNullException(nameof(output));
+            this.output = output ?? throw new ArgumentNullException(nameof(output));
         }
 
         /// <inheritdoc />
@@ -58,7 +55,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 GenericMcpRuntimeHostAssemblyResolver.ResolveRuntimeHostAssemblyPath();
 
             var settings =
-                CreateHttpProcessProductionScenarioSettings(
+                HttpProcessHostProductionScenarioSettingsBuilder.Build(
+                    scenario,
                     controlPlaneId,
                     runtimeHostAssemblyPath);
 
@@ -90,7 +88,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                                 host,
                                 tenantHttpClient,
                                 RequestedBy,
-                                tenantId: tenant.TenantId)
+                                tenantId: tenant.TenantId,
+                                tenantGroupId: tenant.TenantGroupId)
                             .ConfigureAwait(false);
 
                     tenantContexts.Add(
@@ -100,7 +99,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                             tenantMcp));
 
                     this.output.WriteLine(
-                        $"[HTTP PROCESS PRODUCTION] Tenant MCP client created. TenantId='{tenant.TenantId}'.");
+                        $"[HTTP PROCESS PRODUCTION] Tenant MCP client created. TenantId='{tenant.TenantId}', TenantGroupId='{tenant.TenantGroupId}'.");
                 }
 
                 var tenantTasks =
@@ -168,7 +167,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 $"{scenario.Name}-{tenant.TenantId}-{Guid.NewGuid():N}";
 
             this.output.WriteLine(
-                $"[HTTP PROCESS PRODUCTION] Submitting tenant workload. TenantId='{tenant.TenantId}', PipelineKey='{pipelineName}', RunCount='{tenant.Run.RunCount}', StepCount='{tenant.Run.StepCount}'.");
+                $"[HTTP PROCESS PRODUCTION] Submitting tenant workload. TenantId='{tenant.TenantId}', TenantGroupId='{tenant.TenantGroupId}', PipelineKey='{pipelineName}', RunCount='{tenant.Run.RunCount}', StepCount='{tenant.Run.StepCount}'.");
 
             var sharedRunIds =
                 await SubmitRunsAsync(
@@ -218,7 +217,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                         mcp,
                         dispatchedRuns,
                         finalStatuses,
-                        assertReplayLedgerTrace: true)
+                        scenario.Assertions)
                     .ConfigureAwait(false);
 
             var runtimeInstanceIds =
@@ -230,7 +229,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                     .ToArray();
 
             this.output.WriteLine(
-                $"[HTTP PROCESS PRODUCTION] Tenant completed. TenantId='{tenant.TenantId}', PipelineKey='{pipelineName}', RuntimeInstances='{string.Join(", ", runtimeInstanceIds)}', ScaleOutRequests='{scaleOutRequests.Count}'.");
+                $"[HTTP PROCESS PRODUCTION] Tenant completed. TenantId='{tenant.TenantId}', TenantGroupId='{tenant.TenantGroupId}', PipelineKey='{pipelineName}', RuntimeInstances='{string.Join(", ", runtimeInstanceIds)}', ScaleOutRequests='{scaleOutRequests.Count}'.");
 
             return new ProductionTenantScenarioResult
             {
@@ -248,79 +247,6 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                     ["runtimeInstanceIdPrefix"] = tenant.RuntimeInstanceIdPrefix
                 }
             };
-        }
-
-        /// <summary>
-        /// Creates HTTP process-host production scenario settings.
-        /// </summary>
-        /// <param name="controlPlaneId">The control-plane id.</param>
-        /// <param name="runtimeHostAssemblyPath">The runtime host assembly path.</param>
-        /// <returns>The settings dictionary.</returns>
-        private static Dictionary<string, string?> CreateHttpProcessProductionScenarioSettings(
-            string controlPlaneId,
-            string runtimeHostAssemblyPath)
-        {
-            var settings =
-                GenericMcpServerTestSettings.CreateHttpProcessHostScaleOutOnlyControlPlaneSettings(
-                    controlPlaneId,
-                    runtimeHostAssemblyPath);
-
-            settings["AiMcpHost:EnableSharedQueuePump"] = "true";
-
-            settings["AiSharedQueueBackgroundService:Enabled"] = "true";
-            settings["AiSharedQueueBackgroundService:WaitForRuntimeReadiness"] = "false";
-            settings["AiSharedQueueBackgroundService:RuntimeReadinessPollInterval"] = "00:00:00.100";
-            settings["AiSharedQueueBackgroundService:RuntimeReadinessTimeout"] = "00:00:05";
-            settings["AiSharedQueueBackgroundService:IntervalSeconds"] = "1";
-            settings["AiSharedQueueBackgroundService:MaxDispatchesPerCycle"] = "10";
-
-            settings["AiSharedQueuePump:Enabled"] = "true";
-
-            // Important:
-            // This production scenario starts from zero runtime capacity.
-            // Submit must go through admission immediately so admission can create
-            // Redis scale-out requests. QueueFirst would enqueue first and may never
-            // create the scale-out request when no runtime exists yet.
-            settings["AiSharedRuntimeController:SubmitMode"] = "DirectDispatch";
-
-            settings["AiRuntimeScaleOutWatcher:Enabled"] = "true";
-            settings["AiRuntimeScaleOutWatcher:IntervalSeconds"] = "1";
-
-            settings["AiHttpRuntimeInstanceProvider:EnableCircuitBreaker"] = "false";
-            settings["AiHttpRuntimeInstanceProvider:CircuitBreakerFailureThreshold"] = "100";
-
-            settings["AiEngine:Snapshots:Enabled"] = "true";
-            settings["AiEngine:Snapshots:Mongo:Enabled"] = "true";
-
-            // Parent control-plane ledger reader.
-            settings["AiDecisionLedger:Provider"] = "mongo";
-            settings["AiObservability:Ledger:Provider"] = "mongo";
-
-            // Child process runtime ledger writer.
-            settings["AiRuntimeProcessHostCreation:EnvironmentVariables:AiDecisionLedger__Provider"] = "mongo";
-            settings["AiRuntimeProcessHostCreation:EnvironmentVariables:AiObservability__Ledger__Provider"] = "mongo";
-
-            settings["AiRuntimeProcessHostCreation:EnvironmentVariables:AiPayloadStore__Enabled"] = "true";
-            settings["AiRuntimeProcessHostCreation:EnvironmentVariables:AiPayloadStore__Provider"] = "mongo-redis";
-            settings["AiRuntimeProcessHostCreation:EnvironmentVariables:AiPayloadStore__RequireReplaySafePayloads"] = "true";
-
-            settings["AiExecutionReplay:MetadataStore:Provider"] = "mongo";
-            settings["AiExecutionReplay:MetadataStore:Mongo:CollectionName"] = "ai_execution_replay_metadata";
-
-            settings["AiRuntimeProcessHostCreation:EnvironmentVariables:AiExecutionReplay__MetadataStore__Provider"] = "mongo";
-            settings["AiRuntimeProcessHostCreation:EnvironmentVariables:AiExecutionReplay__MetadataStore__Mongo__CollectionName"] = "ai_execution_replay_metadata";
-
-            settings["AiEngine:Observability:EnableTracing"] = "true";
-            settings["AiEngine:Observability:EnableInMemoryRecording"] = "true";
-            settings["AiEngine:Observability:Tracing:Mode"] = "Mongo";
-            settings["AiEngine:Observability:Tracing:MongoCollectionName"] = "ai_runtime_traces";
-
-            settings["AiRuntimeProcessHostCreation:EnvironmentVariables:AiEngine__Observability__EnableTracing"] = "true";
-            settings["AiRuntimeProcessHostCreation:EnvironmentVariables:AiEngine__Observability__EnableInMemoryRecording"] = "true";
-            settings["AiRuntimeProcessHostCreation:EnvironmentVariables:AiEngine__Observability__Tracing__Mode"] = "Mongo";
-            settings["AiRuntimeProcessHostCreation:EnvironmentVariables:AiEngine__Observability__Tracing__MongoCollectionName"] = "ai_runtime_traces";
-
-            return settings;
         }
 
         /// <summary>
@@ -348,20 +274,27 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 };
 
             var submitRequest =
-                new AiSharedRuntimeControllerRequest
-                {
-                    Operation = AiSharedRuntimeControllerOperation.SubmitRun,
-                    PipelineKey = pipelineName,
-                    TenantId = tenant.TenantId,
-                    RequestedBy = RequestedBy,
-                    Source = Source,
-                    RunRequest = McpTestPipelineFactory.CreateRunRequest(
-                        pipelineName,
-                        stepCount: tenant.Run.StepCount,
-                        input: input,
-                        enableRetention: tenant.Run.EnableRetention,
-                        flakyStepInterval: tenant.Run.FlakyStepInterval)
-                };
+                 new AiSharedRuntimeControllerRequest
+                 {
+                     Operation = AiSharedRuntimeControllerOperation.SubmitRun,
+                     PipelineKey = pipelineName,
+                     TenantId = tenant.TenantId,
+                     RequestedBy = RequestedBy,
+                     Source = Source,
+                     Metadata = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                     {
+                         [AiRuntimeInstanceIsolationMetadataKeys.TenantId] = tenant.TenantId,
+                         [AiRuntimeInstanceIsolationMetadataKeys.TenantGroupId] = tenant.TenantGroupId,
+                         ["pipelineName"] = pipelineName,
+                         ["runtimeInstanceIdPrefix"] = tenant.RuntimeInstanceIdPrefix
+                     },
+                     RunRequest = McpTestPipelineFactory.CreateRunRequest(
+                         pipelineName,
+                         stepCount: tenant.Run.StepCount,
+                         input: input,
+                         enableRetention: tenant.Run.EnableRetention,
+                         flakyStepInterval: tenant.Run.FlakyStepInterval)
+                 };
 
             var submitResults =
                 await mcp.SubmitManyRunsAsync(
@@ -392,8 +325,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
         /// </summary>
         /// <param name="submitResult">The submit result.</param>
         /// <returns>The shared run id.</returns>
-        private static string ExtractSharedRunId(
-            object submitResult)
+        private static string ExtractSharedRunId(object submitResult)
         {
             ArgumentNullException.ThrowIfNull(submitResult);
 
@@ -591,14 +523,16 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
         /// <param name="mcp">The tenant-scoped MCP client.</param>
         /// <param name="dispatchedRuns">The dispatched shared runs.</param>
         /// <param name="finalStatuses">The terminal runtime statuses.</param>
-        /// <param name="assertReplayLedgerTrace">Whether replay, ledger, and trace should be queried.</param>
+        /// <param name="assertions">The scenario assertion options that control which observability and replay queries are executed.</param>
         /// <returns>The run results.</returns>
         private async Task<IReadOnlyList<ProductionRunScenarioResult>> BuildRunResultsAsync(
             McpTestClient mcp,
             IReadOnlyList<AiSharedRunRecord> dispatchedRuns,
             IReadOnlyList<AiRuntimeQueueControlPlaneResult> finalStatuses,
-            bool assertReplayLedgerTrace)
+            ProductionRuntimeScenarioAssertionOptions assertions)
         {
+            ArgumentNullException.ThrowIfNull(assertions);
+
             var results =
                 new List<ProductionRunScenarioResult>();
 
@@ -651,24 +585,44 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 var hasReplayLedger = false;
                 var hasReplayTrace = false;
 
-                if (assertReplayLedgerTrace)
+                var ledgerCount = 0;
+                var traceCount = 0;
+
+                var replaySuccess = false;
+                string? replayMessage = null;
+
+                if (assertions.AssertLedger)
                 {
                     var ledgerEntries =
                         await mcp.GetLedgerByExecutionAsync(
                                 executionId!)
                             .ConfigureAwait(false);
 
+                    ledgerCount =
+                        ledgerEntries.Count;
+
+                    hasLedger =
+                        ledgerCount > 0;
+                }
+
+                if (assertions.AssertTrace)
+                {
                     var traceEvents =
                         await mcp.GetTraceByExecutionAsync(
                                 executionId!)
                             .ConfigureAwait(false);
 
-                    hasLedger =
-                        ledgerEntries.Count > 0;
+                    traceCount =
+                        traceEvents.Count;
 
                     hasTrace =
-                        traceEvents.Count > 0;
+                        traceCount > 0;
+                }
 
+                if (assertions.AssertReplayReport ||
+                    assertions.AssertReplayLedger ||
+                    assertions.AssertReplayTrace)
+                {
                     var replayRequest =
                         new AiReplayControlRequest
                         {
@@ -684,45 +638,63 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                                 replayRequest)
                             .ConfigureAwait(false);
 
-                    replayRequest.Operation = AiReplayOperation.GetReport;
+                    replaySuccess =
+                        replayResult.Success;
 
-                    var replayReport =
-                        await mcp.GetReplayReportAsync(
-                                replayRequest)
-                            .ConfigureAwait(false);
+                    replayMessage =
+                        replayResult.FailureReason ??
+                        replayResult.Message;
 
-                    replayRequest.Operation = AiReplayOperation.GetLedger;
+                    if (assertions.AssertReplayReport)
+                    {
+                        replayRequest.Operation =
+                            AiReplayOperation.GetReport;
 
-                    var replayLedger =
-                        await mcp.GetReplayLedgerAsync(
-                                replayRequest)
-                            .ConfigureAwait(false);
+                        var replayReport =
+                            await mcp.GetReplayReportAsync(
+                                    replayRequest)
+                                .ConfigureAwait(false);
 
-                    replayRequest.Operation = AiReplayOperation.GetTimeline;
+                        hasReplayReport =
+                            replayResult.Success &&
+                            replayReport.Success;
+                    }
 
-                    var replayTrace =
-                        await mcp.GetReplayTraceAsync(
-                                replayRequest)
-                            .ConfigureAwait(false);
+                    if (assertions.AssertReplayLedger)
+                    {
+                        replayRequest.Operation =
+                            AiReplayOperation.GetLedger;
 
-                    hasReplayReport =
-                        replayResult.Success &&
-                        replayReport.Success;
+                        var replayLedger =
+                            await mcp.GetReplayLedgerAsync(
+                                    replayRequest)
+                                .ConfigureAwait(false);
 
-                    hasReplayLedger =
-                        replayLedger.Success;
+                        hasReplayLedger =
+                            replayLedger.Success;
+                    }
 
-                    hasReplayTrace =
-                        replayTrace.Success;
+                    if (assertions.AssertReplayTrace)
+                    {
+                        replayRequest.Operation =
+                            AiReplayOperation.GetTimeline;
 
-                    this.output.WriteLine(
-                        $"[HTTP PROCESS PRODUCTION][REPLAY DEBUG] ExecutionId='{executionId}', " +
-                        $"LedgerCount='{ledgerEntries.Count}', TraceCount='{traceEvents.Count}', " +
-                        $"ReplaySuccess='{replayResult.Success}', ReplayFailure='{replayResult.FailureReason ?? replayResult.Message}', " +
-                        $"ReportSuccess='{replayReport.Success}', ReportFailure='{replayReport.FailureReason ?? replayReport.Message}', " +
-                        $"ReplayLedgerSuccess='{replayLedger.Success}', ReplayLedgerFailure='{replayLedger.FailureReason ?? replayLedger.Message}', " +
-                        $"ReplayTraceSuccess='{replayTrace.Success}', ReplayTraceFailure='{replayTrace.FailureReason ?? replayTrace.Message}'.");
+                        var replayTrace =
+                            await mcp.GetReplayTraceAsync(
+                                    replayRequest)
+                                .ConfigureAwait(false);
+
+                        hasReplayTrace =
+                            replayTrace.Success;
+                    }
                 }
+
+                this.output.WriteLine(
+                    $"[HTTP PROCESS PRODUCTION][OBSERVABILITY DEBUG] ExecutionId='{executionId}', " +
+                    $"LedgerCount='{ledgerCount}', TraceCount='{traceCount}', " +
+                    $"HasLedger='{hasLedger}', HasTrace='{hasTrace}', " +
+                    $"ReplaySuccess='{replaySuccess}', ReplayMessage='{replayMessage}', " +
+                    $"HasReplayReport='{hasReplayReport}', HasReplayLedger='{hasReplayLedger}', HasReplayTrace='{hasReplayTrace}'.");
 
                 results.Add(
                     new ProductionRunScenarioResult
@@ -747,7 +719,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
         /// Finds the shared run matching a terminal runtime queue status.
         /// </summary>
         /// <param name="dispatchedRuns">The dispatched shared runs.</param>
-        /// <param name="status">The runtime queue status.</param>
+        /// <param name="status">The runtime queue control-plane status.</param>
         /// <returns>The matching shared run.</returns>
         private static AiSharedRunRecord FindMatchingSharedRun(
             IReadOnlyList<AiSharedRunRecord> dispatchedRuns,

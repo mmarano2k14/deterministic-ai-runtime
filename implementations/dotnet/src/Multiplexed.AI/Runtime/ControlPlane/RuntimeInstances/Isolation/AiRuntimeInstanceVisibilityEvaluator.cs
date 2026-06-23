@@ -46,15 +46,17 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Isolation
 
             if (descriptor.IsolationMode == AiRuntimeInstanceIsolationMode.Dedicated)
             {
-                return IsOwnedRuntimeVisibleForTenant(
+                return IsOwnedRuntimeVisibleForTenantOrGroup(
                     tenantId,
+                    tenantGroupId,
                     descriptor);
             }
 
             if (descriptor.IsolationMode == AiRuntimeInstanceIsolationMode.Hybrid)
             {
-                return IsOwnedRuntimeVisibleForTenant(
+                return IsOwnedRuntimeVisibleForTenantOrGroup(
                     tenantId,
+                    tenantGroupId,
                     descriptor);
             }
 
@@ -126,29 +128,41 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Isolation
         }
 
         /// <summary>
-        /// Determines whether a dedicated or hybrid runtime resource is visible for its owning tenant.
+        /// Determines whether a dedicated or hybrid runtime resource is visible for its owning tenant or tenant group.
         /// </summary>
         /// <param name="tenantId">The current tenant identifier.</param>
+        /// <param name="tenantGroupId">The current tenant group identifier.</param>
         /// <param name="descriptor">The runtime resource visibility descriptor.</param>
-        /// <returns><see langword="true" /> when the runtime resource belongs to the exact tenant; otherwise, <see langword="false" />.</returns>
-        private static bool IsOwnedRuntimeVisibleForTenant(
+        /// <returns>
+        /// <see langword="true" /> when the runtime resource belongs to the exact tenant or tenant group;
+        /// otherwise, <see langword="false" />.
+        /// </returns>
+        private static bool IsOwnedRuntimeVisibleForTenantOrGroup(
             string? tenantId,
+            string? tenantGroupId,
             AiRuntimeInstanceVisibilityDescriptor descriptor)
         {
-            if (string.IsNullOrWhiteSpace(tenantId))
+            if (!string.IsNullOrWhiteSpace(tenantId) &&
+                !string.IsNullOrWhiteSpace(descriptor.TenantId) &&
+                string.Equals(
+                    tenantId,
+                    descriptor.TenantId,
+                    StringComparison.OrdinalIgnoreCase))
             {
-                return false;
+                return true;
             }
 
-            if (string.IsNullOrWhiteSpace(descriptor.TenantId))
+            if (!string.IsNullOrWhiteSpace(tenantGroupId) &&
+                !string.IsNullOrWhiteSpace(descriptor.TenantGroupId) &&
+                string.Equals(
+                    tenantGroupId,
+                    descriptor.TenantGroupId,
+                    StringComparison.OrdinalIgnoreCase))
             {
-                return false;
+                return true;
             }
 
-            return string.Equals(
-                tenantId,
-                descriptor.TenantId,
-                StringComparison.OrdinalIgnoreCase);
+            return false;
         }
 
         /// <summary>

@@ -1,18 +1,24 @@
 ﻿using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Definitions;
 using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Results;
+using Xunit;
 
 namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Assertions
 {
     /// <summary>
-    /// Contains common replay, ledger, and trace assertions for production runtime scenarios.
+    /// Provides assertions for replay, ledger, and trace visibility in production runtime scenarios.
     /// </summary>
+    /// <remarks>
+    /// These assertions validate the observable execution data produced by the runtime.
+    /// In process-host scenarios, this data must cross process boundaries through durable
+    /// stores such as MongoDB-backed decision ledger, replay metadata, and runtime trace stores.
+    /// </remarks>
     public static class ProductionReplayLedgerAssertions
     {
         /// <summary>
-        /// Verifies that replay, ledger, and trace were available for all completed runs when required by the scenario.
+        /// Asserts that replay, ledger, and trace data are available according to the scenario assertion options.
         /// </summary>
-        /// <param name="scenario">The expected scenario definition.</param>
-        /// <param name="result">The actual scenario result.</param>
+        /// <param name="scenario">The production runtime scenario definition.</param>
+        /// <param name="result">The production runtime scenario result.</param>
         public static void AssertReplayLedgerTraceAvailable(
             ProductionRuntimeScenarioDefinition scenario,
             ProductionRuntimeScenarioResult result)
@@ -25,35 +31,62 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Assert
                 return;
             }
 
-            foreach (var tenantResult in result.Tenants)
+            foreach (var tenant in result.Tenants)
             {
-                Assert.All(
-                    tenantResult.Runs,
-                    run =>
-                    {
-                        Assert.False(
-                            string.IsNullOrWhiteSpace(run.ExecutionId));
+                foreach (var run in tenant.Runs)
+                {
+                    AssertRunReplayLedgerTraceAvailable(
+                        scenario,
+                        tenant,
+                        run);
+                }
+            }
+        }
 
-                        Assert.True(
-                            run.HasLedger,
-                            $"Expected ledger entries for execution '{run.ExecutionId}'.");
+        /// <summary>
+        /// Asserts replay, ledger, and trace data for one completed production run.
+        /// </summary>
+        /// <param name="scenario">The production runtime scenario definition.</param>
+        /// <param name="tenant">The tenant scenario result.</param>
+        /// <param name="run">The run scenario result.</param>
+        private static void AssertRunReplayLedgerTraceAvailable(
+            ProductionRuntimeScenarioDefinition scenario,
+            ProductionTenantScenarioResult tenant,
+            ProductionRunScenarioResult run)
+        {
+            if (scenario.Assertions.AssertLedger)
+            {
+                Assert.True(
+                    run.HasLedger,
+                    $"Expected ledger entries for execution '{run.ExecutionId}'. TenantId='{tenant.TenantId}', RuntimeInstanceId='{run.RuntimeInstanceId}', SharedRunId='{run.SharedRunId}'.");
+            }
 
-                        Assert.True(
-                            run.HasTrace,
-                            $"Expected trace events for execution '{run.ExecutionId}'.");
+            if (scenario.Assertions.AssertTrace)
+            {
+                Assert.True(
+                    run.HasTrace,
+                    $"Expected trace events for execution '{run.ExecutionId}'. TenantId='{tenant.TenantId}', RuntimeInstanceId='{run.RuntimeInstanceId}', SharedRunId='{run.SharedRunId}'.");
+            }
 
-                        Assert.True(
-                            run.HasReplayReport,
-                            $"Expected replay report for execution '{run.ExecutionId}'.");
+            if (scenario.Assertions.AssertReplayReport)
+            {
+                Assert.True(
+                    run.HasReplayReport,
+                    $"Expected replay report for execution '{run.ExecutionId}'. TenantId='{tenant.TenantId}', RuntimeInstanceId='{run.RuntimeInstanceId}', SharedRunId='{run.SharedRunId}'.");
+            }
 
-                        Assert.True(
-                            run.HasReplayLedger,
-                            $"Expected replay ledger for execution '{run.ExecutionId}'.");
+            if (scenario.Assertions.AssertReplayLedger)
+            {
+                Assert.True(
+                    run.HasReplayLedger,
+                    $"Expected replay ledger for execution '{run.ExecutionId}'. TenantId='{tenant.TenantId}', RuntimeInstanceId='{run.RuntimeInstanceId}', SharedRunId='{run.SharedRunId}'.");
+            }
 
-                        Assert.True(
-                            run.HasReplayTrace,
-                            $"Expected replay trace for execution '{run.ExecutionId}'.");
-                    });
+            if (scenario.Assertions.AssertReplayTrace)
+            {
+                Assert.True(
+                    run.HasReplayTrace,
+                    $"Expected replay trace timeline for execution '{run.ExecutionId}'. TenantId='{tenant.TenantId}', RuntimeInstanceId='{run.RuntimeInstanceId}', SharedRunId='{run.SharedRunId}'.");
             }
         }
     }

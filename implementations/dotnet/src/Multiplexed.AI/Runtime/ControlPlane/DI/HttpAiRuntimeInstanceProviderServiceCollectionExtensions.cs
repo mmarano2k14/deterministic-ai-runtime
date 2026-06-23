@@ -1,10 +1,12 @@
 ﻿using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers.Http;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.SharedInstance;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Isolation;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http.ScaleOut;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.SharedInstance;
@@ -88,6 +90,13 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
         /// </para>
         ///
         /// <para>
+        /// This method also registers a default <see cref="IAiTenantRuntimeSettingsProvider"/>
+        /// only when none has already been registered. This keeps simple HTTP provider
+        /// registrations self-contained while allowing production scenarios to override
+        /// tenant settings with configuration-backed providers.
+        /// </para>
+        ///
+        /// <para>
         /// This method also calls <see cref="AddAiRuntimeInstanceHttpCommandHandling(IServiceCollection)"/>
         /// so HTTP fixture/runtime scenarios that host the command endpoint in the same service collection
         /// continue to work.
@@ -130,6 +139,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
             services
                 .AddOptions<AiHttpRuntimeScaleOutOptions>()
                 .BindConfiguration(ScaleOutOptionsSectionName);
+
+            services.TryAddSingleton<
+                IAiTenantRuntimeSettingsProvider,
+                HardcodedAiTenantRuntimeSettingsProvider>();
 
             services.AddHttpClient<HttpAiRuntimeInstanceProvider>();
 

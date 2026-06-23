@@ -3,6 +3,11 @@
     /// <summary>
     /// Describes one tenant participating in a production runtime scenario.
     /// </summary>
+    /// <remarks>
+    /// A tenant scenario definition describes the tenant identity, runtime isolation
+    /// mode, expected runtime capacity, workload, and isolation assertions used by
+    /// provider-specific production scenario runners.
+    /// </remarks>
     public sealed record ProductionTenantScenarioDefinition
     {
         /// <summary>
@@ -13,11 +18,30 @@
         /// <summary>
         /// Gets the optional tenant group id.
         /// </summary>
+        /// <remarks>
+        /// Tenant group id is useful for policy grouping, but dedicated and hybrid
+        /// runtime visibility must still be validated carefully so tenants do not
+        /// accidentally consume another tenant's dedicated runtime capacity.
+        /// </remarks>
         public string? TenantGroupId { get; init; }
+
+        /// <summary>
+        /// Gets the runtime mode expected for this tenant.
+        /// </summary>
+        /// <remarks>
+        /// The runtime mode controls whether this tenant is expected to use dedicated,
+        /// shared, or hybrid runtime capacity during the scenario.
+        /// </remarks>
+        public ProductionTenantRuntimeMode RuntimeMode { get; init; } =
+            ProductionTenantRuntimeMode.Dedicated;
 
         /// <summary>
         /// Gets the expected runtime instance id prefix for this tenant.
         /// </summary>
+        /// <remarks>
+        /// This prefix is used by tenant isolation assertions to validate that runs
+        /// were dispatched to runtime instances compatible with the tenant policy.
+        /// </remarks>
         public required string RuntimeInstanceIdPrefix { get; init; }
 
         /// <summary>
@@ -48,11 +72,20 @@
         /// <summary>
         /// Gets a value indicating whether assigned runtime instances must match the tenant runtime prefix.
         /// </summary>
+        /// <remarks>
+        /// Dedicated tenants should normally keep this enabled. Shared or hybrid
+        /// scenarios may disable it when they intentionally validate shared fallback
+        /// or shared pool routing.
+        /// </remarks>
         public bool ExpectDedicatedRuntimePrefix { get; init; } = true;
 
         /// <summary>
         /// Gets a value indicating whether the scenario should observe temporary overflow before all runs dispatch.
         /// </summary>
+        /// <remarks>
+        /// This is useful for scenarios that intentionally submit more work than
+        /// the initially available tenant capacity can dispatch immediately.
+        /// </remarks>
         public bool ExpectCapacityOverflow { get; init; } = true;
     }
 }

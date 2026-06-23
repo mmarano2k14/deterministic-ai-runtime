@@ -245,7 +245,16 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
             services.TryAddSingleton<IAiScaleOutFulfilledRunRequeueService, AiScaleOutFulfilledRunRequeueService>();
             services.TryAddSingleton<IAiRuntimeScaleOutProvider, SimulatedAiRuntimeScaleOutProvider>();
 
-            services.TryAddSingleton<IAiTenantRuntimeSettingsProvider, HardcodedAiTenantRuntimeSettingsProvider>();
+            if (configuration is null)
+            {
+                services.TryAddSingleton<IAiTenantRuntimeSettingsProvider, HardcodedAiTenantRuntimeSettingsProvider>();
+            }
+            else
+            {
+                ConfigureTenantRuntimeSettingsProvider(services, configuration);
+            }
+
+
             services.TryAddSingleton<IAiRuntimeInstanceVisibilityEvaluator, AiRuntimeInstanceVisibilityEvaluator>();
 
             services.TryAddSingleton<IAiSharedRuntimeController, AiSharedRuntimeController>();
@@ -517,6 +526,29 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
             services.AddSingleton<IAiControlPlaneObserver, LoggedAiControlPlaneObserver>();
 
             return services;
+        }
+
+        /// <summary>
+        /// Configures the tenant runtime settings provider.
+        /// </summary>
+        /// <param name="services">The service collection.</param>
+        /// <param name="configuration">The application configuration.</param>
+        private static void ConfigureTenantRuntimeSettingsProvider(
+            IServiceCollection services,
+            IConfiguration configuration)
+        {
+            services.RemoveAll<IAiTenantRuntimeSettingsProvider>();
+
+            var provider =
+                configuration["AiTenantRuntimeSettings:Provider"];
+
+            if (string.Equals(provider, "Configuration", StringComparison.OrdinalIgnoreCase))
+            {
+                services.AddSingleton<IAiTenantRuntimeSettingsProvider, ConfigurationAiTenantRuntimeSettingsProvider>();
+                return;
+            }
+
+            services.AddSingleton<IAiTenantRuntimeSettingsProvider, HardcodedAiTenantRuntimeSettingsProvider>();
         }
     }
 }

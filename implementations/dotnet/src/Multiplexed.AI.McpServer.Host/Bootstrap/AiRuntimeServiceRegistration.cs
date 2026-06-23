@@ -1,5 +1,6 @@
 ﻿using Microsoft.Extensions.DependencyInjection.Extensions;
 using MongoDB.Driver;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
 using Multiplexed.Abstractions.AI.Execution.Persistence.Replay.Metadata;
 using Multiplexed.Abstractions.AI.Observability.Ledger;
 using Multiplexed.Abstractions.Core.ExecutionContext;
@@ -14,6 +15,7 @@ using Multiplexed.AI.Observability.Ledger;
 using Multiplexed.AI.Runtime;
 using Multiplexed.AI.Runtime.AI.Providers.Llm.OpenAI.DI;
 using Multiplexed.AI.Runtime.AI.Rag.DI;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Isolation;
 using Multiplexed.AI.Runtime.DependencyInjection;
 using Multiplexed.AI.Runtime.Execution.Persistence.Replay.Metadata;
 using Multiplexed.AI.Runtime.Execution.Retention.Policies;
@@ -73,6 +75,10 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
             EnsurePayloadStoreOptions(configuration, options);
 
             services.AddMultiplexAI(options);
+
+            ConfigureTenantRuntimeSettingsProvider(
+                services,
+                configuration);
 
             ConfigureDecisionLedger(
                 services,
@@ -141,6 +147,38 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
                 configuration);
         }
 
+        /// <summary>
+        /// Configures the tenant runtime settings provider used by admission, scale-out,
+        /// host creation, registration metadata, capacity metadata, and visibility logic.
+        /// </summary>
+        /// <param name="services">The service collection.</param>
+        /// <param name="configuration">The application configuration.</param>
+        /// <remarks>
+        /// The production scenario framework can provide tenant runtime settings through
+        /// configuration. This override must run after <c>AddMultiplexAI</c> because the
+        /// default runtime registration may already have registered the hardcoded provider.
+        /// </remarks>
+        private static void ConfigureTenantRuntimeSettingsProvider(
+            IServiceCollection services,
+            IConfiguration configuration)
+        {
+            var provider =
+                configuration["AiTenantRuntimeSettings:Provider"];
+
+            if (!string.Equals(provider, "Configuration", StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            services.RemoveAll<IAiTenantRuntimeSettingsProvider>();
+            services.AddSingleton<IAiTenantRuntimeSettingsProvider, ConfigurationAiTenantRuntimeSettingsProvider>();
+        }
+
+        /// <summary>
+        /// Configures the decision ledger provider.
+        /// </summary>
+        /// <param name="services">The service collection.</param>
+        /// <param name="configuration">The application configuration.</param>
         private static void ConfigureDecisionLedger(
             IServiceCollection services,
             IConfiguration configuration)
@@ -180,6 +218,11 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
             });
         }
 
+        /// <summary>
+        /// Configures the replay metadata store provider.
+        /// </summary>
+        /// <param name="services">The service collection.</param>
+        /// <param name="configuration">The application configuration.</param>
         private static void ConfigureReplayMetadataStore(
             IServiceCollection services,
             IConfiguration configuration)
@@ -221,6 +264,11 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
                         collectionName));
         }
 
+        /// <summary>
+        /// Ensures Mongo snapshot persistence options are configured when Mongo snapshots are enabled.
+        /// </summary>
+        /// <param name="configuration">The application configuration.</param>
+        /// <param name="options">The AI engine options.</param>
         private static void EnsureSnapshotOptions(
             IConfiguration configuration,
             AiEngineOptions options)

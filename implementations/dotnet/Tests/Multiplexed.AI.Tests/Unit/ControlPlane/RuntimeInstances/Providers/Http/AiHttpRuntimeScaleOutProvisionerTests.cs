@@ -33,12 +33,16 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Providers.Http
             var capacityStore =
                 new TestRuntimeInstanceCapacityStore();
 
+            var tenantRuntimeSettingsProvider =
+                new RequestCompatibleTenantRuntimeSettingsProvider();
+
             var provisioner =
                 new AiHttpRuntimeScaleOutProvisioner(
                     registry,
                     capacityStore,
                     new NoopAiRuntimeHostManager(),
                     new TestRuntimeInstanceReadinessWaiter(),
+                    tenantRuntimeSettingsProvider,
                     Options.Create(
                         new AiHttpRuntimeScaleOutOptions
                         {
@@ -216,12 +220,16 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Providers.Http
             var readinessWaiter =
                 new TestRuntimeInstanceReadinessWaiter();
 
+            var tenantRuntimeSettingsProvider =
+                new RequestCompatibleTenantRuntimeSettingsProvider();
+
             var provisioner =
                 new AiHttpRuntimeScaleOutProvisioner(
                     registry,
                     capacityStore,
                     hostManager,
                     readinessWaiter,
+                    tenantRuntimeSettingsProvider,
                     Options.Create(
                         new AiHttpRuntimeScaleOutOptions
                         {
@@ -275,8 +283,13 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Providers.Http
                 "control-plane-1:tenant-a-http-1",
                 result.RuntimeInstanceId);
 
-            Assert.StartsWith("http-host-manager-scaleout-", result.ProviderOperationId);
-            Assert.EndsWith("scaleout-hostmanager-1", result.ProviderOperationId);
+            Assert.StartsWith(
+                "http-host-manager-scaleout-",
+                result.ProviderOperationId);
+
+            Assert.EndsWith(
+                "scaleout-hostmanager-1",
+                result.ProviderOperationId);
 
             Assert.Equal(
                 1,
@@ -313,12 +326,23 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Providers.Http
                 "group-a",
                 hostManager.LastRequest.ExecutionContextSnapshot.TenantGroupId);
 
-            Assert.Equal(1, hostManager.CallCount);
-            var hostStartRequest = Assert.IsType<AiRuntimeHostStartRequest>(hostManager.LastRequest);
-            Assert.True(hostStartRequest.IsolationMode.ToString() == AiRuntimeInstanceIsolationMode.Dedicated.ToString());
-            Assert.Equal(5, hostStartRequest.MaxRuntimeInstances);
-            Assert.True(hostStartRequest.PreferDedicatedCapacity);
-            Assert.False(hostStartRequest.AllowSharedFallback);
+            var hostStartRequest =
+                Assert.IsType<AiRuntimeHostStartRequest>(
+                    hostManager.LastRequest);
+
+            Assert.Equal(
+                AiRuntimeInstanceIsolationMode.Dedicated.ToString(),
+                hostStartRequest.IsolationMode.ToString());
+
+            Assert.Equal(
+                5,
+                hostStartRequest.MaxRuntimeInstances);
+
+            Assert.True(
+                hostStartRequest.PreferDedicatedCapacity);
+
+            Assert.False(
+                hostStartRequest.AllowSharedFallback);
 
             Assert.True(
                 hostManager.LastRequest.PreferDedicatedCapacity);
@@ -369,6 +393,33 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Providers.Http
                 TtlSeconds = 0,
                 CreatedAtUtc = DateTime.UtcNow
             };
+        }
+
+        /// <summary>
+        /// Test tenant runtime settings provider that mirrors the explicit scale-out request values
+        /// used by these provisioner unit tests.
+        /// </summary>
+        private sealed class RequestCompatibleTenantRuntimeSettingsProvider : IAiTenantRuntimeSettingsProvider
+        {
+            /// <inheritdoc />
+            public AiTenantRuntimeSettings GetSettings(
+                string tenantId,
+                string? tenantGroupId)
+            {
+                return new AiTenantRuntimeSettings
+                {
+                    TenantId = tenantId,
+                    TenantGroupId = tenantGroupId,
+                    IsolationMode = AiRuntimeInstanceIsolationMode.Dedicated,
+                    PreferDedicatedCapacity = true,
+                    AllowSharedFallback = false,
+                    MaxRuntimeInstances = 5,
+                    WorkerCountPerInstance = 7,
+                    MaxConcurrentRunsPerInstance = 3,
+                    LocalQueueCapacity = 42,
+                    RuntimeInstanceIdPrefix = "tenant-a-http"
+                };
+            }
         }
 
         /// <summary>

@@ -1,5 +1,8 @@
-﻿using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Assertions;
+﻿using System;
+using System.Linq;
+using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Assertions;
 using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Definitions;
+using Xunit;
 using Xunit.Abstractions;
 
 namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Providers.Http
@@ -15,11 +18,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
         /// Initializes a new instance of the <see cref="HttpProcessHostProductionScenarioTests"/> class.
         /// </summary>
         /// <param name="output">The test output helper.</param>
-        public HttpProcessHostProductionScenarioTests(
-            ITestOutputHelper output)
+        public HttpProcessHostProductionScenarioTests(ITestOutputHelper output)
         {
-            this.output =
-                output;
+            this.output = output;
         }
 
         /// <summary>
@@ -29,44 +30,115 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
         [Fact]
         public async Task Http_ProcessHost_Should_Run_MultiTenant_Capacity_Replay_Ledger_Production_Scenario()
         {
+            var scenario = ProductionRuntimeScenarioFactory.CreateMultiTenantCapacityReplayLedgerScenario();
+            var runner = new HttpProcessHostProductionScenarioRunner(this.output);
+            var result = await runner.RunAsync(scenario).ConfigureAwait(false);
+
+            AssertScenarioResult(scenario, result);
+        }
+
+        /// <summary>
+        /// Verifies that a small HTTP process-host scenario can persist ledger, trace,
+        /// replay metadata, replay ledger, and replay timeline data across the process boundary.
+        /// </summary>
+        [Fact]
+        public async Task Http_ProcessHost_Should_Persist_Ledger_ReplayMetadata_And_Trace_Across_Process_Boundary()
+        {
+            var baseScenario = ProductionRuntimeScenarioFactory.CreateMultiTenantCapacityReplayLedgerScenario();
+            var tenant = baseScenario.Tenants.First();
+
             var scenario =
-                ProductionRuntimeScenarioFactory.CreateMultiTenantCapacityReplayLedgerScenario();
+                baseScenario with
+                {
+                    Name = "process-boundary-ledger-replay-trace",
+                    ControlPlaneIdPrefix = "process-boundary-ledger-replay-trace",
+                    Tenants = new[]
+                    {
+                        tenant with
+                        {
+                            Run = tenant.Run with
+                            {
+                                RunCount = 1,
+                                StepCount = 5,
+                                DelayMs = 1,
+                                FlakyStepInterval = 0,
+                                EnableRetention = true
+                            }
+                        }
+                    },
+                    PersistenceProfile = ProductionRuntimePersistenceProfile.MongoRedis,
+                    ObservabilityProfile = ProductionRuntimeObservabilityProfile.DurableMongo,
+                    HostCreationMode = ProductionRuntimeHostCreationMode.Process,
+                    SubmitMode = ProductionRuntimeSubmitMode.DirectDispatch,
+                    ScaleOutTimeout = TimeSpan.FromMinutes(2),
+                    DispatchTimeout = TimeSpan.FromMinutes(2),
+                    CompletionTimeout = TimeSpan.FromMinutes(3),
+                    Assertions = new ProductionRuntimeScenarioAssertionOptions
+                    {
+                        AssertAllRunsCompleted = true,
+                        AssertTenantIsolation = true,
+                        AssertScaleOut = true,
+                        AssertMaxRuntimeInstances = true,
+                        AssertLedger = true,
+                        AssertTrace = true,
+                        AssertReplayReport = true,
+                        AssertReplayLedger = true,
+                        AssertReplayTrace = true
+                    }
+                };
 
-            var runner =
-                new HttpProcessHostProductionScenarioRunner(
-                    this.output);
+            var runner = new HttpProcessHostProductionScenarioRunner(this.output);
+            var result = await runner.RunAsync(scenario).ConfigureAwait(false);
 
-            var result =
-                await runner
-                    .RunAsync(scenario)
-                    .ConfigureAwait(false);
+            AssertScenarioResult(scenario, result);
+        }
 
-            ProductionRuntimeScenarioAssertions.AssertScenarioShape(
-                scenario,
-                result);
+        /// <summary>
+        /// Verifies that the HTTP process-host provider respects Dedicated, Shared, and Hybrid tenant runtime modes.
+        /// </summary>
+        [Fact]
+        public async Task Http_ProcessHost_Should_Respect_Dedicated_Shared_Hybrid_Tenant_Runtime_Modes()
+        {
+            var scenario = ProductionRuntimeScenarioFactory.CreateDedicatedSharedHybridRuntimeModeScenario();
+            var runner = new HttpProcessHostProductionScenarioRunner(this.output);
+            var result = await runner.RunAsync(scenario).ConfigureAwait(false);
 
-            ProductionRuntimeScenarioAssertions.AssertAllRunsCompleted(
-                scenario,
-                result);
+            AssertScenarioResult(scenario, result);
+        }
 
-            ProductionCapacityAssertions.AssertMaxRuntimeInstancesWereRespected(
-                scenario,
-                result);
+        /// <summary>
+        /// Asserts a production runtime scenario result according to the scenario assertion options.
+        /// </summary>
+        /// <param name="scenario">The scenario definition.</param>
+        /// <param name="result">The scenario result.</param>
+        private static void AssertScenarioResult(
+            ProductionRuntimeScenarioDefinition scenario,
+            Results.ProductionRuntimeScenarioResult result)
+        {
+            ProductionRuntimeScenarioAssertions.AssertScenarioShape(scenario, result);
 
-            ProductionCapacityAssertions.AssertFulfilledScaleOutRequestsHaveRuntimeInstanceIds(
-                result);
+            if (scenario.Assertions.AssertAllRunsCompleted)
+            {
+                ProductionRuntimeScenarioAssertions.AssertAllRunsCompleted(scenario, result);
+            }
 
-            ProductionTenantIsolationAssertions.AssertTenantRuntimePrefixesWereRespected(
-                scenario,
-                result);
+            if (scenario.Assertions.AssertMaxRuntimeInstances)
+            {
+                ProductionCapacityAssertions.AssertMaxRuntimeInstancesWereRespected(scenario, result);
+            }
 
-            ProductionTenantIsolationAssertions.AssertNoCrossTenantRuntimePrefixUsage(
-                scenario,
-                result);
+            if (scenario.Assertions.AssertScaleOut)
+            {
+                ProductionCapacityAssertions.AssertFulfilledScaleOutRequestsHaveRuntimeInstanceIds(result);
+            }
 
-            ProductionReplayLedgerAssertions.AssertReplayLedgerTraceAvailable(
-                scenario,
-                result);
+            if (scenario.Assertions.AssertTenantIsolation)
+            {
+                ProductionTenantIsolationAssertions.AssertTenantRuntimePrefixesWereRespected(scenario, result);
+                ProductionTenantIsolationAssertions.AssertNoCrossTenantRuntimePrefixUsage(scenario, result);
+            }
+
+            ProductionReplayLedgerAssertions.AssertReplayLedgerTraceAvailable(scenario, result);
         }
     }
 }
