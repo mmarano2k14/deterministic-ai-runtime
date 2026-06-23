@@ -286,6 +286,68 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Isolation
             Assert.True(visible);
         }
 
+        /// <summary>
+        /// Verifies that a Dedicated runtime instance is not visible when the tenant group does not match.
+        /// </summary>
+        [Fact]
+        public void IsVisible_Should_Return_False_For_Dedicated_Instance_When_Tenant_Group_Does_Not_Match()
+        {
+            var evaluator = CreateEvaluator();
+
+            var descriptor = new AiRuntimeInstanceVisibilityDescriptor
+            {
+                RuntimeInstanceId = "enterprise-runtime-1",
+                TenantGroupId = "enterprise-group-a",
+                IsolationMode = AiRuntimeInstanceIsolationMode.Dedicated
+            };
+
+            var visible = evaluator.IsVisible("tenant-x", "enterprise-group-b", descriptor);
+
+            Assert.False(visible);
+        }
+
+        /// <summary>
+        /// Verifies that a Hybrid runtime instance is visible when the tenant group matches.
+        /// </summary>
+        [Fact]
+        public void IsVisible_Should_Return_True_For_Hybrid_Instance_When_Tenant_Group_Matches()
+        {
+            var evaluator = CreateEvaluator();
+
+            var descriptor = new AiRuntimeInstanceVisibilityDescriptor
+            {
+                RuntimeInstanceId = "hybrid-enterprise-runtime-1",
+                TenantGroupId = "enterprise-group",
+                IsolationMode = AiRuntimeInstanceIsolationMode.Hybrid,
+                AllowSharedFallback = true
+            };
+
+            var visible = evaluator.IsVisible("tenant-x", "enterprise-group", descriptor);
+
+            Assert.True(visible);
+        }
+
+        /// <summary>
+        /// Verifies that a Hybrid runtime instance is not visible when the tenant group does not match.
+        /// </summary>
+        [Fact]
+        public void IsVisible_Should_Return_False_For_Hybrid_Instance_When_Tenant_Group_Does_Not_Match()
+        {
+            var evaluator = CreateEvaluator();
+
+            var descriptor = new AiRuntimeInstanceVisibilityDescriptor
+            {
+                RuntimeInstanceId = "hybrid-enterprise-runtime-1",
+                TenantGroupId = "enterprise-group-a",
+                IsolationMode = AiRuntimeInstanceIsolationMode.Hybrid,
+                AllowSharedFallback = true
+            };
+
+            var visible = evaluator.IsVisible("tenant-x", "enterprise-group-b", descriptor);
+
+            Assert.False(visible);
+        }
+
         private static AiRuntimeInstanceVisibilityEvaluator CreateEvaluator()
         {
             return new AiRuntimeInstanceVisibilityEvaluator(
