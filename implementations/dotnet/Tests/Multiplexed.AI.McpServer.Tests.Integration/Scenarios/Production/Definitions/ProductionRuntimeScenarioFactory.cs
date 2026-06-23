@@ -172,6 +172,151 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Defini
         }
 
         /// <summary>
+        /// Creates a focused single-tenant Dedicated runtime mode scenario.
+        /// </summary>
+        /// <returns>The production runtime scenario definition.</returns>
+        public static ProductionRuntimeScenarioDefinition CreateSingleTenantDedicatedRuntimeModeScenario()
+        {
+            return CreateFocusedRuntimeModeScenario(
+                name: "single-tenant-dedicated-runtime-mode",
+                controlPlaneIdPrefix: "production-single-tenant-dedicated",
+                tenants:
+                [
+                    CreateRuntimeModeTenant(
+                tenantId: "tenant-dedicated-single",
+                tenantGroupId: "tenant-mode-group-dedicated-single",
+                runtimeMode: ProductionTenantRuntimeMode.Dedicated,
+                runtimeInstanceIdPrefix: "tenant-dedicated-single-runtime",
+                expectDedicatedRuntimePrefix: true)
+                ]);
+        }
+
+        /// <summary>
+        /// Creates a focused single-tenant Shared runtime mode scenario.
+        /// </summary>
+        /// <returns>The production runtime scenario definition.</returns>
+        public static ProductionRuntimeScenarioDefinition CreateSingleTenantSharedRuntimeModeScenario()
+        {
+            return CreateFocusedRuntimeModeScenario(
+                name: "single-tenant-shared-runtime-mode",
+                controlPlaneIdPrefix: "production-single-tenant-shared",
+                tenants:
+                [
+                    CreateRuntimeModeTenant(
+                tenantId: "tenant-shared-single",
+                tenantGroupId: "tenant-mode-group-shared-single",
+                runtimeMode: ProductionTenantRuntimeMode.Shared,
+                runtimeInstanceIdPrefix: "tenant-shared-single-runtime",
+                expectDedicatedRuntimePrefix: false)
+                ]);
+        }
+
+        /// <summary>
+        /// Creates a focused single-tenant Hybrid runtime mode scenario.
+        /// </summary>
+        /// <returns>The production runtime scenario definition.</returns>
+        public static ProductionRuntimeScenarioDefinition CreateSingleTenantHybridRuntimeModeScenario()
+        {
+            return CreateFocusedRuntimeModeScenario(
+                name: "single-tenant-hybrid-runtime-mode",
+                controlPlaneIdPrefix: "production-single-tenant-hybrid",
+                tenants:
+                [
+                    CreateRuntimeModeTenant(
+                tenantId: "tenant-hybrid-single",
+                tenantGroupId: "tenant-mode-group-hybrid-single",
+                runtimeMode: ProductionTenantRuntimeMode.Hybrid,
+                runtimeInstanceIdPrefix: "tenant-hybrid-single-runtime",
+                expectDedicatedRuntimePrefix: true)
+                ]);
+        }
+
+        /// <summary>
+        /// Creates a focused multi-tenant Dedicated isolation scenario.
+        /// </summary>
+        /// <returns>The production runtime scenario definition.</returns>
+        /// <remarks>
+        /// The scenario executes tenants sequentially so that the first dedicated tenant
+        /// creates runtime capacity before the second dedicated tenant submits work.
+        /// This makes the scenario adversarial: the second tenant must not reuse the first
+        /// tenant's dedicated runtime capacity.
+        /// </remarks>
+        public static ProductionRuntimeScenarioDefinition CreateMultiTenantDedicatedIsolationScenario()
+        {
+            return CreateFocusedRuntimeModeScenario(
+                name: "multi-tenant-dedicated-isolation",
+                controlPlaneIdPrefix: "production-multi-tenant-dedicated-isolation",
+                tenants:
+                [
+                    CreateRuntimeModeTenant(
+                        tenantId: "tenant-dedicated-a",
+                        tenantGroupId: "tenant-mode-group-dedicated-a",
+                        runtimeMode: ProductionTenantRuntimeMode.Dedicated,
+                        runtimeInstanceIdPrefix: "tenant-dedicated-a-runtime",
+                        expectDedicatedRuntimePrefix: true),
+
+                    CreateRuntimeModeTenant(
+                        tenantId: "tenant-dedicated-b",
+                        tenantGroupId: "tenant-mode-group-dedicated-b",
+                        runtimeMode: ProductionTenantRuntimeMode.Dedicated,
+                        runtimeInstanceIdPrefix: "tenant-dedicated-b-runtime",
+                        expectDedicatedRuntimePrefix: true)
+                ])
+                with
+                {
+                    RunTenantsSequentially = true
+                };
+        }
+
+        /// <summary>
+        /// Creates a focused runtime mode scenario.
+        /// </summary>
+        /// <param name="name">The scenario name.</param>
+        /// <param name="controlPlaneIdPrefix">The control-plane id prefix.</param>
+        /// <param name="tenants">The tenant definitions.</param>
+        /// <returns>The production runtime scenario definition.</returns>
+        private static ProductionRuntimeScenarioDefinition CreateFocusedRuntimeModeScenario(
+            string name,
+            string controlPlaneIdPrefix,
+            IReadOnlyList<ProductionTenantScenarioDefinition> tenants)
+        {
+            return new ProductionRuntimeScenarioDefinition
+            {
+                Name = name,
+                ControlPlaneIdPrefix = controlPlaneIdPrefix,
+
+                PersistenceProfile = ProductionRuntimePersistenceProfile.MongoRedis,
+                ObservabilityProfile = ProductionRuntimeObservabilityProfile.DurableMongo,
+                HostCreationMode = ProductionRuntimeHostCreationMode.Process,
+                SubmitMode = ProductionRuntimeSubmitMode.DirectDispatch,
+
+                AssertReplayLedgerTrace = false,
+                AssertRetention = false,
+                AssertMaxRuntimeInstances = true,
+                AssertTenantIsolation = true,
+
+                ScaleOutTimeout = TimeSpan.FromMinutes(2),
+                DispatchTimeout = TimeSpan.FromMinutes(2),
+                CompletionTimeout = TimeSpan.FromMinutes(3),
+
+                Assertions = new ProductionRuntimeScenarioAssertionOptions
+                {
+                    AssertAllRunsCompleted = true,
+                    AssertTenantIsolation = true,
+                    AssertScaleOut = true,
+                    AssertMaxRuntimeInstances = true,
+                    AssertLedger = false,
+                    AssertTrace = false,
+                    AssertReplayReport = false,
+                    AssertReplayLedger = false,
+                    AssertReplayTrace = false
+                },
+
+                Tenants = tenants
+            };
+        }
+
+        /// <summary>
         /// Creates one tenant definition for the runtime mode scenario.
         /// </summary>
         /// <param name="tenantId">The tenant id.</param>

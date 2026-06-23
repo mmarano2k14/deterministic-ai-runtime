@@ -102,22 +102,52 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                         $"[HTTP PROCESS PRODUCTION] Tenant MCP client created. TenantId='{tenant.TenantId}', TenantGroupId='{tenant.TenantGroupId}'.");
                 }
 
-                var tenantTasks =
-                    tenantContexts
-                        .Select(context =>
-                            RunTenantAsync(
-                                scenario,
-                                context.Tenant,
-                                controlPlaneId,
-                                context.Mcp,
-                                scaleOutRequestStore,
-                                cancellationToken))
-                        .ToArray();
+                IReadOnlyList<ProductionTenantScenarioResult> tenantResults;
 
-                var tenantResults =
-                    await Task
-                        .WhenAll(tenantTasks)
-                        .ConfigureAwait(false);
+                if (scenario.RunTenantsSequentially)
+                {
+                    var sequentialTenantResults =
+                        new List<ProductionTenantScenarioResult>();
+
+                    foreach (var context in tenantContexts)
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+
+                        var tenantResult =
+                            await RunTenantAsync(
+                                    scenario,
+                                    context.Tenant,
+                                    controlPlaneId,
+                                    context.Mcp,
+                                    scaleOutRequestStore,
+                                    cancellationToken)
+                                .ConfigureAwait(false);
+
+                        sequentialTenantResults.Add(
+                            tenantResult);
+                    }
+
+                    tenantResults = sequentialTenantResults;
+                }
+                else
+                {
+                    var tenantTasks =
+                        tenantContexts
+                            .Select(context =>
+                                RunTenantAsync(
+                                    scenario,
+                                    context.Tenant,
+                                    controlPlaneId,
+                                    context.Mcp,
+                                    scaleOutRequestStore,
+                                    cancellationToken))
+                            .ToArray();
+
+                    tenantResults =
+                        await Task
+                            .WhenAll(tenantTasks)
+                            .ConfigureAwait(false);
+                }
 
                 return new ProductionRuntimeScenarioResult
                 {
@@ -485,7 +515,15 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                     RequestId = request.RequestId,
                     SharedRunId = request.SharedRunId,
                     TenantId = request.TenantId ?? string.Empty,
+                    TenantGroupId = request.TenantGroupId,
                     Status = request.Status.ToString(),
+                    IsolationMode = request.IsolationMode.ToString(),
+                    PreferDedicatedCapacity = request.PreferDedicatedCapacity,
+                    AllowSharedFallback = request.AllowSharedFallback,
+                    RuntimeInstanceIdPrefix = request.RuntimeInstanceIdPrefix,
+                    WorkerCountPerInstance = request.WorkerCountPerInstance,
+                    MaxConcurrentRunsPerInstance = request.MaxConcurrentRunsPerInstance,
+                    LocalQueueCapacity = request.LocalQueueCapacity,
                     FulfilledRuntimeInstanceId = request.FulfilledRuntimeInstanceId,
                     RejectionReason = request.RejectionReason,
                     FulfilledAtUtc = request.FulfilledAtUtc,

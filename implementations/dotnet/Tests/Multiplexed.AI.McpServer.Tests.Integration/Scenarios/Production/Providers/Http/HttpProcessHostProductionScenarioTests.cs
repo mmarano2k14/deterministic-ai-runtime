@@ -107,6 +107,58 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
         }
 
         /// <summary>
+        /// Verifies that the HTTP process-host provider runs a single tenant in Dedicated runtime mode.
+        /// </summary>
+        [Fact]
+        public async Task Http_ProcessHost_Should_Run_SingleTenant_Dedicated_Runtime_Mode()
+        {
+            var scenario = ProductionRuntimeScenarioFactory.CreateSingleTenantDedicatedRuntimeModeScenario();
+            var runner = new HttpProcessHostProductionScenarioRunner(this.output);
+            var result = await runner.RunAsync(scenario).ConfigureAwait(false);
+
+            AssertScenarioResult(scenario, result);
+        }
+
+        /// <summary>
+        /// Verifies that the HTTP process-host provider runs a single tenant in Shared runtime mode.
+        /// </summary>
+        [Fact]
+        public async Task Http_ProcessHost_Should_Run_SingleTenant_Shared_Runtime_Mode()
+        {
+            var scenario = ProductionRuntimeScenarioFactory.CreateSingleTenantSharedRuntimeModeScenario();
+            var runner = new HttpProcessHostProductionScenarioRunner(this.output);
+            var result = await runner.RunAsync(scenario).ConfigureAwait(false);
+
+            AssertScenarioResult(scenario, result);
+        }
+
+        /// <summary>
+        /// Verifies that the HTTP process-host provider runs a single tenant in Hybrid runtime mode.
+        /// </summary>
+        [Fact]
+        public async Task Http_ProcessHost_Should_Run_SingleTenant_Hybrid_Runtime_Mode()
+        {
+            var scenario = ProductionRuntimeScenarioFactory.CreateSingleTenantHybridRuntimeModeScenario();
+            var runner = new HttpProcessHostProductionScenarioRunner(this.output);
+            var result = await runner.RunAsync(scenario).ConfigureAwait(false);
+
+            AssertScenarioResult(scenario, result);
+        }
+
+        /// <summary>
+        /// Verifies that multiple Dedicated tenants are isolated from each other's runtime capacity.
+        /// </summary>
+        [Fact]
+        public async Task Http_ProcessHost_Should_Isolate_Multiple_Dedicated_Tenants()
+        {
+            var scenario = ProductionRuntimeScenarioFactory.CreateMultiTenantDedicatedIsolationScenario();
+            var runner = new HttpProcessHostProductionScenarioRunner(this.output);
+            var result = await runner.RunAsync(scenario).ConfigureAwait(false);
+
+            AssertScenarioResult(scenario, result);
+        }
+
+        /// <summary>
         /// Asserts a production runtime scenario result according to the scenario assertion options.
         /// </summary>
         /// <param name="scenario">The scenario definition.</param>
@@ -130,6 +182,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             if (scenario.Assertions.AssertScaleOut)
             {
                 ProductionCapacityAssertions.AssertFulfilledScaleOutRequestsHaveRuntimeInstanceIds(result);
+                ProductionTenantRuntimeModeAssertions.AssertTenantRuntimeModesWerePropagated(scenario, result);
             }
 
             if (scenario.Assertions.AssertTenantIsolation)

@@ -157,5 +157,14 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Defini
         /// expected to reach a terminal state.
         /// </remarks>
         public TimeSpan CompletionTimeout { get; init; } = TimeSpan.FromMinutes(5);
+
+        /// <summary>
+        /// Gets a value indicating whether tenant workloads must be executed sequentially.
+        /// </summary>
+        /// <remarks>
+        /// Sequential execution is useful for adversarial routing scenarios where one tenant
+        /// must create runtime capacity before another tenant submits work.
+        /// </remarks>
+        public bool RunTenantsSequentially { get; init; } = false;
     }
 }
