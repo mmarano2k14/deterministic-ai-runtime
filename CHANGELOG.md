@@ -6,6 +6,216 @@ This project follows a deterministic runtime and observability model designed fo
 
 ---
 
+## [1.0.6.9] - 2026-06-23 — MCP Production Runtime Scenario Framework
+
+## Latest increment — HTTP tenant runtime mode validation and provisioning hardening
+
+### Summary
+
+This increment strengthens the production scenario framework for tenant-aware HTTP process-host runtime scale-out.
+
+The work improves confidence at three levels:
+
+1. production-style process-host scenarios;
+2. tenant runtime visibility and mode mapping rules;
+3. HTTP scale-out provisioning effective settings.
+
+The goal was not only to make tests green, but to prove real tenant isolation behavior and ensure tenant runtime settings are the effective source of truth for HTTP scale-out provisioning.
+
+---
+
+## Production scenario framework updates
+
+### Added focused HTTP process-host runtime mode scenarios
+
+Added focused HTTP process-host scenarios for:
+
+- single-tenant Dedicated runtime mode;
+- single-tenant Shared runtime mode;
+- single-tenant Hybrid runtime mode;
+- multi-tenant Dedicated isolation.
+
+These scenarios complement the existing combined Dedicated / Shared / Hybrid scenario by validating each mode independently.
+
+### Added scale-out result runtime mode fields
+
+`ProductionScaleOutScenarioResult` now captures additional scale-out request data:
+
+- `TenantGroupId`
+- `IsolationMode`
+- `PreferDedicatedCapacity`
+- `AllowSharedFallback`
+- `RuntimeInstanceIdPrefix`
+- `WorkerCountPerInstance`
+- `MaxConcurrentRunsPerInstance`
+- `LocalQueueCapacity`
+
+These fields allow production scenario assertions to validate the effective tenant runtime mode settings propagated into scale-out requests.
+
+### Updated HTTP process-host scenario runner mapping
+
+`HttpProcessHostProductionScenarioRunner` now maps the additional runtime mode and capacity fields from `AiRuntimeScaleOutRequestRecord` into `ProductionScaleOutScenarioResult`.
+
+This makes runtime mode validation observable from scenario results instead of relying only on indirect run completion.
+
+### Added runtime mode propagation assertions
+
+Added `ProductionTenantRuntimeModeAssertions`.
+
+The assertion verifies that each tenant scale-out request carries the expected:
+
+- tenant id;
+- tenant group id;
+- isolation mode;
+- dedicated capacity preference;
+- shared fallback setting;
+- runtime instance id prefix;
+- worker count;
+- max concurrent runs;
+- local queue capacity.
+
+The common HTTP process-host scenario assertion path now calls this validation when scale-out assertions are enabled.
+
+---
+
+## Adversarial process-host tenant isolation validation
+
+### Added sequential tenant execution option
+
+Added `RunTenantsSequentially` to `ProductionRuntimeScenarioDefinition`.
+
+Default behavior remains unchanged:
+
+- existing scenarios still execute tenants in parallel;
+- only scenarios explicitly setting `RunTenantsSequentially = true` execute tenants sequentially.
+
+This avoids impacting existing production tests while enabling adversarial routing scenarios.
+
+### Strengthened Dedicated tenant isolation scenario
+
+`CreateMultiTenantDedicatedIsolationScenario()` now runs tenants sequentially.
+
+This makes the test adversarial:
+
+1. tenant A submits work;
+2. tenant A triggers scale-out;
+3. tenant A creates a real dedicated runtime process;
+4. tenant A completes;
+5. tenant B submits work afterwards;
+6. tenant B must not reuse tenant A's dedicated runtime;
+7. tenant B must use its own dedicated runtime prefix.
+
+This validates real routing behavior, not just happy-path propagation.
+
+---
+
+## Tenant runtime visibility validation
+
+### Added adversarial visibility tests
+
+Strengthened `AiRuntimeInstanceVisibilityEvaluatorTests` with cases covering:
+
+- Dedicated tenant cannot see shared runtime capacity when shared fallback is disabled;
+- Hybrid tenant behaves like Dedicated when shared fallback is disabled;
+- Hybrid tenant can see shared runtime capacity when shared fallback is enabled;
+- Dedicated runtime instance is not visible when tenant group does not match;
+- Hybrid runtime instance is visible when tenant group matches;
+- Hybrid runtime instance is not visible when tenant group does not match.
+
+These tests lock down the visibility rules for tenant id, tenant group id, isolation mode, and shared fallback.
+
+---
+
+## Tenant runtime mode mapper validation
+
+### Added mapper tests
+
+Added `ProductionTenantRuntimeModeMapperTests` under:
+
+`Scenarios/Production/SharedTests`
+
+The tests validate the expected mapping:
+
+- `Dedicated` → `IsolationMode = Dedicated`, `PreferDedicatedCapacity = true`, `AllowSharedFallback = false`
+- `Shared` → `IsolationMode = Shared`, `PreferDedicatedCapacity = false`, `AllowSharedFallback = true`
+- `Hybrid` → `IsolationMode = Hybrid`, `PreferDedicatedCapacity = true`, `AllowSharedFallback = true`
+
+This keeps pure mapping validation separate from process-host production scenarios while staying in the same integration test project.
+
+---
+
+## HTTP scale-out provisioner hardening
+
+### Added tenant runtime settings precedence test
+
+Added a new `AiHttpRuntimeScaleOutProvisionerTests` test:
+
+`ProvisionAsync_Should_Prefer_Tenant_Runtime_Settings_Over_Request_Runtime_Sizing`
+
+The test intentionally sends request-level runtime sizing values that differ from tenant runtime settings.
+
+It validates that the provisioner uses tenant runtime settings as the effective source of truth for:
+
+- runtime instance id prefix;
+- worker count per instance;
+- max concurrent runs per instance;
+- local queue capacity;
+- max runtime instances.
+
+### Fixed HTTP scale-out provisioning precedence
+
+Updated `AiHttpRuntimeScaleOutProvisioner` so tenant runtime settings take precedence over request-level sizing values.
+
+Effective precedence is now:
+
+`tenant settings > request values > hard defaults`
+
+This applies to:
+
+- `RuntimeInstanceIdPrefix`
+- `WorkerCountPerInstance`
+- `MaxConcurrentRunsPerInstance`
+- `LocalQueueCapacity`
+- `MaxRuntimeInstances`
+
+### Preserved compatibility fallback behavior
+
+Request values remain compatibility fallbacks for older paths where tenant runtime settings may not provide valid values.
+
+HTTP scale-out options remain technical defaults only.
+
+---
+
+## Current validation status
+
+The following test areas were validated green:
+
+- HTTP process-host production scenarios;
+- focused Dedicated / Shared / Hybrid runtime mode scenarios;
+- adversarial multi-tenant Dedicated isolation process-host scenario;
+- tenant runtime visibility evaluator tests;
+- production tenant runtime mode mapper tests;
+- HTTP runtime scale-out provisioner tests;
+- existing HostManager mode provisioning tests.
+
+---
+
+## Notes
+
+This increment does not implement shared-global runtime capacity pooling.
+
+The current Shared scenario still validates Shared mode propagation and execution using the existing tenant-level runtime prefix behavior.
+
+A future decision is still needed for shared runtime semantics:
+
+- shared runtime per tenant;
+- shared runtime per tenant group;
+- global shared runtime pool.
+
+Hybrid fallback process-host behavior should also be tested later only when shared capacity setup is explicit and supported by the framework.
+
+---
+
 ## Tenant runtime mode production scenario
 
 ### Added dedicated / shared / hybrid tenant runtime mode scenario
