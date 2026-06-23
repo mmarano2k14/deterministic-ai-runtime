@@ -27,14 +27,9 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Providers.Http
         [Fact]
         public async Task ProvisionAsync_Should_Register_Runtime_And_Publish_Capacity()
         {
-            var registry =
-                new TestRuntimeInstanceRegistry();
-
-            var capacityStore =
-                new TestRuntimeInstanceCapacityStore();
-
-            var tenantRuntimeSettingsProvider =
-                new RequestCompatibleTenantRuntimeSettingsProvider();
+            var registry = new TestRuntimeInstanceRegistry();
+            var capacityStore = new TestRuntimeInstanceCapacityStore();
+            var tenantRuntimeSettingsProvider = new RequestCompatibleTenantRuntimeSettingsProvider();
 
             var provisioner =
                 new AiHttpRuntimeScaleOutProvisioner(
@@ -78,127 +73,48 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Providers.Http
                     }
                 };
 
-            var result =
-                await provisioner
-                    .ProvisionAsync(request)
-                    .ConfigureAwait(false);
+            var result = await provisioner.ProvisionAsync(request).ConfigureAwait(false);
 
-            Assert.True(
-                result.Success);
+            Assert.True(result.Success);
+            Assert.False(result.Rejected);
+            Assert.Equal("control-plane-1:tenant-a-http-1", result.RuntimeInstanceId);
+            Assert.Equal("http-scaleout-scaleout-1", result.ProviderOperationId);
 
-            Assert.False(
-                result.Rejected);
+            var registration = await registry.GetAsync(result.RuntimeInstanceId!).ConfigureAwait(false);
 
-            Assert.Equal(
-                "control-plane-1:tenant-a-http-1",
-                result.RuntimeInstanceId);
+            Assert.NotNull(registration);
+            Assert.Equal(result.RuntimeInstanceId, registration!.RuntimeInstanceId);
+            Assert.Equal("control-plane-1", registration.ControlPlaneId);
+            Assert.Equal(7, registration.WorkerCount);
+            Assert.Equal(3, registration.MaxConcurrentRuns);
+            Assert.Equal(42, registration.QueueCapacity);
+            Assert.Equal(AiRuntimeInstanceStatus.Ready, registration.Status);
+            Assert.Equal("http", registration.Metadata[AiRuntimeInstanceProviderMetadataKeys.ProviderName]);
+            Assert.Equal("http", registration.Metadata["provider.name"]);
+            Assert.Equal(AiRuntimeInstanceCommandTransportMetadataKeys.HttpTransportName, registration.Metadata[AiRuntimeInstanceCommandTransportMetadataKeys.TransportName]);
+            Assert.Equal("http://control-plane-1:tenant-a-http-1:8080", registration.Metadata[AiRuntimeInstanceCommandTransportMetadataKeys.TransportEndpoint]);
+            Assert.Equal("tenant-a", registration.Metadata[AiRuntimeInstanceIsolationMetadataKeys.TenantId]);
+            Assert.Equal("group-a", registration.Metadata[AiRuntimeInstanceIsolationMetadataKeys.TenantGroupId]);
+            Assert.Equal(AiRuntimeInstanceIsolationMode.Dedicated.ToString(), registration.Metadata[AiRuntimeInstanceIsolationMetadataKeys.IsolationMode]);
+            Assert.Equal("True", registration.Metadata[AiRuntimeInstanceIsolationMetadataKeys.PreferDedicatedCapacity]);
+            Assert.Equal("False", registration.Metadata[AiRuntimeInstanceIsolationMetadataKeys.AllowSharedFallback]);
 
-            Assert.Equal(
-                "http-scaleout-scaleout-1",
-                result.ProviderOperationId);
+            var capacity = await capacityStore.GetAsync(result.RuntimeInstanceId!).ConfigureAwait(false);
 
-            var registration =
-                await registry
-                    .GetAsync(result.RuntimeInstanceId!)
-                    .ConfigureAwait(false);
-
-            Assert.NotNull(
-                registration);
-
-            Assert.Equal(
-                result.RuntimeInstanceId,
-                registration!.RuntimeInstanceId);
-
-            Assert.Equal(
-                "control-plane-1",
-                registration.ControlPlaneId);
-
-            Assert.Equal(
-                7,
-                registration.WorkerCount);
-
-            Assert.Equal(
-                3,
-                registration.MaxConcurrentRuns);
-
-            Assert.Equal(
-                42,
-                registration.QueueCapacity);
-
-            Assert.Equal(
-                AiRuntimeInstanceStatus.Ready,
-                registration.Status);
-
-            Assert.Equal(
-                "http",
-                registration.Metadata[AiRuntimeInstanceProviderMetadataKeys.ProviderName]);
-
-            Assert.Equal(
-                "http",
-                registration.Metadata["provider.name"]);
-
-            Assert.Equal(
-                AiRuntimeInstanceCommandTransportMetadataKeys.HttpTransportName,
-                registration.Metadata[AiRuntimeInstanceCommandTransportMetadataKeys.TransportName]);
-
-            Assert.Equal(
-                "http://control-plane-1:tenant-a-http-1:8080",
-                registration.Metadata[AiRuntimeInstanceCommandTransportMetadataKeys.TransportEndpoint]);
-
-            Assert.Equal(
-                "tenant-a",
-                registration.Metadata[AiRuntimeInstanceIsolationMetadataKeys.TenantId]);
-
-            Assert.Equal(
-                AiRuntimeInstanceIsolationMode.Dedicated.ToString(),
-                registration.Metadata[AiRuntimeInstanceIsolationMetadataKeys.IsolationMode]);
-
-            Assert.Equal(
-                "True",
-                registration.Metadata[AiRuntimeInstanceIsolationMetadataKeys.PreferDedicatedCapacity]);
-
-            Assert.Equal(
-                "False",
-                registration.Metadata[AiRuntimeInstanceIsolationMetadataKeys.AllowSharedFallback]);
-
-            var capacity =
-                await capacityStore
-                    .GetAsync(result.RuntimeInstanceId!)
-                    .ConfigureAwait(false);
-
-            Assert.NotNull(
-                capacity);
-
-            Assert.Equal(
-                result.RuntimeInstanceId,
-                capacity!.RuntimeInstanceId);
-
-            Assert.Equal(
-                AiRuntimeInstanceStatus.Ready,
-                capacity.Status);
-
-            Assert.True(
-                capacity.CanAcceptRun);
-
-            Assert.Equal(
-                7,
-                capacity.WorkerCount);
-
-            Assert.Equal(
-                7,
-                capacity.AvailableWorkerCount);
-
-            Assert.Equal(
-                3,
-                capacity.MaxConcurrentRuns);
-
-            Assert.Equal(
-                3,
-                capacity.AvailableRunSlots);
-
-            Assert.Equal(
-                "42",
-                capacity.Metadata["runtime.localQueueCapacity"]);
+            Assert.NotNull(capacity);
+            Assert.Equal(result.RuntimeInstanceId, capacity!.RuntimeInstanceId);
+            Assert.Equal(AiRuntimeInstanceStatus.Ready, capacity.Status);
+            Assert.True(capacity.CanAcceptRun);
+            Assert.Equal(7, capacity.WorkerCount);
+            Assert.Equal(7, capacity.AvailableWorkerCount);
+            Assert.Equal(3, capacity.MaxConcurrentRuns);
+            Assert.Equal(3, capacity.AvailableRunSlots);
+            Assert.Equal("42", capacity.Metadata["runtime.localQueueCapacity"]);
+            Assert.Equal("tenant-a", capacity.Metadata[AiRuntimeInstanceIsolationMetadataKeys.TenantId]);
+            Assert.Equal("group-a", capacity.Metadata[AiRuntimeInstanceIsolationMetadataKeys.TenantGroupId]);
+            Assert.Equal(AiRuntimeInstanceIsolationMode.Dedicated.ToString(), capacity.Metadata[AiRuntimeInstanceIsolationMetadataKeys.IsolationMode]);
+            Assert.Equal("True", capacity.Metadata[AiRuntimeInstanceIsolationMetadataKeys.PreferDedicatedCapacity]);
+            Assert.Equal("False", capacity.Metadata[AiRuntimeInstanceIsolationMetadataKeys.AllowSharedFallback]);
         }
 
         /// <summary>
@@ -208,20 +124,11 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Providers.Http
         [Fact]
         public async Task ProvisionAsync_With_HostManager_Mode_Should_Start_Runtime_And_Wait_For_Readiness()
         {
-            var registry =
-                new TestRuntimeInstanceRegistry();
-
-            var capacityStore =
-                new TestRuntimeInstanceCapacityStore();
-
-            var hostManager =
-                new TestRuntimeHostManager();
-
-            var readinessWaiter =
-                new TestRuntimeInstanceReadinessWaiter();
-
-            var tenantRuntimeSettingsProvider =
-                new RequestCompatibleTenantRuntimeSettingsProvider();
+            var registry = new TestRuntimeInstanceRegistry();
+            var capacityStore = new TestRuntimeInstanceCapacityStore();
+            var hostManager = new TestRuntimeHostManager();
+            var readinessWaiter = new TestRuntimeInstanceReadinessWaiter();
+            var tenantRuntimeSettingsProvider = new RequestCompatibleTenantRuntimeSettingsProvider();
 
             var provisioner =
                 new AiHttpRuntimeScaleOutProvisioner(
@@ -268,103 +175,122 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Providers.Http
                     }
                 };
 
-            var result =
-                await provisioner
-                    .ProvisionAsync(request)
-                    .ConfigureAwait(false);
+            var result = await provisioner.ProvisionAsync(request).ConfigureAwait(false);
 
-            Assert.True(
-                result.Success);
-
-            Assert.False(
-                result.Rejected);
-
-            Assert.Equal(
-                "control-plane-1:tenant-a-http-1",
-                result.RuntimeInstanceId);
-
-            Assert.StartsWith(
-                "http-host-manager-scaleout-",
-                result.ProviderOperationId);
-
-            Assert.EndsWith(
-                "scaleout-hostmanager-1",
-                result.ProviderOperationId);
-
-            Assert.Equal(
-                1,
-                hostManager.CallCount);
-
-            Assert.NotNull(
-                hostManager.LastRequest);
-
-            Assert.Equal(
-                "scaleout-hostmanager-1",
-                hostManager.LastRequest!.RequestId);
-
-            Assert.Equal(
-                "control-plane-1",
-                hostManager.LastRequest.ControlPlaneId);
-
-            Assert.Equal(
-                "control-plane-1:tenant-a-http-1",
-                hostManager.LastRequest.RuntimeInstanceId);
-
-            Assert.Equal(
-                "tenant-a",
-                hostManager.LastRequest.TenantId);
-
-            Assert.Equal(
-                "group-a",
-                hostManager.LastRequest.TenantGroupId);
-
-            Assert.Equal(
-                "tenant-a",
-                hostManager.LastRequest.ExecutionContextSnapshot.TenantId);
-
-            Assert.Equal(
-                "group-a",
-                hostManager.LastRequest.ExecutionContextSnapshot.TenantGroupId);
+            Assert.True(result.Success);
+            Assert.False(result.Rejected);
+            Assert.Equal("control-plane-1:tenant-a-http-1", result.RuntimeInstanceId);
+            Assert.StartsWith("http-host-manager-scaleout-", result.ProviderOperationId);
+            Assert.EndsWith("scaleout-hostmanager-1", result.ProviderOperationId);
+            Assert.Equal(1, hostManager.CallCount);
+            Assert.NotNull(hostManager.LastRequest);
+            Assert.Equal("scaleout-hostmanager-1", hostManager.LastRequest!.RequestId);
+            Assert.Equal("control-plane-1", hostManager.LastRequest.ControlPlaneId);
+            Assert.Equal("control-plane-1:tenant-a-http-1", hostManager.LastRequest.RuntimeInstanceId);
+            Assert.Equal("tenant-a", hostManager.LastRequest.TenantId);
+            Assert.Equal("group-a", hostManager.LastRequest.TenantGroupId);
+            Assert.Equal("tenant-a", hostManager.LastRequest.ExecutionContextSnapshot.TenantId);
+            Assert.Equal("group-a", hostManager.LastRequest.ExecutionContextSnapshot.TenantGroupId);
 
             var hostStartRequest =
                 Assert.IsType<AiRuntimeHostStartRequest>(
                     hostManager.LastRequest);
 
-            Assert.Equal(
-                AiRuntimeInstanceIsolationMode.Dedicated.ToString(),
-                hostStartRequest.IsolationMode.ToString());
+            Assert.Equal(AiRuntimeInstanceIsolationMode.Dedicated.ToString(), hostStartRequest.IsolationMode.ToString());
+            Assert.Equal(5, hostStartRequest.MaxRuntimeInstances);
+            Assert.True(hostStartRequest.PreferDedicatedCapacity);
+            Assert.False(hostStartRequest.AllowSharedFallback);
+            Assert.True(hostManager.LastRequest.PreferDedicatedCapacity);
+            Assert.False(hostManager.LastRequest.AllowSharedFallback);
+            Assert.Equal(7, hostManager.LastRequest.WorkerCountPerInstance);
+            Assert.Equal(3, hostManager.LastRequest.MaxConcurrentRunsPerInstance);
+            Assert.Equal(42, hostManager.LastRequest.LocalQueueCapacity);
+            Assert.Equal(5, hostManager.LastRequest.MaxRuntimeInstances);
+        }
 
-            Assert.Equal(
-                5,
-                hostStartRequest.MaxRuntimeInstances);
+        /// <summary>
+        /// Verifies that tenant runtime settings take precedence over request-level runtime sizing values.
+        /// </summary>
+        [Fact]
+        public async Task ProvisionAsync_Should_Prefer_Tenant_Runtime_Settings_Over_Request_Runtime_Sizing()
+        {
+            var registry = new TestRuntimeInstanceRegistry();
+            var capacityStore = new TestRuntimeInstanceCapacityStore();
+            var tenantRuntimeSettingsProvider = new SettingsPrecedenceTenantRuntimeSettingsProvider();
 
-            Assert.True(
-                hostStartRequest.PreferDedicatedCapacity);
+            var provisioner =
+                new AiHttpRuntimeScaleOutProvisioner(
+                    registry,
+                    capacityStore,
+                    new NoopAiRuntimeHostManager(),
+                    new TestRuntimeInstanceReadinessWaiter(),
+                    tenantRuntimeSettingsProvider,
+                    Options.Create(
+                        new AiHttpRuntimeScaleOutOptions
+                        {
+                            Enabled = true,
+                            Mode = AiHttpRuntimeScaleOutModes.MetadataOnly,
+                            DefaultRuntimeInstanceIdPrefix = "http-runtime",
+                            EndpointTemplate = "http://{runtimeInstanceId}:8080"
+                        }),
+                    NullLogger<AiHttpRuntimeScaleOutProvisioner>.Instance);
 
-            Assert.False(
-                hostStartRequest.AllowSharedFallback);
+            var request =
+                new AiRuntimeScaleOutProviderRequest
+                {
+                    RequestId = "scaleout-settings-precedence-1",
+                    SharedRunId = "shared-run-settings-precedence-1",
+                    ControlPlaneId = "control-plane-1",
+                    ExecutionContextSnapshot = CreateExecutionContextSnapshot(),
+                    TenantId = "tenant-a",
+                    TenantGroupId = "group-a",
+                    IsolationMode = AiRuntimeInstanceIsolationMode.Dedicated,
+                    PreferDedicatedCapacity = true,
+                    AllowSharedFallback = false,
+                    RuntimeInstanceIdPrefix = "request-http",
+                    CurrentInstanceCount = 0,
+                    RequestedTargetInstanceCount = 1,
+                    WorkerCountPerInstance = 2,
+                    MaxConcurrentRunsPerInstance = 1,
+                    LocalQueueCapacity = 5,
+                    MaxRuntimeInstances = 2,
+                    Metadata = new Dictionary<string, string>
+                    {
+                        ["source"] = "unit-test"
+                    }
+                };
 
-            Assert.True(
-                hostManager.LastRequest.PreferDedicatedCapacity);
+            var result = await provisioner.ProvisionAsync(request).ConfigureAwait(false);
 
-            Assert.False(
-                hostManager.LastRequest.AllowSharedFallback);
+            Assert.True(result.Success);
+            Assert.False(result.Rejected);
+            Assert.Equal("control-plane-1:settings-http-1", result.RuntimeInstanceId);
 
-            Assert.Equal(
-                7,
-                hostManager.LastRequest.WorkerCountPerInstance);
+            var registration = await registry.GetAsync(result.RuntimeInstanceId!).ConfigureAwait(false);
 
-            Assert.Equal(
-                3,
-                hostManager.LastRequest.MaxConcurrentRunsPerInstance);
+            Assert.NotNull(registration);
+            Assert.Equal(11, registration!.WorkerCount);
+            Assert.Equal(6, registration.MaxConcurrentRuns);
+            Assert.Equal(77, registration.QueueCapacity);
+            Assert.Equal("tenant-a", registration.Metadata[AiRuntimeInstanceIsolationMetadataKeys.TenantId]);
+            Assert.Equal("group-a", registration.Metadata[AiRuntimeInstanceIsolationMetadataKeys.TenantGroupId]);
+            Assert.Equal(AiRuntimeInstanceIsolationMode.Dedicated.ToString(), registration.Metadata[AiRuntimeInstanceIsolationMetadataKeys.IsolationMode]);
+            Assert.Equal("True", registration.Metadata[AiRuntimeInstanceIsolationMetadataKeys.PreferDedicatedCapacity]);
+            Assert.Equal("False", registration.Metadata[AiRuntimeInstanceIsolationMetadataKeys.AllowSharedFallback]);
 
-            Assert.Equal(
-                42,
-                hostManager.LastRequest.LocalQueueCapacity);
+            var capacity = await capacityStore.GetAsync(result.RuntimeInstanceId!).ConfigureAwait(false);
 
-            Assert.Equal(
-                5,
-                hostManager.LastRequest.MaxRuntimeInstances);
+            Assert.NotNull(capacity);
+            Assert.Equal(11, capacity!.WorkerCount);
+            Assert.Equal(11, capacity.AvailableWorkerCount);
+            Assert.Equal(6, capacity.MaxConcurrentRuns);
+            Assert.Equal(6, capacity.AvailableRunSlots);
+            Assert.Equal("77", capacity.Metadata["runtime.localQueueCapacity"]);
+            Assert.Equal("tenant-a", capacity.Metadata[AiRuntimeInstanceIsolationMetadataKeys.TenantId]);
+            Assert.Equal("group-a", capacity.Metadata[AiRuntimeInstanceIsolationMetadataKeys.TenantGroupId]);
+            Assert.Equal(AiRuntimeInstanceIsolationMode.Dedicated.ToString(), capacity.Metadata[AiRuntimeInstanceIsolationMetadataKeys.IsolationMode]);
+            Assert.Equal("True", capacity.Metadata[AiRuntimeInstanceIsolationMetadataKeys.PreferDedicatedCapacity]);
+            Assert.Equal("False", capacity.Metadata[AiRuntimeInstanceIsolationMetadataKeys.AllowSharedFallback]);
         }
 
         /// <summary>
@@ -423,12 +349,38 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Providers.Http
         }
 
         /// <summary>
+        /// Test tenant runtime settings provider that returns values different from the request
+        /// so tests can validate tenant settings precedence.
+        /// </summary>
+        private sealed class SettingsPrecedenceTenantRuntimeSettingsProvider : IAiTenantRuntimeSettingsProvider
+        {
+            /// <inheritdoc />
+            public AiTenantRuntimeSettings GetSettings(
+                string tenantId,
+                string? tenantGroupId)
+            {
+                return new AiTenantRuntimeSettings
+                {
+                    TenantId = tenantId,
+                    TenantGroupId = tenantGroupId,
+                    IsolationMode = AiRuntimeInstanceIsolationMode.Dedicated,
+                    PreferDedicatedCapacity = true,
+                    AllowSharedFallback = false,
+                    MaxRuntimeInstances = 9,
+                    WorkerCountPerInstance = 11,
+                    MaxConcurrentRunsPerInstance = 6,
+                    LocalQueueCapacity = 77,
+                    RuntimeInstanceIdPrefix = "settings-http"
+                };
+            }
+        }
+
+        /// <summary>
         /// Test runtime instance registry.
         /// </summary>
         private sealed class TestRuntimeInstanceRegistry : IAiRuntimeInstanceRegistry
         {
-            private readonly Dictionary<string, AiRuntimeInstanceSnapshot> registrations =
-                new(StringComparer.Ordinal);
+            private readonly Dictionary<string, AiRuntimeInstanceSnapshot> registrations = new(StringComparer.Ordinal);
 
             /// <inheritdoc />
             public Task<AiRuntimeInstanceSnapshot> RegisterAsync(
@@ -464,11 +416,9 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Providers.Http
                         Metadata = registration.Metadata
                     };
 
-                registrations[registration.RuntimeInstanceId] =
-                    snapshot;
+                registrations[registration.RuntimeInstanceId] = snapshot;
 
-                return Task.FromResult(
-                    snapshot);
+                return Task.FromResult(snapshot);
             }
 
             /// <inheritdoc />
@@ -486,8 +436,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Providers.Http
                 AiRuntimeInstanceStatus status,
                 CancellationToken cancellationToken = default)
             {
-                return Task.FromResult<AiRuntimeInstanceSnapshot?>(
-                    null);
+                return Task.FromResult<AiRuntimeInstanceSnapshot?>(null);
             }
 
             /// <inheritdoc />
@@ -495,12 +444,9 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Providers.Http
                 string runtimeInstanceId,
                 CancellationToken cancellationToken = default)
             {
-                registrations.TryGetValue(
-                    runtimeInstanceId,
-                    out var snapshot);
+                registrations.TryGetValue(runtimeInstanceId, out var snapshot);
 
-                return Task.FromResult<AiRuntimeInstanceSnapshot?>(
-                    snapshot);
+                return Task.FromResult<AiRuntimeInstanceSnapshot?>(snapshot);
             }
 
             /// <inheritdoc />
@@ -508,8 +454,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Providers.Http
                 bool includeStopped = false,
                 CancellationToken cancellationToken = default)
             {
-                return Task.FromResult<IReadOnlyList<AiRuntimeInstanceSnapshot>>(
-                    registrations.Values.ToArray());
+                return Task.FromResult<IReadOnlyList<AiRuntimeInstanceSnapshot>>(registrations.Values.ToArray());
             }
 
             /// <inheritdoc />
@@ -517,8 +462,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Providers.Http
                 string runtimeInstanceId,
                 CancellationToken cancellationToken = default)
             {
-                return Task.FromResult<AiRuntimeInstanceSnapshot?>(
-                    null);
+                return Task.FromResult<AiRuntimeInstanceSnapshot?>(null);
             }
 
             /// <inheritdoc />
@@ -526,8 +470,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Providers.Http
                 string runtimeInstanceId,
                 CancellationToken cancellationToken = default)
             {
-                return Task.FromResult<AiRuntimeInstanceSnapshot?>(
-                    null);
+                return Task.FromResult<AiRuntimeInstanceSnapshot?>(null);
             }
         }
 
@@ -536,8 +479,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Providers.Http
         /// </summary>
         private sealed class TestRuntimeInstanceCapacityStore : IAiRuntimeInstanceCapacityStore
         {
-            private readonly Dictionary<string, AiRuntimeInstanceCapacityDescriptor> descriptors =
-                new(StringComparer.Ordinal);
+            private readonly Dictionary<string, AiRuntimeInstanceCapacityDescriptor> descriptors = new(StringComparer.Ordinal);
 
             /// <inheritdoc />
             public Task PublishAsync(
@@ -546,8 +488,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Providers.Http
             {
                 ArgumentNullException.ThrowIfNull(descriptor);
 
-                descriptors[descriptor.RuntimeInstanceId] =
-                    descriptor;
+                descriptors[descriptor.RuntimeInstanceId] = descriptor;
 
                 return Task.CompletedTask;
             }
@@ -557,20 +498,16 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Providers.Http
                 string runtimeInstanceId,
                 CancellationToken cancellationToken = default)
             {
-                descriptors.TryGetValue(
-                    runtimeInstanceId,
-                    out var descriptor);
+                descriptors.TryGetValue(runtimeInstanceId, out var descriptor);
 
-                return Task.FromResult<AiRuntimeInstanceCapacityDescriptor?>(
-                    descriptor);
+                return Task.FromResult<AiRuntimeInstanceCapacityDescriptor?>(descriptor);
             }
 
             /// <inheritdoc />
             public Task<IReadOnlyList<AiRuntimeInstanceCapacityDescriptor>> ListAsync(
                 CancellationToken cancellationToken = default)
             {
-                return Task.FromResult<IReadOnlyList<AiRuntimeInstanceCapacityDescriptor>>(
-                    descriptors.Values.ToArray());
+                return Task.FromResult<IReadOnlyList<AiRuntimeInstanceCapacityDescriptor>>(descriptors.Values.ToArray());
             }
 
             /// <inheritdoc />
@@ -578,8 +515,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Providers.Http
                 string runtimeInstanceId,
                 CancellationToken cancellationToken = default)
             {
-                return Task.FromResult(
-                    descriptors.Remove(runtimeInstanceId));
+                return Task.FromResult(descriptors.Remove(runtimeInstanceId));
             }
         }
 

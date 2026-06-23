@@ -15,14 +15,13 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http.Sc
     /// Provisions HTTP runtime capacity for HTTP provider scale-out requests.
     /// </summary>
     /// <remarks>
-    /// This provisioner primarily consumes tenant-aware runtime settings carried by
-    /// <see cref="AiRuntimeScaleOutProviderRequest" />.
+    /// This provisioner resolves tenant-aware runtime settings from <see cref="IAiTenantRuntimeSettingsProvider" />.
     ///
-    /// When older request paths do not carry tenant-aware fields such as runtime
-    /// instance prefix, worker count, queue capacity, or isolation flags, this
-    /// provisioner falls back to <see cref="IAiTenantRuntimeSettingsProvider" />.
+    /// Tenant runtime settings are treated as the source of truth for runtime prefix,
+    /// worker count, queue capacity, maximum concurrency, maximum instance count, and isolation flags.
     ///
-    /// HTTP scale-out options remain provider technical defaults only.
+    /// Values carried by <see cref="AiRuntimeScaleOutProviderRequest" /> are kept as compatibility
+    /// fallbacks for older request paths. HTTP scale-out options remain provider technical defaults only.
     /// </remarks>
     public sealed class AiHttpRuntimeScaleOutProvisioner : IAiHttpRuntimeScaleOutProvisioner
     {
@@ -42,17 +41,17 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http.Sc
         private const string DefaultEndpointTemplate = "http://localhost";
 
         /// <summary>
-        /// Default worker count used only when the tenant-aware request does not provide one.
+        /// Default worker count used only when neither tenant settings nor the request provide one.
         /// </summary>
         private const int DefaultWorkerCountPerInstance = 1;
 
         /// <summary>
-        /// Default maximum concurrent run count used only when the tenant-aware request does not provide one.
+        /// Default maximum concurrent run count used only when neither tenant settings nor the request provide one.
         /// </summary>
         private const int DefaultMaxConcurrentRunsPerInstance = 1;
 
         /// <summary>
-        /// Default local queue capacity used only when the tenant-aware request does not provide one.
+        /// Default local queue capacity used only when neither tenant settings nor the request provide one.
         /// </summary>
         private const int DefaultQueueCapacity = 100;
 
@@ -426,25 +425,26 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http.Sc
 
             var workerCount =
                 ResolvePositiveOrDefault(
-                    request.WorkerCountPerInstance,
                     tenantSettings.WorkerCountPerInstance,
+                    request.WorkerCountPerInstance,
                     DefaultWorkerCountPerInstance);
 
             var maxConcurrentRuns =
                 ResolvePositiveOrDefault(
-                    request.MaxConcurrentRunsPerInstance,
                     tenantSettings.MaxConcurrentRunsPerInstance,
+                    request.MaxConcurrentRunsPerInstance,
                     DefaultMaxConcurrentRunsPerInstance);
 
             var queueCapacity =
                 ResolvePositiveOrDefault(
-                    request.LocalQueueCapacity,
                     tenantSettings.LocalQueueCapacity,
+                    request.LocalQueueCapacity,
                     DefaultQueueCapacity);
 
             var maxRuntimeInstances =
-                request.MaxRuntimeInstances ??
-                tenantSettings.MaxRuntimeInstances;
+                ResolvePositiveOrNullableDefault(
+                    tenantSettings.MaxRuntimeInstances,
+                    request.MaxRuntimeInstances);
 
             var metadata =
                 CreateMetadata(
@@ -611,28 +611,51 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http.Sc
         }
 
         /// <summary>
-        /// Resolves a positive integer value from request, tenant settings, or hard default.
+        /// Resolves the first positive integer value from tenant settings, request, or hard default.
         /// </summary>
-        /// <param name="requestValue">The request value.</param>
         /// <param name="tenantValue">The tenant settings value.</param>
+        /// <param name="requestValue">The request value.</param>
         /// <param name="hardDefault">The hard fallback value.</param>
         /// <returns>The resolved positive value.</returns>
         private static int ResolvePositiveOrDefault(
-            int? requestValue,
             int? tenantValue,
+            int? requestValue,
             int hardDefault)
         {
-            if (requestValue.HasValue && requestValue.Value > 0)
-            {
-                return requestValue.Value;
-            }
-
             if (tenantValue.HasValue && tenantValue.Value > 0)
             {
                 return tenantValue.Value;
             }
 
+            if (requestValue.HasValue && requestValue.Value > 0)
+            {
+                return requestValue.Value;
+            }
+
             return hardDefault;
+        }
+
+        /// <summary>
+        /// Resolves the first positive nullable integer value from tenant settings or request.
+        /// </summary>
+        /// <param name="tenantValue">The tenant settings value.</param>
+        /// <param name="requestValue">The request value.</param>
+        /// <returns>The resolved positive value, or <c>null</c> when no positive value exists.</returns>
+        private static int? ResolvePositiveOrNullableDefault(
+            int tenantValue,
+            int? requestValue)
+        {
+            if (tenantValue > 0)
+            {
+                return tenantValue;
+            }
+
+            if (requestValue.HasValue && requestValue.Value > 0)
+            {
+                return requestValue.Value;
+            }
+
+            return null;
         }
 
         /// <summary>
