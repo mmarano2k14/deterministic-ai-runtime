@@ -25,6 +25,26 @@ namespace Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Capacity
         public required string RuntimeInstanceId { get; init; }
 
         /// <summary>
+        /// Gets the tenant identifier that owns this runtime capacity, when tenant-scoped.
+        /// </summary>
+        /// <remarks>
+        /// This value is a first-class routing and isolation field.
+        /// Metadata may duplicate it for diagnostics, but tenant-aware capacity filtering
+        /// must not depend only on metadata.
+        /// </remarks>
+        public string? TenantId { get; init; }
+
+        /// <summary>
+        /// Gets the tenant group identifier that owns this runtime capacity, when group-scoped.
+        /// </summary>
+        /// <remarks>
+        /// This value is a first-class routing and isolation field.
+        /// It allows dedicated or hybrid group-owned runtime capacity to be matched without
+        /// relying only on metadata.
+        /// </remarks>
+        public string? TenantGroupId { get; init; }
+
+        /// <summary>
         /// Gets the runtime instance role.
         /// </summary>
         public AiRuntimeInstanceRole Role { get; init; } =

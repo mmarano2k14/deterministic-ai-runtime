@@ -28,6 +28,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Capacity
     ///   stale, migrated, corrupted, or foreign capacity descriptors.
     /// - Capacity listing self-heals the scoped index by removing missing or foreign descriptors.
     /// - Tenant-aware visibility is applied on read operations through the active execution context.
+    /// - Tenant visibility supports both metadata-based isolation and first-class tenant fields.
     /// </remarks>
     public sealed class RedisAiRuntimeInstanceCapacityStore :
         IAiRuntimeInstanceCapacityStore
@@ -348,14 +349,48 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Capacity
                 return true;
             }
 
-            var visibilityDescriptor = visibilityEvaluator.CreateDescriptor(
-                descriptor.RuntimeInstanceId,
-                descriptor.Metadata);
+            var visibilityDescriptor =
+                visibilityEvaluator.CreateDescriptor(
+                    descriptor.RuntimeInstanceId,
+                    CreateEffectiveIsolationMetadata(descriptor));
 
             return visibilityEvaluator.IsVisible(
                 currentSnapshot.TenantId,
                 currentSnapshot.TenantGroupId,
                 visibilityDescriptor);
+        }
+
+        /// <summary>
+        /// Creates effective isolation metadata by combining descriptor metadata with
+        /// first-class tenant ownership fields.
+        /// </summary>
+        /// <param name="descriptor">The runtime instance capacity descriptor.</param>
+        /// <returns>The effective isolation metadata used for tenant-aware visibility checks.</returns>
+        /// <remarks>
+        /// Metadata-based tenant ownership is kept for backward compatibility.
+        /// First-class tenant fields are authoritative when present.
+        /// </remarks>
+        private static IReadOnlyDictionary<string, string> CreateEffectiveIsolationMetadata(
+            AiRuntimeInstanceCapacityDescriptor descriptor)
+        {
+            var metadata =
+                new Dictionary<string, string>(
+                    descriptor.Metadata,
+                    StringComparer.OrdinalIgnoreCase);
+
+            if (!string.IsNullOrWhiteSpace(descriptor.TenantId))
+            {
+                metadata[AiRuntimeInstanceIsolationMetadataKeys.TenantId] =
+                    descriptor.TenantId;
+            }
+
+            if (!string.IsNullOrWhiteSpace(descriptor.TenantGroupId))
+            {
+                metadata[AiRuntimeInstanceIsolationMetadataKeys.TenantGroupId] =
+                    descriptor.TenantGroupId;
+            }
+
+            return metadata;
         }
 
         /// <summary>
@@ -522,6 +557,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Capacity
             return new AiRuntimeInstanceCapacityDescriptor
             {
                 RuntimeInstanceId = descriptor.RuntimeInstanceId,
+                TenantId = descriptor.TenantId,
+                TenantGroupId = descriptor.TenantGroupId,
                 ControlPlaneId = controlPlaneId,
                 ControlPlaneHostId = descriptor.ControlPlaneHostId,
                 Role = descriptor.Role,
