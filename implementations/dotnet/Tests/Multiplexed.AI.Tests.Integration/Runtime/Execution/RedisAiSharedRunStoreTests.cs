@@ -512,6 +512,51 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution
             Assert.Null(loaded.ExecutionId);
         }
 
+        /// <summary>
+        /// Verifies that dispatch ownership metadata is durably persisted in Redis.
+        /// </summary>
+        [Fact]
+        public async Task MarkDispatchedAsync_Should_Persist_Dispatch_Ownership_Metadata()
+        {
+            var store = CreateStore();
+
+            var sharedRunId =
+                RunId("shared-run-dispatch-ownership");
+
+            await store.CreateAsync(
+                CreateRecord(sharedRunId, AiSharedRunStatus.AssignedToInstance));
+
+            await store.MarkDispatchedAsync(
+                sharedRunId,
+                runtimeInstanceId: "runtime-1",
+                localRunId: "local-run-1",
+                executionId: "execution-1",
+                reason: "dispatch succeeded");
+
+            var loaded =
+                await store.GetAsync(sharedRunId);
+
+            var records =
+                await store.ListAsync();
+
+            Assert.NotNull(loaded);
+            Assert.Equal(_controlPlaneId, loaded!.ControlPlaneId);
+            Assert.Equal(AiSharedRunStatus.Dispatched, loaded.Status);
+            Assert.Equal("runtime-1", loaded.AssignedRuntimeInstanceId);
+            Assert.Equal("local-run-1", loaded.LocalRunId);
+            Assert.Equal("execution-1", loaded.ExecutionId);
+            Assert.Equal("dispatch succeeded", loaded.Reason);
+
+            Assert.Contains(
+                records,
+                record =>
+                    record.SharedRunId == sharedRunId &&
+                    record.Status == AiSharedRunStatus.Dispatched &&
+                    record.AssignedRuntimeInstanceId == "runtime-1" &&
+                    record.LocalRunId == "local-run-1" &&
+                    record.ExecutionId == "execution-1");
+        }
+
         private RedisAiSharedRunStore CreateStore()
         {
             if (_connection is null)

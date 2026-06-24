@@ -103,5 +103,23 @@ namespace Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue
         Task<AiRuntimeRunExecutionIndexEntry?> GetAsync(
             string runId,
             CancellationToken cancellationToken = default);
+
+        /// <summary>
+        /// Lists unfinished runtime run execution index entries assigned to the specified runtime instance.
+        /// </summary>
+        /// <param name="runtimeInstanceId">The runtime instance identifier.</param>
+        /// <param name="cancellationToken">A token used to cancel the operation.</param>
+        /// <returns>
+        /// The unfinished index entries assigned to the specified runtime instance and visible
+        /// to the current tenant context.
+        /// </returns>
+        /// <remarks>
+        /// Terminal entries such as completed, failed, and cancelled runs must not be returned.
+        /// Implementations must preserve tenant isolation when a tenant-scoped execution context
+        /// is active.
+        /// </remarks>
+        Task<IReadOnlyList<AiRuntimeRunExecutionIndexEntry>> ListUnfinishedByRuntimeInstanceAsync(
+            string runtimeInstanceId,
+            CancellationToken cancellationToken = default);
     }
 }

@@ -373,6 +373,99 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue.Redis
             return entry;
         }
 
+        /// <inheritdoc />
+        public async Task<IReadOnlyList<AiRuntimeRunExecutionIndexEntry>> ListUnfinishedByRuntimeInstanceAsync(
+            string runtimeInstanceId,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(runtimeInstanceId);
+
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var controlPlaneId =
+                await ResolveControlPlaneIdAsync(cancellationToken)
+                    .ConfigureAwait(false);
+
+            var runIds =
+                await _database
+                    .SortedSetRangeByRankAsync(
+                        BuildAllIndexKey(controlPlaneId),
+                        order: Order.Ascending)
+                    .ConfigureAwait(false);
+
+            cancellationToken.ThrowIfCancellationRequested();
+
+            if (runIds.Length == 0)
+            {
+                return Array.Empty<AiRuntimeRunExecutionIndexEntry>();
+            }
+
+            var tenantId =
+                TryResolveTenantId();
+
+            var entries =
+                new List<AiRuntimeRunExecutionIndexEntry>(runIds.Length);
+
+            foreach (var runIdValue in runIds)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                var runId =
+                    runIdValue.ToString();
+
+                if (string.IsNullOrWhiteSpace(runId))
+                {
+                    continue;
+                }
+
+                var entry =
+                    await GetRawAsync(
+                            controlPlaneId,
+                            runId,
+                            cancellationToken)
+                        .ConfigureAwait(false);
+
+                if (entry is null)
+                {
+                    continue;
+                }
+
+                if (!string.Equals(
+                        entry.RuntimeInstanceId,
+                        runtimeInstanceId,
+                        StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                if (!IsUnfinished(entry))
+                {
+                    continue;
+                }
+
+                if (!BelongsToTenant(
+                        entry,
+                        tenantId))
+                {
+                    continue;
+                }
+
+                entries.Add(entry);
+            }
+
+            return entries
+                .OrderBy(entry => entry.CreatedAtUtc)
+                .ThenBy(entry => entry.RunId, StringComparer.Ordinal)
+                .ToArray();
+        }
+
+        /// <summary>
+        /// Determines whether the current tenant context is allowed to mutate the specified runtime run entry.
+        /// </summary>
+        /// <param name="controlPlaneId">The control-plane identifier.</param>
+        /// <param name="runId">The local runtime run identifier.</param>
+        /// <param name="cancellationToken">A token used to cancel the operation.</param>
+        /// <returns>True when the entry exists and belongs to the current tenant context; otherwise false.</returns>
         private async Task<bool> CanMutateAsync(
             string controlPlaneId,
             string runId,
@@ -394,6 +487,13 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue.Redis
                 TryResolveTenantId());
         }
 
+        /// <summary>
+        /// Gets a runtime run execution index entry without applying tenant visibility filtering.
+        /// </summary>
+        /// <param name="controlPlaneId">The control-plane identifier.</param>
+        /// <param name="runId">The local runtime run identifier.</param>
+        /// <param name="cancellationToken">A token used to cancel the operation.</param>
+        /// <returns>The raw index entry when it exists; otherwise null.</returns>
         private async Task<AiRuntimeRunExecutionIndexEntry?> GetRawAsync(
             string controlPlaneId,
             string runId,
@@ -416,6 +516,13 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue.Redis
             return MapEntry(entries);
         }
 
+        /// <summary>
+        /// Builds the Redis keys used by the queued-run registration script.
+        /// </summary>
+        /// <param name="controlPlaneId">The control-plane identifier.</param>
+        /// <param name="runId">The local runtime run identifier.</param>
+        /// <param name="tenantId">The optional tenant identifier.</param>
+        /// <returns>The Redis keys used to register the entry and update its indexes.</returns>
         private RedisKey[] BuildRegisterKeys(
             string controlPlaneId,
             string runId,
@@ -438,6 +545,13 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue.Redis
             };
         }
 
+        /// <summary>
+        /// Builds the Redis argument values used by the queued-run registration script.
+        /// </summary>
+        /// <param name="entry">The runtime run execution index entry to serialize.</param>
+        /// <param name="score">The sorted-set score used for ordered index scans.</param>
+        /// <param name="expireSeconds">The optional record expiration in seconds, or 0 when disabled.</param>
+        /// <returns>The Redis values passed to the registration script.</returns>
         private static RedisValue[] BuildRegisterValues(
             AiRuntimeRunExecutionIndexEntry entry,
             double score,
@@ -464,6 +578,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue.Redis
             return values.ToArray();
         }
 
+        /// <summary>
+        /// Maps Redis hash entries to a runtime run execution index entry.
+        /// </summary>
+        /// <param name="entries">The Redis hash entries.</param>
+        /// <returns>The mapped runtime run execution index entry.</returns>
         private static AiRuntimeRunExecutionIndexEntry MapEntry(
             IReadOnlyCollection<HashEntry> entries)
         {
@@ -494,6 +613,12 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue.Redis
             };
         }
 
+        /// <summary>
+        /// Resolves the current control-plane identifier.
+        /// </summary>
+        /// <param name="cancellationToken">A token used to cancel the operation.</param>
+        /// <returns>The resolved control-plane identifier.</returns>
+        /// <exception cref="InvalidOperationException">Thrown when the control-plane identifier is empty.</exception>
         private async Task<string> ResolveControlPlaneIdAsync(
             CancellationToken cancellationToken)
         {
@@ -512,6 +637,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue.Redis
             return resolvedControlPlaneId;
         }
 
+        /// <summary>
+        /// Attempts to resolve the current execution context snapshot.
+        /// </summary>
+        /// <returns>The current execution context snapshot, or null when none is available.</returns>
         private ExecutionContextSnapshot? TryResolveSnapshot()
         {
             if (_executionContextSnapshotProvider is null)
@@ -529,11 +658,21 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue.Redis
             }
         }
 
+        /// <summary>
+        /// Attempts to resolve the current tenant identifier from the execution context snapshot.
+        /// </summary>
+        /// <returns>The current tenant identifier, or null when no tenant context is active.</returns>
         private string? TryResolveTenantId()
         {
             return TryResolveSnapshot()?.TenantId;
         }
 
+        /// <summary>
+        /// Determines whether an index entry belongs to the expected tenant.
+        /// </summary>
+        /// <param name="entry">The runtime run execution index entry.</param>
+        /// <param name="expectedTenantId">The expected tenant identifier, or null for unscoped access.</param>
+        /// <returns>True when the entry belongs to the expected tenant or access is unscoped; otherwise false.</returns>
         private static bool BelongsToTenant(
             AiRuntimeRunExecutionIndexEntry entry,
             string? expectedTenantId)
@@ -557,6 +696,24 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue.Redis
                 StringComparison.Ordinal);
         }
 
+        /// <summary>
+        /// Determines whether an index entry has not reached a terminal runtime-run state.
+        /// </summary>
+        /// <param name="entry">The runtime run execution index entry.</param>
+        /// <returns>True when the entry is unfinished; otherwise false.</returns>
+        private static bool IsUnfinished(
+            AiRuntimeRunExecutionIndexEntry entry)
+        {
+            return !string.Equals(entry.Status, "completed", StringComparison.OrdinalIgnoreCase) &&
+                   !string.Equals(entry.Status, "failed", StringComparison.OrdinalIgnoreCase) &&
+                   !string.Equals(entry.Status, "cancelled", StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>
+        /// Builds the Redis key prefix for runtime run execution index entries owned by a control plane.
+        /// </summary>
+        /// <param name="controlPlaneId">The control-plane identifier.</param>
+        /// <returns>The Redis key prefix.</returns>
         private string BuildIndexKeyPrefix(
             string controlPlaneId)
         {
@@ -570,6 +727,12 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue.Redis
                 RuntimeRunIndexKeySegment);
         }
 
+        /// <summary>
+        /// Builds the Redis key prefix for tenant-scoped runtime run execution indexes.
+        /// </summary>
+        /// <param name="controlPlaneId">The control-plane identifier.</param>
+        /// <param name="tenantId">The tenant identifier.</param>
+        /// <returns>The Redis tenant-scoped key prefix.</returns>
         private string BuildTenantIndexKeyPrefix(
             string controlPlaneId,
             string tenantId)
@@ -588,6 +751,12 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue.Redis
                 RuntimeRunIndexKeySegment);
         }
 
+        /// <summary>
+        /// Builds the Redis item key for a runtime run execution index entry.
+        /// </summary>
+        /// <param name="controlPlaneId">The control-plane identifier.</param>
+        /// <param name="runId">The local runtime run identifier.</param>
+        /// <returns>The Redis item key.</returns>
         private RedisKey BuildItemKey(
             string controlPlaneId,
             string runId)
@@ -600,6 +769,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue.Redis
                 NormalizeKeySegment(runId));
         }
 
+        /// <summary>
+        /// Builds the Redis sorted-set key containing all runtime run identifiers for a control plane.
+        /// </summary>
+        /// <param name="controlPlaneId">The control-plane identifier.</param>
+        /// <returns>The Redis all-index key.</returns>
         private RedisKey BuildAllIndexKey(
             string controlPlaneId)
         {
@@ -609,6 +783,12 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue.Redis
                 AllIndexKeySegment);
         }
 
+        /// <summary>
+        /// Builds the Redis sorted-set key containing all runtime run identifiers for a tenant.
+        /// </summary>
+        /// <param name="controlPlaneId">The control-plane identifier.</param>
+        /// <param name="tenantId">The tenant identifier.</param>
+        /// <returns>The Redis tenant all-index key.</returns>
         private RedisKey BuildTenantAllIndexKey(
             string controlPlaneId,
             string tenantId)
@@ -619,6 +799,12 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue.Redis
                 AllIndexKeySegment);
         }
 
+        /// <summary>
+        /// Adds a Redis hash field/value pair to a Redis values collection.
+        /// </summary>
+        /// <param name="values">The Redis values collection.</param>
+        /// <param name="name">The field name.</param>
+        /// <param name="value">The optional field value.</param>
         private static void AddField(
             ICollection<RedisValue> values,
             string name,
@@ -628,6 +814,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue.Redis
             values.Add(value ?? string.Empty);
         }
 
+        /// <summary>
+        /// Normalizes the configured Redis key prefix.
+        /// </summary>
+        /// <param name="keyPrefix">The configured key prefix.</param>
+        /// <returns>The normalized base key prefix.</returns>
         private static string NormalizeBaseKeyPrefix(
             string keyPrefix)
         {
@@ -641,6 +832,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue.Redis
                 .TrimEnd(':');
         }
 
+        /// <summary>
+        /// Normalizes a value so it can safely be used as a Redis key segment.
+        /// </summary>
+        /// <param name="value">The raw key segment value.</param>
+        /// <returns>The normalized Redis key segment.</returns>
         private static string NormalizeKeySegment(
             string value)
         {
@@ -652,6 +848,12 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue.Redis
                 .Replace("\\", "/", StringComparison.Ordinal);
         }
 
+        /// <summary>
+        /// Gets an optional field value from a Redis hash field dictionary.
+        /// </summary>
+        /// <param name="fields">The Redis hash field dictionary.</param>
+        /// <param name="name">The field name.</param>
+        /// <returns>The field value, or null when the field is missing or blank.</returns>
         private static string? GetOptional(
             IReadOnlyDictionary<string, string> fields,
             string name)
@@ -665,6 +867,13 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue.Redis
             return value;
         }
 
+        /// <summary>
+        /// Gets a required field value from a Redis hash field dictionary.
+        /// </summary>
+        /// <param name="fields">The Redis hash field dictionary.</param>
+        /// <param name="name">The field name.</param>
+        /// <returns>The required field value.</returns>
+        /// <exception cref="InvalidOperationException">Thrown when the field is missing or blank.</exception>
         private static string GetRequired(
             IReadOnlyDictionary<string, string> fields,
             string name)
@@ -679,18 +888,33 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue.Redis
             return value;
         }
 
+        /// <summary>
+        /// Formats a timestamp for Redis persistence.
+        /// </summary>
+        /// <param name="value">The timestamp value.</param>
+        /// <returns>The formatted timestamp.</returns>
         private static string FormatDate(
             DateTimeOffset value)
         {
             return value.ToString("O", CultureInfo.InvariantCulture);
         }
 
+        /// <summary>
+        /// Formats an optional timestamp for Redis persistence.
+        /// </summary>
+        /// <param name="value">The optional timestamp value.</param>
+        /// <returns>The formatted timestamp, or null when no value is available.</returns>
         private static string? FormatOptionalDate(
             DateTimeOffset? value)
         {
             return value?.ToString("O", CultureInfo.InvariantCulture);
         }
 
+        /// <summary>
+        /// Parses a persisted timestamp from Redis.
+        /// </summary>
+        /// <param name="value">The persisted timestamp.</param>
+        /// <returns>The parsed timestamp.</returns>
         private static DateTimeOffset ParseDateTimeOffset(
             string value)
         {
@@ -700,6 +924,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue.Redis
                 DateTimeStyles.RoundtripKind);
         }
 
+        /// <summary>
+        /// Parses an optional persisted timestamp from Redis.
+        /// </summary>
+        /// <param name="value">The optional persisted timestamp.</param>
+        /// <returns>The parsed timestamp, or null when no value is available.</returns>
         private static DateTimeOffset? ParseOptionalDateTimeOffset(
             string? value)
         {
@@ -711,6 +940,12 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue.Redis
             return ParseDateTimeOffset(value);
         }
 
+        /// <summary>
+        /// Serializes a value to JSON for Redis persistence.
+        /// </summary>
+        /// <typeparam name="T">The value type.</typeparam>
+        /// <param name="value">The value to serialize.</param>
+        /// <returns>The JSON payload, or an empty string when the value is null.</returns>
         private static string Serialize<T>(
             T? value)
         {
@@ -719,6 +954,12 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue.Redis
                 : JsonSerializer.Serialize(value, JsonOptions);
         }
 
+        /// <summary>
+        /// Deserializes an optional JSON payload from Redis.
+        /// </summary>
+        /// <typeparam name="T">The value type.</typeparam>
+        /// <param name="json">The optional JSON payload.</param>
+        /// <returns>The deserialized value, or default when the payload is blank.</returns>
         private static T? DeserializeOptional<T>(
             string? json)
         {
@@ -732,12 +973,21 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue.Redis
                 JsonOptions);
         }
 
+        /// <summary>
+        /// Builds the sorted-set score used to order runtime run index entries.
+        /// </summary>
+        /// <param name="createdAtUtc">The entry creation timestamp.</param>
+        /// <returns>The Redis sorted-set score.</returns>
         private static double BuildIndexScore(
             DateTimeOffset createdAtUtc)
         {
             return createdAtUtc.ToUnixTimeMilliseconds();
         }
 
+        /// <summary>
+        /// Gets the configured record expiration in seconds.
+        /// </summary>
+        /// <returns>The expiration in seconds, or 0 when expiration is disabled.</returns>
         private long GetExpireSeconds()
         {
             if (!_options.EnableRecordExpiration ||
@@ -751,6 +1001,14 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue.Redis
                 (long)_options.RecordExpiration.Value.TotalSeconds);
         }
 
+        /// <summary>
+        /// Validates the Redis Lua mutation result.
+        /// </summary>
+        /// <param name="result">The Redis script result.</param>
+        /// <param name="runId">The local runtime run identifier.</param>
+        /// <param name="expectedStatus">The expected status returned by the script.</param>
+        /// <param name="operation">The logical operation name used in error messages.</param>
+        /// <exception cref="InvalidOperationException">Thrown when Redis returns an unexpected mutation result.</exception>
         private static void EnsureMutationResult(
             RedisResult result,
             string runId,

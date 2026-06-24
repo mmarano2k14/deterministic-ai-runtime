@@ -271,6 +271,36 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController
             Assert.Null(updated);
         }
 
+        /// <summary>
+        /// Verifies that dispatch ownership metadata is durably persisted in the shared run store.
+        /// </summary>
+        [Fact]
+        public async Task MarkDispatchedAsync_Should_Persist_Dispatch_Ownership_Metadata()
+        {
+            var store = new InMemoryAiSharedRunStore();
+
+            await store.CreateAsync(
+                CreateRecord("shared-run-1", AiSharedRunStatus.AssignedToInstance));
+
+            await store.MarkDispatchedAsync(
+                "shared-run-1",
+                runtimeInstanceId: "runtime-1",
+                localRunId: "local-run-1",
+                executionId: "execution-1",
+                reason: "dispatch succeeded");
+
+            var stored = await store.GetAsync("shared-run-1");
+            var records = await store.ListAsync();
+
+            Assert.NotNull(stored);
+            Assert.Equal(AiSharedRunStatus.Dispatched, stored!.Status);
+            Assert.Equal("runtime-1", stored.AssignedRuntimeInstanceId);
+            Assert.Equal("local-run-1", stored.LocalRunId);
+            Assert.Equal("execution-1", stored.ExecutionId);
+            Assert.Equal("dispatch succeeded", stored.Reason);
+            Assert.Contains(records, record => record.SharedRunId == "shared-run-1" && record.Status == AiSharedRunStatus.Dispatched);
+        }
+
         private static AiSharedRunRecord CreateRecord(
             string sharedRunId,
             AiSharedRunStatus status,

@@ -346,6 +346,40 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
             Assert.Equal(3, items.Count);
         }
 
+        /// <summary>
+        /// Verifies that dispatched shared queue items remain discoverable for diagnostics and recovery scans.
+        /// </summary>
+        [Fact]
+        public async Task MarkDispatchedAsync_Should_Keep_Item_Discoverable_When_Including_Terminal_Items()
+        {
+            var queue = new InMemoryAiSharedQueue();
+
+            await queue.EnqueueAsync(CreateItem("shared-run-1"));
+
+            var claimed = await queue.ClaimNextAsync(new AiSharedQueueClaimRequest
+            {
+                RuntimeInstanceId = "runtime-1"
+            });
+
+            Assert.NotNull(claimed);
+
+            await queue.MarkDispatchedAsync(
+                "shared-run-1",
+                claimed!.ClaimToken!,
+                reason: "sent to runtime queue");
+
+            var loaded = await queue.GetAsync("shared-run-1");
+            var activeItems = await queue.ListAsync();
+            var allItems = await queue.ListAsync(includeTerminal: true);
+
+            Assert.NotNull(loaded);
+            Assert.Equal(AiSharedQueueItemStatus.Dispatched, loaded!.Status);
+            Assert.Equal("runtime-1", loaded.ClaimedByRuntimeInstanceId);
+            Assert.Equal("sent to runtime queue", loaded.Reason);
+            Assert.DoesNotContain(activeItems, item => item.SharedRunId == "shared-run-1");
+            Assert.Contains(allItems, item => item.SharedRunId == "shared-run-1" && item.Status == AiSharedQueueItemStatus.Dispatched);
+        }
+
         private static AiSharedQueueItem CreateItem(
             string sharedRunId,
             AiSharedQueueItemStatus status = AiSharedQueueItemStatus.Pending,

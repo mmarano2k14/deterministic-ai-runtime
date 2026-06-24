@@ -256,6 +256,31 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue
         }
 
         /// <inheritdoc />
+        public Task<IReadOnlyList<AiRuntimeRunExecutionIndexEntry>> ListUnfinishedByRuntimeInstanceAsync(
+            string runtimeInstanceId,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(runtimeInstanceId);
+
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var entries = _entries
+                .Values
+                .Where(entry =>
+                    string.Equals(
+                        entry.RuntimeInstanceId,
+                        runtimeInstanceId,
+                        StringComparison.Ordinal) &&
+                    IsUnfinished(entry) &&
+                    BelongsToCurrentTenant(entry))
+                .OrderBy(entry => entry.CreatedAtUtc)
+                .ThenBy(entry => entry.RunId, StringComparer.Ordinal)
+                .ToArray();
+
+            return Task.FromResult<IReadOnlyList<AiRuntimeRunExecutionIndexEntry>>(entries);
+        }
+
+        /// <inheritdoc />
         public Task<AiRuntimeRunExecutionIndexEntry?> GetAsync(
             string runId,
             CancellationToken cancellationToken = default)
@@ -275,6 +300,19 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue
                 BelongsToCurrentTenant(entry)
                     ? entry
                     : null);
+        }
+
+        /// <summary>
+        /// Determines whether an index entry has not reached a terminal runtime-run state.
+        /// </summary>
+        /// <param name="entry">The runtime run index entry.</param>
+        /// <returns>True when the entry is unfinished; otherwise false.</returns>
+        private static bool IsUnfinished(
+            AiRuntimeRunExecutionIndexEntry entry)
+        {
+            return !string.Equals(entry.Status, "completed", StringComparison.OrdinalIgnoreCase) &&
+                   !string.Equals(entry.Status, "failed", StringComparison.OrdinalIgnoreCase) &&
+                   !string.Equals(entry.Status, "cancelled", StringComparison.OrdinalIgnoreCase);
         }
 
         /// <summary>

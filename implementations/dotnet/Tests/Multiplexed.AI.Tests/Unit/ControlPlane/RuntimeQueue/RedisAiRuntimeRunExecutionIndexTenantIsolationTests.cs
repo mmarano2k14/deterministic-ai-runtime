@@ -272,6 +272,65 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeQueue
             Assert.Null(visibleToTenantB);
         }
 
+        /// <summary>
+        /// Verifies that unfinished runtime run entries can be listed by runtime instance id.
+        /// </summary>
+        [Fact]
+        public async Task ListUnfinishedByRuntimeInstanceAsync_Should_Return_Only_Unfinished_Runs_For_RuntimeInstance()
+        {
+            var queuedRunId = $"run-a-queued-{Guid.NewGuid():N}";
+            var runningRunId = $"run-a-running-{Guid.NewGuid():N}";
+            var completedRunId = $"run-a-completed-{Guid.NewGuid():N}";
+            var failedRunId = $"run-a-failed-{Guid.NewGuid():N}";
+            var cancelledRunId = $"run-a-cancelled-{Guid.NewGuid():N}";
+            var otherRuntimeRunId = $"run-a-other-runtime-{Guid.NewGuid():N}";
+
+            await tenantAStore!.RegisterQueuedAsync(CreateEntry(queuedRunId, "tenant-a", runtimeInstanceId: "runtime-a")).ConfigureAwait(false);
+            await tenantAStore.RegisterQueuedAsync(CreateEntry(runningRunId, "tenant-a", runtimeInstanceId: "runtime-a")).ConfigureAwait(false);
+            await tenantAStore.MarkStartedAsync(runningRunId, $"execution-{Guid.NewGuid():N}").ConfigureAwait(false);
+            await tenantAStore.RegisterQueuedAsync(CreateEntry(completedRunId, "tenant-a", runtimeInstanceId: "runtime-a")).ConfigureAwait(false);
+            await tenantAStore.MarkCompletedAsync(completedRunId, $"execution-{Guid.NewGuid():N}").ConfigureAwait(false);
+            await tenantAStore.RegisterQueuedAsync(CreateEntry(failedRunId, "tenant-a", runtimeInstanceId: "runtime-a")).ConfigureAwait(false);
+            await tenantAStore.MarkFailedAsync(failedRunId, $"execution-{Guid.NewGuid():N}", "runtime failure").ConfigureAwait(false);
+            await tenantAStore.RegisterQueuedAsync(CreateEntry(cancelledRunId, "tenant-a", runtimeInstanceId: "runtime-a")).ConfigureAwait(false);
+            await tenantAStore.MarkCancelledAsync(cancelledRunId, $"execution-{Guid.NewGuid():N}", "cancelled").ConfigureAwait(false);
+            await tenantAStore.RegisterQueuedAsync(CreateEntry(otherRuntimeRunId, "tenant-a", runtimeInstanceId: "runtime-other")).ConfigureAwait(false);
+
+            var entries = await tenantAStore.ListUnfinishedByRuntimeInstanceAsync("runtime-a").ConfigureAwait(false);
+
+            Assert.Equal(2, entries.Count);
+            Assert.Contains(entries, entry => entry.RunId == queuedRunId && entry.Status == "queued");
+            Assert.Contains(entries, entry => entry.RunId == runningRunId && entry.Status == "running");
+            Assert.DoesNotContain(entries, entry => entry.RunId == completedRunId);
+            Assert.DoesNotContain(entries, entry => entry.RunId == failedRunId);
+            Assert.DoesNotContain(entries, entry => entry.RunId == cancelledRunId);
+            Assert.DoesNotContain(entries, entry => entry.RuntimeInstanceId == "runtime-other");
+        }
+
+        /// <summary>
+        /// Verifies that unfinished runtime run lookup preserves tenant isolation.
+        /// </summary>
+        [Fact]
+        public async Task ListUnfinishedByRuntimeInstanceAsync_Should_Preserve_Tenant_Isolation()
+        {
+            var tenantARunId = $"run-a-{Guid.NewGuid():N}";
+            var tenantBRunId = $"run-b-{Guid.NewGuid():N}";
+
+            await tenantAStore!.RegisterQueuedAsync(CreateEntry(tenantARunId, "tenant-a", runtimeInstanceId: "runtime-shared")).ConfigureAwait(false);
+            await tenantBStore!.RegisterQueuedAsync(CreateEntry(tenantBRunId, "tenant-b", runtimeInstanceId: "runtime-shared")).ConfigureAwait(false);
+
+            var visibleToTenantA = await tenantAStore.ListUnfinishedByRuntimeInstanceAsync("runtime-shared").ConfigureAwait(false);
+            var visibleToTenantB = await tenantBStore.ListUnfinishedByRuntimeInstanceAsync("runtime-shared").ConfigureAwait(false);
+
+            Assert.Single(visibleToTenantA);
+            Assert.Equal(tenantARunId, visibleToTenantA[0].RunId);
+            Assert.Equal("tenant-a", visibleToTenantA[0].ExecutionContextSnapshot?.TenantId);
+
+            Assert.Single(visibleToTenantB);
+            Assert.Equal(tenantBRunId, visibleToTenantB[0].RunId);
+            Assert.Equal("tenant-b", visibleToTenantB[0].ExecutionContextSnapshot?.TenantId);
+        }
+
         private static AiRuntimeRunExecutionIndexEntry CreateEntry(
             string runId,
             string tenantId,
@@ -290,6 +349,37 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeQueue
                     ["source"] = "redis-runtime-run-index-test"
                 }
             };
+        }
+
+        /// <summary>
+        /// Verifies that runtime assignment metadata is persisted on queued index entries.
+        /// </summary>
+        [Fact]
+        public async Task RegisterQueuedAsync_Should_Persist_Runtime_Assignment_Metadata()
+        {
+            var tenantARunId =
+                $"run-a-{Guid.NewGuid():N}";
+
+            await tenantAStore!
+                .RegisterQueuedAsync(
+                    CreateEntry(
+                        tenantARunId,
+                        "tenant-a",
+                        runtimeInstanceId: "runtime-a"))
+                .ConfigureAwait(false);
+
+            var entry =
+                await tenantAStore
+                    .GetAsync(tenantARunId)
+                    .ConfigureAwait(false);
+
+            Assert.NotNull(entry);
+            Assert.Equal(tenantARunId, entry!.RunId);
+            Assert.Equal("runtime-a", entry.RuntimeInstanceId);
+            Assert.Equal("queued", entry.Status);
+            Assert.Equal("tenant-a", entry.ExecutionContextSnapshot?.TenantId);
+            Assert.Equal("tenant-a", entry.Metadata["tenantId"]);
+            Assert.Equal("redis-runtime-run-index-test", entry.Metadata["source"]);
         }
 
         private static ExecutionContextSnapshot CreateSnapshot(
