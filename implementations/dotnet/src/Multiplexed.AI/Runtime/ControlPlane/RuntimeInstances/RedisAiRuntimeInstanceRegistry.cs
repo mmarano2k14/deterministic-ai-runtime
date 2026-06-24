@@ -26,6 +26,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances
     ///   stale, migrated, corrupted, or foreign entries.
     /// - Registry listing self-heals the scoped index by removing missing or foreign entries.
     /// - Tenant-aware visibility is applied on read operations through the active execution context.
+    /// - Tenant visibility supports both metadata-based isolation and first-class tenant fields.
     /// </remarks>
     public sealed class RedisAiRuntimeInstanceRegistry : IAiRuntimeInstanceRegistry
     {
@@ -117,20 +118,23 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances
                 controlPlaneId;
 
             var now = DateTimeOffset.UtcNow;
+
             var effectiveRegistration =
                 EnsureRegistrationControlPlaneId(
                     registration,
                     controlPlaneId);
 
-            var key = GetInstanceKey(
-                controlPlaneId,
-                effectiveRegistration.RuntimeInstanceId);
-
-            var existing = await GetEntryAsync(
+            var key =
+                GetInstanceKey(
                     controlPlaneId,
-                    effectiveRegistration.RuntimeInstanceId,
-                    cancellationToken)
-                .ConfigureAwait(false);
+                    effectiveRegistration.RuntimeInstanceId);
+
+            var existing =
+                await GetEntryAsync(
+                        controlPlaneId,
+                        effectiveRegistration.RuntimeInstanceId,
+                        cancellationToken)
+                    .ConfigureAwait(false);
 
             var entry = existing is null
                 ? RuntimeInstanceEntry.Create(effectiveRegistration, now)
@@ -172,11 +176,12 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances
                         cancellationToken)
                     .ConfigureAwait(false);
 
-            var existing = await GetEntryAsync(
-                    controlPlaneId,
-                    runtimeInstanceId,
-                    cancellationToken)
-                .ConfigureAwait(false);
+            var existing =
+                await GetEntryAsync(
+                        controlPlaneId,
+                        runtimeInstanceId,
+                        cancellationToken)
+                    .ConfigureAwait(false);
 
             if (existing is null)
             {
@@ -209,18 +214,19 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances
                     ? maxLocalWorkersPerExecution
                     : null;
 
-            var updated = existing.UpdateHeartbeat(
-                queuedRunCount,
-                runningRunCount,
-                activeRunCount,
-                effectiveAvailableRunSlots,
-                effectiveActiveWorkerCount,
-                effectiveAvailableWorkerCount,
-                effectiveMaxLocalWorkersPerExecution,
-                isQueuePaused,
-                effectiveCanAcceptRun,
-                status,
-                now);
+            var updated =
+                existing.UpdateHeartbeat(
+                    queuedRunCount,
+                    runningRunCount,
+                    activeRunCount,
+                    effectiveAvailableRunSlots,
+                    effectiveActiveWorkerCount,
+                    effectiveAvailableWorkerCount,
+                    effectiveMaxLocalWorkersPerExecution,
+                    isQueuePaused,
+                    effectiveCanAcceptRun,
+                    status,
+                    now);
 
             await SaveEntryAsync(
                     controlPlaneId,
@@ -248,11 +254,12 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances
                         cancellationToken)
                     .ConfigureAwait(false);
 
-            var entry = await GetEntryAsync(
-                    controlPlaneId,
-                    runtimeInstanceId,
-                    cancellationToken)
-                .ConfigureAwait(false);
+            var entry =
+                await GetEntryAsync(
+                        controlPlaneId,
+                        runtimeInstanceId,
+                        cancellationToken)
+                    .ConfigureAwait(false);
 
             if (entry is null)
             {
@@ -285,9 +292,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances
             var now = DateTimeOffset.UtcNow;
             var instanceSetKey = GetInstanceSetKey(controlPlaneId);
 
-            var members = await database
-                .SetMembersAsync(instanceSetKey)
-                .ConfigureAwait(false);
+            var members =
+                await database
+                    .SetMembersAsync(instanceSetKey)
+                    .ConfigureAwait(false);
 
             var snapshots = new List<AiRuntimeInstanceSnapshot>();
 
@@ -307,11 +315,12 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances
                     continue;
                 }
 
-                var entry = await GetRawEntryAsync(
-                        controlPlaneId,
-                        runtimeInstanceId,
-                        cancellationToken)
-                    .ConfigureAwait(false);
+                var entry =
+                    await GetRawEntryAsync(
+                            controlPlaneId,
+                            runtimeInstanceId,
+                            cancellationToken)
+                        .ConfigureAwait(false);
 
                 if (entry is null)
                 {
@@ -371,11 +380,12 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances
                         cancellationToken)
                     .ConfigureAwait(false);
 
-            var existing = await GetEntryAsync(
-                    controlPlaneId,
-                    runtimeInstanceId,
-                    cancellationToken)
-                .ConfigureAwait(false);
+            var existing =
+                await GetEntryAsync(
+                        controlPlaneId,
+                        runtimeInstanceId,
+                        cancellationToken)
+                    .ConfigureAwait(false);
 
             if (existing is null)
             {
@@ -413,11 +423,12 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances
 
             var instanceSetKey = GetInstanceSetKey(controlPlaneId);
 
-            var existing = await GetEntryAsync(
-                    controlPlaneId,
-                    runtimeInstanceId,
-                    cancellationToken)
-                .ConfigureAwait(false);
+            var existing =
+                await GetEntryAsync(
+                        controlPlaneId,
+                        runtimeInstanceId,
+                        cancellationToken)
+                    .ConfigureAwait(false);
 
             if (existing is null)
             {
@@ -426,9 +437,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances
                         runtimeInstanceId)
                     .ConfigureAwait(false);
 
-                controlPlaneIdsByRuntimeInstanceId.TryRemove(
-                    runtimeInstanceId,
-                    out _);
+                controlPlaneIdsByRuntimeInstanceId.TryRemove(runtimeInstanceId, out _);
 
                 return null;
             }
@@ -437,26 +446,23 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances
             var stopped = existing.WithStatus(AiRuntimeInstanceStatus.Stopped, now);
             var snapshot = stopped.ToSnapshot(now);
 
-            var key = GetInstanceKey(
-                controlPlaneId,
-                runtimeInstanceId);
-
+            var key = GetInstanceKey(controlPlaneId, runtimeInstanceId);
             var batch = database.CreateBatch();
 
-            var removeFromIndexTask = batch.SetRemoveAsync(
-                instanceSetKey,
-                runtimeInstanceId);
+            var removeFromIndexTask =
+                batch.SetRemoveAsync(
+                    instanceSetKey,
+                    runtimeInstanceId);
 
-            var deleteEntryTask = batch.KeyDeleteAsync(key);
+            var deleteEntryTask =
+                batch.KeyDeleteAsync(key);
 
             batch.Execute();
 
             await removeFromIndexTask.ConfigureAwait(false);
             await deleteEntryTask.ConfigureAwait(false);
 
-            controlPlaneIdsByRuntimeInstanceId.TryRemove(
-                runtimeInstanceId,
-                out _);
+            controlPlaneIdsByRuntimeInstanceId.TryRemove(runtimeInstanceId, out _);
 
             return snapshot;
         }
@@ -479,14 +485,46 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances
                 return true;
             }
 
-            var descriptor = visibilityEvaluator.CreateDescriptor(
-                snapshot.RuntimeInstanceId,
-                snapshot.Metadata);
+            var descriptor =
+                visibilityEvaluator.CreateDescriptor(
+                    snapshot.RuntimeInstanceId,
+                    CreateEffectiveIsolationMetadata(snapshot));
 
             return visibilityEvaluator.IsVisible(
                 currentSnapshot.TenantId,
                 currentSnapshot.TenantGroupId,
                 descriptor);
+        }
+
+        /// <summary>
+        /// Creates effective isolation metadata by combining snapshot metadata with
+        /// first-class tenant ownership fields.
+        /// </summary>
+        /// <param name="snapshot">The runtime instance snapshot.</param>
+        /// <returns>The effective isolation metadata used for tenant-aware visibility checks.</returns>
+        /// <remarks>
+        /// Metadata-based tenant ownership is kept for backward compatibility.
+        /// First-class tenant fields are authoritative when present.
+        /// </remarks>
+        private static IReadOnlyDictionary<string, string> CreateEffectiveIsolationMetadata(
+            AiRuntimeInstanceSnapshot snapshot)
+        {
+            var metadata =
+                new Dictionary<string, string>(
+                    snapshot.Metadata,
+                    StringComparer.OrdinalIgnoreCase);
+
+            if (!string.IsNullOrWhiteSpace(snapshot.TenantId))
+            {
+                metadata[AiRuntimeInstanceIsolationMetadataKeys.TenantId] = snapshot.TenantId;
+            }
+
+            if (!string.IsNullOrWhiteSpace(snapshot.TenantGroupId))
+            {
+                metadata[AiRuntimeInstanceIsolationMetadataKeys.TenantGroupId] = snapshot.TenantGroupId;
+            }
+
+            return metadata;
         }
 
         /// <summary>
@@ -529,11 +567,12 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances
             string runtimeInstanceId,
             CancellationToken cancellationToken)
         {
-            var entry = await GetRawEntryAsync(
-                    controlPlaneId,
-                    runtimeInstanceId,
-                    cancellationToken)
-                .ConfigureAwait(false);
+            var entry =
+                await GetRawEntryAsync(
+                        controlPlaneId,
+                        runtimeInstanceId,
+                        cancellationToken)
+                    .ConfigureAwait(false);
 
             if (!BelongsToControlPlane(
                     entry?.ControlPlaneId,
@@ -560,9 +599,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            var value = await database
-                .StringGetAsync(GetInstanceKey(controlPlaneId, runtimeInstanceId))
-                .ConfigureAwait(false);
+            var value =
+                await database
+                    .StringGetAsync(GetInstanceKey(controlPlaneId, runtimeInstanceId))
+                    .ConfigureAwait(false);
 
             if (!value.HasValue)
             {
@@ -596,14 +636,16 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances
 
             var batch = database.CreateBatch();
 
-            var setTask = batch.StringSetAsync(
-                key,
-                json,
-                registrationOptions.RegistryTtl);
+            var setTask =
+                batch.StringSetAsync(
+                    key,
+                    json,
+                    registrationOptions.RegistryTtl);
 
-            var addTask = batch.SetAddAsync(
-                instanceSetKey,
-                runtimeInstanceId);
+            var addTask =
+                batch.SetAddAsync(
+                    instanceSetKey,
+                    runtimeInstanceId);
 
             batch.Execute();
 
@@ -684,15 +726,24 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances
 
             return new AiRuntimeInstanceRegistration
             {
+                McpRuntimeId = registration.McpRuntimeId,
                 RuntimeInstanceId = registration.RuntimeInstanceId,
+                TenantId = registration.TenantId,
+                TenantGroupId = registration.TenantGroupId,
                 ControlPlaneId = controlPlaneId,
                 ControlPlaneHostId = registration.ControlPlaneHostId,
                 HostId = registration.HostId,
                 RuntimeId = registration.RuntimeId,
                 Role = registration.Role,
+                HostName = registration.HostName,
+                ProcessId = registration.ProcessId,
+                KubernetesNamespace = registration.KubernetesNamespace,
+                KubernetesPodName = registration.KubernetesPodName,
+                KubernetesNodeName = registration.KubernetesNodeName,
                 WorkerCount = registration.WorkerCount,
                 QueueCapacity = registration.QueueCapacity,
                 MaxConcurrentRuns = registration.MaxConcurrentRuns,
+                RuntimeVersion = registration.RuntimeVersion,
                 RegisteredAtUtc = registration.RegisteredAtUtc,
                 Metadata = metadata
             };

@@ -8,8 +8,8 @@ namespace Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry
     /// </summary>
     /// <remarks>
     /// This model is used by runtime instance registries to preserve runtime visibility,
-    /// heartbeat state, local queue state, local run capacity, and local worker capacity
-    /// before projecting the data into <see cref="AiRuntimeInstanceSnapshot"/>.
+    /// heartbeat state, local queue state, local run capacity, local worker capacity,
+    /// and tenant ownership before projecting the data into <see cref="AiRuntimeInstanceSnapshot"/>.
     /// </remarks>
     public sealed class RuntimeInstanceEntry
     {
@@ -17,6 +17,16 @@ namespace Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry
         /// Gets the runtime process, pod, or replica identifier.
         /// </summary>
         public required string RuntimeInstanceId { get; init; }
+
+        /// <summary>
+        /// Gets the tenant identifier that owns this runtime instance, when tenant-scoped.
+        /// </summary>
+        public string? TenantId { get; init; }
+
+        /// <summary>
+        /// Gets the tenant group identifier that owns this runtime instance, when group-scoped.
+        /// </summary>
+        public string? TenantGroupId { get; init; }
 
         /// <summary>
         /// Gets the logical control-plane identifier that owns this runtime instance entry.
@@ -172,6 +182,8 @@ namespace Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry
             return new RuntimeInstanceEntry
             {
                 RuntimeInstanceId = registration.RuntimeInstanceId,
+                TenantId = registration.TenantId,
+                TenantGroupId = registration.TenantGroupId,
                 ControlPlaneId = registration.ControlPlaneId,
                 HostId = registration.HostId,
                 RuntimeId = registration.RuntimeId,
@@ -185,18 +197,14 @@ namespace Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry
                 KubernetesNodeName = registration.KubernetesNodeName,
                 WorkerCount = registration.WorkerCount,
                 ActiveWorkerCount = 0,
-                AvailableWorkerCount = canAcceptRun
-                    ? registration.WorkerCount
-                    : 0,
+                AvailableWorkerCount = canAcceptRun ? registration.WorkerCount : 0,
                 MaxLocalWorkersPerExecution = null,
                 QueuedRunCount = 0,
                 RunningRunCount = 0,
                 ActiveRunCount = 0,
                 QueueCapacity = registration.QueueCapacity,
                 MaxConcurrentRuns = registration.MaxConcurrentRuns,
-                AvailableRunSlots = canAcceptRun
-                    ? registration.MaxConcurrentRuns
-                    : 0,
+                AvailableRunSlots = canAcceptRun ? registration.MaxConcurrentRuns : 0,
                 IsQueuePaused = false,
                 CanAcceptRun = canAcceptRun,
                 RegisteredAtUtc = now,
@@ -225,6 +233,8 @@ namespace Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry
             return new RuntimeInstanceEntry
             {
                 RuntimeInstanceId = registration.RuntimeInstanceId,
+                TenantId = registration.TenantId ?? TenantId,
+                TenantGroupId = registration.TenantGroupId ?? TenantGroupId,
                 ControlPlaneId = registration.ControlPlaneId ?? ControlPlaneId,
                 HostId = registration.HostId,
                 RuntimeId = registration.RuntimeId,
@@ -239,23 +249,15 @@ namespace Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry
                 KubernetesPodName = registration.KubernetesPodName,
                 KubernetesNodeName = registration.KubernetesNodeName,
                 WorkerCount = registration.WorkerCount,
-                ActiveWorkerCount = registration.Role == AiRuntimeInstanceRole.Runtime
-                    ? ActiveWorkerCount
-                    : 0,
-                AvailableWorkerCount = registration.Role == AiRuntimeInstanceRole.Runtime
-                    ? AvailableWorkerCount
-                    : 0,
-                MaxLocalWorkersPerExecution = registration.Role == AiRuntimeInstanceRole.Runtime
-                    ? MaxLocalWorkersPerExecution
-                    : null,
+                ActiveWorkerCount = registration.Role == AiRuntimeInstanceRole.Runtime ? ActiveWorkerCount : 0,
+                AvailableWorkerCount = registration.Role == AiRuntimeInstanceRole.Runtime ? AvailableWorkerCount : 0,
+                MaxLocalWorkersPerExecution = registration.Role == AiRuntimeInstanceRole.Runtime ? MaxLocalWorkersPerExecution : null,
                 QueuedRunCount = QueuedRunCount,
                 RunningRunCount = RunningRunCount,
                 ActiveRunCount = ActiveRunCount,
                 QueueCapacity = registration.QueueCapacity,
                 MaxConcurrentRuns = registration.MaxConcurrentRuns,
-                AvailableRunSlots = registration.Role == AiRuntimeInstanceRole.Runtime
-                    ? AvailableRunSlots
-                    : 0,
+                AvailableRunSlots = registration.Role == AiRuntimeInstanceRole.Runtime ? AvailableRunSlots : 0,
                 IsQueuePaused = IsQueuePaused,
                 CanAcceptRun = canAcceptRun,
                 RegisteredAtUtc = RegisteredAtUtc,
@@ -296,6 +298,8 @@ namespace Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry
             return new RuntimeInstanceEntry
             {
                 RuntimeInstanceId = RuntimeInstanceId,
+                TenantId = TenantId,
+                TenantGroupId = TenantGroupId,
                 ControlPlaneId = ControlPlaneId,
                 HostId = HostId,
                 RuntimeId = RuntimeId,
@@ -336,9 +340,16 @@ namespace Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry
             AiRuntimeInstanceStatus status,
             DateTimeOffset now)
         {
+            var canAcceptRun =
+                Role == AiRuntimeInstanceRole.Runtime &&
+                CanAcceptRun &&
+                IsAcceptingStatus(status);
+
             return new RuntimeInstanceEntry
             {
                 RuntimeInstanceId = RuntimeInstanceId,
+                TenantId = TenantId,
+                TenantGroupId = TenantGroupId,
                 ControlPlaneId = ControlPlaneId,
                 HostId = HostId,
                 RuntimeId = RuntimeId,
@@ -360,13 +371,24 @@ namespace Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry
                 QueueCapacity = QueueCapacity,
                 MaxConcurrentRuns = MaxConcurrentRuns,
                 AvailableRunSlots = AvailableRunSlots,
-                IsQueuePaused = IsQueuePaused,
-                CanAcceptRun = CanAcceptRun,
+                IsQueuePaused = status == AiRuntimeInstanceStatus.Paused || IsQueuePaused,
+                CanAcceptRun = canAcceptRun,
                 RegisteredAtUtc = RegisteredAtUtc,
                 LastHeartbeatAtUtc = now,
                 RuntimeVersion = RuntimeVersion,
                 Metadata = Metadata
             };
+        }
+
+        /// <summary>
+        /// Determines whether a runtime instance status may still accept new runs.
+        /// </summary>
+        /// <param name="status">The runtime instance status.</param>
+        /// <returns><c>true</c> when the status may accept new runs; otherwise, <c>false</c>.</returns>
+        private static bool IsAcceptingStatus(
+            AiRuntimeInstanceStatus status)
+        {
+            return status is AiRuntimeInstanceStatus.Ready or AiRuntimeInstanceStatus.Busy;
         }
 
         /// <summary>
@@ -380,6 +402,8 @@ namespace Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry
             return new AiRuntimeInstanceSnapshot
             {
                 RuntimeInstanceId = RuntimeInstanceId,
+                TenantId = TenantId,
+                TenantGroupId = TenantGroupId,
                 ControlPlaneId = ControlPlaneId,
                 HostId = HostId,
                 RuntimeId = RuntimeId,
