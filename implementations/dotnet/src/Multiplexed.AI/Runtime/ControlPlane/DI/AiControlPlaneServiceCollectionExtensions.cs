@@ -16,6 +16,7 @@ using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Environment;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Health;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Identity;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Recovery;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.SharedInstance;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue;
@@ -42,6 +43,7 @@ using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Health;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strategy.Process;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Identity;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Isolation;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.SharedInstance;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue;
@@ -72,6 +74,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
         /// <param name="configureRuntimeQueue">Optional local runtime queue control-plane options configuration.</param>
         /// <param name="configureRuntimeInstance">Optional runtime instance control-plane options configuration.</param>
         /// <param name="configureRuntimeInstanceHealthReconciliation">Optional runtime instance health reconciliation options configuration.</param>
+        /// <param name="configureRuntimeExecutionRecoveryReconciliation">Optional runtime execution recovery reconciliation options configuration.</param>
         /// <param name="configureAdmission">Optional run admission options configuration.</param>
         /// <param name="configureSharedController">Optional shared runtime controller options configuration.</param>
         /// <param name="configureSharedQueue">Optional shared queue options configuration.</param>
@@ -86,6 +89,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
             Action<AiRuntimeQueueControlPlaneOptions>? configureRuntimeQueue = null,
             Action<AiRuntimeInstanceControlPlaneOptions>? configureRuntimeInstance = null,
             Action<AiRuntimeInstanceHealthReconciliationOptions>? configureRuntimeInstanceHealthReconciliation = null,
+            Action<AiRuntimeExecutionRecoveryReconciliationOptions>? configureRuntimeExecutionRecoveryReconciliation = null,
             Action<AiRunAdmissionOptions>? configureAdmission = null,
             Action<AiSharedRuntimeControllerOptions>? configureSharedController = null,
             Action<AiSharedQueueOptions>? configureSharedQueue = null,
@@ -133,6 +137,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
 
             services.AddAiRuntimeInstanceHealthReconciliation(
                 configureRuntimeInstanceHealthReconciliation);
+
+            services.AddAiRuntimeExecutionRecoveryReconciliation(
+                configureRuntimeExecutionRecoveryReconciliation);
 
             if (configureAdmission is null)
             {
@@ -367,6 +374,37 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
             }
 
             services.TryAddSingleton<IAiRuntimeInstanceHealthReconciler, AiRuntimeInstanceHealthReconciler>();
+
+            return services;
+        }
+
+        /// <summary>
+        /// Registers runtime execution recovery reconciliation services.
+        /// </summary>
+        /// <param name="services">The service collection.</param>
+        /// <param name="configure">Optional runtime execution recovery reconciliation options configuration.</param>
+        /// <returns>The same service collection for chaining.</returns>
+        /// <remarks>
+        /// This method registers the runtime execution recovery reconciler only.
+        /// It does not register a hosted service, does not requeue unfinished runs by default,
+        /// does not own runtime health detection, and does not manage provider or host lifecycle.
+        /// </remarks>
+        public static IServiceCollection AddAiRuntimeExecutionRecoveryReconciliation(
+            this IServiceCollection services,
+            Action<AiRuntimeExecutionRecoveryReconciliationOptions>? configure = null)
+        {
+            ArgumentNullException.ThrowIfNull(services);
+
+            if (configure is null)
+            {
+                services.AddOptions<AiRuntimeExecutionRecoveryReconciliationOptions>();
+            }
+            else
+            {
+                services.Configure(configure);
+            }
+
+            services.TryAddSingleton<IAiRuntimeExecutionRecoveryReconciler, AiRuntimeExecutionRecoveryReconciler>();
 
             return services;
         }

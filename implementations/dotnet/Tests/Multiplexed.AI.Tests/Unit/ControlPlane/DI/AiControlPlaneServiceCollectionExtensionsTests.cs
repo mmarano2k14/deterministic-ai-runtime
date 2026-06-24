@@ -7,6 +7,7 @@ using Multiplexed.Abstractions.AI.ControlPlane.Observability;
 using Multiplexed.Abstractions.AI.ControlPlane.Replay;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Control;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Health;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Recovery;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Controller;
@@ -19,6 +20,8 @@ using Multiplexed.AI.Runtime.ControlPlane.DI;
 using Multiplexed.AI.Runtime.ControlPlane.Observability;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Health;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue;
 using Multiplexed.AI.Runtime.ControlPlane.SharedController;
 using Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling;
 using Multiplexed.AI.Runtime.ControlPlane.SharedController.Store;
@@ -639,6 +642,91 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.DI
             Assert.True(options.Enabled);
             Assert.Equal(TimeSpan.FromSeconds(3), options.Interval);
             Assert.Equal(TimeSpan.FromSeconds(2), options.ErrorDelay);
+        }
+
+        /// <summary>
+        /// Verifies that runtime execution recovery reconciliation can be registered.
+        /// </summary>
+        [Fact]
+        public void AddAiRuntimeExecutionRecoveryReconciliation_Should_Register_RuntimeExecutionRecoveryReconciler()
+        {
+            var services = new ServiceCollection();
+
+            services.AddSingleton<IAiRuntimeInstanceRegistry, InMemoryAiRuntimeInstanceRegistry>();
+            services.AddSingleton<IAiRuntimeRunExecutionIndex, InMemoryAiRuntimeRunExecutionIndex>();
+            services.AddAiRuntimeExecutionRecoveryReconciliation();
+
+            using var provider = services.BuildServiceProvider();
+
+            var reconciler = provider.GetRequiredService<IAiRuntimeExecutionRecoveryReconciler>();
+
+            Assert.IsType<AiRuntimeExecutionRecoveryReconciler>(reconciler);
+        }
+
+        /// <summary>
+        /// Verifies that runtime execution recovery reconciliation options can be configured.
+        /// </summary>
+        [Fact]
+        public void AddAiRuntimeExecutionRecoveryReconciliation_Should_Configure_Options()
+        {
+            var services = new ServiceCollection();
+
+            services.AddSingleton<IAiRuntimeInstanceRegistry, InMemoryAiRuntimeInstanceRegistry>();
+            services.AddSingleton<IAiRuntimeRunExecutionIndex, InMemoryAiRuntimeRunExecutionIndex>();
+            services.AddAiRuntimeExecutionRecoveryReconciliation(options =>
+            {
+                options.Enabled = true;
+                options.IncludeUnhealthyRuntimeInstances = true;
+                options.IncludeStoppedRuntimeInstances = true;
+                options.IncludeDrainingRuntimeInstances = true;
+                options.RequeueUnfinishedRuns = false;
+                options.DryRun = true;
+            });
+
+            using var provider = services.BuildServiceProvider();
+
+            var options = provider
+                .GetRequiredService<IOptions<AiRuntimeExecutionRecoveryReconciliationOptions>>()
+                .Value;
+
+            Assert.True(options.Enabled);
+            Assert.True(options.IncludeUnhealthyRuntimeInstances);
+            Assert.True(options.IncludeStoppedRuntimeInstances);
+            Assert.True(options.IncludeDrainingRuntimeInstances);
+            Assert.False(options.RequeueUnfinishedRuns);
+            Assert.True(options.DryRun);
+        }
+
+        /// <summary>
+        /// Verifies that AddAiControlPlane configures runtime execution recovery reconciliation options.
+        /// </summary>
+        [Fact]
+        public void AddAiControlPlane_Should_Configure_RuntimeExecutionRecoveryReconciliation_Options()
+        {
+            var services = new ServiceCollection();
+
+            services.AddAiControlPlane(
+                configureRuntimeExecutionRecoveryReconciliation: options =>
+                {
+                    options.Enabled = true;
+                    options.IncludeStoppedRuntimeInstances = true;
+                    options.IncludeDrainingRuntimeInstances = true;
+                    options.RequeueUnfinishedRuns = false;
+                    options.DryRun = true;
+                });
+
+            using var provider = services.BuildServiceProvider();
+
+            var options = provider
+                .GetRequiredService<IOptions<AiRuntimeExecutionRecoveryReconciliationOptions>>()
+                .Value;
+
+            Assert.True(options.Enabled);
+            Assert.True(options.IncludeUnhealthyRuntimeInstances);
+            Assert.True(options.IncludeStoppedRuntimeInstances);
+            Assert.True(options.IncludeDrainingRuntimeInstances);
+            Assert.False(options.RequeueUnfinishedRuns);
+            Assert.True(options.DryRun);
         }
     }
 }
