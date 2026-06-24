@@ -6,6 +6,46 @@ This project follows a deterministic runtime and observability model designed fo
 
 ---
 
+## [1.0.6.9] - 2026-06-24 - Runtime execution recovery — transition service owns recovery mutation boundary
+
+### Changed
+- Moved recovered runtime execution index closure from `AiRuntimeExecutionRecoveryReconciler` into `AiRuntimeExecutionRecoveryTransitionService`.
+- Kept `AiRuntimeExecutionRecoveryReconciler` focused on coordination only:
+  - scanning unavailable runtime instances
+  - listing unfinished runtime runs
+  - resolving shared run ownership
+  - routing validated candidates to the transition service
+  - reporting recovery decisions
+- Consolidated recovery mutations inside `AiRuntimeExecutionRecoveryTransitionService`:
+  - requeue dispatched shared queue item
+  - mark local runtime execution index entry as `requeued-for-recovery`
+- Updated transition service construction to require `IAiRuntimeRunExecutionIndex` in addition to `IAiSharedQueue`.
+
+### Added
+- Added transition service unit coverage proving that a successful non-dry-run recovery:
+  - requeues a dispatched shared queue item back to `Pending`
+  - clears claim metadata
+  - marks the runtime execution index as `requeued-for-recovery`
+  - removes the recovered runtime run from unfinished runtime instance scans
+
+### Fixed
+- Fixed the recovery responsibility boundary so the reconciler no longer directly mutates runtime execution index state.
+- Fixed transition service tests to validate the complete mutation boundary instead of only the shared queue mutation.
+- Ensured dry-run recovery still performs no mutation on shared queue state or runtime execution index state.
+
+### Production note
+This keeps the production recovery architecture clean:
+
+`RuntimeExecutionRecoveryReconciler = discovery + coordination + decision reporting`
+
+`AiRuntimeExecutionRecoveryTransitionService = recovery mutation boundary`
+
+The successful recovery mutation path is now:
+
+`resolved ownership -> dispatched shared queue item requeued to Pending -> local runtime execution index marked requeued-for-recovery -> next recovery scan ignores the already recovered local runtime run`
+
+---
+
 ## [1.0.6.9] - 2026-06-24 - Runtime execution recovery — recovered runtime index closure
 
 ### Added
