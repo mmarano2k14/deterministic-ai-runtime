@@ -6,7 +6,59 @@ This project follows a deterministic runtime and observability model designed fo
 
 ---
 
-## [1.0.6.9] - 2026-06-24  Runtime Instance Health Reconciler — Routing Safety Hardening
+## [1.0.6.9] - 2026-06-24 - Runtime execution recovery — dispatched shared queue requeue
+
+### Added
+
+- Added controlled recovery support for shared queue items already assigned to failed or unhealthy runtime instances.
+- Added `IAiSharedQueue.RequeueDispatchedAsync(...)` as a recovery-only queue transition.
+- Added in-memory shared queue support for `Dispatched -> Pending` recovery transitions.
+- Added Redis shared queue support for `Dispatched -> Pending` recovery transitions through an atomic Lua script.
+- Added Redis script cache support for the new recovery requeue operation.
+- Added recovery transition mutation support in `AiRuntimeExecutionRecoveryTransitionService`.
+- Added integration coverage proving that runtime execution recovery can requeue dispatched shared queue items when explicitly enabled.
+- Added Redis end-to-end integration coverage for recovery mutation.
+- Added idempotence coverage proving that the same shared run is not requeued twice.
+
+### Changed
+
+- `AiRuntimeExecutionRecoveryReconciler` now routes recoverable unfinished runtime runs through the transition service with an explicit dry-run or mutation reason.
+- Recovery mutation is now enabled only when `DryRun = false` and `RequeueUnfinishedRuns = true`.
+- Recovery decisions now distinguish between dry-run discovery and actual recovery requeue operations.
+- Redis recovery requeue script now uses Redis-compatible hash updates for older Redis versions.
+
+### Validated recovery behavior
+
+- Stale runtime instances are marked `Unhealthy` by the health reconciler.
+- Recovery reconciliation scans unavailable runtime instances.
+- Runtime execution index exposes unfinished local runtime runs.
+- Shared run ownership resolver maps runtime/local execution back to the shared run and claim token.
+- Transition service requeues the dispatched shared queue item.
+- Shared queue item moves from `Dispatched` back to `Pending`.
+- Runtime instance, worker, claim token, claimed time, and claim expiry are cleared.
+- Runtime execution index intentionally remains unchanged for this step.
+- A second recovery pass does not requeue the same shared run again.
+
+### Architecture note
+
+Runtime instance health reconciliation and runtime execution recovery remain separate responsibilities.
+
+The health reconciler only prevents unsafe routing by marking stale or unhealthy runtime instances and suppressing unsafe capacity. It does not requeue, restart, kill, cancel, fail, or dead-letter work.
+
+Runtime execution recovery is responsible for restoring work already assigned to an unavailable runtime instance. The current implementation safely requeues the shared queue item, while leaving the runtime execution index unchanged for now.
+
+### Tests
+
+- Added shared queue recovery requeue tests for in-memory queue.
+- Added shared queue recovery requeue tests for Redis queue.
+- Added transition service mutation tests.
+- Added non-dry-run runtime execution recovery integration test.
+- Added idempotent recovery integration test.
+- Added Redis end-to-end recovery mutation integration test.
+
+---
+
+## [1.0.6.9] - 2026-06-24 - Runtime Instance Health Reconciler — Routing Safety Hardening
 
 Added a dedicated runtime instance health reconciliation layer to protect dispatch and admission routing from stale or unhealthy runtime instances.
 
