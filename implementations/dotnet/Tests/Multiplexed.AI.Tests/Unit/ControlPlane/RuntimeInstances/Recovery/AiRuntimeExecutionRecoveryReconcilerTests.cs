@@ -1,11 +1,13 @@
 ﻿using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Recovery;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Recovery.Transition;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Ownership;
 using Multiplexed.Abstractions.Core.ExecutionContext;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery.Transition;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue;
 using Multiplexed.AI.Runtime.ControlPlane.SharedController.Ownership;
 using Multiplexed.AI.Runtime.ControlPlane.SharedController.Store;
@@ -89,8 +91,8 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Recovery
             Assert.Null(decision.SharedRunId);
             Assert.Equal("tenant-1", decision.TenantId);
             Assert.Equal("tenant-group-1", decision.TenantGroupId);
-            Assert.Equal("report-unresolved-unfinished-run", decision.Action);
-            Assert.Equal("dry-run-discovered-unresolved-shared-run", decision.Reason);
+            Assert.Equal("none", decision.Action);
+            Assert.Equal("ownership-not-resolved", decision.Reason);
             Assert.False(decision.Changed);
         }
 
@@ -221,10 +223,14 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Recovery
                     new InMemoryAiSharedQueue(),
                     new InMemoryAiSharedRunStore());
 
+            IAiRuntimeExecutionRecoveryTransitionService transitionService =
+                new AiRuntimeExecutionRecoveryTransitionService();
+
             return new AiRuntimeExecutionRecoveryReconciler(
                 registry,
                 index,
                 ownershipResolver,
+                transitionService,
                 Options.Create(options));
         }
 

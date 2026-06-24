@@ -1,6 +1,7 @@
 ﻿using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Health;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Recovery;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Recovery.Transition;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Ownership;
@@ -12,6 +13,7 @@ using Multiplexed.Abstractions.Core.ExecutionContext;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Health;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery.Transition;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue;
 using Multiplexed.AI.Runtime.ControlPlane.SharedController.Ownership;
 using Multiplexed.AI.Runtime.ControlPlane.SharedController.Store;
@@ -146,10 +148,14 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Shared
                     sharedQueue,
                     sharedRunStore);
 
+            IAiRuntimeExecutionRecoveryTransitionService transitionService =
+                new AiRuntimeExecutionRecoveryTransitionService();
+
             var recoveryReconciler = new AiRuntimeExecutionRecoveryReconciler(
                 registry,
                 runExecutionIndex,
                 ownershipResolver,
+                transitionService,
                 Options.Create(new AiRuntimeExecutionRecoveryReconciliationOptions
                 {
                     Enabled = true,
@@ -190,8 +196,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Shared
             Assert.Equal(sharedRunId, decision.SharedRunId);
             Assert.Equal("tenant-a", decision.TenantId);
             Assert.Equal("tenant-group-a", decision.TenantGroupId);
-            Assert.Equal("report-recoverable-unfinished-run", decision.Action);
-            Assert.Equal("dry-run-discovered-recoverable-shared-run", decision.Reason);
+            Assert.Equal("dry-run-requeue-shared-run", decision.Action);
+            Assert.Equal("dry-run-runtime-execution-recovery", decision.Reason);
             Assert.False(decision.Changed);
 
             Assert.NotNull(sharedRun);

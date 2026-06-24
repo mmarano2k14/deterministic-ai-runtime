@@ -1,5 +1,6 @@
 ﻿using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Recovery;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Recovery.Transition;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Ownership;
@@ -14,18 +15,21 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery
     ///
     /// Current implementation is discovery-only / dry-run safe:
     /// it scans unavailable runtime instances, reports unfinished runtime runs,
-    /// and resolves shared run ownership when available.
+    /// resolves shared run ownership when available, and routes validated recovery
+    /// candidates through the runtime execution recovery transition service.
     ///
-    /// It does not requeue, fail, cancel, dead-letter, restart, or kill anything.
+    /// It does not directly requeue, fail, cancel, dead-letter, restart, or kill anything.
     ///
     /// Runtime health detection is owned by the runtime instance health reconciler.
     /// Runtime lifecycle is owned by providers and host managers.
+    /// Recovery mutation boundaries are owned by the runtime execution recovery transition service.
     /// </remarks>
     public sealed class AiRuntimeExecutionRecoveryReconciler : IAiRuntimeExecutionRecoveryReconciler
     {
         private readonly IAiRuntimeInstanceRegistry runtimeInstanceRegistry;
         private readonly IAiRuntimeRunExecutionIndex runtimeRunExecutionIndex;
         private readonly IAiSharedRunOwnershipResolver sharedRunOwnershipResolver;
+        private readonly IAiRuntimeExecutionRecoveryTransitionService transitionService;
         private readonly AiRuntimeExecutionRecoveryReconciliationOptions options;
 
         /// <summary>
@@ -34,21 +38,25 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery
         /// <param name="runtimeInstanceRegistry">The runtime instance registry.</param>
         /// <param name="runtimeRunExecutionIndex">The runtime run execution index.</param>
         /// <param name="sharedRunOwnershipResolver">The shared run ownership resolver.</param>
+        /// <param name="transitionService">The runtime execution recovery transition service.</param>
         /// <param name="options">The recovery reconciliation options.</param>
         public AiRuntimeExecutionRecoveryReconciler(
             IAiRuntimeInstanceRegistry runtimeInstanceRegistry,
             IAiRuntimeRunExecutionIndex runtimeRunExecutionIndex,
             IAiSharedRunOwnershipResolver sharedRunOwnershipResolver,
+            IAiRuntimeExecutionRecoveryTransitionService transitionService,
             IOptions<AiRuntimeExecutionRecoveryReconciliationOptions> options)
         {
             ArgumentNullException.ThrowIfNull(runtimeInstanceRegistry);
             ArgumentNullException.ThrowIfNull(runtimeRunExecutionIndex);
             ArgumentNullException.ThrowIfNull(sharedRunOwnershipResolver);
+            ArgumentNullException.ThrowIfNull(transitionService);
             ArgumentNullException.ThrowIfNull(options);
 
             this.runtimeInstanceRegistry = runtimeInstanceRegistry;
             this.runtimeRunExecutionIndex = runtimeRunExecutionIndex;
             this.sharedRunOwnershipResolver = sharedRunOwnershipResolver;
+            this.transitionService = transitionService;
             this.options = options.Value;
         }
 
@@ -68,6 +76,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery
             var scannedRuntimeInstanceCount = 0;
             var ignoredRuntimeInstanceCount = 0;
             var discoveredUnfinishedRunCount = 0;
+            var recoveredRunCount = 0;
             var decisions = new List<AiRuntimeExecutionRecoveryDecision>();
 
             foreach (var runtimeInstance in runtimeInstances)
@@ -131,6 +140,22 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery
                             cancellationToken)
                         .ConfigureAwait(false);
 
+                    var transition = await transitionService
+                        .ApplyAsync(
+                            new AiRuntimeExecutionRecoveryTransitionRequest
+                            {
+                                Ownership = ownership,
+                                Reason = "dry-run-runtime-execution-recovery",
+                                DryRun = options.DryRun || !options.RequeueUnfinishedRuns
+                            },
+                            cancellationToken)
+                        .ConfigureAwait(false);
+
+                    if (transition.Changed)
+                    {
+                        recoveredRunCount++;
+                    }
+
                     decisions.Add(new AiRuntimeExecutionRecoveryDecision
                     {
                         RuntimeInstanceId = runtimeInstance.RuntimeInstanceId,
@@ -139,9 +164,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery
                         SharedRunId = ownership.SharedRunId,
                         TenantId = unfinishedRun.ExecutionContextSnapshot?.TenantId ?? runtimeInstance.TenantId,
                         TenantGroupId = unfinishedRun.ExecutionContextSnapshot?.TenantGroupId ?? runtimeInstance.TenantGroupId,
-                        Action = ResolveDryRunAction(ownership),
-                        Reason = ResolveDryRunReason(ownership),
-                        Changed = false
+                        Action = transition.Action,
+                        Reason = transition.Reason,
+                        Changed = transition.Changed
                     });
                 }
             }
@@ -151,7 +176,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery
                 ScannedRuntimeInstanceCount = scannedRuntimeInstanceCount,
                 IgnoredRuntimeInstanceCount = ignoredRuntimeInstanceCount,
                 DiscoveredUnfinishedRunCount = discoveredUnfinishedRunCount,
-                RecoveredRunCount = 0,
+                RecoveredRunCount = recoveredRunCount,
                 Decisions = decisions
             };
         }
@@ -171,42 +196,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery
                 AiRuntimeInstanceStatus.Draining => options.IncludeDrainingRuntimeInstances,
                 _ => false
             };
-        }
-
-        /// <summary>
-        /// Resolves the dry-run recovery action from shared run ownership resolution.
-        /// </summary>
-        /// <param name="ownership">The shared run ownership resolution result.</param>
-        /// <returns>The dry-run recovery action.</returns>
-        private static string ResolveDryRunAction(
-            AiSharedRunOwnershipResolutionResult ownership)
-        {
-            if (!ownership.Resolved)
-            {
-                return "report-unresolved-unfinished-run";
-            }
-
-            return ownership.CanRecover
-                ? "report-recoverable-unfinished-run"
-                : "report-non-recoverable-unfinished-run";
-        }
-
-        /// <summary>
-        /// Resolves the dry-run recovery reason from shared run ownership resolution.
-        /// </summary>
-        /// <param name="ownership">The shared run ownership resolution result.</param>
-        /// <returns>The dry-run recovery reason.</returns>
-        private static string ResolveDryRunReason(
-            AiSharedRunOwnershipResolutionResult ownership)
-        {
-            if (!ownership.Resolved)
-            {
-                return "dry-run-discovered-unresolved-shared-run";
-            }
-
-            return ownership.CanRecover
-                ? "dry-run-discovered-recoverable-shared-run"
-                : "dry-run-discovered-non-recoverable-shared-run";
         }
     }
 }

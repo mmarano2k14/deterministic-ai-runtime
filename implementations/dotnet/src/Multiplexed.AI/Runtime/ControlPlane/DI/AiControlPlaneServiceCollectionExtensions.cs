@@ -17,6 +17,7 @@ using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Health;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Identity;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Recovery;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Recovery.Transition;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.SharedInstance;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue;
@@ -45,6 +46,7 @@ using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strategy.
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Identity;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Isolation;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery.Transition;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.SharedInstance;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue;
@@ -410,6 +412,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
             services.TryAddSingleton<IAiSharedRunStore, InMemoryAiSharedRunStore>();
             services.TryAddSingleton<IAiSharedQueue, InMemoryAiSharedQueue>();
             services.TryAddSingleton<IAiSharedRunOwnershipResolver, AiSharedRunOwnershipResolver>();
+            services.TryAddSingleton<IAiRuntimeExecutionRecoveryTransitionService, AiRuntimeExecutionRecoveryTransitionService>();
             services.TryAddSingleton<IAiRuntimeExecutionRecoveryReconciler, AiRuntimeExecutionRecoveryReconciler>();
 
             return services;
