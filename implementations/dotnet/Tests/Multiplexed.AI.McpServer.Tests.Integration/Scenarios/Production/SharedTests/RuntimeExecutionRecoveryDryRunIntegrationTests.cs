@@ -149,7 +149,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Shared
                     sharedRunStore);
 
             IAiRuntimeExecutionRecoveryTransitionService transitionService =
-                new AiRuntimeExecutionRecoveryTransitionService();
+                new AiRuntimeExecutionRecoveryTransitionService(sharedQueue);
 
             var recoveryReconciler = new AiRuntimeExecutionRecoveryReconciler(
                 registry,
@@ -221,6 +221,217 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Shared
             Assert.Equal(AiSharedQueueItemStatus.Dispatched, terminalItem.Status);
             Assert.Equal(runtimeInstanceId, terminalItem.ClaimedByRuntimeInstanceId);
             Assert.Equal(claimed.ClaimToken, terminalItem.ClaimToken);
+
+            var unfinished = Assert.Single(unfinishedRuns);
+            Assert.Equal(runtimeInstanceId, unfinished.RuntimeInstanceId);
+            Assert.Equal(localRunId, unfinished.RunId);
+            Assert.Equal(executionId, unfinished.ExecutionId);
+            Assert.Equal("running", unfinished.Status);
+
+            Assert.NotNull(indexEntry);
+            Assert.Equal(localRunId, indexEntry!.RunId);
+            Assert.Equal(executionId, indexEntry.ExecutionId);
+            Assert.Equal(runtimeInstanceId, indexEntry.RuntimeInstanceId);
+            Assert.Equal("running", indexEntry.Status);
+            Assert.Null(indexEntry.CompletedAtUtc);
+        }
+
+        /// <summary>
+        /// Verifies that recovery reconciliation can requeue a dispatched shared queue item
+        /// when recovery mutation is explicitly enabled.
+        /// </summary>
+        [Fact]
+        public async Task ReconcileAsync_Should_Requeue_Dispatched_Shared_Run_When_Recovery_Mutation_Is_Enabled()
+        {
+            var registry = new InMemoryAiRuntimeInstanceRegistry();
+            var sharedQueue = new InMemoryAiSharedQueue();
+            var sharedRunStore = new InMemoryAiSharedRunStore();
+            var runExecutionIndex = new InMemoryAiRuntimeRunExecutionIndex();
+
+            const string runtimeInstanceId = "runtime-tenant-a-1";
+            const string sharedRunId = "shared-run-recovery-mutation-1";
+            const string localRunId = "local-run-recovery-mutation-1";
+            const string executionId = "execution-recovery-mutation-1";
+
+            var contextSnapshot = CreateExecutionContextSnapshot(
+                tenantId: "tenant-a",
+                tenantGroupId: "tenant-group-a");
+
+            await registry.RegisterAsync(
+                CreateRegistration(
+                    runtimeInstanceId,
+                    tenantId: "tenant-a",
+                    tenantGroupId: "tenant-group-a"));
+
+            await sharedRunStore.CreateAsync(new AiSharedRunRecord
+            {
+                SharedRunId = sharedRunId,
+                Status = AiSharedRunStatus.QueuedGlobally,
+                RunRequest = CreateRunRequest(contextSnapshot),
+                ExecutionContextSnapshot = contextSnapshot,
+                PipelineKey = "runtime-recovery-mutation-test",
+                CorrelationId = "correlation-runtime-recovery-mutation",
+                RequestedBy = "test",
+                Source = "integration-test",
+                Reason = "created-for-runtime-recovery-mutation",
+                SubmittedAtUtc = DateTimeOffset.UtcNow,
+                UpdatedAtUtc = DateTimeOffset.UtcNow,
+                Metadata = new Dictionary<string, string>
+                {
+                    ["scenario"] = "runtime-recovery-mutation"
+                }
+            });
+
+            await sharedQueue.EnqueueAsync(new AiSharedQueueItem
+            {
+                SharedRunId = sharedRunId,
+                Status = AiSharedQueueItemStatus.Pending,
+                ExecutionContextSnapshot = contextSnapshot,
+                PipelineKey = "runtime-recovery-mutation-test",
+                Priority = 0,
+                EnqueuedAtUtc = DateTimeOffset.UtcNow,
+                UpdatedAtUtc = DateTimeOffset.UtcNow,
+                Metadata = new Dictionary<string, string>
+                {
+                    ["scenario"] = "runtime-recovery-mutation"
+                }
+            });
+
+            var claimed = await sharedQueue.ClaimNextAsync(new AiSharedQueueClaimRequest
+            {
+                RuntimeInstanceId = runtimeInstanceId,
+                WorkerId = "worker-1",
+                TenantId = "tenant-a",
+                PipelineKey = "runtime-recovery-mutation-test",
+                ClaimTtl = TimeSpan.FromMinutes(5),
+                Reason = "test-claim"
+            });
+
+            Assert.NotNull(claimed);
+            Assert.False(string.IsNullOrWhiteSpace(claimed!.ClaimToken));
+
+            await sharedQueue.MarkDispatchedAsync(
+                sharedRunId,
+                claimed.ClaimToken!,
+                reason: "test-dispatch");
+
+            await sharedRunStore.MarkDispatchedAsync(
+                sharedRunId,
+                runtimeInstanceId,
+                localRunId,
+                executionId,
+                reason: "test-dispatch");
+
+            await runExecutionIndex.RegisterQueuedAsync(new AiRuntimeRunExecutionIndexEntry
+            {
+                RunId = localRunId,
+                ExecutionId = executionId,
+                RuntimeInstanceId = runtimeInstanceId,
+                Status = "queued",
+                CreatedAtUtc = DateTimeOffset.UtcNow,
+                ExecutionContextSnapshot = contextSnapshot,
+                Metadata = new Dictionary<string, string>
+                {
+                    ["scenario"] = "runtime-recovery-mutation"
+                }
+            });
+
+            await runExecutionIndex.MarkStartedAsync(
+                localRunId,
+                executionId);
+
+            var healthReconciler = new AiRuntimeInstanceHealthReconciler(
+                registry,
+                Options.Create(new AiRuntimeInstanceHealthReconciliationOptions
+                {
+                    Enabled = true,
+                    StaleHeartbeatThreshold = TimeSpan.Zero,
+                    MarkStaleRuntimeUnhealthy = true,
+                    IncludeReadyRuntimeInstances = true,
+                    IncludeBusyRuntimeInstances = true
+                }));
+
+            var healthResult = await healthReconciler.ReconcileAsync();
+
+            IAiSharedRunOwnershipResolver ownershipResolver =
+                new AiSharedRunOwnershipResolver(
+                    sharedQueue,
+                    sharedRunStore);
+
+            IAiRuntimeExecutionRecoveryTransitionService transitionService =
+                new AiRuntimeExecutionRecoveryTransitionService(sharedQueue);
+
+            var recoveryReconciler = new AiRuntimeExecutionRecoveryReconciler(
+                registry,
+                runExecutionIndex,
+                ownershipResolver,
+                transitionService,
+                Options.Create(new AiRuntimeExecutionRecoveryReconciliationOptions
+                {
+                    Enabled = true,
+                    IncludeUnhealthyRuntimeInstances = true,
+                    IncludeStoppedRuntimeInstances = false,
+                    IncludeDrainingRuntimeInstances = false,
+                    RequeueUnfinishedRuns = true,
+                    DryRun = false
+                }));
+
+            var recoveryResult = await recoveryReconciler.ReconcileAsync();
+
+            var runtime = await registry.GetAsync(runtimeInstanceId);
+            var sharedRun = await sharedRunStore.GetAsync(sharedRunId);
+            var queueItem = await sharedQueue.GetAsync(sharedRunId);
+            var activeQueueItems = await sharedQueue.ListAsync();
+            var allQueueItems = await sharedQueue.ListAsync(includeTerminal: true);
+            var unfinishedRuns = await runExecutionIndex.ListUnfinishedByRuntimeInstanceAsync(runtimeInstanceId);
+            var indexEntry = await runExecutionIndex.GetAsync(localRunId);
+
+            Assert.Equal(1, healthResult.ScannedCount);
+            Assert.Equal(1, healthResult.MarkedUnhealthyCount);
+            Assert.Equal(0, healthResult.IgnoredCount);
+
+            Assert.NotNull(runtime);
+            Assert.Equal(AiRuntimeInstanceStatus.Unhealthy, runtime!.Status);
+            Assert.False(runtime.CanAcceptRun);
+
+            Assert.Equal(1, recoveryResult.ScannedRuntimeInstanceCount);
+            Assert.Equal(0, recoveryResult.IgnoredRuntimeInstanceCount);
+            Assert.Equal(1, recoveryResult.DiscoveredUnfinishedRunCount);
+            Assert.Equal(1, recoveryResult.RecoveredRunCount);
+
+            var decision = Assert.Single(recoveryResult.Decisions);
+            Assert.Equal(runtimeInstanceId, decision.RuntimeInstanceId);
+            Assert.Equal(localRunId, decision.LocalRunId);
+            Assert.Equal(executionId, decision.ExecutionId);
+            Assert.Equal(sharedRunId, decision.SharedRunId);
+            Assert.Equal("tenant-a", decision.TenantId);
+            Assert.Equal("tenant-group-a", decision.TenantGroupId);
+            Assert.Equal("requeue-shared-run", decision.Action);
+            Assert.Equal("dry-run-runtime-execution-recovery", decision.Reason);
+            Assert.True(decision.Changed);
+
+            Assert.NotNull(sharedRun);
+            Assert.Equal(AiSharedRunStatus.Dispatched, sharedRun!.Status);
+            Assert.Equal(runtimeInstanceId, sharedRun.AssignedRuntimeInstanceId);
+            Assert.Equal(localRunId, sharedRun.LocalRunId);
+            Assert.Equal(executionId, sharedRun.ExecutionId);
+
+            Assert.NotNull(queueItem);
+            Assert.Equal(AiSharedQueueItemStatus.Pending, queueItem!.Status);
+            Assert.Null(queueItem.ClaimedByRuntimeInstanceId);
+            Assert.Null(queueItem.ClaimedByWorkerId);
+            Assert.Null(queueItem.ClaimToken);
+            Assert.Null(queueItem.ClaimedAtUtc);
+            Assert.Null(queueItem.ClaimExpiresAtUtc);
+            Assert.Equal("dry-run-runtime-execution-recovery", queueItem.Reason);
+
+            var activeItem = Assert.Single(activeQueueItems);
+            Assert.Equal(sharedRunId, activeItem.SharedRunId);
+            Assert.Equal(AiSharedQueueItemStatus.Pending, activeItem.Status);
+
+            var allItem = Assert.Single(allQueueItems);
+            Assert.Equal(sharedRunId, allItem.SharedRunId);
+            Assert.Equal(AiSharedQueueItemStatus.Pending, allItem.Status);
 
             var unfinished = Assert.Single(unfinishedRuns);
             Assert.Equal(runtimeInstanceId, unfinished.RuntimeInstanceId);
