@@ -11,14 +11,14 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery
     /// Default runtime execution recovery reconciler.
     /// </summary>
     /// <remarks>
-    /// This reconciler owns execution recovery only.
+    /// This reconciler owns execution recovery coordination only.
     ///
-    /// Current implementation is discovery-only / dry-run safe:
-    /// it scans unavailable runtime instances, reports unfinished runtime runs,
+    /// It scans unavailable runtime instances, reports unfinished runtime runs,
     /// resolves shared run ownership when available, and routes validated recovery
     /// candidates through the runtime execution recovery transition service.
     ///
-    /// It does not directly requeue, fail, cancel, dead-letter, restart, or kill anything.
+    /// It does not directly mutate shared queue state, fail, cancel, dead-letter,
+    /// restart, or kill anything.
     ///
     /// Runtime health detection is owned by the runtime instance health reconciler.
     /// Runtime lifecycle is owned by providers and host managers.
@@ -127,6 +127,12 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery
 
                     discoveredUnfinishedRunCount++;
 
+                    var tenantId = unfinishedRun.ExecutionContextSnapshot?.TenantId ??
+                        runtimeInstance.TenantId;
+
+                    var tenantGroupId = unfinishedRun.ExecutionContextSnapshot?.TenantGroupId ??
+                        runtimeInstance.TenantGroupId;
+
                     var ownership = await sharedRunOwnershipResolver
                         .ResolveAsync(
                             new AiSharedRunOwnershipResolutionRequest
@@ -134,19 +140,24 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery
                                 RuntimeInstanceId = runtimeInstance.RuntimeInstanceId,
                                 LocalRunId = unfinishedRun.RunId,
                                 ExecutionId = unfinishedRun.ExecutionId,
-                                TenantId = unfinishedRun.ExecutionContextSnapshot?.TenantId ?? runtimeInstance.TenantId,
-                                TenantGroupId = unfinishedRun.ExecutionContextSnapshot?.TenantGroupId ?? runtimeInstance.TenantGroupId
+                                TenantId = tenantId,
+                                TenantGroupId = tenantGroupId
                             },
                             cancellationToken)
                         .ConfigureAwait(false);
+
+                    var dryRun = options.DryRun ||
+                        !options.RequeueUnfinishedRuns;
 
                     var transition = await transitionService
                         .ApplyAsync(
                             new AiRuntimeExecutionRecoveryTransitionRequest
                             {
                                 Ownership = ownership,
-                                Reason = "dry-run-runtime-execution-recovery",
-                                DryRun = options.DryRun || !options.RequeueUnfinishedRuns
+                                DryRun = dryRun,
+                                Reason = dryRun
+                                    ? "dry-run-runtime-execution-recovery"
+                                    : "runtime-execution-recovery-requeue"
                             },
                             cancellationToken)
                         .ConfigureAwait(false);
@@ -162,8 +173,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery
                         LocalRunId = unfinishedRun.RunId,
                         ExecutionId = unfinishedRun.ExecutionId,
                         SharedRunId = ownership.SharedRunId,
-                        TenantId = unfinishedRun.ExecutionContextSnapshot?.TenantId ?? runtimeInstance.TenantId,
-                        TenantGroupId = unfinishedRun.ExecutionContextSnapshot?.TenantGroupId ?? runtimeInstance.TenantGroupId,
+                        TenantId = tenantId,
+                        TenantGroupId = tenantGroupId,
                         Action = transition.Action,
                         Reason = transition.Reason,
                         Changed = transition.Changed
