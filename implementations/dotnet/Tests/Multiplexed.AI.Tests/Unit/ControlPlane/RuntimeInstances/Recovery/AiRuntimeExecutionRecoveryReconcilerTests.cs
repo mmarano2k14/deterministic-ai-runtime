@@ -2,10 +2,14 @@
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Recovery;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue;
+using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Ownership;
 using Multiplexed.Abstractions.Core.ExecutionContext;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue;
+using Multiplexed.AI.Runtime.ControlPlane.SharedController.Ownership;
+using Multiplexed.AI.Runtime.ControlPlane.SharedController.Store;
+using Multiplexed.AI.Runtime.ControlPlane.SharedQueue;
 
 namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Recovery
 {
@@ -82,10 +86,11 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Recovery
             Assert.Equal("runtime-1", decision.RuntimeInstanceId);
             Assert.Equal("run-1", decision.LocalRunId);
             Assert.Equal("execution-1", decision.ExecutionId);
+            Assert.Null(decision.SharedRunId);
             Assert.Equal("tenant-1", decision.TenantId);
             Assert.Equal("tenant-group-1", decision.TenantGroupId);
-            Assert.Equal("report-unfinished-run", decision.Action);
-            Assert.Equal("dry-run-discovered-unfinished-run", decision.Reason);
+            Assert.Equal("report-unresolved-unfinished-run", decision.Action);
+            Assert.Equal("dry-run-discovered-unresolved-shared-run", decision.Reason);
             Assert.False(decision.Changed);
         }
 
@@ -211,9 +216,15 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Recovery
             IAiRuntimeRunExecutionIndex index,
             AiRuntimeExecutionRecoveryReconciliationOptions options)
         {
+            IAiSharedRunOwnershipResolver ownershipResolver =
+                new AiSharedRunOwnershipResolver(
+                    new InMemoryAiSharedQueue(),
+                    new InMemoryAiSharedRunStore());
+
             return new AiRuntimeExecutionRecoveryReconciler(
                 registry,
                 index,
+                ownershipResolver,
                 Options.Create(options));
         }
 

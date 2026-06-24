@@ -23,6 +23,7 @@ using Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue.Redis;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Controller;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Dispatch;
+using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Ownership;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Scaling;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Store;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Background;
@@ -49,6 +50,7 @@ using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.SharedInstance;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue.Redis;
 using Multiplexed.AI.Runtime.ControlPlane.SharedController;
+using Multiplexed.AI.Runtime.ControlPlane.SharedController.Ownership;
 using Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling;
 using Multiplexed.AI.Runtime.ControlPlane.SharedController.Store;
 using Multiplexed.AI.Runtime.ControlPlane.SharedQueue;
@@ -249,6 +251,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
 
             services.TryAddSingleton<IAiSharedRunStore, InMemoryAiSharedRunStore>();
             services.TryAddSingleton<IAiSharedQueue, InMemoryAiSharedQueue>();
+            services.TryAddSingleton<IAiSharedRunOwnershipResolver, AiSharedRunOwnershipResolver>();
             services.TryAddSingleton<IAiSharedRunDispatcher, LocalAiSharedRunDispatcher>();
             services.TryAddSingleton<IAiSharedQueueDispatcher, AiSharedQueueDispatcher>();
             services.TryAddSingleton<IAiSharedQueuePump, AiSharedQueuePump>();
@@ -404,6 +407,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
                 services.Configure(configure);
             }
 
+            services.TryAddSingleton<IAiSharedRunStore, InMemoryAiSharedRunStore>();
+            services.TryAddSingleton<IAiSharedQueue, InMemoryAiSharedQueue>();
+            services.TryAddSingleton<IAiSharedRunOwnershipResolver, AiSharedRunOwnershipResolver>();
             services.TryAddSingleton<IAiRuntimeExecutionRecoveryReconciler, AiRuntimeExecutionRecoveryReconciler>();
 
             return services;

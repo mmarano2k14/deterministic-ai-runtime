@@ -3,13 +3,18 @@ using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Health;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Recovery;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue;
+using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Ownership;
+using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Store;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Claiming;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Queue;
+using Multiplexed.Abstractions.AI.Execution.Instance.Worker;
 using Multiplexed.Abstractions.Core.ExecutionContext;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Health;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue;
+using Multiplexed.AI.Runtime.ControlPlane.SharedController.Ownership;
+using Multiplexed.AI.Runtime.ControlPlane.SharedController.Store;
 using Multiplexed.AI.Runtime.ControlPlane.SharedQueue;
 
 namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.SharedTests
@@ -28,6 +33,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Shared
         {
             var registry = new InMemoryAiRuntimeInstanceRegistry();
             var sharedQueue = new InMemoryAiSharedQueue();
+            var sharedRunStore = new InMemoryAiSharedRunStore();
             var runExecutionIndex = new InMemoryAiRuntimeRunExecutionIndex();
 
             const string runtimeInstanceId = "runtime-tenant-a-1";
@@ -44,6 +50,25 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Shared
                     runtimeInstanceId,
                     tenantId: "tenant-a",
                     tenantGroupId: "tenant-group-a"));
+
+            await sharedRunStore.CreateAsync(new AiSharedRunRecord
+            {
+                SharedRunId = sharedRunId,
+                Status = AiSharedRunStatus.QueuedGlobally,
+                RunRequest = CreateRunRequest(contextSnapshot),
+                ExecutionContextSnapshot = contextSnapshot,
+                PipelineKey = "runtime-recovery-dry-run-test",
+                CorrelationId = "correlation-runtime-recovery-dry-run",
+                RequestedBy = "test",
+                Source = "integration-test",
+                Reason = "created-for-runtime-recovery-dry-run",
+                SubmittedAtUtc = DateTimeOffset.UtcNow,
+                UpdatedAtUtc = DateTimeOffset.UtcNow,
+                Metadata = new Dictionary<string, string>
+                {
+                    ["scenario"] = "runtime-recovery-dry-run"
+                }
+            });
 
             await sharedQueue.EnqueueAsync(new AiSharedQueueItem
             {
@@ -78,6 +103,13 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Shared
                 claimed.ClaimToken!,
                 reason: "test-dispatch");
 
+            await sharedRunStore.MarkDispatchedAsync(
+                sharedRunId,
+                runtimeInstanceId,
+                localRunId,
+                executionId,
+                reason: "test-dispatch");
+
             await runExecutionIndex.RegisterQueuedAsync(new AiRuntimeRunExecutionIndexEntry
             {
                 RunId = localRunId,
@@ -109,9 +141,15 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Shared
 
             var healthResult = await healthReconciler.ReconcileAsync();
 
+            IAiSharedRunOwnershipResolver ownershipResolver =
+                new AiSharedRunOwnershipResolver(
+                    sharedQueue,
+                    sharedRunStore);
+
             var recoveryReconciler = new AiRuntimeExecutionRecoveryReconciler(
                 registry,
                 runExecutionIndex,
+                ownershipResolver,
                 Options.Create(new AiRuntimeExecutionRecoveryReconciliationOptions
                 {
                     Enabled = true,
@@ -125,6 +163,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Shared
             var recoveryResult = await recoveryReconciler.ReconcileAsync();
 
             var runtime = await registry.GetAsync(runtimeInstanceId);
+            var sharedRun = await sharedRunStore.GetAsync(sharedRunId);
             var queueItem = await sharedQueue.GetAsync(sharedRunId);
             var activeQueueItems = await sharedQueue.ListAsync();
             var terminalQueueItems = await sharedQueue.ListAsync(includeTerminal: true);
@@ -148,11 +187,19 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Shared
             Assert.Equal(runtimeInstanceId, decision.RuntimeInstanceId);
             Assert.Equal(localRunId, decision.LocalRunId);
             Assert.Equal(executionId, decision.ExecutionId);
+            Assert.Equal(sharedRunId, decision.SharedRunId);
             Assert.Equal("tenant-a", decision.TenantId);
             Assert.Equal("tenant-group-a", decision.TenantGroupId);
-            Assert.Equal("report-unfinished-run", decision.Action);
-            Assert.Equal("dry-run-discovered-unfinished-run", decision.Reason);
+            Assert.Equal("report-recoverable-unfinished-run", decision.Action);
+            Assert.Equal("dry-run-discovered-recoverable-shared-run", decision.Reason);
             Assert.False(decision.Changed);
+
+            Assert.NotNull(sharedRun);
+            Assert.Equal(AiSharedRunStatus.Dispatched, sharedRun!.Status);
+            Assert.Equal(runtimeInstanceId, sharedRun.AssignedRuntimeInstanceId);
+            Assert.Equal(localRunId, sharedRun.LocalRunId);
+            Assert.Equal(executionId, sharedRun.ExecutionId);
+            Assert.Equal("test-dispatch", sharedRun.Reason);
 
             Assert.NotNull(queueItem);
             Assert.Equal(AiSharedQueueItemStatus.Dispatched, queueItem!.Status);
@@ -236,6 +283,25 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Shared
                 InFlightCount = 0,
                 TtlSeconds = 300,
                 CreatedAtUtc = DateTime.Now
+            };
+        }
+
+        /// <summary>
+        /// Creates a pipeline run request for shared-run test records.
+        /// </summary>
+        /// <param name="contextSnapshot">The execution context snapshot.</param>
+        /// <returns>The pipeline run request.</returns>
+        private static AiRuntimePipelineRunRequest CreateRunRequest(
+            ExecutionContextSnapshot contextSnapshot)
+        {
+            return new AiRuntimePipelineRunRequest
+            {
+                PipelineName = "runtime-recovery-dry-run-test",
+                ExecutionContextSnapshot = contextSnapshot,
+                Input = new Dictionary<string, object?>
+                {
+                    ["scenario"] = "runtime-recovery-dry-run"
+                }
             };
         }
     }
