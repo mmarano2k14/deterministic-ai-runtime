@@ -1,8 +1,11 @@
 ﻿using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Recovery.Transition;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Ownership;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Store;
+using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Claiming;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Queue;
+using Multiplexed.Abstractions.Core.ExecutionContext;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery.Transition;
+using Multiplexed.AI.Runtime.ControlPlane.SharedQueue;
 
 namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Recovery.Transition
 {
@@ -17,7 +20,8 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Recovery.Trans
         [Fact]
         public async Task ApplyAsync_Should_Reject_When_Ownership_Is_Not_Resolved()
         {
-            var service = new AiRuntimeExecutionRecoveryTransitionService();
+            var sharedQueue = new InMemoryAiSharedQueue();
+            var service = new AiRuntimeExecutionRecoveryTransitionService(sharedQueue);
 
             var result = await service.ApplyAsync(new AiRuntimeExecutionRecoveryTransitionRequest
             {
@@ -42,7 +46,8 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Recovery.Trans
         [Fact]
         public async Task ApplyAsync_Should_Reject_When_Ownership_Is_Not_Recoverable()
         {
-            var service = new AiRuntimeExecutionRecoveryTransitionService();
+            var sharedQueue = new InMemoryAiSharedQueue();
+            var service = new AiRuntimeExecutionRecoveryTransitionService(sharedQueue);
 
             var result = await service.ApplyAsync(new AiRuntimeExecutionRecoveryTransitionRequest
             {
@@ -68,7 +73,8 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Recovery.Trans
         [Fact]
         public async Task ApplyAsync_Should_Accept_Recoverable_Ownership_When_DryRun()
         {
-            var service = new AiRuntimeExecutionRecoveryTransitionService();
+            var sharedQueue = new InMemoryAiSharedQueue();
+            var service = new AiRuntimeExecutionRecoveryTransitionService(sharedQueue);
 
             var result = await service.ApplyAsync(new AiRuntimeExecutionRecoveryTransitionRequest
             {
@@ -89,26 +95,75 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Recovery.Trans
             Assert.Equal("execution-1", result.ExecutionId);
         }
 
+
         /// <summary>
-        /// Verifies that non-dry-run mutation is not implemented yet.
+        /// Verifies that recoverable ownership requeues the dispatched shared queue item when mutation is enabled.
         /// </summary>
         [Fact]
-        public async Task ApplyAsync_Should_Reject_Mutation_When_Not_Implemented()
+        public async Task ApplyAsync_Should_Requeue_Dispatched_Shared_Queue_Item_When_Not_DryRun()
         {
-            var service = new AiRuntimeExecutionRecoveryTransitionService();
+            var sharedQueue = new InMemoryAiSharedQueue();
+            var service = new AiRuntimeExecutionRecoveryTransitionService(sharedQueue);
+
+            await sharedQueue.EnqueueAsync(new AiSharedQueueItem
+            {
+                SharedRunId = "shared-run-1",
+                Status = AiSharedQueueItemStatus.Pending,
+                ExecutionContextSnapshot = CreateExecutionContextSnapshot(),
+                PipelineKey = "transition-test",
+                Priority = 0,
+                EnqueuedAtUtc = DateTimeOffset.UtcNow,
+                UpdatedAtUtc = DateTimeOffset.UtcNow,
+                Metadata = new Dictionary<string, string>
+                {
+                    ["test"] = "true"
+                }
+            });
+
+            var claimed = await sharedQueue.ClaimNextAsync(new AiSharedQueueClaimRequest
+            {
+                RuntimeInstanceId = "runtime-1",
+                WorkerId = "worker-1",
+                PipelineKey = "transition-test",
+                ClaimTtl = TimeSpan.FromMinutes(5),
+                Reason = "test-claim"
+            });
+
+            Assert.NotNull(claimed);
+            Assert.False(string.IsNullOrWhiteSpace(claimed!.ClaimToken));
+
+            await sharedQueue.MarkDispatchedAsync(
+                "shared-run-1",
+                claimed.ClaimToken!,
+                reason: "test-dispatch");
 
             var result = await service.ApplyAsync(new AiRuntimeExecutionRecoveryTransitionRequest
             {
                 Ownership = CreateOwnership(
                     resolved: true,
-                    canRecover: true),
+                    canRecover: true,
+                    claimToken: claimed.ClaimToken),
+                Reason = "test-recovery-requeue",
                 DryRun = false
             });
 
-            Assert.False(result.Accepted);
-            Assert.False(result.Changed);
-            Assert.Equal("none", result.Action);
-            Assert.Equal("recovery-transition-mutation-not-implemented", result.Reason);
+            Assert.True(result.Accepted);
+            Assert.True(result.Changed);
+            Assert.Equal("requeue-shared-run", result.Action);
+            Assert.Equal("test-recovery-requeue", result.Reason);
+            Assert.Equal("shared-run-1", result.SharedRunId);
+            Assert.Equal("runtime-1", result.RuntimeInstanceId);
+            Assert.Equal("run-1", result.LocalRunId);
+            Assert.Equal("execution-1", result.ExecutionId);
+
+            var item = await sharedQueue.GetAsync("shared-run-1");
+
+            Assert.NotNull(item);
+            Assert.Equal(AiSharedQueueItemStatus.Pending, item!.Status);
+            Assert.Null(item.ClaimToken);
+            Assert.Null(item.ClaimedByRuntimeInstanceId);
+            Assert.Null(item.ClaimedByWorkerId);
+            Assert.Equal("test-recovery-requeue", item.Reason);
         }
 
         /// <summary>
@@ -116,10 +171,12 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Recovery.Trans
         /// </summary>
         /// <param name="resolved">Whether ownership is resolved.</param>
         /// <param name="canRecover">Whether ownership is recoverable.</param>
+        /// <param name="claimToken">The optional claim token.</param>
         /// <returns>The ownership resolution result.</returns>
         private static AiSharedRunOwnershipResolutionResult CreateOwnership(
             bool resolved,
-            bool canRecover)
+            bool canRecover,
+            string? claimToken = "claim-token-1")
         {
             return new AiSharedRunOwnershipResolutionResult
             {
@@ -132,9 +189,30 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Recovery.Trans
                 TenantGroupId = "tenant-group-1",
                 QueueStatus = resolved ? AiSharedQueueItemStatus.Dispatched : null,
                 SharedRunStatus = resolved ? AiSharedRunStatus.Dispatched : null,
-                ClaimToken = resolved ? "claim-token-1" : null,
+                ClaimToken = resolved ? claimToken : null,
                 CanRecover = canRecover,
                 Reason = resolved ? "shared-run-ownership-resolved" : "shared-run-ownership-not-found"
+            };
+        }
+
+        /// <summary>
+        /// Creates an execution context snapshot.
+        /// </summary>
+        /// <returns>The execution context snapshot.</returns>
+        private static ExecutionContextSnapshot CreateExecutionContextSnapshot()
+        {
+            return new ExecutionContextSnapshot
+            {
+                ContextKey = "ctx-tenant-1",
+                Project = "transition-tests",
+                UserId = "test-user",
+                TenantId = "tenant-1",
+                TenantGroupId = "tenant-group-1",
+                CurrentNamespace = "default",
+                Namespaces = new List<NamespaceEntry>(),
+                InFlightCount = 0,
+                TtlSeconds = 300,
+                CreatedAtUtc = DateTime.Now
             };
         }
     }

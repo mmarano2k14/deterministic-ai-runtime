@@ -223,8 +223,10 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Recovery
                     new InMemoryAiSharedQueue(),
                     new InMemoryAiSharedRunStore());
 
+            var sharedQueue = new InMemoryAiSharedQueue();
+
             IAiRuntimeExecutionRecoveryTransitionService transitionService =
-                new AiRuntimeExecutionRecoveryTransitionService();
+                new AiRuntimeExecutionRecoveryTransitionService(sharedQueue);
 
             return new AiRuntimeExecutionRecoveryReconciler(
                 registry,
