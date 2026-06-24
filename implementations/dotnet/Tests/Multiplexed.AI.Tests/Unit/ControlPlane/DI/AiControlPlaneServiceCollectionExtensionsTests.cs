@@ -6,6 +6,7 @@ using Multiplexed.Abstractions.AI.ControlPlane.Admission;
 using Multiplexed.Abstractions.AI.ControlPlane.Observability;
 using Multiplexed.Abstractions.AI.ControlPlane.Replay;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Control;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Health;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Controller;
@@ -17,6 +18,7 @@ using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Queue;
 using Multiplexed.AI.Runtime.ControlPlane.DI;
 using Multiplexed.AI.Runtime.ControlPlane.Observability;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Health;
 using Multiplexed.AI.Runtime.ControlPlane.SharedController;
 using Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling;
 using Multiplexed.AI.Runtime.ControlPlane.SharedController.Store;
@@ -503,6 +505,48 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.DI
             Assert.Equal(5, options.MaxRequestsPerCycle);
             Assert.False(options.RejectOnProviderFailure);
             Assert.False(options.IgnoreWhenControlPlaneIdMissing);
+        }
+
+        [Fact]
+        public void AddAiRuntimeInstanceHealthReconciliation_Should_Register_RuntimeInstanceHealthReconciler()
+        {
+            var services = new ServiceCollection();
+
+            services.AddSingleton<IAiRuntimeInstanceRegistry, InMemoryAiRuntimeInstanceRegistry>();
+            services.AddAiRuntimeInstanceHealthReconciliation();
+
+            using var provider = services.BuildServiceProvider();
+
+            var reconciler = provider.GetRequiredService<IAiRuntimeInstanceHealthReconciler>();
+
+            Assert.IsType<AiRuntimeInstanceHealthReconciler>(reconciler);
+        }
+
+        /// <summary>
+        /// Verifies that runtime instance health reconciliation options can be configured.
+        /// </summary>
+        [Fact]
+        public void AddAiRuntimeInstanceHealthReconciliation_Should_Configure_Options()
+        {
+            var services = new ServiceCollection();
+
+            services.AddSingleton<IAiRuntimeInstanceRegistry, InMemoryAiRuntimeInstanceRegistry>();
+            services.AddAiRuntimeInstanceHealthReconciliation(options =>
+            {
+                options.Enabled = false;
+                options.StaleHeartbeatThreshold = TimeSpan.FromMinutes(2);
+                options.DryRun = true;
+            });
+
+            using var provider = services.BuildServiceProvider();
+
+            var options = provider
+                .GetRequiredService<Microsoft.Extensions.Options.IOptions<AiRuntimeInstanceHealthReconciliationOptions>>()
+                .Value;
+
+            Assert.False(options.Enabled);
+            Assert.Equal(TimeSpan.FromMinutes(2), options.StaleHeartbeatThreshold);
+            Assert.True(options.DryRun);
         }
     }
 }

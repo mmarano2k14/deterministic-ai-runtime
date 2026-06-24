@@ -13,6 +13,7 @@ using Multiplexed.Abstractions.AI.ControlPlane.Replay;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Capacity;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Control;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Environment;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Health;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Identity;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
@@ -37,6 +38,7 @@ using Multiplexed.AI.Runtime.ControlPlane.Replay;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Capacity;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Environment;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Health;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strategy.Process;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Identity;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Isolation;
@@ -69,6 +71,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
         /// <param name="configureExecution">Optional execution control-plane options configuration.</param>
         /// <param name="configureRuntimeQueue">Optional local runtime queue control-plane options configuration.</param>
         /// <param name="configureRuntimeInstance">Optional runtime instance control-plane options configuration.</param>
+        /// <param name="configureRuntimeInstanceHealthReconciliation">Optional runtime instance health reconciliation options configuration.</param>
         /// <param name="configureAdmission">Optional run admission options configuration.</param>
         /// <param name="configureSharedController">Optional shared runtime controller options configuration.</param>
         /// <param name="configureSharedQueue">Optional shared queue options configuration.</param>
@@ -82,6 +85,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
             Action<AiExecutionControlPlaneOptions>? configureExecution = null,
             Action<AiRuntimeQueueControlPlaneOptions>? configureRuntimeQueue = null,
             Action<AiRuntimeInstanceControlPlaneOptions>? configureRuntimeInstance = null,
+            Action<AiRuntimeInstanceHealthReconciliationOptions>? configureRuntimeInstanceHealthReconciliation = null,
             Action<AiRunAdmissionOptions>? configureAdmission = null,
             Action<AiSharedRuntimeControllerOptions>? configureSharedController = null,
             Action<AiSharedQueueOptions>? configureSharedQueue = null,
@@ -126,6 +130,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
             {
                 services.Configure(configureRuntimeInstance);
             }
+
+            services.AddAiRuntimeInstanceHealthReconciliation(
+                configureRuntimeInstanceHealthReconciliation);
 
             if (configureAdmission is null)
             {
@@ -254,7 +261,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
                 ConfigureTenantRuntimeSettingsProvider(services, configuration);
             }
 
-
             services.TryAddSingleton<IAiRuntimeInstanceVisibilityEvaluator, AiRuntimeInstanceVisibilityEvaluator>();
 
             services.TryAddSingleton<IAiSharedRuntimeController, AiSharedRuntimeController>();
@@ -330,6 +336,37 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
 
             services.RemoveAll<IAiRuntimeRunExecutionIndex>();
             services.AddSingleton<IAiRuntimeRunExecutionIndex, RedisAiRuntimeRunExecutionIndex>();
+
+            return services;
+        }
+
+        /// <summary>
+        /// Registers runtime instance health reconciliation services.
+        /// </summary>
+        /// <param name="services">The service collection.</param>
+        /// <param name="configure">Optional runtime instance health reconciliation options configuration.</param>
+        /// <returns>The same service collection for chaining.</returns>
+        /// <remarks>
+        /// This method registers the pure health reconciler service only.
+        /// It does not register a hosted service, timer loop, execution recovery,
+        /// run requeue, host restart, process kill, or dead-letter queue behavior.
+        /// </remarks>
+        public static IServiceCollection AddAiRuntimeInstanceHealthReconciliation(
+            this IServiceCollection services,
+            Action<AiRuntimeInstanceHealthReconciliationOptions>? configure = null)
+        {
+            ArgumentNullException.ThrowIfNull(services);
+
+            if (configure is null)
+            {
+                services.AddOptions<AiRuntimeInstanceHealthReconciliationOptions>();
+            }
+            else
+            {
+                services.Configure(configure);
+            }
+
+            services.TryAddSingleton<IAiRuntimeInstanceHealthReconciler, AiRuntimeInstanceHealthReconciler>();
 
             return services;
         }
