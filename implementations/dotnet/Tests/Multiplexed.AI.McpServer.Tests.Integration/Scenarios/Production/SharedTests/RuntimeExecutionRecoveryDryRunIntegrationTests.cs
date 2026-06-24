@@ -153,7 +153,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Shared
                     sharedRunStore);
 
             IAiRuntimeExecutionRecoveryTransitionService transitionService =
-                new AiRuntimeExecutionRecoveryTransitionService(sharedQueue);
+                new AiRuntimeExecutionRecoveryTransitionService(sharedQueue, runExecutionIndex);
 
             var recoveryReconciler = new AiRuntimeExecutionRecoveryReconciler(
                 registry,
@@ -363,7 +363,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Shared
                     sharedRunStore);
 
             IAiRuntimeExecutionRecoveryTransitionService transitionService =
-                new AiRuntimeExecutionRecoveryTransitionService(sharedQueue);
+                new AiRuntimeExecutionRecoveryTransitionService(sharedQueue, runExecutionIndex);
 
             var recoveryReconciler = new AiRuntimeExecutionRecoveryReconciler(
                 registry,
@@ -570,7 +570,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Shared
                     sharedRunStore);
 
             IAiRuntimeExecutionRecoveryTransitionService transitionService =
-                new AiRuntimeExecutionRecoveryTransitionService(sharedQueue);
+                new AiRuntimeExecutionRecoveryTransitionService(sharedQueue, runExecutionIndex);
 
             var recoveryReconciler = new AiRuntimeExecutionRecoveryReconciler(
                 registry,
@@ -779,7 +779,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Shared
                         sharedRunStore);
 
                 IAiRuntimeExecutionRecoveryTransitionService transitionService =
-                    new AiRuntimeExecutionRecoveryTransitionService(sharedQueue);
+                    new AiRuntimeExecutionRecoveryTransitionService(sharedQueue, runExecutionIndex);
 
                 var recoveryReconciler = new AiRuntimeExecutionRecoveryReconciler(
                     registry,

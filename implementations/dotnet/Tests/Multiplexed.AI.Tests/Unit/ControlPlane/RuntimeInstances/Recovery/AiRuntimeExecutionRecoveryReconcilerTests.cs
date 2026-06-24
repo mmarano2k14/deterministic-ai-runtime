@@ -218,15 +218,18 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Recovery
             IAiRuntimeRunExecutionIndex index,
             AiRuntimeExecutionRecoveryReconciliationOptions options)
         {
+            var sharedQueue = new InMemoryAiSharedQueue();
+            var sharedRunStore = new InMemoryAiSharedRunStore();
+
             IAiSharedRunOwnershipResolver ownershipResolver =
                 new AiSharedRunOwnershipResolver(
-                    new InMemoryAiSharedQueue(),
-                    new InMemoryAiSharedRunStore());
-
-            var sharedQueue = new InMemoryAiSharedQueue();
+                    sharedQueue,
+                    sharedRunStore);
 
             IAiRuntimeExecutionRecoveryTransitionService transitionService =
-                new AiRuntimeExecutionRecoveryTransitionService(sharedQueue);
+                new AiRuntimeExecutionRecoveryTransitionService(
+                    sharedQueue,
+                    index);
 
             return new AiRuntimeExecutionRecoveryReconciler(
                 registry,

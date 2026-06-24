@@ -1,4 +1,5 @@
 ﻿using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Recovery.Transition;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Queue;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery.Transition
@@ -13,22 +14,30 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery.Transiti
     /// kill processes, or decide which runtime instance should be recovered.
     ///
     /// When dry-run is enabled, it validates the transition and reports the action
-    /// without mutating shared queue state.
+    /// without mutating shared queue state or runtime execution index state.
+    ///
+    /// When mutation is enabled, it requeues the dispatched shared queue item and
+    /// then marks the local runtime execution index entry as requeued for recovery.
     /// </remarks>
     public sealed class AiRuntimeExecutionRecoveryTransitionService : IAiRuntimeExecutionRecoveryTransitionService
     {
         private readonly IAiSharedQueue sharedQueue;
+        private readonly IAiRuntimeRunExecutionIndex runtimeRunExecutionIndex;
 
         /// <summary>
         /// Initializes a new instance of the <see cref="AiRuntimeExecutionRecoveryTransitionService"/> class.
         /// </summary>
         /// <param name="sharedQueue">The shared queue.</param>
+        /// <param name="runtimeRunExecutionIndex">The runtime run execution index.</param>
         public AiRuntimeExecutionRecoveryTransitionService(
-            IAiSharedQueue sharedQueue)
+            IAiSharedQueue sharedQueue,
+            IAiRuntimeRunExecutionIndex runtimeRunExecutionIndex)
         {
             ArgumentNullException.ThrowIfNull(sharedQueue);
+            ArgumentNullException.ThrowIfNull(runtimeRunExecutionIndex);
 
             this.sharedQueue = sharedQueue;
+            this.runtimeRunExecutionIndex = runtimeRunExecutionIndex;
         }
 
         /// <inheritdoc />
@@ -102,6 +111,39 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery.Transiti
                 };
             }
 
+            if (string.IsNullOrWhiteSpace(ownership.LocalRunId))
+            {
+                return new AiRuntimeExecutionRecoveryTransitionResult
+                {
+                    Accepted = false,
+                    Changed = false,
+                    SharedRunId = ownership.SharedRunId,
+                    RuntimeInstanceId = ownership.RuntimeInstanceId,
+                    LocalRunId = ownership.LocalRunId,
+                    ExecutionId = ownership.ExecutionId,
+                    Action = "none",
+                    Reason = "local-run-id-missing"
+                };
+            }
+
+            if (string.IsNullOrWhiteSpace(ownership.ExecutionId))
+            {
+                return new AiRuntimeExecutionRecoveryTransitionResult
+                {
+                    Accepted = false,
+                    Changed = false,
+                    SharedRunId = ownership.SharedRunId,
+                    RuntimeInstanceId = ownership.RuntimeInstanceId,
+                    LocalRunId = ownership.LocalRunId,
+                    ExecutionId = ownership.ExecutionId,
+                    Action = "none",
+                    Reason = "execution-id-missing"
+                };
+            }
+
+            var reason =
+                request.Reason ?? "runtime-execution-recovery-requeue";
+
             if (request.DryRun)
             {
                 return new AiRuntimeExecutionRecoveryTransitionResult
@@ -113,7 +155,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery.Transiti
                     LocalRunId = ownership.LocalRunId,
                     ExecutionId = ownership.ExecutionId,
                     Action = "dry-run-requeue-shared-run",
-                    Reason = request.Reason ?? "dry-run-recovery-transition"
+                    Reason = reason
                 };
             }
 
@@ -121,7 +163,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery.Transiti
                 .RequeueDispatchedAsync(
                     ownership.SharedRunId,
                     ownership.ClaimToken,
-                    request.Reason ?? "runtime-execution-recovery-requeue",
+                    reason,
                     cancellationToken)
                 .ConfigureAwait(false);
 
@@ -140,6 +182,14 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery.Transiti
                 };
             }
 
+            await runtimeRunExecutionIndex
+                .MarkRequeuedForRecoveryAsync(
+                    ownership.LocalRunId,
+                    ownership.ExecutionId,
+                    reason,
+                    cancellationToken)
+                .ConfigureAwait(false);
+
             return new AiRuntimeExecutionRecoveryTransitionResult
             {
                 Accepted = true,
@@ -149,7 +199,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery.Transiti
                 LocalRunId = ownership.LocalRunId,
                 ExecutionId = ownership.ExecutionId,
                 Action = "requeue-shared-run",
-                Reason = request.Reason ?? "runtime-execution-recovery-requeue"
+                Reason = reason
             };
         }
     }

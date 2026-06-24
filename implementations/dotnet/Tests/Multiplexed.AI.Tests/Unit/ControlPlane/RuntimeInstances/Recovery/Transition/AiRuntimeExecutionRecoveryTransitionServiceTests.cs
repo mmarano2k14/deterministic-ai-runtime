@@ -1,10 +1,12 @@
 ﻿using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Recovery.Transition;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Ownership;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Store;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Claiming;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Queue;
 using Multiplexed.Abstractions.Core.ExecutionContext;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery.Transition;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue;
 using Multiplexed.AI.Runtime.ControlPlane.SharedQueue;
 
 namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Recovery.Transition
@@ -21,7 +23,10 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Recovery.Trans
         public async Task ApplyAsync_Should_Reject_When_Ownership_Is_Not_Resolved()
         {
             var sharedQueue = new InMemoryAiSharedQueue();
-            var service = new AiRuntimeExecutionRecoveryTransitionService(sharedQueue);
+            var runExecutionIndex = new InMemoryAiRuntimeRunExecutionIndex();
+            var service = new AiRuntimeExecutionRecoveryTransitionService(
+                sharedQueue,
+                runExecutionIndex);
 
             var result = await service.ApplyAsync(new AiRuntimeExecutionRecoveryTransitionRequest
             {
@@ -47,7 +52,10 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Recovery.Trans
         public async Task ApplyAsync_Should_Reject_When_Ownership_Is_Not_Recoverable()
         {
             var sharedQueue = new InMemoryAiSharedQueue();
-            var service = new AiRuntimeExecutionRecoveryTransitionService(sharedQueue);
+            var runExecutionIndex = new InMemoryAiRuntimeRunExecutionIndex();
+            var service = new AiRuntimeExecutionRecoveryTransitionService(
+                sharedQueue,
+                runExecutionIndex);
 
             var result = await service.ApplyAsync(new AiRuntimeExecutionRecoveryTransitionRequest
             {
@@ -74,7 +82,10 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Recovery.Trans
         public async Task ApplyAsync_Should_Accept_Recoverable_Ownership_When_DryRun()
         {
             var sharedQueue = new InMemoryAiSharedQueue();
-            var service = new AiRuntimeExecutionRecoveryTransitionService(sharedQueue);
+            var runExecutionIndex = new InMemoryAiRuntimeRunExecutionIndex();
+            var service = new AiRuntimeExecutionRecoveryTransitionService(
+                sharedQueue,
+                runExecutionIndex);
 
             var result = await service.ApplyAsync(new AiRuntimeExecutionRecoveryTransitionRequest
             {
@@ -85,6 +96,8 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Recovery.Trans
                 DryRun = true
             });
 
+            var indexEntry = await runExecutionIndex.GetAsync("run-1");
+
             Assert.True(result.Accepted);
             Assert.False(result.Changed);
             Assert.Equal("dry-run-requeue-shared-run", result.Action);
@@ -93,8 +106,8 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Recovery.Trans
             Assert.Equal("runtime-1", result.RuntimeInstanceId);
             Assert.Equal("run-1", result.LocalRunId);
             Assert.Equal("execution-1", result.ExecutionId);
+            Assert.Null(indexEntry);
         }
-
 
         /// <summary>
         /// Verifies that recoverable ownership requeues the dispatched shared queue item when mutation is enabled.
@@ -103,7 +116,10 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Recovery.Trans
         public async Task ApplyAsync_Should_Requeue_Dispatched_Shared_Queue_Item_When_Not_DryRun()
         {
             var sharedQueue = new InMemoryAiSharedQueue();
-            var service = new AiRuntimeExecutionRecoveryTransitionService(sharedQueue);
+            var runExecutionIndex = new InMemoryAiRuntimeRunExecutionIndex();
+            var service = new AiRuntimeExecutionRecoveryTransitionService(
+                sharedQueue,
+                runExecutionIndex);
 
             await sharedQueue.EnqueueAsync(new AiSharedQueueItem
             {
@@ -119,6 +135,24 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Recovery.Trans
                     ["test"] = "true"
                 }
             });
+
+            await runExecutionIndex.RegisterQueuedAsync(new AiRuntimeRunExecutionIndexEntry
+            {
+                RunId = "run-1",
+                ExecutionId = "execution-1",
+                RuntimeInstanceId = "runtime-1",
+                Status = "queued",
+                CreatedAtUtc = DateTimeOffset.UtcNow,
+                ExecutionContextSnapshot = CreateExecutionContextSnapshot(),
+                Metadata = new Dictionary<string, string>
+                {
+                    ["test"] = "true"
+                }
+            });
+
+            await runExecutionIndex.MarkStartedAsync(
+                "run-1",
+                "execution-1");
 
             var claimed = await sharedQueue.ClaimNextAsync(new AiSharedQueueClaimRequest
             {
@@ -147,6 +181,10 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Recovery.Trans
                 DryRun = false
             });
 
+            var item = await sharedQueue.GetAsync("shared-run-1");
+            var indexEntry = await runExecutionIndex.GetAsync("run-1");
+            var unfinishedRuns = await runExecutionIndex.ListUnfinishedByRuntimeInstanceAsync("runtime-1");
+
             Assert.True(result.Accepted);
             Assert.True(result.Changed);
             Assert.Equal("requeue-shared-run", result.Action);
@@ -156,14 +194,22 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Recovery.Trans
             Assert.Equal("run-1", result.LocalRunId);
             Assert.Equal("execution-1", result.ExecutionId);
 
-            var item = await sharedQueue.GetAsync("shared-run-1");
-
             Assert.NotNull(item);
             Assert.Equal(AiSharedQueueItemStatus.Pending, item!.Status);
             Assert.Null(item.ClaimToken);
             Assert.Null(item.ClaimedByRuntimeInstanceId);
             Assert.Null(item.ClaimedByWorkerId);
             Assert.Equal("test-recovery-requeue", item.Reason);
+
+            Assert.NotNull(indexEntry);
+            Assert.Equal("run-1", indexEntry!.RunId);
+            Assert.Equal("execution-1", indexEntry.ExecutionId);
+            Assert.Equal("runtime-1", indexEntry.RuntimeInstanceId);
+            Assert.Equal("requeued-for-recovery", indexEntry.Status);
+            Assert.Equal("test-recovery-requeue", indexEntry.FailureReason);
+            Assert.NotNull(indexEntry.CompletedAtUtc);
+
+            Assert.Empty(unfinishedRuns);
         }
 
         /// <summary>
