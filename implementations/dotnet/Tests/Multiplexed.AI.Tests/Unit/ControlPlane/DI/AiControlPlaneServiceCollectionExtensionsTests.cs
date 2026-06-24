@@ -548,5 +548,52 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.DI
             Assert.Equal(TimeSpan.FromMinutes(2), options.StaleHeartbeatThreshold);
             Assert.True(options.DryRun);
         }
+
+        /// <summary>
+        /// Verifies that AddAiControlPlane exposes runtime instance health reconciliation options.
+        /// </summary>
+        [Fact]
+        public void AddAiControlPlane_Should_Configure_RuntimeInstanceHealthReconciliation_Options()
+        {
+            var services = new ServiceCollection();
+
+            services.AddAiControlPlane(
+                configureRuntimeInstanceHealthReconciliation: options =>
+                {
+                    options.Enabled = false;
+                    options.StaleHeartbeatThreshold = TimeSpan.FromSeconds(45);
+                    options.MarkStaleRuntimeUnhealthy = false;
+                    options.DryRun = true;
+                });
+
+            using var provider = services.BuildServiceProvider();
+
+            var options = provider
+                .GetRequiredService<IOptions<AiRuntimeInstanceHealthReconciliationOptions>>()
+                .Value;
+
+            Assert.False(options.Enabled);
+            Assert.Equal(TimeSpan.FromSeconds(45), options.StaleHeartbeatThreshold);
+            Assert.False(options.MarkStaleRuntimeUnhealthy);
+            Assert.True(options.DryRun);
+        }
+
+        /// <summary>
+        /// Verifies that AddAiControlPlane registers the runtime instance health reconciler service.
+        /// </summary>
+        [Fact]
+        public void AddAiControlPlane_Should_Register_RuntimeInstanceHealthReconciler()
+        {
+            var services = new ServiceCollection();
+
+            services.AddSingleton<IAiRuntimeInstanceRegistry, InMemoryAiRuntimeInstanceRegistry>();
+            services.AddAiControlPlane();
+
+            using var provider = services.BuildServiceProvider();
+
+            var reconciler = provider.GetRequiredService<IAiRuntimeInstanceHealthReconciler>();
+
+            Assert.IsType<AiRuntimeInstanceHealthReconciler>(reconciler);
+        }
     }
 }
