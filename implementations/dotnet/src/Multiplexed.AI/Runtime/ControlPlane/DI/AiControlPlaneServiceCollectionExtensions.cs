@@ -545,6 +545,55 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
         }
 
         /// <summary>
+        /// Registers the runtime instance health reconciler hosted service.
+        /// </summary>
+        /// <param name="services">The service collection.</param>
+        /// <param name="configure">Optional hosted service options configuration.</param>
+        /// <returns>The same service collection for chaining.</returns>
+        /// <remarks>
+        /// This method registers only the hosted health reconciliation loop.
+        /// The hosted service remains inactive unless <see cref="AiRuntimeInstanceHealthReconcilerHostedServiceOptions.Enabled" />
+        /// is set to <see langword="true" />.
+        /// </remarks>
+        public static IServiceCollection AddAiRuntimeInstanceHealthReconcilerHostedService(
+            this IServiceCollection services,
+            Action<AiRuntimeInstanceHealthReconcilerHostedServiceOptions>? configure = null)
+        {
+            ArgumentNullException.ThrowIfNull(services);
+
+            if (configure is null)
+            {
+                services
+                    .AddOptions<AiRuntimeInstanceHealthReconcilerHostedServiceOptions>()
+                    .Validate(
+                        options => options.Interval > TimeSpan.Zero,
+                        "Runtime instance health reconciler interval must be positive.")
+                    .Validate(
+                        options => options.ErrorDelay > TimeSpan.Zero,
+                        "Runtime instance health reconciler error delay must be positive.");
+            }
+            else
+            {
+                services
+                    .AddOptions<AiRuntimeInstanceHealthReconcilerHostedServiceOptions>()
+                    .Configure(configure)
+                    .Validate(
+                        options => options.Interval > TimeSpan.Zero,
+                        "Runtime instance health reconciler interval must be positive.")
+                    .Validate(
+                        options => options.ErrorDelay > TimeSpan.Zero,
+                        "Runtime instance health reconciler error delay must be positive.");
+            }
+
+            services.AddAiRuntimeInstanceHealthReconciliation();
+
+            services.TryAddEnumerable(
+                ServiceDescriptor.Singleton<IHostedService, AiRuntimeInstanceHealthReconcilerHostedService>());
+
+            return services;
+        }
+
+        /// <summary>
         /// Enables structured logging for AI control-plane events.
         ///
         /// This replaces the default no-op observer with a logging observer

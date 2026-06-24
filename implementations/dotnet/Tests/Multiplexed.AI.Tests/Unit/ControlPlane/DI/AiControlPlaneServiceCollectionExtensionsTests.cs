@@ -595,5 +595,50 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.DI
 
             Assert.IsType<AiRuntimeInstanceHealthReconciler>(reconciler);
         }
+
+        /// <summary>
+        /// Verifies that the runtime instance health reconciler hosted service can be registered.
+        /// </summary>
+        [Fact]
+        public void AddAiRuntimeInstanceHealthReconcilerHostedService_Should_Register_HostedService()
+        {
+            var services = new ServiceCollection();
+
+            services.AddSingleton<IAiRuntimeInstanceRegistry, InMemoryAiRuntimeInstanceRegistry>();
+            services.AddAiRuntimeInstanceHealthReconcilerHostedService();
+
+            using var provider = services.BuildServiceProvider();
+
+            var hostedServices = provider.GetServices<Microsoft.Extensions.Hosting.IHostedService>();
+
+            Assert.Contains(hostedServices, service => service is AiRuntimeInstanceHealthReconcilerHostedService);
+        }
+
+        /// <summary>
+        /// Verifies that runtime instance health reconciler hosted service options can be configured.
+        /// </summary>
+        [Fact]
+        public void AddAiRuntimeInstanceHealthReconcilerHostedService_Should_Configure_Options()
+        {
+            var services = new ServiceCollection();
+
+            services.AddSingleton<IAiRuntimeInstanceRegistry, InMemoryAiRuntimeInstanceRegistry>();
+            services.AddAiRuntimeInstanceHealthReconcilerHostedService(options =>
+            {
+                options.Enabled = true;
+                options.Interval = TimeSpan.FromSeconds(3);
+                options.ErrorDelay = TimeSpan.FromSeconds(2);
+            });
+
+            using var provider = services.BuildServiceProvider();
+
+            var options = provider
+                .GetRequiredService<Microsoft.Extensions.Options.IOptions<AiRuntimeInstanceHealthReconcilerHostedServiceOptions>>()
+                .Value;
+
+            Assert.True(options.Enabled);
+            Assert.Equal(TimeSpan.FromSeconds(3), options.Interval);
+            Assert.Equal(TimeSpan.FromSeconds(2), options.ErrorDelay);
+        }
     }
 }
