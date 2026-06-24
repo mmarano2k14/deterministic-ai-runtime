@@ -256,6 +256,186 @@ namespace Multiplexed.AI.Tests.Runtime.ControlPlane.RuntimeInstances
         }
 
         /// <summary>
+        /// Verifies that marking a runtime instance as unhealthy updates the runtime status.
+        /// </summary>
+        [Fact]
+        public async Task MarkUnhealthyAsync_Should_Mark_Runtime_Instance_As_Unhealthy()
+        {
+            var redis = await ConnectionMultiplexer.ConnectAsync("localhost:6379");
+            var registry = CreateRegistry(redis);
+
+            var runtimeInstanceId = $"test-runtime-{Guid.NewGuid():N}";
+
+            await registry.RegisterAsync(
+                CreateRegistration(
+                    runtimeInstanceId,
+                    tenantId: "tenant-1",
+                    tenantGroupId: "tenant-group-1"));
+
+            var snapshot = await registry.MarkUnhealthyAsync(runtimeInstanceId);
+
+            AssertRuntimeSnapshot(
+                snapshot,
+                runtimeInstanceId,
+                tenantId: "tenant-1",
+                tenantGroupId: "tenant-group-1",
+                status: AiRuntimeInstanceStatus.Unhealthy,
+                availableRunSlots: 5,
+                canAcceptRun: false,
+                activeWorkerCount: 0,
+                availableWorkerCount: 10);
+        }
+
+        /// <summary>
+        /// Verifies that marking a runtime instance as unhealthy preserves tenant ownership.
+        /// </summary>
+        [Fact]
+        public async Task MarkUnhealthyAsync_Should_Preserve_Tenant_Ownership()
+        {
+            var redis = await ConnectionMultiplexer.ConnectAsync("localhost:6379");
+            var registry = CreateRegistry(redis);
+
+            var runtimeInstanceId = $"test-runtime-{Guid.NewGuid():N}";
+
+            await registry.RegisterAsync(
+                CreateRegistration(
+                    runtimeInstanceId,
+                    tenantId: "tenant-a",
+                    tenantGroupId: "tenant-group-a"));
+
+            var snapshot = await registry.MarkUnhealthyAsync(runtimeInstanceId);
+
+            AssertRuntimeSnapshot(
+                snapshot,
+                runtimeInstanceId,
+                tenantId: "tenant-a",
+                tenantGroupId: "tenant-group-a",
+                status: AiRuntimeInstanceStatus.Unhealthy,
+                availableRunSlots: 5,
+                canAcceptRun: false,
+                activeWorkerCount: 0,
+                availableWorkerCount: 10);
+        }
+
+        /// <summary>
+        /// Verifies that marking a runtime instance as unhealthy preserves available run slots
+        /// as historical capacity information while disabling routing.
+        /// </summary>
+        [Fact]
+        public async Task MarkUnhealthyAsync_Should_Keep_AvailableRunSlots_Unchanged()
+        {
+            var redis = await ConnectionMultiplexer.ConnectAsync("localhost:6379");
+            var registry = CreateRegistry(redis);
+
+            var runtimeInstanceId = $"test-runtime-{Guid.NewGuid():N}";
+
+            await registry.RegisterAsync(
+                CreateRegistration(
+                    runtimeInstanceId,
+                    tenantId: "tenant-1",
+                    tenantGroupId: "tenant-group-1",
+                    workerCount: 10,
+                    queueCapacity: 100,
+                    maxConcurrentRuns: 7));
+
+            var snapshot = await registry.MarkUnhealthyAsync(runtimeInstanceId);
+
+            AssertRuntimeSnapshot(
+                snapshot,
+                runtimeInstanceId,
+                tenantId: "tenant-1",
+                tenantGroupId: "tenant-group-1",
+                status: AiRuntimeInstanceStatus.Unhealthy,
+                maxConcurrentRuns: 7,
+                availableRunSlots: 7,
+                canAcceptRun: false,
+                activeWorkerCount: 0,
+                availableWorkerCount: 10);
+        }
+
+        /// <summary>
+        /// Verifies that marking a runtime instance as unhealthy is persisted and visible through direct lookup.
+        /// </summary>
+        [Fact]
+        public async Task MarkUnhealthyAsync_Should_Persist_Unhealthy_Status()
+        {
+            var redis = await ConnectionMultiplexer.ConnectAsync("localhost:6379");
+            var registry = CreateRegistry(redis);
+
+            var runtimeInstanceId = $"test-runtime-{Guid.NewGuid():N}";
+
+            await registry.RegisterAsync(
+                CreateRegistration(
+                    runtimeInstanceId,
+                    tenantId: "tenant-1",
+                    tenantGroupId: "tenant-group-1"));
+
+            await registry.MarkUnhealthyAsync(runtimeInstanceId);
+
+            var snapshot = await registry.GetAsync(runtimeInstanceId);
+
+            AssertRuntimeSnapshot(
+                snapshot,
+                runtimeInstanceId,
+                tenantId: "tenant-1",
+                tenantGroupId: "tenant-group-1",
+                status: AiRuntimeInstanceStatus.Unhealthy,
+                availableRunSlots: 5,
+                canAcceptRun: false,
+                activeWorkerCount: 0,
+                availableWorkerCount: 10);
+        }
+
+        /// <summary>
+        /// Verifies that unhealthy runtime instances remain listed because they are not stopped.
+        /// </summary>
+        [Fact]
+        public async Task ListAsync_Should_Include_Unhealthy_Runtime_Instance_By_Default()
+        {
+            var redis = await ConnectionMultiplexer.ConnectAsync("localhost:6379");
+            var registry = CreateRegistry(redis);
+
+            var runtimeInstanceId = $"test-runtime-{Guid.NewGuid():N}";
+
+            await registry.RegisterAsync(
+                CreateRegistration(
+                    runtimeInstanceId,
+                    tenantId: "tenant-1",
+                    tenantGroupId: "tenant-group-1"));
+
+            await registry.MarkUnhealthyAsync(runtimeInstanceId);
+
+            var snapshots = await registry.ListAsync();
+
+            var snapshot = Assert.Single(snapshots.Where(item => item.RuntimeInstanceId == runtimeInstanceId));
+
+            AssertRuntimeSnapshot(
+                snapshot,
+                runtimeInstanceId,
+                tenantId: "tenant-1",
+                tenantGroupId: "tenant-group-1",
+                status: AiRuntimeInstanceStatus.Unhealthy,
+                availableRunSlots: 5,
+                canAcceptRun: false,
+                activeWorkerCount: 0,
+                availableWorkerCount: 10);
+        }
+
+        /// <summary>
+        /// Verifies that marking an unknown runtime instance as unhealthy returns null.
+        /// </summary>
+        [Fact]
+        public async Task MarkUnhealthyAsync_Should_Return_Null_When_Runtime_Instance_Is_Unknown()
+        {
+            var redis = await ConnectionMultiplexer.ConnectAsync("localhost:6379");
+            var registry = CreateRegistry(redis);
+
+            var snapshot = await registry.MarkUnhealthyAsync($"missing-runtime-{Guid.NewGuid():N}");
+
+            Assert.Null(snapshot);
+        }
+
+        /// <summary>
         /// Verifies that unregistering a runtime instance marks it as stopped and removes
         /// it from visible registry listings.
         /// </summary>

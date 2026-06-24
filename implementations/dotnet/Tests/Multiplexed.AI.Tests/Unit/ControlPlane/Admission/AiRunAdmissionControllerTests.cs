@@ -627,6 +627,11 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.Admission
             {
                 throw new NotSupportedException();
             }
+
+            public Task<AiRuntimeInstanceSnapshot?> MarkUnhealthyAsync(string runtimeInstanceId, CancellationToken cancellationToken = default)
+            {
+                throw new NotImplementedException();
+            }
         }
     }
 }

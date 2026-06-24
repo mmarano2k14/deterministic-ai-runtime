@@ -638,6 +638,14 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController.Scaling
                 return Task.FromResult<AiRuntimeInstanceSnapshot?>(
                     null);
             }
+
+            public Task<AiRuntimeInstanceSnapshot?> MarkUnhealthyAsync(string runtimeInstanceId, CancellationToken cancellationToken = default)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                return Task.FromResult<AiRuntimeInstanceSnapshot?>(
+                    null);
+            }
         }
 
         /// <summary>

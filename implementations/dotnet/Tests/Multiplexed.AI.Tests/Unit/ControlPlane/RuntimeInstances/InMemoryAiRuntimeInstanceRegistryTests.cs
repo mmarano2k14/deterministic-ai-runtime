@@ -123,6 +123,97 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances
         }
 
         [Fact]
+        public async Task HeartbeatAsync_Should_Mark_Unhealthy_Runtime_As_NonAccepting()
+        {
+            var registry = new InMemoryAiRuntimeInstanceRegistry();
+
+            await registry.RegisterAsync(new AiRuntimeInstanceRegistration
+            {
+                RuntimeInstanceId = "runtime-1",
+                WorkerCount = 2,
+                MaxConcurrentRuns = 2
+            });
+
+            var snapshot = await registry.HeartbeatAsync(
+                runtimeInstanceId: "runtime-1",
+                queuedRunCount: 0,
+                runningRunCount: 0,
+                activeRunCount: 0,
+                availableRunSlots: 2,
+                activeWorkerCount: 0,
+                availableWorkerCount: 2,
+                maxLocalWorkersPerExecution: 1,
+                isQueuePaused: false,
+                canAcceptRun: true,
+                status: AiRuntimeInstanceStatus.Unhealthy);
+
+            Assert.NotNull(snapshot);
+            Assert.Equal(AiRuntimeInstanceStatus.Unhealthy, snapshot!.Status);
+            Assert.False(snapshot.CanAcceptRun);
+            Assert.Equal(2, snapshot.AvailableRunSlots);
+        }
+
+        [Fact]
+        public async Task HeartbeatAsync_Should_Mark_Paused_Runtime_As_NonAccepting()
+        {
+            var registry = new InMemoryAiRuntimeInstanceRegistry();
+
+            await registry.RegisterAsync(new AiRuntimeInstanceRegistration
+            {
+                RuntimeInstanceId = "runtime-1",
+                WorkerCount = 2,
+                MaxConcurrentRuns = 2
+            });
+
+            var snapshot = await registry.HeartbeatAsync(
+                runtimeInstanceId: "runtime-1",
+                queuedRunCount: 0,
+                runningRunCount: 0,
+                activeRunCount: 0,
+                availableRunSlots: 2,
+                activeWorkerCount: 0,
+                availableWorkerCount: 2,
+                maxLocalWorkersPerExecution: 1,
+                isQueuePaused: false,
+                canAcceptRun: true,
+                status: AiRuntimeInstanceStatus.Paused);
+
+            Assert.NotNull(snapshot);
+            Assert.Equal(AiRuntimeInstanceStatus.Paused, snapshot!.Status);
+            Assert.False(snapshot.CanAcceptRun);
+        }
+
+        [Fact]
+        public async Task HeartbeatAsync_Should_Mark_Draining_Runtime_As_NonAccepting()
+        {
+            var registry = new InMemoryAiRuntimeInstanceRegistry();
+
+            await registry.RegisterAsync(new AiRuntimeInstanceRegistration
+            {
+                RuntimeInstanceId = "runtime-1",
+                WorkerCount = 2,
+                MaxConcurrentRuns = 2
+            });
+
+            var snapshot = await registry.HeartbeatAsync(
+                runtimeInstanceId: "runtime-1",
+                queuedRunCount: 0,
+                runningRunCount: 0,
+                activeRunCount: 0,
+                availableRunSlots: 2,
+                activeWorkerCount: 0,
+                availableWorkerCount: 2,
+                maxLocalWorkersPerExecution: 1,
+                isQueuePaused: false,
+                canAcceptRun: true,
+                status: AiRuntimeInstanceStatus.Draining);
+
+            Assert.NotNull(snapshot);
+            Assert.Equal(AiRuntimeInstanceStatus.Draining, snapshot!.Status);
+            Assert.False(snapshot.CanAcceptRun);
+        }
+
+        [Fact]
         public async Task ListAsync_Should_Return_Registered_Instances_Ordered_By_RuntimeInstanceId()
         {
             var registry = new InMemoryAiRuntimeInstanceRegistry();
@@ -161,6 +252,119 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances
 
             Assert.NotNull(snapshot);
             Assert.Equal(AiRuntimeInstanceStatus.Draining, snapshot!.Status);
+            Assert.False(snapshot.CanAcceptRun);
+        }
+
+        [Fact]
+        public async Task MarkUnhealthyAsync_Should_Mark_Runtime_Instance_As_Unhealthy()
+        {
+            var registry = new InMemoryAiRuntimeInstanceRegistry();
+
+            await registry.RegisterAsync(new AiRuntimeInstanceRegistration
+            {
+                RuntimeInstanceId = "runtime-1",
+                WorkerCount = 2,
+                MaxConcurrentRuns = 2
+            });
+
+            var snapshot = await registry.MarkUnhealthyAsync("runtime-1");
+
+            Assert.NotNull(snapshot);
+            Assert.Equal(AiRuntimeInstanceStatus.Unhealthy, snapshot!.Status);
+        }
+
+        [Fact]
+        public async Task MarkUnhealthyAsync_Should_Mark_Runtime_Instance_As_NonAccepting()
+        {
+            var registry = new InMemoryAiRuntimeInstanceRegistry();
+
+            await registry.RegisterAsync(new AiRuntimeInstanceRegistration
+            {
+                RuntimeInstanceId = "runtime-1",
+                WorkerCount = 2,
+                MaxConcurrentRuns = 2
+            });
+
+            var snapshot = await registry.MarkUnhealthyAsync("runtime-1");
+
+            Assert.NotNull(snapshot);
+            Assert.Equal(AiRuntimeInstanceStatus.Unhealthy, snapshot!.Status);
+            Assert.False(snapshot.CanAcceptRun);
+        }
+
+        [Fact]
+        public async Task MarkUnhealthyAsync_Should_Keep_AvailableRunSlots_Unchanged()
+        {
+            var registry = new InMemoryAiRuntimeInstanceRegistry();
+
+            await registry.RegisterAsync(new AiRuntimeInstanceRegistration
+            {
+                RuntimeInstanceId = "runtime-1",
+                WorkerCount = 4,
+                MaxConcurrentRuns = 3
+            });
+
+            var snapshot = await registry.MarkUnhealthyAsync("runtime-1");
+
+            Assert.NotNull(snapshot);
+            Assert.Equal(AiRuntimeInstanceStatus.Unhealthy, snapshot!.Status);
+            Assert.Equal(3, snapshot.AvailableRunSlots);
+            Assert.False(snapshot.CanAcceptRun);
+        }
+
+        [Fact]
+        public async Task MarkUnhealthyAsync_Should_Preserve_Tenant_Ownership()
+        {
+            var registry = new InMemoryAiRuntimeInstanceRegistry();
+
+            await registry.RegisterAsync(new AiRuntimeInstanceRegistration
+            {
+                RuntimeInstanceId = "runtime-tenant-a",
+                TenantId = "tenant-a",
+                TenantGroupId = "group-a",
+                WorkerCount = 2,
+                MaxConcurrentRuns = 2
+            });
+
+            var snapshot = await registry.MarkUnhealthyAsync("runtime-tenant-a");
+
+            Assert.NotNull(snapshot);
+            Assert.Equal(AiRuntimeInstanceStatus.Unhealthy, snapshot!.Status);
+            Assert.Equal("tenant-a", snapshot.TenantId);
+            Assert.Equal("group-a", snapshot.TenantGroupId);
+            Assert.False(snapshot.CanAcceptRun);
+        }
+
+        [Fact]
+        public async Task MarkUnhealthyAsync_Should_Return_Null_When_Runtime_Instance_Is_Unknown()
+        {
+            var registry = new InMemoryAiRuntimeInstanceRegistry();
+
+            var snapshot = await registry.MarkUnhealthyAsync("missing-runtime");
+
+            Assert.Null(snapshot);
+        }
+
+        [Fact]
+        public async Task ListAsync_Should_Include_Unhealthy_Runtime_Instance_By_Default()
+        {
+            var registry = new InMemoryAiRuntimeInstanceRegistry();
+
+            await registry.RegisterAsync(new AiRuntimeInstanceRegistration
+            {
+                RuntimeInstanceId = "runtime-1",
+                WorkerCount = 2,
+                MaxConcurrentRuns = 2
+            });
+
+            await registry.MarkUnhealthyAsync("runtime-1");
+
+            var snapshots = await registry.ListAsync();
+
+            Assert.Single(snapshots);
+            Assert.Equal("runtime-1", snapshots[0].RuntimeInstanceId);
+            Assert.Equal(AiRuntimeInstanceStatus.Unhealthy, snapshots[0].Status);
+            Assert.False(snapshots[0].CanAcceptRun);
         }
 
         [Fact]
@@ -178,6 +382,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances
 
             Assert.NotNull(snapshot);
             Assert.Equal(AiRuntimeInstanceStatus.Stopped, snapshot!.Status);
+            Assert.False(snapshot.CanAcceptRun);
         }
 
         [Fact]
@@ -215,6 +420,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances
 
             Assert.Single(snapshots);
             Assert.Equal(AiRuntimeInstanceStatus.Stopped, snapshots[0].Status);
+            Assert.False(snapshots[0].CanAcceptRun);
         }
 
         [Fact]
@@ -238,6 +444,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances
 
             Assert.Equal(AiRuntimeInstanceStatus.Ready, snapshot.Status);
             Assert.Equal(3, snapshot.WorkerCount);
+            Assert.True(snapshot.CanAcceptRun);
         }
     }
 }

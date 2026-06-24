@@ -472,6 +472,11 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Providers.Http
             {
                 return Task.FromResult<AiRuntimeInstanceSnapshot?>(null);
             }
+
+            public Task<AiRuntimeInstanceSnapshot?> MarkUnhealthyAsync(string runtimeInstanceId, CancellationToken cancellationToken = default)
+            {
+                return Task.FromResult<AiRuntimeInstanceSnapshot?>(null);
+            }
         }
 
         /// <summary>

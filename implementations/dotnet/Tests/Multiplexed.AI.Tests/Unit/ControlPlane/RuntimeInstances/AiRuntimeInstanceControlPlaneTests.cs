@@ -532,6 +532,29 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances
                     SnapshotAtUtc = now
                 };
             }
+
+            public Task<AiRuntimeInstanceSnapshot?> MarkUnhealthyAsync(string runtimeInstanceId, CancellationToken cancellationToken = default)
+            {
+                UnregisterCalled = true;
+                LastRuntimeInstanceId = runtimeInstanceId;
+
+                return Task.FromResult<AiRuntimeInstanceSnapshot?>(
+                    CreateSnapshot(
+                        runtimeInstanceId,
+                        AiRuntimeInstanceStatus.Unhealthy,
+                        workerCount: 4,
+                        activeWorkerCount: 0,
+                        availableWorkerCount: 0,
+                        maxLocalWorkersPerExecution: 2,
+                        queuedRunCount: 0,
+                        runningRunCount: 0,
+                        activeRunCount: 0,
+                        queueCapacity: 8,
+                        maxConcurrentRuns: 2,
+                        availableRunSlots: 0,
+                        isQueuePaused: false,
+                        canAcceptRun: false));
+            }
         }
     }
 }

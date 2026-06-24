@@ -98,5 +98,15 @@
         Task<AiRuntimeInstanceSnapshot?> UnregisterAsync(
             string runtimeInstanceId,
             CancellationToken cancellationToken = default);
+
+        /// <summary>
+        /// Marks a runtime instance as unhealthy.
+        /// </summary>
+        /// <param name="runtimeInstanceId">The runtime instance identifier.</param>
+        /// <param name="cancellationToken">A token used to cancel the operation.</param>
+        /// <returns>The updated runtime instance snapshot, or null when unknown.</returns>
+        Task<AiRuntimeInstanceSnapshot?> MarkUnhealthyAsync(
+            string runtimeInstanceId,
+            CancellationToken cancellationToken = default);
     }
 }

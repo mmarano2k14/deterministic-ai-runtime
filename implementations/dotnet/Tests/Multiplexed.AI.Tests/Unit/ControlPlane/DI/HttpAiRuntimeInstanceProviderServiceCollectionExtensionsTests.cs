@@ -572,6 +572,11 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.DI
                     Metadata = existing.Metadata
                 };
             }
+
+            public Task<AiRuntimeInstanceSnapshot?> MarkUnhealthyAsync(string runtimeInstanceId, CancellationToken cancellationToken = default)
+            {
+                throw new NotImplementedException();
+            }
         }
 
         /// <summary>

@@ -408,6 +408,44 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances
         }
 
         /// <inheritdoc />
+        public async Task<AiRuntimeInstanceSnapshot?> MarkUnhealthyAsync(
+            string runtimeInstanceId,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(runtimeInstanceId);
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var controlPlaneId = await ResolveControlPlaneIdForRuntimeInstanceAsync(
+                    runtimeInstanceId,
+                    cancellationToken)
+                .ConfigureAwait(false);
+
+            var existing = await GetEntryAsync(
+                    controlPlaneId,
+                    runtimeInstanceId,
+                    cancellationToken)
+                .ConfigureAwait(false);
+
+            if (existing is null)
+            {
+                return null;
+            }
+
+            var now = DateTimeOffset.UtcNow;
+            var updated = existing.WithStatus(AiRuntimeInstanceStatus.Unhealthy, now);
+
+            await SaveEntryAsync(
+                    controlPlaneId,
+                    GetInstanceKey(controlPlaneId, runtimeInstanceId),
+                    runtimeInstanceId,
+                    updated,
+                    cancellationToken)
+                .ConfigureAwait(false);
+
+            return updated.ToSnapshot(now);
+        }
+
+        /// <inheritdoc />
         public async Task<AiRuntimeInstanceSnapshot?> UnregisterAsync(
             string runtimeInstanceId,
             CancellationToken cancellationToken = default)
