@@ -6,6 +6,38 @@ This project follows a deterministic runtime and observability model designed fo
 
 ---
 
+## [1.0.6.9] - 2026-06-24 - Runtime execution recovery — recovered runtime index closure
+
+### Added
+- Added a durable `requeued-for-recovery` runtime execution index state.
+- Added `IAiRuntimeRunExecutionIndex.MarkRequeuedForRecoveryAsync(...)` to close recovered runtime executions after a successful shared queue recovery transition.
+- Added in-memory and Redis implementations for marking runtime run execution index entries as `requeued-for-recovery`.
+- Added Redis and in-memory coverage for:
+  - running run -> `requeued-for-recovery`
+  - idempotent recovery mark
+  - terminal state rejection
+  - exclusion from unfinished runtime-run scans
+
+### Changed
+- Updated runtime execution recovery reconciliation so that, after a successful shared queue requeue, the local runtime execution index is marked as `requeued-for-recovery`.
+- Updated recovery mutation integration tests to assert that recovered runtime executions are no longer returned by `ListUnfinishedByRuntimeInstanceAsync(...)`.
+- Updated idempotence coverage so a second recovery reconciliation no longer rediscoveres the same already-recovered runtime execution.
+- Preserved dry-run recovery behavior: dry-run discovery still does not mutate shared queue state or runtime execution index state.
+
+### Fixed
+- Fixed repeated recovery discovery for already-requeued executions by moving recovered runtime entries out of the unfinished scan set.
+- Fixed Redis runtime run execution index test expectations where `MarkStartedAsync(...)` returns the Redis script operation result `started` while the persisted runtime status remains `running`.
+- Fixed terminal Redis recovery-mark assertions so completed runs do not require a failure reason.
+
+### Production note
+This closes the recovery loop for dispatched shared queue recovery:
+
+`runtime unhealthy -> unfinished local runtime run discovered -> shared run ownership resolved -> shared queue requeued to Pending -> runtime execution index marked requeued-for-recovery -> next recovery scan ignores the already recovered runtime execution`
+
+This keeps the architecture boundary intact: health reconciliation prevents unsafe routing, while execution recovery owns restoration/requeue of work already assigned to failed runtime instances.
+
+---
+
 ## [1.0.6.9] - 2026-06-24 - Runtime execution recovery — dispatched shared queue requeue
 
 ### Added
