@@ -467,6 +467,160 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedQueue
             Assert.Contains(allItems, item => item.SharedRunId == "shared-run-1" && item.Status == AiSharedQueueItemStatus.Dispatched);
         }
 
+        /// <summary>
+        /// Verifies that a dispatched Redis shared queue item can be requeued during controlled recovery.
+        /// </summary>
+        [Fact]
+        public async Task RequeueDispatchedAsync_Should_Requeue_Dispatched_Item_And_Clear_Claim()
+        {
+            var queue = CreateQueue();
+
+            await queue.EnqueueAsync(CreateItem(
+                "shared-run-requeue-dispatched-1",
+                pipelineKey: "test-pipeline",
+                metadata: new Dictionary<string, string>
+                {
+                    ["test"] = "true"
+                }));
+
+            var claimed = await queue.ClaimNextAsync(new AiSharedQueueClaimRequest
+            {
+                RuntimeInstanceId = "runtime-1",
+                WorkerId = "worker-1",
+                PipelineKey = "test-pipeline",
+                ClaimTtl = TimeSpan.FromMinutes(5),
+                Reason = "test-claim"
+            });
+
+            Assert.NotNull(claimed);
+            Assert.False(string.IsNullOrWhiteSpace(claimed!.ClaimToken));
+
+            var dispatched = await queue.MarkDispatchedAsync(
+                "shared-run-requeue-dispatched-1",
+                claimed.ClaimToken!,
+                reason: "test-dispatch");
+
+            Assert.NotNull(dispatched);
+            Assert.Equal(AiSharedQueueItemStatus.Dispatched, dispatched!.Status);
+            Assert.Equal("runtime-1", dispatched.ClaimedByRuntimeInstanceId);
+            Assert.Equal("worker-1", dispatched.ClaimedByWorkerId);
+            Assert.Equal(claimed.ClaimToken, dispatched.ClaimToken);
+
+            var requeued = await queue.RequeueDispatchedAsync(
+                "shared-run-requeue-dispatched-1",
+                claimed.ClaimToken!,
+                reason: "test-recovery-requeue");
+
+            Assert.NotNull(requeued);
+            Assert.Equal(AiSharedQueueItemStatus.Pending, requeued!.Status);
+            Assert.Null(requeued.ClaimedByRuntimeInstanceId);
+            Assert.Null(requeued.ClaimedByWorkerId);
+            Assert.Null(requeued.ClaimToken);
+            Assert.Null(requeued.ClaimedAtUtc);
+            Assert.Null(requeued.ClaimExpiresAtUtc);
+            Assert.Equal("test-recovery-requeue", requeued.Reason);
+
+            var activeItem = Assert.Single(await queue.ListAsync());
+            Assert.Equal("shared-run-requeue-dispatched-1", activeItem.SharedRunId);
+            Assert.Equal(AiSharedQueueItemStatus.Pending, activeItem.Status);
+
+            var allItems = await queue.ListAsync(includeTerminal: true);
+            var allItem = Assert.Single(allItems);
+            Assert.Equal("shared-run-requeue-dispatched-1", allItem.SharedRunId);
+            Assert.Equal(AiSharedQueueItemStatus.Pending, allItem.Status);
+        }
+
+        /// <summary>
+        /// Verifies that Redis recovery requeue rejects an invalid claim token.
+        /// </summary>
+        [Fact]
+        public async Task RequeueDispatchedAsync_Should_Return_Null_When_ClaimToken_Does_Not_Match()
+        {
+            var queue = CreateQueue();
+
+            await queue.EnqueueAsync(CreateItem(
+                "shared-run-requeue-dispatched-invalid-token",
+                pipelineKey: "test-pipeline",
+                metadata: new Dictionary<string, string>
+                {
+                    ["test"] = "true"
+                }));
+
+            var claimed = await queue.ClaimNextAsync(new AiSharedQueueClaimRequest
+            {
+                RuntimeInstanceId = "runtime-1",
+                WorkerId = "worker-1",
+                PipelineKey = "test-pipeline",
+                ClaimTtl = TimeSpan.FromMinutes(5),
+                Reason = "test-claim"
+            });
+
+            Assert.NotNull(claimed);
+            Assert.False(string.IsNullOrWhiteSpace(claimed!.ClaimToken));
+
+            await queue.MarkDispatchedAsync(
+                "shared-run-requeue-dispatched-invalid-token",
+                claimed.ClaimToken!,
+                reason: "test-dispatch");
+
+            var requeued = await queue.RequeueDispatchedAsync(
+                "shared-run-requeue-dispatched-invalid-token",
+                "wrong-token",
+                reason: "test-recovery-requeue");
+
+            Assert.Null(requeued);
+
+            var item = await queue.GetAsync("shared-run-requeue-dispatched-invalid-token");
+
+            Assert.NotNull(item);
+            Assert.Equal(AiSharedQueueItemStatus.Dispatched, item!.Status);
+            Assert.Equal(claimed.ClaimToken, item.ClaimToken);
+        }
+
+        /// <summary>
+        /// Verifies that Redis recovery requeue rejects non-dispatched queue items.
+        /// </summary>
+        [Fact]
+        public async Task RequeueDispatchedAsync_Should_Return_Null_When_Item_Is_Not_Dispatched()
+        {
+            var queue = CreateQueue();
+
+            await queue.EnqueueAsync(CreateItem(
+                "shared-run-requeue-dispatched-not-dispatched",
+                pipelineKey: "test-pipeline",
+                metadata: new Dictionary<string, string>
+                {
+                    ["test"] = "true"
+                }));
+
+            var claimed = await queue.ClaimNextAsync(new AiSharedQueueClaimRequest
+            {
+                RuntimeInstanceId = "runtime-1",
+                WorkerId = "worker-1",
+                PipelineKey = "test-pipeline",
+                ClaimTtl = TimeSpan.FromMinutes(5),
+                Reason = "test-claim"
+            });
+
+            Assert.NotNull(claimed);
+            Assert.False(string.IsNullOrWhiteSpace(claimed!.ClaimToken));
+
+            var requeued = await queue.RequeueDispatchedAsync(
+                "shared-run-requeue-dispatched-not-dispatched",
+                claimed.ClaimToken!,
+                reason: "test-recovery-requeue");
+
+            Assert.Null(requeued);
+
+            var item = await queue.GetAsync("shared-run-requeue-dispatched-not-dispatched");
+
+            Assert.NotNull(item);
+            Assert.Equal(AiSharedQueueItemStatus.Claimed, item!.Status);
+            Assert.Equal(claimed.ClaimToken, item.ClaimToken);
+            Assert.Equal("runtime-1", item.ClaimedByRuntimeInstanceId);
+            Assert.Equal("worker-1", item.ClaimedByWorkerId);
+        }
+
         private RedisAiSharedQueue CreateQueue()
         {
             if (_connection is null)
@@ -480,7 +634,7 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedQueue
                 {
                     KeyPrefix = _keyPrefix,
                     ListScanLimit = 100
-                }), 
+                }),
                 new StaticAiControlPlaneIdResolver("test-control-plane"));
         }
 

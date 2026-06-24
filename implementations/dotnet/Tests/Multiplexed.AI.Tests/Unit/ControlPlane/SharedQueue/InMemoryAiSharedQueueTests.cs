@@ -1,6 +1,7 @@
 ﻿using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Claiming;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Queue;
+using Multiplexed.Abstractions.Core.ExecutionContext;
 using Multiplexed.AI.Runtime.ControlPlane.SharedQueue;
 using Multiplexed.AI.Tests.Fixtures;
 
@@ -378,6 +379,90 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
             Assert.Equal("sent to runtime queue", loaded.Reason);
             Assert.DoesNotContain(activeItems, item => item.SharedRunId == "shared-run-1");
             Assert.Contains(allItems, item => item.SharedRunId == "shared-run-1" && item.Status == AiSharedQueueItemStatus.Dispatched);
+        }
+
+        /// <summary>
+        /// Verifies that a dispatched shared queue item can be requeued during controlled recovery.
+        /// </summary>
+        [Fact]
+        public async Task RequeueDispatchedAsync_Should_Requeue_Dispatched_Item_And_Clear_Claim()
+        {
+            var queue = new InMemoryAiSharedQueue();
+
+            await queue.EnqueueAsync(new AiSharedQueueItem
+            {
+                SharedRunId = "shared-run-1",
+                Status = AiSharedQueueItemStatus.Pending,
+                ExecutionContextSnapshot = CreateExecutionContextSnapshot(),
+                PipelineKey = "test-pipeline",
+                Priority = 0,
+                EnqueuedAtUtc = DateTimeOffset.UtcNow,
+                UpdatedAtUtc = DateTimeOffset.UtcNow,
+                Metadata = new Dictionary<string, string>
+                {
+                    ["test"] = "true"
+                }
+            });
+
+            var claimed = await queue.ClaimNextAsync(new AiSharedQueueClaimRequest
+            {
+                RuntimeInstanceId = "runtime-1",
+                WorkerId = "worker-1",
+                TenantId = "tenant-1",
+                PipelineKey = "test-pipeline",
+                ClaimTtl = TimeSpan.FromMinutes(5),
+                Reason = "test-claim"
+            });
+
+            Assert.NotNull(claimed);
+            Assert.False(string.IsNullOrWhiteSpace(claimed!.ClaimToken));
+
+            var dispatched = await queue.MarkDispatchedAsync(
+                "shared-run-1",
+                claimed.ClaimToken!,
+                reason: "test-dispatch");
+
+            Assert.NotNull(dispatched);
+            Assert.Equal(AiSharedQueueItemStatus.Dispatched, dispatched!.Status);
+
+            var requeued = await queue.RequeueDispatchedAsync(
+                "shared-run-1",
+                claimed.ClaimToken!,
+                reason: "test-recovery-requeue");
+
+            Assert.NotNull(requeued);
+            Assert.Equal(AiSharedQueueItemStatus.Pending, requeued!.Status);
+            Assert.Null(requeued.ClaimedByRuntimeInstanceId);
+            Assert.Null(requeued.ClaimedByWorkerId);
+            Assert.Null(requeued.ClaimToken);
+            Assert.Null(requeued.ClaimedAtUtc);
+            Assert.Null(requeued.ClaimExpiresAtUtc);
+            Assert.Equal("test-recovery-requeue", requeued.Reason);
+
+            var activeItem = Assert.Single(await queue.ListAsync());
+            Assert.Equal("shared-run-1", activeItem.SharedRunId);
+            Assert.Equal(AiSharedQueueItemStatus.Pending, activeItem.Status);
+        }
+
+        /// <summary>
+        /// Creates an execution context snapshot.
+        /// </summary>
+        /// <returns>The execution context snapshot.</returns>
+        private static ExecutionContextSnapshot CreateExecutionContextSnapshot()
+        {
+            return new ExecutionContextSnapshot
+            {
+                ContextKey = "ctx-tenant-1",
+                Project = "shared-queue-tests",
+                UserId = "test-user",
+                TenantId = "tenant-1",
+                TenantGroupId = "tenant-group-1",
+                CurrentNamespace = "default",
+                Namespaces = new List<NamespaceEntry>(),
+                InFlightCount = 0,
+                TtlSeconds = 300,
+                CreatedAtUtc = DateTime.Now
+            };
         }
 
         private static AiSharedQueueItem CreateItem(

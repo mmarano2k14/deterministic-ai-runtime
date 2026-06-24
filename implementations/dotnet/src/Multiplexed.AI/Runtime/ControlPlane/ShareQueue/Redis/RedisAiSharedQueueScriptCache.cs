@@ -24,6 +24,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
         private byte[]? _claimNextSha;
         private byte[]? _markDispatchedSha;
         private byte[]? _requeueSha;
+        private byte[]? _requeueDispatchedSha;
         private byte[]? _cancelSha;
 
         /// <summary>
@@ -99,6 +100,22 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
                 database,
                 ScriptKind.Requeue,
                 RedisAiSharedQueueScripts.Requeue,
+                keys,
+                values);
+        }
+
+        /// <summary>
+        /// Executes the atomic requeue-dispatched script.
+        /// </summary>
+        public Task<RedisResult> ExecuteRequeueDispatchedAsync(
+            IDatabase database,
+            RedisKey[] keys,
+            RedisValue[] values)
+        {
+            return ExecuteAsync(
+                database,
+                ScriptKind.RequeueDispatched,
+                RedisAiSharedQueueScripts.RequeueDispatched,
                 keys,
                 values);
         }
@@ -259,6 +276,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
                 ScriptKind.ClaimNext => _claimNextSha,
                 ScriptKind.MarkDispatched => _markDispatchedSha,
                 ScriptKind.Requeue => _requeueSha,
+                ScriptKind.RequeueDispatched => _requeueDispatchedSha,
                 ScriptKind.Cancel => _cancelSha,
                 _ => null
             };
@@ -287,6 +305,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
 
                 case ScriptKind.Requeue:
                     _requeueSha = sha;
+                    break;
+
+                case ScriptKind.RequeueDispatched:
+                    _requeueDispatchedSha = sha;
                     break;
 
                 case ScriptKind.Cancel:
@@ -321,9 +343,14 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
             Requeue = 3,
 
             /// <summary>
+            /// Atomic requeue-dispatched recovery script.
+            /// </summary>
+            RequeueDispatched = 4,
+
+            /// <summary>
             /// Atomic cancel script.
             /// </summary>
-            Cancel = 4
+            Cancel = 5
         }
     }
 }

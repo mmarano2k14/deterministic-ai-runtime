@@ -192,6 +192,53 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
         }
 
         /// <inheritdoc />
+        public Task<AiSharedQueueItem?> RequeueDispatchedAsync(
+            string sharedRunId,
+            string claimToken,
+            string? reason = null,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(sharedRunId);
+            ArgumentException.ThrowIfNullOrWhiteSpace(claimToken);
+
+            cancellationToken.ThrowIfCancellationRequested();
+
+            while (true)
+            {
+                if (!_items.TryGetValue(sharedRunId, out var existing))
+                {
+                    return Task.FromResult<AiSharedQueueItem?>(null);
+                }
+
+                if (existing.Status != AiSharedQueueItemStatus.Dispatched ||
+                    !string.Equals(existing.ClaimToken, claimToken, StringComparison.Ordinal))
+                {
+                    return Task.FromResult<AiSharedQueueItem?>(null);
+                }
+
+                var now = DateTimeOffset.UtcNow;
+
+                var updated = new AiSharedQueueItem
+                {
+                    SharedRunId = existing.SharedRunId,
+                    Status = AiSharedQueueItemStatus.Pending,
+                    ExecutionContextSnapshot = existing.ExecutionContextSnapshot,
+                    PipelineKey = existing.PipelineKey,
+                    Priority = existing.Priority,
+                    EnqueuedAtUtc = existing.EnqueuedAtUtc,
+                    UpdatedAtUtc = now,
+                    Reason = reason,
+                    Metadata = existing.Metadata
+                };
+
+                if (_items.TryUpdate(sharedRunId, updated, existing))
+                {
+                    return Task.FromResult<AiSharedQueueItem?>(updated);
+                }
+            }
+        }
+
+        /// <inheritdoc />
         public Task<AiSharedQueueItem?> CancelAsync(
             string sharedRunId,
             string? reason = null,

@@ -318,5 +318,55 @@
 
             return 'cancelled'
             """;
+
+        /// <summary>
+        /// Atomically requeues a dispatched shared queue item during execution recovery.
+        /// </summary>
+        public const string RequeueDispatched = """
+            local itemKey = KEYS[1]
+            local pendingIndexKey = KEYS[2]
+            local tenantPendingIndexKey = KEYS[3]
+
+            local sharedRunId = ARGV[1]
+            local expectedClaimToken = ARGV[2]
+            local score = ARGV[3]
+            local updatedAtUtc = ARGV[4]
+            local reason = ARGV[5]
+
+            if redis.call('EXISTS', itemKey) == 0 then
+                return 'missing'
+            end
+
+            local status = redis.call('HGET', itemKey, 'status')
+            local claimToken = redis.call('HGET', itemKey, 'claimToken')
+
+            if status ~= 'Dispatched' then
+                return 'not-dispatched'
+            end
+
+            if claimToken ~= expectedClaimToken then
+                return 'not-owner'
+            end
+
+            redis.call(
+                'HMSET',
+                itemKey,
+                'status', 'Pending',
+                'claimedByRuntimeInstanceId', '',
+                'claimedByWorkerId', '',
+                'claimToken', '',
+                'claimedAtUtc', '',
+                'claimExpiresAtUtc', '',
+                'updatedAtUtc', updatedAtUtc,
+                'reason', reason)
+
+            redis.call('ZADD', pendingIndexKey, score, sharedRunId)
+
+            if tenantPendingIndexKey ~= nil and tenantPendingIndexKey ~= '' then
+                redis.call('ZADD', tenantPendingIndexKey, score, sharedRunId)
+            end
+
+            return 'requeued-dispatched'
+            """;
     }
 }

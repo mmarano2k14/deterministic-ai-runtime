@@ -653,6 +653,95 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
         }
 
         /// <inheritdoc />
+        public async Task<AiSharedQueueItem?> RequeueDispatchedAsync(
+            string sharedRunId,
+            string claimToken,
+            string? reason = null,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(sharedRunId);
+            ArgumentException.ThrowIfNullOrWhiteSpace(claimToken);
+
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var controlPlaneId =
+                await ResolveControlPlaneIdAsync(
+                        requestedControlPlaneId: null,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+            var existing = await GetAsync(
+                    controlPlaneId,
+                    sharedRunId,
+                    cancellationToken)
+                .ConfigureAwait(false);
+
+            if (existing is null)
+            {
+                return null;
+            }
+
+            if (existing.Status != AiSharedQueueItemStatus.Dispatched)
+            {
+                return null;
+            }
+
+            var now = DateTimeOffset.UtcNow;
+
+            var score = BuildQueueScoreFromParts(
+                existing.Priority,
+                existing.EnqueuedAtUtc);
+
+            var tenantPendingIndexKey = string.IsNullOrWhiteSpace(existing.ExecutionContextSnapshot.TenantId)
+                ? (RedisKey)string.Empty
+                : BuildTenantPendingIndexKey(
+                    controlPlaneId,
+                    existing.ExecutionContextSnapshot.TenantId);
+
+            var result = await _scripts
+                .ExecuteRequeueDispatchedAsync(
+                    _database,
+                    new RedisKey[]
+                    {
+                BuildItemKey(
+                    controlPlaneId,
+                    sharedRunId),
+                BuildPendingIndexKey(controlPlaneId),
+                tenantPendingIndexKey
+                    },
+                    new RedisValue[]
+                    {
+                sharedRunId,
+                claimToken,
+                score,
+                FormatDate(now),
+                reason ?? string.Empty
+                    })
+                .ConfigureAwait(false);
+
+            var status = result.ToString();
+
+            if (string.Equals(status, "missing", StringComparison.Ordinal) ||
+                string.Equals(status, "not-owner", StringComparison.Ordinal) ||
+                string.Equals(status, "not-dispatched", StringComparison.Ordinal))
+            {
+                return null;
+            }
+
+            if (string.Equals(status, "requeued-dispatched", StringComparison.Ordinal))
+            {
+                return await GetAsync(
+                        controlPlaneId,
+                        sharedRunId,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+            }
+
+            throw new InvalidOperationException(
+                $"Unexpected Redis requeue-dispatched result for shared queue item '{sharedRunId}': '{status}'.");
+        }
+
+        /// <inheritdoc />
         public async Task<AiSharedQueueItem?> CancelAsync(
             string sharedRunId,
             string? reason = null,
