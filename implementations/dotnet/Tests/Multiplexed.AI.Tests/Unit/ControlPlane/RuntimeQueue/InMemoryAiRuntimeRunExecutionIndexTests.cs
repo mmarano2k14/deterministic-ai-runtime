@@ -77,6 +77,140 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeQueue
             Assert.DoesNotContain(entries, entry => entry.RuntimeInstanceId == "runtime-2");
         }
 
+        /// <summary>
+        /// Verifies that a running runtime run can be marked as requeued for recovery.
+        /// </summary>
+        [Fact]
+        public async Task MarkRequeuedForRecoveryAsync_Should_Mark_Running_Run_As_Requeued_For_Recovery()
+        {
+            var index = new InMemoryAiRuntimeRunExecutionIndex();
+
+            await index.RegisterQueuedAsync(new AiRuntimeRunExecutionIndexEntry
+            {
+                RunId = "run-1",
+                ExecutionId = "execution-1",
+                RuntimeInstanceId = "runtime-1",
+                Status = "queued",
+                CreatedAtUtc = DateTimeOffset.UtcNow,
+                ExecutionContextSnapshot = CreateExecutionContextSnapshot()
+            });
+
+            await index.MarkStartedAsync(
+                "run-1",
+                "execution-1");
+
+            var changed = await index.MarkRequeuedForRecoveryAsync(
+                "run-1",
+                "execution-1",
+                "runtime-execution-recovery-requeue");
+
+            var entry = await index.GetAsync("run-1");
+            var unfinished = await index.ListUnfinishedByRuntimeInstanceAsync("runtime-1");
+
+            Assert.True(changed);
+            Assert.NotNull(entry);
+            Assert.Equal("requeued-for-recovery", entry!.Status);
+            Assert.Equal("runtime-execution-recovery-requeue", entry.FailureReason);
+            Assert.NotNull(entry.CompletedAtUtc);
+            Assert.Empty(unfinished);
+        }
+
+        /// <summary>
+        /// Verifies that requeued-for-recovery is idempotent.
+        /// </summary>
+        [Fact]
+        public async Task MarkRequeuedForRecoveryAsync_Should_Return_False_When_Already_Requeued_For_Recovery()
+        {
+            var index = new InMemoryAiRuntimeRunExecutionIndex();
+
+            await index.RegisterQueuedAsync(new AiRuntimeRunExecutionIndexEntry
+            {
+                RunId = "run-1",
+                ExecutionId = "execution-1",
+                RuntimeInstanceId = "runtime-1",
+                Status = "queued",
+                CreatedAtUtc = DateTimeOffset.UtcNow,
+                ExecutionContextSnapshot = CreateExecutionContextSnapshot()
+            });
+
+            await index.MarkStartedAsync(
+                "run-1",
+                "execution-1");
+
+            var first = await index.MarkRequeuedForRecoveryAsync(
+                "run-1",
+                "execution-1",
+                "first-recovery");
+
+            var second = await index.MarkRequeuedForRecoveryAsync(
+                "run-1",
+                "execution-1",
+                "second-recovery");
+
+            var entry = await index.GetAsync("run-1");
+
+            Assert.True(first);
+            Assert.False(second);
+            Assert.NotNull(entry);
+            Assert.Equal("requeued-for-recovery", entry!.Status);
+            Assert.Equal("first-recovery", entry.FailureReason);
+        }
+
+        /// <summary>
+        /// Verifies that terminal runtime run entries cannot be marked as requeued for recovery.
+        /// </summary>
+        [Theory]
+        [InlineData("completed")]
+        [InlineData("failed")]
+        [InlineData("cancelled")]
+        [InlineData("requeued-for-recovery")]
+        public async Task MarkRequeuedForRecoveryAsync_Should_Return_False_When_Run_Is_Terminal(
+            string terminalStatus)
+        {
+            var index = new InMemoryAiRuntimeRunExecutionIndex();
+
+            await index.RegisterQueuedAsync(new AiRuntimeRunExecutionIndexEntry
+            {
+                RunId = "run-1",
+                ExecutionId = "execution-1",
+                RuntimeInstanceId = "runtime-1",
+                Status = terminalStatus,
+                CreatedAtUtc = DateTimeOffset.UtcNow,
+                CompletedAtUtc = DateTimeOffset.UtcNow,
+                FailureReason = "terminal",
+                ExecutionContextSnapshot = CreateExecutionContextSnapshot()
+            });
+
+            var changed = await index.MarkRequeuedForRecoveryAsync(
+                "run-1",
+                "execution-1",
+                "runtime-execution-recovery-requeue");
+
+            var entry = await index.GetAsync("run-1");
+
+            Assert.False(changed);
+            Assert.NotNull(entry);
+            Assert.Equal(terminalStatus, entry!.Status);
+            Assert.Equal("terminal", entry.FailureReason);
+        }
+
+        private static ExecutionContextSnapshot CreateExecutionContextSnapshot()
+        {
+            return new ExecutionContextSnapshot
+            {
+                ContextKey = "ctx-tenant-1",
+                Project = "runtime-run-index-tests",
+                UserId = "test-user",
+                TenantId = "tenant-1",
+                TenantGroupId = "tenant-group-1",
+                CurrentNamespace = "default",
+                Namespaces = new List<NamespaceEntry>(),
+                InFlightCount = 0,
+                TtlSeconds = 300,
+                CreatedAtUtc = DateTime.Now
+            };
+        }
+
         private static AiRuntimeRunExecutionIndexEntry CreateEntry(
             string runId,
             string runtimeInstanceId,

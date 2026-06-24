@@ -45,6 +45,24 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue.Redis
         private const string AllIndexKeySegment =
             "all";
 
+        private const string StatusQueued =
+            "queued";
+
+        private const string StatusRunning =
+            "running";
+
+        private const string StatusCompleted =
+            "completed";
+
+        private const string StatusFailed =
+            "failed";
+
+        private const string StatusCancelled =
+            "cancelled";
+
+        private const string StatusRequeuedForRecovery =
+            "requeued-for-recovery";
+
         private static readonly JsonSerializerOptions JsonOptions = new()
         {
             PropertyNameCaseInsensitive = true
@@ -88,10 +106,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue.Redis
             IExecutionContextSnapshotProvider? executionContextSnapshotProvider)
         {
             ArgumentNullException.ThrowIfNull(connection);
+            ArgumentException.ThrowIfNullOrWhiteSpace(options?.Value?.KeyPrefix);
             ArgumentNullException.ThrowIfNull(controlPlaneIdResolver);
 
             _database = connection.GetDatabase();
-            _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
+            _options = options.Value;
             _scripts = new RedisAiRuntimeRunExecutionIndexScriptCache(connection);
             _controlPlaneIdResolver = controlPlaneIdResolver;
             _executionContextSnapshotProvider = executionContextSnapshotProvider;
@@ -125,7 +144,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue.Redis
                 RunId = entry.RunId,
                 ExecutionId = entry.ExecutionId,
                 RuntimeInstanceId = entry.RuntimeInstanceId,
-                Status = string.IsNullOrWhiteSpace(entry.Status) ? "queued" : entry.Status,
+                Status = string.IsNullOrWhiteSpace(entry.Status) ? StatusQueued : entry.Status,
                 FailureReason = entry.FailureReason,
                 ExecutionContextSnapshot = executionContextSnapshot,
                 CreatedAtUtc = createdAtUtc,
@@ -250,7 +269,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue.Redis
             EnsureMutationResult(
                 result,
                 runId,
-                "completed",
+                StatusCompleted,
                 "complete");
         }
 
@@ -293,7 +312,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue.Redis
             EnsureMutationResult(
                 result,
                 runId,
-                "failed",
+                StatusFailed,
                 "fail");
         }
 
@@ -335,8 +354,65 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue.Redis
             EnsureMutationResult(
                 result,
                 runId,
-                "cancelled",
+                StatusCancelled,
                 "cancel");
+        }
+
+        /// <inheritdoc />
+        public async Task<bool> MarkRequeuedForRecoveryAsync(
+            string runId,
+            string executionId,
+            string reason,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(runId);
+            ArgumentException.ThrowIfNullOrWhiteSpace(executionId);
+            ArgumentException.ThrowIfNullOrWhiteSpace(reason);
+
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var controlPlaneId =
+                await ResolveControlPlaneIdAsync(cancellationToken)
+                    .ConfigureAwait(false);
+
+            var existing = await GetRawAsync(
+                    controlPlaneId,
+                    runId,
+                    cancellationToken)
+                .ConfigureAwait(false);
+
+            if (existing is null)
+            {
+                return false;
+            }
+
+            if (!BelongsToTenant(
+                    existing,
+                    TryResolveTenantId()))
+            {
+                return false;
+            }
+
+            if (IsTerminal(existing))
+            {
+                return false;
+            }
+
+            var now = DateTimeOffset.UtcNow;
+
+            await _database
+                .HashSetAsync(
+                    BuildItemKey(controlPlaneId, runId),
+                    new HashEntry[]
+                    {
+                        new("executionId", executionId),
+                        new("status", StatusRequeuedForRecovery),
+                        new("failureReason", reason),
+                        new("completedAtUtc", FormatDate(now))
+                    })
+                .ConfigureAwait(false);
+
+            return true;
         }
 
         /// <inheritdoc />
@@ -699,14 +775,26 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue.Redis
         /// <summary>
         /// Determines whether an index entry has not reached a terminal runtime-run state.
         /// </summary>
-        /// <param name="entry">The runtime run execution index entry.</param>
+        /// <param name="entry">The runtime run index entry.</param>
         /// <returns>True when the entry is unfinished; otherwise false.</returns>
         private static bool IsUnfinished(
             AiRuntimeRunExecutionIndexEntry entry)
         {
-            return !string.Equals(entry.Status, "completed", StringComparison.OrdinalIgnoreCase) &&
-                   !string.Equals(entry.Status, "failed", StringComparison.OrdinalIgnoreCase) &&
-                   !string.Equals(entry.Status, "cancelled", StringComparison.OrdinalIgnoreCase);
+            return !IsTerminal(entry);
+        }
+
+        /// <summary>
+        /// Determines whether an index entry has reached a terminal runtime-run state.
+        /// </summary>
+        /// <param name="entry">The runtime run index entry.</param>
+        /// <returns>True when the entry is terminal; otherwise false.</returns>
+        private static bool IsTerminal(
+            AiRuntimeRunExecutionIndexEntry entry)
+        {
+            return string.Equals(entry.Status, StatusCompleted, StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(entry.Status, StatusFailed, StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(entry.Status, StatusCancelled, StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(entry.Status, StatusRequeuedForRecovery, StringComparison.OrdinalIgnoreCase);
         }
 
         /// <summary>

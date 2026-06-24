@@ -92,6 +92,30 @@ namespace Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue
             CancellationToken cancellationToken = default);
 
         /// <summary>
+        /// Marks a runtime run as requeued for recovery.
+        /// </summary>
+        /// <param name="runId">The local runtime run identifier.</param>
+        /// <param name="executionId">The durable DAG execution identifier.</param>
+        /// <param name="reason">The recovery reason to store on the index entry.</param>
+        /// <param name="cancellationToken">A token used to cancel the operation.</param>
+        /// <returns>
+        /// <c>true</c> when the entry was transitioned to requeued-for-recovery;
+        /// otherwise, <c>false</c>.
+        /// </returns>
+        /// <remarks>
+        /// This transition is used when work already assigned to an unavailable runtime
+        /// instance has been safely returned to the shared queue.
+        ///
+        /// Implementations should reject missing entries and terminal entries such as
+        /// completed, failed, cancelled, or already requeued-for-recovery entries.
+        /// </remarks>
+        Task<bool> MarkRequeuedForRecoveryAsync(
+            string runId,
+            string executionId,
+            string reason,
+            CancellationToken cancellationToken = default);
+
+        /// <summary>
         /// Gets the runtime run execution index entry for a local runtime run.
         /// </summary>
         /// <param name="runId">The local runtime run identifier.</param>
@@ -114,7 +138,9 @@ namespace Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue
         /// to the current tenant context.
         /// </returns>
         /// <remarks>
-        /// Terminal entries such as completed, failed, and cancelled runs must not be returned.
+        /// Terminal entries such as completed, failed, cancelled, and requeued-for-recovery runs
+        /// must not be returned.
+        ///
         /// Implementations must preserve tenant isolation when a tenant-scoped execution context
         /// is active.
         /// </remarks>

@@ -5,7 +5,6 @@ using Multiplexed.Abstractions.Core.ExecutionContext;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue.Redis;
 using Multiplexed.AI.Tests.Fixtures;
 using StackExchange.Redis;
-using Xunit;
 
 namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeQueue
 {
@@ -19,7 +18,6 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeQueue
             $"multiplexed:ai:test:runtime-run-index:{Guid.NewGuid():N}";
 
         private IConnectionMultiplexer? redis;
-
         private RedisAiRuntimeRunExecutionIndex? tenantAStore;
         private RedisAiRuntimeRunExecutionIndex? tenantBStore;
 
@@ -65,17 +63,19 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeQueue
 
         public async Task DisposeAsync()
         {
-            if (redis is not null)
+            if (redis is null)
             {
-                await DeleteTestKeysAsync(redis)
-                    .ConfigureAwait(false);
-
-                await redis
-                    .CloseAsync()
-                    .ConfigureAwait(false);
-
-                redis.Dispose();
+                return;
             }
+
+            await DeleteTestKeysAsync(redis)
+                .ConfigureAwait(false);
+
+            await redis
+                .CloseAsync()
+                .ConfigureAwait(false);
+
+            redis.Dispose();
         }
 
         [Fact]
@@ -331,26 +331,6 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeQueue
             Assert.Equal("tenant-b", visibleToTenantB[0].ExecutionContextSnapshot?.TenantId);
         }
 
-        private static AiRuntimeRunExecutionIndexEntry CreateEntry(
-            string runId,
-            string tenantId,
-            string runtimeInstanceId)
-        {
-            return new AiRuntimeRunExecutionIndexEntry
-            {
-                RunId = runId,
-                RuntimeInstanceId = runtimeInstanceId,
-                Status = "queued",
-                CreatedAtUtc = DateTimeOffset.UtcNow,
-                ExecutionContextSnapshot = CreateSnapshot(tenantId),
-                Metadata = new Dictionary<string, string>
-                {
-                    ["tenantId"] = tenantId,
-                    ["source"] = "redis-runtime-run-index-test"
-                }
-            };
-        }
-
         /// <summary>
         /// Verifies that runtime assignment metadata is persisted on queued index entries.
         /// </summary>
@@ -380,6 +360,217 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeQueue
             Assert.Equal("tenant-a", entry.ExecutionContextSnapshot?.TenantId);
             Assert.Equal("tenant-a", entry.Metadata["tenantId"]);
             Assert.Equal("redis-runtime-run-index-test", entry.Metadata["source"]);
+        }
+
+        /// <summary>
+        /// Verifies that a running Redis runtime run can be marked as requeued for recovery.
+        /// </summary>
+        [Fact]
+        public async Task MarkRequeuedForRecoveryAsync_Should_Mark_Running_Run_As_Requeued_For_Recovery()
+        {
+            var runId =
+                $"run-requeued-for-recovery-{Guid.NewGuid():N}";
+
+            await tenantAStore!
+                .RegisterQueuedAsync(
+                    CreateEntry(
+                        runId,
+                        "tenant-a",
+                        runtimeInstanceId: "runtime-a"))
+                .ConfigureAwait(false);
+
+            await tenantAStore
+                .MarkStartedAsync(
+                    runId,
+                    "execution-1")
+                .ConfigureAwait(false);
+
+            var changed =
+                await tenantAStore
+                    .MarkRequeuedForRecoveryAsync(
+                        runId,
+                        "execution-1",
+                        "runtime-execution-recovery-requeue")
+                    .ConfigureAwait(false);
+
+            var entry =
+                await tenantAStore
+                    .GetAsync(runId)
+                    .ConfigureAwait(false);
+
+            var unfinished =
+                await tenantAStore
+                    .ListUnfinishedByRuntimeInstanceAsync("runtime-a")
+                    .ConfigureAwait(false);
+
+            Assert.True(changed);
+            Assert.NotNull(entry);
+            Assert.Equal("requeued-for-recovery", entry!.Status);
+            Assert.Equal("runtime-execution-recovery-requeue", entry.FailureReason);
+            Assert.NotNull(entry.CompletedAtUtc);
+            Assert.Empty(unfinished);
+        }
+
+        /// <summary>
+        /// Verifies that Redis requeued-for-recovery is idempotent.
+        /// </summary>
+        [Fact]
+        public async Task MarkRequeuedForRecoveryAsync_Should_Return_False_When_Already_Requeued_For_Recovery()
+        {
+            var runId =
+                $"run-requeued-for-recovery-idempotent-{Guid.NewGuid():N}";
+
+            await tenantAStore!
+                .RegisterQueuedAsync(
+                    CreateEntry(
+                        runId,
+                        "tenant-a",
+                        runtimeInstanceId: "runtime-a"))
+                .ConfigureAwait(false);
+
+            await tenantAStore
+                .MarkStartedAsync(
+                    runId,
+                    "execution-1")
+                .ConfigureAwait(false);
+
+            var first =
+                await tenantAStore
+                    .MarkRequeuedForRecoveryAsync(
+                        runId,
+                        "execution-1",
+                        "first-recovery")
+                    .ConfigureAwait(false);
+
+            var second =
+                await tenantAStore
+                    .MarkRequeuedForRecoveryAsync(
+                        runId,
+                        "execution-1",
+                        "second-recovery")
+                    .ConfigureAwait(false);
+
+            var entry =
+                await tenantAStore
+                    .GetAsync(runId)
+                    .ConfigureAwait(false);
+
+            Assert.True(first);
+            Assert.False(second);
+            Assert.NotNull(entry);
+            Assert.Equal("requeued-for-recovery", entry!.Status);
+            Assert.Equal("first-recovery", entry.FailureReason);
+        }
+
+        /// <summary>
+        /// Verifies that terminal Redis runtime run entries cannot be marked as requeued for recovery.
+        /// </summary>
+        [Theory]
+        [InlineData("completed")]
+        [InlineData("failed")]
+        [InlineData("cancelled")]
+        [InlineData("requeued-for-recovery")]
+        public async Task MarkRequeuedForRecoveryAsync_Should_Return_False_When_Run_Is_Terminal(
+            string terminalStatus)
+        {
+            var runId =
+                $"run-requeued-for-recovery-terminal-{terminalStatus}-{Guid.NewGuid():N}";
+
+            await tenantAStore!
+                .RegisterQueuedAsync(
+                    CreateEntry(
+                        runId,
+                        "tenant-a",
+                        runtimeInstanceId: "runtime-a"))
+                .ConfigureAwait(false);
+
+            if (terminalStatus == "completed")
+            {
+                await tenantAStore
+                    .MarkCompletedAsync(
+                        runId,
+                        "execution-1")
+                    .ConfigureAwait(false);
+            }
+            else if (terminalStatus == "failed")
+            {
+                await tenantAStore
+                    .MarkFailedAsync(
+                        runId,
+                        "execution-1",
+                        "terminal")
+                    .ConfigureAwait(false);
+            }
+            else if (terminalStatus == "cancelled")
+            {
+                await tenantAStore
+                    .MarkCancelledAsync(
+                        runId,
+                        "execution-1",
+                        "terminal")
+                    .ConfigureAwait(false);
+            }
+            else
+            {
+                await tenantAStore
+                    .MarkStartedAsync(
+                        runId,
+                        "execution-1")
+                    .ConfigureAwait(false);
+
+                await tenantAStore
+                    .MarkRequeuedForRecoveryAsync(
+                        runId,
+                        "execution-1",
+                        "terminal")
+                    .ConfigureAwait(false);
+            }
+
+            var changed =
+                await tenantAStore
+                    .MarkRequeuedForRecoveryAsync(
+                        runId,
+                        "execution-1",
+                        "runtime-execution-recovery-requeue")
+                    .ConfigureAwait(false);
+
+            var entry =
+                await tenantAStore
+                    .GetAsync(runId)
+                    .ConfigureAwait(false);
+
+            Assert.False(changed);
+            Assert.NotNull(entry);
+            Assert.Equal(terminalStatus, entry!.Status);
+
+            if (terminalStatus == "completed")
+            {
+                Assert.Null(entry.FailureReason);
+            }
+            else
+            {
+                Assert.Equal("terminal", entry.FailureReason);
+            }
+        }
+
+        private static AiRuntimeRunExecutionIndexEntry CreateEntry(
+            string runId,
+            string tenantId,
+            string runtimeInstanceId)
+        {
+            return new AiRuntimeRunExecutionIndexEntry
+            {
+                RunId = runId,
+                RuntimeInstanceId = runtimeInstanceId,
+                Status = "queued",
+                CreatedAtUtc = DateTimeOffset.UtcNow,
+                ExecutionContextSnapshot = CreateSnapshot(tenantId),
+                Metadata = new Dictionary<string, string>
+                {
+                    ["tenantId"] = tenantId,
+                    ["source"] = "redis-runtime-run-index-test"
+                }
+            };
         }
 
         private static ExecutionContextSnapshot CreateSnapshot(

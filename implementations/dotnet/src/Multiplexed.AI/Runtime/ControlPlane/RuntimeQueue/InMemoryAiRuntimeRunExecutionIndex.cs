@@ -24,6 +24,13 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue
     /// </remarks>
     public sealed class InMemoryAiRuntimeRunExecutionIndex : IAiRuntimeRunExecutionIndex
     {
+        private const string StatusQueued = "queued";
+        private const string StatusRunning = "running";
+        private const string StatusCompleted = "completed";
+        private const string StatusFailed = "failed";
+        private const string StatusCancelled = "cancelled";
+        private const string StatusRequeuedForRecovery = "requeued-for-recovery";
+
         private readonly ConcurrentDictionary<string, AiRuntimeRunExecutionIndexEntry> _entries =
             new(StringComparer.Ordinal);
 
@@ -65,7 +72,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue
                 RunId = entry.RunId,
                 ExecutionId = entry.ExecutionId,
                 RuntimeInstanceId = entry.RuntimeInstanceId,
-                Status = string.IsNullOrWhiteSpace(entry.Status) ? "queued" : entry.Status,
+                Status = string.IsNullOrWhiteSpace(entry.Status) ? StatusQueued : entry.Status,
                 FailureReason = entry.FailureReason,
                 CreatedAtUtc = entry.CreatedAtUtc == default ? now : entry.CreatedAtUtc,
                 StartedAtUtc = entry.StartedAtUtc,
@@ -98,7 +105,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue
                 {
                     RunId = runId,
                     ExecutionId = executionId,
-                    Status = "running",
+                    Status = StatusRunning,
                     CreatedAtUtc = now,
                     StartedAtUtc = now,
                     ExecutionContextSnapshot = TryResolveSnapshot()
@@ -108,7 +115,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue
                     RunId = existing.RunId,
                     ExecutionId = executionId,
                     RuntimeInstanceId = existing.RuntimeInstanceId,
-                    Status = "running",
+                    Status = StatusRunning,
                     FailureReason = null,
                     CreatedAtUtc = existing.CreatedAtUtc,
                     StartedAtUtc = existing.StartedAtUtc ?? now,
@@ -141,7 +148,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue
                 {
                     RunId = runId,
                     ExecutionId = executionId,
-                    Status = "completed",
+                    Status = StatusCompleted,
                     CreatedAtUtc = now,
                     StartedAtUtc = now,
                     CompletedAtUtc = now,
@@ -152,7 +159,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue
                     RunId = existing.RunId,
                     ExecutionId = executionId,
                     RuntimeInstanceId = existing.RuntimeInstanceId,
-                    Status = "completed",
+                    Status = StatusCompleted,
                     FailureReason = null,
                     CreatedAtUtc = existing.CreatedAtUtc,
                     StartedAtUtc = existing.StartedAtUtc ?? now,
@@ -186,7 +193,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue
                 {
                     RunId = runId,
                     ExecutionId = executionId,
-                    Status = "failed",
+                    Status = StatusFailed,
                     FailureReason = failureReason,
                     CreatedAtUtc = now,
                     CompletedAtUtc = now,
@@ -197,7 +204,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue
                     RunId = existing.RunId,
                     ExecutionId = executionId ?? existing.ExecutionId,
                     RuntimeInstanceId = existing.RuntimeInstanceId,
-                    Status = "failed",
+                    Status = StatusFailed,
                     FailureReason = failureReason,
                     CreatedAtUtc = existing.CreatedAtUtc,
                     StartedAtUtc = existing.StartedAtUtc,
@@ -230,7 +237,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue
                 {
                     RunId = runId,
                     ExecutionId = executionId,
-                    Status = "cancelled",
+                    Status = StatusCancelled,
                     FailureReason = reason,
                     CreatedAtUtc = now,
                     CompletedAtUtc = now,
@@ -241,7 +248,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue
                     RunId = existing.RunId,
                     ExecutionId = executionId ?? existing.ExecutionId,
                     RuntimeInstanceId = existing.RuntimeInstanceId,
-                    Status = "cancelled",
+                    Status = StatusCancelled,
                     FailureReason = reason,
                     CreatedAtUtc = existing.CreatedAtUtc,
                     StartedAtUtc = existing.StartedAtUtc,
@@ -253,6 +260,55 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue
                 });
 
             return Task.CompletedTask;
+        }
+
+        /// <inheritdoc />
+        public Task<bool> MarkRequeuedForRecoveryAsync(
+            string runId,
+            string executionId,
+            string reason,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(runId);
+            ArgumentException.ThrowIfNullOrWhiteSpace(executionId);
+            ArgumentException.ThrowIfNullOrWhiteSpace(reason);
+
+            cancellationToken.ThrowIfCancellationRequested();
+
+            while (true)
+            {
+                if (!_entries.TryGetValue(runId, out var existing))
+                {
+                    return Task.FromResult(false);
+                }
+
+                if (!BelongsToCurrentTenant(existing) ||
+                    IsTerminal(existing))
+                {
+                    return Task.FromResult(false);
+                }
+
+                var updated = new AiRuntimeRunExecutionIndexEntry
+                {
+                    RunId = existing.RunId,
+                    ExecutionId = executionId,
+                    RuntimeInstanceId = existing.RuntimeInstanceId,
+                    Status = StatusRequeuedForRecovery,
+                    FailureReason = reason,
+                    CreatedAtUtc = existing.CreatedAtUtc,
+                    StartedAtUtc = existing.StartedAtUtc,
+                    CompletedAtUtc = DateTimeOffset.UtcNow,
+                    ExecutionContextSnapshot =
+                        existing.ExecutionContextSnapshot ??
+                        TryResolveSnapshot(),
+                    Metadata = existing.Metadata
+                };
+
+                if (_entries.TryUpdate(runId, updated, existing))
+                {
+                    return Task.FromResult(true);
+                }
+            }
         }
 
         /// <inheritdoc />
@@ -310,9 +366,21 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue
         private static bool IsUnfinished(
             AiRuntimeRunExecutionIndexEntry entry)
         {
-            return !string.Equals(entry.Status, "completed", StringComparison.OrdinalIgnoreCase) &&
-                   !string.Equals(entry.Status, "failed", StringComparison.OrdinalIgnoreCase) &&
-                   !string.Equals(entry.Status, "cancelled", StringComparison.OrdinalIgnoreCase);
+            return !IsTerminal(entry);
+        }
+
+        /// <summary>
+        /// Determines whether an index entry has reached a terminal runtime-run state.
+        /// </summary>
+        /// <param name="entry">The runtime run index entry.</param>
+        /// <returns>True when the entry is terminal; otherwise false.</returns>
+        private static bool IsTerminal(
+            AiRuntimeRunExecutionIndexEntry entry)
+        {
+            return string.Equals(entry.Status, StatusCompleted, StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(entry.Status, StatusFailed, StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(entry.Status, StatusCancelled, StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(entry.Status, StatusRequeuedForRecovery, StringComparison.OrdinalIgnoreCase);
         }
 
         /// <summary>
