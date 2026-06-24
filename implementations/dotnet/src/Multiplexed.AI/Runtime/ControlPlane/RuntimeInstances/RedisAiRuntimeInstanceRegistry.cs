@@ -192,7 +192,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances
 
             var effectiveCanAcceptRun =
                 existing.Role == AiRuntimeInstanceRole.Runtime &&
-                canAcceptRun;
+                canAcceptRun &&
+                IsAcceptingStatus(status);
 
             var effectiveAvailableRunSlots =
                 existing.Role == AiRuntimeInstanceRole.Runtime
@@ -811,6 +812,17 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances
                 .Trim()
                 .Replace(" ", "-", StringComparison.Ordinal)
                 .Replace("\\", "/", StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Determines whether a runtime instance status may accept new runs.
+        /// </summary>
+        /// <param name="status">The runtime instance status.</param>
+        /// <returns><c>true</c> when the runtime instance status can accept new runs; otherwise, <c>false</c>.</returns>
+        private static bool IsAcceptingStatus(
+            AiRuntimeInstanceStatus status)
+        {
+            return status is AiRuntimeInstanceStatus.Ready or AiRuntimeInstanceStatus.Busy;
         }
 
         /// <summary>

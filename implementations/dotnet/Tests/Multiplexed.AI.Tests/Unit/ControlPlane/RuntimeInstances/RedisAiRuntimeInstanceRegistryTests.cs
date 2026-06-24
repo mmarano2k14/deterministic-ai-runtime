@@ -296,6 +296,148 @@ namespace Multiplexed.AI.Tests.Runtime.ControlPlane.RuntimeInstances
         }
 
         /// <summary>
+        /// Verifies that an unhealthy runtime heartbeat is never exposed as dispatchable capacity,
+        /// even when heartbeat reports available slots.
+        /// </summary>
+        [Fact]
+        public async Task HeartbeatAsync_Should_Mark_Unhealthy_Runtime_As_NonAccepting()
+        {
+            var redis = await ConnectionMultiplexer.ConnectAsync("localhost:6379");
+            var registry = CreateRegistry(redis);
+
+            var runtimeInstanceId = $"test-runtime-{Guid.NewGuid():N}";
+
+            await registry.RegisterAsync(
+                CreateRegistration(
+                    runtimeInstanceId,
+                    tenantId: "tenant-1",
+                    tenantGroupId: "tenant-group-1",
+                    workerCount: 10,
+                    queueCapacity: 100,
+                    maxConcurrentRuns: 5));
+
+            var snapshot = await registry.HeartbeatAsync(
+                runtimeInstanceId,
+                queuedRunCount: 0,
+                runningRunCount: 0,
+                activeRunCount: 0,
+                availableRunSlots: 5,
+                activeWorkerCount: 0,
+                availableWorkerCount: 10,
+                maxLocalWorkersPerExecution: 2,
+                isQueuePaused: false,
+                canAcceptRun: true,
+                status: AiRuntimeInstanceStatus.Unhealthy);
+
+            AssertRuntimeSnapshot(
+                snapshot,
+                runtimeInstanceId,
+                tenantId: "tenant-1",
+                tenantGroupId: "tenant-group-1",
+                status: AiRuntimeInstanceStatus.Unhealthy,
+                availableRunSlots: 5,
+                canAcceptRun: false,
+                activeWorkerCount: 0,
+                availableWorkerCount: 10,
+                maxLocalWorkersPerExecution: 2);
+        }
+
+        /// <summary>
+        /// Verifies that a paused runtime heartbeat is never exposed as dispatchable capacity,
+        /// even when heartbeat reports available slots.
+        /// </summary>
+        [Fact]
+        public async Task HeartbeatAsync_Should_Mark_Paused_Runtime_As_NonAccepting()
+        {
+            var redis = await ConnectionMultiplexer.ConnectAsync("localhost:6379");
+            var registry = CreateRegistry(redis);
+
+            var runtimeInstanceId = $"test-runtime-{Guid.NewGuid():N}";
+
+            await registry.RegisterAsync(
+                CreateRegistration(
+                    runtimeInstanceId,
+                    tenantId: "tenant-1",
+                    tenantGroupId: "tenant-group-1",
+                    workerCount: 10,
+                    queueCapacity: 100,
+                    maxConcurrentRuns: 5));
+
+            var snapshot = await registry.HeartbeatAsync(
+                runtimeInstanceId,
+                queuedRunCount: 0,
+                runningRunCount: 0,
+                activeRunCount: 0,
+                availableRunSlots: 5,
+                activeWorkerCount: 0,
+                availableWorkerCount: 10,
+                maxLocalWorkersPerExecution: 2,
+                isQueuePaused: true,
+                canAcceptRun: true,
+                status: AiRuntimeInstanceStatus.Paused);
+
+            AssertRuntimeSnapshot(
+                snapshot,
+                runtimeInstanceId,
+                tenantId: "tenant-1",
+                tenantGroupId: "tenant-group-1",
+                status: AiRuntimeInstanceStatus.Paused,
+                availableRunSlots: 5,
+                isQueuePaused: true,
+                canAcceptRun: false,
+                activeWorkerCount: 0,
+                availableWorkerCount: 10,
+                maxLocalWorkersPerExecution: 2);
+        }
+
+        /// <summary>
+        /// Verifies that a draining runtime heartbeat is never exposed as dispatchable capacity,
+        /// even when heartbeat reports available slots.
+        /// </summary>
+        [Fact]
+        public async Task HeartbeatAsync_Should_Mark_Draining_Runtime_As_NonAccepting()
+        {
+            var redis = await ConnectionMultiplexer.ConnectAsync("localhost:6379");
+            var registry = CreateRegistry(redis);
+
+            var runtimeInstanceId = $"test-runtime-{Guid.NewGuid():N}";
+
+            await registry.RegisterAsync(
+                CreateRegistration(
+                    runtimeInstanceId,
+                    tenantId: "tenant-1",
+                    tenantGroupId: "tenant-group-1",
+                    workerCount: 10,
+                    queueCapacity: 100,
+                    maxConcurrentRuns: 5));
+
+            var snapshot = await registry.HeartbeatAsync(
+                runtimeInstanceId,
+                queuedRunCount: 0,
+                runningRunCount: 0,
+                activeRunCount: 0,
+                availableRunSlots: 5,
+                activeWorkerCount: 0,
+                availableWorkerCount: 10,
+                maxLocalWorkersPerExecution: 2,
+                isQueuePaused: false,
+                canAcceptRun: true,
+                status: AiRuntimeInstanceStatus.Draining);
+
+            AssertRuntimeSnapshot(
+                snapshot,
+                runtimeInstanceId,
+                tenantId: "tenant-1",
+                tenantGroupId: "tenant-group-1",
+                status: AiRuntimeInstanceStatus.Draining,
+                availableRunSlots: 5,
+                canAcceptRun: false,
+                activeWorkerCount: 0,
+                availableWorkerCount: 10,
+                maxLocalWorkersPerExecution: 2);
+        }
+
+        /// <summary>
         /// Creates a Redis-backed runtime instance registry for tests.
         /// </summary>
         /// <param name="redis">The Redis connection multiplexer.</param>
