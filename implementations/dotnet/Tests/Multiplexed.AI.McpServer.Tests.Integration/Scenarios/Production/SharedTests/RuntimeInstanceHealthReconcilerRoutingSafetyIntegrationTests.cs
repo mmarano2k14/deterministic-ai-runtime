@@ -1,8 +1,14 @@
 ﻿using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Health;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue;
+using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Claiming;
+using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Queue;
+using Multiplexed.Abstractions.Core.ExecutionContext;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Health;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue;
+using Multiplexed.AI.Runtime.ControlPlane.SharedQueue;
 
 namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.SharedTests
 {
@@ -248,6 +254,160 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Shared
             Assert.False(draining.CanAcceptRun);
             Assert.False(unhealthy.CanAcceptRun);
             Assert.False(stopped.CanAcceptRun);
+        }
+
+        /// <summary>
+        /// Verifies that health reconciliation only protects routing and does not perform execution recovery.
+        /// </summary>
+        [Fact]
+        public async Task ReconcileAsync_Should_Not_Requeue_Or_Modify_Assigned_Run_Ownership()
+        {
+            var registry = new InMemoryAiRuntimeInstanceRegistry();
+            var sharedQueue = new InMemoryAiSharedQueue();
+            var runExecutionIndex = new InMemoryAiRuntimeRunExecutionIndex();
+
+            const string runtimeInstanceId = "runtime-tenant-a-1";
+            const string sharedRunId = "shared-run-1";
+            const string localRunId = "local-run-1";
+            const string executionId = "execution-1";
+
+            var contextSnapshot = CreateExecutionContextSnapshot(
+                tenantId: "tenant-a",
+                tenantGroupId: "tenant-group-a");
+
+            await registry.RegisterAsync(
+                CreateRegistration(
+                    runtimeInstanceId,
+                    tenantId: "tenant-a",
+                    tenantGroupId: "tenant-group-a"));
+
+            await sharedQueue.EnqueueAsync(new AiSharedQueueItem
+            {
+                SharedRunId = sharedRunId,
+                Status = AiSharedQueueItemStatus.Pending,
+                ExecutionContextSnapshot = contextSnapshot,
+                PipelineKey = "health-reconciler-test",
+                Priority = 0,
+                EnqueuedAtUtc = DateTimeOffset.UtcNow,
+                UpdatedAtUtc = DateTimeOffset.UtcNow,
+                Metadata = new Dictionary<string, string>
+                {
+                    ["scenario"] = "health-not-recovery"
+                }
+            });
+
+            var claimed = await sharedQueue.ClaimNextAsync(new AiSharedQueueClaimRequest
+            {
+                RuntimeInstanceId = runtimeInstanceId,
+                WorkerId = "worker-1",
+                TenantId = "tenant-a",
+                PipelineKey = "health-reconciler-test",
+                ClaimTtl = TimeSpan.FromMinutes(5),
+                Reason = "test-claim"
+            });
+
+            Assert.NotNull(claimed);
+            Assert.False(string.IsNullOrWhiteSpace(claimed!.ClaimToken));
+
+            await sharedQueue.MarkDispatchedAsync(
+                sharedRunId,
+                claimed.ClaimToken!,
+                reason: "test-dispatch");
+
+            await runExecutionIndex.RegisterQueuedAsync(new AiRuntimeRunExecutionIndexEntry
+            {
+                RunId = localRunId,
+                ExecutionId = executionId,
+                RuntimeInstanceId = runtimeInstanceId,
+                Status = "queued",
+                CreatedAtUtc = DateTimeOffset.UtcNow,
+                ExecutionContextSnapshot = contextSnapshot,
+                Metadata = new Dictionary<string, string>
+                {
+                    ["scenario"] = "health-not-recovery"
+                }
+            });
+
+            await runExecutionIndex.MarkStartedAsync(
+                localRunId,
+                executionId);
+
+            var reconciler = CreateReconciler(
+                registry,
+                new AiRuntimeInstanceHealthReconciliationOptions
+                {
+                    Enabled = true,
+                    StaleHeartbeatThreshold = TimeSpan.Zero,
+                    MarkStaleRuntimeUnhealthy = true,
+                    IncludeReadyRuntimeInstances = true,
+                    IncludeBusyRuntimeInstances = true
+                });
+
+            var result = await reconciler.ReconcileAsync();
+
+            var runtime = await registry.GetAsync(runtimeInstanceId);
+            var queueItem = await sharedQueue.GetAsync(sharedRunId);
+            var activeQueueItems = await sharedQueue.ListAsync();
+            var terminalQueueItems = await sharedQueue.ListAsync(includeTerminal: true);
+            var unfinishedRuns = await runExecutionIndex.ListUnfinishedByRuntimeInstanceAsync(runtimeInstanceId);
+
+            Assert.Equal(1, result.ScannedCount);
+            Assert.Equal(1, result.MarkedUnhealthyCount);
+            Assert.Equal(0, result.IgnoredCount);
+
+            Assert.NotNull(runtime);
+            Assert.Equal(AiRuntimeInstanceStatus.Unhealthy, runtime!.Status);
+            Assert.False(runtime.CanAcceptRun);
+
+            Assert.NotNull(queueItem);
+            Assert.Equal(AiSharedQueueItemStatus.Dispatched, queueItem!.Status);
+            Assert.Equal(runtimeInstanceId, queueItem.ClaimedByRuntimeInstanceId);
+            Assert.Equal("worker-1", queueItem.ClaimedByWorkerId);
+            Assert.Equal(claimed.ClaimToken, queueItem.ClaimToken);
+            Assert.Equal("test-dispatch", queueItem.Reason);
+            Assert.Equal("tenant-a", queueItem.ExecutionContextSnapshot.TenantId);
+            Assert.Equal("tenant-group-a", queueItem.ExecutionContextSnapshot.TenantGroupId);
+
+            Assert.Empty(activeQueueItems);
+
+            var terminalItem = Assert.Single(terminalQueueItems);
+            Assert.Equal(sharedRunId, terminalItem.SharedRunId);
+            Assert.Equal(AiSharedQueueItemStatus.Dispatched, terminalItem.Status);
+            Assert.Equal(runtimeInstanceId, terminalItem.ClaimedByRuntimeInstanceId);
+            Assert.Equal(claimed.ClaimToken, terminalItem.ClaimToken);
+
+            var unfinished = Assert.Single(unfinishedRuns);
+            Assert.Equal(runtimeInstanceId, unfinished.RuntimeInstanceId);
+            Assert.Equal(localRunId, unfinished.RunId);
+            Assert.Equal(executionId, unfinished.ExecutionId);
+            Assert.Equal("running", unfinished.Status);
+            Assert.Equal("tenant-a", unfinished.ExecutionContextSnapshot.TenantId);
+            Assert.Equal("tenant-group-a", unfinished.ExecutionContextSnapshot.TenantGroupId);
+        }
+
+        /// <summary>
+        /// Creates an execution context snapshot for tenant-aware test records.
+        /// </summary>
+        /// <param name="tenantId">The tenant identifier.</param>
+        /// <param name="tenantGroupId">The tenant group identifier.</param>
+        /// <returns>The execution context snapshot.</returns>
+        private static ExecutionContextSnapshot CreateExecutionContextSnapshot(
+            string tenantId,
+            string tenantGroupId)
+        {
+            return new ExecutionContextSnapshot
+            {
+                ContextKey = $"ctx-{tenantId}",
+                Project = "deterministic-ai-runtime-tests",
+                UserId = "test-user",
+                TenantId = tenantId,
+                TenantGroupId = tenantGroupId,
+                CurrentNamespace = "default",
+                Namespaces = new List<NamespaceEntry>(),
+                InFlightCount = 0,
+                TtlSeconds = 300,
+                CreatedAtUtc = DateTime.Now
+            };
         }
 
         /// <summary>

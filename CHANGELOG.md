@@ -6,6 +6,91 @@ This project follows a deterministic runtime and observability model designed fo
 
 ---
 
+## [1.0.6.9] - 2026-06-24  Runtime Instance Health Reconciler — Routing Safety Hardening
+
+Added a dedicated runtime instance health reconciliation layer to protect dispatch and admission routing from stale or unhealthy runtime instances.
+
+### Added
+
+- Added `IAiRuntimeInstanceHealthReconciler` contract.
+- Added `AiRuntimeInstanceHealthReconciler` implementation.
+- Added `AiRuntimeInstanceHealthReconciliationOptions`.
+- Added `AiRuntimeInstanceHealthReconciliationResult`.
+- Added `AiRuntimeInstanceHealthDecision`.
+- Added `AiRuntimeInstanceHealthReconcilerHostedService`.
+- Added `AiRuntimeInstanceHealthReconcilerHostedServiceOptions`.
+- Added DI registration for runtime instance health reconciliation.
+- Added optional hosted service registration for periodic health reconciliation.
+- Added `MarkUnhealthyAsync(...)` to the runtime instance registry abstraction.
+- Added `MarkUnhealthyAsync(...)` support for both in-memory and Redis runtime instance registries.
+
+### Behavior
+
+The health reconciler scans registered runtime instances and detects stale heartbeats based on a configurable threshold.
+
+When a runtime instance is considered stale, the reconciler marks it as `Unhealthy` through the runtime instance registry.
+
+Once marked unhealthy, the runtime instance is no longer allowed to accept new runs.
+
+The reconciler supports:
+
+- `Enabled`
+- `StaleHeartbeatThreshold`
+- `MarkStaleRuntimeUnhealthy`
+- `IncludeReadyRuntimeInstances`
+- `IncludeBusyRuntimeInstances`
+- `IgnorePausedRuntimeInstances`
+- `IgnoreStoppedRuntimeInstances`
+- `IgnoreDrainingRuntimeInstances`
+- `DryRun`
+
+The hosted service is disabled by default and must be explicitly enabled.
+
+### Routing Safety Boundary
+
+This component is intentionally limited to routing safety.
+
+It does not perform execution recovery.
+
+It does not:
+
+- requeue shared queue items;
+- modify shared run ownership;
+- modify runtime run execution index ownership;
+- move runs to DLQ;
+- restart runtime hosts;
+- kill runtime processes;
+- manage provider lifecycle;
+- recover volatile local runtime queues.
+
+Execution recovery remains a separate responsibility and will be handled by a future dedicated recovery reconciler.
+
+### Tests
+
+Added unit and integration coverage for:
+
+- marking stale `Ready` runtime instances as `Unhealthy`;
+- marking stale `Busy` runtime instances as `Unhealthy`;
+- preserving tenant ownership metadata;
+- preserving runtime capacity metadata;
+- ignoring fresh runtime instances;
+- ignoring already non-routable statuses such as `Paused`, `Draining`, `Stopped`, and `Unhealthy`;
+- validating DI registration;
+- validating hosted service registration;
+- validating hosted service disabled behavior;
+- validating hosted service enabled behavior;
+- proving health reconciliation does not requeue or modify assigned run ownership.
+
+### Production Impact
+
+This hardening prevents unsafe dispatch/admission selection when a runtime instance stops heartbeating or becomes unhealthy.
+
+The shared queue, shared run store, and runtime execution index remain the durable sources of truth for future recovery logic.
+
+This keeps runtime health reconciliation and runtime execution recovery cleanly separated.
+
+---
+
 ## [1.0.6.9] - 2026-06-24 — Runtime Store Hardening
 
 ### Scope
