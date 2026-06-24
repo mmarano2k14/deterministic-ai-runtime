@@ -23,6 +23,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery
     /// Runtime health detection is owned by the runtime instance health reconciler.
     /// Runtime lifecycle is owned by providers and host managers.
     /// Recovery mutation boundaries are owned by the runtime execution recovery transition service.
+    /// Runtime execution index completion state is updated only after a successful recovery transition.
     /// </remarks>
     public sealed class AiRuntimeExecutionRecoveryReconciler : IAiRuntimeExecutionRecoveryReconciler
     {
@@ -165,6 +166,14 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery
                     if (transition.Changed)
                     {
                         recoveredRunCount++;
+
+                        await runtimeRunExecutionIndex
+                            .MarkRequeuedForRecoveryAsync(
+                                unfinishedRun.RunId,
+                                unfinishedRun.ExecutionId,
+                                transition.Reason,
+                                cancellationToken)
+                            .ConfigureAwait(false);
                     }
 
                     decisions.Add(new AiRuntimeExecutionRecoveryDecision

@@ -411,7 +411,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Shared
             Assert.Equal("tenant-a", decision.TenantId);
             Assert.Equal("tenant-group-a", decision.TenantGroupId);
             Assert.Equal("requeue-shared-run", decision.Action);
-            Assert.Equal("dry-run-runtime-execution-recovery", decision.Reason);
+            Assert.Equal("runtime-execution-recovery-requeue", decision.Reason);
             Assert.True(decision.Changed);
 
             Assert.NotNull(sharedRun);
@@ -427,7 +427,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Shared
             Assert.Null(queueItem.ClaimToken);
             Assert.Null(queueItem.ClaimedAtUtc);
             Assert.Null(queueItem.ClaimExpiresAtUtc);
-            Assert.Equal("dry-run-runtime-execution-recovery", queueItem.Reason);
+            Assert.Equal("runtime-execution-recovery-requeue", queueItem.Reason);
 
             var activeItem = Assert.Single(activeQueueItems);
             Assert.Equal(sharedRunId, activeItem.SharedRunId);
@@ -437,18 +437,15 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Shared
             Assert.Equal(sharedRunId, allItem.SharedRunId);
             Assert.Equal(AiSharedQueueItemStatus.Pending, allItem.Status);
 
-            var unfinished = Assert.Single(unfinishedRuns);
-            Assert.Equal(runtimeInstanceId, unfinished.RuntimeInstanceId);
-            Assert.Equal(localRunId, unfinished.RunId);
-            Assert.Equal(executionId, unfinished.ExecutionId);
-            Assert.Equal("running", unfinished.Status);
+            Assert.Empty(unfinishedRuns);
 
             Assert.NotNull(indexEntry);
             Assert.Equal(localRunId, indexEntry!.RunId);
             Assert.Equal(executionId, indexEntry.ExecutionId);
             Assert.Equal(runtimeInstanceId, indexEntry.RuntimeInstanceId);
-            Assert.Equal("running", indexEntry.Status);
-            Assert.Null(indexEntry.CompletedAtUtc);
+            Assert.Equal("requeued-for-recovery", indexEntry.Status);
+            Assert.Equal("runtime-execution-recovery-requeue", indexEntry.FailureReason);
+            Assert.NotNull(indexEntry.CompletedAtUtc);
         }
 
         /// <summary>
@@ -597,6 +594,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Shared
             var activeQueueItems = await sharedQueue.ListAsync();
             var allQueueItems = await sharedQueue.ListAsync(includeTerminal: true);
             var unfinishedRuns = await runExecutionIndex.ListUnfinishedByRuntimeInstanceAsync(runtimeInstanceId);
+            var indexEntry = await runExecutionIndex.GetAsync(localRunId);
 
             Assert.Equal(1, firstRecoveryResult.DiscoveredUnfinishedRunCount);
             Assert.Equal(1, firstRecoveryResult.RecoveredRunCount);
@@ -607,16 +605,16 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Shared
             Assert.Equal("runtime-execution-recovery-requeue", firstDecision.Reason);
             Assert.True(firstDecision.Changed);
 
-            Assert.Equal(1, secondRecoveryResult.DiscoveredUnfinishedRunCount);
+            Assert.Equal(0, secondRecoveryResult.DiscoveredUnfinishedRunCount);
             Assert.Equal(0, secondRecoveryResult.RecoveredRunCount);
 
             var secondDecision = Assert.Single(secondRecoveryResult.Decisions);
             Assert.Equal(runtimeInstanceId, secondDecision.RuntimeInstanceId);
-            Assert.Equal(localRunId, secondDecision.LocalRunId);
-            Assert.Equal(executionId, secondDecision.ExecutionId);
+            Assert.Null(secondDecision.LocalRunId);
+            Assert.Null(secondDecision.ExecutionId);
             Assert.Null(secondDecision.SharedRunId);
             Assert.Equal("none", secondDecision.Action);
-            Assert.Equal("ownership-not-resolved", secondDecision.Reason);
+            Assert.Equal("no-unfinished-runtime-runs", secondDecision.Reason);
             Assert.False(secondDecision.Changed);
 
             Assert.NotNull(queueItem);
@@ -634,11 +632,15 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Shared
             Assert.Equal(sharedRunId, allItem.SharedRunId);
             Assert.Equal(AiSharedQueueItemStatus.Pending, allItem.Status);
 
-            var unfinished = Assert.Single(unfinishedRuns);
-            Assert.Equal(runtimeInstanceId, unfinished.RuntimeInstanceId);
-            Assert.Equal(localRunId, unfinished.RunId);
-            Assert.Equal(executionId, unfinished.ExecutionId);
-            Assert.Equal("running", unfinished.Status);
+            Assert.Empty(unfinishedRuns);
+
+            Assert.NotNull(indexEntry);
+            Assert.Equal(localRunId, indexEntry!.RunId);
+            Assert.Equal(executionId, indexEntry.ExecutionId);
+            Assert.Equal(runtimeInstanceId, indexEntry.RuntimeInstanceId);
+            Assert.Equal("requeued-for-recovery", indexEntry.Status);
+            Assert.Equal("runtime-execution-recovery-requeue", indexEntry.FailureReason);
+            Assert.NotNull(indexEntry.CompletedAtUtc);
         }
 
         /// <summary>
@@ -800,6 +802,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Shared
                 var activeQueueItems = await sharedQueue.ListAsync();
                 var allQueueItems = await sharedQueue.ListAsync(includeTerminal: true);
                 var unfinishedRuns = await runExecutionIndex.ListUnfinishedByRuntimeInstanceAsync(runtimeInstanceId);
+                var indexEntry = await runExecutionIndex.GetAsync(localRunId);
 
                 Assert.Equal(1, recoveryResult.ScannedRuntimeInstanceCount);
                 Assert.Equal(0, recoveryResult.IgnoredRuntimeInstanceCount);
@@ -834,11 +837,15 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Shared
                 Assert.Equal(sharedRunId, allItem.SharedRunId);
                 Assert.Equal(AiSharedQueueItemStatus.Pending, allItem.Status);
 
-                var unfinished = Assert.Single(unfinishedRuns);
-                Assert.Equal(runtimeInstanceId, unfinished.RuntimeInstanceId);
-                Assert.Equal(localRunId, unfinished.RunId);
-                Assert.Equal(executionId, unfinished.ExecutionId);
-                Assert.Equal("running", unfinished.Status);
+                Assert.Empty(unfinishedRuns);
+
+                Assert.NotNull(indexEntry);
+                Assert.Equal(localRunId, indexEntry!.RunId);
+                Assert.Equal(executionId, indexEntry.ExecutionId);
+                Assert.Equal(runtimeInstanceId, indexEntry.RuntimeInstanceId);
+                Assert.Equal("requeued-for-recovery", indexEntry.Status);
+                Assert.Equal("runtime-execution-recovery-requeue", indexEntry.FailureReason);
+                Assert.NotNull(indexEntry.CompletedAtUtc);
             }
             finally
             {
