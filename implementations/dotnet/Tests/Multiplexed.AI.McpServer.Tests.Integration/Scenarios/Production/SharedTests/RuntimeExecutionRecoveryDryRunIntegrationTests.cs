@@ -1,4 +1,5 @@
 ﻿using Microsoft.Extensions.Options;
+using Multiplexed.Abstractions.AI.ControlPlane.Discovery;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Health;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Recovery;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Recovery.Transition;
@@ -8,6 +9,7 @@ using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Ownership;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Store;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Claiming;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Queue;
+using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Redis;
 using Multiplexed.Abstractions.AI.Execution.Instance.Worker;
 using Multiplexed.Abstractions.Core.ExecutionContext;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances;
@@ -18,6 +20,8 @@ using Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue;
 using Multiplexed.AI.Runtime.ControlPlane.SharedController.Ownership;
 using Multiplexed.AI.Runtime.ControlPlane.SharedController.Store;
 using Multiplexed.AI.Runtime.ControlPlane.SharedQueue;
+using Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis;
+using StackExchange.Redis;
 
 namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.SharedTests
 {
@@ -638,6 +642,226 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Shared
         }
 
         /// <summary>
+        /// Verifies that recovery reconciliation can requeue a dispatched Redis shared queue item
+        /// when recovery mutation is explicitly enabled.
+        /// </summary>
+        [Fact]
+        public async Task ReconcileAsync_Should_Requeue_Dispatched_Redis_Shared_Run_When_Recovery_Mutation_Is_Enabled()
+        {
+            var registry = new InMemoryAiRuntimeInstanceRegistry();
+            var sharedRunStore = new InMemoryAiSharedRunStore();
+            var runExecutionIndex = new InMemoryAiRuntimeRunExecutionIndex();
+
+            var keyPrefix = $"test:runtime-recovery-redis:{Guid.NewGuid():N}";
+            await using var redis = await ConnectionMultiplexer.ConnectAsync("localhost:6379");
+
+            try
+            {
+                var sharedQueue = new RedisAiSharedQueue(
+                    redis,
+                    Options.Create(new RedisAiSharedQueueOptions
+                    {
+                        KeyPrefix = keyPrefix,
+                        ListScanLimit = 100
+                    }),
+                    new StaticAiControlPlaneIdResolver("test-control-plane"));
+
+                const string runtimeInstanceId = "runtime-tenant-a-redis-1";
+                const string sharedRunId = "shared-run-recovery-redis-mutation-1";
+                const string localRunId = "local-run-recovery-redis-mutation-1";
+                const string executionId = "execution-recovery-redis-mutation-1";
+
+                var contextSnapshot = CreateExecutionContextSnapshot(
+                    tenantId: "tenant-a",
+                    tenantGroupId: "tenant-group-a");
+
+                await registry.RegisterAsync(
+                    CreateRegistration(
+                        runtimeInstanceId,
+                        tenantId: "tenant-a",
+                        tenantGroupId: "tenant-group-a"));
+
+                await sharedRunStore.CreateAsync(new AiSharedRunRecord
+                {
+                    SharedRunId = sharedRunId,
+                    Status = AiSharedRunStatus.QueuedGlobally,
+                    RunRequest = CreateRunRequest(contextSnapshot),
+                    ExecutionContextSnapshot = contextSnapshot,
+                    PipelineKey = "runtime-recovery-redis-mutation-test",
+                    CorrelationId = "correlation-runtime-recovery-redis-mutation",
+                    RequestedBy = "test",
+                    Source = "integration-test",
+                    Reason = "created-for-runtime-recovery-redis-mutation",
+                    SubmittedAtUtc = DateTimeOffset.UtcNow,
+                    UpdatedAtUtc = DateTimeOffset.UtcNow,
+                    Metadata = new Dictionary<string, string>
+                    {
+                        ["scenario"] = "runtime-recovery-redis-mutation"
+                    }
+                });
+
+                await sharedQueue.EnqueueAsync(new AiSharedQueueItem
+                {
+                    SharedRunId = sharedRunId,
+                    Status = AiSharedQueueItemStatus.Pending,
+                    ExecutionContextSnapshot = contextSnapshot,
+                    PipelineKey = "runtime-recovery-redis-mutation-test",
+                    Priority = 0,
+                    EnqueuedAtUtc = DateTimeOffset.UtcNow,
+                    UpdatedAtUtc = DateTimeOffset.UtcNow,
+                    Metadata = new Dictionary<string, string>
+                    {
+                        ["scenario"] = "runtime-recovery-redis-mutation"
+                    }
+                });
+
+                var claimed = await sharedQueue.ClaimNextAsync(new AiSharedQueueClaimRequest
+                {
+                    RuntimeInstanceId = runtimeInstanceId,
+                    WorkerId = "worker-1",
+                    TenantId = "tenant-a",
+                    PipelineKey = "runtime-recovery-redis-mutation-test",
+                    ClaimTtl = TimeSpan.FromMinutes(5),
+                    Reason = "test-claim"
+                });
+
+                Assert.NotNull(claimed);
+                Assert.False(string.IsNullOrWhiteSpace(claimed!.ClaimToken));
+
+                await sharedQueue.MarkDispatchedAsync(
+                    sharedRunId,
+                    claimed.ClaimToken!,
+                    reason: "test-dispatch");
+
+                await sharedRunStore.MarkDispatchedAsync(
+                    sharedRunId,
+                    runtimeInstanceId,
+                    localRunId,
+                    executionId,
+                    reason: "test-dispatch");
+
+                await runExecutionIndex.RegisterQueuedAsync(new AiRuntimeRunExecutionIndexEntry
+                {
+                    RunId = localRunId,
+                    ExecutionId = executionId,
+                    RuntimeInstanceId = runtimeInstanceId,
+                    Status = "queued",
+                    CreatedAtUtc = DateTimeOffset.UtcNow,
+                    ExecutionContextSnapshot = contextSnapshot,
+                    Metadata = new Dictionary<string, string>
+                    {
+                        ["scenario"] = "runtime-recovery-redis-mutation"
+                    }
+                });
+
+                await runExecutionIndex.MarkStartedAsync(
+                    localRunId,
+                    executionId);
+
+                var healthReconciler = new AiRuntimeInstanceHealthReconciler(
+                    registry,
+                    Options.Create(new AiRuntimeInstanceHealthReconciliationOptions
+                    {
+                        Enabled = true,
+                        StaleHeartbeatThreshold = TimeSpan.Zero,
+                        MarkStaleRuntimeUnhealthy = true,
+                        IncludeReadyRuntimeInstances = true,
+                        IncludeBusyRuntimeInstances = true
+                    }));
+
+                await healthReconciler.ReconcileAsync();
+
+                IAiSharedRunOwnershipResolver ownershipResolver =
+                    new AiSharedRunOwnershipResolver(
+                        sharedQueue,
+                        sharedRunStore);
+
+                IAiRuntimeExecutionRecoveryTransitionService transitionService =
+                    new AiRuntimeExecutionRecoveryTransitionService(sharedQueue);
+
+                var recoveryReconciler = new AiRuntimeExecutionRecoveryReconciler(
+                    registry,
+                    runExecutionIndex,
+                    ownershipResolver,
+                    transitionService,
+                    Options.Create(new AiRuntimeExecutionRecoveryReconciliationOptions
+                    {
+                        Enabled = true,
+                        IncludeUnhealthyRuntimeInstances = true,
+                        IncludeStoppedRuntimeInstances = false,
+                        IncludeDrainingRuntimeInstances = false,
+                        RequeueUnfinishedRuns = true,
+                        DryRun = false
+                    }));
+
+                var recoveryResult = await recoveryReconciler.ReconcileAsync();
+
+                var queueItem = await sharedQueue.GetAsync(sharedRunId);
+                var activeQueueItems = await sharedQueue.ListAsync();
+                var allQueueItems = await sharedQueue.ListAsync(includeTerminal: true);
+                var unfinishedRuns = await runExecutionIndex.ListUnfinishedByRuntimeInstanceAsync(runtimeInstanceId);
+
+                Assert.Equal(1, recoveryResult.ScannedRuntimeInstanceCount);
+                Assert.Equal(0, recoveryResult.IgnoredRuntimeInstanceCount);
+                Assert.Equal(1, recoveryResult.DiscoveredUnfinishedRunCount);
+                Assert.Equal(1, recoveryResult.RecoveredRunCount);
+
+                var decision = Assert.Single(recoveryResult.Decisions);
+                Assert.Equal(runtimeInstanceId, decision.RuntimeInstanceId);
+                Assert.Equal(localRunId, decision.LocalRunId);
+                Assert.Equal(executionId, decision.ExecutionId);
+                Assert.Equal(sharedRunId, decision.SharedRunId);
+                Assert.Equal("tenant-a", decision.TenantId);
+                Assert.Equal("tenant-group-a", decision.TenantGroupId);
+                Assert.Equal("requeue-shared-run", decision.Action);
+                Assert.Equal("runtime-execution-recovery-requeue", decision.Reason);
+                Assert.True(decision.Changed);
+
+                Assert.NotNull(queueItem);
+                Assert.Equal(AiSharedQueueItemStatus.Pending, queueItem!.Status);
+                Assert.Null(queueItem.ClaimedByRuntimeInstanceId);
+                Assert.Null(queueItem.ClaimedByWorkerId);
+                Assert.Null(queueItem.ClaimToken);
+                Assert.Null(queueItem.ClaimedAtUtc);
+                Assert.Null(queueItem.ClaimExpiresAtUtc);
+                Assert.Equal("runtime-execution-recovery-requeue", queueItem.Reason);
+
+                var activeItem = Assert.Single(activeQueueItems);
+                Assert.Equal(sharedRunId, activeItem.SharedRunId);
+                Assert.Equal(AiSharedQueueItemStatus.Pending, activeItem.Status);
+
+                var allItem = Assert.Single(allQueueItems);
+                Assert.Equal(sharedRunId, allItem.SharedRunId);
+                Assert.Equal(AiSharedQueueItemStatus.Pending, allItem.Status);
+
+                var unfinished = Assert.Single(unfinishedRuns);
+                Assert.Equal(runtimeInstanceId, unfinished.RuntimeInstanceId);
+                Assert.Equal(localRunId, unfinished.RunId);
+                Assert.Equal(executionId, unfinished.ExecutionId);
+                Assert.Equal("running", unfinished.Status);
+            }
+            finally
+            {
+                var database = redis.GetDatabase();
+
+                var server = redis.GetServer(
+                    redis.GetEndPoints().First());
+
+                var keys = server.Keys(
+                        database: database.Database,
+                        pattern: $"{keyPrefix}*")
+                    .ToArray();
+
+                if (keys.Length > 0)
+                {
+                    await database.KeyDeleteAsync(keys);
+                }
+
+                await redis.CloseAsync();
+            }
+        }
+
+        /// <summary>
         /// Creates a runtime instance registration.
         /// </summary>
         /// <param name="runtimeInstanceId">The runtime instance identifier.</param>
@@ -710,6 +934,34 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Shared
                     ["scenario"] = "runtime-recovery-dry-run"
                 }
             };
+        }
+
+        /// <summary>
+        /// Static control plane identifier resolver for Redis integration tests.
+        /// </summary>
+        private sealed class StaticAiControlPlaneIdResolver : IAiControlPlaneIdResolver
+        {
+            private readonly string controlPlaneId;
+
+            /// <summary>
+            /// Initializes a new instance of the <see cref="StaticAiControlPlaneIdResolver"/> class.
+            /// </summary>
+            /// <param name="controlPlaneId">The control plane identifier.</param>
+            public StaticAiControlPlaneIdResolver(string controlPlaneId)
+            {
+                ArgumentException.ThrowIfNullOrWhiteSpace(controlPlaneId);
+
+                this.controlPlaneId = controlPlaneId;
+            }
+
+            /// <inheritdoc />
+            public Task<string> ResolveAsync(
+                CancellationToken cancellationToken = default)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                return Task.FromResult(controlPlaneId);
+            }
         }
     }
 }
