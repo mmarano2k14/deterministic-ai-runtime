@@ -6,6 +6,403 @@ This project follows a deterministic runtime and observability model designed fo
 
 ---
 
+## [1.0.6.9] - 2026-06-24 — Runtime Store Hardening
+
+### Scope
+
+This hardening pass focused on the durable control-plane stores required before introducing `RuntimeInstanceHealthReconciler` and later `RuntimeExecutionRecoveryReconciler`.
+
+The goal was to make sure each store can safely support production routing, tenant isolation, dispatch ownership, runtime health semantics, and future recovery scans without mixing health management with recovery logic.
+
+---
+
+### Stores hardened
+
+- `RedisAiSharedRunStore`
+- `RedisAiSharedQueue`
+- `RedisAiRuntimeRunExecutionIndex`
+- `RedisAiRuntimeInstanceCapacityStore`
+- `RedisAiRuntimeInstanceRegistry`
+- Cross-store routing safety integration coverage
+
+---
+
+## SharedRunStore hardening
+
+### Added / validated
+
+- Durable dispatch ownership persistence.
+- `MarkDispatchedAsync` now validated to persist:
+  - `Status = Dispatched`
+  - `AssignedRuntimeInstanceId`
+  - `LocalRunId`
+  - `ExecutionId`
+  - `Reason`
+- `GetAsync` confirms persisted ownership metadata.
+- `ListAsync` confirms dispatched records remain discoverable.
+
+### Test coverage
+
+- `MarkDispatchedAsync_Should_Persist_Dispatch_Ownership_Metadata`
+
+### Production value
+
+This guarantees that once a shared run is dispatched to a runtime instance, the control plane keeps a durable ownership record that can later be used by diagnostics, recovery, or reconciliation flows.
+
+---
+
+## SharedQueue hardening
+
+### Added / validated
+
+- Dispatched queue items remain discoverable for diagnostics and future recovery scans.
+- Default listing excludes terminal items.
+- Explicit terminal listing includes dispatched items.
+- `GetAsync` can still load dispatched items directly.
+
+### Test coverage
+
+- `MarkDispatchedAsync_Should_Keep_Item_Discoverable_When_Including_Terminal_Items`
+
+### Production value
+
+The shared queue now clearly separates active scheduling from durable observability/recovery visibility.
+
+Dispatched items are no longer active scheduling candidates, but they remain recoverable and diagnosable.
+
+---
+
+## RuntimeRunExecutionIndex hardening
+
+### Added / validated
+
+- New lookup method:
+
+```csharp
+Task<IReadOnlyList<AiRuntimeRunExecutionIndexEntry>> ListUnfinishedByRuntimeInstanceAsync(
+    string runtimeInstanceId,
+    CancellationToken cancellationToken = default);
+```
+
+- Redis and in-memory implementations return unfinished runs assigned to a runtime instance.
+- Terminal statuses are excluded:
+  - `completed`
+  - `failed`
+  - `cancelled`
+- Tenant isolation is preserved when listing unfinished runs.
+- Runtime assignment metadata is persisted on queued index entries.
+
+### Test coverage
+
+- `ListUnfinishedByRuntimeInstanceAsync_Should_Return_Only_Unfinished_Runs_For_RuntimeInstance`
+- `ListUnfinishedByRuntimeInstanceAsync_Should_Preserve_Tenant_Isolation`
+- `RegisterQueuedAsync_Should_Persist_Runtime_Assignment_Metadata`
+
+### Production value
+
+This gives the future recovery layer a durable way to discover unfinished work assigned to a failed, unhealthy, or draining runtime instance.
+
+No recovery action is performed yet. This only provides safe discovery.
+
+---
+
+## RuntimeInstanceCapacityStore hardening
+
+### Added / validated
+
+- Added first-class tenant ownership fields to capacity descriptors:
+  - `TenantId`
+  - `TenantGroupId`
+- Tenant-aware visibility now uses effective isolation metadata:
+  - metadata-based tenant ownership remains supported
+  - first-class tenant fields are authoritative when present
+- Dedicated capacity can be matched without relying only on metadata.
+- Existing metadata compatibility preserved.
+
+### Test coverage
+
+- `PublishAsync_Should_Store_Capacity_Descriptor`
+- `ListAsync_Should_Return_Published_Descriptors`
+- `PublishAsync_Should_Store_Unhealthy_NonAccepting_Capacity_Descriptor`
+- `RemoveAsync_Should_Remove_Descriptor`
+- `ListAsync_Should_Return_Dedicated_Capacity_When_FirstClass_Tenant_Matches`
+
+### Production value
+
+Capacity routing now supports proper tenant ownership as a first-class concept while remaining backward compatible with metadata-driven isolation.
+
+---
+
+## RuntimeInstanceRegistry hardening
+
+### Added / validated
+
+- Added first-class tenant ownership to:
+  - `AiRuntimeInstanceRegistration`
+  - `AiRuntimeInstanceSnapshot`
+  - `RuntimeInstanceEntry`
+- Tenant ownership is preserved across:
+  - registration
+  - Redis persistence
+  - snapshot projection
+  - heartbeat updates
+  - draining
+  - unregister
+- Registry visibility now uses effective isolation metadata:
+  - first-class `TenantId` / `TenantGroupId`
+  - metadata fallback compatibility
+- `Draining` and `Stopped` runtime instances are non-dispatchable.
+- Heartbeat status semantics hardened so unsafe statuses cannot accept new runs.
+
+### Health status semantics
+
+The following statuses are now treated as non-dispatchable:
+
+- `Unhealthy`
+- `Paused`
+- `Draining`
+- `Stopped`
+
+Even if a heartbeat reports available slots and `canAcceptRun = true`, the registry forces `CanAcceptRun = false` for unsafe statuses.
+
+### Test coverage
+
+Core registry:
+
+- `RegisterAsync_Should_Create_Runtime_Instance`
+- `GetAsync_Should_Return_Registered_Runtime_Instance`
+- `HeartbeatAsync_Should_Update_Runtime_Instance_Capacity`
+- `HeartbeatAsync_Should_Force_ControlPlane_To_Not_Accept_Runs`
+- `ListAsync_Should_Return_Registered_Runtime_Instances`
+- `MarkDrainingAsync_Should_Mark_Runtime_Instance_As_Draining`
+- `UnregisterAsync_Should_Remove_Runtime_Instance_From_Registry`
+
+Tenant visibility:
+
+- `ListAsync_Should_Treat_Missing_Isolation_Metadata_As_Shared`
+- `GetAsync_Should_Treat_Missing_Isolation_Metadata_As_Shared`
+- `ListAsync_Should_Return_Dedicated_Instance_When_Tenant_Matches`
+- `GetAsync_Should_Return_Dedicated_Instance_When_Tenant_Matches`
+- `ListAsync_Should_Not_Return_Dedicated_Instance_When_Tenant_Does_Not_Match`
+- `GetAsync_Should_Return_Null_For_Dedicated_Instance_When_Tenant_Does_Not_Match`
+- `ListAsync_Should_Return_Dedicated_Instance_When_FirstClass_Tenant_Matches`
+- `GetAsync_Should_Return_Dedicated_Instance_When_FirstClass_Tenant_Matches`
+- `ListAsync_Should_Not_Return_Dedicated_Instance_When_FirstClass_Tenant_Does_Not_Match`
+- `GetAsync_Should_Return_Null_For_Dedicated_Instance_When_FirstClass_Tenant_Does_Not_Match`
+
+Health semantics:
+
+- `HeartbeatAsync_Should_Mark_Unhealthy_Runtime_As_NonAccepting`
+- `HeartbeatAsync_Should_Mark_Paused_Runtime_As_NonAccepting`
+- `HeartbeatAsync_Should_Mark_Draining_Runtime_As_NonAccepting`
+
+### Production value
+
+The registry can now safely act as the source of truth for runtime routing eligibility.
+
+A runtime can still expose diagnostic capacity information, but unsafe runtime statuses no longer allow dispatch selection.
+
+---
+
+## Production assertion hardening
+
+### Added / adjusted
+
+- Mixed-tenant production assertions were updated so hybrid tenants can validly use:
+  - their own dedicated runtime prefix
+  - shared runtime prefix
+- Shared fallback is no longer treated as cross-tenant leakage for hybrid tenants.
+- Dedicated tenant runtime prefix validation remains strict.
+
+### Production value
+
+The production validation scenario now matches the intended isolation model:
+
+- Dedicated tenants stay dedicated.
+- Shared tenants use shared runtimes.
+- Hybrid tenants can use dedicated first and shared fallback when allowed.
+
+---
+
+## Cross-store routing safety integration test
+
+### Added
+
+New integration coverage:
+
+- `RuntimeInstanceRoutingSafetyIntegrationTests`
+- `Marking_Runtime_Unhealthy_Should_Stop_New_Routing_While_Preserving_Assigned_Run_Ownership`
+
+### Validated flow
+
+The test validates the full durable safety chain:
+
+1. Register a tenant-owned runtime instance.
+2. Create a shared run.
+3. Enqueue a shared queue item.
+4. Claim and dispatch the queue item.
+5. Persist shared run dispatch ownership.
+6. Register the runtime run index entry.
+7. Mark the runtime run as started.
+8. Heartbeat the runtime as `Unhealthy`.
+9. Verify new routing is blocked via `CanAcceptRun = false`.
+10. Verify already assigned work remains durable and discoverable.
+
+### Validated stores
+
+- `RedisAiRuntimeInstanceRegistry`
+- `RedisAiSharedQueue`
+- `RedisAiSharedRunStore`
+- `RedisAiRuntimeRunExecutionIndex`
+
+### Assertions
+
+- Registry reports runtime as `Unhealthy`.
+- Registry forces `CanAcceptRun = false`.
+- Shared queue item remains `Dispatched`.
+- Shared queue item is excluded from active queue listing.
+- Shared queue item is included when terminal items are requested.
+- Shared run store preserves:
+  - `AssignedRuntimeInstanceId`
+  - `LocalRunId`
+  - `ExecutionId`
+- Runtime run execution index returns unfinished work by runtime instance.
+- Tenant context remains preserved.
+
+### Production value
+
+This is the architectural gate before implementing `RuntimeInstanceHealthReconciler`.
+
+It proves:
+
+```text
+Health safety = OK
+Recovery discovery = OK
+Recovery action = not implemented yet
+```
+
+---
+
+## Design decisions confirmed
+
+### Health and recovery remain separate
+
+`RuntimeInstanceHealthReconciler` will handle routing safety:
+
+```text
+runtime unhealthy / draining / paused
+→ registry marks runtime non-dispatchable
+→ admission / dispatcher stop selecting it
+```
+
+`RuntimeExecutionRecoveryReconciler` will later handle assigned work recovery:
+
+```text
+runtime failed / unhealthy / expired
+→ discover unfinished assigned work
+→ requeue / restore / fail / DLQ according to policy
+```
+
+### Runtime provider does not own recovery
+
+HTTP/gRPC provider health signals must not directly restart, kill, or recover runtime instances.
+
+Providers may report endpoint health signals such as:
+
+- `http-circuit-open`
+- `http-provider-unavailable`
+- readiness failure
+
+The control plane and lifecycle-owning provider decide what to do next.
+
+### Local runtime queues remain volatile
+
+Durable truth remains in:
+
+- shared queue
+- shared run store
+- runtime run execution index
+- runtime instance registry
+- capacity store
+- existing runtime observability / ledger components
+
+---
+
+## Validation status
+
+All impacted tests passed after this hardening pass.
+
+Validated areas:
+
+- Redis shared run store
+- Redis shared queue
+- Redis runtime run execution index
+- Redis runtime instance capacity store
+- Redis runtime instance registry
+- tenant visibility
+- tenant isolation
+- health status semantics
+- mixed tenant production assertions
+- cross-store routing safety integration
+
+---
+
+## Recommended commits
+
+### Store tenant visibility / ownership
+
+```bash
+git add -A
+git commit -m "Harden runtime instance registry tenant visibility"
+```
+
+### Health status semantics
+
+```bash
+git add -A
+git commit -m "Harden runtime registry health status semantics"
+```
+
+### Cross-store routing safety
+
+```bash
+git add -A
+git commit -m "Add runtime routing safety integration coverage"
+```
+
+Or as one combined commit:
+
+```bash
+git add -A
+git commit -m "Harden runtime store routing safety"
+```
+
+---
+
+## Next step
+
+Start `RuntimeInstanceHealthReconciler` foundation.
+
+Recommended first step:
+
+```text
+Define health signal contract and status transition rules.
+```
+
+Do not mix this yet with runtime execution recovery.
+
+Next implementation boundary:
+
+```text
+RuntimeInstanceHealthReconciler
+→ routing safety only
+
+RuntimeExecutionRecoveryReconciler
+→ assigned work recovery later
+```
+
+---
+
 ## [1.0.6.9] - 2026-06-23 — MCP Production Runtime Scenario Framework
 
 ## Latest increment — HTTP tenant runtime mode validation and provisioning hardening
