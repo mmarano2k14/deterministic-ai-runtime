@@ -3,6 +3,7 @@ using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.ControlPlane.Admission;
 using Multiplexed.Abstractions.AI.ControlPlane.Admission.Reservations;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Capacity;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
 using Multiplexed.Abstractions.AI.Execution.Instance.Worker;
 using Multiplexed.Abstractions.AI.Runtime.Execution.Instance.Worker;
@@ -300,19 +301,22 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.Admission
                     AiRuntimeInstanceStatus.Busy,
                     canAcceptRun: false,
                     queuedRunCount: 8,
-                    runningRunCount: 2),
+                    runningRunCount: 2,
+                    tenantId: "tenant-a"),
                 CreateInstance(
                     "tenant-a-runtime-2",
                     AiRuntimeInstanceStatus.Busy,
                     canAcceptRun: false,
                     queuedRunCount: 8,
-                    runningRunCount: 2),
+                    runningRunCount: 2,
+                    tenantId: "tenant-a"),
                 CreateInstance(
                     "tenant-a-runtime-3",
                     AiRuntimeInstanceStatus.Busy,
                     canAcceptRun: false,
                     queuedRunCount: 8,
-                    runningRunCount: 2));
+                    runningRunCount: 2,
+                    tenantId: "tenant-a"));
 
             var controller = CreateController(
                 registry,
@@ -370,13 +374,15 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.Admission
                     AiRuntimeInstanceStatus.Busy,
                     canAcceptRun: false,
                     queuedRunCount: 8,
-                    runningRunCount: 2),
+                    runningRunCount: 2,
+                    tenantId: "tenant-a"),
                 CreateInstance(
                     "tenant-a-runtime-2",
                     AiRuntimeInstanceStatus.Busy,
                     canAcceptRun: false,
                     queuedRunCount: 8,
-                    runningRunCount: 2));
+                    runningRunCount: 2,
+                    tenantId: "tenant-a"));
 
             var controller = CreateController(
                 registry,
@@ -518,7 +524,9 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.Admission
             bool canAcceptRun,
             int queuedRunCount,
             int runningRunCount,
-            bool? isQueuePaused = null)
+            bool? isQueuePaused = null,
+            string? tenantId = null,
+            string? tenantGroupId = null)
         {
             var now =
                 DateTimeOffset.UtcNow;
@@ -550,8 +558,29 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.Admission
 
                 RegisteredAtUtc = now,
                 LastHeartbeatAtUtc = now,
-                SnapshotAtUtc = now
+                SnapshotAtUtc = now,
+                Metadata = CreateRuntimeInstanceMetadata(tenantId, tenantGroupId)
             };
+        }
+
+        private static IReadOnlyDictionary<string, string> CreateRuntimeInstanceMetadata(
+            string? tenantId,
+            string? tenantGroupId)
+        {
+            var metadata =
+                new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+            if (!string.IsNullOrWhiteSpace(tenantId))
+            {
+                metadata[AiRuntimeInstanceIsolationMetadataKeys.TenantId] = tenantId;
+            }
+
+            if (!string.IsNullOrWhiteSpace(tenantGroupId))
+            {
+                metadata[AiRuntimeInstanceIsolationMetadataKeys.TenantGroupId] = tenantGroupId;
+            }
+
+            return metadata;
         }
 
         private sealed class FakeRuntimeInstanceRegistry :

@@ -216,10 +216,75 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController.Ownership
         }
 
         /// <summary>
-        /// Verifies that resolved ownership is not recoverable when shared queue status is not dispatched.
+        /// Verifies that ownership is resolved but not recoverable when the shared run itself is not dispatched.
         /// </summary>
         [Fact]
-        public async Task ResolveAsync_Should_Resolve_As_NotRecoverable_When_Queue_Is_Not_Dispatched()
+        public async Task ResolveAsync_Should_Resolve_As_NotRecoverable_When_SharedRun_Is_Not_Dispatched()
+        {
+            var sharedQueue = new InMemoryAiSharedQueue();
+            var sharedRunStore = new InMemoryAiSharedRunStore();
+            var resolver = new AiSharedRunOwnershipResolver(sharedQueue, sharedRunStore);
+
+            const string runtimeInstanceId = "runtime-tenant-a-1";
+            const string sharedRunId = "shared-run-1";
+            const string localRunId = "local-run-1";
+            const string executionId = "execution-1";
+
+            var contextSnapshot = CreateExecutionContextSnapshot("tenant-a", "tenant-group-a");
+
+            await sharedRunStore.CreateAsync(new AiSharedRunRecord
+            {
+                SharedRunId = sharedRunId,
+                Status = AiSharedRunStatus.QueuedGlobally,
+                RunRequest = CreateRunRequest(contextSnapshot),
+                ExecutionContextSnapshot = contextSnapshot,
+                LocalRunId = localRunId,
+                ExecutionId = executionId,
+                AssignedRuntimeInstanceId = runtimeInstanceId,
+                PipelineKey = "ownership-test",
+                SubmittedAtUtc = DateTimeOffset.UtcNow,
+                UpdatedAtUtc = DateTimeOffset.UtcNow
+            });
+
+            await sharedQueue.EnqueueAsync(new AiSharedQueueItem
+            {
+                SharedRunId = sharedRunId,
+                Status = AiSharedQueueItemStatus.Pending,
+                ExecutionContextSnapshot = contextSnapshot,
+                PipelineKey = "ownership-test",
+                Priority = 0,
+                EnqueuedAtUtc = DateTimeOffset.UtcNow,
+                UpdatedAtUtc = DateTimeOffset.UtcNow
+            });
+
+            var result = await resolver.ResolveAsync(new AiSharedRunOwnershipResolutionRequest
+            {
+                RuntimeInstanceId = runtimeInstanceId,
+                LocalRunId = localRunId,
+                ExecutionId = executionId,
+                TenantId = "tenant-a",
+                TenantGroupId = "tenant-group-a"
+            });
+
+            Assert.True(result.Resolved);
+            Assert.False(result.CanRecover);
+            Assert.Equal(sharedRunId, result.SharedRunId);
+            Assert.Equal(runtimeInstanceId, result.RuntimeInstanceId);
+            Assert.Equal(localRunId, result.LocalRunId);
+            Assert.Equal(executionId, result.ExecutionId);
+            Assert.Equal("tenant-a", result.TenantId);
+            Assert.Equal("tenant-group-a", result.TenantGroupId);
+            Assert.Equal(AiSharedQueueItemStatus.Pending, result.QueueStatus);
+            Assert.Equal(AiSharedRunStatus.QueuedGlobally, result.SharedRunStatus);
+            Assert.StartsWith("shared-run-ownership-resolved-not-recover", result.Reason, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Verifies that ownership is resolved but not recoverable when the shared run is dispatched
+        /// but the shared queue item is not dispatched.
+        /// </summary>
+        [Fact]
+        public async Task ResolveAsync_Should_Resolve_As_NotRecoverable_When_SharedRun_Is_Dispatched_And_Queue_Is_Not_Dispatched()
         {
             var sharedQueue = new InMemoryAiSharedQueue();
             var sharedRunStore = new InMemoryAiSharedRunStore();
@@ -266,9 +331,17 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController.Ownership
                 TenantGroupId = "tenant-group-a"
             });
 
-            Assert.False(result.Resolved);
+            Assert.True(result.Resolved);
             Assert.False(result.CanRecover);
-            Assert.Equal("shared-run-ownership-not-found", result.Reason);
+            Assert.Equal(sharedRunId, result.SharedRunId);
+            Assert.Equal(runtimeInstanceId, result.RuntimeInstanceId);
+            Assert.Equal(localRunId, result.LocalRunId);
+            Assert.Equal(executionId, result.ExecutionId);
+            Assert.Equal("tenant-a", result.TenantId);
+            Assert.Equal("tenant-group-a", result.TenantGroupId);
+            Assert.Equal(AiSharedQueueItemStatus.Pending, result.QueueStatus);
+            Assert.Equal(AiSharedRunStatus.Dispatched, result.SharedRunStatus);
+            Assert.StartsWith("shared-run-ownership-resolved-not-recover", result.Reason, StringComparison.Ordinal);
         }
 
         /// <summary>

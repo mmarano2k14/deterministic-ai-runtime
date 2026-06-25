@@ -6,6 +6,7 @@ using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Dispatch;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Queue;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Redis;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
 using Multiplexed.Abstractions.AI.Execution.Instance.Worker;
 using Multiplexed.Abstractions.AI.Runtime.Execution.Instance.Worker;
 using Multiplexed.AI.Runtime.ControlPlane.Admission.Reservations;
@@ -99,6 +100,7 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedQueue
 
             var runDispatcher = new FakeSharedRunDispatcher();
             var admissionController = new FakeRunAdmissionController();
+            var runtimeInstanceRegistry = await CreateReadyRuntimeRegistryAsync();
 
             var dispatcher = new AiSharedQueueDispatcher(
                 queue,
@@ -106,7 +108,7 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedQueue
                 runDispatcher,
                 admissionController,
                 new InMemoryAiRuntimeAdmissionReservationStore(),
-                new InMemoryAiRuntimeInstanceRegistry(),
+                runtimeInstanceRegistry,
                 new FakeRuntimeScaleOutRequestPublisher(),
                 new HardcodedAiTenantRuntimeSettingsProvider(),
                 new FakeExecutionContextAccessor(),
@@ -275,13 +277,15 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedQueue
                     CompletedAtUtc = DateTimeOffset.UtcNow
                 });
 
+            var runtimeInstanceRegistry = await CreateReadyRuntimeRegistryAsync();
+
             var dispatcher = new AiSharedQueueDispatcher(
                 queue,
                 store,
                 runDispatcher,
                 new FakeRunAdmissionController(),
                 new InMemoryAiRuntimeAdmissionReservationStore(),
-                new InMemoryAiRuntimeInstanceRegistry(),
+                runtimeInstanceRegistry,
                 new FakeRuntimeScaleOutRequestPublisher(),
                 new HardcodedAiTenantRuntimeSettingsProvider(),
                 new FakeExecutionContextAccessor(),
@@ -336,8 +340,12 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedQueue
                 CreateQueueItem(sharedRunId));
 
             var tasks = Enumerable.Range(0, 20)
-                .Select(index =>
+                .Select(async index =>
                 {
+                    var runtimeInstanceId = $"runtime-{index}";
+                    var runtimeInstanceRegistry = await CreateReadyRuntimeRegistryAsync(runtimeInstanceId)
+                        .ConfigureAwait(false);
+
                     var dispatcher = new AiSharedQueueDispatcher(
                         queue,
                         store,
@@ -346,7 +354,7 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedQueue
                             {
                                 Success = true,
                                 SharedRunId = sharedRunId,
-                                RuntimeInstanceId = $"runtime-{index}",
+                                RuntimeInstanceId = runtimeInstanceId,
                                 LocalRunId = $"local-run-{index}",
                                 ExecutionId = $"execution-{index}",
                                 Message = "Dispatched.",
@@ -354,23 +362,23 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedQueue
                                 CompletedAtUtc = DateTimeOffset.UtcNow
                             }),
                         new FakeRunAdmissionController(
-                            assignedRuntimeInstanceId: $"runtime-{index}"),
+                            assignedRuntimeInstanceId: runtimeInstanceId),
                         new InMemoryAiRuntimeAdmissionReservationStore(),
-                        new InMemoryAiRuntimeInstanceRegistry(),
+                        runtimeInstanceRegistry,
                         new FakeRuntimeScaleOutRequestPublisher(),
                         new HardcodedAiTenantRuntimeSettingsProvider(),
                         new FakeExecutionContextAccessor(),
                         NullLogger<AiSharedQueueDispatcher>.Instance);
 
-                    return dispatcher.DispatchNextAsync(new AiSharedQueueDispatchRequest
+                    return await dispatcher.DispatchNextAsync(new AiSharedQueueDispatchRequest
                     {
-                        RuntimeInstanceId = $"runtime-{index}",
+                        RuntimeInstanceId = runtimeInstanceId,
                         WorkerId = $"worker-{index}",
                         Metadata = new Dictionary<string, string>
                         {
                             ["controlPlaneId"] = _controlPlaneId
                         }
-                    });
+                    }).ConfigureAwait(false);
                 })
                 .ToArray();
 
@@ -492,6 +500,48 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedQueue
                     ["controlPlaneId"] = _controlPlaneId
                 }
             };
+        }
+
+        private static async Task<InMemoryAiRuntimeInstanceRegistry> CreateReadyRuntimeRegistryAsync(
+            string runtimeInstanceId = "runtime-1")
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(runtimeInstanceId);
+
+            var registry = new InMemoryAiRuntimeInstanceRegistry();
+
+            await registry.RegisterAsync(
+                    new AiRuntimeInstanceRegistration
+                    {
+                        RuntimeInstanceId = runtimeInstanceId,
+                        Role = AiRuntimeInstanceRole.Runtime,
+                        HostName = "redis-shared-queue-dispatcher-test-host",
+                        ProcessId = Environment.ProcessId,
+                        WorkerCount = 1,
+                        QueueCapacity = 100,
+                        MaxConcurrentRuns = 1,
+                        RuntimeVersion = "unit-test",
+                        Metadata = new Dictionary<string, string>
+                        {
+                            ["test"] = "true"
+                        }
+                    })
+                .ConfigureAwait(false);
+
+            await registry.HeartbeatAsync(
+                    runtimeInstanceId,
+                    queuedRunCount: 0,
+                    runningRunCount: 0,
+                    activeRunCount: 0,
+                    availableRunSlots: 1,
+                    activeWorkerCount: 0,
+                    availableWorkerCount: 1,
+                    maxLocalWorkersPerExecution: 1,
+                    isQueuePaused: false,
+                    canAcceptRun: true,
+                    status: AiRuntimeInstanceStatus.Ready)
+                .ConfigureAwait(false);
+
+            return registry;
         }
 
         private string RunId(

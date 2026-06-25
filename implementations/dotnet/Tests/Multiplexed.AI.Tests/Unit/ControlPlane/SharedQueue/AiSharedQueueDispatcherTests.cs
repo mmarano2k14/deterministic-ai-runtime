@@ -1,5 +1,6 @@
 ﻿using Microsoft.Extensions.Logging.Abstractions;
 using Multiplexed.Abstractions.AI.ControlPlane.Admission.Reservations;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Dispatch;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Store;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue;
@@ -28,7 +29,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
                 new FakeSharedRunDispatcher(),
                 new FakeRunAdmissionController(),
                 new InMemoryAiRuntimeAdmissionReservationStore(),
-                new InMemoryAiRuntimeInstanceRegistry(),
+                await CreateReadyRuntimeRegistryAsync(),
                 new FakeRuntimeScaleOutRequestPublisher(),
                 new HardcodedAiTenantRuntimeSettingsProvider(),
                 new FakeExecutionContextAccessor(),
@@ -66,7 +67,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
                 runDispatcher,
                 fakeAdmission,
                 reservationStore,
-                new InMemoryAiRuntimeInstanceRegistry(),
+                await CreateReadyRuntimeRegistryAsync(),
                 new FakeRuntimeScaleOutRequestPublisher(),
                 new HardcodedAiTenantRuntimeSettingsProvider(),
                 new FakeExecutionContextAccessor(),
@@ -129,10 +130,10 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
                 new FakeSharedRunDispatcher(),
                 new FakeRunAdmissionController(),
                 new InMemoryAiRuntimeAdmissionReservationStore(),
-                new InMemoryAiRuntimeInstanceRegistry(),
+                await CreateReadyRuntimeRegistryAsync(),
                 new FakeRuntimeScaleOutRequestPublisher(),
                 new HardcodedAiTenantRuntimeSettingsProvider(),
-                new FakeExecutionContextAccessor(), 
+                new FakeExecutionContextAccessor(),
                 NullLogger<AiSharedQueueDispatcher>.Instance);
 
             var result = await dispatcher.DispatchNextAsync(new AiSharedQueueDispatchRequest
@@ -181,10 +182,10 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
                 runDispatcher,
                 new FakeRunAdmissionController(),
                 new InMemoryAiRuntimeAdmissionReservationStore(),
-                new InMemoryAiRuntimeInstanceRegistry(),
+                await CreateReadyRuntimeRegistryAsync(),
                 new FakeRuntimeScaleOutRequestPublisher(),
                 new HardcodedAiTenantRuntimeSettingsProvider(),
-                new FakeExecutionContextAccessor(),     
+                new FakeExecutionContextAccessor(),
                 NullLogger<AiSharedQueueDispatcher>.Instance);
 
             var result = await dispatcher.DispatchNextAsync(new AiSharedQueueDispatchRequest
@@ -242,7 +243,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
                 new FakeSharedRunDispatcher(),
                 new FakeRunAdmissionController(),
                 new InMemoryAiRuntimeAdmissionReservationStore(),
-                new InMemoryAiRuntimeInstanceRegistry(),
+                await CreateReadyRuntimeRegistryAsync(),
                 new FakeRuntimeScaleOutRequestPublisher(),
                 new HardcodedAiTenantRuntimeSettingsProvider(),
                 new FakeExecutionContextAccessor(),
@@ -295,7 +296,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
                 runDispatcher,
                 admissionController,
                 new InMemoryAiRuntimeAdmissionReservationStore(),
-                new InMemoryAiRuntimeInstanceRegistry(),
+                await CreateReadyRuntimeRegistryAsync(),
                 new FakeRuntimeScaleOutRequestPublisher(),
                 new HardcodedAiTenantRuntimeSettingsProvider(),
                 new FakeExecutionContextAccessor(),
@@ -327,7 +328,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
                 new FakeSharedRunDispatcher(),
                 new FakeRunAdmissionController(),
                 new InMemoryAiRuntimeAdmissionReservationStore(),
-                new InMemoryAiRuntimeInstanceRegistry(),
+                await CreateReadyRuntimeRegistryAsync(),
                 new FakeRuntimeScaleOutRequestPublisher(),
                 new HardcodedAiTenantRuntimeSettingsProvider(),
                 new FakeExecutionContextAccessor(),
@@ -344,9 +345,9 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
                 new InMemoryAiSharedQueue(),
                 new InMemoryAiSharedRunStore(),
                 new FakeSharedRunDispatcher(),
-                new FakeRunAdmissionController(), 
+                new FakeRunAdmissionController(),
                 new InMemoryAiRuntimeAdmissionReservationStore(),
-                new InMemoryAiRuntimeInstanceRegistry(),    
+                await CreateReadyRuntimeRegistryAsync(),
                 new FakeRuntimeScaleOutRequestPublisher(),
                 new HardcodedAiTenantRuntimeSettingsProvider(),
                 new FakeExecutionContextAccessor(),
@@ -401,7 +402,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
                     runDispatcher,
                     new FakeRunAdmissionController(),
                     new InMemoryAiRuntimeAdmissionReservationStore(),
-                    new InMemoryAiRuntimeInstanceRegistry(),
+                    await CreateReadyRuntimeRegistryAsync(),
                     new FakeRuntimeScaleOutRequestPublisher(),
                     new HardcodedAiTenantRuntimeSettingsProvider(),
                     new FakeExecutionContextAccessor(),
@@ -514,7 +515,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
                     runDispatcher,
                     new FakeRunAdmissionController(),
                     reservationStore,
-                    new InMemoryAiRuntimeInstanceRegistry(),
+                    await CreateReadyRuntimeRegistryAsync(),
                     new FakeRuntimeScaleOutRequestPublisher(),
                     new HardcodedAiTenantRuntimeSettingsProvider(),
                     new FakeExecutionContextAccessor(),
@@ -591,7 +592,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
                     runDispatcher,
                     new FakeRunAdmissionController(),
                     reservationStore,
-                    new InMemoryAiRuntimeInstanceRegistry(),
+                    await CreateReadyRuntimeRegistryAsync(),
                     new FakeRuntimeScaleOutRequestPublisher(),
                     new HardcodedAiTenantRuntimeSettingsProvider(),
                     new FakeExecutionContextAccessor(),
@@ -669,7 +670,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
                     runDispatcher,
                     new FakeRunAdmissionController(),
                     new InMemoryAiRuntimeAdmissionReservationStore(),
-                    new InMemoryAiRuntimeInstanceRegistry(),
+                    await CreateReadyRuntimeRegistryAsync(),
                     new FakeRuntimeScaleOutRequestPublisher(),
                     new HardcodedAiTenantRuntimeSettingsProvider(),
                     new FakeExecutionContextAccessor(),
@@ -706,6 +707,60 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
             Assert.Equal(
                 "HTTP runtime dispatch exploded.",
                 queueItem.Reason);
+        }
+
+        /// <summary>
+        /// Creates a ready runtime instance registry entry used by tests that must reach
+        /// the shared run dispatcher after the runtime routability guard.
+        /// </summary>
+        /// <param name="runtimeInstanceId">The runtime instance identifier.</param>
+        /// <param name="tenantId">The optional tenant identifier.</param>
+        /// <param name="tenantGroupId">The optional tenant group identifier.</param>
+        /// <returns>The populated in-memory runtime instance registry.</returns>
+        private static async Task<InMemoryAiRuntimeInstanceRegistry> CreateReadyRuntimeRegistryAsync(
+            string runtimeInstanceId = "runtime-1",
+            string? tenantId = null,
+            string? tenantGroupId = null)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(runtimeInstanceId);
+
+            var registry = new InMemoryAiRuntimeInstanceRegistry();
+
+            await registry.RegisterAsync(
+                    new AiRuntimeInstanceRegistration
+                    {
+                        RuntimeInstanceId = runtimeInstanceId,
+                        TenantId = tenantId,
+                        TenantGroupId = tenantGroupId,
+                        Role = AiRuntimeInstanceRole.Runtime,
+                        HostName = "unit-test-host",
+                        ProcessId = Environment.ProcessId,
+                        WorkerCount = 1,
+                        QueueCapacity = 100,
+                        MaxConcurrentRuns = 1,
+                        RuntimeVersion = "unit-test",
+                        Metadata = new Dictionary<string, string>
+                        {
+                            ["test"] = "true"
+                        }
+                    })
+                .ConfigureAwait(false);
+
+            await registry.HeartbeatAsync(
+                    runtimeInstanceId,
+                    queuedRunCount: 0,
+                    runningRunCount: 0,
+                    activeRunCount: 0,
+                    availableRunSlots: 1,
+                    activeWorkerCount: 0,
+                    availableWorkerCount: 1,
+                    maxLocalWorkersPerExecution: 1,
+                    isQueuePaused: false,
+                    canAcceptRun: true,
+                    status: AiRuntimeInstanceStatus.Ready)
+                .ConfigureAwait(false);
+
+            return registry;
         }
 
         private static AiSharedRunRecord CreateSharedRun(
