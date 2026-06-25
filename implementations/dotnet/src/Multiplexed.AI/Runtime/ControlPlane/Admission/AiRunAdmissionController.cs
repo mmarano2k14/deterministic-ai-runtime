@@ -561,6 +561,12 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission
         /// </summary>
         /// <param name="instance">The runtime instance snapshot.</param>
         /// <returns><see langword="true"/> when the instance should count against the max runtime instance limit; otherwise, <see langword="false"/>.</returns>
+        /// <remarks>
+        /// Runtime instances that are unhealthy, busy, paused, or draining are not necessarily
+        /// routable, but they still represent existing tenant capacity. Counting them prevents
+        /// scale-out replacement from trying to recreate an already-started process with the
+        /// same deterministic runtime instance id suffix.
+        /// </remarks>
         private static bool IsCountableForMaxRuntimeInstances(
             AiRuntimeInstanceSnapshot instance)
         {
@@ -569,8 +575,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission
                 return false;
             }
 
-            return instance.Status is not AiRuntimeInstanceStatus.Stopped
-                and not AiRuntimeInstanceStatus.Unhealthy;
+            return instance.Status is not AiRuntimeInstanceStatus.Stopped;
         }
 
         /// <summary>

@@ -43,6 +43,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                     runtimeHostAssemblyPath);
 
             ApplySharedQueueSettings(settings);
+            ApplyRuntimeExecutionRecoverySettings(settings, scenario);
             ApplySubmitModeSettings(settings, scenario);
             ApplyTenantRuntimeSettings(settings, scenario);
             ApplyScaleOutSettings(settings);
@@ -75,6 +76,34 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             settings["AiSharedQueueBackgroundService:MaxDispatchesPerCycle"] = "10";
 
             settings["AiSharedQueuePump:Enabled"] = "true";
+        }
+
+        /// <summary>
+        /// Applies runtime execution recovery settings used by process-host recovery scenarios.
+        /// </summary>
+        /// <param name="settings">The settings dictionary to mutate.</param>
+        /// <param name="scenario">The production runtime scenario definition.</param>
+        /// <remarks>
+        /// DAG resume is intentionally opt-in. Legacy redispatch recovery scenarios
+        /// must keep creating a new recovered execution, while focused DAG resume
+        /// scenarios explicitly keep the existing execution identifier.
+        /// </remarks>
+        private static void ApplyRuntimeExecutionRecoverySettings(
+            Dictionary<string, string?> settings,
+            ProductionRuntimeScenarioDefinition scenario)
+        {
+            var enableDagExecutionResume =
+                scenario.Name.Contains(
+                    "dag-resume",
+                    StringComparison.OrdinalIgnoreCase);
+
+            settings["AiRuntimeExecutionRecoveryReconciliation:Enabled"] = "true";
+            settings["AiRuntimeExecutionRecoveryReconciliation:IncludeUnhealthyRuntimeInstances"] = "true";
+            settings["AiRuntimeExecutionRecoveryReconciliation:IncludeStoppedRuntimeInstances"] = "true";
+            settings["AiRuntimeExecutionRecoveryReconciliation:IncludeDrainingRuntimeInstances"] = "true";
+            settings["AiRuntimeExecutionRecoveryReconciliation:RequeueUnfinishedRuns"] = "true";
+            settings["AiRuntimeExecutionRecoveryReconciliation:DryRun"] = "false";
+            settings["AiRuntimeExecutionRecoveryReconciliation:EnableDagExecutionResume"] = enableDagExecutionResume.ToString();
         }
 
         /// <summary>

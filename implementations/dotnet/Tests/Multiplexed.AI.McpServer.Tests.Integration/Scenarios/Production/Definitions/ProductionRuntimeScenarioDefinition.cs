@@ -147,7 +147,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Defini
         /// This timeout covers the period during which shared runs are expected
         /// to be assigned to runtime instances and receive local runtime run ids.
         /// </remarks>
-        public TimeSpan DispatchTimeout { get; init; } = TimeSpan.FromMinutes(3);
+        public TimeSpan DispatchTimeout { get; set; } = TimeSpan.FromMinutes(3);
 
         /// <summary>
         /// Gets the timeout used while waiting for terminal completion.
@@ -156,7 +156,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Defini
         /// This timeout covers the period during which dispatched runtime runs are
         /// expected to reach a terminal state.
         /// </remarks>
-        public TimeSpan CompletionTimeout { get; init; } = TimeSpan.FromMinutes(5);
+        public TimeSpan CompletionTimeout { get; set; } = TimeSpan.FromMinutes(5);
 
         /// <summary>
         /// Gets a value indicating whether tenant workloads must be executed sequentially.

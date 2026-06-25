@@ -10,45 +10,52 @@ using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Scaling;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Store;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Claiming;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Queue;
+using Multiplexed.Abstractions.AI.Execution;
+using Multiplexed.Abstractions.AI.Execution.State;
+using Multiplexed.Abstractions.AI.Pipeline;
 using Multiplexed.AI.McpServer.Tests.Integration.Fixtures;
 using Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic;
 using Multiplexed.AI.McpServer.Tests.Integration.Helpers;
 using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Definitions;
+using Multiplexed.AI.Stores;
 using Xunit;
 using Xunit.Abstractions;
 
 namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Providers.Http
 {
     /// <summary>
-    /// HTTP process-host recovery tests proving that an in-flight execution assigned
-    /// to an unhealthy HTTP runtime can be recovered and redispatched to another runtime.
+    /// HTTP process-host DAG resume recovery tests proving that a failed runtime can stop
+    /// at a claimed DAG step and a replacement runtime can resume from that same step
+    /// without replaying already completed steps.
     /// </summary>
-    public sealed class HttpRuntimeExecutionRecoveryRedispatchIntegrationTests
+    public sealed class HttpProcessHostDagResumeRecoveryScenarioTests
     {
-        private const string RequestedBy = "http-runtime-recovery-redispatch-test";
-        private const string Source = "http-runtime-recovery-redispatch";
+        private const string RequestedBy = "http-process-host-dag-resume-recovery-test";
+        private const string Source = "http-process-host-dag-resume-recovery";
+        private const int StepCount = 100;
+        private const int FailureStepNumber = 50;
 
         private readonly ITestOutputHelper output;
 
         /// <summary>
-        /// Initializes a new instance of the <see cref="HttpRuntimeExecutionRecoveryRedispatchIntegrationTests"/> class.
+        /// Initializes a new instance of the <see cref="HttpProcessHostDagResumeRecoveryScenarioTests"/> class.
         /// </summary>
         /// <param name="output">The test output helper.</param>
-        public HttpRuntimeExecutionRecoveryRedispatchIntegrationTests(
+        public HttpProcessHostDagResumeRecoveryScenarioTests(
             ITestOutputHelper output)
         {
             this.output = output ?? throw new ArgumentNullException(nameof(output));
         }
 
         /// <summary>
-        /// Verifies that a shared run already dispatched to a real HTTP runtime process can be
-        /// recovered when that runtime is marked unhealthy and then redispatched to a new healthy runtime.
+        /// Verifies that HTTP process-host recovery resumes a durable DAG from the failed step
+        /// and does not replay steps already completed before the runtime failure.
         /// </summary>
         [Fact]
-        public async Task Http_ProcessHost_Should_Recover_InFlight_Execution_And_Redispatch_To_Healthy_Runtime()
+        public async Task Http_ProcessHost_Should_Resume_Dag_From_Failed_Step_Without_Replaying_Completed_Steps()
         {
             var scenario =
-                CreateHttpRecoveryScenario();
+                CreateHttpDagResumeRecoveryScenario();
 
             scenario.DispatchTimeout = TimeSpan.FromMinutes(1);
             scenario.CompletionTimeout = TimeSpan.FromMinutes(1);
@@ -90,6 +97,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             var recoveryReconciler =
                 host.Services.GetRequiredService<IAiRuntimeExecutionRecoveryReconciler>();
 
+            var dagStore =
+                host.Services.GetRequiredService<IAiDagExecutionStore>();
+
             var recoveryOptions =
                 host.Services
                     .GetRequiredService<IOptions<AiRuntimeExecutionRecoveryReconciliationOptions>>()
@@ -117,10 +127,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 $"{scenario.Name}-{tenant.TenantId}-{Guid.NewGuid():N}";
 
             this.output.WriteLine(
-                $"[HTTP RECOVERY REDISPATCH] Starting. ControlPlaneId='{controlPlaneId}', PipelineKey='{pipelineName}', RuntimeHostAssemblyPath='{runtimeHostAssemblyPath}'.");
-
-            this.output.WriteLine(
-                $"[HTTP RECOVERY REDISPATCH] Recovery options. Enabled='{recoveryOptions.Enabled}', IncludeUnhealthy='{recoveryOptions.IncludeUnhealthyRuntimeInstances}', IncludeStopped='{recoveryOptions.IncludeStoppedRuntimeInstances}', IncludeDraining='{recoveryOptions.IncludeDrainingRuntimeInstances}', RequeueUnfinishedRuns='{recoveryOptions.RequeueUnfinishedRuns}', EnableDagExecutionResume='{recoveryOptions.EnableDagExecutionResume}', DryRun='{recoveryOptions.DryRun}'.");
+                $"[HTTP DAG RESUME] Starting. ControlPlaneId='{controlPlaneId}', PipelineKey='{pipelineName}', RuntimeHostAssemblyPath='{runtimeHostAssemblyPath}'.");
 
             var sharedRunId =
                 await SubmitOneRunAsync(
@@ -154,8 +161,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             var failedLocalRunId =
                 firstDispatch.LocalRunId!;
 
-            var failedExecutionId =
-                $"http-recovery-seeded-execution-{Guid.NewGuid():N}";
+            var existingExecutionId =
+                $"http-dag-resume-existing-execution-{Guid.NewGuid():N}";
 
             await SeedInFlightRuntimeExecutionAsync(
                     sharedRunStore,
@@ -164,21 +171,30 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                     firstDispatch,
                     failedRuntimeInstanceId,
                     failedLocalRunId,
-                    failedExecutionId)
+                    existingExecutionId)
                 .ConfigureAwait(false);
 
-            var failedIndexBeforeRecovery =
-                await runExecutionIndex
-                    .GetAsync(failedLocalRunId)
+            await SeedDurableDagStoppedAtStepAsync(
+                    dagStore,
+                    existingExecutionId,
+                    pipelineName,
+                    firstDispatch.RunRequest?.PipelineDefinition,
+                    StepCount,
+                    FailureStepNumber,
+                    failedRuntimeInstanceId)
+                .ConfigureAwait(false);
+
+            var beforeRecovery =
+                await dagStore
+                    .GetStateAsync(existingExecutionId)
                     .ConfigureAwait(false);
 
-            Assert.NotNull(failedIndexBeforeRecovery);
-            Assert.Equal(failedRuntimeInstanceId, failedIndexBeforeRecovery!.RuntimeInstanceId);
-            Assert.Equal(failedExecutionId, failedIndexBeforeRecovery.ExecutionId);
-            Assert.Equal("running", failedIndexBeforeRecovery.Status);
+            AssertDagStoppedAtFailurePoint(
+                beforeRecovery,
+                FailureStepNumber);
 
             this.output.WriteLine(
-                $"[HTTP RECOVERY REDISPATCH] First HTTP dispatch observed and in-flight execution seeded. SharedRunId='{sharedRunId}', FailedRuntimeInstanceId='{failedRuntimeInstanceId}', LocalRunId='{failedLocalRunId}', ExecutionId='{failedExecutionId}'.");
+                $"[HTTP DAG RESUME] Seeded DAG state. ExecutionId='{existingExecutionId}', CompletedBeforeFailure='{FailureStepNumber - 1}', FailedStep='{FormatStepName(FailureStepNumber)}', FailedRuntimeInstanceId='{failedRuntimeInstanceId}'.");
 
             var recoveryResult =
                 await MarkUnhealthyAndReconcileUntilRecoveredAsync(
@@ -186,12 +202,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                         healthReconciler,
                         recoveryReconciler,
                         failedRuntimeInstanceId,
-                        TimeSpan.FromSeconds(20))
+                        TimeSpan.FromSeconds(30))
                     .ConfigureAwait(false);
-
-            Assert.True(
-                recoveryResult.DiscoveredUnfinishedRunCount >= 1,
-                $"Expected at least one discovered unfinished run, actual '{recoveryResult.DiscoveredUnfinishedRunCount}'.");
 
             Assert.Equal(1, recoveryResult.RecoveredRunCount);
 
@@ -200,11 +212,23 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 decision =>
                     decision.RuntimeInstanceId == failedRuntimeInstanceId &&
                     decision.LocalRunId == failedLocalRunId &&
-                    decision.ExecutionId == failedExecutionId &&
+                    decision.ExecutionId == existingExecutionId &&
                     decision.SharedRunId == sharedRunId &&
                     decision.Action == "requeue-shared-run" &&
                     decision.Reason == "runtime-execution-recovery-requeue" &&
                     decision.Changed);
+
+            var queueItemAfterRecovery =
+                await sharedQueue
+                    .GetAsync(sharedRunId)
+                    .ConfigureAwait(false);
+
+            Assert.NotNull(queueItemAfterRecovery);
+            Assert.Equal(AiSharedQueueItemStatus.Pending, queueItemAfterRecovery!.Status);
+            Assert.Equal("resume-existing-execution", queueItemAfterRecovery.Metadata["recovery.mode"]);
+            Assert.Equal(existingExecutionId, queueItemAfterRecovery.Metadata["recovery.failedExecutionId"]);
+            Assert.Equal(failedRuntimeInstanceId, queueItemAfterRecovery.Metadata["recovery.failedRuntimeInstanceId"]);
+            Assert.Equal(failedLocalRunId, queueItemAfterRecovery.Metadata["recovery.failedLocalRunId"]);
 
             var failedIndexAfterRecovery =
                 await runExecutionIndex
@@ -213,18 +237,15 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
 
             Assert.NotNull(failedIndexAfterRecovery);
             Assert.Equal("requeued-for-recovery", failedIndexAfterRecovery!.Status);
-            Assert.Equal("runtime-execution-recovery-requeue", failedIndexAfterRecovery.FailureReason);
-            Assert.NotNull(failedIndexAfterRecovery.CompletedAtUtc);
 
-            var failedRuntimeUnfinishedRuns =
-                await runExecutionIndex
-                    .ListUnfinishedByRuntimeInstanceAsync(failedRuntimeInstanceId)
+            var recoveredBeforeRedispatch =
+                await dagStore
+                    .GetStateAsync(existingExecutionId)
                     .ConfigureAwait(false);
 
-            Assert.Empty(failedRuntimeUnfinishedRuns);
-
-            this.output.WriteLine(
-                $"[HTTP RECOVERY REDISPATCH] Recovery completed. SharedRunId='{sharedRunId}', FailedRuntimeInstanceId='{failedRuntimeInstanceId}'.");
+            AssertDagStoppedAtFailurePoint(
+                recoveredBeforeRedispatch,
+                FailureStepNumber);
 
             var redispatchedRun =
                 await WaitForSharedRunAssignedAwayFromRuntimeAsync(
@@ -240,9 +261,10 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             Assert.False(string.IsNullOrWhiteSpace(redispatchedRun.LocalRunId));
             Assert.NotEqual(failedRuntimeInstanceId, redispatchedRun.AssignedRuntimeInstanceId);
             Assert.NotEqual(failedLocalRunId, redispatchedRun.LocalRunId);
+            Assert.Equal(existingExecutionId, redispatchedRun.ExecutionId);
 
             this.output.WriteLine(
-                $"[HTTP RECOVERY REDISPATCH] Redispatch observed. SharedRunId='{sharedRunId}', NewRuntimeInstanceId='{redispatchedRun.AssignedRuntimeInstanceId}', NewLocalRunId='{redispatchedRun.LocalRunId}', NewExecutionId='{redispatchedRun.ExecutionId}'.");
+                $"[HTTP DAG RESUME] Redispatch observed. SharedRunId='{sharedRunId}', NewRuntimeInstanceId='{redispatchedRun.AssignedRuntimeInstanceId}', NewLocalRunId='{redispatchedRun.LocalRunId}', ExecutionId='{redispatchedRun.ExecutionId}'.");
 
             var finalStatuses =
                 await McpTestWaitHelpers
@@ -261,25 +283,59 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
 
             Assert.Equal(redispatchedRun.AssignedRuntimeInstanceId, finalStatus.RuntimeInstanceId);
             Assert.Equal(redispatchedRun.LocalRunId, finalStatus.RunId);
-            Assert.Equal("completed", finalStatus.RunState?.Status);
 
-            var recoveredExecutionId =
+            if (!string.Equals(finalStatus.RunState?.Status, "completed", StringComparison.OrdinalIgnoreCase))
+            {
+                var failedDagState =
+                    await dagStore
+                        .GetStateAsync(existingExecutionId)
+                        .ConfigureAwait(false);
+
+                Assert.Fail(
+                    "Recovered DAG resume run did not complete. " +
+                    $"ExpectedStatus='completed', ActualStatus='{finalStatus.RunState?.Status}', " +
+                    $"Success='{finalStatus.Success}', FailureReason='{finalStatus.FailureReason}', Message='{finalStatus.Message}', " +
+                    $"RuntimeInstanceId='{finalStatus.RuntimeInstanceId}', RunId='{finalStatus.RunId}', ExecutionId='{finalStatus.ExecutionId}', " +
+                    $"RunStateExecutionId='{finalStatus.RunState?.ExecutionId}', RunStateFailureReason='{finalStatus.RunState?.FailureReason}', " +
+                    $"DagSummary='{FormatDagStateSummary(failedDagState)}'.");
+            }
+
+            var finalExecutionId =
                 finalStatus.ExecutionId ??
                 finalStatus.RunState?.ExecutionId ??
                 redispatchedRun.ExecutionId;
 
-            Assert.False(string.IsNullOrWhiteSpace(recoveredExecutionId));
-            Assert.NotEqual(failedExecutionId, recoveredExecutionId);
+            Assert.Equal(existingExecutionId, finalExecutionId);
+
+            var finalDagState =
+                await dagStore
+                    .GetStateAsync(existingExecutionId)
+                    .ConfigureAwait(false);
+
+            AssertDagCompletedFromFailurePoint(
+                finalDagState,
+                FailureStepNumber,
+                StepCount);
+
+            var replacementIndex =
+                await runExecutionIndex
+                    .GetAsync(redispatchedRun.LocalRunId!)
+                    .ConfigureAwait(false);
+
+            Assert.NotNull(replacementIndex);
+            Assert.Equal(existingExecutionId, replacementIndex!.ExecutionId);
+            Assert.Equal(redispatchedRun.AssignedRuntimeInstanceId, replacementIndex.RuntimeInstanceId);
+            Assert.Equal("completed", replacementIndex.Status);
 
             this.output.WriteLine(
-                $"[HTTP RECOVERY REDISPATCH] Completed. SharedRunId='{sharedRunId}', FailedExecutionId='{failedExecutionId}', RecoveredExecutionId='{recoveredExecutionId}'.");
+                $"[HTTP DAG RESUME PROOF] ExecutionId='{existingExecutionId}', FailureStep='{FormatStepName(FailureStepNumber)}', CompletedBeforeFailure='{FailureStepNumber - 1}', RecoveredFromStep='{FormatStepName(FailureStepNumber)}', FinalCompletedSteps='{StepCount}/{StepCount}', FailedRuntimeInstanceId='{failedRuntimeInstanceId}', ReplacementRuntimeInstanceId='{redispatchedRun.AssignedRuntimeInstanceId}', FailedLocalRunId='{failedLocalRunId}', ReplacementLocalRunId='{redispatchedRun.LocalRunId}'.");
         }
 
         /// <summary>
-        /// Creates a focused HTTP process-host recovery scenario.
+        /// Creates a focused HTTP process-host DAG resume recovery scenario.
         /// </summary>
         /// <returns>The scenario definition.</returns>
-        private static ProductionRuntimeScenarioDefinition CreateHttpRecoveryScenario()
+        private static ProductionRuntimeScenarioDefinition CreateHttpDagResumeRecoveryScenario()
         {
             var baseScenario =
                 ProductionRuntimeScenarioFactory.CreateSingleTenantDedicatedRuntimeModeScenario();
@@ -289,8 +345,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
 
             return baseScenario with
             {
-                Name = "http-process-host-inflight-recovery-redispatch",
-                ControlPlaneIdPrefix = "http-process-host-inflight-recovery-redispatch",
+                Name = "http-process-host-dag-resume-recovery",
+                ControlPlaneIdPrefix = "http-process-host-dag-resume-recovery",
                 Tenants = new[]
                 {
                     tenant with
@@ -302,8 +358,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                         Run = tenant.Run with
                         {
                             RunCount = 1,
-                            StepCount = 20,
-                            DelayMs = 250,
+                            StepCount = StepCount,
+                            DelayMs = 10,
                             FlakyStepInterval = 0,
                             EnableRetention = true
                         }
@@ -315,7 +371,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 SubmitMode = ProductionRuntimeSubmitMode.DirectDispatch,
                 ScaleOutTimeout = TimeSpan.FromMinutes(2),
                 DispatchTimeout = TimeSpan.FromMinutes(3),
-                CompletionTimeout = TimeSpan.FromMinutes(4),
+                CompletionTimeout = TimeSpan.FromMinutes(5),
                 Assertions = new ProductionRuntimeScenarioAssertionOptions
                 {
                     AssertAllRunsCompleted = true,
@@ -332,7 +388,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
         }
 
         /// <summary>
-        /// Verifies that runtime execution recovery is enabled for this host.
+        /// Verifies that runtime execution recovery options are enabled for DAG resume.
         /// </summary>
         /// <param name="options">The recovery options.</param>
         private static void AssertRecoveryOptionsEnabled(
@@ -343,17 +399,13 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             Assert.True(options.IncludeStoppedRuntimeInstances, "Runtime execution recovery must scan stopped runtime instances.");
             Assert.True(options.IncludeDrainingRuntimeInstances, "Runtime execution recovery must scan draining runtime instances.");
             Assert.True(options.RequeueUnfinishedRuns, "Runtime execution recovery must requeue unfinished runs.");
-            Assert.False(options.EnableDagExecutionResume, "DAG resume must be disabled for the legacy redispatch recovery test because it expects a new recovered execution id.");
+            Assert.True(options.EnableDagExecutionResume, "DAG resume recovery must be enabled for this test.");
             Assert.False(options.DryRun, "Runtime execution recovery must not run in dry-run mode for this test.");
         }
 
         /// <summary>
         /// Submits one shared run through the tenant-scoped MCP client.
         /// </summary>
-        /// <param name="mcp">The tenant-scoped MCP client.</param>
-        /// <param name="tenant">The tenant scenario definition.</param>
-        /// <param name="pipelineName">The pipeline name.</param>
-        /// <returns>The submitted shared run id.</returns>
         private static async Task<string> SubmitOneRunAsync(
             McpTestClient mcp,
             ProductionTenantScenarioDefinition tenant,
@@ -412,21 +464,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
         }
 
         /// <summary>
-        /// Seeds the durable shared queue ownership and runtime execution index for the HTTP recovery scenario.
+        /// Seeds durable shared queue ownership and runtime execution index for recovery.
         /// </summary>
-        /// <remarks>
-        /// The HTTP process-host scenario proves real HTTP runtime dispatch, but the spawned
-        /// runtime process does not yet publish its local execution index into the control-plane
-        /// test service provider. This helper simulates the durable in-flight execution
-        /// observation and shared queue dispatched ownership required by runtime execution recovery.
-        /// </remarks>
-        /// <param name="sharedRunStore">The shared run store.</param>
-        /// <param name="sharedQueue">The shared queue.</param>
-        /// <param name="runExecutionIndex">The runtime run execution index.</param>
-        /// <param name="sharedRun">The dispatched shared run.</param>
-        /// <param name="runtimeInstanceId">The failed runtime instance id.</param>
-        /// <param name="localRunId">The failed runtime local run id.</param>
-        /// <param name="executionId">The seeded execution id.</param>
         private static async Task SeedInFlightRuntimeExecutionAsync(
             IAiSharedRunStore sharedRunStore,
             IAiSharedQueue sharedQueue,
@@ -440,9 +479,6 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             ArgumentNullException.ThrowIfNull(sharedQueue);
             ArgumentNullException.ThrowIfNull(runExecutionIndex);
             ArgumentNullException.ThrowIfNull(sharedRun);
-            ArgumentException.ThrowIfNullOrWhiteSpace(runtimeInstanceId);
-            ArgumentException.ThrowIfNullOrWhiteSpace(localRunId);
-            ArgumentException.ThrowIfNullOrWhiteSpace(executionId);
 
             await sharedRunStore
                 .MarkDispatchedAsync(
@@ -450,7 +486,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                     runtimeInstanceId,
                     localRunId,
                     executionId,
-                    reason: "http-runtime-inflight-recovery-seed")
+                    reason: "http-dag-resume-recovery-seed")
                 .ConfigureAwait(false);
 
             var queueItem =
@@ -472,7 +508,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                         UpdatedAtUtc = DateTimeOffset.UtcNow,
                         Metadata = new Dictionary<string, string>
                         {
-                            ["scenario"] = "http-runtime-inflight-recovery-redispatch",
+                            ["scenario"] = "http-dag-resume-recovery",
                             ["seeded"] = "true"
                         }
                     })
@@ -494,11 +530,11 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                         .ClaimNextAsync(new AiSharedQueueClaimRequest
                         {
                             RuntimeInstanceId = runtimeInstanceId,
-                            WorkerId = "http-runtime-inflight-recovery-seed-worker",
+                            WorkerId = "http-dag-resume-recovery-seed-worker",
                             TenantId = sharedRun.ExecutionContextSnapshot?.TenantId,
                             PipelineKey = sharedRun.PipelineKey,
                             ClaimTtl = TimeSpan.FromMinutes(5),
-                            Reason = "http-runtime-inflight-recovery-seed-claim"
+                            Reason = "http-dag-resume-recovery-seed-claim"
                         })
                         .ConfigureAwait(false);
 
@@ -510,7 +546,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                     .MarkDispatchedAsync(
                         sharedRun.SharedRunId,
                         claim.ClaimToken!,
-                        reason: "http-runtime-inflight-recovery-seed-dispatch")
+                        reason: "http-dag-resume-recovery-seed-dispatch")
                     .ConfigureAwait(false);
             }
 
@@ -525,7 +561,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                     ExecutionContextSnapshot = sharedRun.ExecutionContextSnapshot,
                     Metadata = new Dictionary<string, string>
                     {
-                        ["scenario"] = "http-runtime-inflight-recovery-redispatch",
+                        ["scenario"] = "http-dag-resume-recovery",
                         ["seeded"] = "true"
                     }
                 })
@@ -539,19 +575,248 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
         }
 
         /// <summary>
+        /// Seeds a durable DAG state that has completed all steps before the failure point
+        /// and has the failure step running with an expired lease.
+        /// </summary>
+        private static async Task SeedDurableDagStoppedAtStepAsync(
+            IAiDagExecutionStore dagStore,
+            string executionId,
+            string pipelineName,
+            AiPipelineDefinition? definition,
+            int stepCount,
+            int failureStepNumber,
+            string failedRuntimeInstanceId)
+        {
+            ArgumentNullException.ThrowIfNull(dagStore);
+            ArgumentException.ThrowIfNullOrWhiteSpace(executionId);
+            ArgumentException.ThrowIfNullOrWhiteSpace(pipelineName);
+
+            var stepNames =
+                ResolveStepNames(
+                    definition,
+                    stepCount);
+
+            Assert.Equal(stepCount, stepNames.Count);
+
+            var record =
+                new AiExecutionRecord
+                {
+                    ExecutionId = executionId,
+                    PipelineName = pipelineName,
+                    ExecutionMode = AiExecutionMode.Dag,
+                    Status = AiExecutionStatus.Running,
+                    CreatedAtUtc = DateTime.UtcNow.AddMinutes(-5)
+                };
+
+            for (var stepNumber = 1; stepNumber < failureStepNumber; stepNumber++)
+            {
+                record.CompletedSteps.Add(stepNames[stepNumber - 1]);
+            }
+
+            var state =
+                new AiExecutionState
+                {
+                    ExecutionId = executionId,
+                    PipelineName = pipelineName
+                };
+
+            for (var stepNumber = 1; stepNumber <= stepCount; stepNumber++)
+            {
+                var stepName =
+                    stepNames[stepNumber - 1];
+
+                var dependsOn =
+                    ResolveStepDependencies(
+                        definition,
+                        stepName,
+                        stepNumber);
+
+                var step =
+                    new AiStepState
+                    {
+                        StepName = stepName,
+                        DependsOn = dependsOn,
+                        ClaimTimeoutSeconds = 30,
+                        Inputs = new Dictionary<string, object?>(StringComparer.Ordinal),
+                        Config = new Dictionary<string, object?>(StringComparer.Ordinal)
+                    };
+
+                if (stepNumber < failureStepNumber)
+                {
+                    step.Status = AiStepExecutionStatus.Completed;
+                    step.StartedAtUtc = DateTime.UtcNow.AddMinutes(-5);
+                    step.CompletedAtUtc = DateTime.UtcNow.AddMinutes(-4);
+                }
+                else if (stepNumber == failureStepNumber)
+                {
+                    step.Status = AiStepExecutionStatus.Running;
+                    step.ClaimedBy = $"{failedRuntimeInstanceId}:worker-old";
+                    step.ClaimToken = $"claim-token-{Guid.NewGuid():N}";
+                    step.ClaimedAtUtc = DateTime.UtcNow.AddMinutes(-10);
+                    step.LeaseExpiresAtUtc = DateTime.UtcNow.AddMinutes(-9);
+                    step.RecoveryCount = 0;
+                }
+                else
+                {
+                    step.Status = AiStepExecutionStatus.Ready;
+                }
+
+                state.Steps[stepName] = step;
+            }
+
+            await dagStore
+                .CreateAsync(
+                    record,
+                    state)
+                .ConfigureAwait(false);
+        }
+
+        /// <summary>
+        /// Resolves step names from the runtime-generated pipeline definition.
+        /// </summary>
+        private static IReadOnlyList<string> ResolveStepNames(
+            AiPipelineDefinition? definition,
+            int stepCount)
+        {
+            if (definition is not null &&
+                definition.Steps.Count == stepCount)
+            {
+                return definition.Steps
+                    .OrderBy(step => step.Order)
+                    .Select(step => step.Name)
+                    .ToArray();
+            }
+
+            return Enumerable
+                .Range(1, stepCount)
+                .Select(FormatStepName)
+                .ToArray();
+        }
+
+        /// <summary>
+        /// Resolves step dependencies from the generated definition, falling back to a linear DAG.
+        /// </summary>
+        private static List<string> ResolveStepDependencies(
+            AiPipelineDefinition? definition,
+            string stepName,
+            int stepNumber)
+        {
+            var definitionStep =
+                definition?.Steps.FirstOrDefault(step =>
+                    string.Equals(step.Name, stepName, StringComparison.Ordinal));
+
+            if (definitionStep is not null)
+            {
+                return definitionStep.DependsOn.ToList();
+            }
+
+            if (stepNumber == 1)
+            {
+                return new List<string>();
+            }
+
+            return new List<string>
+            {
+                FormatStepName(stepNumber - 1)
+            };
+        }
+
+        /// <summary>
+        /// Asserts the seeded DAG state before redispatch.
+        /// </summary>
+        private static void AssertDagStoppedAtFailurePoint(
+            AiExecutionState? state,
+            int failureStepNumber)
+        {
+            Assert.NotNull(state);
+
+            var ordered =
+                state!.Steps.Values
+                    .OrderBy(step => step.StepName, StringComparer.Ordinal)
+                    .ToArray();
+
+            Assert.Equal(StepCount, ordered.Length);
+
+            for (var index = 0; index < failureStepNumber - 1; index++)
+            {
+                Assert.Equal(AiStepExecutionStatus.Completed, ordered[index].Status);
+                Assert.Equal(0, ordered[index].RecoveryCount);
+            }
+
+            var failedStep =
+                ordered[failureStepNumber - 1];
+
+            Assert.Equal(AiStepExecutionStatus.Running, failedStep.Status);
+            Assert.False(string.IsNullOrWhiteSpace(failedStep.ClaimToken));
+            Assert.NotNull(failedStep.LeaseExpiresAtUtc);
+            Assert.True(failedStep.LeaseExpiresAtUtc < DateTime.UtcNow);
+            Assert.Equal(0, failedStep.RecoveryCount);
+        }
+
+        /// <summary>
+        /// Asserts the final DAG state after resume.
+        /// </summary>
+        private static void AssertDagCompletedFromFailurePoint(
+            AiExecutionState? state,
+            int failureStepNumber,
+            int stepCount)
+        {
+            Assert.NotNull(state);
+
+            var ordered =
+                state!.Steps.Values
+                    .OrderBy(step => step.StepName, StringComparer.Ordinal)
+                    .ToArray();
+
+            Assert.Equal(stepCount, ordered.Length);
+            Assert.All(ordered, step => Assert.Equal(AiStepExecutionStatus.Completed, step.Status));
+
+            for (var index = 0; index < failureStepNumber - 1; index++)
+            {
+                Assert.Equal(0, ordered[index].RecoveryCount);
+            }
+
+            Assert.True(
+                ordered[failureStepNumber - 1].RecoveryCount >= 1,
+                $"Expected failure step '{ordered[failureStepNumber - 1].StepName}' to be recovered before resume.");
+        }
+
+        /// <summary>
+        /// Formats a compact DAG state summary for failed resume diagnostics.
+        /// </summary>
+        /// <param name="state">The DAG state.</param>
+        /// <returns>The formatted DAG state summary.</returns>
+        private static string FormatDagStateSummary(
+            AiExecutionState? state)
+        {
+            if (state is null)
+            {
+                return "<null>";
+            }
+
+            var grouped =
+                state.Steps.Values
+                    .GroupBy(step => step.Status)
+                    .OrderBy(group => group.Key.ToString(), StringComparer.Ordinal)
+                    .Select(group => $"{group.Key}={group.Count()}");
+
+            var nonCompleted =
+                state.Steps.Values
+                    .Where(step => step.Status != AiStepExecutionStatus.Completed)
+                    .OrderBy(step => step.StepName, StringComparer.Ordinal)
+                    .Take(20)
+                    .Select(step =>
+                        $"{step.StepName}:{step.Status}:Recovery={step.RecoveryCount}:ClaimedBy={step.ClaimedBy ?? string.Empty}:Lease={step.LeaseExpiresAtUtc?.ToString("O") ?? string.Empty}:Error={step.Error ?? string.Empty}");
+
+            return
+                $"ExecutionId='{state.ExecutionId}', PipelineName='{state.PipelineName}', " +
+                $"Counts='{string.Join(",", grouped)}', " +
+                $"NonCompleted='{string.Join(" | ", nonCompleted)}'";
+        }
+
+        /// <summary>
         /// Repeatedly marks a runtime unhealthy, reconciles routing health, and runs execution recovery until one in-flight run is recovered.
         /// </summary>
-        /// <remarks>
-        /// Runtime execution recovery and runtime instance health reconciliation are intentionally separate.
-        /// This helper runs both in the test: health reconciliation prevents the failed runtime from being
-        /// selected again, while execution recovery requeues the already-dispatched in-flight run.
-        /// </remarks>
-        /// <param name="registry">The runtime instance registry.</param>
-        /// <param name="healthReconciler">The runtime instance health reconciler.</param>
-        /// <param name="recoveryReconciler">The runtime execution recovery reconciler.</param>
-        /// <param name="runtimeInstanceId">The runtime instance id to mark unhealthy.</param>
-        /// <param name="timeout">The timeout.</param>
-        /// <returns>The recovery reconciliation result that recovered the in-flight run.</returns>
         private static async Task<AiRuntimeExecutionRecoveryReconciliationResult> MarkUnhealthyAndReconcileUntilRecoveredAsync(
             IAiRuntimeInstanceRegistry registry,
             IAiRuntimeInstanceHealthReconciler healthReconciler,
@@ -559,11 +824,6 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             string runtimeInstanceId,
             TimeSpan timeout)
         {
-            ArgumentNullException.ThrowIfNull(registry);
-            ArgumentNullException.ThrowIfNull(healthReconciler);
-            ArgumentNullException.ThrowIfNull(recoveryReconciler);
-            ArgumentException.ThrowIfNullOrWhiteSpace(runtimeInstanceId);
-
             var deadline =
                 DateTimeOffset.UtcNow.Add(timeout);
 
@@ -602,61 +862,16 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
 
             Assert.Fail(
                 $"Runtime execution recovery did not recover the in-flight run within '{timeout}'. " +
-                $"RuntimeInstanceId='{runtimeInstanceId}', " +
-                $"LastRuntimeStatus='{lastSnapshot?.Status}', LastCanAcceptRun='{lastSnapshot?.CanAcceptRun}', " +
-                $"LastScannedRuntimeInstanceCount='{lastResult?.ScannedRuntimeInstanceCount}', " +
-                $"LastIgnoredRuntimeInstanceCount='{lastResult?.IgnoredRuntimeInstanceCount}', " +
-                $"LastDiscoveredUnfinishedRunCount='{lastResult?.DiscoveredUnfinishedRunCount}', " +
-                $"LastRecoveredRunCount='{lastResult?.RecoveredRunCount}'." +
-                Environment.NewLine +
-                FormatRecoveryDecisions(lastResult));
+                $"RuntimeInstanceId='{runtimeInstanceId}', LastRuntimeStatus='{lastSnapshot?.Status}', " +
+                $"LastRecoveredRunCount='{lastResult?.RecoveredRunCount}'.");
 
             throw new InvalidOperationException(
                 "Unreachable assertion path.");
         }
 
         /// <summary>
-        /// Formats recovery decisions for assertion diagnostics.
-        /// </summary>
-        /// <param name="result">The recovery reconciliation result.</param>
-        /// <returns>The formatted recovery decisions.</returns>
-        private static string FormatRecoveryDecisions(
-            AiRuntimeExecutionRecoveryReconciliationResult? result)
-        {
-            if (result is null)
-            {
-                return "Recovery decisions: <null result>";
-            }
-
-            if (result.Decisions.Count == 0)
-            {
-                return "Recovery decisions: <empty>";
-            }
-
-            return "Recovery decisions:" +
-                Environment.NewLine +
-                string.Join(
-                    Environment.NewLine,
-                    result.Decisions.Select(decision =>
-                        $"RuntimeInstanceId='{decision.RuntimeInstanceId}', " +
-                        $"LocalRunId='{decision.LocalRunId}', " +
-                        $"ExecutionId='{decision.ExecutionId}', " +
-                        $"SharedRunId='{decision.SharedRunId}', " +
-                        $"TenantId='{decision.TenantId}', " +
-                        $"TenantGroupId='{decision.TenantGroupId}', " +
-                        $"Action='{decision.Action}', " +
-                        $"Reason='{decision.Reason}', " +
-                        $"Changed='{decision.Changed}'."));
-        }
-
-        /// <summary>
         /// Waits for the submitted run to become dispatched.
         /// </summary>
-        /// <param name="mcp">The MCP test client.</param>
-        /// <param name="pipelineName">The pipeline name.</param>
-        /// <param name="sharedRunId">The shared run id.</param>
-        /// <param name="timeout">The timeout.</param>
-        /// <returns>The dispatched shared run record.</returns>
         private static async Task<AiSharedRunRecord> WaitForSingleDispatchedRunAsync(
             McpTestClient mcp,
             string pipelineName,
@@ -682,18 +897,6 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
         /// <summary>
         /// Waits until the shared run is assigned to a runtime different from the failed runtime.
         /// </summary>
-        /// <remarks>
-        /// In the HTTP process-host scenario the failed runtime process can still emit heartbeats.
-        /// While waiting for redispatch, the test continuously keeps the failed runtime unhealthy
-        /// and reruns health reconciliation so the dispatcher does not select it again.
-        /// </remarks>
-        /// <param name="registry">The runtime instance registry.</param>
-        /// <param name="healthReconciler">The runtime instance health reconciler.</param>
-        /// <param name="sharedRunStore">The shared run store.</param>
-        /// <param name="sharedRunId">The shared run id.</param>
-        /// <param name="failedRuntimeInstanceId">The failed runtime instance id.</param>
-        /// <param name="timeout">The timeout.</param>
-        /// <returns>The redispatched shared run record.</returns>
         private static async Task<AiSharedRunRecord> WaitForSharedRunAssignedAwayFromRuntimeAsync(
             IAiRuntimeInstanceRegistry registry,
             IAiRuntimeInstanceHealthReconciler healthReconciler,
@@ -702,12 +905,6 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             string failedRuntimeInstanceId,
             TimeSpan timeout)
         {
-            ArgumentNullException.ThrowIfNull(registry);
-            ArgumentNullException.ThrowIfNull(healthReconciler);
-            ArgumentNullException.ThrowIfNull(sharedRunStore);
-            ArgumentException.ThrowIfNullOrWhiteSpace(sharedRunId);
-            ArgumentException.ThrowIfNullOrWhiteSpace(failedRuntimeInstanceId);
-
             var deadline =
                 DateTimeOffset.UtcNow.Add(timeout);
 
@@ -753,7 +950,6 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 $"Shared run was not redispatched away from failed runtime within '{timeout}'. " +
                 $"SharedRunId='{sharedRunId}', FailedRuntimeInstanceId='{failedRuntimeInstanceId}', " +
                 $"LastFailedRuntimeStatus='{lastFailedRuntimeSnapshot?.Status}', " +
-                $"LastFailedRuntimeCanAcceptRun='{lastFailedRuntimeSnapshot?.CanAcceptRun}', " +
                 $"LastAssignedRuntimeInstanceId='{lastRecord?.AssignedRuntimeInstanceId}', " +
                 $"LastLocalRunId='{lastRecord?.LocalRunId}', LastExecutionId='{lastRecord?.ExecutionId}'.");
 
@@ -763,11 +959,6 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
         /// <summary>
         /// Waits until at least one tenant scale-out request is fulfilled.
         /// </summary>
-        /// <param name="store">The scale-out request store.</param>
-        /// <param name="controlPlaneId">The control-plane id.</param>
-        /// <param name="tenant">The tenant scenario definition.</param>
-        /// <param name="pipelineName">The pipeline name.</param>
-        /// <param name="timeout">The timeout.</param>
         private static async Task WaitForAnyTenantScaleOutRequestFulfilledAsync(
             IAiRuntimeScaleOutRequestStore store,
             string controlPlaneId,
@@ -816,13 +1007,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
         /// <summary>
         /// Extracts the shared run id from a submit result.
         /// </summary>
-        /// <param name="submitResult">The submit result.</param>
-        /// <returns>The shared run id.</returns>
         private static string ExtractSharedRunId(
             object submitResult)
         {
-            ArgumentNullException.ThrowIfNull(submitResult);
-
             var resultType =
                 submitResult.GetType();
 
@@ -861,6 +1048,15 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
 
             throw new InvalidOperationException(
                 $"Could not extract SharedRunId from submit result type '{resultType.FullName}'.");
+        }
+
+        /// <summary>
+        /// Formats a stable fallback step name.
+        /// </summary>
+        private static string FormatStepName(
+            int stepNumber)
+        {
+            return $"step-{stepNumber:000}";
         }
     }
 }
