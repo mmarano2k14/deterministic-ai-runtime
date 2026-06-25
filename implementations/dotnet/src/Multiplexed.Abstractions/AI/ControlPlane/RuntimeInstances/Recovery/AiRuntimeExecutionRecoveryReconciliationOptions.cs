@@ -38,5 +38,16 @@
         /// Gets or sets a value indicating whether reconciliation should only report decisions without mutations.
         /// </summary>
         public bool DryRun { get; set; } = true;
+
+        /// <summary>
+        /// Gets or sets a value indicating whether runtime execution recovery should try to resume
+        /// the existing durable DAG execution instead of creating a new recovered execution.
+        /// </summary>
+        /// <remarks>
+        /// The default is <see langword="false"/> to preserve the existing recovery behavior:
+        /// recover shared run ownership, requeue the shared run, redispatch to healthy capacity,
+        /// and create a new recovered execution.
+        /// </remarks>
+        public bool EnableDagExecutionResume { get; set; } = false;
     }
 }
