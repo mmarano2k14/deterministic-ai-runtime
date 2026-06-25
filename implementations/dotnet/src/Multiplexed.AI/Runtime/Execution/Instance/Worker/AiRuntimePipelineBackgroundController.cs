@@ -33,14 +33,18 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
     /// them in the background.
     /// </para>
     /// <para>
-    /// Each queued request creates one new runtime execution and therefore one
+    /// Normal queued requests create one new runtime execution and therefore one
     /// distinct execution identifier.
     /// </para>
     /// <para>
-    /// The controller does not reuse execution identifiers. The execution identifier
-    /// remains the namespace for the execution record, DAG state, step states,
-    /// retention artifacts, externalized payloads, resolver indexes, snapshots,
-    /// and replay data.
+    /// Controlled recovery resume requests are the only supported exception. They
+    /// explicitly target an existing durable execution identifier and must not call
+    /// the execution creation path again.
+    /// </para>
+    /// <para>
+    /// The execution identifier remains the namespace for the execution record, DAG
+    /// state, step states, retention artifacts, externalized payloads, resolver
+    /// indexes, snapshots, and replay data.
     /// </para>
     /// <para>
     /// The controller limits the number of active pipeline runs through
@@ -702,7 +706,7 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
                 await _observability.Tracer.TraceExecutionAsync(
                     new AiExecutionTraceContext
                     {
-                        ExecutionId = handle.RunId,
+                        ExecutionId = handle.ExecutionId ?? handle.RunId,
                         ExecutionMode = "Dag",
                         Status = "PipelineRunQueued",
                         WorkerId = queuedRun.Correlation.WorkerId ?? PipelineBackgroundControllerWorkerId
@@ -985,7 +989,9 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
                 handle.MarkCreatingExecution();
 
                 _logger.Engine.LogInformation(
-                    $"[AI PIPELINE CONTROLLER] Creating execution. RunId='{handle.RunId}', Pipeline='{request.PipelineName}', RuntimeInstanceId='{_runtimeInstanceIdentity.RuntimeInstanceId}', TenantId='{request.ExecutionContextSnapshot?.TenantId ?? string.Empty}', ContextKey='{request.ExecutionContextSnapshot?.ContextKey ?? string.Empty}', InputType='{ResolveInputTypeName(request.Input)}'.");
+                    queuedRun.IsResume
+                        ? $"[AI PIPELINE CONTROLLER] Preparing existing execution resume. RunId='{handle.RunId}', ExecutionId='{queuedRun.ResumeExecutionId}', Pipeline='{request.PipelineName}', RuntimeInstanceId='{_runtimeInstanceIdentity.RuntimeInstanceId}', TenantId='{request.ExecutionContextSnapshot?.TenantId ?? string.Empty}', ContextKey='{request.ExecutionContextSnapshot?.ContextKey ?? string.Empty}', InputType='{ResolveInputTypeName(request.Input)}'."
+                        : $"[AI PIPELINE CONTROLLER] Creating execution. RunId='{handle.RunId}', Pipeline='{request.PipelineName}', RuntimeInstanceId='{_runtimeInstanceIdentity.RuntimeInstanceId}', TenantId='{request.ExecutionContextSnapshot?.TenantId ?? string.Empty}', ContextKey='{request.ExecutionContextSnapshot?.ContextKey ?? string.Empty}', InputType='{ResolveInputTypeName(request.Input)}'.");
 
                 diagnosticPhase =
                     "resolve-definition";
@@ -1091,7 +1097,9 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
                             ["distributed.enabled"] = _options.Distributed.Enabled.ToString(),
                             ["distributed.worker.count"] = _options.Distributed.WorkerCount.ToString(),
                             ["max.local.workers.per.execution"] = _options.MaxLocalWorkersPerExecution.ToString(),
-                            ["effective.worker.count.per.execution"] = ResolveMaxWorkerCountForExecution().ToString()
+                            ["effective.worker.count.per.execution"] = ResolveMaxWorkerCountForExecution().ToString(),
+                            ["recovery.resume"] = queuedRun.IsResume.ToString(),
+                            ["recovery.execution.id"] = queuedRun.ResumeExecutionId ?? string.Empty
                         },
                         cancellationToken)
                     .ConfigureAwait(false);
