@@ -1,5 +1,6 @@
 ﻿using Microsoft.Extensions.Logging;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.SharedInstance;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Dispatch;
 
@@ -33,10 +34,18 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Dispatch
     /// - Providers must still dispatch into the selected runtime instance local queue.
     /// - The DAG execution engine and workers remain owned by the target runtime instance.
     /// </para>
+    ///
+    /// <para>
+    /// SAFETY GUARANTEE:
+    /// - This dispatcher performs a final registry safety check before invoking a provider.
+    /// - If the selected runtime instance is missing, unhealthy, draining, stopped, paused,
+    ///   or cannot accept runs, dispatch is blocked and the caller can requeue the shared run.
+    /// </para>
     /// </remarks>
     public sealed class RemoteAiSharedRunDispatcher : IAiSharedRunDispatcher
     {
         private readonly IAiRuntimeInstanceProviderCapabilityResolver providerCapabilityResolver;
+        private readonly IAiRuntimeInstanceRegistry runtimeInstanceRegistry;
         private readonly ILogger<RemoteAiSharedRunDispatcher> logger;
 
         /// <summary>
@@ -45,14 +54,20 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Dispatch
         /// <param name="providerCapabilityResolver">
         /// The provider capability resolver used to resolve the dispatch provider for the target runtime instance.
         /// </param>
+        /// <param name="runtimeInstanceRegistry">The runtime instance registry used for final dispatch safety checks.</param>
         /// <param name="logger">The logger used for diagnostics.</param>
         public RemoteAiSharedRunDispatcher(
             IAiRuntimeInstanceProviderCapabilityResolver providerCapabilityResolver,
+            IAiRuntimeInstanceRegistry runtimeInstanceRegistry,
             ILogger<RemoteAiSharedRunDispatcher> logger)
         {
             this.providerCapabilityResolver =
                 providerCapabilityResolver
                 ?? throw new ArgumentNullException(nameof(providerCapabilityResolver));
+
+            this.runtimeInstanceRegistry =
+                runtimeInstanceRegistry
+                ?? throw new ArgumentNullException(nameof(runtimeInstanceRegistry));
 
             this.logger =
                 logger
@@ -96,6 +111,35 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Dispatch
                     request.RuntimeInstanceId,
                     "missing-run-request",
                     "Shared run does not contain a runtime pipeline run request.");
+            }
+
+            var runtimeSafetySnapshot =
+                await runtimeInstanceRegistry
+                    .GetAsync(
+                        request.RuntimeInstanceId,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+            if (runtimeSafetySnapshot is null ||
+                !runtimeSafetySnapshot.CanAcceptRun)
+            {
+                logger.LogWarning(
+                    "REMOTE DISPATCH BLOCKED RuntimeInstanceId={RuntimeInstanceId} SharedRunId={SharedRunId} Status={Status} CanAcceptRun={CanAcceptRun} Reason={Reason}",
+                    request.RuntimeInstanceId,
+                    request.SharedRun.SharedRunId,
+                    runtimeSafetySnapshot?.Status,
+                    runtimeSafetySnapshot?.CanAcceptRun,
+                    "runtime-instance-not-routable");
+
+                Console.WriteLine(
+                    $"[REMOTE DISPATCH] BLOCKED RuntimeInstanceId='{request.RuntimeInstanceId}' SharedRunId='{request.SharedRun.SharedRunId}' Status='{runtimeSafetySnapshot?.Status}' CanAcceptRun='{runtimeSafetySnapshot?.CanAcceptRun}' Reason='runtime-instance-not-routable'");
+
+                return CreateFailedResult(
+                    request,
+                    startedAtUtc,
+                    request.RuntimeInstanceId,
+                    "runtime-instance-not-routable",
+                    $"Runtime instance '{request.RuntimeInstanceId}' is not routable.");
             }
 
             var resolution =

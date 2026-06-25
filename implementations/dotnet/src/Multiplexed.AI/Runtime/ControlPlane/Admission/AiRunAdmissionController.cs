@@ -143,11 +143,13 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission
                     if (!eligible)
                     {
                         _logger.LogInformation(
-                            "Admission runtime instance rejected before capacity evaluation. RunId={RunId}, RuntimeInstanceId={RuntimeInstanceId}, Status={Status}, Reason={Reason}",
+                            "Admission runtime instance rejected before capacity evaluation. RunId={RunId}, RuntimeInstanceId={RuntimeInstanceId}, Status={Status}, CanAcceptRun={CanAcceptRun}, IsQueuePaused={IsQueuePaused}, Reason={Reason}",
                             request.RunId,
                             instance.RuntimeInstanceId,
                             instance.Status,
-                            "Runtime instance status is not eligible for admission.");
+                            instance.CanAcceptRun,
+                            instance.IsQueuePaused,
+                            "Runtime instance snapshot is not eligible for admission.");
                     }
 
                     return eligible;
@@ -328,16 +330,79 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission
                             cancellationToken)
                         .ConfigureAwait(false);
 
-                if (capacityDescriptor is null &&
-                    IsProbablyStaleRuntimeInstance(instance))
+                var currentInstance =
+                    await _registry
+                        .GetAsync(
+                            instance.RuntimeInstanceId,
+                            cancellationToken)
+                        .ConfigureAwait(false);
+
+                if (currentInstance is null)
                 {
                     LogAdmissionCandidateRejected(
                         request,
                         instance,
                         capacityDescriptor,
                         reservedRunCount: 0,
-                        availableRunSlots: instance.AvailableRunSlots ?? 0,
-                        effectiveAvailableRunSlots: instance.AvailableRunSlots ?? 0,
+                        availableRunSlots: capacityDescriptor?.AvailableRunSlots ?? instance.AvailableRunSlots ?? 0,
+                        effectiveAvailableRunSlots: capacityDescriptor?.AvailableRunSlots ?? instance.AvailableRunSlots ?? 0,
+                        reason: "Runtime instance disappeared from registry before admission assignment.");
+
+                    continue;
+                }
+
+                if (!currentInstance.CanAcceptRun)
+                {
+                    LogAdmissionCandidateRejected(
+                        request,
+                        currentInstance,
+                        capacityDescriptor,
+                        reservedRunCount: 0,
+                        availableRunSlots: capacityDescriptor?.AvailableRunSlots ?? currentInstance.AvailableRunSlots ?? 0,
+                        effectiveAvailableRunSlots: capacityDescriptor?.AvailableRunSlots ?? currentInstance.AvailableRunSlots ?? 0,
+                        reason: "Runtime instance cannot accept run according to current registry snapshot.");
+
+                    continue;
+                }
+
+                if (currentInstance.IsQueuePaused)
+                {
+                    LogAdmissionCandidateRejected(
+                        request,
+                        currentInstance,
+                        capacityDescriptor,
+                        reservedRunCount: 0,
+                        availableRunSlots: capacityDescriptor?.AvailableRunSlots ?? currentInstance.AvailableRunSlots ?? 0,
+                        effectiveAvailableRunSlots: capacityDescriptor?.AvailableRunSlots ?? currentInstance.AvailableRunSlots ?? 0,
+                        reason: "Runtime instance queue is paused according to current registry snapshot.");
+
+                    continue;
+                }
+
+                if (!IsEligibleForAdmission(currentInstance))
+                {
+                    LogAdmissionCandidateRejected(
+                        request,
+                        currentInstance,
+                        capacityDescriptor,
+                        reservedRunCount: 0,
+                        availableRunSlots: capacityDescriptor?.AvailableRunSlots ?? currentInstance.AvailableRunSlots ?? 0,
+                        effectiveAvailableRunSlots: capacityDescriptor?.AvailableRunSlots ?? currentInstance.AvailableRunSlots ?? 0,
+                        reason: "Current runtime instance snapshot is not eligible for admission.");
+
+                    continue;
+                }
+
+                if (capacityDescriptor is null &&
+                    IsProbablyStaleRuntimeInstance(currentInstance))
+                {
+                    LogAdmissionCandidateRejected(
+                        request,
+                        currentInstance,
+                        capacityDescriptor,
+                        reservedRunCount: 0,
+                        availableRunSlots: currentInstance.AvailableRunSlots ?? 0,
+                        effectiveAvailableRunSlots: currentInstance.AvailableRunSlots ?? 0,
                         reason: "Runtime instance has no capacity descriptor and looks stale.");
 
                     continue;
@@ -348,63 +413,60 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission
                 {
                     LogAdmissionCandidateRejected(
                         request,
-                        instance,
+                        currentInstance,
                         capacityDescriptor,
                         reservedRunCount: 0,
-                        availableRunSlots: capacityDescriptor.AvailableRunSlots ?? instance.AvailableRunSlots ?? 0,
-                        effectiveAvailableRunSlots: capacityDescriptor.AvailableRunSlots ?? instance.AvailableRunSlots ?? 0,
+                        availableRunSlots: capacityDescriptor.AvailableRunSlots ?? currentInstance.AvailableRunSlots ?? 0,
+                        effectiveAvailableRunSlots: capacityDescriptor.AvailableRunSlots ?? currentInstance.AvailableRunSlots ?? 0,
                         reason: "Capacity descriptor role is not Runtime.");
 
                     continue;
                 }
 
                 if (capacityDescriptor is not null &&
-                    capacityDescriptor.Status == AiRuntimeInstanceStatus.Stopped)
+                    !IsCapacityDescriptorStatusEligibleForAdmission(capacityDescriptor.Status))
                 {
                     LogAdmissionCandidateRejected(
                         request,
-                        instance,
+                        currentInstance,
                         capacityDescriptor,
                         reservedRunCount: 0,
-                        availableRunSlots: capacityDescriptor.AvailableRunSlots ?? instance.AvailableRunSlots ?? 0,
-                        effectiveAvailableRunSlots: capacityDescriptor.AvailableRunSlots ?? instance.AvailableRunSlots ?? 0,
-                        reason: "Capacity descriptor status is Stopped.");
+                        availableRunSlots: capacityDescriptor.AvailableRunSlots ?? currentInstance.AvailableRunSlots ?? 0,
+                        effectiveAvailableRunSlots: capacityDescriptor.AvailableRunSlots ?? currentInstance.AvailableRunSlots ?? 0,
+                        reason: "Capacity descriptor status is not eligible for admission.");
 
                     continue;
                 }
 
-                var canAcceptRun =
-                    capacityDescriptor?.CanAcceptRun ??
-                    instance.CanAcceptRun;
-
-                if (!canAcceptRun)
+                if (capacityDescriptor is not null &&
+                    !capacityDescriptor.CanAcceptRun)
                 {
                     LogAdmissionCandidateRejected(
                         request,
-                        instance,
+                        currentInstance,
                         capacityDescriptor,
                         reservedRunCount: 0,
-                        availableRunSlots: capacityDescriptor?.AvailableRunSlots ?? instance.AvailableRunSlots ?? 0,
-                        effectiveAvailableRunSlots: capacityDescriptor?.AvailableRunSlots ?? instance.AvailableRunSlots ?? 0,
-                        reason: "Runtime instance cannot accept run according to capacity descriptor or registry snapshot.");
+                        availableRunSlots: capacityDescriptor.AvailableRunSlots ?? currentInstance.AvailableRunSlots ?? 0,
+                        effectiveAvailableRunSlots: capacityDescriptor.AvailableRunSlots ?? currentInstance.AvailableRunSlots ?? 0,
+                        reason: "Runtime instance cannot accept run according to capacity descriptor.");
 
                     continue;
                 }
 
                 var isQueuePaused =
                     capacityDescriptor?.IsQueuePaused ??
-                    instance.IsQueuePaused;
+                    false;
 
                 if (isQueuePaused)
                 {
                     LogAdmissionCandidateRejected(
                         request,
-                        instance,
+                        currentInstance,
                         capacityDescriptor,
                         reservedRunCount: 0,
-                        availableRunSlots: capacityDescriptor?.AvailableRunSlots ?? instance.AvailableRunSlots ?? 0,
-                        effectiveAvailableRunSlots: capacityDescriptor?.AvailableRunSlots ?? instance.AvailableRunSlots ?? 0,
-                        reason: "Runtime instance queue is paused.");
+                        availableRunSlots: capacityDescriptor?.AvailableRunSlots ?? currentInstance.AvailableRunSlots ?? 0,
+                        effectiveAvailableRunSlots: capacityDescriptor?.AvailableRunSlots ?? currentInstance.AvailableRunSlots ?? 0,
+                        reason: "Runtime instance queue is paused according to capacity descriptor.");
 
                     continue;
                 }
@@ -412,13 +474,13 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission
                 var reservedRunCount =
                     await _reservationStore
                         .GetReservedRunCountAsync(
-                            instance.RuntimeInstanceId,
+                            currentInstance.RuntimeInstanceId,
                             cancellationToken)
                         .ConfigureAwait(false);
 
                 var availableRunSlots =
                     capacityDescriptor?.AvailableRunSlots ??
-                    instance.AvailableRunSlots ??
+                    currentInstance.AvailableRunSlots ??
                     0;
 
                 var effectiveAvailableRunSlots =
@@ -427,28 +489,30 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission
                         availableRunSlots - reservedRunCount);
 
                 _logger.LogInformation(
-                    "Admission candidate accepted. RunId={RunId}, RuntimeInstanceId={RuntimeInstanceId}, Role={Role}, Status={Status}, RegistryCanAcceptRun={RegistryCanAcceptRun}, CapacityCanAcceptRun={CapacityCanAcceptRun}, EffectiveCanAcceptRun={EffectiveCanAcceptRun}, IsQueuePaused={IsQueuePaused}, AvailableRunSlots={AvailableRunSlots}, ReservedRunCount={ReservedRunCount}, EffectiveAvailableRunSlots={EffectiveAvailableRunSlots}, WorkerCount={WorkerCount}, ActiveWorkerCount={ActiveWorkerCount}, AvailableWorkerCount={AvailableWorkerCount}, QueuedRunCount={QueuedRunCount}, RunningRunCount={RunningRunCount}, QueueFirstAdmission={QueueFirstAdmission}",
+                    "Admission candidate accepted. RunId={RunId}, RuntimeInstanceId={RuntimeInstanceId}, Role={Role}, RegistryStatus={RegistryStatus}, CapacityStatus={CapacityStatus}, RegistryCanAcceptRun={RegistryCanAcceptRun}, CapacityCanAcceptRun={CapacityCanAcceptRun}, EffectiveCanAcceptRun={EffectiveCanAcceptRun}, RegistryIsQueuePaused={RegistryIsQueuePaused}, CapacityIsQueuePaused={CapacityIsQueuePaused}, AvailableRunSlots={AvailableRunSlots}, ReservedRunCount={ReservedRunCount}, EffectiveAvailableRunSlots={EffectiveAvailableRunSlots}, WorkerCount={WorkerCount}, ActiveWorkerCount={ActiveWorkerCount}, AvailableWorkerCount={AvailableWorkerCount}, QueuedRunCount={QueuedRunCount}, RunningRunCount={RunningRunCount}, QueueFirstAdmission={QueueFirstAdmission}",
                     request.RunId,
-                    instance.RuntimeInstanceId,
-                    instance.Role,
-                    capacityDescriptor?.Status ?? instance.Status,
-                    instance.CanAcceptRun,
+                    currentInstance.RuntimeInstanceId,
+                    currentInstance.Role,
+                    currentInstance.Status,
+                    capacityDescriptor?.Status,
+                    currentInstance.CanAcceptRun,
                     capacityDescriptor?.CanAcceptRun,
-                    canAcceptRun,
-                    isQueuePaused,
+                    true,
+                    currentInstance.IsQueuePaused,
+                    capacityDescriptor?.IsQueuePaused,
                     availableRunSlots,
                     reservedRunCount,
                     effectiveAvailableRunSlots,
-                    capacityDescriptor?.WorkerCount ?? instance.WorkerCount,
-                    capacityDescriptor?.ActiveWorkerCount ?? instance.ActiveWorkerCount,
-                    capacityDescriptor?.AvailableWorkerCount ?? instance.AvailableWorkerCount,
-                    capacityDescriptor?.QueuedRunCount ?? instance.QueuedRunCount,
-                    capacityDescriptor?.RunningRunCount ?? instance.RunningRunCount,
+                    capacityDescriptor?.WorkerCount ?? currentInstance.WorkerCount,
+                    capacityDescriptor?.ActiveWorkerCount ?? currentInstance.ActiveWorkerCount,
+                    capacityDescriptor?.AvailableWorkerCount ?? currentInstance.AvailableWorkerCount,
+                    capacityDescriptor?.QueuedRunCount ?? currentInstance.QueuedRunCount,
+                    capacityDescriptor?.RunningRunCount ?? currentInstance.RunningRunCount,
                     effectiveAvailableRunSlots <= 0);
 
                 candidates.Add(
                     new AdmissionCandidate(
-                        instance,
+                        currentInstance,
                         capacityDescriptor,
                         reservedRunCount,
                         effectiveAvailableRunSlots));
@@ -480,6 +544,42 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission
         }
 
         /// <summary>
+        /// Determines whether a capacity descriptor status is eligible for admission.
+        /// </summary>
+        /// <param name="status">The capacity descriptor runtime status.</param>
+        /// <returns><see langword="true"/> when eligible; otherwise, <see langword="false"/>.</returns>
+        private bool IsCapacityDescriptorStatusEligibleForAdmission(
+            AiRuntimeInstanceStatus status)
+        {
+            if (status == AiRuntimeInstanceStatus.Stopped)
+            {
+                return false;
+            }
+
+            if (status == AiRuntimeInstanceStatus.Paused && !_options.AllowPausedInstances)
+            {
+                return false;
+            }
+
+            if (status == AiRuntimeInstanceStatus.Draining && !_options.AllowDrainingInstances)
+            {
+                return false;
+            }
+
+            if (status == AiRuntimeInstanceStatus.Unhealthy && !_options.AllowUnhealthyInstances)
+            {
+                return false;
+            }
+
+            return status is
+                AiRuntimeInstanceStatus.Ready or
+                AiRuntimeInstanceStatus.Busy or
+                AiRuntimeInstanceStatus.Paused or
+                AiRuntimeInstanceStatus.Draining or
+                AiRuntimeInstanceStatus.Unknown;
+        }
+
+        /// <summary>
         /// Determines whether a runtime instance is eligible to participate in admission decisions.
         /// </summary>
         /// <param name="instance">The runtime instance snapshot to evaluate.</param>
@@ -487,6 +587,16 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission
         private bool IsEligibleForAdmission(
             AiRuntimeInstanceSnapshot instance)
         {
+            if (!instance.CanAcceptRun)
+            {
+                return false;
+            }
+
+            if (instance.IsQueuePaused)
+            {
+                return false;
+            }
+
             if (instance.Status == AiRuntimeInstanceStatus.Stopped)
             {
                 return false;
@@ -541,21 +651,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission
         /// <summary>
         /// Selects the best runtime instance for admission from the already-ranked available candidates.
         /// </summary>
-        /// <remarks>
-        /// Runtime instances are first ranked by effective capacity before this method is called.
-        /// Effective capacity subtracts temporary admission reservations from the visible runtime
-        /// capacity snapshot.
-        ///
-        /// Queue-first admission allows selecting a runtime instance even when immediate run slots
-        /// are currently exhausted, as long as the runtime explicitly reports that it can accept
-        /// another run into its local queue.
-        ///
-        /// When several instances have the same admission rank, this method rotates between them
-        /// using an in-process admission sequence. This prevents all equal-capacity runs from
-        /// being assigned to the first runtime instance in lexical order.
-        /// </remarks>
-        /// <param name="availableCandidates">The ranked available admission candidates.</param>
-        /// <returns>The selected admission candidate, or <see langword="null"/> when none is available.</returns>
         private AdmissionCandidate? SelectRuntimeInstanceForAdmission(
             IReadOnlyList<AdmissionCandidate> availableCandidates)
         {
@@ -590,9 +685,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission
         /// <summary>
         /// Determines whether two admission candidates have the same admission rank.
         /// </summary>
-        /// <param name="candidate">The admission candidate to compare.</param>
-        /// <param name="baseline">The baseline admission candidate.</param>
-        /// <returns><see langword="true"/> if both candidates have the same admission rank; otherwise, <see langword="false"/>.</returns>
         private static bool HasSameAdmissionRank(
             AdmissionCandidate candidate,
             AdmissionCandidate baseline)
@@ -607,8 +699,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission
         /// <summary>
         /// Resolves the tenant group identifier from the admission request.
         /// </summary>
-        /// <param name="request">The admission request.</param>
-        /// <returns>The tenant group identifier when available; otherwise, <see langword="null"/>.</returns>
         private static string? ResolveTenantGroupId(
             AiRunAdmissionRequest request)
         {
@@ -618,8 +708,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission
         /// <summary>
         /// Resolves the effective maximum runtime instance count for this admission decision.
         /// </summary>
-        /// <param name="tenantRuntimeSettings">The tenant runtime settings.</param>
-        /// <returns>The effective maximum runtime instance count.</returns>
         private int? ResolveEffectiveMaxInstanceCount(
             AiTenantRuntimeSettings tenantRuntimeSettings)
         {
@@ -636,9 +724,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission
         /// <summary>
         /// Determines whether the admission controller should request scale-out.
         /// </summary>
-        /// <param name="currentRuntimeInstanceCount">The number of currently visible runtime instances.</param>
-        /// <param name="maxInstanceCount">The effective maximum number of runtime instances allowed.</param>
-        /// <returns><see langword="true"/> when scale-out should be requested; otherwise, <see langword="false"/>.</returns>
         private bool ShouldRequestScaleOut(
             int currentRuntimeInstanceCount,
             int? maxInstanceCount)
@@ -659,13 +744,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission
         /// <summary>
         /// Creates an assignment decision for a selected runtime instance.
         /// </summary>
-        /// <param name="candidate">The selected admission candidate.</param>
-        /// <param name="visibleInstances">All visible runtime instances.</param>
-        /// <param name="availableInstances">The available runtime instances considered for assignment.</param>
-        /// <param name="maxInstanceCount">The effective maximum number of runtime instances allowed.</param>
-        /// <param name="tenantRuntimeSettings">The tenant runtime settings resolved for this admission decision.</param>
-        /// <param name="reason">The decision reason.</param>
-        /// <returns>The assignment admission decision.</returns>
         private AiRunAdmissionDecision CreateAssignmentDecision(
             AdmissionCandidate candidate,
             IReadOnlyCollection<AiRuntimeInstanceSnapshot> visibleInstances,
@@ -727,13 +805,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission
         /// <summary>
         /// Creates a non-assignment admission decision.
         /// </summary>
-        /// <param name="decisionType">The admission decision type.</param>
-        /// <param name="reason">The decision reason.</param>
-        /// <param name="visibleInstances">All visible runtime instances.</param>
-        /// <param name="availableInstances">The available runtime instances.</param>
-        /// <param name="maxInstanceCount">The effective maximum number of runtime instances allowed.</param>
-        /// <param name="tenantRuntimeSettings">The tenant runtime settings resolved for this admission decision.</param>
-        /// <returns>The admission decision.</returns>
         private AiRunAdmissionDecision CreateDecision(
             AiRunAdmissionDecisionType decisionType,
             string reason,
@@ -774,13 +845,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission
         /// Adds tenant runtime settings to admission metadata for diagnostics, logs, dashboards,
         /// and non-critical observability.
         /// </summary>
-        /// <remarks>
-        /// These metadata values are intentionally duplicated from strongly typed admission
-        /// properties. They must not become the primary source for critical routing decisions.
-        /// Critical runtime behavior should use <see cref="AiRunAdmissionDecision.TenantRuntimeSettings"/>.
-        /// </remarks>
-        /// <param name="metadata">The metadata dictionary to enrich.</param>
-        /// <param name="tenantRuntimeSettings">The tenant runtime settings resolved for the decision.</param>
         private static void AddTenantRuntimeSettingsMetadata(
             IDictionary<string, string> metadata,
             AiTenantRuntimeSettings tenantRuntimeSettings)
@@ -819,13 +883,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission
         /// <summary>
         /// Logs a rejected admission candidate.
         /// </summary>
-        /// <param name="request">The admission request.</param>
-        /// <param name="instance">The runtime instance snapshot.</param>
-        /// <param name="capacityDescriptor">The capacity descriptor.</param>
-        /// <param name="reservedRunCount">The reserved run count.</param>
-        /// <param name="availableRunSlots">The available run slots.</param>
-        /// <param name="effectiveAvailableRunSlots">The effective available run slots.</param>
-        /// <param name="reason">The rejection reason.</param>
         private void LogAdmissionCandidateRejected(
             AiRunAdmissionRequest request,
             AiRuntimeInstanceSnapshot instance,
@@ -858,8 +915,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission
         /// <summary>
         /// Gets the queued run count from a candidate capacity descriptor or registry snapshot.
         /// </summary>
-        /// <param name="candidate">The admission candidate.</param>
-        /// <returns>The queued run count.</returns>
         private static int GetQueuedRunCount(
             AdmissionCandidate candidate)
         {
@@ -870,8 +925,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission
         /// <summary>
         /// Gets the running run count from a candidate capacity descriptor or registry snapshot.
         /// </summary>
-        /// <param name="candidate">The admission candidate.</param>
-        /// <returns>The running run count.</returns>
         private static int GetRunningRunCount(
             AdmissionCandidate candidate)
         {
@@ -882,8 +935,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission
         /// <summary>
         /// Gets the available run slot count from a candidate capacity descriptor or registry snapshot.
         /// </summary>
-        /// <param name="candidate">The admission candidate.</param>
-        /// <returns>The available run slot count.</returns>
         private static int GetAvailableRunSlots(
             AdmissionCandidate candidate)
         {
@@ -895,8 +946,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission
         /// <summary>
         /// Gets the active worker count from a candidate capacity descriptor or registry snapshot.
         /// </summary>
-        /// <param name="candidate">The admission candidate.</param>
-        /// <returns>The active worker count.</returns>
         private static int GetActiveWorkerCount(
             AdmissionCandidate candidate)
         {
@@ -908,8 +957,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission
         /// <summary>
         /// Gets the available worker count from a candidate capacity descriptor or registry snapshot.
         /// </summary>
-        /// <param name="candidate">The admission candidate.</param>
-        /// <returns>The available worker count.</returns>
         private static int GetAvailableWorkerCount(
             AdmissionCandidate candidate)
         {
@@ -921,8 +968,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission
         /// <summary>
         /// Gets the maximum worker count per run from a candidate capacity descriptor or registry snapshot.
         /// </summary>
-        /// <param name="candidate">The admission candidate.</param>
-        /// <returns>The maximum worker count per run when available; otherwise, <see langword="null"/>.</returns>
         private static int? GetMaxWorkersPerRun(
             AdmissionCandidate candidate)
         {

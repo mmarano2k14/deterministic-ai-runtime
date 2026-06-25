@@ -12,18 +12,19 @@ namespace Multiplexed.AI.Runtime.Execution.Instance
     /// machine name, process identifier, and a unique runtime-generated value.
     /// </para>
     /// <para>
-    /// When a logical runtime instance identifier is provided, such as <c>mcp-runtime-1</c>,
-    /// the identifier is normalized with the current machine name, for example
-    /// <c>MSI:mcp-runtime-1</c>.
+    /// When a logical runtime instance identifier is provided by the control plane, host manager,
+    /// process launcher, Kubernetes adapter, or attach mode, it is preserved exactly as provided.
+    /// This is important because the runtime instance id is the durable correlation key used by
+    /// registry, capacity, shared dispatch, runtime execution indexes, recovery, tracing, and
+    /// observability.
     /// </para>
     /// <para>
     /// The instance should be registered as a singleton so the same identity is reused for
     /// the lifetime of the runtime host.
     /// </para>
     /// <para>
-    /// The generated identity is intended for distributed runtime ownership, observability,
-    /// ledger correlation, tracing, metrics, and diagnostics. It is not intended to be a
-    /// security token or a durable identity across process restarts.
+    /// The generated fallback identity is intended for local in-process diagnostics only. It is
+    /// not intended to replace a control-plane assigned runtime instance id in production modes.
     /// </para>
     /// </remarks>
     public sealed class DefaultAiRuntimeInstanceIdentity : IAiRuntimeInstanceIdentityDescriptor
@@ -43,7 +44,7 @@ namespace Multiplexed.AI.Runtime.Execution.Instance
         /// <param name="runtimeInstanceId">
         /// The runtime instance identifier to expose.
         /// If null or empty, a generated fallback identifier is used.
-        /// If a logical identifier is provided, it is prefixed with the machine name.
+        /// If provided, the identifier is preserved exactly as supplied.
         /// </param>
         public DefaultAiRuntimeInstanceIdentity(
             string? runtimeInstanceId)
@@ -71,8 +72,12 @@ namespace Multiplexed.AI.Runtime.Execution.Instance
         public DateTimeOffset StartedAtUtc { get; }
 
         /// <summary>
-        /// Normalizes a runtime instance identifier for observability and diagnostics.
+        /// Normalizes a runtime instance identifier.
         /// </summary>
+        /// <param name="runtimeInstanceId">The configured runtime instance identifier.</param>
+        /// <param name="hostName">The local host name used only for fallback identity generation.</param>
+        /// <param name="processId">The local process id used only for fallback identity generation.</param>
+        /// <returns>The effective runtime instance identifier.</returns>
         private static string NormalizeRuntimeInstanceId(
             string? runtimeInstanceId,
             string hostName,
@@ -83,17 +88,7 @@ namespace Multiplexed.AI.Runtime.Execution.Instance
                 return $"{hostName}:{processId}:{Guid.NewGuid():N}";
             }
 
-            var trimmedRuntimeInstanceId =
-                runtimeInstanceId.Trim();
-
-            if (trimmedRuntimeInstanceId.StartsWith(
-                    $"{hostName}:",
-                    StringComparison.Ordinal))
-            {
-                return trimmedRuntimeInstanceId;
-            }
-
-            return $"{hostName}:{trimmedRuntimeInstanceId}";
+            return runtimeInstanceId.Trim();
         }
     }
 }

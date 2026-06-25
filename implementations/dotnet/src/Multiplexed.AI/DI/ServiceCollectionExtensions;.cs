@@ -4,6 +4,7 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI;
 using Multiplexed.Abstractions.AI.Concurrency;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
 using Multiplexed.Abstractions.AI.Execution;
 using Multiplexed.Abstractions.AI.Execution.Cleanup;
 using Multiplexed.Abstractions.AI.Execution.Context;
@@ -633,7 +634,15 @@ namespace Multiplexed.AI.DI
             // instance identity / runtime instance worker / background controller
             // ------------------------------------------------------------
 
-            services.TryAddSingleton<IAiRuntimeInstanceIdentityDescriptor, DefaultAiRuntimeInstanceIdentity>();
+            services.TryAddSingleton<IAiRuntimeInstanceIdentityDescriptor>(sp =>
+            {
+                var registrationOptions =
+                    sp.GetRequiredService<IOptions<AiRuntimeInstanceRegistrationOptions>>().Value;
+
+                return new DefaultAiRuntimeInstanceIdentity(
+                    registrationOptions.RuntimeInstanceId);
+            });
+
             services.TryAddSingleton<IAiRuntimeInstanceWorkerFactory,AiRuntimeInstanceWorkerFactory>();
             services.TryAddSingleton<IAiRuntimeInstanceWorkerIdentity, DefaultAiRuntimeInstanceWorkerIdentity>();
 

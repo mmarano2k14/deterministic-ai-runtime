@@ -6,6 +6,122 @@ This project follows a deterministic runtime and observability model designed fo
 
 ---
 
+## [1.0.6.9] - 2026-06-25 — HTTP process-host recovery and runtime identity hardening
+
+### Summary
+
+Validated production-grade recovery for in-flight HTTP runtime executions when a process-hosted runtime instance becomes unsafe or unhealthy.
+
+This update confirms that the control plane can detect an execution already assigned to a failed runtime instance, recover the shared run ownership, request replacement HTTP process-host capacity, and redispatch the run to a healthy runtime instance.
+
+This is a runtime ownership and redispatch recovery milestone. It does not yet implement step-level DAG resume from the last completed step.
+
+### Added
+
+- Added recovery validation for in-flight executions assigned to failed HTTP process-host runtime instances.
+- Added test coverage for redispatching a recovered shared run to replacement process-host runtime capacity.
+- Added validation that replacement runtime capacity is created through the real process host path, not fixtures.
+- Added validation that the recovered execution produces a new recovered execution id after redispatch.
+- Added readiness validation for process-host runtimes when the runtime command endpoint is missing.
+- Added rejection validation for scale-out requests when the runtime process starts but command endpoint readiness fails.
+
+### Changed
+
+- Hardened runtime instance identity propagation for process-hosted runtime instances.
+- Updated the default runtime identity behavior so a configured logical `RuntimeInstanceId` is preserved exactly instead of being prefixed with machine name.
+- Updated `IAiRuntimeInstanceIdentityDescriptor` registration to resolve `AiRuntimeInstanceRegistrationOptions.RuntimeInstanceId` and pass it into `DefaultAiRuntimeInstanceIdentity`.
+- Preserved generated fallback identities only for cases where no explicit runtime instance id is configured.
+- Ensured the runtime process writes execution ownership using the control-plane assigned runtime instance id instead of local fallback values such as `MachineName:ProcessId:Guid`.
+
+### Fixed
+
+- Fixed recovered process-host executions being indexed with a generated local runtime id such as `MSI:<pid>:<guid>` instead of the durable control-plane runtime instance id.
+- Fixed the final recovery assertion mismatch between expected replacement runtime id and actual runtime execution ownership id.
+- Fixed process-host runtime identity consistency across registry, capacity, shared dispatch, runtime execution index, observability, and recovery assertions.
+- Fixed replacement scale-out deduplication for recovered shared queue redispatch by allowing recovery redispatch requests to use a unique scale-out request id and recovery-specific intent metadata.
+
+### Validated
+
+- Runtime process host startup through `HostCreationMode=Process`.
+- Redis-backed scale-out request publication and watcher processing.
+- Failed runtime instance detection and suppression.
+- In-flight execution recovery transition.
+- Shared queue redispatch to replacement runtime capacity.
+- Replacement runtime process registration and capacity publication.
+- Recovery completion with distinct failed and recovered execution ids.
+- Negative readiness path where command endpoint is intentionally disabled.
+- Scale-out rejection with `runtime-readiness-command-endpoint-missing` when process readiness is incomplete.
+
+### Confirmed test result
+
+Validated recovery scenario:
+
+`HttpRuntimeExecutionRecoveryRedispatchIntegrationTests.Http_ProcessHost_Should_Recover_InFlight_Execution_And_Redispatch_To_Healthy_Runtime`
+
+Observed flow:
+
+- Runtime 1 received the original shared run.
+- In-flight execution was seeded against runtime 1.
+- Runtime 1 was marked unhealthy.
+- Recovery completed for the failed runtime assignment.
+- Shared run was redispatched to runtime 2.
+- Runtime 2 created the recovered execution.
+- Test completed successfully with both failed and recovered execution ids.
+
+Example completion output:
+
+`[HTTP RECOVERY REDISPATCH] Completed. SharedRunId='<sharedRunId>', FailedExecutionId='<failedExecutionId>', RecoveredExecutionId='<recoveredExecutionId>'.`
+
+### Important architecture note
+
+This update validates runtime execution ownership recovery and redispatch.
+
+It does not yet validate partial DAG resume from the last completed step.
+
+Current validated behavior:
+
+`runtime-1 fails -> shared run recovered -> replacement runtime-2 created -> run redispatched -> new recovered execution created`
+
+Target next behavior:
+
+`100 steps -> 70 completed -> runtime crash -> replacement runtime resumes from step 71 and executes only remaining work`
+
+### Next work
+
+- Design and validate DAG step-level resume recovery.
+- Preserve completed steps and durable outputs across runtime failure.
+- Reset stale running, claimed, or in-progress steps owned by the failed runtime.
+- Resume the execution from the durable DAG state rather than restarting the whole run.
+- Introduce recovery metadata on shared queue redispatch:
+  - `recovery.mode=resume-existing-execution`
+  - `recovery.failedRuntimeInstanceId`
+  - `recovery.failedExecutionId`
+  - `recovery.failedLocalRunId`
+  - `recovery.reason=runtime-instance-unavailable`
+- Decide whether recovered executions should preserve the same logical `ExecutionId` with a new recovery attempt id, or continue creating a new execution id linked to the failed one.
+
+---
+
+## [1.0.6.9] - 2026-06-24 - Runtime execution recovery — in-flight redispatch proof
+
+### Added
+- Added production-style recovery redispatch integration coverage.
+- Added in-memory and Redis shared queue tests proving that an in-flight execution assigned to a failed runtime can be recovered and redispatched to a healthy runtime.
+- Added coverage for the full recovery path:
+  - runtime A claims and starts an execution
+  - runtime A becomes unhealthy while the execution is running
+  - recovery requeues the durable shared run
+  - runtime A local execution index is marked `requeued-for-recovery`
+  - runtime B claims the same shared run
+  - runtime B starts and completes a new execution attempt
+
+### Production note
+This validates Recovery V1 for in-flight executions.
+
+The system does not resume volatile in-memory worker state. Instead, it recovers durable ownership from the failed runtime, requeues the shared run, closes the stale local runtime execution index entry, and allows a healthy runtime to execute a new attempt.
+
+---
+
 ## [1.0.6.9] - 2026-06-24 - Runtime execution recovery — transition service owns recovery mutation boundary
 
 ### Changed

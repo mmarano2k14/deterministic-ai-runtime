@@ -22,6 +22,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
         private const string DefaultProviderName = "local";
 
         /// <summary>
+        /// Metadata key used to override the generated scale-out request id.
+        /// </summary>
+        private const string ScaleOutRequestIdMetadataKey = "scaleout.requestId";
+
+        /// <summary>
         /// Persists scale-out requests created by this publisher.
         /// </summary>
         private readonly IAiRuntimeScaleOutRequestStore store;
@@ -194,13 +199,25 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
         }
 
         /// <summary>
-        /// Creates a deterministic request identifier from the shared run id.
+        /// Creates a scale-out request identifier.
         /// </summary>
+        /// <remarks>
+        /// By default, submit-time scale-out remains deterministic and uses the shared run id.
+        /// Recovery and redispatch paths may provide a metadata override so they can publish
+        /// a new replacement request for the same shared run after an earlier request has already
+        /// reached a terminal state.
+        /// </remarks>
         /// <param name="request">The scale-out request.</param>
         /// <returns>The generated scale-out request identifier.</returns>
         private static string CreateRequestId(
             AiRuntimeScaleOutRequest request)
         {
+            if (request.Metadata.TryGetValue(ScaleOutRequestIdMetadataKey, out var requestId) &&
+                !string.IsNullOrWhiteSpace(requestId))
+            {
+                return requestId.Trim();
+            }
+
             return $"scale-out-{request.SharedRunId}";
         }
 

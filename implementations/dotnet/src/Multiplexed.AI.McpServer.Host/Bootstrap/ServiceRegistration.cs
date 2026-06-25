@@ -1,8 +1,10 @@
-﻿using Microsoft.Extensions.DependencyInjection.Extensions;
+﻿using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Multiplexed.Abstractions.AI.ControlPlane.Admission;
 using Multiplexed.Abstractions.AI.ControlPlane.Admission.Reservations;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Pool;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Recovery;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Controller;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Dispatch;
@@ -206,6 +208,12 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
                 "[CONTROL PLANE ONLY][BEFORE REGISTRATION]");
 
             services.AddAiControlPlane(
+                configureRuntimeExecutionRecoveryReconciliation: options =>
+                {
+                    ConfigureRuntimeExecutionRecoveryReconciliationOptions(
+                        configuration,
+                        options);
+                },
                 configureAdmission: options =>
                 {
                     ConfigureAdmissionOptions(
@@ -277,6 +285,12 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
                 "[CONTROL PLANE LOCAL][BEFORE REGISTRATION]");
 
             services.AddAiControlPlane(
+                configureRuntimeExecutionRecoveryReconciliation: options =>
+                {
+                    ConfigureRuntimeExecutionRecoveryReconciliationOptions(
+                        configuration,
+                        options);
+                },
                 configureAdmission: options =>
                 {
                     ConfigureAdmissionOptions(
@@ -381,6 +395,12 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
                 "[CONTROL PLANE HTTP][ENTRY]");
 
             services.AddAiControlPlane(
+                configureRuntimeExecutionRecoveryReconciliation: options =>
+                {
+                    ConfigureRuntimeExecutionRecoveryReconciliationOptions(
+                        configuration,
+                        options);
+                },
                 configureAdmission: options =>
                 {
                     ConfigureAdmissionOptions(
@@ -852,6 +872,61 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
             if (section["RejectWhenNoCapacity"] is null)
             {
                 options.RejectWhenNoCapacity = false;
+            }
+        }
+
+        /// <summary>
+        /// Configures runtime execution recovery reconciliation options for MCP control-plane modes.
+        /// </summary>
+        /// <remarks>
+        /// Configuration values from the <c>AiRuntimeExecutionRecoveryReconciliation</c> section are applied first.
+        ///
+        /// Runtime execution recovery is intentionally separate from runtime instance health reconciliation.
+        /// Health reconciliation prevents unsafe routing. Execution recovery requeues work that was already
+        /// assigned to failed, stopped, draining, or unavailable runtime instances.
+        /// </remarks>
+        /// <param name="configuration">The application configuration.</param>
+        /// <param name="options">The runtime execution recovery reconciliation options.</param>
+        private static void ConfigureRuntimeExecutionRecoveryReconciliationOptions(
+            IConfiguration configuration,
+            AiRuntimeExecutionRecoveryReconciliationOptions options)
+        {
+            ArgumentNullException.ThrowIfNull(configuration);
+            ArgumentNullException.ThrowIfNull(options);
+
+            var section =
+                configuration.GetSection("AiRuntimeExecutionRecoveryReconciliation");
+
+            section.Bind(options);
+
+            if (section["Enabled"] is null)
+            {
+                options.Enabled = true;
+            }
+
+            if (section["IncludeUnhealthyRuntimeInstances"] is null)
+            {
+                options.IncludeUnhealthyRuntimeInstances = true;
+            }
+
+            if (section["IncludeStoppedRuntimeInstances"] is null)
+            {
+                options.IncludeStoppedRuntimeInstances = true;
+            }
+
+            if (section["IncludeDrainingRuntimeInstances"] is null)
+            {
+                options.IncludeDrainingRuntimeInstances = true;
+            }
+
+            if (section["RequeueUnfinishedRuns"] is null)
+            {
+                options.RequeueUnfinishedRuns = true;
+            }
+
+            if (section["DryRun"] is null)
+            {
+                options.DryRun = false;
             }
         }
 

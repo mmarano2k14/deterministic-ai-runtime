@@ -1,7 +1,10 @@
 ﻿using Microsoft.Extensions.Logging;
 using Multiplexed.Abstractions.AI.ControlPlane.Admission;
 using Multiplexed.Abstractions.AI.ControlPlane.Admission.Reservations;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Dispatch;
+using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Scaling;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Store;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Claiming;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Dispatch;
@@ -22,6 +25,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
     /// - atomically claim one pending shared queue item
     /// - load the associated shared run record
     /// - select an available runtime instance through admission
+    /// - publish a replacement scale-out request when admission asks for more runtime capacity
     /// - reserve temporary admission capacity before dispatch
     /// - dispatch the shared run to the selected runtime instance
     /// - mark the queue item as dispatched on success
@@ -30,16 +34,24 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
     /// - requeue the item when dispatch fails or throws
     /// - release temporary admission reservations after dispatch attempts
     ///
-    /// This service does not scale Kubernetes.
+    /// This service does not scale Kubernetes directly.
     /// It does not execute DAG steps directly.
     /// </remarks>
     public sealed class AiSharedQueueDispatcher : IAiSharedQueueDispatcher
     {
+        private const string ScaleOutRequestIdMetadataKey = "scaleout.requestId";
+        private const string ScaleOutIntentMetadataKey = "scaleout.intent";
+        private const string ScaleOutIntentSharedQueueRedispatchReplacement = "shared-queue-redispatch-replacement";
+        private const string SharedQueueRedispatchReplacementReason = "Shared queue redispatch requested replacement runtime capacity.";
+
         private readonly IAiSharedQueue _sharedQueue;
         private readonly IAiSharedRunStore _sharedRunStore;
         private readonly IAiSharedRunDispatcher _sharedRunDispatcher;
         private readonly IAiRunAdmissionController _admissionController;
         private readonly IAiRuntimeAdmissionReservationStore _reservationStore;
+        private readonly IAiRuntimeInstanceRegistry _runtimeInstanceRegistry;
+        private readonly IAiRuntimeScaleOutRequestPublisher _scaleOutPublisher;
+        private readonly IAiTenantRuntimeSettingsProvider _tenantRuntimeSettingsProvider;
         private readonly IExecutionContextAccessor _executionContextAccessor;
         private readonly ILogger<AiSharedQueueDispatcher> _logger;
 
@@ -52,6 +64,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
             IAiSharedRunDispatcher sharedRunDispatcher,
             IAiRunAdmissionController admissionController,
             IAiRuntimeAdmissionReservationStore reservationStore,
+            IAiRuntimeInstanceRegistry runtimeInstanceRegistry,
+            IAiRuntimeScaleOutRequestPublisher scaleOutPublisher,
+            IAiTenantRuntimeSettingsProvider tenantRuntimeSettingsProvider,
             IExecutionContextAccessor executionContextAccessor,
             ILogger<AiSharedQueueDispatcher> logger)
         {
@@ -60,6 +75,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
             _sharedRunDispatcher = sharedRunDispatcher ?? throw new ArgumentNullException(nameof(sharedRunDispatcher));
             _admissionController = admissionController ?? throw new ArgumentNullException(nameof(admissionController));
             _reservationStore = reservationStore ?? throw new ArgumentNullException(nameof(reservationStore));
+            _runtimeInstanceRegistry = runtimeInstanceRegistry ?? throw new ArgumentNullException(nameof(runtimeInstanceRegistry));
+            _scaleOutPublisher = scaleOutPublisher ?? throw new ArgumentNullException(nameof(scaleOutPublisher));
+            _tenantRuntimeSettingsProvider = tenantRuntimeSettingsProvider ?? throw new ArgumentNullException(nameof(tenantRuntimeSettingsProvider));
             _executionContextAccessor = executionContextAccessor ?? throw new ArgumentNullException(nameof(executionContextAccessor));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
@@ -214,6 +232,14 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                         sharedRun.ExecutionContextSnapshot.TenantGroupId,
                         sharedRun.ExecutionContextSnapshot.ContextKey);
 
+                    var safePreferredRuntimeInstanceId =
+                        await ResolveSafePreferredRuntimeInstanceIdAsync(
+                                sharedRun.AssignedRuntimeInstanceId,
+                                sharedRun.SharedRunId,
+                                controlPlaneId,
+                                cancellationToken)
+                            .ConfigureAwait(false);
+
                     var admissionDecision = await _admissionController
                         .AdmitAsync(
                             new AiRunAdmissionRequest
@@ -222,7 +248,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                                 RunId = sharedRun.SharedRunId,
                                 TenantId = sharedRun.ExecutionContextSnapshot.TenantId,
                                 PipelineKey = sharedRun.PipelineKey,
-                                PreferredRuntimeInstanceId = sharedRun.AssignedRuntimeInstanceId,
+                                PreferredRuntimeInstanceId = safePreferredRuntimeInstanceId,
                                 CorrelationId = request.CorrelationId ?? sharedRun.CorrelationId,
                                 RequestedBy = request.RequestedBy,
                                 Source = request.Source,
@@ -239,6 +265,41 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                         admissionDecision.DecisionType,
                         admissionDecision.AssignedRuntimeInstanceId,
                         admissionDecision.Reason);
+
+                    if (admissionDecision.DecisionType == AiRunAdmissionDecisionType.RequestScaleOut)
+                    {
+                        await PublishScaleOutRequestAsync(
+                                sharedRun,
+                                admissionDecision,
+                                cancellationToken)
+                            .ConfigureAwait(false);
+
+                        await RequeueBestEffortAsync(
+                                queueItem,
+                                SharedQueueRedispatchReplacementReason,
+                                cancellationToken)
+                            .ConfigureAwait(false);
+
+                        var completedAtUtc = DateTimeOffset.UtcNow;
+
+                        return new AiSharedQueueDispatchResult
+                        {
+                            Success = false,
+                            SharedRunId = queueItem.SharedRunId,
+                            RuntimeInstanceId = request.RuntimeInstanceId,
+                            QueueItem = queueItem,
+                            SharedRun = sharedRun,
+                            Message = "Shared queue item was requeued after publishing a replacement scale-out request.",
+                            FailureReason = "scale-out-requested",
+                            StartedAtUtc = startedAtUtc,
+                            CompletedAtUtc = completedAtUtc,
+                            DurationMs = CalculateDurationMs(startedAtUtc, completedAtUtc),
+                            Diagnostics = new[]
+                            {
+                                admissionDecision.Reason ?? SharedQueueRedispatchReplacementReason
+                            }
+                        };
+                    }
 
                     if (admissionDecision.DecisionType != AiRunAdmissionDecisionType.AssignToInstance ||
                         string.IsNullOrWhiteSpace(admissionDecision.AssignedRuntimeInstanceId))
@@ -279,6 +340,41 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
 
                     var targetRuntimeInstanceId =
                         admissionDecision.AssignedRuntimeInstanceId;
+
+                    if (!await IsRuntimeInstanceRoutableAsync(targetRuntimeInstanceId, cancellationToken).ConfigureAwait(false))
+                    {
+                        _logger.LogWarning(
+                            "Shared queue dispatch rejected unsafe runtime instance selected by admission. SharedRunId={SharedRunId}, ControlPlaneId={ControlPlaneId}, RuntimeInstanceId={RuntimeInstanceId}",
+                            sharedRun.SharedRunId,
+                            controlPlaneId,
+                            targetRuntimeInstanceId);
+
+                        await RequeueBestEffortAsync(
+                                queueItem,
+                                "Selected runtime instance is not routable.",
+                                cancellationToken)
+                            .ConfigureAwait(false);
+
+                        var completedAtUtc = DateTimeOffset.UtcNow;
+
+                        return new AiSharedQueueDispatchResult
+                        {
+                            Success = false,
+                            SharedRunId = queueItem.SharedRunId,
+                            RuntimeInstanceId = targetRuntimeInstanceId,
+                            QueueItem = queueItem,
+                            SharedRun = sharedRun,
+                            Message = "Shared queue item was requeued because admission selected an unsafe runtime instance.",
+                            FailureReason = "runtime-instance-not-routable",
+                            StartedAtUtc = startedAtUtc,
+                            CompletedAtUtc = completedAtUtc,
+                            DurationMs = CalculateDurationMs(startedAtUtc, completedAtUtc),
+                            Diagnostics = new[]
+                            {
+                                "Selected runtime instance is not routable."
+                            }
+                        };
+                    }
 
                     _logger.LogDebug(
                         "Reserving temporary admission capacity. SharedRunId={SharedRunId}, ControlPlaneId={ControlPlaneId}, RuntimeInstanceId={RuntimeInstanceId}, RunCount={RunCount}",
@@ -536,6 +632,176 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                     Diagnostics = new[] { exception.Message }
                 };
             }
+        }
+
+        /// <summary>
+        /// Publishes a replacement scale-out request for a shared run when admission requests more runtime capacity during shared queue dispatch.
+        /// </summary>
+        /// <param name="sharedRun">The shared run record.</param>
+        /// <param name="admissionDecision">The scale-out admission decision.</param>
+        /// <param name="cancellationToken">A token used to cancel the operation.</param>
+        private async Task PublishScaleOutRequestAsync(
+            AiSharedRunRecord sharedRun,
+            AiRunAdmissionDecision admissionDecision,
+            CancellationToken cancellationToken)
+        {
+            var tenantRuntimeSettings =
+                admissionDecision.TenantRuntimeSettings ??
+                _tenantRuntimeSettingsProvider.GetSettings(
+                    sharedRun.ExecutionContextSnapshot.TenantId,
+                    sharedRun.ExecutionContextSnapshot.TenantGroupId);
+
+            var tenantId =
+                !string.IsNullOrWhiteSpace(admissionDecision.TenantId)
+                    ? admissionDecision.TenantId
+                    : tenantRuntimeSettings.TenantId ?? sharedRun.ExecutionContextSnapshot.TenantId;
+
+            var tenantGroupId =
+                !string.IsNullOrWhiteSpace(admissionDecision.TenantGroupId)
+                    ? admissionDecision.TenantGroupId
+                    : tenantRuntimeSettings.TenantGroupId ?? sharedRun.ExecutionContextSnapshot.TenantGroupId;
+
+            var metadata =
+                CreateScaleOutRedispatchMetadata(
+                    sharedRun);
+
+            var publishResult =
+                await _scaleOutPublisher
+                    .PublishAsync(
+                        new AiRuntimeScaleOutRequest
+                        {
+                            SharedRun = sharedRun,
+                            SharedRunId = sharedRun.SharedRunId,
+                            ExecutionContextSnapshot = sharedRun.ExecutionContextSnapshot,
+
+                            TenantId = tenantId,
+                            TenantGroupId = tenantGroupId,
+                            PipelineKey = sharedRun.PipelineKey,
+
+                            IsolationMode = tenantRuntimeSettings.IsolationMode,
+                            PreferDedicatedCapacity = tenantRuntimeSettings.PreferDedicatedCapacity,
+                            AllowSharedFallback = tenantRuntimeSettings.AllowSharedFallback,
+                            MaxRuntimeInstances = tenantRuntimeSettings.MaxRuntimeInstances,
+                            RuntimeInstanceIdPrefix = tenantRuntimeSettings.RuntimeInstanceIdPrefix,
+                            WorkerCountPerInstance = tenantRuntimeSettings.WorkerCountPerInstance,
+                            MaxConcurrentRunsPerInstance = tenantRuntimeSettings.MaxConcurrentRunsPerInstance,
+                            LocalQueueCapacity = tenantRuntimeSettings.LocalQueueCapacity,
+
+                            VisibleInstanceCount = admissionDecision.VisibleInstanceCount,
+                            AvailableInstanceCount = admissionDecision.AvailableInstanceCount,
+                            CurrentInstanceCount = admissionDecision.CurrentInstanceCount,
+                            MaxInstanceCount = admissionDecision.MaxInstanceCount,
+
+                            CorrelationId = sharedRun.CorrelationId,
+                            RequestedBy = sharedRun.RequestedBy,
+                            Source = sharedRun.Source,
+                            Reason = SharedQueueRedispatchReplacementReason,
+                            Metadata = metadata
+                        },
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+            _logger.LogInformation(
+                "Shared queue dispatch published replacement scale-out request. SharedRunId={SharedRunId}, ScaleOutRequestId={ScaleOutRequestId}, TenantId={TenantId}, TenantGroupId={TenantGroupId}, PipelineKey={PipelineKey}, MaxRuntimeInstances={MaxRuntimeInstances}, RuntimeInstanceIdPrefix={RuntimeInstanceIdPrefix}, Message={Message}",
+                sharedRun.SharedRunId,
+                publishResult.ScaleOutRequestId,
+                tenantId,
+                tenantGroupId,
+                sharedRun.PipelineKey,
+                tenantRuntimeSettings.MaxRuntimeInstances,
+                tenantRuntimeSettings.RuntimeInstanceIdPrefix,
+                publishResult.Message);
+        }
+
+        /// <summary>
+        /// Creates metadata for replacement scale-out requests emitted from shared queue redispatch.
+        /// </summary>
+        /// <param name="sharedRun">The shared run record.</param>
+        /// <returns>The scale-out metadata.</returns>
+        private static IReadOnlyDictionary<string, string> CreateScaleOutRedispatchMetadata(
+            AiSharedRunRecord sharedRun)
+        {
+            var metadata =
+                new Dictionary<string, string>(
+                    sharedRun.Metadata,
+                    StringComparer.OrdinalIgnoreCase);
+
+            metadata[ScaleOutIntentMetadataKey] =
+                ScaleOutIntentSharedQueueRedispatchReplacement;
+
+            metadata[ScaleOutRequestIdMetadataKey] =
+                $"scale-out-redispatch-{sharedRun.SharedRunId}-{Guid.NewGuid():N}";
+
+            return metadata;
+        }
+
+        /// <summary>
+        /// Resolves a preferred runtime instance only when it is still routable.
+        /// </summary>
+        /// <param name="preferredRuntimeInstanceId">The preferred runtime instance id.</param>
+        /// <param name="sharedRunId">The shared run id.</param>
+        /// <param name="controlPlaneId">The control-plane id.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <returns>The preferred runtime instance id when safe; otherwise, <c>null</c>.</returns>
+        private async Task<string?> ResolveSafePreferredRuntimeInstanceIdAsync(
+            string? preferredRuntimeInstanceId,
+            string sharedRunId,
+            string controlPlaneId,
+            CancellationToken cancellationToken)
+        {
+            if (string.IsNullOrWhiteSpace(preferredRuntimeInstanceId))
+            {
+                return null;
+            }
+
+            var snapshot =
+                await _runtimeInstanceRegistry
+                    .GetAsync(
+                        preferredRuntimeInstanceId,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+            if (snapshot is not null &&
+                snapshot.CanAcceptRun)
+            {
+                return preferredRuntimeInstanceId;
+            }
+
+            _logger.LogInformation(
+                "Ignoring stale preferred runtime instance because it is not routable. SharedRunId={SharedRunId}, ControlPlaneId={ControlPlaneId}, PreferredRuntimeInstanceId={PreferredRuntimeInstanceId}, Status={Status}, CanAcceptRun={CanAcceptRun}",
+                sharedRunId,
+                controlPlaneId,
+                preferredRuntimeInstanceId,
+                snapshot?.Status,
+                snapshot?.CanAcceptRun);
+
+            return null;
+        }
+
+        /// <summary>
+        /// Determines whether a runtime instance is still routable immediately before dispatch.
+        /// </summary>
+        /// <param name="runtimeInstanceId">The runtime instance id.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <returns><c>true</c> when the runtime instance can accept runs; otherwise, <c>false</c>.</returns>
+        private async Task<bool> IsRuntimeInstanceRoutableAsync(
+            string runtimeInstanceId,
+            CancellationToken cancellationToken)
+        {
+            if (string.IsNullOrWhiteSpace(runtimeInstanceId))
+            {
+                return false;
+            }
+
+            var snapshot =
+                await _runtimeInstanceRegistry
+                    .GetAsync(
+                        runtimeInstanceId,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+            return snapshot is not null &&
+                   snapshot.CanAcceptRun;
         }
 
         /// <summary>

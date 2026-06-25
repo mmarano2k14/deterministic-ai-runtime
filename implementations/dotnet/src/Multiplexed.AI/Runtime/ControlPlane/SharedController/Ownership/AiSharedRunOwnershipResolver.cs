@@ -93,23 +93,23 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Ownership
         }
 
         /// <summary>
-        /// Determines whether a shared queue item matches the requested runtime ownership.
+        /// Determines whether a shared queue item is a candidate for the requested ownership.
         /// </summary>
+        /// <remarks>
+        /// For local runtime dispatch, the shared queue claim can be owned directly by the runtime instance.
+        /// For remote HTTP/process-host dispatch, the shared queue claim may be owned by the control-plane
+        /// dispatcher or pump while the target runtime ownership is stored on the shared run record.
+        ///
+        /// Therefore this method only rejects tenant mismatches. Runtime/local execution ownership is
+        /// validated later against the shared run store.
+        /// </remarks>
         /// <param name="item">The shared queue item.</param>
         /// <param name="request">The ownership resolution request.</param>
-        /// <returns><c>true</c> when the queue item matches; otherwise, <c>false</c>.</returns>
+        /// <returns><c>true</c> when the queue item can be inspected; otherwise, <c>false</c>.</returns>
         private static bool MatchesQueueOwnership(
             AiSharedQueueItem item,
             AiSharedRunOwnershipResolutionRequest request)
         {
-            if (!string.Equals(
-                    item.ClaimedByRuntimeInstanceId,
-                    request.RuntimeInstanceId,
-                    StringComparison.Ordinal))
-            {
-                return false;
-            }
-
             if (!MatchesTenant(
                     item.ExecutionContextSnapshot.TenantId,
                     request.TenantId))
@@ -130,6 +130,14 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Ownership
         /// <summary>
         /// Determines whether a shared run record matches the requested runtime ownership.
         /// </summary>
+        /// <remarks>
+        /// HTTP/process-host dispatch can make shared-run assignment visible before the final
+        /// runtime execution id has been propagated back to the shared run store.
+        ///
+        /// In that case, the runtime execution index is the durable source for the in-flight
+        /// execution id, while the shared run store still proves runtime/local-run ownership.
+        /// Therefore an empty shared-run execution id does not prevent ownership resolution.
+        /// </remarks>
         /// <param name="record">The shared run record.</param>
         /// <param name="request">The ownership resolution request.</param>
         /// <returns><c>true</c> when the shared run record matches; otherwise, <c>false</c>.</returns>
@@ -154,11 +162,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Ownership
                 return false;
             }
 
-            if (!string.IsNullOrWhiteSpace(request.ExecutionId) &&
-                !string.Equals(
+            if (!MatchesExecutionOwnership(
                     record.ExecutionId,
-                    request.ExecutionId,
-                    StringComparison.Ordinal))
+                    request.ExecutionId))
             {
                 return false;
             }
@@ -178,6 +184,36 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Ownership
             }
 
             return true;
+        }
+
+        /// <summary>
+        /// Determines whether the shared-run execution id matches the runtime execution request.
+        /// </summary>
+        /// <remarks>
+        /// A missing shared-run execution id is accepted because the runtime execution index
+        /// can already hold the execution id for an in-flight local runtime execution.
+        /// </remarks>
+        /// <param name="sharedRunExecutionId">The execution id stored on the shared run.</param>
+        /// <param name="requestedExecutionId">The execution id from the runtime execution index.</param>
+        /// <returns><c>true</c> when execution ownership can be matched; otherwise, <c>false</c>.</returns>
+        private static bool MatchesExecutionOwnership(
+            string? sharedRunExecutionId,
+            string? requestedExecutionId)
+        {
+            if (string.IsNullOrWhiteSpace(requestedExecutionId))
+            {
+                return true;
+            }
+
+            if (string.IsNullOrWhiteSpace(sharedRunExecutionId))
+            {
+                return true;
+            }
+
+            return string.Equals(
+                sharedRunExecutionId,
+                requestedExecutionId,
+                StringComparison.Ordinal);
         }
 
         /// <summary>
@@ -206,20 +242,35 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Ownership
             AiSharedQueueItem queueItem,
             AiSharedRunRecord sharedRun)
         {
+            var executionId =
+                string.IsNullOrWhiteSpace(sharedRun.ExecutionId)
+                    ? request.ExecutionId
+                    : sharedRun.ExecutionId;
+
+            var localRunId =
+                string.IsNullOrWhiteSpace(sharedRun.LocalRunId)
+                    ? request.LocalRunId
+                    : sharedRun.LocalRunId;
+
+            var canRecover =
+                IsRecoverable(
+                    queueItem.Status,
+                    sharedRun.Status);
+
             return new AiSharedRunOwnershipResolutionResult
             {
                 Resolved = true,
                 SharedRunId = sharedRun.SharedRunId,
                 RuntimeInstanceId = request.RuntimeInstanceId,
-                LocalRunId = sharedRun.LocalRunId ?? request.LocalRunId,
-                ExecutionId = sharedRun.ExecutionId ?? request.ExecutionId,
+                LocalRunId = localRunId,
+                ExecutionId = executionId,
                 TenantId = sharedRun.ExecutionContextSnapshot.TenantId,
                 TenantGroupId = sharedRun.ExecutionContextSnapshot.TenantGroupId,
                 QueueStatus = queueItem.Status,
                 SharedRunStatus = sharedRun.Status,
                 ClaimToken = queueItem.ClaimToken,
-                CanRecover = IsRecoverable(queueItem.Status, sharedRun.Status),
-                Reason = IsRecoverable(queueItem.Status, sharedRun.Status)
+                CanRecover = canRecover,
+                Reason = canRecover
                     ? "shared-run-ownership-resolved"
                     : "shared-run-ownership-resolved-not-recoverable"
             };
