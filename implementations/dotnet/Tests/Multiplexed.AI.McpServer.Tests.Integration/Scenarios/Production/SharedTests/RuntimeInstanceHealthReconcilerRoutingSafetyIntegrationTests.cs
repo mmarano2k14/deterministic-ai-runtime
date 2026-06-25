@@ -9,6 +9,7 @@ using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Health;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue;
 using Multiplexed.AI.Runtime.ControlPlane.SharedQueue;
+using Multiplexed.AI.Runtime.ControlPlane.ShareQueue;
 
 namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.SharedTests
 {

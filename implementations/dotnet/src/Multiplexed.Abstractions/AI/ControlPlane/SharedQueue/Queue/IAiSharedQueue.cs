@@ -117,5 +117,25 @@ namespace Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Queue
             string? reason = null,
             CancellationToken cancellationToken = default);
 
+        /// <summary>
+        /// Requeues a dispatched shared queue item during controlled execution recovery
+        /// and merges additional metadata into the queue item.
+        /// </summary>
+        /// <param name="sharedRunId">The shared run identifier.</param>
+        /// <param name="claimToken">The expected claim token from the original dispatch ownership.</param>
+        /// <param name="reason">The optional recovery reason.</param>
+        /// <param name="metadata">Optional metadata to merge into the requeued item.</param>
+        /// <param name="cancellationToken">A token used to cancel the operation.</param>
+        /// <returns>The requeued shared queue item, or <c>null</c> when the transition is rejected.</returns>
+        /// <remarks>
+        /// This overload preserves the existing recovery requeue behavior while allowing
+        /// higher-level recovery services to attach durable recovery intent metadata.
+        /// </remarks>
+        Task<AiSharedQueueItem?> RequeueDispatchedAsync(
+            string sharedRunId,
+            string claimToken,
+            string? reason,
+            IReadOnlyDictionary<string, string>? metadata,
+            CancellationToken cancellationToken = default);
     }
 }

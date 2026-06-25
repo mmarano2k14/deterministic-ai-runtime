@@ -7,6 +7,7 @@ using Multiplexed.Abstractions.Core.ExecutionContext;
 using Multiplexed.AI.Runtime.ControlPlane.SharedController.Ownership;
 using Multiplexed.AI.Runtime.ControlPlane.SharedController.Store;
 using Multiplexed.AI.Runtime.ControlPlane.SharedQueue;
+using Multiplexed.AI.Runtime.ControlPlane.ShareQueue;
 
 namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController.Ownership
 {

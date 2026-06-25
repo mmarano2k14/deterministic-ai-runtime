@@ -2,7 +2,7 @@
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Queue;
 using System.Collections.Concurrent;
 
-namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
+namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue
 {
     /// <summary>
     /// In-memory implementation of the shared/global queue.
@@ -198,6 +198,22 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
             string? reason = null,
             CancellationToken cancellationToken = default)
         {
+            return RequeueDispatchedAsync(
+                sharedRunId,
+                claimToken,
+                reason,
+                metadata: null,
+                cancellationToken);
+        }
+
+        /// <inheritdoc />
+        public Task<AiSharedQueueItem?> RequeueDispatchedAsync(
+            string sharedRunId,
+            string claimToken,
+            string? reason,
+            IReadOnlyDictionary<string, string>? metadata,
+            CancellationToken cancellationToken = default)
+        {
             ArgumentException.ThrowIfNullOrWhiteSpace(sharedRunId);
             ArgumentException.ThrowIfNullOrWhiteSpace(claimToken);
 
@@ -228,7 +244,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                     EnqueuedAtUtc = existing.EnqueuedAtUtc,
                     UpdatedAtUtc = now,
                     Reason = reason,
-                    Metadata = existing.Metadata
+                    Metadata = MergeMetadata(
+                        existing.Metadata,
+                        metadata)
                 };
 
                 if (_items.TryUpdate(sharedRunId, updated, existing))
@@ -343,6 +361,40 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                     return Task.FromResult<AiSharedQueueItem?>(updated);
                 }
             }
+        }
+
+        /// <summary>
+        /// Merges optional metadata into existing queue item metadata.
+        /// </summary>
+        /// <param name="existingMetadata">The existing metadata.</param>
+        /// <param name="metadata">The optional metadata to merge.</param>
+        /// <returns>The merged metadata.</returns>
+        private static IReadOnlyDictionary<string, string> MergeMetadata(
+            IReadOnlyDictionary<string, string> existingMetadata,
+            IReadOnlyDictionary<string, string>? metadata)
+        {
+            if (metadata is null ||
+                metadata.Count == 0)
+            {
+                return existingMetadata;
+            }
+
+            var merged =
+                new Dictionary<string, string>(
+                    existingMetadata,
+                    StringComparer.OrdinalIgnoreCase);
+
+            foreach (var pair in metadata)
+            {
+                if (string.IsNullOrWhiteSpace(pair.Key))
+                {
+                    continue;
+                }
+
+                merged[pair.Key] = pair.Value ?? string.Empty;
+            }
+
+            return merged;
         }
 
         /// <summary>

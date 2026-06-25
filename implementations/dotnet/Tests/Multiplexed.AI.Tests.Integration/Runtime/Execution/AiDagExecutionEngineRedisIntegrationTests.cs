@@ -424,6 +424,123 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution
         }
 
         /// <summary>
+        /// Verifies that a recovered timed-out running step can be claimed again and that
+        /// dependent steps remain blocked until the recovered step completes.
+        ///
+        /// EXPECTED:
+        /// - already completed dependency remains Completed
+        /// - expired running step is recovered back to Ready
+        /// - recovered step can be claimed by a new worker
+        /// - dependent step is not claimable before the recovered step completes
+        /// - dependent step becomes claimable after the recovered step completes
+        /// </summary>
+        [RedisFact]
+        public async Task RecoverTimedOutStepsAsync_And_TryClaimNextReadyStepAsync_Should_Resume_From_Recovered_Step()
+        {
+            var dagStore = CreateDagStore();
+            var executionId = Guid.NewGuid().ToString("N");
+
+            var record = new AiExecutionRecord
+            {
+                ExecutionId = executionId,
+                PipelineName = "dag",
+                ExecutionMode = AiExecutionMode.Dag,
+                Status = AiExecutionStatus.Running
+            };
+
+            var state = new AiExecutionState
+            {
+                ExecutionId = executionId
+            };
+
+            state.Steps["start"] = new AiStepState
+            {
+                StepName = "start",
+                Status = AiStepExecutionStatus.Completed
+            };
+
+            state.Steps["work"] = new AiStepState
+            {
+                StepName = "work",
+                Status = AiStepExecutionStatus.Running,
+                ClaimedBy = "worker-old",
+                ClaimToken = "claim-old",
+                ClaimedAtUtc = DateTime.UtcNow.AddMinutes(-10),
+                LeaseExpiresAtUtc = DateTime.UtcNow.AddMinutes(-9),
+                ClaimTimeoutSeconds = 30,
+                DependsOn = new List<string> { "start" }
+            };
+
+            state.Steps["merge"] = new AiStepState
+            {
+                StepName = "merge",
+                Status = AiStepExecutionStatus.Ready,
+                DependsOn = new List<string> { "work" }
+            };
+
+            await dagStore.CreateAsync(record, state);
+
+            try
+            {
+                var recovered = await dagStore.RecoverTimedOutStepsAsync(executionId);
+
+                Assert.Equal(1, recovered);
+
+                var recoveredSnapshot = await dagStore.GetStateAsync(executionId);
+
+                Assert.NotNull(recoveredSnapshot);
+                Assert.Equal(AiStepExecutionStatus.Completed, recoveredSnapshot!.Steps["start"].Status);
+                Assert.Equal(AiStepExecutionStatus.Ready, recoveredSnapshot.Steps["work"].Status);
+                Assert.Equal(1, recoveredSnapshot.Steps["work"].RecoveryCount);
+                Assert.Null(recoveredSnapshot.Steps["work"].ClaimedBy);
+                Assert.Null(recoveredSnapshot.Steps["work"].ClaimToken);
+                Assert.Null(recoveredSnapshot.Steps["work"].ClaimedAtUtc);
+                Assert.Null(recoveredSnapshot.Steps["work"].LeaseExpiresAtUtc);
+                Assert.Equal(AiStepExecutionStatus.Ready, recoveredSnapshot.Steps["merge"].Status);
+
+                var recoveredClaim = await dagStore.TryClaimNextReadyStepAsync(
+                    executionId,
+                    "worker-new");
+
+                Assert.NotNull(recoveredClaim);
+                Assert.Equal("work", recoveredClaim!.StepName);
+
+                var blockedClaim = await dagStore.TryClaimNextReadyStepAsync(
+                    executionId,
+                    "worker-blocked");
+
+                Assert.Null(blockedClaim);
+
+                var completed = await dagStore.TryCompleteStepAsync(
+                    executionId,
+                    "work",
+                    recoveredClaim.ClaimToken,
+                    AiStepResult.Ok("recovered work done"));
+
+                Assert.True(completed);
+
+                var dependentClaim = await dagStore.TryClaimNextReadyStepAsync(
+                    executionId,
+                    "worker-dependent");
+
+                Assert.NotNull(dependentClaim);
+                Assert.Equal("merge", dependentClaim!.StepName);
+
+                var finalSnapshot = await dagStore.GetStateAsync(executionId);
+
+                Assert.NotNull(finalSnapshot);
+                Assert.Equal(AiStepExecutionStatus.Completed, finalSnapshot!.Steps["start"].Status);
+                Assert.Equal(AiStepExecutionStatus.Completed, finalSnapshot.Steps["work"].Status);
+                Assert.Equal(AiStepExecutionStatus.Running, finalSnapshot.Steps["merge"].Status);
+                Assert.Equal("worker-dependent", finalSnapshot.Steps["merge"].ClaimedBy);
+            }
+            finally
+            {
+                await CleanupDagExecutionAsync(executionId);
+            }
+        }
+
+        /// <summary>
         /// Verifies that completion rejects an invalid claim token.
         /// </summary>
         [RedisFact]

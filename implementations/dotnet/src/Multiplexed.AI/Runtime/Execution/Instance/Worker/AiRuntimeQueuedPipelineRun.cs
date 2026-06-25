@@ -33,17 +33,34 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
         /// <param name="handle">The public run handle.</param>
         /// <param name="completionSource">The completion source for the submitted run.</param>
         /// <param name="correlation">The runtime execution correlation context owned by this queued run.</param>
+        /// <param name="resumeExecutionId">The optional existing execution identifier to resume.</param>
         public AiRuntimeQueuedPipelineRun(
             AiRuntimePipelineRunRequest request,
             AiRuntimeWorkerRunHandle handle,
             TaskCompletionSource<AiExecutionRecord> completionSource,
-            AiRuntimeExecutionCorrelationContext correlation)
+            AiRuntimeExecutionCorrelationContext correlation,
+            string? resumeExecutionId = null)
         {
             Request = request ?? throw new ArgumentNullException(nameof(request));
             Handle = handle ?? throw new ArgumentNullException(nameof(handle));
             CompletionSource = completionSource ?? throw new ArgumentNullException(nameof(completionSource));
             Correlation = correlation ?? throw new ArgumentNullException(nameof(correlation));
+            ResumeExecutionId = string.IsNullOrWhiteSpace(resumeExecutionId)
+                ? null
+                : resumeExecutionId;
         }
+
+        /// <summary>
+        /// Gets the existing durable execution identifier to resume, if this queued run
+        /// was created by controlled runtime execution recovery.
+        /// </summary>
+        public string? ResumeExecutionId { get; }
+
+        /// <summary>
+        /// Gets a value indicating whether this queued run should resume an existing execution.
+        /// </summary>
+        public bool IsResume =>
+            !string.IsNullOrWhiteSpace(ResumeExecutionId);
 
         /// <summary>
         /// Gets the submitted pipeline run request.

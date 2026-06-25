@@ -346,6 +346,108 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution
         }
 
         /// <summary>
+        /// Verifies that timeout recovery preserves completed steps and only requeues
+        /// running steps whose persisted lease has expired.
+        ///
+        /// EXPECTED:
+        /// - completed steps remain Completed
+        /// - expired running steps transition back to Ready
+        /// - non-expired running steps remain Running
+        /// - already ready steps remain Ready
+        /// - recovery count is incremented only for recovered steps
+        /// </summary>
+        [Fact]
+        public async Task RecoverTimedOutStepsAsync_Should_Preserve_Completed_Steps_And_Recover_Only_Expired_Running_Steps()
+        {
+            // Arrange
+            var executionId = Guid.NewGuid().ToString("N");
+
+            var completedStep1 = CreateCompletedStep("step-1");
+            var completedStep2 = CreateCompletedStep("step-2");
+
+            var expiredRunningStep1 = CreateRunningStep(
+                stepName: "step-3",
+                claimedBy: "worker-expired-a",
+                claimToken: "claim-token-expired-a",
+                claimedAtUtc: DateTime.UtcNow.AddMinutes(-10),
+                leaseExpiresAtUtc: DateTime.UtcNow.AddMinutes(-5),
+                claimTimeoutSeconds: 60);
+
+            var expiredRunningStep2 = CreateRunningStep(
+                stepName: "step-4",
+                claimedBy: "worker-expired-b",
+                claimToken: "claim-token-expired-b",
+                claimedAtUtc: DateTime.UtcNow.AddMinutes(-8),
+                leaseExpiresAtUtc: DateTime.UtcNow.AddMinutes(-4),
+                claimTimeoutSeconds: 60);
+
+            expiredRunningStep2.RecoveryCount = 2;
+
+            var activeRunningStep = CreateRunningStep(
+                stepName: "step-5",
+                claimedBy: "worker-active",
+                claimToken: "claim-token-active",
+                claimedAtUtc: DateTime.UtcNow.AddSeconds(-5),
+                leaseExpiresAtUtc: DateTime.UtcNow.AddMinutes(5),
+                claimTimeoutSeconds: 300);
+
+            var readyStep = CreateReadyStep("step-6", claimTimeoutSeconds: 60);
+
+            await CreateExecutionAsync(
+                executionId,
+                completedStep1,
+                completedStep2,
+                expiredRunningStep1,
+                expiredRunningStep2,
+                activeRunningStep,
+                readyStep);
+
+            // Act
+            var recovered = await _store.RecoverTimedOutStepsAsync(executionId);
+
+            // Assert
+            recovered.Should().Be(2);
+
+            var state = await _store.GetStateAsync(executionId);
+            state.Should().NotBeNull();
+
+            var reloadedCompletedStep1 = state!.Steps["step-1"];
+            var reloadedCompletedStep2 = state.Steps["step-2"];
+            var reloadedExpiredRunningStep1 = state.Steps["step-3"];
+            var reloadedExpiredRunningStep2 = state.Steps["step-4"];
+            var reloadedActiveRunningStep = state.Steps["step-5"];
+            var reloadedReadyStep = state.Steps["step-6"];
+
+            reloadedCompletedStep1.Status.Should().Be(AiStepExecutionStatus.Completed);
+            reloadedCompletedStep2.Status.Should().Be(AiStepExecutionStatus.Completed);
+            reloadedCompletedStep1.RecoveryCount.Should().Be(0);
+            reloadedCompletedStep2.RecoveryCount.Should().Be(0);
+
+            reloadedExpiredRunningStep1.Status.Should().Be(AiStepExecutionStatus.Ready);
+            reloadedExpiredRunningStep1.ClaimedBy.Should().BeNull();
+            reloadedExpiredRunningStep1.ClaimToken.Should().BeNull();
+            reloadedExpiredRunningStep1.ClaimedAtUtc.Should().BeNull();
+            reloadedExpiredRunningStep1.LeaseExpiresAtUtc.Should().BeNull();
+            reloadedExpiredRunningStep1.RecoveryCount.Should().Be(1);
+
+            reloadedExpiredRunningStep2.Status.Should().Be(AiStepExecutionStatus.Ready);
+            reloadedExpiredRunningStep2.ClaimedBy.Should().BeNull();
+            reloadedExpiredRunningStep2.ClaimToken.Should().BeNull();
+            reloadedExpiredRunningStep2.ClaimedAtUtc.Should().BeNull();
+            reloadedExpiredRunningStep2.LeaseExpiresAtUtc.Should().BeNull();
+            reloadedExpiredRunningStep2.RecoveryCount.Should().Be(3);
+
+            reloadedActiveRunningStep.Status.Should().Be(AiStepExecutionStatus.Running);
+            reloadedActiveRunningStep.ClaimedBy.Should().Be("worker-active");
+            reloadedActiveRunningStep.ClaimToken.Should().Be("claim-token-active");
+            reloadedActiveRunningStep.LeaseExpiresAtUtc.Should().NotBeNull();
+            reloadedActiveRunningStep.RecoveryCount.Should().Be(0);
+
+            reloadedReadyStep.Status.Should().Be(AiStepExecutionStatus.Ready);
+            reloadedReadyStep.RecoveryCount.Should().Be(0);
+        }
+
+        /// <summary>
         /// Verifies that a stale completion attempt is rejected when the claim token does not match.
         ///
         /// EXPECTED:
@@ -455,6 +557,21 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution
                 StepName = stepName,
                 Status = AiStepExecutionStatus.Ready,
                 ClaimTimeoutSeconds = claimTimeoutSeconds,
+                DependsOn = new List<string>(),
+                Inputs = new Dictionary<string, object?>(StringComparer.Ordinal),
+                Config = new Dictionary<string, object?>(StringComparer.Ordinal)
+            };
+        }
+
+        /// <summary>
+        /// Builds a completed step suitable for recovery preservation tests.
+        /// </summary>
+        private static AiStepState CreateCompletedStep(string stepName)
+        {
+            return new AiStepState
+            {
+                StepName = stepName,
+                Status = AiStepExecutionStatus.Completed,
                 DependsOn = new List<string>(),
                 Inputs = new Dictionary<string, object?>(StringComparer.Ordinal),
                 Config = new Dictionary<string, object?>(StringComparer.Ordinal)

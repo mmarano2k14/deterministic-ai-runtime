@@ -26,6 +26,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue
     /// </remarks>
     public sealed class AiRuntimeQueueControlPlane : IAiRuntimeQueueControlPlane
     {
+        private const string RecoveryModeMetadataKey = "recovery.mode";
+        private const string RecoveryModeResumeExistingExecution = "resume-existing-execution";
+        private const string RecoveryFailedExecutionIdMetadataKey = "recovery.failedExecutionId";
+
         private readonly IAiRuntimePipelineBackgroundController _controller;
         private readonly IAiRuntimeRunExecutionIndex _runExecutionIndex;
         private readonly AiRuntimeQueueControlPlaneOptions _options;
@@ -306,9 +310,22 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue
             AiRuntimeQueueControlPlaneRequest request,
             CancellationToken cancellationToken)
         {
-            var handle = await _controller
-                .EnqueueAsync(request.RunRequest!, cancellationToken)
-                .ConfigureAwait(false);
+            var resumeExecutionId =
+                TryResolveResumeExecutionId(
+                    request.Metadata);
+
+            var handle = string.IsNullOrWhiteSpace(resumeExecutionId)
+                ? await _controller
+                    .EnqueueAsync(
+                        request.RunRequest!,
+                        cancellationToken)
+                    .ConfigureAwait(false)
+                : await _controller
+                    .EnqueueResumeAsync(
+                        request.RunRequest!,
+                        resumeExecutionId,
+                        cancellationToken)
+                    .ConfigureAwait(false);
 
             var runState = await _controller
                 .GetRunStateAsync(handle.RunId, cancellationToken)
@@ -341,6 +358,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue
                                 ["requestedBy"] = request.RequestedBy ?? string.Empty,
                                 ["reason"] = request.Reason ?? string.Empty,
                                 ["correlationId"] = request.CorrelationId ?? string.Empty,
+                                ["recovery.resume"] = (!string.IsNullOrWhiteSpace(resumeExecutionId)).ToString(),
+                                ["recovery.execution.id"] = resumeExecutionId ?? string.Empty,
                                 [AiRuntimeInstanceIsolationMetadataKeys.TenantId] = executionContextSnapshot?.TenantId ?? string.Empty
                             })
                     },
@@ -826,6 +845,73 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue
             }
 
             return (long)(completedAtUtc - startedAtUtc).TotalMilliseconds;
+        }
+
+        /// <summary>
+        /// Resolves the existing execution identifier when the enqueue request carries
+        /// controlled recovery resume metadata.
+        /// </summary>
+        /// <param name="metadata">The enqueue metadata.</param>
+        /// <returns>The execution identifier to resume, or <c>null</c>.</returns>
+        private static string? TryResolveResumeExecutionId(
+            IReadOnlyDictionary<string, string>? metadata)
+        {
+            if (metadata is null ||
+                metadata.Count == 0)
+            {
+                return null;
+            }
+
+            if (!TryGetMetadataValue(
+                    metadata,
+                    RecoveryModeMetadataKey,
+                    out var mode) ||
+                !string.Equals(
+                    mode,
+                    RecoveryModeResumeExistingExecution,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return null;
+            }
+
+            if (!TryGetMetadataValue(
+                    metadata,
+                    RecoveryFailedExecutionIdMetadataKey,
+                    out var executionId) ||
+                string.IsNullOrWhiteSpace(executionId))
+            {
+                return null;
+            }
+
+            return executionId;
+        }
+
+        /// <summary>
+        /// Gets a metadata value using case-insensitive key comparison.
+        /// </summary>
+        /// <param name="metadata">The metadata dictionary.</param>
+        /// <param name="key">The metadata key.</param>
+        /// <param name="value">The resolved metadata value.</param>
+        /// <returns><c>true</c> when found; otherwise, <c>false</c>.</returns>
+        private static bool TryGetMetadataValue(
+            IReadOnlyDictionary<string, string> metadata,
+            string key,
+            out string? value)
+        {
+            foreach (var pair in metadata)
+            {
+                if (string.Equals(
+                        pair.Key,
+                        key,
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    value = pair.Value;
+                    return true;
+                }
+            }
+
+            value = null;
+            return false;
         }
 
         /// <summary>

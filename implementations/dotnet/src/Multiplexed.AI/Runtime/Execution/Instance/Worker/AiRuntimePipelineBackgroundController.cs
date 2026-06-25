@@ -251,15 +251,47 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
         }
 
         /// <inheritdoc />
-        public async ValueTask<AiRuntimeWorkerRunHandle> EnqueueAsync(
+        public ValueTask<AiRuntimeWorkerRunHandle> EnqueueAsync(
             AiRuntimePipelineRunRequest request,
             CancellationToken cancellationToken = default)
+        {
+            return EnqueueCoreAsync(
+                request,
+                resumeExecutionId: null,
+                cancellationToken);
+        }
+
+        /// <inheritdoc />
+        public ValueTask<AiRuntimeWorkerRunHandle> EnqueueResumeAsync(
+            AiRuntimePipelineRunRequest request,
+            string executionId,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(executionId);
+
+            return EnqueueCoreAsync(
+                request,
+                executionId,
+                cancellationToken);
+        }
+
+        /// <summary>
+        /// Enqueues one pipeline run request for normal execution creation or controlled execution resume.
+        /// </summary>
+        /// <param name="request">The pipeline run request.</param>
+        /// <param name="resumeExecutionId">The optional existing execution identifier to resume.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <returns>A handle for the queued runtime run.</returns>
+        private async ValueTask<AiRuntimeWorkerRunHandle> EnqueueCoreAsync(
+            AiRuntimePipelineRunRequest request,
+            string? resumeExecutionId,
+            CancellationToken cancellationToken)
         {
             ArgumentNullException.ThrowIfNull(request);
             ArgumentException.ThrowIfNullOrWhiteSpace(request.PipelineName);
 
             Console.WriteLine(
-                $"[AI PIPELINE CONTROLLER] ENQUEUE CALLED ControllerHash='{GetHashCode()}' RuntimeInstanceId='{_runtimeInstanceIdentity.RuntimeInstanceId}'");
+                $"[AI PIPELINE CONTROLLER] ENQUEUE CALLED ControllerHash='{GetHashCode()}' RuntimeInstanceId='{_runtimeInstanceIdentity.RuntimeInstanceId}' ResumeExecutionId='{resumeExecutionId ?? string.Empty}'");
 
             if (_options.RejectEnqueueWhenStopped && !_started)
             {
@@ -279,6 +311,7 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
             {
                 CorrelationId = runId,
                 RunId = runId,
+                ExecutionId = resumeExecutionId,
                 PipelineName = request.PipelineName,
                 RuntimeInstanceId = _runtimeInstanceIdentity.RuntimeInstanceId,
                 WorkerId = PipelineBackgroundControllerWorkerId
@@ -287,15 +320,21 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
             var completionSource = new TaskCompletionSource<AiExecutionRecord>(
                 TaskCreationOptions.RunContinuationsAsynchronously);
 
-            var handle = new AiRuntimeWorkerRunHandle(
-                runId,
-                completionSource.Task);
+            var handle = string.IsNullOrWhiteSpace(resumeExecutionId)
+                ? new AiRuntimeWorkerRunHandle(
+                    runId,
+                    completionSource.Task)
+                : new AiRuntimeWorkerRunHandle(
+                    runId,
+                    completionSource.Task,
+                    resumeExecutionId);
 
             var queuedRun = new AiRuntimeQueuedPipelineRun(
                 request,
                 handle,
                 completionSource,
-                correlation);
+                correlation,
+                resumeExecutionId);
 
             _queuedRuns[runId] = queuedRun;
 
@@ -306,7 +345,7 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
                     cancellationToken).ConfigureAwait(false);
 
                 Console.WriteLine(
-                     $"[AI PIPELINE CONTROLLER] ENQUEUED RuntimeInstanceId='{_runtimeInstanceIdentity.RuntimeInstanceId}' RunId='{runId}'");
+                     $"[AI PIPELINE CONTROLLER] ENQUEUED RuntimeInstanceId='{_runtimeInstanceIdentity.RuntimeInstanceId}' RunId='{runId}' ResumeExecutionId='{resumeExecutionId ?? string.Empty}'");
             }
             catch
             {
@@ -318,18 +357,22 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
             }
 
             _logger.Engine.LogInformation(
-                $"[AI PIPELINE CONTROLLER] Run queued. RunId='{runId}', Pipeline='{request.PipelineName}'.");
+                $"[AI PIPELINE CONTROLLER] Run queued. RunId='{runId}', Pipeline='{request.PipelineName}', ResumeExecutionId='{resumeExecutionId ?? string.Empty}'.");
 
             await RecordRunLedgerAsync(
                     runId,
                     request.PipelineName,
                     AiDecisionLedgerEvents.Run.Queued,
                     AiDecisionLedgerOutcome.Persisted,
-                    reason: "Pipeline run queued.",
+                    reason: string.IsNullOrWhiteSpace(resumeExecutionId)
+                        ? "Pipeline run queued."
+                        : "Pipeline run queued for existing execution resume.",
                     metadata: new Dictionary<string, string>
                     {
                         ["run.id"] = runId,
-                        ["pipeline.name"] = request.PipelineName
+                        ["pipeline.name"] = request.PipelineName,
+                        ["recovery.resume"] = (!string.IsNullOrWhiteSpace(resumeExecutionId)).ToString(),
+                        ["recovery.execution.id"] = resumeExecutionId ?? string.Empty
                     },
                     cancellationToken: cancellationToken)
                 .ConfigureAwait(false);
@@ -965,14 +1008,31 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
                     $"[AI PIPELINE CONTROLLER] Definition published. RunId='{handle.RunId}', Pipeline='{request.PipelineName}'.");
 
                 diagnosticPhase =
-                    "create-execution";
+                    queuedRun.IsResume
+                        ? "resume-existing-execution"
+                        : "create-execution";
 
-                created = await CreateExecutionAsync(
-                    request,
-                    cancellationToken).ConfigureAwait(false);
+                if (queuedRun.IsResume)
+                {
+                    created = new AiExecutionRecord
+                    {
+                        ExecutionId = queuedRun.ResumeExecutionId!,
+                        PipelineName = request.PipelineName,
+                        Status = AiExecutionStatus.Running
+                    };
 
-                _logger.Engine.LogInformation(
-                    $"[AI PIPELINE CONTROLLER] Execution created. RunId='{handle.RunId}', ExecutionId='{created.ExecutionId}', Pipeline='{created.PipelineName}'.");
+                    _logger.Engine.LogInformation(
+                        $"[AI PIPELINE CONTROLLER] Existing execution resume selected. RunId='{handle.RunId}', ExecutionId='{created.ExecutionId}', Pipeline='{request.PipelineName}', RuntimeInstanceId='{_runtimeInstanceIdentity.RuntimeInstanceId}'.");
+                }
+                else
+                {
+                    created = await CreateExecutionAsync(
+                        request,
+                        cancellationToken).ConfigureAwait(false);
+
+                    _logger.Engine.LogInformation(
+                        $"[AI PIPELINE CONTROLLER] Execution created. RunId='{handle.RunId}', ExecutionId='{created.ExecutionId}', Pipeline='{created.PipelineName}'.");
+                }
 
                 queuedRun.Correlation.ExecutionId =
                     created.ExecutionId;

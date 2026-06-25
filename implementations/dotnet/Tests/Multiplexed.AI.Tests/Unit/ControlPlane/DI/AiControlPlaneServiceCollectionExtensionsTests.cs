@@ -26,6 +26,7 @@ using Multiplexed.AI.Runtime.ControlPlane.SharedController;
 using Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling;
 using Multiplexed.AI.Runtime.ControlPlane.SharedController.Store;
 using Multiplexed.AI.Runtime.ControlPlane.SharedQueue;
+using Multiplexed.AI.Runtime.ControlPlane.ShareQueue;
 using Multiplexed.AI.Runtime.Observability.Logging;
 using StackExchange.Redis;
 

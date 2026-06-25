@@ -1,4 +1,6 @@
-﻿using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Recovery.Transition;
+﻿using Microsoft.Extensions.Options;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Recovery;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Recovery.Transition;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Ownership;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Store;
@@ -8,6 +10,7 @@ using Multiplexed.Abstractions.Core.ExecutionContext;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery.Transition;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue;
 using Multiplexed.AI.Runtime.ControlPlane.SharedQueue;
+using Multiplexed.AI.Runtime.ControlPlane.ShareQueue;
 
 namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Recovery.Transition
 {
@@ -210,6 +213,186 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Recovery.Trans
             Assert.NotNull(indexEntry.CompletedAtUtc);
 
             Assert.Empty(unfinishedRuns);
+        }
+
+        /// <summary>
+        /// Verifies that DAG resume metadata is not added when DAG resume recovery is disabled.
+        /// </summary>
+        [Fact]
+        public async Task ApplyAsync_Should_Not_Add_Dag_Resume_Metadata_When_EnableDagExecutionResume_Is_Disabled()
+        {
+            var sharedQueue = new InMemoryAiSharedQueue();
+            var runExecutionIndex = new InMemoryAiRuntimeRunExecutionIndex();
+            var service = new AiRuntimeExecutionRecoveryTransitionService(
+                sharedQueue,
+                runExecutionIndex,
+                Options.Create(new AiRuntimeExecutionRecoveryReconciliationOptions
+                {
+                    EnableDagExecutionResume = false
+                }));
+
+            await sharedQueue.EnqueueAsync(new AiSharedQueueItem
+            {
+                SharedRunId = "shared-run-1",
+                Status = AiSharedQueueItemStatus.Pending,
+                ExecutionContextSnapshot = CreateExecutionContextSnapshot(),
+                PipelineKey = "transition-test",
+                Priority = 0,
+                EnqueuedAtUtc = DateTimeOffset.UtcNow,
+                UpdatedAtUtc = DateTimeOffset.UtcNow,
+                Metadata = new Dictionary<string, string>
+                {
+                    ["test"] = "true"
+                }
+            });
+
+            await runExecutionIndex.RegisterQueuedAsync(new AiRuntimeRunExecutionIndexEntry
+            {
+                RunId = "run-1",
+                ExecutionId = "execution-1",
+                RuntimeInstanceId = "runtime-1",
+                Status = "queued",
+                CreatedAtUtc = DateTimeOffset.UtcNow,
+                ExecutionContextSnapshot = CreateExecutionContextSnapshot(),
+                Metadata = new Dictionary<string, string>
+                {
+                    ["test"] = "true"
+                }
+            });
+
+            await runExecutionIndex.MarkStartedAsync(
+                "run-1",
+                "execution-1");
+
+            var claimed = await sharedQueue.ClaimNextAsync(new AiSharedQueueClaimRequest
+            {
+                RuntimeInstanceId = "runtime-1",
+                WorkerId = "worker-1",
+                PipelineKey = "transition-test",
+                ClaimTtl = TimeSpan.FromMinutes(5),
+                Reason = "test-claim"
+            });
+
+            Assert.NotNull(claimed);
+            Assert.False(string.IsNullOrWhiteSpace(claimed!.ClaimToken));
+
+            await sharedQueue.MarkDispatchedAsync(
+                "shared-run-1",
+                claimed.ClaimToken!,
+                reason: "test-dispatch");
+
+            var result = await service.ApplyAsync(new AiRuntimeExecutionRecoveryTransitionRequest
+            {
+                Ownership = CreateOwnership(
+                    resolved: true,
+                    canRecover: true,
+                    claimToken: claimed.ClaimToken),
+                Reason = "test-recovery-requeue",
+                DryRun = false
+            });
+
+            var item = await sharedQueue.GetAsync("shared-run-1");
+
+            Assert.True(result.Accepted);
+            Assert.True(result.Changed);
+            Assert.NotNull(item);
+            Assert.Equal(AiSharedQueueItemStatus.Pending, item!.Status);
+            Assert.Equal("true", item.Metadata["test"]);
+            Assert.False(item.Metadata.ContainsKey("recovery.mode"));
+            Assert.False(item.Metadata.ContainsKey("recovery.failedExecutionId"));
+            Assert.False(item.Metadata.ContainsKey("recovery.failedRuntimeInstanceId"));
+            Assert.False(item.Metadata.ContainsKey("recovery.failedLocalRunId"));
+            Assert.False(item.Metadata.ContainsKey("recovery.reason"));
+        }
+
+        /// <summary>
+        /// Verifies that DAG resume metadata is added when DAG resume recovery is enabled.
+        /// </summary>
+        [Fact]
+        public async Task ApplyAsync_Should_Add_Dag_Resume_Metadata_When_EnableDagExecutionResume_Is_Enabled()
+        {
+            var sharedQueue = new InMemoryAiSharedQueue();
+            var runExecutionIndex = new InMemoryAiRuntimeRunExecutionIndex();
+            var service = new AiRuntimeExecutionRecoveryTransitionService(
+                sharedQueue,
+                runExecutionIndex,
+                Options.Create(new AiRuntimeExecutionRecoveryReconciliationOptions
+                {
+                    EnableDagExecutionResume = true
+                }));
+
+            await sharedQueue.EnqueueAsync(new AiSharedQueueItem
+            {
+                SharedRunId = "shared-run-1",
+                Status = AiSharedQueueItemStatus.Pending,
+                ExecutionContextSnapshot = CreateExecutionContextSnapshot(),
+                PipelineKey = "transition-test",
+                Priority = 0,
+                EnqueuedAtUtc = DateTimeOffset.UtcNow,
+                UpdatedAtUtc = DateTimeOffset.UtcNow,
+                Metadata = new Dictionary<string, string>
+                {
+                    ["test"] = "true"
+                }
+            });
+
+            await runExecutionIndex.RegisterQueuedAsync(new AiRuntimeRunExecutionIndexEntry
+            {
+                RunId = "run-1",
+                ExecutionId = "execution-1",
+                RuntimeInstanceId = "runtime-1",
+                Status = "queued",
+                CreatedAtUtc = DateTimeOffset.UtcNow,
+                ExecutionContextSnapshot = CreateExecutionContextSnapshot(),
+                Metadata = new Dictionary<string, string>
+                {
+                    ["test"] = "true"
+                }
+            });
+
+            await runExecutionIndex.MarkStartedAsync(
+                "run-1",
+                "execution-1");
+
+            var claimed = await sharedQueue.ClaimNextAsync(new AiSharedQueueClaimRequest
+            {
+                RuntimeInstanceId = "runtime-1",
+                WorkerId = "worker-1",
+                PipelineKey = "transition-test",
+                ClaimTtl = TimeSpan.FromMinutes(5),
+                Reason = "test-claim"
+            });
+
+            Assert.NotNull(claimed);
+            Assert.False(string.IsNullOrWhiteSpace(claimed!.ClaimToken));
+
+            await sharedQueue.MarkDispatchedAsync(
+                "shared-run-1",
+                claimed.ClaimToken!,
+                reason: "test-dispatch");
+
+            var result = await service.ApplyAsync(new AiRuntimeExecutionRecoveryTransitionRequest
+            {
+                Ownership = CreateOwnership(
+                    resolved: true,
+                    canRecover: true,
+                    claimToken: claimed.ClaimToken),
+                Reason = "test-recovery-requeue",
+                DryRun = false
+            });
+
+            var item = await sharedQueue.GetAsync("shared-run-1");
+
+            Assert.True(result.Accepted);
+            Assert.True(result.Changed);
+            Assert.NotNull(item);
+            Assert.Equal(AiSharedQueueItemStatus.Pending, item!.Status);
+            Assert.Equal("true", item.Metadata["test"]);
+            Assert.Equal("resume-existing-execution", item.Metadata["recovery.mode"]);
+            Assert.Equal("execution-1", item.Metadata["recovery.failedExecutionId"]);
+            Assert.Equal("runtime-1", item.Metadata["recovery.failedRuntimeInstanceId"]);
+            Assert.Equal("run-1", item.Metadata["recovery.failedLocalRunId"]);
+            Assert.Equal("test-recovery-requeue", item.Metadata["recovery.reason"]);
         }
 
         /// <summary>

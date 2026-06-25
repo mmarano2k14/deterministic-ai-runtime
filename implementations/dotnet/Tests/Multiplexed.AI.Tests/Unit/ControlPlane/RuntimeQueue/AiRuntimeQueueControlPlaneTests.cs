@@ -9,6 +9,7 @@ using Multiplexed.Abstractions.AI.Runtime.Execution.Instance.Worker;
 using Multiplexed.Abstractions.Core.ExecutionContext;
 using Multiplexed.AI.Runtime.ControlPlane.Observability;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue;
+using Multiplexed.AI.Tests.Fixtures;
 
 namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeQueue
 {
@@ -289,6 +290,59 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeQueue
             });
         }
 
+        [Fact]
+        public async Task EnqueueRunAsync_Should_Call_Controller_Resume_When_Recovery_Metadata_Is_Present()
+        {
+            var controller = new FakeRuntimePipelineBackgroundController();
+            var runExecutionIndex = new InMemoryAiRuntimeRunExecutionIndex();
+
+            var controlPlane = CreateControlPlane(
+                controller,
+                runExecutionIndex: runExecutionIndex);
+
+            var result = await controlPlane.EnqueueRunAsync(new AiRuntimeQueueControlPlaneRequest
+            {
+                Operation = AiRuntimeQueueControlPlaneOperation.EnqueueRun,
+                RunRequest = new AiRuntimePipelineRunRequest
+                {
+                    PipelineName = "pipeline-1",
+                    ExecutionContextSnapshot = CreateExecutionContextSnapshot()
+                },
+                Metadata = new Dictionary<string, string>
+                {
+                    ["recovery.mode"] = "resume-existing-execution",
+                    ["recovery.failedExecutionId"] = "execution-existing-1",
+                    ["recovery.failedRuntimeInstanceId"] = "runtime-instance-failed-1",
+                    ["recovery.failedLocalRunId"] = "run-failed-1",
+                    ["recovery.reason"] = "unit-test-recovery"
+                },
+                Source = "unit-test",
+                RequestedBy = "tester",
+                Reason = "resume existing execution",
+                CorrelationId = "correlation-1",
+                RuntimeInstanceId = "runtime-instance-1"
+            });
+
+            var indexed = await runExecutionIndex.GetAsync(
+                result.RunId!);
+
+            Assert.True(result.Success);
+            Assert.NotNull(result.RunHandle);
+            Assert.Equal("execution-existing-1", result.ExecutionId);
+            Assert.True(controller.EnqueueResumeCalled);
+            Assert.False(controller.EnqueueCalled);
+            Assert.Equal("execution-existing-1", controller.LastExecutionId);
+            Assert.Equal("pipeline-1", controller.LastRunRequest?.PipelineName);
+            Assert.NotNull(indexed);
+            Assert.Equal(result.RunId, indexed!.RunId);
+            Assert.Equal("execution-existing-1", indexed.ExecutionId);
+            Assert.Equal("True", indexed.Metadata["recovery.resume"]);
+            Assert.Equal("execution-existing-1", indexed.Metadata["recovery.execution.id"]);
+            Assert.Equal("resume-existing-execution", indexed.Metadata["recovery.mode"]);
+            Assert.Equal("runtime-instance-failed-1", indexed.Metadata["recovery.failedRuntimeInstanceId"]);
+            Assert.Equal("run-failed-1", indexed.Metadata["recovery.failedLocalRunId"]);
+        }
+
         private static AiRuntimeQueueControlPlane CreateControlPlane(
             IAiRuntimePipelineBackgroundController controller,
             AiRuntimeQueueControlPlaneOptions? options = null,
@@ -367,166 +421,6 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeQueue
                 Events.Add(controlPlaneEvent);
 
                 return Task.CompletedTask;
-            }
-        }
-
-        private sealed class FakeRuntimePipelineBackgroundController : IAiRuntimePipelineBackgroundController
-        {
-            private readonly AiRuntimeWorkerRunHandle _handle;
-
-            public FakeRuntimePipelineBackgroundController()
-            {
-                var completionSource = new TaskCompletionSource<AiExecutionRecord>(
-                    TaskCreationOptions.RunContinuationsAsynchronously);
-
-                completionSource.SetResult(new AiExecutionRecord
-                {
-                    ExecutionId = "execution-1",
-                    Status = AiExecutionStatus.Completed,
-                    CompletedAtUtc = DateTime.UtcNow
-                });
-
-                _handle = new AiRuntimeWorkerRunHandle(
-                    "run-1",
-                    completionSource.Task);
-
-                _handle.MarkRunning("execution-1");
-            }
-
-            public bool EnqueueCalled { get; private set; }
-
-            public bool CancelRunCalled { get; private set; }
-
-            public bool CancelQueuedRunCalled { get; private set; }
-
-            public bool PauseQueueCalled { get; private set; }
-
-            public bool ResumeQueueCalled { get; private set; }
-
-            public bool GetRunStateCalled { get; private set; }
-
-            public bool GetQueueStateCalled { get; private set; }
-
-            public string? LastRunId { get; private set; }
-
-            public string? LastReason { get; private set; }
-
-            public string? LastRequestedBy { get; private set; }
-
-            public AiRuntimePipelineRunRequest? LastRunRequest { get; private set; }
-
-            public Task StartAsync(
-                CancellationToken cancellationToken = default)
-            {
-                return Task.CompletedTask;
-            }
-
-            public Task StopAsync(
-                CancellationToken cancellationToken = default)
-            {
-                return Task.CompletedTask;
-            }
-
-            public ValueTask<AiRuntimeWorkerRunHandle> EnqueueAsync(
-                AiRuntimePipelineRunRequest request,
-                CancellationToken cancellationToken = default)
-            {
-                EnqueueCalled = true;
-                LastRunRequest = request;
-
-                return ValueTask.FromResult(_handle);
-            }
-
-            public Task PauseQueueAsync(
-                string? reason = null,
-                string? requestedBy = null,
-                CancellationToken cancellationToken = default)
-            {
-                PauseQueueCalled = true;
-                LastReason = reason;
-                LastRequestedBy = requestedBy;
-
-                return Task.CompletedTask;
-            }
-
-            public Task ResumeQueueAsync(
-                string? requestedBy = null,
-                CancellationToken cancellationToken = default)
-            {
-                ResumeQueueCalled = true;
-                LastRequestedBy = requestedBy;
-
-                return Task.CompletedTask;
-            }
-
-            public Task<bool> CancelQueuedRunAsync(
-                string runId,
-                string? reason = null,
-                string? requestedBy = null,
-                CancellationToken cancellationToken = default)
-            {
-                CancelQueuedRunCalled = true;
-                LastRunId = runId;
-                LastReason = reason;
-                LastRequestedBy = requestedBy;
-
-                return Task.FromResult(true);
-            }
-
-            public Task<bool> CancelRunAsync(
-                string runId,
-                string? reason = null,
-                string? requestedBy = null,
-                CancellationToken cancellationToken = default)
-            {
-                CancelRunCalled = true;
-                LastRunId = runId;
-                LastReason = reason;
-                LastRequestedBy = requestedBy;
-
-                return Task.FromResult(true);
-            }
-
-            public Task<AiRuntimePipelineRunState?> GetRunStateAsync(
-                string runId,
-                CancellationToken cancellationToken = default)
-            {
-                GetRunStateCalled = true;
-                LastRunId = runId;
-
-                return Task.FromResult<AiRuntimePipelineRunState?>(
-                    new AiRuntimePipelineRunState
-                    {
-                        RunId = runId,
-                        ExecutionId = "execution-1",
-                        PipelineKey = "pipeline-1",
-                        PipelineName = "pipeline-1",
-                        RuntimeInstanceId = "runtime-instance-1",
-                        Status = "running",
-                        IsQueued = false,
-                        IsRunning = true,
-                        CancellationRequested = false
-                    });
-            }
-
-            public Task<AiRuntimePipelineQueueState> GetQueueStateAsync(
-                CancellationToken cancellationToken = default)
-            {
-                GetQueueStateCalled = true;
-
-                return Task.FromResult(new AiRuntimePipelineQueueState
-                {
-                    RuntimeInstanceId = "runtime-instance-1",
-                    IsPaused = PauseQueueCalled && !ResumeQueueCalled,
-                    QueuedRunCount = 1,
-                    RunningRunCount = 1,
-                    ActiveRunCount = 2,
-                    QueueCapacity = 8,
-                    MaxConcurrentRuns = 1,
-                    AvailableRunSlots = 0,
-                    CanAcceptRun = false,
-                    SnapshotAtUtc = DateTimeOffset.UtcNow
-                });
             }
         }
     }

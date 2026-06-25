@@ -45,6 +45,31 @@ namespace Multiplexed.Abstractions.AI.Execution.Instance.Worker
         }
 
         /// <summary>
+        /// Initializes a new instance of the <see cref="AiRuntimeWorkerRunHandle"/> class
+        /// with an already known durable execution identifier.
+        /// </summary>
+        /// <param name="runId">The controller-level run identifier.</param>
+        /// <param name="completion">The completion task for the submitted run.</param>
+        /// <param name="executionId">The durable runtime execution identifier.</param>
+        public AiRuntimeWorkerRunHandle(
+            string runId,
+            Task<AiExecutionRecord> completion,
+            string executionId)
+            : this(
+                runId,
+                completion)
+        {
+            if (string.IsNullOrWhiteSpace(executionId))
+            {
+                throw new ArgumentException(
+                    "Execution id cannot be null or empty.",
+                    nameof(executionId));
+            }
+
+            ExecutionId = executionId;
+        }
+
+        /// <summary>
         /// Gets the controller-level run identifier.
         /// </summary>
         public string RunId { get; }

@@ -1,6 +1,10 @@
-﻿using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Recovery.Transition;
+﻿using Microsoft.Extensions.Options;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Recovery;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Recovery.Transition;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue;
+using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Ownership;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Queue;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery.Transition
 {
@@ -21,8 +25,16 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery.Transiti
     /// </remarks>
     public sealed class AiRuntimeExecutionRecoveryTransitionService : IAiRuntimeExecutionRecoveryTransitionService
     {
+        private const string RecoveryModeMetadataKey = "recovery.mode";
+        private const string RecoveryModeResumeExistingExecution = "resume-existing-execution";
+        private const string RecoveryFailedExecutionIdMetadataKey = "recovery.failedExecutionId";
+        private const string RecoveryFailedRuntimeInstanceIdMetadataKey = "recovery.failedRuntimeInstanceId";
+        private const string RecoveryFailedLocalRunIdMetadataKey = "recovery.failedLocalRunId";
+        private const string RecoveryReasonMetadataKey = "recovery.reason";
+
         private readonly IAiSharedQueue sharedQueue;
         private readonly IAiRuntimeRunExecutionIndex runtimeRunExecutionIndex;
+        private readonly AiRuntimeExecutionRecoveryReconciliationOptions options;
 
         /// <summary>
         /// Initializes a new instance of the <see cref="AiRuntimeExecutionRecoveryTransitionService"/> class.
@@ -32,12 +44,31 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery.Transiti
         public AiRuntimeExecutionRecoveryTransitionService(
             IAiSharedQueue sharedQueue,
             IAiRuntimeRunExecutionIndex runtimeRunExecutionIndex)
+            : this(
+                sharedQueue,
+                runtimeRunExecutionIndex,
+                Options.Create(new AiRuntimeExecutionRecoveryReconciliationOptions()))
+        {
+        }
+
+        /// <summary>
+        /// Initializes a new instance of the <see cref="AiRuntimeExecutionRecoveryTransitionService"/> class.
+        /// </summary>
+        /// <param name="sharedQueue">The shared queue.</param>
+        /// <param name="runtimeRunExecutionIndex">The runtime run execution index.</param>
+        /// <param name="options">The runtime execution recovery reconciliation options.</param>
+        public AiRuntimeExecutionRecoveryTransitionService(
+            IAiSharedQueue sharedQueue,
+            IAiRuntimeRunExecutionIndex runtimeRunExecutionIndex,
+            IOptions<AiRuntimeExecutionRecoveryReconciliationOptions> options)
         {
             ArgumentNullException.ThrowIfNull(sharedQueue);
             ArgumentNullException.ThrowIfNull(runtimeRunExecutionIndex);
+            ArgumentNullException.ThrowIfNull(options);
 
             this.sharedQueue = sharedQueue;
             this.runtimeRunExecutionIndex = runtimeRunExecutionIndex;
+            this.options = options.Value;
         }
 
         /// <inheritdoc />
@@ -159,11 +190,19 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery.Transiti
                 };
             }
 
-            var requeued = await sharedQueue
+            var metadata =
+                this.options.EnableDagExecutionResume
+                    ? CreateDagResumeRecoveryMetadata(
+                        ownership,
+                        reason)
+                    : null;
+
+            var requeued = await this.sharedQueue
                 .RequeueDispatchedAsync(
                     ownership.SharedRunId,
                     ownership.ClaimToken,
                     reason,
+                    metadata,
                     cancellationToken)
                 .ConfigureAwait(false);
 
@@ -182,7 +221,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery.Transiti
                 };
             }
 
-            await runtimeRunExecutionIndex
+            await this.runtimeRunExecutionIndex
                 .MarkRequeuedForRecoveryAsync(
                     ownership.LocalRunId,
                     ownership.ExecutionId,
@@ -200,6 +239,26 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery.Transiti
                 ExecutionId = ownership.ExecutionId,
                 Action = "requeue-shared-run",
                 Reason = reason
+            };
+        }
+
+        /// <summary>
+        /// Creates metadata instructing the next runtime dispatch to resume the existing durable DAG execution.
+        /// </summary>
+        /// <param name="ownership">The resolved shared run ownership.</param>
+        /// <param name="reason">The recovery reason.</param>
+        /// <returns>The recovery metadata.</returns>
+        private static IReadOnlyDictionary<string, string> CreateDagResumeRecoveryMetadata(
+            AiSharedRunOwnershipResolutionResult ownership,
+            string reason)
+        {
+            return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                [RecoveryModeMetadataKey] = RecoveryModeResumeExistingExecution,
+                [RecoveryFailedExecutionIdMetadataKey] = ownership.ExecutionId ?? string.Empty,
+                [RecoveryFailedRuntimeInstanceIdMetadataKey] = ownership.RuntimeInstanceId ?? string.Empty,
+                [RecoveryFailedLocalRunIdMetadataKey] = ownership.LocalRunId ?? string.Empty,
+                [RecoveryReasonMetadataKey] = reason
             };
         }
     }

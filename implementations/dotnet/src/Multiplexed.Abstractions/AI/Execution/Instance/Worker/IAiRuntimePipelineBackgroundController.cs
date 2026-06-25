@@ -148,5 +148,24 @@ namespace Multiplexed.Abstractions.AI.Execution.Instance.Worker
         /// </remarks>
         Task<AiRuntimePipelineQueueState> GetQueueStateAsync(
             CancellationToken cancellationToken = default);
+
+        /// <summary>
+        /// Enqueues one pipeline run request for background resume of an existing runtime execution.
+        /// </summary>
+        /// <param name="request">The pipeline run request.</param>
+        /// <param name="executionId">The existing durable execution identifier to resume.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <returns>
+        /// A handle that can be used to observe the submitted run status and completion.
+        /// </returns>
+        /// <remarks>
+        /// This operation is intended for controlled runtime execution recovery only.
+        /// Unlike <see cref="EnqueueAsync"/>, it does not create a new durable execution id.
+        /// It queues local runtime work that will continue an existing durable execution.
+        /// </remarks>
+        ValueTask<AiRuntimeWorkerRunHandle> EnqueueResumeAsync(
+            AiRuntimePipelineRunRequest request,
+            string executionId,
+            CancellationToken cancellationToken = default);
     }
 }

@@ -653,10 +653,26 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
         }
 
         /// <inheritdoc />
-        public async Task<AiSharedQueueItem?> RequeueDispatchedAsync(
+        public Task<AiSharedQueueItem?> RequeueDispatchedAsync(
             string sharedRunId,
             string claimToken,
             string? reason = null,
+            CancellationToken cancellationToken = default)
+        {
+            return RequeueDispatchedAsync(
+                sharedRunId,
+                claimToken,
+                reason,
+                metadata: null,
+                cancellationToken);
+        }
+
+        /// <inheritdoc />
+        public async Task<AiSharedQueueItem?> RequeueDispatchedAsync(
+            string sharedRunId,
+            string claimToken,
+            string? reason,
+            IReadOnlyDictionary<string, string>? metadata,
             CancellationToken cancellationToken = default)
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(sharedRunId);
@@ -730,6 +746,17 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
 
             if (string.Equals(status, "requeued-dispatched", StringComparison.Ordinal))
             {
+                if (metadata is not null &&
+                    metadata.Count > 0)
+                {
+                    await SetMergedMetadataAsync(
+                            controlPlaneId,
+                            sharedRunId,
+                            existing.Metadata,
+                            metadata)
+                        .ConfigureAwait(false);
+                }
+
                 return await GetAsync(
                         controlPlaneId,
                         sharedRunId,
@@ -1108,6 +1135,54 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
                 Reason = GetOptional(fields, "reason"),
                 Metadata = metadata
             };
+        }
+
+        private async Task SetMergedMetadataAsync(
+            string controlPlaneId,
+            string sharedRunId,
+            IReadOnlyDictionary<string, string> existingMetadata,
+            IReadOnlyDictionary<string, string> metadata)
+        {
+            var merged =
+                MergeMetadata(
+                    existingMetadata,
+                    metadata);
+
+            await _database.HashSetAsync(
+                    BuildItemKey(
+                        controlPlaneId,
+                        sharedRunId),
+                    "metadataJson",
+                    Serialize(merged))
+                .ConfigureAwait(false);
+        }
+
+        private static IReadOnlyDictionary<string, string> MergeMetadata(
+            IReadOnlyDictionary<string, string> existingMetadata,
+            IReadOnlyDictionary<string, string>? metadata)
+        {
+            if (metadata is null ||
+                metadata.Count == 0)
+            {
+                return existingMetadata;
+            }
+
+            var merged =
+                new Dictionary<string, string>(
+                    existingMetadata,
+                    StringComparer.OrdinalIgnoreCase);
+
+            foreach (var pair in metadata)
+            {
+                if (string.IsNullOrWhiteSpace(pair.Key))
+                {
+                    continue;
+                }
+
+                merged[pair.Key] = pair.Value ?? string.Empty;
+            }
+
+            return merged;
         }
 
         private async Task<string> ResolveControlPlaneIdAsync(
