@@ -1,0 +1,92 @@
+D:\Dev\Personal\multiplexed-rbac\implementations\dotnet\src\Multiplexed.Abstractions\AI\ControlPlane\RuntimeInstances\Pool\IAiLocalRuntimeInstanceHostFactory.cs:47: Task<IAiLocalRuntimeInstanceHost> CreateAsync(
+D:\Dev\Personal\multiplexed-rbac\implementations\dotnet\src\Multiplexed.Abstractions\AI\ControlPlane\SharedController\Scaling\IAiRuntimeScaleOutRequestStore.cs:19: Task<AiRuntimeScaleOutRequestRecord> CreateAsync(
+D:\Dev\Personal\multiplexed-rbac\implementations\dotnet\src\Multiplexed.Abstractions\AI\ControlPlane\SharedController\Store\IAiSharedRunStore.cs:32: Task<AiSharedRunRecord> CreateAsync(
+D:\Dev\Personal\multiplexed-rbac\implementations\dotnet\src\Multiplexed.Abstractions\AI\Execution\IAiExecutionEngine.cs:28: Task<AiExecutionRecord> CreateAsync(
+D:\Dev\Personal\multiplexed-rbac\implementations\dotnet\src\Multiplexed.Abstractions\AI\Execution\IAiExecutionEngine.cs:39: Task<AiExecutionRecord> CreateAsync(
+D:\Dev\Personal\multiplexed-rbac\implementations\dotnet\src\Multiplexed.Abstractions\AI\Execution\IAiExecutionEngine.cs:51: public abstract Task<AiExecutionRecord> CreateAsync(
+D:\Dev\Personal\multiplexed-rbac\implementations\dotnet\src\Multiplexed.Abstractions\AI\Execution\Control\IAiExecutionControlStore.cs:22: Task<bool> TryCreateAsync(
+D:\Dev\Personal\multiplexed-rbac\implementations\dotnet\src\Multiplexed.Abstractions\AI\Execution\Instance\Worker\AiRuntimeInstanceWorkerOptions.cs:19: public sealed class AiRuntimeInstanceWorkerOptions
+D:\Dev\Personal\multiplexed-rbac\implementations\dotnet\src\Multiplexed.Abstractions\AI\Execution\Instance\Worker\IAiRuntimeInstanceWorker.cs:41: Task<AiExecutionRecord> RunExecutionAsync(
+D:\Dev\Personal\multiplexed-rbac\implementations\dotnet\src\Multiplexed.Abstractions\AI\Execution\Instance\Worker\IAiRuntimeInstanceWorkerGroup.cs:54: Task<AiExecutionRecord> RunExecutionAsync(
+D:\Dev\Personal\multiplexed-rbac\implementations\dotnet\src\Multiplexed.AI\Runtime\ControlPlane\ExecutionAssistance\AiExecutionAssistanceWorker.cs:72: var record = await _runtimeWorker.RunExecutionAsync(
+D:\Dev\Personal\multiplexed-rbac\implementations\dotnet\src\Multiplexed.AI\Runtime\ControlPlane\ExecutionAssistance\InMemoryAiExecutionAssistanceCandidateStore.cs:13: public sealed class InMemoryAiExecutionAssistanceCandidateStore : IAiExecutionAssistanceCandidateStore
+D:\Dev\Personal\multiplexed-rbac\implementations\dotnet\src\Multiplexed.AI\Runtime\ControlPlane\RuntimeInstances\Pool\AiLocalRuntimeInstanceHostFactory.cs:63: public async Task<IAiLocalRuntimeInstanceHost> CreateAsync(
+D:\Dev\Personal\multiplexed-rbac\implementations\dotnet\src\Multiplexed.AI\Runtime\ControlPlane\RuntimeInstances\Pool\AiLocalRuntimeInstanceHostFactory.cs:243: private sealed class RuntimeInstanceIdentityParts
+D:\Dev\Personal\multiplexed-rbac\implementations\dotnet\src\Multiplexed.AI\Runtime\ControlPlane\RuntimeInstances\Pool\AiLocalRuntimeInstanceScaler.cs:416: .CreateAsync(
+D:\Dev\Personal\multiplexed-rbac\implementations\dotnet\src\Multiplexed.AI\Runtime\ControlPlane\SharedController\AiSharedRuntimeController.cs:433: .CreateAsync(record, cancellationToken)
+D:\Dev\Personal\multiplexed-rbac\implementations\dotnet\src\Multiplexed.AI\Runtime\ControlPlane\SharedController\Scaling\InMemoryAiRuntimeScaleOutRequestStore.cs:41: public Task<AiRuntimeScaleOutRequestRecord> CreateAsync(
+D:\Dev\Personal\multiplexed-rbac\implementations\dotnet\src\Multiplexed.AI\Runtime\ControlPlane\SharedController\Scaling\StoreBackedAiRuntimeScaleOutRequestPublisher.cs:136: .CreateAsync(
+D:\Dev\Personal\multiplexed-rbac\implementations\dotnet\src\Multiplexed.AI\Runtime\ControlPlane\SharedController\Scaling\Redis\RedisAiRuntimeScaleOutRequestStore.cs:67: public async Task<AiRuntimeScaleOutRequestRecord> CreateAsync(
+D:\Dev\Personal\multiplexed-rbac\implementations\dotnet\src\Multiplexed.AI\Runtime\ControlPlane\SharedController\Scaling\Redis\RedisAiRuntimeScaleOutRequestStore.cs:92: .ExecuteCreateAsync(
+D:\Dev\Personal\multiplexed-rbac\implementations\dotnet\src\Multiplexed.AI\Runtime\ControlPlane\SharedController\Scaling\Redis\RedisAiRuntimeScaleOutRequestStoreScriptCache.cs:52: public Task<RedisResult> ExecuteCreateAsync(
+D:\Dev\Personal\multiplexed-rbac\implementations\dotnet\src\Multiplexed.AI\Runtime\ControlPlane\SharedController\Store\InMemoryAiSharedRunStore.cs:47: public Task<AiSharedRunRecord> CreateAsync(
+D:\Dev\Personal\multiplexed-rbac\implementations\dotnet\src\Multiplexed.AI\Runtime\ControlPlane\SharedController\Store\RedisAiSharedRunStore.cs:69: public async Task<AiSharedRunRecord> CreateAsync(
+D:\Dev\Personal\multiplexed-rbac\implementations\dotnet\src\Multiplexed.AI\Runtime\ControlPlane\SharedController\Store\RedisAiSharedRunStore.cs:103: .ExecuteCreateAsync(
+D:\Dev\Personal\multiplexed-rbac\implementations\dotnet\src\Multiplexed.AI\Runtime\ControlPlane\SharedController\Store\RedisAiSharedRunStoreScriptCache.cs:46: public Task<RedisResult> ExecuteCreateAsync(
+D:\Dev\Personal\multiplexed-rbac\implementations\dotnet\src\Multiplexed.AI\Runtime\Execution\AiExecutionEngine.cs:113: public virtual Task<AiExecutionRecord> CreateAsync(
+D:\Dev\Personal\multiplexed-rbac\implementations\dotnet\src\Multiplexed.AI\Runtime\Execution\AiExecutionEngine.cs:118: "CreateAsync(input) is no longer supported without an explicit pipeline name.");
+D:\Dev\Personal\multiplexed-rbac\implementations\dotnet\src\Multiplexed.AI\Runtime\Execution\AiExecutionEngine.cs:125: public abstract Task<AiExecutionRecord> CreateAsync(
+D:\Dev\Personal\multiplexed-rbac\implementations\dotnet\src\Multiplexed.AI\Runtime\Execution\AiExecutionEngine.cs:134: public abstract Task<AiExecutionRecord> CreateAsync(
+D:\Dev\Personal\multiplexed-rbac\implementations\dotnet\src\Multiplexed.AI\Runtime\Execution\AiExecutionEngineRouter.cs:49: public Task<AiExecutionRecord> CreateAsync(
+D:\Dev\Personal\multiplexed-rbac\implementations\dotnet\src\Multiplexed.AI\Runtime\Execution\AiExecutionEngineRouter.cs:54: "CreateAsync(input) is no longer supported without an explicit pipeline name.");
+D:\Dev\Personal\multiplexed-rbac\implementations\dotnet\src\Multiplexed.AI\Runtime\Execution\AiExecutionEngineRouter.cs:65: public Task<AiExecutionRecord> CreateAsync(
+D:\Dev\Personal\multiplexed-rbac\implementations\dotnet\src\Multiplexed.AI\Runtime\Execution\AiExecutionEngineRouter.cs:71: "CreateAsync(pipelineName, input) should be handled by the appropriate engine based on pipeline configuration.");
+D:\Dev\Personal\multiplexed-rbac\implementations\dotnet\src\Multiplexed.AI\Runtime\Execution\AiExecutionEngineRouter.cs:185: public Task<AiExecutionRecord> CreateAsync(string pipelineName, IDictionary<string, object?> input, CancellationToken cancellationToken = default)
+D:\Dev\Personal\multiplexed-rbac\implementations\dotnet\src\Multiplexed.AI\Runtime\Execution\AiExecutionEngineRouter.cs:188: "CreateAsync(pipelineName, input) should be handled by the appropriate engine based on pipeline configuration.");
+D:\Dev\Personal\multiplexed-rbac\implementations\dotnet\src\Multiplexed.AI\Runtime\Execution\Control\AiExecutionControlService.cs:21: public sealed class AiExecutionControlService : IAiExecutionControlService
+D:\Dev\Personal\multiplexed-rbac\implementations\dotnet\src\Multiplexed.AI\Runtime\Execution\Control\AiExecutionControlService.cs:400: var created = await _store.TryCreateAsync(next, cancellationToken).ConfigureAwait(false);
+D:\Dev\Personal\multiplexed-rbac\implementations\dotnet\src\Multiplexed.AI\Runtime\Execution\Engine\Core\AiDagExecutionEngine.cs:45: public override Task<AiExecutionRecord> CreateAsync(
+D:\Dev\Personal\multiplexed-rbac\implementations\dotnet\src\Multiplexed.AI\Runtime\Execution\Engine\Core\AiDagExecutionEngine.cs:50: return _runtime.Creator.CreateAsync(
+D:\Dev\Personal\multiplexed-rbac\implementations\dotnet\src\Multiplexed.AI\Runtime\Execution\Engine\Core\AiDagExecutionEngine.cs:57: public override Task<AiExecutionRecord> CreateAsync(
+D:\Dev\Personal\multiplexed-rbac\implementations\dotnet\src\Multiplexed.AI\Runtime\Execution\Engine\Core\AiDagExecutionEngine.cs:62: return _runtime.Creator.CreateAsync(
+D:\Dev\Personal\multiplexed-rbac\implementations\dotnet\src\Multiplexed.AI\Runtime\Execution\Engine\Core\AiSequentialExecutionEngine.cs:67: public override Task<AiExecutionRecord> CreateAsync(
+D:\Dev\Personal\multiplexed-rbac\implementations\dotnet\src\Multiplexed.AI\Runtime\Execution\Engine\Core\AiSequentialExecutionEngine.cs:104: public override Task<AiExecutionRecord> CreateAsync(
+D:\Dev\Personal\multiplexed-rbac\implementations\dotnet\src\Multiplexed.AI\Runtime\Execution\Engine\Core\AiSequentialExecutionEngine.cs:206: await Store.CreateAsync(record, state, cancellationToken);
+D:\Dev\Personal\multiplexed-rbac\implementations\dotnet\src\Multiplexed.AI\Runtime\Execution\Engine\Creation\AiDagExecutionCreator.cs:39: public Task<AiExecutionRecord> CreateAsync(
+D:\Dev\Personal\multiplexed-rbac\implementations\dotnet\src\Multiplexed.AI\Runtime\Execution\Engine\Creation\AiDagExecutionCreator.cs:64: public Task<AiExecutionRecord> CreateAsync(
+D:\Dev\Personal\multiplexed-rbac\implementations\dotnet\src\Multiplexed.AI\Runtime\Execution\Engine\Creation\AiDagExecutionCreator.cs:239: .CreateAsync(
+D:\Dev\Personal\multiplexed-rbac\implementations\dotnet\src\Multiplexed.AI\Runtime\Execution\Engine\Creation\AiDagExecutionCreator.cs:248: .CreateAsync(
+D:\Dev\Personal\multiplexed-rbac\implementations\dotnet\src\Multiplexed.AI\Runtime\Execution\Instance\DefaultAiRuntimeInstanceIdentity.cs:30: public sealed class DefaultAiRuntimeInstanceIdentity : IAiRuntimeInstanceIdentityDescriptor
+D:\Dev\Personal\multiplexed-rbac\implementations\dotnet\src\Multiplexed.AI\Runtime\Execution\Instance\DefaultAiRuntimeInstanceWorkerIdentity.cs:25: public sealed class DefaultAiRuntimeInstanceWorkerIdentity : IAiRuntimeInstanceWorkerIdentity
+D:\Dev\Personal\multiplexed-rbac\implementations\dotnet\src\Multiplexed.AI\Runtime\Execution\Instance\Worker\AiRuntimeInstanceWorker.cs:34: public sealed class AiRuntimeInstanceWorker : IAiRuntimeInstanceWorker
+D:\Dev\Personal\multiplexed-rbac\implementations\dotnet\src\Multiplexed.AI\Runtime\Execution\Instance\Worker\AiRuntimeInstanceWorker.cs:75: public async Task<AiExecutionRecord> RunExecutionAsync(
+D:\Dev\Personal\multiplexed-rbac\implementations\dotnet\src\Multiplexed.AI\Runtime\Execution\Instance\Worker\AiRuntimeInstanceWorkerFactory .cs:31: public sealed class AiRuntimeInstanceWorkerFactory : IAiRuntimeInstanceWorkerFactory
+D:\Dev\Personal\multiplexed-rbac\implementations\dotnet\src\Multiplexed.AI\Runtime\Execution\Instance\Worker\AiRuntimeInstanceWorkerGroup.cs:45: public sealed class AiRuntimeInstanceWorkerGroup : IAiRuntimeInstanceWorkerGroup
+D:\Dev\Personal\multiplexed-rbac\implementations\dotnet\src\Multiplexed.AI\Runtime\Execution\Instance\Worker\AiRuntimeInstanceWorkerGroup.cs:64: public async Task<AiExecutionRecord> RunExecutionAsync(
+D:\Dev\Personal\multiplexed-rbac\implementations\dotnet\src\Multiplexed.AI\Runtime\Execution\Instance\Worker\AiRuntimeInstanceWorkerGroup.cs:212: var finalized = await worker.RunExecutionAsync(
+D:\Dev\Personal\multiplexed-rbac\implementations\dotnet\src\Multiplexed.AI\Runtime\Execution\Instance\Worker\AiRuntimeInstanceWorkerGroup.cs:238: return await worker.RunExecutionAsync(
+D:\Dev\Personal\multiplexed-rbac\implementations\dotnet\src\Multiplexed.AI\Runtime\Execution\Instance\Worker\AiRuntimeInstanceWorkerIdentity.cs:21: public sealed class AiRuntimeInstanceWorkerIdentity : IAiRuntimeInstanceWorkerIdentity
+D:\Dev\Personal\multiplexed-rbac\implementations\dotnet\src\Multiplexed.AI\Runtime\Execution\Instance\Worker\AiRuntimePipelineBackgroundController.cs:1512: return await _worker.RunExecutionAsync(
+D:\Dev\Personal\multiplexed-rbac\implementations\dotnet\src\Multiplexed.AI\Runtime\Execution\Instance\Worker\AiRuntimePipelineBackgroundController.cs:1520: return await _workerGroup.RunExecutionAsync(
+D:\Dev\Personal\multiplexed-rbac\implementations\dotnet\src\Multiplexed.AI\Runtime\Execution\Instance\Worker\AiRuntimePipelineBackgroundController.cs:1603: return await _engine.CreateAsync(
+D:\Dev\Personal\multiplexed-rbac\implementations\dotnet\src\Multiplexed.AI\Runtime\Execution\Instance\Worker\AiRuntimePipelineBackgroundController.cs:1611: return await _engine.CreateAsync(
+D:\Dev\Personal\multiplexed-rbac\implementations\dotnet\src\Multiplexed.AI\Runtime\Execution\Instance\Worker\AiRuntimePipelineBackgroundController.cs:1619: return await _engine.CreateAsync(
+D:\Dev\Personal\multiplexed-rbac\implementations\dotnet\src\Multiplexed.AI\Runtime\Execution\Instance\Worker\AiRuntimePipelineBackgroundController.cs:1627: return await _engine.CreateAsync(
+D:\Dev\Personal\multiplexed-rbac\implementations\dotnet\src\Multiplexed.AI\Runtime\Execution\Instance\Worker\AiRuntimePipelineBackgroundController.cs:1633: return await _engine.CreateAsync(
+D:\Dev\Personal\multiplexed-rbac\implementations\dotnet\src\Multiplexed.AI\Runtime\Execution\Instance\Worker\AiRuntimePipelineRunDefinitionPublisher.cs:20: public sealed class AiRuntimePipelineRunDefinitionPublisher : IAiRuntimePipelineRunDefinitionPublisher
+D:\Dev\Personal\multiplexed-rbac\implementations\dotnet\src\Multiplexed.AI\Runtime\Execution\Instance\Worker\AiRuntimePipelineRunDefinitionResolver.cs:20: public sealed class AiRuntimePipelineRunDefinitionResolver : IAiRuntimePipelineRunDefinitionResolver
+D:\Dev\Personal\multiplexed-rbac\implementations\dotnet\src\Multiplexed.AI\Runtime\Execution\Instance\Worker\NoOpAiRuntimePipelineRunLifecycleHook.cs:8: public sealed class NoOpAiRuntimePipelineRunLifecycleHook
+D:\Dev\Personal\multiplexed-rbac\implementations\dotnet\src\Multiplexed.AI\Runtime\Observability\AiRuntimeObservability.cs:24: public sealed class AiRuntimeObservability : IAiRuntimeObservability
+D:\Dev\Personal\multiplexed-rbac\implementations\dotnet\src\Multiplexed.AI\Runtime\Observability\Logging\AiRuntimeLogger.cs:11: public sealed class AiRuntimeLogger : IAiRuntimeLogger
+D:\Dev\Personal\multiplexed-rbac\implementations\dotnet\src\Multiplexed.AI\Runtime\Observability\Metrics\Workers\AiRuntimeInstanceWorkerMetrics.cs:29: public sealed class AiRuntimeInstanceWorkerMetrics : IAiRuntimeInstanceWorkerMetrics
+D:\Dev\Personal\multiplexed-rbac\implementations\dotnet\src\Multiplexed.AI\Stores\AiExecutionStore.cs:34: public async Task CreateAsync(
+D:\Dev\Personal\multiplexed-rbac\implementations\dotnet\src\Multiplexed.AI\Stores\AiExecutionStore.cs:41: await _primary.CreateAsync(record, state, cancellationToken);
+D:\Dev\Personal\multiplexed-rbac\implementations\dotnet\src\Multiplexed.AI\Stores\AiExecutionStore.cs:42: await _fallback.CreateAsync(record, state, cancellationToken);
+D:\Dev\Personal\multiplexed-rbac\implementations\dotnet\src\Multiplexed.AI\Stores\AiExecutionStore.cs:46: await _fallback.CreateAsync(record, state, cancellationToken);
+D:\Dev\Personal\multiplexed-rbac\implementations\dotnet\src\Multiplexed.AI\Stores\AiExecutionStore.cs:67: await _fallback.CreateAsync(record, state, cancellationToken);
+D:\Dev\Personal\multiplexed-rbac\implementations\dotnet\src\Multiplexed.AI\Stores\AiExecutionStore.cs:96: await _fallback.CreateAsync(record, state, cancellationToken);
+D:\Dev\Personal\multiplexed-rbac\implementations\dotnet\src\Multiplexed.AI\Stores\AiExecutionStore.cs:130: await _fallback.CreateAsync(record, state, cancellationToken);
+D:\Dev\Personal\multiplexed-rbac\implementations\dotnet\src\Multiplexed.AI\Stores\AiExecutionStore.cs:166: await _fallback.CreateAsync(record, state, cancellationToken);
+D:\Dev\Personal\multiplexed-rbac\implementations\dotnet\src\Multiplexed.AI\Stores\AiExecutionStore.cs:174: await _fallback.CreateAsync(record, state, cancellationToken);
+D:\Dev\Personal\multiplexed-rbac\implementations\dotnet\src\Multiplexed.AI\Stores\AiExecutionStore.cs:200: await _fallback.CreateAsync(record, state, cancellationToken);
+D:\Dev\Personal\multiplexed-rbac\implementations\dotnet\src\Multiplexed.AI\Stores\AiExecutionStore.cs:209: await _fallback.CreateAsync(record, state, cancellationToken);
+D:\Dev\Personal\multiplexed-rbac\implementations\dotnet\src\Multiplexed.AI\Stores\AiExecutionStore.cs:312: await _fallback.CreateAsync(record, state, cancellationToken);
+D:\Dev\Personal\multiplexed-rbac\implementations\dotnet\src\Multiplexed.AI\Stores\AiExecutionStore.cs:317: await _fallback.CreateAsync(record, state, cancellationToken);
+D:\Dev\Personal\multiplexed-rbac\implementations\dotnet\src\Multiplexed.AI\Stores\IAiDagExecutionStore.cs:21: Task CreateAsync(
+D:\Dev\Personal\multiplexed-rbac\implementations\dotnet\src\Multiplexed.AI\Stores\IAiExecutionStore.cs:25: Task CreateAsync(
+D:\Dev\Personal\multiplexed-rbac\implementations\dotnet\src\Multiplexed.AI\Stores\Cache\Redis\RedisAiDagExecutionStore.cs:50: public async Task CreateAsync(
+D:\Dev\Personal\multiplexed-rbac\implementations\dotnet\src\Multiplexed.AI\Stores\Cache\Redis\RedisAiDagExecutionStore.cs:55: await _services.StateWriter.CreateAsync(record, state, cancellationToken);
+D:\Dev\Personal\multiplexed-rbac\implementations\dotnet\src\Multiplexed.AI\Stores\Cache\Redis\RedisAiExecutionStore.cs:114: public async Task CreateAsync(
+D:\Dev\Personal\multiplexed-rbac\implementations\dotnet\src\Multiplexed.AI\Stores\Cache\Redis\Control\RedisAiExecutionControlStore.cs:49: public async Task<bool> TryCreateAsync(
+D:\Dev\Personal\multiplexed-rbac\implementations\dotnet\src\Multiplexed.AI\Stores\Cache\Redis\Dag\RedisDagStoreStateWriter.cs:32: public async Task CreateAsync(
+D:\Dev\Personal\multiplexed-rbac\implementations\dotnet\src\Multiplexed.AI\Stores\Memory\MemoryAiExecutionStore.cs:24: public Task CreateAsync(
