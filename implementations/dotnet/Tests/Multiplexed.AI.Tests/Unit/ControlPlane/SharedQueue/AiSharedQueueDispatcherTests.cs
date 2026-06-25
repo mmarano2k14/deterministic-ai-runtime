@@ -321,6 +321,85 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
         }
 
         [Fact]
+        public async Task DispatchNextAsync_Should_Preserve_Recovery_Resume_Metadata_When_Dispatching()
+        {
+            var queue = new InMemoryAiSharedQueue();
+            var store = new InMemoryAiSharedRunStore();
+
+            await store.CreateAsync(
+                CreateSharedRun(
+                    "shared-run-1",
+                    AiSharedRunStatus.QueuedGlobally,
+                    metadata: new Dictionary<string, string>
+                    {
+                        ["recovery.mode"] = "resume-existing-execution",
+                        ["recovery.failedExecutionId"] = "execution-existing-1",
+                        ["recovery.failedRuntimeInstanceId"] = "runtime-failed-1",
+                        ["recovery.failedLocalRunId"] = "run-failed-1",
+                        ["recovery.reason"] = "unit-test-recovery"
+                    }));
+
+            await queue.EnqueueAsync(
+                CreateQueueItem("shared-run-1"));
+
+            var runDispatcher = new FakeSharedRunDispatcher();
+            var admissionController = new FakeRunAdmissionController();
+
+            var dispatcher = new AiSharedQueueDispatcher(
+                queue,
+                store,
+                runDispatcher,
+                admissionController,
+                new InMemoryAiRuntimeAdmissionReservationStore(),
+                await CreateReadyRuntimeRegistryAsync(),
+                new FakeRuntimeScaleOutRequestPublisher(),
+                new HardcodedAiTenantRuntimeSettingsProvider(),
+                new FakeExecutionContextAccessor(),
+                NullLogger<AiSharedQueueDispatcher>.Instance);
+
+            var result = await dispatcher.DispatchNextAsync(new AiSharedQueueDispatchRequest
+            {
+                RuntimeInstanceId = "runtime-1",
+                WorkerId = "worker-1",
+                CorrelationId = "correlation-1",
+                RequestedBy = "tester",
+                Source = "unit-test",
+                Reason = "dispatch recovery resume",
+                Metadata = new Dictionary<string, string>
+                {
+                    ["request.marker"] = "dispatch-request"
+                }
+            });
+
+            Assert.True(result.Success);
+            Assert.NotNull(runDispatcher.LastRequest);
+
+            Assert.Equal(
+                "resume-existing-execution",
+                runDispatcher.LastRequest!.Metadata["recovery.mode"]);
+
+            Assert.Equal(
+                "execution-existing-1",
+                runDispatcher.LastRequest.Metadata["recovery.failedExecutionId"]);
+
+            Assert.Equal(
+                "runtime-failed-1",
+                runDispatcher.LastRequest.Metadata["recovery.failedRuntimeInstanceId"]);
+
+            Assert.Equal(
+                "run-failed-1",
+                runDispatcher.LastRequest.Metadata["recovery.failedLocalRunId"]);
+
+            Assert.Equal(
+                "unit-test-recovery",
+                runDispatcher.LastRequest.Metadata["recovery.reason"]);
+
+            Assert.Equal(
+                "dispatch-request",
+                runDispatcher.LastRequest.Metadata["request.marker"]);
+        }
+
+        [Fact]
         public async Task DispatchNextAsync_Should_Throw_When_Request_Is_Null()
         {
             var dispatcher = new AiSharedQueueDispatcher(
