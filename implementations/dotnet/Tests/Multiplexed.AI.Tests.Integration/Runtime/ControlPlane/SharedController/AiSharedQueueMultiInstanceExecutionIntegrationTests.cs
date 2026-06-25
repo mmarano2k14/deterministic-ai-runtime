@@ -385,6 +385,8 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedController
                     assignedRuntimeInstanceId: runtimeInstanceId),
                 new InMemoryAiRuntimeAdmissionReservationStore(),
                 new InMemoryAiRuntimeInstanceRegistry(),
+                new FakeRuntimeScaleOutRequestPublisher(),
+                new HardcodedAiTenantRuntimeSettingsProvider(),
                 new FakeExecutionContextAccessor(),
                 NullLogger<AiSharedQueueDispatcher>.Instance);
 

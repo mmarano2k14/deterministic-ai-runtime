@@ -9,6 +9,7 @@ using Multiplexed.Abstractions.AI.Execution.Instance.Worker;
 using Multiplexed.Abstractions.AI.Runtime.Execution.Instance.Worker;
 using Multiplexed.AI.Runtime.ControlPlane.Admission.Reservations;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Isolation;
 using Multiplexed.AI.Runtime.ControlPlane.SharedController;
 using Multiplexed.AI.Runtime.ControlPlane.SharedController.Store;
 using Multiplexed.AI.Runtime.ControlPlane.SharedQueue;
@@ -28,6 +29,8 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
                 new FakeRunAdmissionController(),
                 new InMemoryAiRuntimeAdmissionReservationStore(),
                 new InMemoryAiRuntimeInstanceRegistry(),
+                new FakeRuntimeScaleOutRequestPublisher(),
+                new HardcodedAiTenantRuntimeSettingsProvider(),
                 new FakeExecutionContextAccessor(),
                 NullLogger<AiSharedQueueDispatcher>.Instance);
 
@@ -64,6 +67,8 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
                 fakeAdmission,
                 reservationStore,
                 new InMemoryAiRuntimeInstanceRegistry(),
+                new FakeRuntimeScaleOutRequestPublisher(),
+                new HardcodedAiTenantRuntimeSettingsProvider(),
                 new FakeExecutionContextAccessor(),
                 NullLogger<AiSharedQueueDispatcher>.Instance);
 
@@ -125,6 +130,8 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
                 new FakeRunAdmissionController(),
                 new InMemoryAiRuntimeAdmissionReservationStore(),
                 new InMemoryAiRuntimeInstanceRegistry(),
+                new FakeRuntimeScaleOutRequestPublisher(),
+                new HardcodedAiTenantRuntimeSettingsProvider(),
                 new FakeExecutionContextAccessor(), 
                 NullLogger<AiSharedQueueDispatcher>.Instance);
 
@@ -175,6 +182,8 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
                 new FakeRunAdmissionController(),
                 new InMemoryAiRuntimeAdmissionReservationStore(),
                 new InMemoryAiRuntimeInstanceRegistry(),
+                new FakeRuntimeScaleOutRequestPublisher(),
+                new HardcodedAiTenantRuntimeSettingsProvider(),
                 new FakeExecutionContextAccessor(),     
                 NullLogger<AiSharedQueueDispatcher>.Instance);
 
@@ -234,6 +243,8 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
                 new FakeRunAdmissionController(),
                 new InMemoryAiRuntimeAdmissionReservationStore(),
                 new InMemoryAiRuntimeInstanceRegistry(),
+                new FakeRuntimeScaleOutRequestPublisher(),
+                new HardcodedAiTenantRuntimeSettingsProvider(),
                 new FakeExecutionContextAccessor(),
                 NullLogger<AiSharedQueueDispatcher>.Instance);
 
@@ -285,6 +296,8 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
                 admissionController,
                 new InMemoryAiRuntimeAdmissionReservationStore(),
                 new InMemoryAiRuntimeInstanceRegistry(),
+                new FakeRuntimeScaleOutRequestPublisher(),
+                new HardcodedAiTenantRuntimeSettingsProvider(),
                 new FakeExecutionContextAccessor(),
                 NullLogger<AiSharedQueueDispatcher>.Instance);
 
@@ -315,6 +328,8 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
                 new FakeRunAdmissionController(),
                 new InMemoryAiRuntimeAdmissionReservationStore(),
                 new InMemoryAiRuntimeInstanceRegistry(),
+                new FakeRuntimeScaleOutRequestPublisher(),
+                new HardcodedAiTenantRuntimeSettingsProvider(),
                 new FakeExecutionContextAccessor(),
                 NullLogger<AiSharedQueueDispatcher>.Instance);
 
@@ -332,6 +347,8 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
                 new FakeRunAdmissionController(), 
                 new InMemoryAiRuntimeAdmissionReservationStore(),
                 new InMemoryAiRuntimeInstanceRegistry(),    
+                new FakeRuntimeScaleOutRequestPublisher(),
+                new HardcodedAiTenantRuntimeSettingsProvider(),
                 new FakeExecutionContextAccessor(),
                 NullLogger<AiSharedQueueDispatcher>.Instance);
 
@@ -385,6 +402,8 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
                     new FakeRunAdmissionController(),
                     new InMemoryAiRuntimeAdmissionReservationStore(),
                     new InMemoryAiRuntimeInstanceRegistry(),
+                    new FakeRuntimeScaleOutRequestPublisher(),
+                    new HardcodedAiTenantRuntimeSettingsProvider(),
                     new FakeExecutionContextAccessor(),
                     NullLogger<AiSharedQueueDispatcher>.Instance);
 
@@ -496,6 +515,8 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
                     new FakeRunAdmissionController(),
                     reservationStore,
                     new InMemoryAiRuntimeInstanceRegistry(),
+                    new FakeRuntimeScaleOutRequestPublisher(),
+                    new HardcodedAiTenantRuntimeSettingsProvider(),
                     new FakeExecutionContextAccessor(),
                     NullLogger<AiSharedQueueDispatcher>.Instance);
 
@@ -570,7 +591,9 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
                     runDispatcher,
                     new FakeRunAdmissionController(),
                     reservationStore,
-                    new InMemoryAiRuntimeInstanceRegistry(),    
+                    new InMemoryAiRuntimeInstanceRegistry(),
+                    new FakeRuntimeScaleOutRequestPublisher(),
+                    new HardcodedAiTenantRuntimeSettingsProvider(),
                     new FakeExecutionContextAccessor(),
                     NullLogger<AiSharedQueueDispatcher>.Instance);
 
@@ -647,6 +670,8 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
                     new FakeRunAdmissionController(),
                     new InMemoryAiRuntimeAdmissionReservationStore(),
                     new InMemoryAiRuntimeInstanceRegistry(),
+                    new FakeRuntimeScaleOutRequestPublisher(),
+                    new HardcodedAiTenantRuntimeSettingsProvider(),
                     new FakeExecutionContextAccessor(),
                     NullLogger<AiSharedQueueDispatcher>.Instance);
 

@@ -361,6 +361,7 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedController
                 var remoteSharedRunDispatcher =
                     new RemoteAiSharedRunDispatcher(
                         providerCapabilityResolver,
+                        new InMemoryAiRuntimeInstanceRegistry(),
                         NullLogger<RemoteAiSharedRunDispatcher>.Instance);
 
                 var sharedRunId =
@@ -626,6 +627,7 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedController
                 var remoteSharedRunDispatcher =
                     new RemoteAiSharedRunDispatcher(
                         providerCapabilityResolver,
+                        new InMemoryAiRuntimeInstanceRegistry(),
                         NullLogger<RemoteAiSharedRunDispatcher>.Instance);
 
                 var sharedRunId =
@@ -917,6 +919,7 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedController
                 var remoteSharedRunDispatcher =
                     new RemoteAiSharedRunDispatcher(
                         providerCapabilityResolver,
+                        new InMemoryAiRuntimeInstanceRegistry(),
                         NullLogger<RemoteAiSharedRunDispatcher>.Instance);
 
                 var sharedRunIdPrefix =
@@ -1309,6 +1312,8 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedController
                     assignedRuntimeInstanceId: runtimeInstance.RuntimeInstanceId), 
                 new InMemoryAiRuntimeAdmissionReservationStore(),
                 new InMemoryAiRuntimeInstanceRegistry(),
+                new FakeRuntimeScaleOutRequestPublisher(),
+                new HardcodedAiTenantRuntimeSettingsProvider(),
                 new FakeExecutionContextAccessor(),
                 NullLogger<AiSharedQueueDispatcher>.Instance);
 
