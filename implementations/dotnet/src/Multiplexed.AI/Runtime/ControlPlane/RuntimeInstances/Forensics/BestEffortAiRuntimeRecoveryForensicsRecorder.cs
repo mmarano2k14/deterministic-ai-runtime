@@ -1,0 +1,83 @@
+﻿using System;
+using System.Threading;
+using System.Threading.Tasks;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Forensics;
+
+namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics
+{
+    /// <summary>
+    /// Records runtime recovery forensics evidence using best-effort persistence.
+    /// </summary>
+    public sealed class BestEffortAiRuntimeRecoveryForensicsRecorder : IAiRuntimeRecoveryForensicsRecorder
+    {
+        private readonly IAiRuntimeRecoveryForensicsStore _store;
+        private readonly AiRuntimeRecoveryForensicsOptions _options;
+        private readonly ILogger<BestEffortAiRuntimeRecoveryForensicsRecorder> _logger;
+
+        /// <summary>
+        /// Initializes a new instance of the <see cref="BestEffortAiRuntimeRecoveryForensicsRecorder"/> class.
+        /// </summary>
+        /// <param name="store">The runtime recovery forensics store.</param>
+        /// <param name="options">The runtime recovery forensics options.</param>
+        /// <param name="logger">The logger.</param>
+        public BestEffortAiRuntimeRecoveryForensicsRecorder(
+            IAiRuntimeRecoveryForensicsStore store,
+            IOptions<AiRuntimeRecoveryForensicsOptions> options,
+            ILogger<BestEffortAiRuntimeRecoveryForensicsRecorder> logger)
+        {
+            _store = store;
+            _options = options.Value;
+            _logger = logger;
+        }
+
+        /// <inheritdoc />
+        public async Task RecordAsync(AiRuntimeRecoveryForensicsRecord record, CancellationToken cancellationToken = default)
+        {
+            ArgumentNullException.ThrowIfNull(record);
+
+            if (!_options.Enabled)
+            {
+                return;
+            }
+
+            try
+            {
+                await _store.UpsertAsync(record, cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (!_options.StrictPersistence)
+            {
+                _logger.LogWarning(
+                    ex,
+                    "Failed to persist runtime recovery forensics record. ForensicsId={ForensicsId} ExecutionId={ExecutionId}",
+                    record.Identity.ForensicsId,
+                    record.Identity.ExecutionId);
+            }
+        }
+
+        /// <inheritdoc />
+        public async Task RecordEventAsync(AiRuntimeRecoveryForensicsEvent evt, CancellationToken cancellationToken = default)
+        {
+            ArgumentNullException.ThrowIfNull(evt);
+
+            if (!_options.Enabled)
+            {
+                return;
+            }
+
+            try
+            {
+                await _store.AppendEventAsync(evt.ForensicsId, evt, cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (!_options.StrictPersistence)
+            {
+                _logger.LogWarning(
+                    ex,
+                    "Failed to persist runtime recovery forensics event. ForensicsId={ForensicsId} EventType={EventType}",
+                    evt.ForensicsId,
+                    evt.EventType);
+            }
+        }
+    }
+}
