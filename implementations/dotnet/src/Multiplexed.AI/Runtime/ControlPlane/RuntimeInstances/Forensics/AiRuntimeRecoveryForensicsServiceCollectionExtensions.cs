@@ -1,5 +1,7 @@
 ﻿using System;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+using MongoDB.Driver;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Forensics;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics
@@ -18,7 +20,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics
         {
             ArgumentNullException.ThrowIfNull(services);
 
-            services.AddSingleton<IAiRuntimeRecoveryForensicsRecorder, NoopAiRuntimeRecoveryForensicsRecorder>();
+            services.TryAddSingleton<IAiRuntimeRecoveryForensicsRecorder, NoopAiRuntimeRecoveryForensicsRecorder>();
 
             return services;
         }
@@ -48,6 +50,81 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics
             services.AddSingleton<IAiRuntimeRecoveryForensicsRecorder, BestEffortAiRuntimeRecoveryForensicsRecorder>();
 
             return services;
+        }
+
+        /// <summary>
+        /// Adds MongoDB runtime recovery forensics services using an existing registered MongoDB database.
+        /// </summary>
+        /// <param name="services">The service collection.</param>
+        /// <param name="configureForensics">The optional forensics options configuration delegate.</param>
+        /// <param name="configureMongo">The optional MongoDB options configuration delegate.</param>
+        /// <returns>The updated service collection.</returns>
+        public static IServiceCollection AddMongoAiRuntimeRecoveryForensics(
+            this IServiceCollection services,
+            Action<AiRuntimeRecoveryForensicsOptions>? configureForensics = null,
+            Action<AiRuntimeRecoveryForensicsMongoOptions>? configureMongo = null)
+        {
+            ArgumentNullException.ThrowIfNull(services);
+
+            if (configureForensics is not null)
+            {
+                services.Configure(configureForensics);
+            }
+            else
+            {
+                services.Configure<AiRuntimeRecoveryForensicsOptions>(_ => { });
+            }
+
+            if (configureMongo is not null)
+            {
+                services.Configure(configureMongo);
+            }
+            else
+            {
+                services.Configure<AiRuntimeRecoveryForensicsMongoOptions>(_ => { });
+            }
+
+            services.AddSingleton<IAiRuntimeRecoveryForensicsStore, MongoAiRuntimeRecoveryForensicsStore>();
+            services.AddSingleton<IAiRuntimeRecoveryForensicsRecorder, BestEffortAiRuntimeRecoveryForensicsRecorder>();
+
+            return services;
+        }
+
+        /// <summary>
+        /// Adds MongoDB runtime recovery forensics services and registers MongoDB client and database dependencies.
+        /// </summary>
+        /// <param name="services">The service collection.</param>
+        /// <param name="connectionString">The MongoDB connection string.</param>
+        /// <param name="databaseName">The MongoDB database name.</param>
+        /// <param name="configureForensics">The optional forensics options configuration delegate.</param>
+        /// <param name="configureMongo">The optional MongoDB options configuration delegate.</param>
+        /// <returns>The updated service collection.</returns>
+        public static IServiceCollection AddMongoAiRuntimeRecoveryForensics(
+            this IServiceCollection services,
+            string connectionString,
+            string databaseName,
+            Action<AiRuntimeRecoveryForensicsOptions>? configureForensics = null,
+            Action<AiRuntimeRecoveryForensicsMongoOptions>? configureMongo = null)
+        {
+            ArgumentNullException.ThrowIfNull(services);
+            ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
+            ArgumentException.ThrowIfNullOrWhiteSpace(databaseName);
+
+            services.Configure<AiRuntimeRecoveryForensicsMongoOptions>(options =>
+            {
+                options.ConnectionString = connectionString;
+                options.DatabaseName = databaseName;
+                configureMongo?.Invoke(options);
+            });
+
+            services.TryAddSingleton<IMongoClient>(_ => new MongoClient(connectionString));
+            services.TryAddSingleton(provider =>
+            {
+                var client = provider.GetRequiredService<IMongoClient>();
+                return client.GetDatabase(databaseName);
+            });
+
+            return services.AddMongoAiRuntimeRecoveryForensics(configureForensics, null);
         }
     }
 }
