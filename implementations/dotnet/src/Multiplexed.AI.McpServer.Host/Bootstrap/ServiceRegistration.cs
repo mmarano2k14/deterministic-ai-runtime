@@ -525,6 +525,13 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
 
             services.AddAiControlPlane();
 
+            AddRedisControlPlaneStoresIfAvailable(
+                services,
+                configuration);
+
+            Console.WriteLine(
+                "[RUNTIME INSTANCE ONLY] Redis control-plane stores registered when available.");
+
             services.AddAiControlPlaneDiscoveryCore();
 
             services.AddAiRuntimeInstanceHttpCommandHandling();

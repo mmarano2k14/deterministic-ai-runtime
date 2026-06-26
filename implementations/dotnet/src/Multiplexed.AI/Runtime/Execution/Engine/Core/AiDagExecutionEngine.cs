@@ -74,11 +74,7 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Core
             {
                 return await _runtime.DistributedRunner.ExecuteNextAsync(
                     executionId,
-                    async contextKey =>
-                    {
-                        var rbacContext = await LoadContextAsync(contextKey);
-                        Accessor.Set(rbacContext);
-                    },
+                    contextKey => LoadContextAndSetAsync(executionId, contextKey),
                     BuildExecutionContext,
                     PersistAsync,
                     EnsurePipelineName,
@@ -89,11 +85,7 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Core
             return await _runtime.LocalRunner.ExecuteNextAsync(
                 executionId,
                 LoadExecutionAsync,
-                async contextKey =>
-                {
-                    var rbacContext = await LoadContextAsync(contextKey);
-                    Accessor.Set(rbacContext);
-                },
+                contextKey => LoadContextAndSetAsync(executionId, contextKey),
                 BuildExecutionContext,
                 PersistAsync,
                 EnsurePipelineName,
@@ -114,11 +106,7 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Core
                 return await _runtime.BatchRunner.ExecuteBatchAsync(
                     executionId,
                     maxSteps,
-                    async contextKey =>
-                    {
-                        var rbacContext = await LoadContextAsync(contextKey);
-                        Accessor.Set(rbacContext);
-                    },
+                    contextKey => LoadContextAndSetAsync(executionId, contextKey),
                     BuildExecutionContext,
                     PersistAsync,
                     EnsurePipelineName,
@@ -129,11 +117,7 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Core
             return await _runtime.LocalRunner.ExecuteNextAsync(
                 executionId,
                 LoadExecutionAsync,
-                async contextKey =>
-                {
-                    var rbacContext = await LoadContextAsync(contextKey);
-                    Accessor.Set(rbacContext);
-                },
+                contextKey => LoadContextAndSetAsync(executionId, contextKey),
                 BuildExecutionContext,
                 PersistAsync,
                 EnsurePipelineName,
@@ -179,6 +163,25 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Core
 
                     return record;
                 });
+        }
+
+        /// <summary>
+        /// Loads the RBAC execution context required by the DAG state and sets it on the accessor.
+        /// </summary>
+        /// <param name="executionId">The durable execution identifier being advanced.</param>
+        /// <param name="contextKey">The context key stored on the execution or DAG state.</param>
+        private async Task LoadContextAndSetAsync(
+            string executionId,
+            string contextKey)
+        {
+            var rbacContext =
+                await LoadContextForExecutionAsync(
+                        executionId,
+                        contextKey)
+                    .ConfigureAwait(false);
+
+            Accessor.Set(
+                rbacContext);
         }
     }
 }

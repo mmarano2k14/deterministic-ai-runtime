@@ -1,5 +1,4 @@
 ﻿using System.Reflection;
-using System.Runtime.CompilerServices;
 using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.ControlPlane.ExecutionAssistance;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
@@ -55,6 +54,15 @@ namespace Multiplexed.AI.Tests.Unit.Execution.Instance.Worker
                 },
                 existingExecutionId);
 
+            var queuedIndex =
+                await runExecutionIndex
+                    .GetAsync(handle.RunId)
+                    .ConfigureAwait(false);
+
+            Assert.NotNull(queuedIndex);
+            Assert.Equal(existingExecutionId, queuedIndex!.ExecutionId);
+            Assert.Equal("queued", queuedIndex.Status);
+
             var final = await handle.Completion.WaitAsync(
                 TimeSpan.FromSeconds(10));
 
@@ -81,8 +89,9 @@ namespace Multiplexed.AI.Tests.Unit.Execution.Instance.Worker
             IAiRuntimeRunExecutionIndex runExecutionIndex,
             IAiRuntimePipelineRunLifecycleHook lifecycleHook)
         {
-            var engine = (AiDagExecutionEngine)RuntimeHelpers.GetUninitializedObject(
-                typeof(AiDagExecutionEngine));
+            var engine = new AiDagExecutionEngine(
+                NullProxy.Create<IAiDagExecutionEngineServices>(),
+                NullProxy.Create<IAiDagExecutionEngineRuntimeServices>());
 
             return new AiRuntimePipelineBackgroundController(
                 engine,
@@ -289,11 +298,11 @@ namespace Multiplexed.AI.Tests.Unit.Execution.Instance.Worker
         {
             public string RuntimeInstanceId { get; } = "runtime-instance-1";
 
-            public string HostName => throw new NotImplementedException();
+            public string HostName => "unit-test-host";
 
-            public int ProcessId => throw new NotImplementedException();
+            public int ProcessId => Environment.ProcessId;
 
-            public DateTimeOffset StartedAtUtc => throw new NotImplementedException();
+            public DateTimeOffset StartedAtUtc { get; } = DateTimeOffset.UtcNow;
         }
 
         /// <summary>

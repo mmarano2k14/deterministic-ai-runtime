@@ -348,6 +348,15 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
                     queuedRun,
                     cancellationToken).ConfigureAwait(false);
 
+                if (!string.IsNullOrWhiteSpace(resumeExecutionId))
+                {
+                    await RegisterResumeRunExecutionIndexAsync(
+                            queuedRun,
+                            resumeExecutionId,
+                            cancellationToken)
+                        .ConfigureAwait(false);
+                }
+
                 Console.WriteLine(
                      $"[AI PIPELINE CONTROLLER] ENQUEUED RuntimeInstanceId='{_runtimeInstanceIdentity.RuntimeInstanceId}' RunId='{runId}' ResumeExecutionId='{resumeExecutionId ?? string.Empty}'");
             }
@@ -382,6 +391,46 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
                 .ConfigureAwait(false);
 
             return handle;
+        }
+
+        /// <summary>
+        /// Registers a queued local runtime run that targets an existing durable execution.
+        /// </summary>
+        /// <param name="queuedRun">The queued runtime pipeline run.</param>
+        /// <param name="resumeExecutionId">The durable execution identifier being resumed.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        private async Task RegisterResumeRunExecutionIndexAsync(
+            AiRuntimeQueuedPipelineRun queuedRun,
+            string resumeExecutionId,
+            CancellationToken cancellationToken)
+        {
+            ArgumentNullException.ThrowIfNull(queuedRun);
+            ArgumentException.ThrowIfNullOrWhiteSpace(resumeExecutionId);
+
+            await _runExecutionIndex
+                .RegisterQueuedAsync(new AiRuntimeRunExecutionIndexEntry
+                {
+                    RunId = queuedRun.Handle.RunId,
+                    ExecutionId = resumeExecutionId,
+                    RuntimeInstanceId = _runtimeInstanceIdentity.RuntimeInstanceId,
+                    Status = "queued",
+                    CreatedAtUtc = DateTimeOffset.UtcNow,
+                    ExecutionContextSnapshot = queuedRun.Request.ExecutionContextSnapshot,
+                    Metadata = new Dictionary<string, string>
+                    {
+                        ["pipeline.name"] = queuedRun.Request.PipelineName,
+                        ["runtime.instance.id"] = _runtimeInstanceIdentity.RuntimeInstanceId,
+                        ["recovery.resume"] = "true",
+                        ["recovery.execution.id"] = resumeExecutionId,
+                        ["context.key"] = queuedRun.Request.ExecutionContextSnapshot?.ContextKey ?? string.Empty,
+                        [AiRuntimeInstanceIsolationMetadataKeys.TenantId] = queuedRun.Request.ExecutionContextSnapshot?.TenantId ?? string.Empty,
+                        [AiRuntimeInstanceIsolationMetadataKeys.TenantGroupId] = queuedRun.Request.ExecutionContextSnapshot?.TenantGroupId ?? string.Empty
+                    }
+                })
+                .ConfigureAwait(false);
+
+            _logger.Engine.LogInformation(
+                $"[AI PIPELINE CONTROLLER] Resume run execution index registered. RunId='{queuedRun.Handle.RunId}', ExecutionId='{resumeExecutionId}', RuntimeInstanceId='{_runtimeInstanceIdentity.RuntimeInstanceId}', Pipeline='{queuedRun.Request.PipelineName}'.");
         }
 
         /// <inheritdoc />
@@ -977,11 +1026,24 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
                 diagnosticPhase =
                     "restore-execution-context";
 
-                RestoreExecutionContextFromSnapshot(
-                    queuedRun);
+                var restoredExecutionContext =
+                    RestoreExecutionContextFromSnapshot(
+                        queuedRun);
 
                 executionContextRestored =
                     true;
+
+                if (queuedRun.IsResume)
+                {
+                    diagnosticPhase =
+                        "seed-resume-execution-context";
+
+                    await SeedResumeExecutionContextAsync(
+                            queuedRun,
+                            restoredExecutionContext,
+                            cancellationToken)
+                        .ConfigureAwait(false);
+                }
 
                 diagnosticPhase =
                     "mark-creating-execution";
@@ -1224,7 +1286,7 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
         /// Restores the active RBAC execution context from the durable snapshot carried by the runtime run request.
         /// </summary>
         /// <param name="queuedRun">The queued runtime pipeline run.</param>
-        private void RestoreExecutionContextFromSnapshot(
+        private ExecutionContext RestoreExecutionContextFromSnapshot(
             AiRuntimeQueuedPipelineRun queuedRun)
         {
             ArgumentNullException.ThrowIfNull(queuedRun);
@@ -1250,6 +1312,47 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
 
             _executionContextAccessor.Set(
                 context);
+
+            return context;
+        }
+
+        /// <summary>
+        /// Seeds the restored RBAC execution context into the local context store before resuming
+        /// an existing durable execution on a replacement runtime instance.
+        /// </summary>
+        /// <param name="queuedRun">The queued runtime pipeline run.</param>
+        /// <param name="context">The restored RBAC execution context.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        private async Task SeedResumeExecutionContextAsync(
+            AiRuntimeQueuedPipelineRun queuedRun,
+            ExecutionContext context,
+            CancellationToken cancellationToken)
+        {
+            ArgumentNullException.ThrowIfNull(queuedRun);
+            ArgumentNullException.ThrowIfNull(context);
+
+            cancellationToken.ThrowIfCancellationRequested();
+
+            if (!queuedRun.IsResume)
+            {
+                return;
+            }
+
+            if (string.IsNullOrWhiteSpace(context.ContextKey))
+            {
+                throw new InvalidOperationException(
+                    $"Cannot resume execution '{queuedRun.ResumeExecutionId}' for runtime run '{queuedRun.Handle.RunId}' because the restored execution context has no ContextKey.");
+            }
+
+            await _engine
+                .SeedRestoredExecutionContextAsync(
+                    queuedRun.ResumeExecutionId,
+                    context,
+                    cancellationToken)
+                .ConfigureAwait(false);
+
+            _logger.Engine.LogInformation(
+                $"[AI PIPELINE CONTROLLER] Resume execution context seeded. RunId='{queuedRun.Handle.RunId}', ExecutionId='{queuedRun.ResumeExecutionId}', Pipeline='{queuedRun.Request.PipelineName}', RuntimeInstanceId='{_runtimeInstanceIdentity.RuntimeInstanceId}', TenantId='{context.TenantId}', ContextKey='{context.ContextKey}'.");
         }
 
         /// <summary>

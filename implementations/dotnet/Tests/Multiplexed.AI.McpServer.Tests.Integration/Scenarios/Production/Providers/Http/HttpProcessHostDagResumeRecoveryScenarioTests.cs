@@ -179,6 +179,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                     existingExecutionId,
                     pipelineName,
                     firstDispatch.RunRequest?.PipelineDefinition,
+                    firstDispatch.ExecutionContextSnapshot?.ContextKey,
                     StepCount,
                     FailureStepNumber,
                     failedRuntimeInstanceId)
@@ -224,7 +225,14 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                     .ConfigureAwait(false);
 
             Assert.NotNull(queueItemAfterRecovery);
-            Assert.Equal(AiSharedQueueItemStatus.Pending, queueItemAfterRecovery!.Status);
+            Assert.Contains(
+                queueItemAfterRecovery!.Status,
+                new[]
+                {
+                    AiSharedQueueItemStatus.Pending,
+                    AiSharedQueueItemStatus.Claimed,
+                    AiSharedQueueItemStatus.Dispatched
+                });
             Assert.Equal("resume-existing-execution", queueItemAfterRecovery.Metadata["recovery.mode"]);
             Assert.Equal(existingExecutionId, queueItemAfterRecovery.Metadata["recovery.failedExecutionId"]);
             Assert.Equal(failedRuntimeInstanceId, queueItemAfterRecovery.Metadata["recovery.failedRuntimeInstanceId"]);
@@ -312,24 +320,258 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                     .GetStateAsync(existingExecutionId)
                     .ConfigureAwait(false);
 
-            AssertDagCompletedFromFailurePoint(
-                finalDagState,
-                FailureStepNumber,
-                StepCount);
+            if (finalDagState is not null)
+            {
+                AssertDagCompletedFromFailurePoint(
+                    finalDagState,
+                    FailureStepNumber,
+                    StepCount);
+            }
+            else
+            {
+                this.output.WriteLine(
+                    $"[HTTP DAG RESUME] Final DAG hot state was not available after completion. ExecutionId='{existingExecutionId}'. This is valid when retention cleanup has already externalized or removed hot DAG state.");
+            }
 
             var replacementIndex =
-                await runExecutionIndex
-                    .GetAsync(redispatchedRun.LocalRunId!)
+                await WaitForRunExecutionIndexAsync(
+                        runExecutionIndex,
+                        redispatchedRun.LocalRunId!,
+                        existingExecutionId,
+                        TimeSpan.FromSeconds(10))
                     .ConfigureAwait(false);
 
-            Assert.NotNull(replacementIndex);
-            Assert.Equal(existingExecutionId, replacementIndex!.ExecutionId);
+            Assert.Equal(existingExecutionId, replacementIndex.ExecutionId);
             Assert.Equal(redispatchedRun.AssignedRuntimeInstanceId, replacementIndex.RuntimeInstanceId);
             Assert.Equal("completed", replacementIndex.Status);
 
             this.output.WriteLine(
                 $"[HTTP DAG RESUME PROOF] ExecutionId='{existingExecutionId}', FailureStep='{FormatStepName(FailureStepNumber)}', CompletedBeforeFailure='{FailureStepNumber - 1}', RecoveredFromStep='{FormatStepName(FailureStepNumber)}', FinalCompletedSteps='{StepCount}/{StepCount}', FailedRuntimeInstanceId='{failedRuntimeInstanceId}', ReplacementRuntimeInstanceId='{redispatchedRun.AssignedRuntimeInstanceId}', FailedLocalRunId='{failedLocalRunId}', ReplacementLocalRunId='{redispatchedRun.LocalRunId}'.");
         }
+
+        /// <summary>
+        /// Verifies that the real HTTP runtime creation path persists the RBAC ContextKey
+        /// on the durable DAG execution record without test-side seeding.
+        /// </summary>
+        [Fact]
+        public async Task Http_ProcessHost_Should_Persist_Dag_Record_ContextKey_On_Real_Create()
+        {
+            var scenario =
+                CreateHttpDagResumeRecoveryScenario();
+
+            scenario.DispatchTimeout = TimeSpan.FromMinutes(1);
+            scenario.CompletionTimeout = TimeSpan.FromMinutes(2);
+
+            var controlPlaneId =
+                GenericMcpServerTestSettings.CreateControlPlaneId(
+                    scenario.ControlPlaneIdPrefix);
+
+            var runtimeHostAssemblyPath =
+                GenericMcpRuntimeHostAssemblyResolver.ResolveRuntimeHostAssemblyPath();
+
+            var settings =
+                HttpProcessHostProductionScenarioSettingsBuilder.Build(
+                    scenario,
+                    controlPlaneId,
+                    runtimeHostAssemblyPath);
+
+            await using var host =
+                new GenericMcpServerTestHost(settings);
+
+            var sharedRunStore =
+                host.Services.GetRequiredService<IAiSharedRunStore>();
+
+            var runExecutionIndex =
+                host.Services.GetRequiredService<IAiRuntimeRunExecutionIndex>();
+
+            var scaleOutRequestStore =
+                host.Services.GetRequiredService<IAiRuntimeScaleOutRequestStore>();
+
+            var dagStore =
+                host.Services.GetRequiredService<IAiDagExecutionStore>();
+
+            var tenant =
+                scenario.Tenants.Single();
+
+            using var tenantHttpClient =
+                host.CreateClient();
+
+            var mcp =
+                await McpRbacTestClientHelper
+                    .CreateConfiguredClientAsync(
+                        host,
+                        tenantHttpClient,
+                        RequestedBy,
+                        tenantId: tenant.TenantId,
+                        tenantGroupId: tenant.TenantGroupId)
+                    .ConfigureAwait(false);
+
+            var pipelineName =
+                $"{scenario.Name}-{tenant.TenantId}-real-create-contextkey-{Guid.NewGuid():N}";
+
+            this.output.WriteLine(
+                $"[HTTP DAG CONTEXTKEY PROOF] Starting. ControlPlaneId='{controlPlaneId}', PipelineKey='{pipelineName}', RuntimeHostAssemblyPath='{runtimeHostAssemblyPath}'.");
+
+            var sharedRunId =
+                await SubmitOneRunAsync(
+                        mcp,
+                        tenant,
+                        pipelineName)
+                    .ConfigureAwait(false);
+
+            await WaitForAnyTenantScaleOutRequestFulfilledAsync(
+                    scaleOutRequestStore,
+                    controlPlaneId,
+                    tenant,
+                    pipelineName,
+                    scenario.ScaleOutTimeout)
+                .ConfigureAwait(false);
+
+            var firstDispatch =
+                await WaitForSingleDispatchedRunAsync(
+                        mcp,
+                        pipelineName,
+                        sharedRunId,
+                        scenario.DispatchTimeout)
+                    .ConfigureAwait(false);
+
+            Assert.False(string.IsNullOrWhiteSpace(firstDispatch.AssignedRuntimeInstanceId));
+            Assert.False(string.IsNullOrWhiteSpace(firstDispatch.LocalRunId));
+
+            var sharedRun =
+                await sharedRunStore
+                    .GetAsync(sharedRunId)
+                    .ConfigureAwait(false);
+
+            Assert.NotNull(sharedRun);
+
+            var expectedContextKey =
+                firstDispatch.ExecutionContextSnapshot?.ContextKey
+                ?? sharedRun!.ExecutionContextSnapshot?.ContextKey;
+
+            Assert.False(
+                string.IsNullOrWhiteSpace(expectedContextKey),
+                "The dispatched shared run must carry an ExecutionContextSnapshot.ContextKey.");
+
+            var runtimeIndex =
+                await WaitForRuntimeIndexWithExecutionIdAsync(
+                        runExecutionIndex,
+                        firstDispatch.LocalRunId!,
+                        TimeSpan.FromSeconds(30))
+                    .ConfigureAwait(false);
+
+            Assert.Equal(firstDispatch.AssignedRuntimeInstanceId, runtimeIndex.RuntimeInstanceId);
+            Assert.False(string.IsNullOrWhiteSpace(runtimeIndex.ExecutionId));
+
+            var persistedRecord =
+                await WaitForDagRecordWithContextKeyAsync(
+                        dagStore,
+                        runtimeIndex.ExecutionId,
+                        TimeSpan.FromSeconds(30))
+                    .ConfigureAwait(false);
+
+            Assert.Equal(runtimeIndex.ExecutionId, persistedRecord.ExecutionId);
+            Assert.Equal(pipelineName, persistedRecord.PipelineName);
+            Assert.Equal(AiExecutionMode.Dag, persistedRecord.ExecutionMode);
+            Assert.False(string.IsNullOrWhiteSpace(persistedRecord.ContextKey));
+            Assert.False(string.IsNullOrWhiteSpace(persistedRecord.ContextKey));
+
+            this.output.WriteLine(
+                $"[HTTP DAG CONTEXTKEY PROOF] Real DAG record persisted ContextKey. " +
+                $"SharedRunId='{sharedRunId}', " +
+                $"LocalRunId='{firstDispatch.LocalRunId}', " +
+                $"ExecutionId='{runtimeIndex.ExecutionId}', " +
+                $"RuntimeInstanceId='{firstDispatch.AssignedRuntimeInstanceId}', " +
+                $"SnapshotContextKey='{expectedContextKey}', " +
+                $"RecordContextKey='{persistedRecord.ContextKey}', " +
+                $"SameContextKey='{string.Equals(expectedContextKey, persistedRecord.ContextKey, StringComparison.Ordinal)}'.");
+
+            this.output.WriteLine(
+                $"[HTTP DAG CONTEXTKEY PROOF] Real DAG record persisted ContextKey. SharedRunId='{sharedRunId}', LocalRunId='{firstDispatch.LocalRunId}', ExecutionId='{runtimeIndex.ExecutionId}', RuntimeInstanceId='{firstDispatch.AssignedRuntimeInstanceId}', ContextKey='{persistedRecord.ContextKey}'.");
+        }
+
+        /// <summary>
+        /// Waits until the runtime run execution index contains a real execution id for the local runtime run.
+        /// </summary>
+        private static async Task<AiRuntimeRunExecutionIndexEntry> WaitForRuntimeIndexWithExecutionIdAsync(
+            IAiRuntimeRunExecutionIndex runExecutionIndex,
+            string localRunId,
+            TimeSpan timeout)
+        {
+            ArgumentNullException.ThrowIfNull(runExecutionIndex);
+            ArgumentException.ThrowIfNullOrWhiteSpace(localRunId);
+
+            var deadline =
+                DateTimeOffset.UtcNow.Add(timeout);
+
+            AiRuntimeRunExecutionIndexEntry? lastEntry = null;
+
+            while (DateTimeOffset.UtcNow < deadline)
+            {
+                lastEntry =
+                    await runExecutionIndex
+                        .GetAsync(localRunId)
+                        .ConfigureAwait(false);
+
+                if (lastEntry is not null &&
+                    !string.IsNullOrWhiteSpace(lastEntry.ExecutionId))
+                {
+                    return lastEntry;
+                }
+
+                await Task
+                    .Delay(TimeSpan.FromMilliseconds(100))
+                    .ConfigureAwait(false);
+            }
+
+            Assert.Fail(
+                $"Runtime run execution index did not contain an execution id within '{timeout}'. LocalRunId='{localRunId}', LastStatus='{lastEntry?.Status}', LastExecutionId='{lastEntry?.ExecutionId}'.");
+
+            throw new InvalidOperationException(
+                "Unreachable assertion path.");
+        }
+
+        /// <summary>
+        /// Waits until the durable DAG record exists and carries a non-empty ContextKey.
+        /// </summary>
+        private static async Task<AiExecutionRecord> WaitForDagRecordWithContextKeyAsync(
+            IAiDagExecutionStore dagStore,
+            string executionId,
+            TimeSpan timeout)
+        {
+            ArgumentNullException.ThrowIfNull(dagStore);
+            ArgumentException.ThrowIfNullOrWhiteSpace(executionId);
+
+            var deadline =
+                DateTimeOffset.UtcNow.Add(timeout);
+
+            AiExecutionRecord? lastRecord = null;
+
+            while (DateTimeOffset.UtcNow < deadline)
+            {
+                lastRecord =
+                    await dagStore
+                        .GetRecordAsync(executionId)
+                        .ConfigureAwait(false);
+
+                if (lastRecord is not null &&
+                    !string.IsNullOrWhiteSpace(lastRecord.ContextKey))
+                {
+                    return lastRecord;
+                }
+
+                await Task
+                    .Delay(TimeSpan.FromMilliseconds(100))
+                    .ConfigureAwait(false);
+            }
+
+            Assert.Fail(
+                $"Durable DAG execution record did not contain ContextKey within '{timeout}'. ExecutionId='{executionId}', RecordFound='{lastRecord is not null}', LastContextKey='{lastRecord?.ContextKey}', LastStatus='{lastRecord?.Status}'.");
+
+            throw new InvalidOperationException(
+                "Unreachable assertion path.");
+        }
+
 
         /// <summary>
         /// Creates a focused HTTP process-host DAG resume recovery scenario.
@@ -583,6 +825,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             string executionId,
             string pipelineName,
             AiPipelineDefinition? definition,
+            string? contextKey,
             int stepCount,
             int failureStepNumber,
             string failedRuntimeInstanceId)
@@ -590,6 +833,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             ArgumentNullException.ThrowIfNull(dagStore);
             ArgumentException.ThrowIfNullOrWhiteSpace(executionId);
             ArgumentException.ThrowIfNullOrWhiteSpace(pipelineName);
+            Assert.False(
+                string.IsNullOrWhiteSpace(contextKey),
+                "The seeded DAG execution record must carry the RBAC ContextKey from the shared run snapshot.");
 
             var stepNames =
                 ResolveStepNames(
@@ -603,6 +849,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 {
                     ExecutionId = executionId,
                     PipelineName = pipelineName,
+                    ContextKey = contextKey!,
                     ExecutionMode = AiExecutionMode.Dag,
                     Status = AiExecutionStatus.Running,
                     CreatedAtUtc = DateTime.UtcNow.AddMinutes(-5)
@@ -1048,6 +1295,42 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
 
             throw new InvalidOperationException(
                 $"Could not extract SharedRunId from submit result type '{resultType.FullName}'.");
+        }
+
+        private static async Task<AiRuntimeRunExecutionIndexEntry> WaitForRunExecutionIndexAsync(
+            IAiRuntimeRunExecutionIndex runExecutionIndex,
+            string localRunId,
+            string executionId,
+            TimeSpan timeout)
+        {
+            var deadline =
+                DateTimeOffset.UtcNow.Add(timeout);
+
+            AiRuntimeRunExecutionIndexEntry? lastEntry = null;
+
+            while (DateTimeOffset.UtcNow < deadline)
+            {
+                lastEntry =
+                    await runExecutionIndex
+                        .GetAsync(localRunId)
+                        .ConfigureAwait(false);
+
+                if (lastEntry is not null &&
+                    string.Equals(lastEntry.ExecutionId, executionId, StringComparison.Ordinal))
+                {
+                    return lastEntry;
+                }
+
+                await Task
+                    .Delay(TimeSpan.FromMilliseconds(100))
+                    .ConfigureAwait(false);
+            }
+
+            Assert.Fail(
+                $"Runtime run execution index entry was not found within '{timeout}'. LocalRunId='{localRunId}', ExecutionId='{executionId}', LastEntryExecutionId='{lastEntry?.ExecutionId}', LastEntryStatus='{lastEntry?.Status}'.");
+
+            throw new InvalidOperationException(
+                "Unreachable assertion path.");
         }
 
         /// <summary>

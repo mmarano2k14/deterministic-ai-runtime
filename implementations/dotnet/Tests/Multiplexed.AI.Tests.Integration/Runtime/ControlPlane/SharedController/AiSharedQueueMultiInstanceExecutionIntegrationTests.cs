@@ -2,6 +2,7 @@
 using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.ControlPlane.Admission;
 using Multiplexed.Abstractions.AI.ControlPlane.Observability;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Controller;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Dispatch;
@@ -265,8 +266,8 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedController
                 .Range(1, runtimeInstanceCount)
                 .Select(instanceNumber =>
                     RunRuntimeInstancePumpUntilEmptyAsync(
-                        runtimeInstanceId: $"runtime-instance-{instanceNumber}",
-                        workerId: $"runtime-instance-{instanceNumber}-shared-queue-worker",
+                        runtimeInstanceId: $"{scenarioId}:runtime-instance-{instanceNumber}",
+                        workerId: $"{scenarioId}:runtime-instance-{instanceNumber}-shared-queue-worker",
                         queue,
                         store,
                         recorder,
@@ -377,6 +378,11 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedController
     MultiInstanceDispatchRecorder recorder,
     int maxDispatchesPerPumpCycle)
         {
+            var runtimeInstanceRegistry =
+                await CreateReadyRuntimeRegistryAsync(
+                        runtimeInstanceId)
+                    .ConfigureAwait(false);
+
             var dispatcher = new AiSharedQueueDispatcher(
                 queue,
                 store,
@@ -384,7 +390,7 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedController
                 new FakeRunAdmissionController(
                     assignedRuntimeInstanceId: runtimeInstanceId),
                 new InMemoryAiRuntimeAdmissionReservationStore(),
-                new InMemoryAiRuntimeInstanceRegistry(),
+                runtimeInstanceRegistry,
                 new FakeRuntimeScaleOutRequestPublisher(),
                 new HardcodedAiTenantRuntimeSettingsProvider(),
                 new FakeExecutionContextAccessor(),
@@ -445,6 +451,56 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedController
                     return total;
                 }
             }
+        }
+
+        /// <summary>
+        /// Creates a runtime registry where the simulated runtime instance is visible and ready.
+        /// </summary>
+        /// <param name="runtimeInstanceId">The simulated runtime instance id.</param>
+        /// <returns>The ready runtime instance registry.</returns>
+        private static async Task<InMemoryAiRuntimeInstanceRegistry> CreateReadyRuntimeRegistryAsync(
+            string runtimeInstanceId)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(runtimeInstanceId);
+
+            var registry =
+                new InMemoryAiRuntimeInstanceRegistry();
+
+            await registry
+                .RegisterAsync(new AiRuntimeInstanceRegistration
+                {
+                    RuntimeInstanceId = runtimeInstanceId,
+                    Role = AiRuntimeInstanceRole.Runtime,
+                    HostName = "integration-test-host",
+                    ProcessId = Environment.ProcessId,
+                    WorkerCount = 1,
+                    QueueCapacity = 1000,
+                    MaxConcurrentRuns = 1000,
+                    RuntimeVersion = "integration-test",
+                    Metadata = new Dictionary<string, string>
+                    {
+                        ["provider.name"] = "local",
+                        ["test"] = "true"
+                    }
+                })
+                .ConfigureAwait(false);
+
+            await registry
+                .HeartbeatAsync(
+                    runtimeInstanceId,
+                    queuedRunCount: 0,
+                    runningRunCount: 0,
+                    activeRunCount: 0,
+                    availableRunSlots: 1000,
+                    activeWorkerCount: 0,
+                    availableWorkerCount: 1000,
+                    maxLocalWorkersPerExecution: 1000,
+                    isQueuePaused: false,
+                    canAcceptRun: true,
+                    status: AiRuntimeInstanceStatus.Ready)
+                .ConfigureAwait(false);
+
+            return registry;
         }
 
         private RedisAiSharedRunStore CreateRunStore()

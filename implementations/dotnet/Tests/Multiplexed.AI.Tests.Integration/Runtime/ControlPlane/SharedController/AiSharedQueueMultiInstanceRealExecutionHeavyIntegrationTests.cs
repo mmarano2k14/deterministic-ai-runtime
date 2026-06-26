@@ -6,6 +6,7 @@ using Multiplexed.Abstractions.AI.ControlPlane.ExecutionAssistance;
 using Multiplexed.Abstractions.AI.ControlPlane.Observability;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Capacity;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.SharedInstance;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController;
@@ -311,7 +312,7 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedController
 
                 for (var index = 1; index <= scenario.RuntimeInstanceCount; index++)
                 {
-                    var runtimeInstanceId = $"runtime-instance-{index}";
+                    var runtimeInstanceId = $"{scenario.ScenarioId}:runtime-instance-{index}";
 
                     var harness = await CreateRuntimeInstanceHarnessAsync(
                         scenario,
@@ -344,7 +345,7 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedController
                     await runtimeInstance.BackgroundController.StartAsync();
                 }
 
-               
+
                 var providerRouter =
                     new AiRuntimeInstanceProviderRouter(
                         new IAiRuntimeInstanceProvider[]
@@ -358,10 +359,15 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedController
                         capacityStore,
                         providerRouter);
 
+                var runtimeInstanceRegistry =
+                    await CreateReadyRuntimeRegistryAsync(
+                            runtimeInstances)
+                        .ConfigureAwait(false);
+
                 var remoteSharedRunDispatcher =
                     new RemoteAiSharedRunDispatcher(
                         providerCapabilityResolver,
-                        new InMemoryAiRuntimeInstanceRegistry(),
+                        runtimeInstanceRegistry,
                         NullLogger<RemoteAiSharedRunDispatcher>.Instance);
 
                 var sharedRunId =
@@ -576,7 +582,7 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedController
 
                 for (var index = 1; index <= scenario.RuntimeInstanceCount; index++)
                 {
-                    var runtimeInstanceId = $"runtime-instance-{index}";
+                    var runtimeInstanceId = $"{scenario.ScenarioId}:runtime-instance-{index}";
 
                     var harness = await CreateRuntimeInstanceHarnessAsync(
                         scenario,
@@ -624,10 +630,15 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedController
                         capacityStore,
                         providerRouter);
 
+                var runtimeInstanceRegistry =
+                    await CreateReadyRuntimeRegistryAsync(
+                            runtimeInstances)
+                        .ConfigureAwait(false);
+
                 var remoteSharedRunDispatcher =
                     new RemoteAiSharedRunDispatcher(
                         providerCapabilityResolver,
-                        new InMemoryAiRuntimeInstanceRegistry(),
+                        runtimeInstanceRegistry,
                         NullLogger<RemoteAiSharedRunDispatcher>.Instance);
 
                 var sharedRunId =
@@ -882,7 +893,7 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedController
 
                 for (var index = 1; index <= scenario.RuntimeInstanceCount; index++)
                 {
-                    var runtimeInstanceId = $"runtime-instance-{index}";
+                    var runtimeInstanceId = $"{scenario.ScenarioId}:runtime-instance-{index}";
 
                     var harness = await CreateRuntimeInstanceHarnessAsync(
                         scenario,
@@ -902,6 +913,9 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedController
                     });
                 }
 
+                PublishPipelineDefinitionToAllRuntimeInstances(
+                    runtimeInstances,
+                    scenario);
 
                 var providerRouter =
                 new AiRuntimeInstanceProviderRouter(
@@ -916,10 +930,15 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedController
                         capacityStore,
                         providerRouter);
 
+                var runtimeInstanceRegistry =
+                    await CreateReadyRuntimeRegistryAsync(
+                            runtimeInstances)
+                        .ConfigureAwait(false);
+
                 var remoteSharedRunDispatcher =
                     new RemoteAiSharedRunDispatcher(
                         providerCapabilityResolver,
-                        new InMemoryAiRuntimeInstanceRegistry(),
+                        runtimeInstanceRegistry,
                         NullLogger<RemoteAiSharedRunDispatcher>.Instance);
 
                 var sharedRunIdPrefix =
@@ -1304,14 +1323,19 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedController
             ArgumentNullException.ThrowIfNull(sharedRunDispatcher);
             ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxDispatchesPerPumpCycle);
 
+            var runtimeInstanceRegistry =
+                await CreateReadyRuntimeRegistryAsync(
+                        runtimeInstance.RuntimeInstanceId)
+                    .ConfigureAwait(false);
+
             var queueDispatcher = new AiSharedQueueDispatcher(
                 queue,
                 store,
                 sharedRunDispatcher,
                 new FakeRunAdmissionController(
-                    assignedRuntimeInstanceId: runtimeInstance.RuntimeInstanceId), 
+                    assignedRuntimeInstanceId: runtimeInstance.RuntimeInstanceId),
                 new InMemoryAiRuntimeAdmissionReservationStore(),
-                new InMemoryAiRuntimeInstanceRegistry(),
+                runtimeInstanceRegistry,
                 new FakeRuntimeScaleOutRequestPublisher(),
                 new HardcodedAiTenantRuntimeSettingsProvider(),
                 new FakeExecutionContextAccessor(),
@@ -1557,6 +1581,96 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedController
                 $"StepStatusSummary='{stepStatusSummary}', " +
                 $"StepClaimSummary='{stepClaimSummary}', " +
                 $"StepRetrySummary='{stepRetrySummary}'.");
+        }
+
+        /// <summary>
+        /// Creates a ready runtime instance registry for the specified runtime harnesses.
+        /// </summary>
+        /// <param name="runtimeInstances">The runtime instances to register as ready.</param>
+        /// <returns>The ready runtime instance registry.</returns>
+        private static async Task<InMemoryAiRuntimeInstanceRegistry> CreateReadyRuntimeRegistryAsync(
+            IEnumerable<RuntimeInstanceHarness> runtimeInstances)
+        {
+            ArgumentNullException.ThrowIfNull(runtimeInstances);
+
+            var registry = new InMemoryAiRuntimeInstanceRegistry();
+
+            foreach (var runtimeInstance in runtimeInstances)
+            {
+                await RegisterReadyRuntimeInstanceAsync(
+                        registry,
+                        runtimeInstance.RuntimeInstanceId)
+                    .ConfigureAwait(false);
+            }
+
+            return registry;
+        }
+
+        /// <summary>
+        /// Creates a ready runtime instance registry for one runtime instance.
+        /// </summary>
+        /// <param name="runtimeInstanceId">The runtime instance id.</param>
+        /// <returns>The ready runtime instance registry.</returns>
+        private static async Task<InMemoryAiRuntimeInstanceRegistry> CreateReadyRuntimeRegistryAsync(
+            string runtimeInstanceId)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(runtimeInstanceId);
+
+            var registry = new InMemoryAiRuntimeInstanceRegistry();
+
+            await RegisterReadyRuntimeInstanceAsync(
+                    registry,
+                    runtimeInstanceId)
+                .ConfigureAwait(false);
+
+            return registry;
+        }
+
+        /// <summary>
+        /// Registers one runtime instance as ready in the runtime instance registry.
+        /// </summary>
+        /// <param name="registry">The runtime instance registry.</param>
+        /// <param name="runtimeInstanceId">The runtime instance id.</param>
+        private static async Task RegisterReadyRuntimeInstanceAsync(
+            InMemoryAiRuntimeInstanceRegistry registry,
+            string runtimeInstanceId)
+        {
+            ArgumentNullException.ThrowIfNull(registry);
+            ArgumentException.ThrowIfNullOrWhiteSpace(runtimeInstanceId);
+
+            await registry
+                .RegisterAsync(new AiRuntimeInstanceRegistration
+                {
+                    RuntimeInstanceId = runtimeInstanceId,
+                    Role = AiRuntimeInstanceRole.Runtime,
+                    HostName = "integration-test-host",
+                    ProcessId = Environment.ProcessId,
+                    WorkerCount = 1,
+                    QueueCapacity = 100,
+                    MaxConcurrentRuns = 1,
+                    RuntimeVersion = "integration-test",
+                    Metadata = new Dictionary<string, string>
+                    {
+                        [AiRuntimeInstanceProviderMetadataKeys.ProviderName] = "local",
+                        ["test"] = "true"
+                    }
+                })
+                .ConfigureAwait(false);
+
+            await registry
+                .HeartbeatAsync(
+                    runtimeInstanceId,
+                    queuedRunCount: 0,
+                    runningRunCount: 0,
+                    activeRunCount: 0,
+                    availableRunSlots: 1,
+                    activeWorkerCount: 0,
+                    availableWorkerCount: 1,
+                    maxLocalWorkersPerExecution: 1,
+                    isQueuePaused: false,
+                    canAcceptRun: true,
+                    status: AiRuntimeInstanceStatus.Ready)
+                .ConfigureAwait(false);
         }
 
         /// <summary>
@@ -2443,7 +2557,7 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedController
             public IReadOnlyCollection<string> RetentionPolicies { get; init; } =
                 Array.Empty<string>();
 
-            
+
 
             public static HeavyScenario AllFeaturesHeavy()
             {
@@ -2468,7 +2582,7 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedController
                     maxInlinePayloadBytes: 1,
                     flakyStepInterval: 9,
                     replaySampleCount: 3,
-                    enableRetention:true,
+                    enableRetention: true,
                     workerIdleDelay: TimeSpan.FromMilliseconds(1),
                     sharedDispatchTimeout: TimeSpan.FromSeconds(60),
                     executionTimeout: TimeSpan.FromSeconds(90),

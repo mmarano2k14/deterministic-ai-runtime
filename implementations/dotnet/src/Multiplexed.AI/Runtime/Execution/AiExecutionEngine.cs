@@ -1,9 +1,11 @@
 ﻿using Multiplexed.Abstractions.AI.Execution;
 using Multiplexed.Abstractions.AI.Execution.State;
 using Multiplexed.Abstractions.AI.Pipeline;
+using Multiplexed.Abstractions.Core.ExecutionContext;
 using Multiplexed.AI.Runtime.Observability.Logging;
 using Multiplexed.AI.Stores;
 using Multiplexed.Rbac.Core.ExecutionContext;
+using System.Collections.Concurrent;
 using ExecutionContext = Multiplexed.Rbac.Core.ExecutionContext.ExecutionContext;
 
 namespace Multiplexed.AI.Runtime.Execution
@@ -60,6 +62,9 @@ namespace Multiplexed.AI.Runtime.Execution
             StateReader = stateReader;
             StateWriter = stateWriter;
         }
+
+        private readonly ConcurrentDictionary<string, ExecutionContext> _restoredExecutionContextsByExecutionId =
+            new(StringComparer.Ordinal);
 
         /// <summary>
         /// Gets the durable AI execution store.
@@ -265,6 +270,178 @@ namespace Multiplexed.AI.Runtime.Execution
             {
                 throw new InvalidOperationException("Concurrency conflict on execution update.");
             }
+        }
+
+        /// <summary>
+        /// Seeds a restored RBAC execution context into the engine-owned context store.
+        /// </summary>
+        /// <param name="context">The restored RBAC execution context.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        public Task SeedRestoredExecutionContextAsync(
+            ExecutionContext context,
+            CancellationToken cancellationToken = default)
+        {
+            return SeedRestoredExecutionContextAsync(
+                executionId: null,
+                context,
+                cancellationToken);
+        }
+
+        /// <summary>
+        /// Seeds a restored RBAC execution context into the engine-owned context store and
+        /// binds it to the durable execution identifier being resumed.
+        /// </summary>
+        /// <param name="executionId">The durable execution identifier being resumed.</param>
+        /// <param name="context">The restored RBAC execution context.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        public async Task SeedRestoredExecutionContextAsync(
+            string? executionId,
+            ExecutionContext context,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentNullException.ThrowIfNull(context);
+
+            cancellationToken.ThrowIfCancellationRequested();
+
+            if (string.IsNullOrWhiteSpace(context.ContextKey))
+            {
+                throw new InvalidOperationException(
+                    "Cannot seed restored execution context because ContextKey is missing.");
+            }
+
+            var stableContext =
+                CloneExecutionContext(
+                    context,
+                    context.ContextKey);
+
+            await ContextStore
+                .SeedAsync(stableContext)
+                .ConfigureAwait(false);
+
+            Accessor.Set(
+                stableContext);
+
+            if (!string.IsNullOrWhiteSpace(executionId))
+            {
+                _restoredExecutionContextsByExecutionId[executionId] =
+                    stableContext;
+            }
+
+            Logger.Engine.LogInformation(
+                $"[AI EXECUTION] Restored RBAC execution context seeded. ExecutionId='{executionId ?? string.Empty}', ContextKey='{stableContext.ContextKey}', TenantId='{stableContext.TenantId}', UserId='{stableContext.UserId}'.");
+        }
+
+        /// <summary>
+        /// Loads the RBAC execution context for the supplied execution and context key.
+        /// </summary>
+        /// <param name="executionId">The durable execution identifier.</param>
+        /// <param name="contextKey">The context key requested by the execution record or DAG state.</param>
+        /// <returns>The RBAC execution context.</returns>
+        protected async Task<ExecutionContext> LoadContextForExecutionAsync(
+            string executionId,
+            string contextKey)
+        {
+            try
+            {
+                return await LoadContextAsync(
+                        contextKey)
+                    .ConfigureAwait(false);
+            }
+            catch (InvalidOperationException exception) when (
+                IsRbacExecutionContextNotFound(exception) &&
+                TryGetRestoredExecutionContext(
+                    executionId,
+                    out var restoredContext))
+            {
+                var reboundContext =
+                    CloneExecutionContext(
+                        restoredContext,
+                        contextKey);
+
+                await ContextStore
+                    .SeedAsync(reboundContext)
+                    .ConfigureAwait(false);
+
+                Accessor.Set(
+                    reboundContext);
+
+                Logger.Engine.LogInformation(
+                    $"[AI EXECUTION] Restored RBAC execution context rebound to execution context key. ExecutionId='{executionId}', RequestedContextKey='{contextKey}', RestoredContextKey='{restoredContext.ContextKey}', TenantId='{reboundContext.TenantId}', UserId='{reboundContext.UserId}'.");
+
+                return reboundContext;
+            }
+        }
+
+        /// <summary>
+        /// Gets a restored execution context previously bound to an execution identifier.
+        /// </summary>
+        /// <param name="executionId">The durable execution identifier.</param>
+        /// <param name="context">The restored execution context.</param>
+        /// <returns><c>true</c> when a restored context is available; otherwise, <c>false</c>.</returns>
+        protected bool TryGetRestoredExecutionContext(
+            string executionId,
+            out ExecutionContext context)
+        {
+            context =
+                null!;
+
+            if (string.IsNullOrWhiteSpace(executionId))
+            {
+                return false;
+            }
+
+            return _restoredExecutionContextsByExecutionId.TryGetValue(
+                executionId,
+                out context!);
+        }
+
+        /// <summary>
+        /// Determines whether the exception is the known RBAC context-store miss.
+        /// </summary>
+        /// <param name="exception">The exception.</param>
+        /// <returns><c>true</c> when this is the known RBAC context-store miss; otherwise, <c>false</c>.</returns>
+        protected static bool IsRbacExecutionContextNotFound(
+            InvalidOperationException exception)
+        {
+            return string.Equals(
+                exception.Message,
+                "RBAC execution context not found.",
+                StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Creates a safe copy of an RBAC execution context with the specified context key.
+        /// </summary>
+        /// <param name="context">The source RBAC execution context.</param>
+        /// <param name="contextKey">The context key to assign to the copy.</param>
+        /// <returns>The cloned RBAC execution context.</returns>
+        private static ExecutionContext CloneExecutionContext(
+            ExecutionContext context,
+            string contextKey)
+        {
+            ArgumentNullException.ThrowIfNull(context);
+            ArgumentException.ThrowIfNullOrWhiteSpace(contextKey);
+
+            return new ExecutionContext
+            {
+                ContextKey = contextKey,
+                Project = context.Project,
+                UserId = context.UserId,
+                TenantId = context.TenantId,
+                TenantGroupId = context.TenantGroupId,
+                CurrentNamespace = context.CurrentNamespace,
+                Namespaces = context.Namespaces
+                    .Select(namespaceEntry => new NamespaceEntry
+                    {
+                        Name = namespaceEntry.Name,
+                        Trns = new HashSet<string>(
+                            namespaceEntry.Trns,
+                            StringComparer.Ordinal)
+                    })
+                    .ToList(),
+                InFlightCount = context.InFlightCount,
+                TtlSeconds = context.TtlSeconds
+            };
         }
     }
 }

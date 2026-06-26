@@ -6,6 +6,366 @@ This project follows a deterministic runtime and observability model designed fo
 
 ---
 
+## [1.0.6.9] - 2026-06-25 — Execution Recovery / HTTP Process Host DAG Resume
+
+### Summary
+
+This change validates and implements durable execution recovery for HTTP process-host runtime replacement.
+
+The validated production behavior is:
+
+> A runtime process can fail while owning an in-flight DAG execution, the control plane can recover the assigned shared run, dispatch it to a replacement runtime process, and the replacement runtime can resume the same durable DAG execution without replaying completed steps.
+
+This is not only a test update. Several runtime and control-plane pieces were implemented or hardened to make the recovery path work end to end.
+
+---
+
+## What was implemented
+
+### 1. Execution-bound RBAC context rehydration
+
+Recovery exposed a real production issue: the replacement runtime receives the original `ExecutionContextSnapshot`, but the durable DAG execution record can reference a different `AiExecutionRecord.ContextKey`.
+
+The real create-path proof showed:
+
+```text
+SnapshotContextKey != RecordContextKey
+```
+
+So recovery could not rely on the shared-run snapshot context key being identical to the DAG record context key.
+
+Implemented in the execution engine:
+
+- Added execution-id-bound restored context storage.
+- Added `SeedRestoredExecutionContextAsync(executionId, context, cancellationToken)`.
+- Added context rehydration logic able to clone/re-seed the restored RBAC context under the durable DAG record context key.
+- Updated DAG execution context loading so batch/resume execution can call context loading with both `ExecutionId` and `ContextKey`.
+- Preserved the original execution id as the binding key for recovered contexts.
+
+Result:
+
+```text
+Replacement runtime receives snapshot context
+→ snapshot context is bound to existing ExecutionId
+→ DAG runner loads record.ContextKey
+→ engine re-seeds restored context under record.ContextKey
+→ DAG resume can continue
+```
+
+### 2. DAG resume path uses execution-bound context loading
+
+The DAG execution flow was updated so distributed/local DAG runners no longer load context only by `record.ContextKey`.
+
+Instead, the resume path now resolves context using:
+
+```text
+ExecutionId + ContextKey
+```
+
+This allows the replacement runtime to recover the correct RBAC context even when the durable record context key is not present locally.
+
+### 3. Runtime pipeline controller seeds resume context with ExecutionId
+
+The pipeline background controller already restored `ExecutionContextSnapshot` from the shared runtime run request.
+
+The resume path was updated so `SeedResumeExecutionContextAsync(...)` calls:
+
+```csharp
+SeedRestoredExecutionContextAsync(resumeExecutionId, restoredExecutionContext, cancellationToken)
+```
+
+instead of seeding only by context key.
+
+This is what connects the shared-run recovery request to the durable DAG execution id.
+
+### 4. Resume local runs are registered in IAiRuntimeRunExecutionIndex
+
+Recovery creates a new local runtime run id on the replacement runtime while keeping the same durable execution id.
+
+Before this change, the replacement local run could execute but was not visible through the shared runtime run execution index.
+
+Implemented:
+
+- Resume enqueue now registers the new local runtime run id in `IAiRuntimeRunExecutionIndex`.
+- The index entry uses:
+  - new replacement `RunId`
+  - existing durable `ExecutionId`
+  - replacement `RuntimeInstanceId`
+  - status `queued`
+  - recovery metadata
+  - execution context snapshot metadata
+
+Then the existing controller flow can naturally transition the same index entry through:
+
+```text
+queued → started → completed / failed
+```
+
+Result:
+
+```text
+runtime-2 local run id is visible to control plane
+→ index points to the existing durable ExecutionId
+→ test/control-plane can observe replacement completion
+```
+
+### 5. RuntimeInstanceOnly process hosts now use Redis control-plane stores
+
+The recovery test showed that the runtime process and the control plane were not always writing to the same runtime execution index.
+
+Implemented in `ConfigureRuntimeInstanceOnly(...)`:
+
+```csharp
+AddRedisControlPlaneStoresIfAvailable(services, configuration);
+```
+
+This ensures `RuntimeInstanceOnly` hosts use the Redis-backed shared stores when Redis is configured.
+
+Important: shared queue pump remains disabled in runtime-only mode, so the runtime process does not become a control-plane pump. It only shares the correct durable stores.
+
+Result:
+
+```text
+control-plane reads Redis
+runtime process writes Redis
+IAiRuntimeRunExecutionIndex becomes shared
+replacement local run becomes visible
+```
+
+### 6. Real DAG create ContextKey proof
+
+Added a proof test to validate the real production create path, without test-side seeding.
+
+The test proves:
+
+```text
+MCP submit
+→ HTTP process runtime scale-out
+→ real dispatch
+→ real DAG execution created
+→ DAG store record exists
+→ AiExecutionRecord.ContextKey is non-empty
+```
+
+The test also proved an important real behavior:
+
+```text
+ExecutionContextSnapshot.ContextKey can differ from AiExecutionRecord.ContextKey
+```
+
+This confirms why execution-bound context rehydration is required.
+
+### 7. HTTP process-host DAG resume recovery test
+
+Added/validated the end-to-end recovery scenario:
+
+```text
+runtime-1 owns DAG execution
+→ DAG is stopped at failed/in-flight step
+→ runtime-1 is marked unhealthy
+→ health reconciliation suppresses unsafe capacity
+→ recovery requeues the shared run as resume-existing-execution
+→ replacement runtime-2 is selected
+→ same durable ExecutionId is resumed
+→ completed steps are not replayed
+→ failed/in-flight step is recovered
+→ DAG completes 100/100
+```
+
+The test validates:
+
+- same durable `ExecutionId`
+- new replacement `LocalRunId`
+- new replacement `RuntimeInstanceId`
+- recovered step begins at the failure point
+- completed steps before failure are not replayed
+- final DAG state reaches all completed steps
+- replacement runtime run index reaches `completed`
+
+### 8. Test seed correctness for durable DAG records
+
+The recovery test manually seeds a stopped durable DAG state to simulate a crash at a precise step.
+
+The seeded `AiExecutionRecord` was fixed to include the proper `ContextKey`, because in production the real DAG create path persists a non-empty record context key.
+
+This keeps the recovery test aligned with real durable DAG records.
+
+### 9. Shared queue / health hardening test updates
+
+After health/capacity hardening, several shared queue tests needed to model runtime readiness more accurately.
+
+Implemented/hardened tests by:
+
+- registering simulated runtime instances in `IAiRuntimeInstanceRegistry`
+- marking simulated instances as `Ready`
+- avoiding empty runtime registries in dispatch tests
+- making runtime instance ids scenario-unique
+- explicitly publishing pipeline definitions to all runtime harnesses in heavy real execution tests
+
+This prevents false failures where dispatchers reject or endlessly requeue work because the target runtime instance is not visible as healthy/ready.
+
+---
+
+## What was fixed
+
+### Fixed: missing RBAC context during DAG resume
+
+The replacement runtime previously failed when it attempted to load the DAG record context key but did not have that context locally.
+
+Now recovery binds the restored snapshot context to the durable execution id and can rehydrate the context under the DAG record context key.
+
+### Fixed: empty/missing context key handling in recovered DAG execution
+
+The recovery path no longer assumes the replacement runtime already has the DAG record context key in its local context store.
+
+### Fixed: replacement local run not visible in runtime execution index
+
+`EnqueueResumeAsync(...)` now registers the replacement local run in `IAiRuntimeRunExecutionIndex`.
+
+### Fixed: runtime process writing to local stores while control plane reads Redis
+
+`RuntimeInstanceOnly` hosts now register Redis control-plane stores when available.
+
+### Fixed: shared queue tests with empty runtime registry
+
+Shared queue dispatch tests now register target runtime instances as ready before dispatch.
+
+### Fixed: static runtime instance ids causing cross-test interference
+
+Tests now use scenario-derived runtime instance ids instead of fixed ids such as:
+
+```text
+runtime-instance-1
+runtime-instance-2
+runtime-instance-3
+```
+
+---
+
+## Validated behavior
+
+### Execution recovery
+
+Validated:
+
+```text
+Submit
+→ Dispatch to runtime-1
+→ Runtime owns durable DAG execution
+→ Runtime fails during in-flight DAG step
+→ Health reconciliation marks runtime unsafe
+→ Recovery identifies assigned work
+→ Shared run is requeued as resume-existing-execution
+→ Runtime-2 receives recovered run
+→ Runtime-2 resumes same ExecutionId
+→ Completed steps are not replayed
+→ Failed step is recovered
+→ DAG reaches 100/100 completed steps
+```
+
+### Context recovery
+
+Validated:
+
+```text
+Real DAG create persists AiExecutionRecord.ContextKey
+SnapshotContextKey can differ from RecordContextKey
+Recovery still succeeds because context is bound by ExecutionId
+```
+
+### Runtime execution index
+
+Validated:
+
+```text
+Replacement local run id is registered
+Replacement local run points to existing durable ExecutionId
+Replacement local run reaches completed
+```
+
+### Runtime-only process store sharing
+
+Validated:
+
+```text
+RuntimeInstanceOnly process writes to Redis stores
+Control plane can observe replacement runtime run state
+```
+
+---
+
+## Tests added / updated
+
+### Added / validated
+
+- `Http_ProcessHost_Should_Resume_Dag_From_Failed_Step_Without_Replaying_Completed_Steps`
+- `Http_ProcessHost_Should_Persist_Dag_Record_ContextKey_On_Real_Create`
+- `AiRuntimePipelineBackgroundControllerResumeTests.EnqueueResumeAsync_Should_Run_Worker_With_Existing_ExecutionId`
+
+### Hardened
+
+- `AiSharedQueueMultiInstanceExecutionIntegrationTests`
+- `AiSharedQueueMultiInstanceRealExecutionHeavyIntegrationTests`
+
+---
+
+## Architecture decision confirmed
+
+Execution recovery and runtime health reconciliation remain separate responsibilities.
+
+### Health reconciliation
+
+Responsible for:
+
+- detecting stale/unhealthy/draining runtime instances
+- preventing unsafe routing
+- suppressing unsafe capacity
+- ensuring admission/dispatch does not select failed instances
+
+### Execution recovery
+
+Responsible for:
+
+- restoring work already assigned to a failed runtime
+- requeueing shared runs safely
+- preserving durable execution id
+- resuming DAG state from durable stores
+- preventing replay of completed steps
+
+### HTTP provider boundary
+
+The HTTP provider still does not restart, kill, or recover runtimes directly.
+
+It only reports endpoint health/failure signals.
+
+Runtime lifecycle replacement remains owned by the provider / host manager layer.
+
+---
+
+## Durable truth model
+
+This work confirms the durable truth model:
+
+```text
+Local runtime queues are volatile.
+Durable truth lives in shared queue, shared run store, runtime run execution index, DAG store, snapshots, ledger, and replay artifacts.
+```
+
+Recovery must not depend on local runtime queue memory surviving process failure.
+
+---
+
+## Result
+
+Execution recovery is now validated for HTTP process-host runtime replacement.
+
+The runtime can now support this production-grade behavior:
+
+> A failed runtime process can be replaced while preserving the durable execution id, and an in-flight DAG can continue on the replacement runtime without replaying completed steps.
+
+
+---
+
 ## [1.0.6.9] - 2026-06-25 — HTTP process-host recovery and runtime identity hardening
 
 ### Summary
