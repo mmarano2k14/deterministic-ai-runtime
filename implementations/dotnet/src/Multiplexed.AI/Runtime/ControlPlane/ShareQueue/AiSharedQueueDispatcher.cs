@@ -43,6 +43,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
         private const string ScaleOutIntentMetadataKey = "scaleout.intent";
         private const string ScaleOutIntentSharedQueueRedispatchReplacement = "shared-queue-redispatch-replacement";
         private const string SharedQueueRedispatchReplacementReason = "Shared queue redispatch requested replacement runtime capacity.";
+        private const string RecoveryFailedRuntimeInstanceIdMetadataKey = "recovery.failedRuntimeInstanceId";
 
         private readonly IAiSharedQueue _sharedQueue;
         private readonly IAiSharedRunStore _sharedRunStore;
@@ -235,6 +236,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                     var safePreferredRuntimeInstanceId =
                         await ResolveSafePreferredRuntimeInstanceIdAsync(
                                 sharedRun.AssignedRuntimeInstanceId,
+                                operationMetadata,
                                 sharedRun.SharedRunId,
                                 controlPlaneId,
                                 cancellationToken)
@@ -736,21 +738,42 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
         }
 
         /// <summary>
-        /// Resolves a preferred runtime instance only when it is still routable.
+        /// Resolves a preferred runtime instance only when it is still routable and not the failed runtime for recovery redispatch.
         /// </summary>
         /// <param name="preferredRuntimeInstanceId">The preferred runtime instance id.</param>
+        /// <param name="metadata">The merged dispatch metadata.</param>
         /// <param name="sharedRunId">The shared run id.</param>
         /// <param name="controlPlaneId">The control-plane id.</param>
         /// <param name="cancellationToken">The cancellation token.</param>
         /// <returns>The preferred runtime instance id when safe; otherwise, <c>null</c>.</returns>
         private async Task<string?> ResolveSafePreferredRuntimeInstanceIdAsync(
             string? preferredRuntimeInstanceId,
+            IReadOnlyDictionary<string, string> metadata,
             string sharedRunId,
             string controlPlaneId,
             CancellationToken cancellationToken)
         {
             if (string.IsNullOrWhiteSpace(preferredRuntimeInstanceId))
             {
+                return null;
+            }
+
+            if (TryGetMetadataValue(
+                    metadata,
+                    RecoveryFailedRuntimeInstanceIdMetadataKey,
+                    out var failedRuntimeInstanceId) &&
+                string.Equals(
+                    preferredRuntimeInstanceId,
+                    failedRuntimeInstanceId,
+                    StringComparison.Ordinal))
+            {
+                _logger.LogInformation(
+                    "Ignoring preferred runtime instance because it is the failed runtime instance for this recovery redispatch. SharedRunId={SharedRunId}, ControlPlaneId={ControlPlaneId}, PreferredRuntimeInstanceId={PreferredRuntimeInstanceId}, FailedRuntimeInstanceId={FailedRuntimeInstanceId}",
+                    sharedRunId,
+                    controlPlaneId,
+                    preferredRuntimeInstanceId,
+                    failedRuntimeInstanceId);
+
                 return null;
             }
 
@@ -776,6 +799,44 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                 snapshot?.CanAcceptRun);
 
             return null;
+        }
+
+        /// <summary>
+        /// Attempts to read a metadata value by key using ordinal ignore-case matching.
+        /// </summary>
+        /// <param name="metadata">The metadata dictionary.</param>
+        /// <param name="key">The metadata key.</param>
+        /// <param name="value">The resolved value.</param>
+        /// <returns><c>true</c> when a non-empty value is found; otherwise, <c>false</c>.</returns>
+        private static bool TryGetMetadataValue(
+            IReadOnlyDictionary<string, string> metadata,
+            string key,
+            out string value)
+        {
+            if (metadata.TryGetValue(
+                    key,
+                    out var directValue) &&
+                !string.IsNullOrWhiteSpace(directValue))
+            {
+                value = directValue;
+                return true;
+            }
+
+            foreach (var pair in metadata)
+            {
+                if (string.Equals(
+                        pair.Key,
+                        key,
+                        StringComparison.OrdinalIgnoreCase) &&
+                    !string.IsNullOrWhiteSpace(pair.Value))
+                {
+                    value = pair.Value;
+                    return true;
+                }
+            }
+
+            value = string.Empty;
+            return false;
         }
 
         /// <summary>
