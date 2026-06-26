@@ -714,24 +714,33 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
                     controlPlaneId,
                     existing.ExecutionContextSnapshot.TenantId);
 
+            var mergedMetadata =
+                MergeMetadata(
+                    existing.Metadata,
+                    metadata);
+
+            var metadataJson =
+                Serialize(mergedMetadata);
+
             var result = await _scripts
                 .ExecuteRequeueDispatchedAsync(
                     _database,
                     new RedisKey[]
                     {
-                BuildItemKey(
-                    controlPlaneId,
-                    sharedRunId),
-                BuildPendingIndexKey(controlPlaneId),
-                tenantPendingIndexKey
+                        BuildItemKey(
+                            controlPlaneId,
+                            sharedRunId),
+                        BuildPendingIndexKey(controlPlaneId),
+                        tenantPendingIndexKey
                     },
                     new RedisValue[]
                     {
-                sharedRunId,
-                claimToken,
-                score,
-                FormatDate(now),
-                reason ?? string.Empty
+                        sharedRunId,
+                        claimToken,
+                        score,
+                        FormatDate(now),
+                        reason ?? string.Empty,
+                        metadataJson
                     })
                 .ConfigureAwait(false);
 
@@ -746,17 +755,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
 
             if (string.Equals(status, "requeued-dispatched", StringComparison.Ordinal))
             {
-                if (metadata is not null &&
-                    metadata.Count > 0)
-                {
-                    await SetMergedMetadataAsync(
-                            controlPlaneId,
-                            sharedRunId,
-                            existing.Metadata,
-                            metadata)
-                        .ConfigureAwait(false);
-                }
-
                 return await GetAsync(
                         controlPlaneId,
                         sharedRunId,
@@ -1135,26 +1133,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
                 Reason = GetOptional(fields, "reason"),
                 Metadata = metadata
             };
-        }
-
-        private async Task SetMergedMetadataAsync(
-            string controlPlaneId,
-            string sharedRunId,
-            IReadOnlyDictionary<string, string> existingMetadata,
-            IReadOnlyDictionary<string, string> metadata)
-        {
-            var merged =
-                MergeMetadata(
-                    existingMetadata,
-                    metadata);
-
-            await _database.HashSetAsync(
-                    BuildItemKey(
-                        controlPlaneId,
-                        sharedRunId),
-                    "metadataJson",
-                    Serialize(merged))
-                .ConfigureAwait(false);
         }
 
         private static IReadOnlyDictionary<string, string> MergeMetadata(
