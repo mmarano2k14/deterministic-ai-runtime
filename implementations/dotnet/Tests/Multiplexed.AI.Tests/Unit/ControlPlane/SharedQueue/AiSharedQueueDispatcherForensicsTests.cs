@@ -213,10 +213,10 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
             Assert.Equal("selected", forensicEvent.Outcome);
             Assert.Equal("execution-1", forensicEvent.ExecutionId);
             Assert.Equal("shared-run-1", forensicEvent.SharedRunId);
-            Assert.Equal("local-run-replacement-1", forensicEvent.LocalRunId);
+            Assert.Null(forensicEvent.LocalRunId);
             Assert.Equal("runtime-replacement-1", forensicEvent.RuntimeInstanceId);
             Assert.Equal("runtime-replacement-1", forensicEvent.Metadata["replacement.runtimeInstanceId"]);
-            Assert.Equal("local-run-replacement-1", forensicEvent.Metadata["replacement.localRunId"]);
+            Assert.False(forensicEvent.Metadata.ContainsKey("replacement.localRunId"));
             Assert.Equal("runtime-failed-1", forensicEvent.Metadata["failed.runtimeInstanceId"]);
             Assert.Equal("local-run-failed-1", forensicEvent.Metadata["failed.localRunId"]);
             Assert.Equal("claim-token-1", forensicEvent.Metadata["queue.claimToken"]);
