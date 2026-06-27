@@ -86,6 +86,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics
 
             services.AddSingleton<IAiRuntimeRecoveryForensicsStore, MongoAiRuntimeRecoveryForensicsStore>();
             services.AddSingleton<IAiRuntimeRecoveryForensicsRecorder, BestEffortAiRuntimeRecoveryForensicsRecorder>();
+            services.AddSingleton<IAiRuntimeRecoveryForensicsQueryService, MongoAiRuntimeRecoveryForensicsQueryService>();
 
             return services;
         }
@@ -121,6 +122,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics
             services.TryAddSingleton(provider =>
             {
                 var client = provider.GetRequiredService<IMongoClient>();
+
                 return client.GetDatabase(databaseName);
             });
 

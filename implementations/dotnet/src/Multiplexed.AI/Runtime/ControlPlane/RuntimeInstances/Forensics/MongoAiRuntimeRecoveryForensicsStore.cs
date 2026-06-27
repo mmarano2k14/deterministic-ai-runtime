@@ -15,7 +15,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics
     /// </summary>
     public sealed class MongoAiRuntimeRecoveryForensicsStore : IAiRuntimeRecoveryForensicsStore
     {
-        private readonly IMongoCollection<AiRuntimeRecoveryForensicsRecord> _collection;
+        private readonly IMongoCollection<MongoAiRuntimeRecoveryForensicsDocument> _collection;
         private readonly AiRuntimeRecoveryForensicsMongoOptions _options;
         private readonly SemaphoreSlim _indexInitializationLock = new(1, 1);
         private bool _indexesInitialized;
@@ -33,11 +33,13 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics
             ArgumentNullException.ThrowIfNull(options);
 
             _options = options.Value;
-            _collection = database.GetCollection<AiRuntimeRecoveryForensicsRecord>(_options.CollectionName);
+            _collection = database.GetCollection<MongoAiRuntimeRecoveryForensicsDocument>(_options.CollectionName);
         }
 
         /// <inheritdoc />
-        public async Task UpsertAsync(AiRuntimeRecoveryForensicsRecord record, CancellationToken cancellationToken = default)
+        public async Task UpsertAsync(
+            AiRuntimeRecoveryForensicsRecord record,
+            CancellationToken cancellationToken = default)
         {
             ArgumentNullException.ThrowIfNull(record);
             ArgumentException.ThrowIfNullOrWhiteSpace(record.Identity.ForensicsId);
@@ -56,8 +58,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics
                 Events = NormalizeEvents(record.Events)
             };
 
-            var filter = Builders<AiRuntimeRecoveryForensicsRecord>.Filter.Eq(
-                x => x.Identity.ForensicsId,
+            var filter = Builders<MongoAiRuntimeRecoveryForensicsDocument>.Filter.Eq(
+                x => x.Id,
                 normalized.Identity.ForensicsId);
 
             var existing = await _collection
@@ -69,21 +71,26 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics
             {
                 normalized = normalized with
                 {
-                    CreatedAtUtc = existing.CreatedAtUtc == default ? normalized.CreatedAtUtc : existing.CreatedAtUtc,
-                    Events = NormalizeEvents(existing.Events.Concat(normalized.Events).ToList())
+                    CreatedAtUtc = existing.Record.CreatedAtUtc == default ? normalized.CreatedAtUtc : existing.Record.CreatedAtUtc,
+                    Events = NormalizeEvents(existing.Record.Events.Concat(normalized.Events).ToList())
                 };
             }
 
+            var document = MongoAiRuntimeRecoveryForensicsDocument.FromRecord(normalized);
+
             await _collection.ReplaceOneAsync(
                     filter,
-                    normalized,
+                    document,
                     new ReplaceOptions { IsUpsert = true },
                     cancellationToken)
                 .ConfigureAwait(false);
         }
 
         /// <inheritdoc />
-        public async Task AppendEventAsync(string forensicsId, AiRuntimeRecoveryForensicsEvent evt, CancellationToken cancellationToken = default)
+        public async Task AppendEventAsync(
+            string forensicsId,
+            AiRuntimeRecoveryForensicsEvent evt,
+            CancellationToken cancellationToken = default)
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(forensicsId);
             ArgumentNullException.ThrowIfNull(evt);
@@ -98,133 +105,170 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics
                 TimestampUtc = evt.TimestampUtc == default ? now : evt.TimestampUtc
             };
 
-            var filter = Builders<AiRuntimeRecoveryForensicsRecord>.Filter.Eq(
-                x => x.Identity.ForensicsId,
+            var filter = Builders<MongoAiRuntimeRecoveryForensicsDocument>.Filter.Eq(
+                x => x.Id,
                 forensicsId);
 
-            var update = Builders<AiRuntimeRecoveryForensicsRecord>.Update
-                .SetOnInsert(
-                    x => x.Identity,
-                    new AiRuntimeRecoveryForensicsIdentity
-                    {
-                        ForensicsId = forensicsId,
-                        ExecutionId = normalizedEvent.ExecutionId ?? string.Empty,
-                        SharedRunId = normalizedEvent.SharedRunId
-                    })
-                .SetOnInsert(x => x.CreatedAtUtc, now)
-                .Set(x => x.UpdatedAtUtc, now)
-                .AddToSet(x => x.Events, normalizedEvent);
+            var existing = await _collection
+                .Find(filter)
+                .FirstOrDefaultAsync(cancellationToken)
+                .ConfigureAwait(false);
 
-            await _collection.UpdateOneAsync(
+            var record = existing?.Record ?? new AiRuntimeRecoveryForensicsRecord
+            {
+                Identity = new AiRuntimeRecoveryForensicsIdentity
+                {
+                    ForensicsId = forensicsId,
+                    ExecutionId = normalizedEvent.ExecutionId ?? string.Empty,
+                    SharedRunId = normalizedEvent.SharedRunId
+                },
+                CreatedAtUtc = now,
+                UpdatedAtUtc = now,
+                Events = Array.Empty<AiRuntimeRecoveryForensicsEvent>()
+            };
+
+            var normalized = record with
+            {
+                UpdatedAtUtc = now,
+                Events = NormalizeEvents(record.Events.Concat(new[] { normalizedEvent }).ToList())
+            };
+
+            var document = MongoAiRuntimeRecoveryForensicsDocument.FromRecord(normalized);
+
+            await _collection.ReplaceOneAsync(
                     filter,
-                    update,
-                    new UpdateOptions { IsUpsert = true },
+                    document,
+                    new ReplaceOptions { IsUpsert = true },
                     cancellationToken)
                 .ConfigureAwait(false);
         }
 
         /// <inheritdoc />
-        public async Task<AiRuntimeRecoveryForensicsRecord?> GetByForensicsIdAsync(string forensicsId, CancellationToken cancellationToken = default)
+        public async Task<AiRuntimeRecoveryForensicsRecord?> GetByForensicsIdAsync(
+            string forensicsId,
+            CancellationToken cancellationToken = default)
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(forensicsId);
 
             await EnsureIndexesAsync(cancellationToken).ConfigureAwait(false);
 
-            var filter = Builders<AiRuntimeRecoveryForensicsRecord>.Filter.Eq(
-                x => x.Identity.ForensicsId,
+            var filter = Builders<MongoAiRuntimeRecoveryForensicsDocument>.Filter.Eq(
+                x => x.Id,
                 forensicsId);
 
-            return await _collection
+            var document = await _collection
                 .Find(filter)
                 .FirstOrDefaultAsync(cancellationToken)
                 .ConfigureAwait(false);
+
+            return document?.Record;
         }
 
         /// <inheritdoc />
-        public async Task<IReadOnlyList<AiRuntimeRecoveryForensicsRecord>> ListByExecutionIdAsync(string executionId, CancellationToken cancellationToken = default)
+        public async Task<IReadOnlyList<AiRuntimeRecoveryForensicsRecord>> ListByExecutionIdAsync(
+            string executionId,
+            CancellationToken cancellationToken = default)
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(executionId);
 
             await EnsureIndexesAsync(cancellationToken).ConfigureAwait(false);
 
-            var filter = Builders<AiRuntimeRecoveryForensicsRecord>.Filter.Eq(
-                x => x.Identity.ExecutionId,
+            var filter = Builders<MongoAiRuntimeRecoveryForensicsDocument>.Filter.Eq(
+                x => x.Record.Identity.ExecutionId,
                 executionId);
 
-            return await _collection
+            var documents = await _collection
                 .Find(filter)
-                .SortByDescending(x => x.CreatedAtUtc)
+                .SortByDescending(x => x.Record.CreatedAtUtc)
                 .ToListAsync(cancellationToken)
                 .ConfigureAwait(false);
+
+            return documents.Select(x => x.Record).ToList();
         }
 
         /// <inheritdoc />
-        public async Task<IReadOnlyList<AiRuntimeRecoveryForensicsRecord>> ListBySharedRunIdAsync(string sharedRunId, CancellationToken cancellationToken = default)
+        public async Task<IReadOnlyList<AiRuntimeRecoveryForensicsRecord>> ListBySharedRunIdAsync(
+            string sharedRunId,
+            CancellationToken cancellationToken = default)
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(sharedRunId);
 
             await EnsureIndexesAsync(cancellationToken).ConfigureAwait(false);
 
-            var filter = Builders<AiRuntimeRecoveryForensicsRecord>.Filter.Eq(
-                x => x.Identity.SharedRunId,
+            var filter = Builders<MongoAiRuntimeRecoveryForensicsDocument>.Filter.Eq(
+                x => x.Record.Identity.SharedRunId,
                 sharedRunId);
 
-            return await _collection
+            var documents = await _collection
                 .Find(filter)
-                .SortByDescending(x => x.CreatedAtUtc)
+                .SortByDescending(x => x.Record.CreatedAtUtc)
                 .ToListAsync(cancellationToken)
                 .ConfigureAwait(false);
+
+            return documents.Select(x => x.Record).ToList();
         }
 
         /// <inheritdoc />
-        public async Task<IReadOnlyList<AiRuntimeRecoveryForensicsRecord>> ListByRuntimeInstanceIdAsync(string runtimeInstanceId, CancellationToken cancellationToken = default)
+        public async Task<IReadOnlyList<AiRuntimeRecoveryForensicsRecord>> ListByRuntimeInstanceIdAsync(
+            string runtimeInstanceId,
+            CancellationToken cancellationToken = default)
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(runtimeInstanceId);
 
             await EnsureIndexesAsync(cancellationToken).ConfigureAwait(false);
 
-            var filter = Builders<AiRuntimeRecoveryForensicsRecord>.Filter.Or(
-                Builders<AiRuntimeRecoveryForensicsRecord>.Filter.Eq(x => x.Failure!.FailedRuntimeInstanceId, runtimeInstanceId),
-                Builders<AiRuntimeRecoveryForensicsRecord>.Filter.Eq(x => x.Replacement!.ReplacementRuntimeInstanceId, runtimeInstanceId));
+            var filter = Builders<MongoAiRuntimeRecoveryForensicsDocument>.Filter.Or(
+                Builders<MongoAiRuntimeRecoveryForensicsDocument>.Filter.Eq(x => x.Record.Failure!.FailedRuntimeInstanceId, runtimeInstanceId),
+                Builders<MongoAiRuntimeRecoveryForensicsDocument>.Filter.Eq(x => x.Record.Replacement!.ReplacementRuntimeInstanceId, runtimeInstanceId));
 
-            return await _collection
+            var documents = await _collection
                 .Find(filter)
-                .SortByDescending(x => x.CreatedAtUtc)
+                .SortByDescending(x => x.Record.CreatedAtUtc)
                 .ToListAsync(cancellationToken)
                 .ConfigureAwait(false);
+
+            return documents.Select(x => x.Record).ToList();
         }
 
         /// <inheritdoc />
-        public async Task<IReadOnlyList<AiRuntimeRecoveryForensicsRecord>> ListByRuntimeFailureIncidentIdAsync(string runtimeFailureIncidentId, CancellationToken cancellationToken = default)
+        public async Task<IReadOnlyList<AiRuntimeRecoveryForensicsRecord>> ListByRuntimeFailureIncidentIdAsync(
+            string runtimeFailureIncidentId,
+            CancellationToken cancellationToken = default)
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(runtimeFailureIncidentId);
 
             await EnsureIndexesAsync(cancellationToken).ConfigureAwait(false);
 
-            var filter = Builders<AiRuntimeRecoveryForensicsRecord>.Filter.Eq(
-                x => x.Failure!.RuntimeFailureIncidentId,
+            var filter = Builders<MongoAiRuntimeRecoveryForensicsDocument>.Filter.Eq(
+                x => x.Record.Failure!.RuntimeFailureIncidentId,
                 runtimeFailureIncidentId);
 
-            return await _collection
+            var documents = await _collection
                 .Find(filter)
-                .SortByDescending(x => x.CreatedAtUtc)
+                .SortByDescending(x => x.Record.CreatedAtUtc)
                 .ToListAsync(cancellationToken)
                 .ConfigureAwait(false);
+
+            return documents.Select(x => x.Record).ToList();
         }
 
         /// <inheritdoc />
-        public async Task<IReadOnlyList<AiRuntimeRecoveryForensicsRecord>> ListRecentAsync(int limit, CancellationToken cancellationToken = default)
+        public async Task<IReadOnlyList<AiRuntimeRecoveryForensicsRecord>> ListRecentAsync(
+            int limit,
+            CancellationToken cancellationToken = default)
         {
             await EnsureIndexesAsync(cancellationToken).ConfigureAwait(false);
 
             var safeLimit = Math.Max(1, limit);
 
-            return await _collection
-                .Find(Builders<AiRuntimeRecoveryForensicsRecord>.Filter.Empty)
-                .SortByDescending(x => x.CreatedAtUtc)
+            var documents = await _collection
+                .Find(Builders<MongoAiRuntimeRecoveryForensicsDocument>.Filter.Empty)
+                .SortByDescending(x => x.Record.CreatedAtUtc)
                 .Limit(safeLimit)
                 .ToListAsync(cancellationToken)
                 .ConfigureAwait(false);
+
+            return documents.Select(x => x.Record).ToList();
         }
 
         /// <summary>
@@ -253,48 +297,48 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics
                     {
                         var models = new[]
                         {
-                            new CreateIndexModel<AiRuntimeRecoveryForensicsRecord>(
-                                Builders<AiRuntimeRecoveryForensicsRecord>.IndexKeys.Ascending(x => x.Identity.ForensicsId),
-                                new CreateIndexOptions { Name = "ux_identity_forensicsId", Unique = true }),
+                            new CreateIndexModel<MongoAiRuntimeRecoveryForensicsDocument>(
+                                Builders<MongoAiRuntimeRecoveryForensicsDocument>.IndexKeys.Ascending(x => x.Id),
+                                new CreateIndexOptions { Name = "ux_id", Unique = true }),
 
-                            new CreateIndexModel<AiRuntimeRecoveryForensicsRecord>(
-                                Builders<AiRuntimeRecoveryForensicsRecord>.IndexKeys.Ascending(x => x.Identity.ExecutionId),
-                                new CreateIndexOptions { Name = "ix_identity_executionId" }),
+                            new CreateIndexModel<MongoAiRuntimeRecoveryForensicsDocument>(
+                                Builders<MongoAiRuntimeRecoveryForensicsDocument>.IndexKeys.Ascending(x => x.Record.Identity.ExecutionId),
+                                new CreateIndexOptions { Name = "ix_record_identity_executionId" }),
 
-                            new CreateIndexModel<AiRuntimeRecoveryForensicsRecord>(
-                                Builders<AiRuntimeRecoveryForensicsRecord>.IndexKeys.Ascending(x => x.Identity.SharedRunId),
-                                new CreateIndexOptions { Name = "ix_identity_sharedRunId", Sparse = true }),
+                            new CreateIndexModel<MongoAiRuntimeRecoveryForensicsDocument>(
+                                Builders<MongoAiRuntimeRecoveryForensicsDocument>.IndexKeys.Ascending(x => x.Record.Identity.SharedRunId),
+                                new CreateIndexOptions { Name = "ix_record_identity_sharedRunId", Sparse = true }),
 
-                            new CreateIndexModel<AiRuntimeRecoveryForensicsRecord>(
-                                Builders<AiRuntimeRecoveryForensicsRecord>.IndexKeys
-                                    .Ascending(x => x.Identity.TenantId)
-                                    .Descending(x => x.CreatedAtUtc),
-                                new CreateIndexOptions { Name = "ix_identity_tenantId_createdAtUtc", Sparse = true }),
+                            new CreateIndexModel<MongoAiRuntimeRecoveryForensicsDocument>(
+                                Builders<MongoAiRuntimeRecoveryForensicsDocument>.IndexKeys
+                                    .Ascending(x => x.Record.Identity.TenantId)
+                                    .Descending(x => x.Record.CreatedAtUtc),
+                                new CreateIndexOptions { Name = "ix_record_identity_tenantId_createdAtUtc", Sparse = true }),
 
-                            new CreateIndexModel<AiRuntimeRecoveryForensicsRecord>(
-                                Builders<AiRuntimeRecoveryForensicsRecord>.IndexKeys
-                                    .Ascending(x => x.Identity.ControlPlaneId)
-                                    .Descending(x => x.CreatedAtUtc),
-                                new CreateIndexOptions { Name = "ix_identity_controlPlaneId_createdAtUtc", Sparse = true }),
+                            new CreateIndexModel<MongoAiRuntimeRecoveryForensicsDocument>(
+                                Builders<MongoAiRuntimeRecoveryForensicsDocument>.IndexKeys
+                                    .Ascending(x => x.Record.Identity.ControlPlaneId)
+                                    .Descending(x => x.Record.CreatedAtUtc),
+                                new CreateIndexOptions { Name = "ix_record_identity_controlPlaneId_createdAtUtc", Sparse = true }),
 
-                            new CreateIndexModel<AiRuntimeRecoveryForensicsRecord>(
-                                Builders<AiRuntimeRecoveryForensicsRecord>.IndexKeys.Ascending(x => x.Failure!.FailedRuntimeInstanceId),
-                                new CreateIndexOptions { Name = "ix_failure_failedRuntimeInstanceId", Sparse = true }),
+                            new CreateIndexModel<MongoAiRuntimeRecoveryForensicsDocument>(
+                                Builders<MongoAiRuntimeRecoveryForensicsDocument>.IndexKeys.Ascending(x => x.Record.Failure!.FailedRuntimeInstanceId),
+                                new CreateIndexOptions { Name = "ix_record_failure_failedRuntimeInstanceId", Sparse = true }),
 
-                            new CreateIndexModel<AiRuntimeRecoveryForensicsRecord>(
-                                Builders<AiRuntimeRecoveryForensicsRecord>.IndexKeys.Ascending(x => x.Failure!.RuntimeFailureIncidentId),
-                                new CreateIndexOptions { Name = "ix_failure_runtimeFailureIncidentId", Sparse = true }),
+                            new CreateIndexModel<MongoAiRuntimeRecoveryForensicsDocument>(
+                                Builders<MongoAiRuntimeRecoveryForensicsDocument>.IndexKeys.Ascending(x => x.Record.Failure!.RuntimeFailureIncidentId),
+                                new CreateIndexOptions { Name = "ix_record_failure_runtimeFailureIncidentId", Sparse = true }),
 
-                            new CreateIndexModel<AiRuntimeRecoveryForensicsRecord>(
-                                Builders<AiRuntimeRecoveryForensicsRecord>.IndexKeys.Ascending(x => x.Replacement!.ReplacementRuntimeInstanceId),
-                                new CreateIndexOptions { Name = "ix_replacement_replacementRuntimeInstanceId", Sparse = true }),
+                            new CreateIndexModel<MongoAiRuntimeRecoveryForensicsDocument>(
+                                Builders<MongoAiRuntimeRecoveryForensicsDocument>.IndexKeys.Ascending(x => x.Record.Replacement!.ReplacementRuntimeInstanceId),
+                                new CreateIndexOptions { Name = "ix_record_replacement_replacementRuntimeInstanceId", Sparse = true }),
 
-                            new CreateIndexModel<AiRuntimeRecoveryForensicsRecord>(
-                                Builders<AiRuntimeRecoveryForensicsRecord>.IndexKeys
-                                    .Ascending(x => x.Recovery!.RecoveryMode)
-                                    .Ascending(x => x.Recovery!.Outcome)
-                                    .Descending(x => x.CreatedAtUtc),
-                                new CreateIndexOptions { Name = "ix_recovery_mode_outcome_createdAtUtc", Sparse = true })
+                            new CreateIndexModel<MongoAiRuntimeRecoveryForensicsDocument>(
+                                Builders<MongoAiRuntimeRecoveryForensicsDocument>.IndexKeys
+                                    .Ascending(x => x.Record.Recovery!.RecoveryMode)
+                                    .Ascending(x => x.Record.Recovery!.Outcome)
+                                    .Descending(x => x.Record.CreatedAtUtc),
+                                new CreateIndexOptions { Name = "ix_record_recovery_mode_outcome_createdAtUtc", Sparse = true })
                         };
 
                         await _collection.Indexes.CreateManyAsync(models, token).ConfigureAwait(false);
@@ -316,7 +360,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics
         /// </summary>
         /// <param name="events">The events to normalize.</param>
         /// <returns>The normalized events.</returns>
-        private static IReadOnlyList<AiRuntimeRecoveryForensicsEvent> NormalizeEvents(IReadOnlyList<AiRuntimeRecoveryForensicsEvent> events)
+        private static IReadOnlyList<AiRuntimeRecoveryForensicsEvent> NormalizeEvents(
+            IReadOnlyList<AiRuntimeRecoveryForensicsEvent> events)
         {
             return events
                 .GroupBy(x => x.EventId, StringComparer.OrdinalIgnoreCase)
