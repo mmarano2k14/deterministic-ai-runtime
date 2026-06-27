@@ -1,12 +1,15 @@
 ﻿using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Forensics;
 using Multiplexed.AI.McpServer.Tests.Integration.Fixtures;
+using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Results;
 using System;
 using System.Collections.Generic;
-using System.Text;
 using Xunit.Abstractions;
 
 namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Assertions
 {
+    /// <summary>
+    /// Provides reusable assertions for production runtime recovery forensics scenarios.
+    /// </summary>
     public static class ProductionRecoveryForensicsAssertions
     {
         /// <summary>
@@ -45,15 +48,15 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Assert
             var expectedTimeline =
                 new[]
                 {
-            "execution.recovery.candidate.detected",
-            "shared.run.requeued.for.resume",
-            "failed.local.run.marked.requeued.for.recovery",
-            "replacement.runtime.selected",
-            "replacement.local.run.registered",
-            "resume.context.seeded",
-            "dag.resume.started",
-            "dag.resume.completed",
-            "execution.recovery.completed"
+                    "execution.recovery.candidate.detected",
+                    "shared.run.requeued.for.resume",
+                    "failed.local.run.marked.requeued.for.recovery",
+                    "replacement.runtime.selected",
+                    "replacement.local.run.registered",
+                    "resume.context.seeded",
+                    "dag.resume.started",
+                    "dag.resume.completed",
+                    "execution.recovery.completed"
                 };
 
             var deadline =
@@ -61,6 +64,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Assert
 
             AiRuntimeRecoveryForensicsReadModel? model = null;
             AiRuntimeRecoveryForensicsQueryResult? lastResult = null;
+            var searchOutputWritten = false;
 
             while (DateTimeOffset.UtcNow < deadline)
             {
@@ -88,14 +92,14 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Assert
 
                 if (model is not null)
                 {
-                    output.WriteLine(
-                        "[HTTP DAG RESUME FORENSICS SEARCH] " +
-                        $"ForensicsId='{model.ForensicsId}', " +
-                        $"ExecutionId='{model.ExecutionId}', " +
-                        $"SharedRunId='{model.SharedRunId}', " +
-                        $"TenantId='{model.TenantId}', " +
-                        $"ControlPlaneId='{model.ControlPlaneId}', " +
-                        $"Timeline='{string.Join(" -> ", model.Timeline.Select(item => item.EventType))}'.");
+                    if (!searchOutputWritten)
+                    {
+                        ProductionRecoveryForensicsOutputWriter.WriteSearchResult(
+                            output,
+                            lastResult);
+
+                        searchOutputWritten = true;
+                    }
 
                     if (expectedTimeline.All(expected => model.Timeline.Any(item =>
                         string.Equals(item.EventType, expected, StringComparison.Ordinal))))
@@ -150,10 +154,18 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Assert
                 string.Equals(controlPlaneId, fetched.ControlPlaneId, StringComparison.Ordinal),
                 $"ControlPlaneId is optional for recovery forensics, but when present it must match. Expected='{controlPlaneId}', Actual='{fetched.ControlPlaneId}'.");
 
+            ProductionRecoveryForensicsOutputWriter.WriteSummary(
+                output,
+                fetched);
+
             var timeline =
                 await mcp
                     .GetRuntimeRecoveryForensicsTimelineAsync(model.ForensicsId)
                     .ConfigureAwait(false);
+
+            ProductionRecoveryForensicsOutputWriter.WriteTimeline(
+                output,
+                timeline);
 
             Assert.Equal(
                 expectedTimeline,
@@ -199,21 +211,13 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Assert
                 string.IsNullOrWhiteSpace(ResolveFirstTimelineMetadataValue(timeline, "resume.contextKey")),
                 "The recovery forensics timeline must expose the restored RBAC context key.");
 
-            output.WriteLine(
-                "[HTTP DAG RESUME FORENSICS PROOF] " +
-                $"ForensicsId='{model.ForensicsId}', " +
-                $"ExecutionId='{executionId}', " +
-                $"SharedRunId='{sharedRunId}', " +
-                $"TenantId='{tenantId}', " +
-                $"TenantGroupId='{tenantGroupId}', " +
-                $"DiagnosticControlPlaneId='{controlPlaneId}', " +
-                $"ActualControlPlaneId='{model.ControlPlaneId}', " +
-                $"PipelineName='{pipelineName}', " +
-                $"FailedRuntimeInstanceId='{failedRuntimeInstanceId}', " +
-                $"ReplacementRuntimeInstanceId='{replacementRuntimeInstanceId}', " +
-                $"FailedLocalRunId='{failedLocalRunId}', " +
-                $"ReplacementLocalRunId='{replacementLocalRunId}', " +
-                $"Timeline='{string.Join(" -> ", timeline.Select(item => item.EventType))}'.");
+            ProductionRecoveryForensicsOutputWriter.WriteProof(
+                output,
+                fetched,
+                timeline,
+                tenantGroupId,
+                controlPlaneId,
+                pipelineName);
         }
 
         /// <summary>

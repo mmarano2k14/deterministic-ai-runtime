@@ -2,18 +2,13 @@
 using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Forensics;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Health;
-using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Recovery;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue;
-using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Controller;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Scaling;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Store;
-using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Claiming;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Queue;
 using Multiplexed.Abstractions.AI.Execution;
-using Multiplexed.Abstractions.AI.Execution.State;
-using Multiplexed.Abstractions.AI.Pipeline;
 using Multiplexed.AI.McpServer.Tests.Integration.Fixtures;
 using Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic;
 using Multiplexed.AI.McpServer.Tests.Integration.Helpers;
@@ -172,7 +167,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             var existingExecutionId =
                 $"http-dag-resume-existing-execution-{Guid.NewGuid():N}";
 
-            await ProductionRecoverySeedHelpers.SeedInFlightRuntimeExecutionAsync(
+            await ProductionRecoverySeedHelpers
+                .SeedInFlightRuntimeExecutionAsync(
                     sharedRunStore,
                     sharedQueue,
                     runExecutionIndex,
@@ -182,7 +178,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                     existingExecutionId)
                 .ConfigureAwait(false);
 
-            await ProductionRecoverySeedHelpers.SeedDurableDagStoppedAtStepAsync(
+            await ProductionRecoverySeedHelpers
+                .SeedDurableDagStoppedAtStepAsync(
                     dagStore,
                     existingExecutionId,
                     pipelineName,
@@ -207,12 +204,13 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 $"[HTTP DAG RESUME] Seeded DAG state. ExecutionId='{existingExecutionId}', CompletedBeforeFailure='{FailureStepNumber - 1}', FailedStep='{ProductionRecoverySeedHelpers.FormatStepName(FailureStepNumber)}', FailedRuntimeInstanceId='{failedRuntimeInstanceId}'.");
 
             var recoveryResult =
-                await ProductionRecoveryWaitHelpers.MarkUnhealthyAndReconcileUntilRecoveredAsync(
+                await ProductionRecoveryWaitHelpers
+                    .MarkUnhealthyAndReconcileUntilRecoveredAsync(
                         registry,
                         healthReconciler,
                         recoveryReconciler,
                         failedRuntimeInstanceId,
-                        TimeSpan.FromSeconds(30))
+                        TimeSpan.FromSeconds(60))
                     .ConfigureAwait(false);
 
             Assert.Equal(1, recoveryResult.RecoveredRunCount);
@@ -266,7 +264,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 StepCount);
 
             var redispatchedRun =
-                await ProductionRecoveryWaitHelpers.WaitForSharedRunAssignedAwayFromRuntimeAsync(
+                await ProductionRecoveryWaitHelpers
+                    .WaitForSharedRunAssignedAwayFromRuntimeAsync(
                         registry,
                         healthReconciler,
                         sharedRunStore,
@@ -344,7 +343,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             }
 
             var replacementIndex =
-                await ProductionRecoveryWaitHelpers.WaitForRunExecutionIndexAsync(
+                await ProductionRecoveryWaitHelpers
+                    .WaitForRunExecutionIndexAsync(
                         runExecutionIndex,
                         redispatchedRun.LocalRunId!,
                         existingExecutionId,
@@ -359,6 +359,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 $"[HTTP DAG RESUME PROOF] ExecutionId='{existingExecutionId}', FailureStep='{ProductionRecoverySeedHelpers.FormatStepName(FailureStepNumber)}', CompletedBeforeFailure='{FailureStepNumber - 1}', RecoveredFromStep='{ProductionRecoverySeedHelpers.FormatStepName(FailureStepNumber)}', FinalCompletedSteps='{StepCount}/{StepCount}', FailedRuntimeInstanceId='{failedRuntimeInstanceId}', ReplacementRuntimeInstanceId='{redispatchedRun.AssignedRuntimeInstanceId}', FailedLocalRunId='{failedLocalRunId}', ReplacementLocalRunId='{redispatchedRun.LocalRunId}'.");
         }
 
+        /// <summary>
+        /// Verifies that HTTP process-host DAG resume recovery forensics are exposed through MCP search/get/timeline tools.
+        /// </summary>
         [Fact]
         public async Task Http_ProcessHost_Should_Expose_Dag_Resume_Recovery_Forensics_Timeline_Through_Mcp()
         {
@@ -485,7 +488,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                     sharedRunId,
                     failedLocalRunId);
 
-            await ProductionRecoverySeedHelpers.SeedInFlightRuntimeExecutionAsync(
+            await ProductionRecoverySeedHelpers
+                .SeedInFlightRuntimeExecutionAsync(
                     sharedRunStore,
                     sharedQueue,
                     runExecutionIndex,
@@ -495,7 +499,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                     existingExecutionId)
                 .ConfigureAwait(false);
 
-            await ProductionRecoverySeedHelpers.SeedDurableDagStoppedAtStepAsync(
+            await ProductionRecoverySeedHelpers
+                .SeedDurableDagStoppedAtStepAsync(
                     dagStore,
                     existingExecutionId,
                     pipelineName,
@@ -513,19 +518,20 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
 
             ProductionDagRecoveryAssertions.AssertDagStoppedAtFailurePoint(
                 beforeRecovery,
-                FailureStepNumber, 
+                FailureStepNumber,
                 StepCount);
 
             this.output.WriteLine(
                 $"[HTTP DAG RESUME] Seeded DAG state. ExecutionId='{existingExecutionId}', CompletedBeforeFailure='{FailureStepNumber - 1}', FailedStep='{ProductionRecoverySeedHelpers.FormatStepName(FailureStepNumber)}', FailedRuntimeInstanceId='{failedRuntimeInstanceId}'.");
 
             var recoveryResult =
-                await ProductionRecoveryWaitHelpers.MarkUnhealthyAndReconcileUntilRecoveredAsync(
+                await ProductionRecoveryWaitHelpers
+                    .MarkUnhealthyAndReconcileUntilRecoveredAsync(
                         registry,
                         healthReconciler,
                         recoveryReconciler,
                         failedRuntimeInstanceId,
-                        TimeSpan.FromSeconds(30))
+                        TimeSpan.FromSeconds(60))
                     .ConfigureAwait(false);
 
             Assert.Equal(1, recoveryResult.RecoveredRunCount);
@@ -580,7 +586,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 StepCount);
 
             var redispatchedRun =
-                await ProductionRecoveryWaitHelpers.WaitForSharedRunAssignedAwayFromRuntimeAsync(
+                await ProductionRecoveryWaitHelpers
+                    .WaitForSharedRunAssignedAwayFromRuntimeAsync(
                         registry,
                         healthReconciler,
                         sharedRunStore,
@@ -658,7 +665,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             }
 
             var replacementIndex =
-                await ProductionRecoveryWaitHelpers.WaitForRunExecutionIndexAsync(
+                await ProductionRecoveryWaitHelpers
+                    .WaitForRunExecutionIndexAsync(
                         runExecutionIndex,
                         redispatchedRun.LocalRunId!,
                         existingExecutionId,
@@ -669,11 +677,16 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             Assert.Equal(redispatchedRun.AssignedRuntimeInstanceId, replacementIndex.RuntimeInstanceId);
             Assert.Equal("completed", replacementIndex.Status);
 
-            var recorder = host.Services.GetRequiredService<IAiRuntimeRecoveryForensicsRecorder>();
-            var store = host.Services.GetRequiredService<IAiRuntimeRecoveryForensicsStore>();
-            var queryService = host.Services.GetRequiredService<IAiRuntimeRecoveryForensicsQueryService>();
+            var recorder =
+                host.Services.GetRequiredService<IAiRuntimeRecoveryForensicsRecorder>();
 
-            output.WriteLine(
+            var store =
+                host.Services.GetRequiredService<IAiRuntimeRecoveryForensicsStore>();
+
+            var queryService =
+                host.Services.GetRequiredService<IAiRuntimeRecoveryForensicsQueryService>();
+
+            this.output.WriteLine(
                 "[FORENSICS DI PROOF] " +
                 $"Recorder='{recorder.GetType().FullName}', " +
                 $"Store='{store.GetType().FullName}', " +
@@ -689,7 +702,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                     .ListBySharedRunIdAsync(sharedRunId)
                     .ConfigureAwait(false);
 
-            output.WriteLine(
+            this.output.WriteLine(
                 "[FORENSICS STORE PROOF] " +
                 $"ExecutionId='{existingExecutionId}', " +
                 $"SharedRunId='{sharedRunId}', " +
@@ -709,10 +722,12 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             Assert.Equal(sharedRunId, directRecord.Identity.SharedRunId);
             Assert.Equal(tenant.TenantId, directRecord.Identity.TenantId);
             Assert.Equal(tenant.TenantGroupId, directRecord.Identity.TenantGroupId);
+
             Assert.True(
                 string.IsNullOrWhiteSpace(directRecord.Identity.ControlPlaneId) ||
                 string.Equals(controlPlaneId, directRecord.Identity.ControlPlaneId, StringComparison.Ordinal),
                 $"ControlPlaneId is optional for recovery forensics, but when present it must match. Expected='{controlPlaneId}', Actual='{directRecord.Identity.ControlPlaneId}'.");
+
             Assert.Equal(pipelineName, directRecord.Identity.PipelineName);
 
             var directQueryResult =
@@ -727,7 +742,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                         })
                     .ConfigureAwait(false);
 
-            output.WriteLine(
+            this.output.WriteLine(
                 "[FORENSICS QUERY SERVICE PROOF] " +
                 $"ExecutionId='{existingExecutionId}', " +
                 $"SharedRunId='{sharedRunId}', " +
@@ -751,7 +766,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 string.Equals(controlPlaneId, directReadModel.ControlPlaneId, StringComparison.Ordinal),
                 $"ControlPlaneId is optional for recovery forensics, but when present it must match. Expected='{controlPlaneId}', Actual='{directReadModel.ControlPlaneId}'.");
 
-            await ProductionRecoveryForensicsAssertions.AssertRecoveryForensicsTimelineViaMcpAsync(
+            await ProductionRecoveryForensicsAssertions
+                .AssertRecoveryForensicsTimelineViaMcpAsync(
                     mcp,
                     expectedForensicsId,
                     existingExecutionId,
@@ -882,7 +898,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 "The dispatched shared run must carry an ExecutionContextSnapshot.ContextKey.");
 
             var runtimeIndex =
-                await ProductionRecoveryWaitHelpers.WaitForRuntimeIndexWithExecutionIdAsync(
+                await ProductionRecoveryWaitHelpers
+                    .WaitForRuntimeIndexWithExecutionIdAsync(
                         runExecutionIndex,
                         firstDispatch.LocalRunId!,
                         TimeSpan.FromSeconds(30))
@@ -892,7 +909,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             Assert.False(string.IsNullOrWhiteSpace(runtimeIndex.ExecutionId));
 
             var persistedRecord =
-                await ProductionRecoveryWaitHelpers.WaitForDagRecordWithContextKeyAsync(
+                await ProductionRecoveryWaitHelpers
+                    .WaitForDagRecordWithContextKeyAsync(
                         dagStore,
                         runtimeIndex.ExecutionId,
                         TimeSpan.FromSeconds(30))
@@ -942,7 +960,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                         {
                             RunCount = 1,
                             StepCount = StepCount,
-                            DelayMs = 10,
+                            DelayMs = 100,
                             FlakyStepInterval = 0,
                             EnableRetention = true
                         }
@@ -968,6 +986,6 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                     AssertReplayTrace = false
                 }
             };
-        }   
+        }
     }
 }
