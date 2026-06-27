@@ -314,15 +314,20 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue
                 TryResolveResumeExecutionId(
                     request.Metadata);
 
+            var enrichedRunRequest =
+                CreateMetadataEnrichedRunRequest(
+                    request.RunRequest!,
+                    request.Metadata);
+
             var handle = string.IsNullOrWhiteSpace(resumeExecutionId)
                 ? await _controller
                     .EnqueueAsync(
-                        request.RunRequest!,
+                        enrichedRunRequest,
                         cancellationToken)
                     .ConfigureAwait(false)
                 : await _controller
                     .EnqueueResumeAsync(
-                        request.RunRequest!,
+                        enrichedRunRequest,
                         resumeExecutionId,
                         cancellationToken)
                     .ConfigureAwait(false);
@@ -336,7 +341,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue
                 .ConfigureAwait(false);
 
             var executionContextSnapshot =
-                request.RunRequest?.ExecutionContextSnapshot;
+                enrichedRunRequest.ExecutionContextSnapshot;
 
             await _runExecutionIndex.RegisterQueuedAsync(
                     new AiRuntimeRunExecutionIndexEntry
@@ -351,7 +356,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue
                         CreatedAtUtc = DateTimeOffset.UtcNow,
                         ExecutionContextSnapshot = executionContextSnapshot,
                         Metadata = MergeMetadata(
-                            request.Metadata,
+                            enrichedRunRequest.Metadata,
                             new Dictionary<string, string>
                             {
                                 ["source"] = request.Source ?? string.Empty,
@@ -360,7 +365,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue
                                 ["correlationId"] = request.CorrelationId ?? string.Empty,
                                 ["recovery.resume"] = (!string.IsNullOrWhiteSpace(resumeExecutionId)).ToString(),
                                 ["recovery.execution.id"] = resumeExecutionId ?? string.Empty,
-                                [AiRuntimeInstanceIsolationMetadataKeys.TenantId] = executionContextSnapshot?.TenantId ?? string.Empty
+                                [AiRuntimeInstanceIsolationMetadataKeys.TenantId] = executionContextSnapshot?.TenantId ?? string.Empty,
+                                [AiRuntimeInstanceIsolationMetadataKeys.TenantGroupId] = executionContextSnapshot?.TenantGroupId ?? string.Empty
                             })
                     },
                     cancellationToken)
@@ -845,6 +851,37 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue
             }
 
             return (long)(completedAtUtc - startedAtUtc).TotalMilliseconds;
+        }
+
+        /// <summary>
+        /// Creates a pipeline run request enriched with runtime queue metadata.
+        /// </summary>
+        /// <param name="runRequest">The original pipeline run request.</param>
+        /// <param name="metadata">The runtime queue metadata to propagate to the background controller.</param>
+        /// <returns>A pipeline run request carrying merged metadata.</returns>
+        /// <remarks>
+        /// Recovery metadata originates at the control-plane queue boundary. The local
+        /// background controller needs the same metadata later to record DAG resume
+        /// forensics after the transient queue item has been consumed.
+        /// </remarks>
+        private static AiRuntimePipelineRunRequest CreateMetadataEnrichedRunRequest(
+            AiRuntimePipelineRunRequest runRequest,
+            IReadOnlyDictionary<string, string>? metadata)
+        {
+            ArgumentNullException.ThrowIfNull(runRequest);
+
+            return new AiRuntimePipelineRunRequest
+            {
+                PipelineName = runRequest.PipelineName,
+                PipelineJson = runRequest.PipelineJson,
+                PipelineJsonFilePath = runRequest.PipelineJsonFilePath,
+                PipelineDefinition = runRequest.PipelineDefinition,
+                Input = runRequest.Input,
+                ExecutionContextSnapshot = runRequest.ExecutionContextSnapshot,
+                Metadata = MergeMetadata(
+                    runRequest.Metadata,
+                    metadata)
+            };
         }
 
         /// <summary>

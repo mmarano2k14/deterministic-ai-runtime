@@ -1,5 +1,6 @@
 ﻿using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.ControlPlane.ExecutionAssistance;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Forensics;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue;
 using Multiplexed.Abstractions.AI.Execution;
@@ -13,6 +14,7 @@ using Multiplexed.Abstractions.AI.Pipeline;
 using Multiplexed.Abstractions.AI.Runtime.Execution.Instance;
 using Multiplexed.Abstractions.AI.Runtime.Execution.Instance.Worker;
 using Multiplexed.Abstractions.Core.ExecutionContext;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics;
 using Multiplexed.AI.Runtime.Execution.Engine.Core;
 using Multiplexed.AI.Runtime.Observability.Helpers;
 using Multiplexed.AI.Runtime.Observability.Logging;
@@ -77,6 +79,7 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
         private readonly IAiExecutionAssistanceCandidateStore _assistanceCandidateStore;
         private readonly IAiRuntimeRunExecutionIndex _runExecutionIndex;
         private readonly IExecutionContextAccessor _executionContextAccessor;
+        private readonly IAiRuntimeRecoveryForensicsRecorder _forensicsRecorder;
 
         private readonly AiRuntimePipelineBackgroundControllerOptions _options;
         private readonly Channel<AiRuntimeQueuedPipelineRun> _queue;
@@ -132,6 +135,62 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
             IAiRuntimeRunExecutionIndex runExecutionIndex,
             IExecutionContextAccessor executionContextAccessor,
             IOptions<AiRuntimePipelineBackgroundControllerOptions> options)
+            : this(
+                engine,
+                worker,
+                workerGroup,
+                workerFactory,
+                definitionResolver,
+                definitionPublisher,
+                runLifecycleHook,
+                executionControlService,
+                runtimeInstanceIdentity,
+                logger,
+                observability,
+                assistanceCandidateStore,
+                runExecutionIndex,
+                executionContextAccessor,
+                options,
+                new NoopAiRuntimeRecoveryForensicsRecorder())
+        {
+        }
+
+        /// <summary>
+        /// Initializes a new instance of the <see cref="AiRuntimePipelineBackgroundController"/> class.
+        /// </summary>
+        /// <param name="engine">The DAG execution engine used to create executions.</param>
+        /// <param name="worker">The runtime instance worker used to advance created executions.</param>
+        /// <param name="workerGroup">The runtime instance worker group used for distributed multi-instance execution.</param>
+        /// <param name="workerFactory">The runtime instance worker factory used to create distributed workers.</param>
+        /// <param name="definitionResolver">The pipeline run definition resolver.</param>
+        /// <param name="definitionPublisher">The pipeline run definition publisher.</param>
+        /// <param name="runLifecycleHook">The pipeline run lifecycle hook.</param>
+        /// <param name="executionControlService">The execution control service.</param>
+        /// <param name="runtimeInstanceIdentity">The runtime instance identity of the controller host.</param>
+        /// <param name="logger">The runtime logger.</param>
+        /// <param name="observability">The runtime observability facade.</param>
+        /// <param name="assistanceCandidateStore">The execution assistance candidate store.</param>
+        /// <param name="runExecutionIndex">The runtime run execution index.</param>
+        /// <param name="executionContextAccessor">The RBAC execution context accessor used to restore durable snapshots for background runs.</param>
+        /// <param name="options">The controller options.</param>
+        /// <param name="forensicsRecorder">The runtime recovery forensics recorder.</param>
+        public AiRuntimePipelineBackgroundController(
+            AiDagExecutionEngine engine,
+            IAiRuntimeInstanceWorker worker,
+            IAiRuntimeInstanceWorkerGroup workerGroup,
+            IAiRuntimeInstanceWorkerFactory workerFactory,
+            IAiRuntimePipelineRunDefinitionResolver definitionResolver,
+            IAiRuntimePipelineRunDefinitionPublisher definitionPublisher,
+            IAiRuntimePipelineRunLifecycleHook runLifecycleHook,
+            IAiExecutionControlService executionControlService,
+            IAiRuntimeInstanceIdentityDescriptor runtimeInstanceIdentity,
+            IAiRuntimeLogger logger,
+            IAiRuntimeObservability observability,
+            IAiExecutionAssistanceCandidateStore assistanceCandidateStore,
+            IAiRuntimeRunExecutionIndex runExecutionIndex,
+            IExecutionContextAccessor executionContextAccessor,
+            IOptions<AiRuntimePipelineBackgroundControllerOptions> options,
+            IAiRuntimeRecoveryForensicsRecorder forensicsRecorder)
         {
             _engine = engine ?? throw new ArgumentNullException(nameof(engine));
             _worker = worker ?? throw new ArgumentNullException(nameof(worker));
@@ -148,6 +207,7 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
             _runExecutionIndex = runExecutionIndex ?? throw new ArgumentNullException(nameof(runExecutionIndex));
             _executionContextAccessor = executionContextAccessor ?? throw new ArgumentNullException(nameof(executionContextAccessor));
             _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
+            _forensicsRecorder = forensicsRecorder ?? throw new ArgumentNullException(nameof(forensicsRecorder));
 
             var queueCapacity = Math.Max(1, _options.QueueCapacity);
             var maxConcurrentRuns = Math.Max(1, _options.MaxConcurrentRuns);
@@ -416,16 +476,18 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
                     Status = "queued",
                     CreatedAtUtc = DateTimeOffset.UtcNow,
                     ExecutionContextSnapshot = queuedRun.Request.ExecutionContextSnapshot,
-                    Metadata = new Dictionary<string, string>
-                    {
-                        ["pipeline.name"] = queuedRun.Request.PipelineName,
-                        ["runtime.instance.id"] = _runtimeInstanceIdentity.RuntimeInstanceId,
-                        ["recovery.resume"] = "true",
-                        ["recovery.execution.id"] = resumeExecutionId,
-                        ["context.key"] = queuedRun.Request.ExecutionContextSnapshot?.ContextKey ?? string.Empty,
-                        [AiRuntimeInstanceIsolationMetadataKeys.TenantId] = queuedRun.Request.ExecutionContextSnapshot?.TenantId ?? string.Empty,
-                        [AiRuntimeInstanceIsolationMetadataKeys.TenantGroupId] = queuedRun.Request.ExecutionContextSnapshot?.TenantGroupId ?? string.Empty
-                    }
+                    Metadata = MergeRecoveryMetadata(
+                        new Dictionary<string, string>
+                        {
+                            ["pipeline.name"] = queuedRun.Request.PipelineName,
+                            ["runtime.instance.id"] = _runtimeInstanceIdentity.RuntimeInstanceId,
+                            ["recovery.resume"] = "true",
+                            ["recovery.execution.id"] = resumeExecutionId,
+                            ["context.key"] = queuedRun.Request.ExecutionContextSnapshot?.ContextKey ?? string.Empty,
+                            [AiRuntimeInstanceIsolationMetadataKeys.TenantId] = queuedRun.Request.ExecutionContextSnapshot?.TenantId ?? string.Empty,
+                            [AiRuntimeInstanceIsolationMetadataKeys.TenantGroupId] = queuedRun.Request.ExecutionContextSnapshot?.TenantGroupId ?? string.Empty
+                        },
+                        GetPipelineRunMetadata(queuedRun.Request))
                 })
                 .ConfigureAwait(false);
 
@@ -1091,6 +1153,15 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
 
                     _logger.Engine.LogInformation(
                         $"[AI PIPELINE CONTROLLER] Existing execution resume selected. RunId='{handle.RunId}', ExecutionId='{created.ExecutionId}', Pipeline='{request.PipelineName}', RuntimeInstanceId='{_runtimeInstanceIdentity.RuntimeInstanceId}'.");
+
+                    await RecordRecoveryForensicsEventAsync(
+                            queuedRun,
+                            AiRuntimeRecoveryForensicsEventType.DagResumeStarted,
+                            "started",
+                            "dag-resume-started-on-replacement-runtime",
+                            created.ExecutionId,
+                            cancellationToken)
+                        .ConfigureAwait(false);
                 }
                 else
                 {
@@ -1178,6 +1249,41 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
                         created.ExecutionId,
                         cancellationToken).ConfigureAwait(false);
 
+                    if (queuedRun.IsResume)
+                    {
+                        if (final.Status == AiExecutionStatus.Completed)
+                        {
+                            await RecordRecoveryForensicsEventAsync(
+                                    queuedRun,
+                                    AiRuntimeRecoveryForensicsEventType.DagResumeCompleted,
+                                    "completed",
+                                    "dag-resume-completed-on-replacement-runtime",
+                                    created.ExecutionId,
+                                    cancellationToken)
+                                .ConfigureAwait(false);
+
+                            await RecordRecoveryForensicsEventAsync(
+                                    queuedRun,
+                                    AiRuntimeRecoveryForensicsEventType.ExecutionRecoveryCompleted,
+                                    "completed",
+                                    "execution-recovery-completed-after-dag-resume",
+                                    created.ExecutionId,
+                                    cancellationToken)
+                                .ConfigureAwait(false);
+                        }
+                        else
+                        {
+                            await RecordRecoveryForensicsEventAsync(
+                                    queuedRun,
+                                    AiRuntimeRecoveryForensicsEventType.ExecutionRecoveryFailed,
+                                    "failed",
+                                    $"execution-recovery-failed-after-dag-resume-status-{final.Status}",
+                                    created.ExecutionId,
+                                    cancellationToken)
+                                .ConfigureAwait(false);
+                        }
+                    }
+
                     diagnosticPhase =
                         "apply-terminal-status";
 
@@ -1243,6 +1349,18 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
                 }
                 catch (Exception ex)
                 {
+                    if (queuedRun.IsResume)
+                    {
+                        await RecordRecoveryForensicsEventAsync(
+                                queuedRun,
+                                AiRuntimeRecoveryForensicsEventType.ExecutionRecoveryFailed,
+                                "failed",
+                                ex.Message,
+                                created.ExecutionId,
+                                CancellationToken.None)
+                            .ConfigureAwait(false);
+                    }
+
                     AttachRunExceptionData(
                         ex,
                         diagnosticPhase,
@@ -1280,6 +1398,250 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
                     previousExecutionContext,
                     executionContextRestored);
             }
+        }
+
+        /// <summary>
+        /// Records a recovery forensics event for a controlled DAG resume.
+        /// </summary>
+        /// <param name="queuedRun">The queued runtime pipeline run.</param>
+        /// <param name="eventType">The recovery forensics event type.</param>
+        /// <param name="outcome">The event outcome.</param>
+        /// <param name="reason">The event reason.</param>
+        /// <param name="executionId">The durable execution identifier.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        private async Task RecordRecoveryForensicsEventAsync(
+            AiRuntimeQueuedPipelineRun queuedRun,
+            string eventType,
+            string outcome,
+            string reason,
+            string executionId,
+            CancellationToken cancellationToken)
+        {
+            if (!queuedRun.IsResume)
+            {
+                return;
+            }
+
+            var metadata =
+                GetPipelineRunMetadata(
+                    queuedRun.Request);
+
+            if (!TryResolveRecoveryForensicsId(
+                    queuedRun,
+                    metadata,
+                    executionId,
+                    out var forensicsId,
+                    out var sharedRunId,
+                    out var failedRuntimeInstanceId,
+                    out var failedLocalRunId))
+            {
+                return;
+            }
+
+            await _forensicsRecorder
+                .RecordEventAsync(
+                    new AiRuntimeRecoveryForensicsEvent
+                    {
+                        EventId = string.Join(
+                            ":",
+                            forensicsId,
+                            eventType,
+                            _runtimeInstanceIdentity.RuntimeInstanceId,
+                            queuedRun.Handle.RunId),
+                        ForensicsId = forensicsId,
+                        TimestampUtc = DateTimeOffset.UtcNow,
+                        EventType = eventType,
+                        Outcome = outcome,
+                        Reason = reason,
+                        ExecutionId = executionId,
+                        SharedRunId = sharedRunId,
+                        LocalRunId = queuedRun.Handle.RunId,
+                        RuntimeInstanceId = _runtimeInstanceIdentity.RuntimeInstanceId,
+                        Metadata = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                        {
+                            ["pipeline.name"] = queuedRun.Request.PipelineName,
+                            ["tenant.id"] = queuedRun.Request.ExecutionContextSnapshot?.TenantId ?? string.Empty,
+                            ["tenant.group.id"] = queuedRun.Request.ExecutionContextSnapshot?.TenantGroupId ?? string.Empty,
+                            ["replacement.runtimeInstanceId"] = _runtimeInstanceIdentity.RuntimeInstanceId,
+                            ["replacement.localRunId"] = queuedRun.Handle.RunId,
+                            ["replacement.executionId"] = executionId,
+                            ["failed.runtimeInstanceId"] = failedRuntimeInstanceId,
+                            ["failed.localRunId"] = failedLocalRunId,
+                            ["resume.contextKey"] = queuedRun.Request.ExecutionContextSnapshot?.ContextKey ?? string.Empty,
+                            ["recovery.resume"] = "true"
+                        }
+                    },
+                    cancellationToken)
+                .ConfigureAwait(false);
+        }
+
+        /// <summary>
+        /// Tries to resolve the recovery forensics identity from propagated runtime pipeline run metadata.
+        /// </summary>
+        /// <param name="queuedRun">The queued runtime pipeline run.</param>
+        /// <param name="metadata">The propagated runtime pipeline run metadata.</param>
+        /// <param name="executionId">The durable execution identifier.</param>
+        /// <param name="forensicsId">The resolved forensics identifier.</param>
+        /// <param name="sharedRunId">The resolved shared run identifier.</param>
+        /// <param name="failedRuntimeInstanceId">The failed runtime instance identifier.</param>
+        /// <param name="failedLocalRunId">The failed local run identifier.</param>
+        /// <returns><c>true</c> when the forensics identity can be resolved; otherwise, <c>false</c>.</returns>
+        private static bool TryResolveRecoveryForensicsId(
+            AiRuntimeQueuedPipelineRun queuedRun,
+            IReadOnlyDictionary<string, string> metadata,
+            string executionId,
+            out string forensicsId,
+            out string? sharedRunId,
+            out string failedRuntimeInstanceId,
+            out string failedLocalRunId)
+        {
+            sharedRunId =
+                ResolveMetadataValue(metadata, "shared.run.id");
+
+            failedRuntimeInstanceId =
+                ResolveMetadataValue(metadata, "recovery.failedRuntimeInstanceId");
+
+            failedLocalRunId =
+                ResolveMetadataValue(metadata, "recovery.failedLocalRunId");
+
+            if (TryGetMetadataValue(
+                    metadata,
+                    "recovery.forensicsId",
+                    out var explicitForensicsId))
+            {
+                forensicsId = explicitForensicsId;
+                return true;
+            }
+
+            if (string.IsNullOrWhiteSpace(sharedRunId) ||
+                string.IsNullOrWhiteSpace(failedLocalRunId))
+            {
+                forensicsId = string.Empty;
+                return false;
+            }
+
+            forensicsId = string.Join(
+                ":",
+                "runtime-recovery",
+                executionId,
+                sharedRunId,
+                failedLocalRunId);
+
+            return !string.IsNullOrWhiteSpace(queuedRun.Handle.RunId);
+        }
+
+        /// <summary>
+        /// Gets optional runtime pipeline run metadata without requiring older request contracts to define the property at compile time.
+        /// </summary>
+        /// <param name="request">The pipeline run request.</param>
+        /// <returns>The metadata dictionary when available; otherwise, an empty dictionary.</returns>
+        private static IReadOnlyDictionary<string, string> GetPipelineRunMetadata(
+            AiRuntimePipelineRunRequest request)
+        {
+            ArgumentNullException.ThrowIfNull(request);
+
+            var metadataProperty =
+                request
+                    .GetType()
+                    .GetProperty(
+                        "Metadata",
+                        BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+
+            if (metadataProperty?.GetValue(request) is IReadOnlyDictionary<string, string> metadata)
+            {
+                return metadata;
+            }
+
+            if (metadataProperty?.GetValue(request) is IDictionary<string, string> dictionary)
+            {
+                return new Dictionary<string, string>(
+                    dictionary,
+                    StringComparer.OrdinalIgnoreCase);
+            }
+
+            return new Dictionary<string, string>();
+        }
+
+        /// <summary>
+        /// Merges recovery metadata dictionaries.
+        /// </summary>
+        /// <param name="baseMetadata">The base metadata.</param>
+        /// <param name="overrideMetadata">The override metadata.</param>
+        /// <returns>The merged metadata dictionary.</returns>
+        private static IReadOnlyDictionary<string, string> MergeRecoveryMetadata(
+            IReadOnlyDictionary<string, string> baseMetadata,
+            IReadOnlyDictionary<string, string> overrideMetadata)
+        {
+            var merged =
+                new Dictionary<string, string>(
+                    baseMetadata,
+                    StringComparer.OrdinalIgnoreCase);
+
+            foreach (var item in overrideMetadata)
+            {
+                if (!string.IsNullOrWhiteSpace(item.Key))
+                {
+                    merged[item.Key] = item.Value;
+                }
+            }
+
+            return merged;
+        }
+
+        /// <summary>
+        /// Resolves a metadata value or an empty string.
+        /// </summary>
+        /// <param name="metadata">The metadata dictionary.</param>
+        /// <param name="key">The metadata key.</param>
+        /// <returns>The metadata value when present; otherwise, an empty string.</returns>
+        private static string ResolveMetadataValue(
+            IReadOnlyDictionary<string, string> metadata,
+            string key)
+        {
+            return TryGetMetadataValue(
+                metadata,
+                key,
+                out var value)
+                ? value
+                : string.Empty;
+        }
+
+        /// <summary>
+        /// Attempts to read a metadata value by key using ordinal ignore-case matching.
+        /// </summary>
+        /// <param name="metadata">The metadata dictionary.</param>
+        /// <param name="key">The metadata key.</param>
+        /// <param name="value">The resolved value.</param>
+        /// <returns><c>true</c> when a non-empty value is found; otherwise, <c>false</c>.</returns>
+        private static bool TryGetMetadataValue(
+            IReadOnlyDictionary<string, string> metadata,
+            string key,
+            out string value)
+        {
+            if (metadata.TryGetValue(
+                    key,
+                    out var directValue) &&
+                !string.IsNullOrWhiteSpace(directValue))
+            {
+                value = directValue;
+                return true;
+            }
+
+            foreach (var pair in metadata)
+            {
+                if (string.Equals(
+                        pair.Key,
+                        key,
+                        StringComparison.OrdinalIgnoreCase) &&
+                    !string.IsNullOrWhiteSpace(pair.Value))
+                {
+                    value = pair.Value;
+                    return true;
+                }
+            }
+
+            value = string.Empty;
+            return false;
         }
 
         /// <summary>
