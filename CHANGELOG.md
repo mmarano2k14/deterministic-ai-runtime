@@ -6,6 +6,86 @@ This project follows a deterministic runtime and observability model designed fo
 
 ---
 
+## 2026-06-27 — Production recovery test helper extraction
+
+### Changed
+- Refactored HTTP process-host DAG resume recovery integration tests by extracting reusable production test helpers and assertions.
+- Extracted DAG recovery assertions into `ProductionDagRecoveryAssertions`:
+  - `AssertDagStoppedAtFailurePoint`
+  - `AssertDagCompletedFromFailurePoint`
+  - `FormatDagStateSummary`
+- Extracted recovery polling helpers into `ProductionRecoveryWaitHelpers`:
+  - wait for runtime recovery reconciliation
+  - wait for shared run redispatch away from failed runtime
+  - wait for runtime execution index entries
+  - wait for durable DAG record `ContextKey`
+- Extracted recovery seed helpers into `ProductionRecoverySeedHelpers`:
+  - seed in-flight runtime execution ownership
+  - seed shared queue dispatched state
+  - seed runtime run execution index
+  - seed durable DAG state stopped at a failed step with expired lease
+  - reusable step-name and dependency helpers
+- Extracted shared run test helpers into `ProductionSharedRunTestHelpers`:
+  - submit one tenant-scoped shared run through MCP
+  - wait for fulfilled tenant scale-out request
+  - wait for single dispatched shared run
+  - extract shared run id from submit result
+- Extracted recovery option assertions into `ProductionRecoveryOptionsAssertions`.
+
+### Improved
+- Reduced private helper noise inside `HttpProcessHostDagResumeRecoveryScenarioTests`.
+- Kept the HTTP DAG resume recovery tests focused on scenario intent instead of low-level polling, seeding, and assertion mechanics.
+- Made DAG recovery, shared run dispatch, runtime recovery polling, and recovery forensics assertions reusable across future Local, HTTP, gRPC, Kubernetes, and Attach-mode production scenarios.
+- Preserved existing production behavior and test coverage while improving maintainability.
+
+### Validated
+- Existing HTTP process-host DAG resume recovery tests remain the reference scenario after helper extraction.
+- The recovery forensics MCP timeline validation remains reusable through `ProductionRecoveryForensicsAssertions`.
+- The extracted helpers keep the same diagnostic failure messages for timeout, missing index, missing DAG context, and redispatch failures.
+
+---
+
+## 2026-06-27 — HTTP DAG Resume Recovery Forensics timeline exposed through MCP
+
+### Added
+- Added a production-grade HTTP process-host integration validation for runtime recovery forensics exposed through MCP.
+- Added end-to-end proof that a DAG resume recovery can be queried through MCP using:
+  - `runtime.recovery.forensics.search`
+  - `runtime.recovery.forensics.get`
+  - `runtime.recovery.forensics.timeline`
+- Added strict recovery forensics timeline validation for the full recovery path:
+  - `execution.recovery.candidate.detected`
+  - `shared.run.requeued.for.resume`
+  - `failed.local.run.marked.requeued.for.recovery`
+  - `replacement.runtime.selected`
+  - `replacement.local.run.registered`
+  - `resume.context.seeded`
+  - `dag.resume.started`
+  - `dag.resume.completed`
+  - `execution.recovery.completed`
+
+### Changed
+- Moved `replacement.runtime.selected` recording earlier in the shared queue dispatch path, before the HTTP dispatch call to the replacement runtime instance.
+- Moved replacement local run recovery forensics to the runtime-side local enqueue path so `replacement.local.run.registered` is recorded before the run can be dequeued by the background controller.
+- Recorded `resume.context.seeded` immediately after the restored execution context is seeded into the replacement runtime, before `dag.resume.started`.
+- Removed premature/empty `replacement.localRunId` metadata from `replacement.runtime.selected`, because the replacement local run is not known at runtime-selection time.
+- Kept `ControlPlaneId` optional in the recovery forensics read model assertions while preserving strict validation for tenant, shared run, execution, runtime, and local run identifiers.
+
+### Validated
+- Validated real HTTP process-host recovery with:
+  - failed runtime instance `runtime-1`
+  - replacement runtime instance `runtime-2`
+  - same durable `ExecutionId`
+  - new replacement `LocalRunId`
+  - restored RBAC execution context
+  - DAG resume from the failed step without replaying completed steps
+  - final DAG completion `100/100`
+- Validated that Mongo recovery forensics persistence, query service, and MCP tools all expose the same recovery record.
+- Validated deterministic recovery timeline ordering through MCP in the production HTTP process-host scenario.
+- Validated that runtime recovery forensics remains observational/read-model only and does not drive recovery decisions.
+
+---
+
 ## [1.0.6.9] - 2026-06-27  Runtime Recovery Forensics — Contracts, InMemory Recorder and Mongo Persistence
 
 Added the first professional foundation for **Runtime Recovery Forensics**.
