@@ -21,11 +21,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics
     {
         private const string ExecutionRecoveryFailedEventType = "execution.recovery.failed";
 
-        private static readonly ProjectionDefinition<AiRuntimeRecoveryForensicsRecord, AiRuntimeRecoveryForensicsRecord> WithoutMongoIdProjection =
-            Builders<AiRuntimeRecoveryForensicsRecord>.Projection
-                .Exclude("_id");
-
-        private readonly IMongoCollection<AiRuntimeRecoveryForensicsRecord> _collection;
+        private readonly IMongoCollection<MongoAiRuntimeRecoveryForensicsDocument> _collection;
         private readonly AiRuntimeRecoveryForensicsMongoOptions _options;
 
         /// <summary>
@@ -41,7 +37,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics
             ArgumentNullException.ThrowIfNull(options);
 
             _options = options.Value;
-            _collection = database.GetCollection<AiRuntimeRecoveryForensicsRecord>(_options.CollectionName);
+            _collection = database.GetCollection<MongoAiRuntimeRecoveryForensicsDocument>(_options.CollectionName);
         }
 
         /// <inheritdoc />
@@ -51,22 +47,21 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(forensicsId);
 
-            var filter = Builders<AiRuntimeRecoveryForensicsRecord>.Filter.Eq(
-                x => x.Identity.ForensicsId,
+            var filter = Builders<MongoAiRuntimeRecoveryForensicsDocument>.Filter.Eq(
+                document => document.Id,
                 forensicsId);
 
-            var record = await MongoRuntimeResilience.ExecuteInfrastructureAsync(
+            var document = await MongoRuntimeResilience.ExecuteInfrastructureAsync(
                     token => _collection
                         .Find(filter)
-                        .Project(WithoutMongoIdProjection)
                         .FirstOrDefaultAsync(token),
                     "runtime-recovery-forensics-query-get-by-forensics-id",
                     cancellationToken: cancellationToken)
                 .ConfigureAwait(false);
 
-            return record is null
+            return document is null
                 ? null
-                : ToReadModel(record);
+                : ToReadModel(document.Record);
         }
 
         /// <inheritdoc />
@@ -79,12 +74,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics
             var safeLimit = Math.Clamp(query.Limit, 1, 500);
             var filter = BuildFilter(query);
 
-            var records = await MongoRuntimeResilience.ExecuteInfrastructureAsync(
+            var documents = await MongoRuntimeResilience.ExecuteInfrastructureAsync(
                     token => _collection
                         .Find(filter)
-                        .SortByDescending(x => x.CreatedAtUtc)
+                        .SortByDescending(document => document.Record.CreatedAtUtc)
                         .Limit(safeLimit)
-                        .Project(WithoutMongoIdProjection)
                         .ToListAsync(token),
                     "runtime-recovery-forensics-query-search",
                     cancellationToken: cancellationToken)
@@ -93,8 +87,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics
             return new AiRuntimeRecoveryForensicsQueryResult
             {
                 Limit = safeLimit,
-                Items = records
-                    .Select(ToReadModel)
+                Items = documents
+                    .Select(document => ToReadModel(document.Record))
                     .ToList()
             };
         }
@@ -117,74 +111,74 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics
         /// </summary>
         /// <param name="query">The query criteria.</param>
         /// <returns>The MongoDB filter.</returns>
-        private static FilterDefinition<AiRuntimeRecoveryForensicsRecord> BuildFilter(
+        private static FilterDefinition<MongoAiRuntimeRecoveryForensicsDocument> BuildFilter(
             AiRuntimeRecoveryForensicsQuery query)
         {
-            var builder = Builders<AiRuntimeRecoveryForensicsRecord>.Filter;
-            var filters = new List<FilterDefinition<AiRuntimeRecoveryForensicsRecord>>();
+            var builder = Builders<MongoAiRuntimeRecoveryForensicsDocument>.Filter;
+            var filters = new List<FilterDefinition<MongoAiRuntimeRecoveryForensicsDocument>>();
 
             if (!string.IsNullOrWhiteSpace(query.ForensicsId))
             {
-                filters.Add(builder.Eq(x => x.Identity.ForensicsId, query.ForensicsId));
+                filters.Add(builder.Eq(document => document.Id, query.ForensicsId));
             }
 
             if (!string.IsNullOrWhiteSpace(query.ExecutionId))
             {
-                filters.Add(builder.Eq(x => x.Identity.ExecutionId, query.ExecutionId));
+                filters.Add(builder.Eq(document => document.Record.Identity.ExecutionId, query.ExecutionId));
             }
 
             if (!string.IsNullOrWhiteSpace(query.SharedRunId))
             {
-                filters.Add(builder.Eq(x => x.Identity.SharedRunId, query.SharedRunId));
+                filters.Add(builder.Eq(document => document.Record.Identity.SharedRunId, query.SharedRunId));
             }
 
             if (!string.IsNullOrWhiteSpace(query.TenantId))
             {
-                filters.Add(builder.Eq(x => x.Identity.TenantId, query.TenantId));
+                filters.Add(builder.Eq(document => document.Record.Identity.TenantId, query.TenantId));
             }
 
             if (!string.IsNullOrWhiteSpace(query.ControlPlaneId))
             {
-                filters.Add(builder.Eq(x => x.Identity.ControlPlaneId, query.ControlPlaneId));
+                filters.Add(builder.Eq(document => document.Record.Identity.ControlPlaneId, query.ControlPlaneId));
             }
 
             if (!string.IsNullOrWhiteSpace(query.RuntimeFailureIncidentId))
             {
-                filters.Add(builder.Eq(x => x.Failure!.RuntimeFailureIncidentId, query.RuntimeFailureIncidentId));
+                filters.Add(builder.Eq(document => document.Record.Failure!.RuntimeFailureIncidentId, query.RuntimeFailureIncidentId));
             }
 
             if (!string.IsNullOrWhiteSpace(query.RuntimeInstanceId))
             {
                 filters.Add(
                     builder.Or(
-                        builder.Eq(x => x.Failure!.FailedRuntimeInstanceId, query.RuntimeInstanceId),
-                        builder.Eq(x => x.Replacement!.ReplacementRuntimeInstanceId, query.RuntimeInstanceId)));
+                        builder.Eq(document => document.Record.Failure!.FailedRuntimeInstanceId, query.RuntimeInstanceId),
+                        builder.Eq(document => document.Record.Replacement!.ReplacementRuntimeInstanceId, query.RuntimeInstanceId)));
             }
 
             if (!string.IsNullOrWhiteSpace(query.EventType))
             {
                 filters.Add(
                     builder.ElemMatch(
-                        x => x.Events,
-                        x => x.EventType == query.EventType));
+                        document => document.Record.Events,
+                        evt => evt.EventType == query.EventType));
             }
 
             if (query.RecentFailuresOnly)
             {
                 filters.Add(
                     builder.ElemMatch(
-                        x => x.Events,
-                        x => x.EventType == ExecutionRecoveryFailedEventType));
+                        document => document.Record.Events,
+                        evt => evt.EventType == ExecutionRecoveryFailedEventType));
             }
 
             if (query.CreatedFromUtc.HasValue)
             {
-                filters.Add(builder.Gte(x => x.CreatedAtUtc, query.CreatedFromUtc.Value));
+                filters.Add(builder.Gte(document => document.Record.CreatedAtUtc, query.CreatedFromUtc.Value));
             }
 
             if (query.CreatedToUtc.HasValue)
             {
-                filters.Add(builder.Lte(x => x.CreatedAtUtc, query.CreatedToUtc.Value));
+                filters.Add(builder.Lte(document => document.Record.CreatedAtUtc, query.CreatedToUtc.Value));
             }
 
             return filters.Count == 0
@@ -210,7 +204,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics
                 CreatedAtUtc = record.CreatedAtUtc,
                 UpdatedAtUtc = record.UpdatedAtUtc,
                 Timeline = record.Events
-                    .OrderBy(x => x.TimestampUtc)
+                    .OrderBy(evt => evt.TimestampUtc)
                     .Select(ToTimelineItem)
                     .ToList(),
                 Record = record

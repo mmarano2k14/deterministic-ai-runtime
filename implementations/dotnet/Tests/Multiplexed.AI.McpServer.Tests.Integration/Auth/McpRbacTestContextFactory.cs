@@ -90,7 +90,10 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Auth
                             $"trn:{Project}:observability:ledger:read",
                             $"trn:{Project}:observability:ledger:query",
                             $"trn:{Project}:observability:trace:read",
-                            $"trn:{Project}:observability:metrics:read"
+                            $"trn:{Project}:observability:metrics:read",
+
+                            $"trn:{Project}:runtime-recovery:forensics:read",
+                            $"trn:{Project}:runtime-recovery:forensics:query"
                         }
                     }
                 },

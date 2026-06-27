@@ -27,6 +27,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery.Transiti
     /// </remarks>
     public sealed class AiRuntimeExecutionRecoveryTransitionService : IAiRuntimeExecutionRecoveryTransitionService
     {
+        private const string RecoveryForensicsIdMetadataKey = "recovery.forensicsId";
         private const string RecoveryModeMetadataKey = "recovery.mode";
         private const string RecoveryModeResumeExistingExecution = "resume-existing-execution";
         private const string RecoveryKindInFlightExecutionResume = "in-flight-execution-resume";
@@ -34,6 +35,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery.Transiti
         private const string RecoveryFailedRuntimeInstanceIdMetadataKey = "recovery.failedRuntimeInstanceId";
         private const string RecoveryFailedLocalRunIdMetadataKey = "recovery.failedLocalRunId";
         private const string RecoveryReasonMetadataKey = "recovery.reason";
+        private const string FailedRuntimeInstanceIdMetadataKey = "failed.runtimeInstanceId";
+        private const string FailedLocalRunIdMetadataKey = "failed.localRunId";
 
         private readonly IAiSharedQueue sharedQueue;
         private readonly IAiRuntimeRunExecutionIndex runtimeRunExecutionIndex;
@@ -199,8 +202,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery.Transiti
                 };
             }
 
-            var reason =
-                request.Reason ?? "runtime-execution-recovery-requeue";
+            var reason = request.Reason ?? "runtime-execution-recovery-requeue";
+            var forensicsId = CreateForensicsId(ownership);
 
             if (request.DryRun)
             {
@@ -221,7 +224,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery.Transiti
                 this.options.EnableDagExecutionResume
                     ? CreateDagResumeRecoveryMetadata(
                         ownership,
-                        reason)
+                        reason,
+                        forensicsId)
                     : null;
 
             var requeued = await this.sharedQueue
@@ -248,7 +252,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery.Transiti
                 };
             }
 
-            await this.runtimeRunExecutionIndex
+            var markedRequeued = await this.runtimeRunExecutionIndex
                 .MarkRequeuedForRecoveryAsync(
                     ownership.LocalRunId,
                     ownership.ExecutionId,
@@ -256,9 +260,25 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery.Transiti
                     cancellationToken)
                 .ConfigureAwait(false);
 
+            if (!markedRequeued)
+            {
+                return new AiRuntimeExecutionRecoveryTransitionResult
+                {
+                    Accepted = false,
+                    Changed = false,
+                    SharedRunId = ownership.SharedRunId,
+                    RuntimeInstanceId = ownership.RuntimeInstanceId,
+                    LocalRunId = ownership.LocalRunId,
+                    ExecutionId = ownership.ExecutionId,
+                    Action = "none",
+                    Reason = "runtime-run-index-requeue-for-recovery-rejected"
+                };
+            }
+
             await this.RecordSuccessfulRecoveryTransitionForensicsAsync(
                     ownership,
                     reason,
+                    forensicsId,
                     cancellationToken)
                 .ConfigureAwait(false);
 
@@ -280,18 +300,23 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery.Transiti
         /// </summary>
         /// <param name="ownership">The resolved shared run ownership.</param>
         /// <param name="reason">The recovery reason.</param>
+        /// <param name="forensicsId">The recovery forensics identifier.</param>
         /// <returns>The recovery metadata.</returns>
         private static IReadOnlyDictionary<string, string> CreateDagResumeRecoveryMetadata(
             AiSharedRunOwnershipResolutionResult ownership,
-            string reason)
+            string reason,
+            string forensicsId)
         {
             return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
             {
+                [RecoveryForensicsIdMetadataKey] = forensicsId,
                 [RecoveryModeMetadataKey] = RecoveryModeResumeExistingExecution,
                 [RecoveryFailedExecutionIdMetadataKey] = ownership.ExecutionId ?? string.Empty,
                 [RecoveryFailedRuntimeInstanceIdMetadataKey] = ownership.RuntimeInstanceId ?? string.Empty,
                 [RecoveryFailedLocalRunIdMetadataKey] = ownership.LocalRunId ?? string.Empty,
-                [RecoveryReasonMetadataKey] = reason
+                [RecoveryReasonMetadataKey] = reason,
+                [FailedRuntimeInstanceIdMetadataKey] = ownership.RuntimeInstanceId ?? string.Empty,
+                [FailedLocalRunIdMetadataKey] = ownership.LocalRunId ?? string.Empty
             };
         }
 
@@ -300,16 +325,18 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery.Transiti
         /// </summary>
         /// <param name="ownership">The resolved shared run ownership.</param>
         /// <param name="reason">The recovery reason.</param>
+        /// <param name="forensicsId">The recovery forensics identifier.</param>
         /// <param name="cancellationToken">A token used to cancel the operation.</param>
         /// <returns>A task that completes when the forensics evidence has been recorded.</returns>
         private async Task RecordSuccessfulRecoveryTransitionForensicsAsync(
             AiSharedRunOwnershipResolutionResult ownership,
             string reason,
+            string forensicsId,
             CancellationToken cancellationToken)
         {
             var now = DateTimeOffset.UtcNow;
-            var forensicsId = CreateForensicsId(ownership);
             var runtimeFailureIncidentId = CreateRuntimeFailureIncidentId(ownership);
+            var metadata = CreateRecoveryForensicsMetadata(ownership, reason, forensicsId);
 
             var record = new AiRuntimeRecoveryForensicsRecord
             {
@@ -317,7 +344,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery.Transiti
                 {
                     ForensicsId = forensicsId,
                     ExecutionId = ownership.ExecutionId ?? string.Empty,
-                    SharedRunId = ownership.SharedRunId
+                    SharedRunId = ownership.SharedRunId,
+                    TenantId = ResolveMetadataValue(metadata, "tenantId", "tenant.id"),
+                    TenantGroupId = ResolveMetadataValue(metadata, "tenantGroupId", "tenant.group.id"),
+                    ControlPlaneId = ResolveMetadataValue(metadata, "controlPlaneId", "control.plane.id"),
+                    PipelineName = ResolveMetadataValue(metadata, "pipelineName", "pipeline.name", "pipelineKey", "pipeline.key")
                 },
                 Failure = new AiRuntimeRecoveryFailureInfo
                 {
@@ -364,23 +395,18 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery.Transiti
                         "requeued",
                         reason,
                         ownership,
-                        now),
+                        now,
+                        metadata),
                     CreateForensicsEvent(
                         forensicsId,
                         AiRuntimeRecoveryForensicsEventType.FailedLocalRunMarkedRequeuedForRecovery,
                         "requeued",
                         reason,
                         ownership,
-                        now)
+                        now,
+                        metadata)
                 ],
-                Metadata = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
-                {
-                    [RecoveryModeMetadataKey] = RecoveryModeResumeExistingExecution,
-                    [RecoveryFailedExecutionIdMetadataKey] = ownership.ExecutionId ?? string.Empty,
-                    [RecoveryFailedRuntimeInstanceIdMetadataKey] = ownership.RuntimeInstanceId ?? string.Empty,
-                    [RecoveryFailedLocalRunIdMetadataKey] = ownership.LocalRunId ?? string.Empty,
-                    [RecoveryReasonMetadataKey] = reason
-                },
+                Metadata = metadata,
                 CreatedAtUtc = now,
                 UpdatedAtUtc = now
             };
@@ -423,6 +449,31 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery.Transiti
         }
 
         /// <summary>
+        /// Creates metadata shared by recovery forensics records and events.
+        /// </summary>
+        /// <param name="ownership">The resolved shared run ownership.</param>
+        /// <param name="reason">The recovery reason.</param>
+        /// <param name="forensicsId">The recovery forensics identifier.</param>
+        /// <returns>The metadata dictionary.</returns>
+        private static IReadOnlyDictionary<string, string> CreateRecoveryForensicsMetadata(
+            AiSharedRunOwnershipResolutionResult ownership,
+            string reason,
+            string forensicsId)
+        {
+            return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                [RecoveryForensicsIdMetadataKey] = forensicsId,
+                [RecoveryModeMetadataKey] = RecoveryModeResumeExistingExecution,
+                [RecoveryFailedExecutionIdMetadataKey] = ownership.ExecutionId ?? string.Empty,
+                [RecoveryFailedRuntimeInstanceIdMetadataKey] = ownership.RuntimeInstanceId ?? string.Empty,
+                [RecoveryFailedLocalRunIdMetadataKey] = ownership.LocalRunId ?? string.Empty,
+                [RecoveryReasonMetadataKey] = reason,
+                [FailedRuntimeInstanceIdMetadataKey] = ownership.RuntimeInstanceId ?? string.Empty,
+                [FailedLocalRunIdMetadataKey] = ownership.LocalRunId ?? string.Empty
+            };
+        }
+
+        /// <summary>
         /// Creates a recovery forensics event.
         /// </summary>
         /// <param name="forensicsId">The forensics identifier.</param>
@@ -431,6 +482,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery.Transiti
         /// <param name="reason">The event reason.</param>
         /// <param name="ownership">The resolved shared run ownership.</param>
         /// <param name="timestampUtc">The event timestamp.</param>
+        /// <param name="metadata">The recovery metadata.</param>
         /// <returns>The recovery forensics event.</returns>
         private static AiRuntimeRecoveryForensicsEvent CreateForensicsEvent(
             string forensicsId,
@@ -438,7 +490,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery.Transiti
             string outcome,
             string reason,
             AiSharedRunOwnershipResolutionResult ownership,
-            DateTimeOffset timestampUtc)
+            DateTimeOffset timestampUtc,
+            IReadOnlyDictionary<string, string> metadata)
         {
             return new AiRuntimeRecoveryForensicsEvent
             {
@@ -455,12 +508,35 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery.Transiti
                 SharedRunId = ownership.SharedRunId,
                 LocalRunId = ownership.LocalRunId,
                 RuntimeInstanceId = ownership.RuntimeInstanceId,
-                Metadata = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
-                {
-                    [RecoveryModeMetadataKey] = RecoveryModeResumeExistingExecution,
-                    [RecoveryReasonMetadataKey] = reason
-                }
+                Metadata = metadata
             };
+        }
+
+        private static string? ResolveMetadataValue(
+            IReadOnlyDictionary<string, string> metadata,
+            params string[] keys)
+        {
+            foreach (var key in keys)
+            {
+                if (metadata.TryGetValue(key, out var value) &&
+                    !string.IsNullOrWhiteSpace(value))
+                {
+                    return value;
+                }
+            }
+
+            foreach (var key in keys)
+            {
+                var match = metadata.FirstOrDefault(pair =>
+                    string.Equals(pair.Key, key, StringComparison.OrdinalIgnoreCase));
+
+                if (!string.IsNullOrWhiteSpace(match.Value))
+                {
+                    return match.Value;
+                }
+            }
+
+            return null;
         }
     }
 }

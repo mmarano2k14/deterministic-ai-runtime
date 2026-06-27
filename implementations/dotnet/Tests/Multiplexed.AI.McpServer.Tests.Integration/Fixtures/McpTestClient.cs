@@ -408,9 +408,23 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures
             AiRuntimeRecoveryForensicsQuery query,
             CancellationToken cancellationToken = default)
         {
+            ArgumentNullException.ThrowIfNull(query);
+
             return CallToolAsync<AiRuntimeRecoveryForensicsQueryResult>(
                 "runtime.recovery.forensics.search",
-                query,
+                new
+                {
+                    forensicsId = query.ForensicsId,
+                    executionId = query.ExecutionId,
+                    sharedRunId = query.SharedRunId,
+                    runtimeInstanceId = query.RuntimeInstanceId,
+                    tenantId = query.TenantId,
+                    tenantGroupId = query.TenantGroupId,
+                    controlPlaneId = query.ControlPlaneId,
+                    eventType = query.EventType,
+                    recentFailuresOnly = query.RecentFailuresOnly,
+                    limit = query.Limit
+                },
                 cancellationToken);
         }
 

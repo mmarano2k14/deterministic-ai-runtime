@@ -19,7 +19,7 @@ namespace Multiplexed.AI.McpServer.Tools
     public sealed class RuntimeRecoveryForensicsMcpTools
     {
         private readonly IAiRuntimeRecoveryForensicsQueryService queryService;
-        private readonly ILogger logger;
+        private readonly ILogger<RuntimeRecoveryForensicsMcpTools> logger;
 
         /// <summary>
         /// Initializes a new instance of the <see cref="RuntimeRecoveryForensicsMcpTools"/> class.
@@ -28,7 +28,7 @@ namespace Multiplexed.AI.McpServer.Tools
         /// <param name="logger">The logger.</param>
         public RuntimeRecoveryForensicsMcpTools(
             IAiRuntimeRecoveryForensicsQueryService queryService,
-            ILogger logger)
+            ILogger<RuntimeRecoveryForensicsMcpTools> logger)
         {
             this.queryService = queryService ?? throw new ArgumentNullException(nameof(queryService));
             this.logger = logger ?? throw new ArgumentNullException(nameof(logger));
@@ -60,35 +60,51 @@ namespace Multiplexed.AI.McpServer.Tools
                 .ConfigureAwait(false);
         }
 
-        /// <summary>
-        /// Searches runtime recovery forensics read models using query filters.
-        /// </summary>
-        /// <param name="query">The runtime recovery forensics query.</param>
-        /// <param name="cancellationToken">A token used to cancel the operation.</param>
-        /// <returns>The recovery forensics query result.</returns>
         [McpServerTool(Name = "runtime.recovery.forensics.search")]
         [Description("Searches runtime recovery forensics read models by execution, shared run, runtime instance, tenant, event type, or recent failures. Read-only; does not trigger recovery.")]
         [RequireCapability("runtime-recovery", "forensics", "query")]
         public async Task<AiRuntimeRecoveryForensicsQueryResult> SearchRuntimeRecoveryForensicsAsync(
-            AiRuntimeRecoveryForensicsQuery query,
+            string? forensicsId = null,
+            string? executionId = null,
+            string? sharedRunId = null,
+            string? runtimeInstanceId = null,
+            string? tenantId = null,
+            string? tenantGroupId = null,
+            string? controlPlaneId = null,
+            string? eventType = null,
+            bool recentFailuresOnly = false,
+            int limit = 50,
             CancellationToken cancellationToken = default)
         {
-            ArgumentNullException.ThrowIfNull(query);
+            var query = new AiRuntimeRecoveryForensicsQuery
+            {
+                ForensicsId = forensicsId,
+                ExecutionId = executionId,
+                SharedRunId = sharedRunId,
+                RuntimeInstanceId = runtimeInstanceId,
+                TenantId = tenantId,
+                TenantGroupId = tenantGroupId,
+                ControlPlaneId = controlPlaneId,
+                EventType = eventType,
+                RecentFailuresOnly = recentFailuresOnly,
+                Limit = limit
+            };
 
             logger.LogInformation(
-                "MCP runtime.recovery.forensics.search called. ForensicsId={ForensicsId}, ExecutionId={ExecutionId}, SharedRunId={SharedRunId}, RuntimeInstanceId={RuntimeInstanceId}, EventType={EventType}, RecentFailuresOnly={RecentFailuresOnly}, Limit={Limit}",
+                "MCP runtime.recovery.forensics.search called. ForensicsId={ForensicsId}, ExecutionId={ExecutionId}, SharedRunId={SharedRunId}, RuntimeInstanceId={RuntimeInstanceId}, TenantId={TenantId}, TenantGroupId={TenantGroupId}, ControlPlaneId={ControlPlaneId}, EventType={EventType}, RecentFailuresOnly={RecentFailuresOnly}, Limit={Limit}",
                 query.ForensicsId,
                 query.ExecutionId,
                 query.SharedRunId,
                 query.RuntimeInstanceId,
+                query.TenantId,
+                query.TenantGroupId,
+                query.ControlPlaneId,
                 query.EventType,
                 query.RecentFailuresOnly,
                 query.Limit);
 
             return await queryService
-                .SearchAsync(
-                    query,
-                    cancellationToken)
+                .SearchAsync(query, cancellationToken)
                 .ConfigureAwait(false);
         }
 

@@ -404,10 +404,6 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
 
             try
             {
-                await _queue.Writer.WriteAsync(
-                    queuedRun,
-                    cancellationToken).ConfigureAwait(false);
-
                 if (!string.IsNullOrWhiteSpace(resumeExecutionId))
                 {
                     await RegisterResumeRunExecutionIndexAsync(
@@ -415,7 +411,20 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
                             resumeExecutionId,
                             cancellationToken)
                         .ConfigureAwait(false);
+
+                    await RecordRecoveryForensicsEventAsync(
+                            queuedRun,
+                            AiRuntimeRecoveryForensicsEventType.ReplacementLocalRunRegistered,
+                            "registered",
+                            "replacement-local-run-registered-on-runtime-instance",
+                            resumeExecutionId,
+                            cancellationToken)
+                        .ConfigureAwait(false);
                 }
+
+                await _queue.Writer.WriteAsync(
+                    queuedRun,
+                    cancellationToken).ConfigureAwait(false);
 
                 Console.WriteLine(
                      $"[AI PIPELINE CONTROLLER] ENQUEUED RuntimeInstanceId='{_runtimeInstanceIdentity.RuntimeInstanceId}' RunId='{runId}' ResumeExecutionId='{resumeExecutionId ?? string.Empty}'");
@@ -1710,6 +1719,15 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
                 .SeedRestoredExecutionContextAsync(
                     queuedRun.ResumeExecutionId,
                     context,
+                    cancellationToken)
+                .ConfigureAwait(false);
+
+            await RecordRecoveryForensicsEventAsync(
+                    queuedRun,
+                    AiRuntimeRecoveryForensicsEventType.ResumeContextSeeded,
+                    "seeded",
+                    "resume-context-seeded-on-replacement-runtime",
+                    queuedRun.ResumeExecutionId!,
                     cancellationToken)
                 .ConfigureAwait(false);
 

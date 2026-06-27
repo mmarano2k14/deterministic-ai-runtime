@@ -71,6 +71,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics
             {
                 normalized = normalized with
                 {
+                    Identity = MergeIdentity(existing.Record.Identity, normalized.Identity),
                     CreatedAtUtc = existing.Record.CreatedAtUtc == default ? normalized.CreatedAtUtc : existing.Record.CreatedAtUtc,
                     Events = NormalizeEvents(existing.Record.Events.Concat(normalized.Events).ToList())
                 };
@@ -95,13 +96,13 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics
             ArgumentException.ThrowIfNullOrWhiteSpace(forensicsId);
             ArgumentNullException.ThrowIfNull(evt);
             ArgumentException.ThrowIfNullOrWhiteSpace(evt.EventId);
-            ArgumentException.ThrowIfNullOrWhiteSpace(evt.ForensicsId);
 
             await EnsureIndexesAsync(cancellationToken).ConfigureAwait(false);
 
             var now = DateTimeOffset.UtcNow;
             var normalizedEvent = evt with
             {
+                ForensicsId = string.IsNullOrWhiteSpace(evt.ForensicsId) ? forensicsId : evt.ForensicsId,
                 TimestampUtc = evt.TimestampUtc == default ? now : evt.TimestampUtc
             };
 
@@ -114,14 +115,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics
                 .FirstOrDefaultAsync(cancellationToken)
                 .ConfigureAwait(false);
 
+            var eventIdentity = CreateIdentityFromEvent(forensicsId, normalizedEvent);
+
             var record = existing?.Record ?? new AiRuntimeRecoveryForensicsRecord
             {
-                Identity = new AiRuntimeRecoveryForensicsIdentity
-                {
-                    ForensicsId = forensicsId,
-                    ExecutionId = normalizedEvent.ExecutionId ?? string.Empty,
-                    SharedRunId = normalizedEvent.SharedRunId
-                },
+                Identity = eventIdentity,
                 CreatedAtUtc = now,
                 UpdatedAtUtc = now,
                 Events = Array.Empty<AiRuntimeRecoveryForensicsEvent>()
@@ -129,6 +127,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics
 
             var normalized = record with
             {
+                Identity = MergeIdentity(record.Identity, eventIdentity),
                 UpdatedAtUtc = now,
                 Events = NormalizeEvents(record.Events.Concat(new[] { normalizedEvent }).ToList())
             };
@@ -298,10 +297,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics
                         var models = new[]
                         {
                             new CreateIndexModel<MongoAiRuntimeRecoveryForensicsDocument>(
-                                Builders<MongoAiRuntimeRecoveryForensicsDocument>.IndexKeys.Ascending(x => x.Id),
-                                new CreateIndexOptions { Name = "ux_id", Unique = true }),
-
-                            new CreateIndexModel<MongoAiRuntimeRecoveryForensicsDocument>(
                                 Builders<MongoAiRuntimeRecoveryForensicsDocument>.IndexKeys.Ascending(x => x.Record.Identity.ExecutionId),
                                 new CreateIndexOptions { Name = "ix_record_identity_executionId" }),
 
@@ -356,6 +351,51 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics
         }
 
         /// <summary>
+        /// Creates a recovery forensics identity from an event and its metadata.
+        /// </summary>
+        /// <param name="forensicsId">The recovery forensics identifier.</param>
+        /// <param name="evt">The recovery forensics event.</param>
+        /// <returns>The recovery forensics identity.</returns>
+        private static AiRuntimeRecoveryForensicsIdentity CreateIdentityFromEvent(
+            string forensicsId,
+            AiRuntimeRecoveryForensicsEvent evt)
+        {
+            return new AiRuntimeRecoveryForensicsIdentity
+            {
+                ForensicsId = forensicsId,
+                ExecutionId = evt.ExecutionId ?? string.Empty,
+                SharedRunId = evt.SharedRunId,
+                PipelineName = ResolveMetadataValue(evt.Metadata, "pipelineName", "pipeline.name", "pipelineKey", "pipeline.key"),
+                TenantId = ResolveMetadataValue(evt.Metadata, "tenantId", "tenant.id"),
+                TenantGroupId = ResolveMetadataValue(evt.Metadata, "tenantGroupId", "tenant.group.id"),
+                ControlPlaneId = ResolveMetadataValue(evt.Metadata, "controlPlaneId", "control.plane.id")
+            };
+        }
+
+        /// <summary>
+        /// Merges two identities while preserving already-known non-empty values.
+        /// </summary>
+        /// <param name="existing">The existing identity.</param>
+        /// <param name="incoming">The incoming identity.</param>
+        /// <returns>The merged identity.</returns>
+        private static AiRuntimeRecoveryForensicsIdentity MergeIdentity(
+            AiRuntimeRecoveryForensicsIdentity existing,
+            AiRuntimeRecoveryForensicsIdentity incoming)
+        {
+            return new AiRuntimeRecoveryForensicsIdentity
+            {
+                Id = FirstNonEmpty(existing.Id, incoming.Id),
+                ForensicsId = FirstNonEmpty(existing.ForensicsId, incoming.ForensicsId) ?? string.Empty,
+                ExecutionId = FirstNonEmpty(existing.ExecutionId, incoming.ExecutionId) ?? string.Empty,
+                SharedRunId = FirstNonEmpty(existing.SharedRunId, incoming.SharedRunId),
+                PipelineName = FirstNonEmpty(existing.PipelineName, incoming.PipelineName),
+                TenantId = FirstNonEmpty(existing.TenantId, incoming.TenantId),
+                TenantGroupId = FirstNonEmpty(existing.TenantGroupId, incoming.TenantGroupId),
+                ControlPlaneId = FirstNonEmpty(existing.ControlPlaneId, incoming.ControlPlaneId)
+            };
+        }
+
+        /// <summary>
         /// Normalizes recovery forensics events by event identifier and timestamp.
         /// </summary>
         /// <param name="events">The events to normalize.</param>
@@ -368,6 +408,47 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics
                 .Select(x => x.First())
                 .OrderBy(x => x.TimestampUtc)
                 .ToList();
+        }
+
+        private static string? ResolveMetadataValue(
+            IReadOnlyDictionary<string, string>? metadata,
+            params string[] keys)
+        {
+            if (metadata is null || metadata.Count == 0)
+            {
+                return null;
+            }
+
+            foreach (var key in keys)
+            {
+                if (metadata.TryGetValue(key, out var value) &&
+                    !string.IsNullOrWhiteSpace(value))
+                {
+                    return value;
+                }
+            }
+
+            foreach (var key in keys)
+            {
+                var match = metadata.FirstOrDefault(pair =>
+                    string.Equals(pair.Key, key, StringComparison.OrdinalIgnoreCase));
+
+                if (!string.IsNullOrWhiteSpace(match.Value))
+                {
+                    return match.Value;
+                }
+            }
+
+            return null;
+        }
+
+        private static string? FirstNonEmpty(
+            string? first,
+            string? second)
+        {
+            return !string.IsNullOrWhiteSpace(first)
+                ? first
+                : second;
         }
     }
 }

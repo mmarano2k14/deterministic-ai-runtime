@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Options;
+using MongoDB.Bson;
 using MongoDB.Driver;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Forensics;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics;
@@ -19,7 +20,8 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Forensics
 
         private readonly MongoClient _client;
         private readonly IMongoDatabase _database;
-        private readonly IMongoCollection<AiRuntimeRecoveryForensicsRecord> _collection;
+        private readonly IMongoCollection<BsonDocument> _collection;
+        private readonly MongoAiRuntimeRecoveryForensicsStore _store;
         private readonly MongoAiRuntimeRecoveryForensicsQueryService _service;
         private readonly string _databaseName;
 
@@ -43,7 +45,12 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Forensics
                     EnsureIndexes = false
                 });
 
-            _collection = _database.GetCollection<AiRuntimeRecoveryForensicsRecord>(options.Value.CollectionName);
+            _collection = _database.GetCollection<BsonDocument>(options.Value.CollectionName);
+
+            _store = new MongoAiRuntimeRecoveryForensicsStore(
+                _database,
+                options);
+
             _service = new MongoAiRuntimeRecoveryForensicsQueryService(
                 _database,
                 options);
@@ -55,8 +62,8 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Forensics
         /// <returns>A completed task.</returns>
         public async Task InitializeAsync()
         {
-            await _collection.DeleteManyAsync(
-                    Builders<AiRuntimeRecoveryForensicsRecord>.Filter.Empty)
+            await _collection
+                .DeleteManyAsync(Builders<BsonDocument>.Filter.Empty)
                 .ConfigureAwait(false);
         }
 
@@ -260,14 +267,16 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Forensics
         }
 
         /// <summary>
-        /// Inserts one recovery forensics record into MongoDB.
+        /// Inserts one recovery forensics record into MongoDB using the production store shape.
         /// </summary>
         /// <param name="record">The record to insert.</param>
         /// <returns>A task representing the asynchronous operation.</returns>
         private async Task InsertAsync(
             AiRuntimeRecoveryForensicsRecord record)
         {
-            await _collection.InsertOneAsync(record).ConfigureAwait(false);
+            await _store
+                .UpsertAsync(record)
+                .ConfigureAwait(false);
         }
 
         /// <summary>
@@ -455,6 +464,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Forensics
                 Metadata = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
                 {
                     ["tenant.id"] = "tenant-1",
+                    ["control.plane.id"] = "control-plane-1",
                     ["replacement.runtimeInstanceId"] = "runtime-replacement-1",
                     ["replacement.localRunId"] = "local-run-replacement-1",
                     ["failed.runtimeInstanceId"] = "runtime-failed-1",

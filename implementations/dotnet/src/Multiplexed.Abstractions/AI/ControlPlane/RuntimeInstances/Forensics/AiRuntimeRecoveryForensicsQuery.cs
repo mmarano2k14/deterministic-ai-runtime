@@ -37,6 +37,8 @@ namespace Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Forensics
         /// </summary>
         public string? TenantId { get; init; }
 
+        public string? TenantGroupId { get; init; }
+
         /// <summary>
         /// Gets the optional control-plane identifier.
         /// </summary>

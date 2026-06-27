@@ -36,6 +36,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics
                 },
                 (_, existing) => record with
                 {
+                    Identity = MergeIdentity(existing.Identity, record.Identity),
                     CreatedAtUtc = existing.CreatedAtUtc == default ? now : existing.CreatedAtUtc,
                     UpdatedAtUtc = record.UpdatedAtUtc == default ? now : record.UpdatedAtUtc,
                     Events = MergeEvents(existing.Events, record.Events)
@@ -51,24 +52,23 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics
             ArgumentNullException.ThrowIfNull(evt);
 
             var now = DateTimeOffset.UtcNow;
+            var eventWithForensicsId = string.Equals(evt.ForensicsId, forensicsId, StringComparison.OrdinalIgnoreCase)
+                ? evt
+                : evt with { ForensicsId = forensicsId };
 
             _records.AddOrUpdate(
                 forensicsId,
                 _ => new AiRuntimeRecoveryForensicsRecord
                 {
-                    Identity = new AiRuntimeRecoveryForensicsIdentity
-                    {
-                        ForensicsId = forensicsId,
-                        ExecutionId = evt.ExecutionId ?? string.Empty,
-                        SharedRunId = evt.SharedRunId
-                    },
-                    Events = [evt],
+                    Identity = CreateIdentityFromEvent(forensicsId, eventWithForensicsId),
+                    Events = [eventWithForensicsId],
                     CreatedAtUtc = now,
                     UpdatedAtUtc = now
                 },
                 (_, existing) => existing with
                 {
-                    Events = MergeEvents(existing.Events, [evt]),
+                    Identity = MergeIdentity(existing.Identity, CreateIdentityFromEvent(forensicsId, eventWithForensicsId)),
+                    Events = MergeEvents(existing.Events, [eventWithForensicsId]),
                     UpdatedAtUtc = now
                 });
 
@@ -152,6 +152,39 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics
             return Task.FromResult<IReadOnlyList<AiRuntimeRecoveryForensicsRecord>>(records);
         }
 
+        private static AiRuntimeRecoveryForensicsIdentity CreateIdentityFromEvent(
+            string forensicsId,
+            AiRuntimeRecoveryForensicsEvent evt)
+        {
+            return new AiRuntimeRecoveryForensicsIdentity
+            {
+                ForensicsId = forensicsId,
+                ExecutionId = evt.ExecutionId ?? string.Empty,
+                SharedRunId = evt.SharedRunId,
+                PipelineName = ResolveMetadataValue(evt.Metadata, "pipelineName", "pipeline.name", "pipelineKey", "pipeline.key"),
+                TenantId = ResolveMetadataValue(evt.Metadata, "tenantId", "tenant.id"),
+                TenantGroupId = ResolveMetadataValue(evt.Metadata, "tenantGroupId", "tenant.group.id"),
+                ControlPlaneId = ResolveMetadataValue(evt.Metadata, "controlPlaneId", "control.plane.id")
+            };
+        }
+
+        private static AiRuntimeRecoveryForensicsIdentity MergeIdentity(
+            AiRuntimeRecoveryForensicsIdentity existing,
+            AiRuntimeRecoveryForensicsIdentity incoming)
+        {
+            return new AiRuntimeRecoveryForensicsIdentity
+            {
+                Id = FirstNonEmpty(existing.Id, incoming.Id),
+                ForensicsId = FirstNonEmpty(existing.ForensicsId, incoming.ForensicsId) ?? string.Empty,
+                ExecutionId = FirstNonEmpty(existing.ExecutionId, incoming.ExecutionId) ?? string.Empty,
+                SharedRunId = FirstNonEmpty(existing.SharedRunId, incoming.SharedRunId),
+                PipelineName = FirstNonEmpty(existing.PipelineName, incoming.PipelineName),
+                TenantId = FirstNonEmpty(existing.TenantId, incoming.TenantId),
+                TenantGroupId = FirstNonEmpty(existing.TenantGroupId, incoming.TenantGroupId),
+                ControlPlaneId = FirstNonEmpty(existing.ControlPlaneId, incoming.ControlPlaneId)
+            };
+        }
+
         private static IReadOnlyList<AiRuntimeRecoveryForensicsEvent> MergeEvents(
             IReadOnlyList<AiRuntimeRecoveryForensicsEvent> existing,
             IReadOnlyList<AiRuntimeRecoveryForensicsEvent> incoming)
@@ -162,6 +195,47 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics
                 .Select(x => x.First())
                 .OrderBy(x => x.TimestampUtc)
                 .ToList();
+        }
+
+        private static string? ResolveMetadataValue(
+            IReadOnlyDictionary<string, string>? metadata,
+            params string[] keys)
+        {
+            if (metadata is null || metadata.Count == 0)
+            {
+                return null;
+            }
+
+            foreach (var key in keys)
+            {
+                if (metadata.TryGetValue(key, out var value) &&
+                    !string.IsNullOrWhiteSpace(value))
+                {
+                    return value;
+                }
+            }
+
+            foreach (var key in keys)
+            {
+                var match = metadata.FirstOrDefault(pair =>
+                    string.Equals(pair.Key, key, StringComparison.OrdinalIgnoreCase));
+
+                if (!string.IsNullOrWhiteSpace(match.Value))
+                {
+                    return match.Value;
+                }
+            }
+
+            return null;
+        }
+
+        private static string? FirstNonEmpty(
+            string? first,
+            string? second)
+        {
+            return !string.IsNullOrWhiteSpace(first)
+                ? first
+                : second;
         }
     }
 }

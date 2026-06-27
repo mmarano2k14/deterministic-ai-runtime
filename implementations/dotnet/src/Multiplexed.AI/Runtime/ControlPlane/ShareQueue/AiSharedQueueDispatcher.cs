@@ -121,6 +121,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
         }
 
         /// <inheritdoc />
+        /// <inheritdoc />
         public async Task<AiSharedQueueDispatchResult> DispatchNextAsync(
             AiSharedQueueDispatchRequest request,
             CancellationToken cancellationToken = default)
@@ -335,8 +336,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                             DurationMs = CalculateDurationMs(startedAtUtc, completedAtUtc),
                             Diagnostics = new[]
                             {
-                                admissionDecision.Reason ?? SharedQueueRedispatchReplacementReason
-                            }
+                        admissionDecision.Reason ?? SharedQueueRedispatchReplacementReason
+                    }
                         };
                     }
 
@@ -372,8 +373,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                             DurationMs = CalculateDurationMs(startedAtUtc, completedAtUtc),
                             Diagnostics = new[]
                             {
-                                admissionDecision.Reason ?? "Admission did not assign a runtime instance."
-                            }
+                        admissionDecision.Reason ?? "Admission did not assign a runtime instance."
+                    }
                         };
                     }
 
@@ -410,8 +411,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                             DurationMs = CalculateDurationMs(startedAtUtc, completedAtUtc),
                             Diagnostics = new[]
                             {
-                                "Selected runtime instance is not routable."
-                            }
+                        "Selected runtime instance is not routable."
+                    }
                         };
                     }
 
@@ -441,6 +442,14 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                         controlPlaneId,
                         targetRuntimeInstanceId,
                         1);
+
+                    await RecordReplacementRuntimeSelectedForensicsAsync(
+                            queueItem,
+                            sharedRun,
+                            operationMetadata,
+                            targetRuntimeInstanceId,
+                            cancellationToken)
+                        .ConfigureAwait(false);
 
                     try
                     {
@@ -601,15 +610,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                             dispatchResult.LocalRunId,
                             dispatchResult.ExecutionId);
 
-                        await RecordReplacementRuntimeSelectedForensicsAsync(
-                                queueItem,
-                                sharedRun,
-                                operationMetadata,
-                                targetRuntimeInstanceId,
-                                dispatchResult,
-                                cancellationToken)
-                            .ConfigureAwait(false);
-
                         var completed =
                             dispatchedRun ?? sharedRun;
 
@@ -689,7 +689,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
         /// <param name="sharedRun">The shared run record.</param>
         /// <param name="metadata">The merged operation metadata.</param>
         /// <param name="replacementRuntimeInstanceId">The replacement runtime instance identifier.</param>
-        /// <param name="dispatchResult">The shared run dispatch result.</param>
         /// <param name="cancellationToken">A token used to cancel the operation.</param>
         /// <returns>A task that completes when the forensics event has been recorded.</returns>
         private async Task RecordReplacementRuntimeSelectedForensicsAsync(
@@ -697,7 +696,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
             AiSharedRunRecord sharedRun,
             IReadOnlyDictionary<string, string> metadata,
             string replacementRuntimeInstanceId,
-            AiSharedRunDispatchResult dispatchResult,
             CancellationToken cancellationToken)
         {
             if (!TryResolveRecoveryForensicsId(
@@ -719,8 +717,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                             ":",
                             forensicsId,
                             AiRuntimeRecoveryForensicsEventType.ReplacementRuntimeSelected,
-                            replacementRuntimeInstanceId,
-                            dispatchResult.LocalRunId ?? string.Empty),
+                            replacementRuntimeInstanceId),
                         ForensicsId = forensicsId,
                         TimestampUtc = DateTimeOffset.UtcNow,
                         EventType = AiRuntimeRecoveryForensicsEventType.ReplacementRuntimeSelected,
@@ -728,18 +725,17 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                         Reason = "replacement-runtime-selected-for-recovery-redispatch",
                         ExecutionId = executionId,
                         SharedRunId = sharedRun.SharedRunId,
-                        LocalRunId = dispatchResult.LocalRunId,
                         RuntimeInstanceId = replacementRuntimeInstanceId,
                         Metadata = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
                         {
                             ["tenant.id"] = sharedRun.ExecutionContextSnapshot.TenantId ?? string.Empty,
                             ["tenant.group.id"] = sharedRun.ExecutionContextSnapshot.TenantGroupId ?? string.Empty,
                             ["replacement.runtimeInstanceId"] = replacementRuntimeInstanceId,
-                            ["replacement.localRunId"] = dispatchResult.LocalRunId ?? string.Empty,
-                            ["replacement.executionId"] = dispatchResult.ExecutionId ?? executionId ?? string.Empty,
+                            ["replacement.executionId"] = executionId ?? string.Empty,
                             ["failed.runtimeInstanceId"] = ResolveMetadataValue(metadata, RecoveryFailedRuntimeInstanceIdMetadataKey),
                             ["failed.localRunId"] = failedLocalRunId ?? string.Empty,
-                            ["queue.claimToken"] = queueItem.ClaimToken ?? string.Empty
+                            ["queue.claimToken"] = queueItem.ClaimToken ?? string.Empty,
+                            ["resume.contextKey"] = sharedRun.ExecutionContextSnapshot.ContextKey ?? string.Empty
                         }
                     },
                     cancellationToken)
