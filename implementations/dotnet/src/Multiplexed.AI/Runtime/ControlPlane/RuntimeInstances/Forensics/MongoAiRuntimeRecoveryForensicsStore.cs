@@ -60,6 +60,20 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics
                 x => x.Identity.ForensicsId,
                 normalized.Identity.ForensicsId);
 
+            var existing = await _collection
+                .Find(filter)
+                .FirstOrDefaultAsync(cancellationToken)
+                .ConfigureAwait(false);
+
+            if (existing is not null)
+            {
+                normalized = normalized with
+                {
+                    CreatedAtUtc = existing.CreatedAtUtc == default ? normalized.CreatedAtUtc : existing.CreatedAtUtc,
+                    Events = NormalizeEvents(existing.Events.Concat(normalized.Events).ToList())
+                };
+            }
+
             await _collection.ReplaceOneAsync(
                     filter,
                     normalized,
@@ -213,6 +227,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics
                 .ConfigureAwait(false);
         }
 
+        /// <summary>
+        /// Ensures MongoDB indexes required by recovery forensics queries.
+        /// </summary>
+        /// <param name="cancellationToken">A token used to cancel the operation.</param>
+        /// <returns>A task that completes when indexes have been ensured.</returns>
         private async Task EnsureIndexesAsync(CancellationToken cancellationToken)
         {
             if (_indexesInitialized || !_options.EnsureIndexes)
@@ -292,6 +311,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics
             }
         }
 
+        /// <summary>
+        /// Normalizes recovery forensics events by event identifier and timestamp.
+        /// </summary>
+        /// <param name="events">The events to normalize.</param>
+        /// <returns>The normalized events.</returns>
         private static IReadOnlyList<AiRuntimeRecoveryForensicsEvent> NormalizeEvents(IReadOnlyList<AiRuntimeRecoveryForensicsEvent> events)
         {
             return events
