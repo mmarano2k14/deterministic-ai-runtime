@@ -6,6 +6,419 @@ This project follows a deterministic runtime and observability model designed fo
 
 ---
 
+## [1.0.6.9] - 2026-06-27  Runtime Recovery Forensics — Contracts, InMemory Recorder and Mongo Persistence
+
+Added the first professional foundation for **Runtime Recovery Forensics**.
+
+This feature provides a persisted, queryable and human-readable proof of runtime execution recovery.
+
+The goal is to explain exactly what happened when a runtime instance fails, what execution work was affected, what state was restored from durable truth, what volatile runtime state was recreated, and what was intentionally not restored.
+
+This is not a new recovery mechanism.
+
+Forensics observes and documents recovery. It does not drive recovery decisions.
+
+## Why
+
+Execution recovery was already validated for HTTP Process Host DAG resume recovery:
+
+- failed runtime instance is detected
+- unsafe capacity is suppressed
+- assigned/in-flight work is recovered
+- shared run is requeued for resume
+- replacement runtime receives the recovered work
+- durable `ExecutionId` is preserved
+- replacement `LocalRunId` is recreated
+- completed DAG steps are not replayed
+- DAG converges to completion
+
+The missing piece was a durable professional proof of that recovery.
+
+Runtime Recovery Forensics now prepares that layer.
+
+## Added
+
+### Recovery Forensics Identity
+
+Added a dedicated identity model:
+
+- `AiRuntimeRecoveryForensicsIdentity`
+
+It groups the main recovery scope identifiers:
+
+- `Id`
+- `ForensicsId`
+- `ExecutionId`
+- `SharedRunId`
+- `PipelineName`
+- `TenantId`
+- `TenantGroupId`
+- `ControlPlaneId`
+
+This keeps the forensic record clean and avoids a flat root model with too many unrelated identifiers.
+
+### Recovery Forensics Record Model
+
+Added the main recovery proof model:
+
+- `AiRuntimeRecoveryForensicsRecord`
+
+The record is structured around:
+
+- `Identity`
+- `Failure`
+- `Recovery`
+- `Replacement`
+- `Context`
+- `Dag`
+- `Artifacts`
+- `Events`
+- `Metadata`
+- `CreatedAtUtc`
+- `UpdatedAtUtc`
+
+This model is designed for MongoDB persistence and future MCP/API reporting.
+
+### Failure Information
+
+Added:
+
+- `AiRuntimeRecoveryFailureInfo`
+
+Captures:
+
+- failed runtime instance id
+- failed local run id
+- runtime failure incident id
+- failure signal
+- health status before/after
+- capacity suppression reason
+- failure detection timestamp
+
+The `RuntimeFailureIncidentId` allows multiple recovered executions to be grouped under one failed runtime incident.
+
+### Recovery Information
+
+Added:
+
+- `AiRuntimeRecoveryInfo`
+
+Captures:
+
+- recovery mode
+- recovery kind
+- outcome
+- reason
+- recovery start timestamp
+- recovery completion timestamp
+
+This supports both single execution recovery and future multi-run recovery reporting.
+
+### Replacement Runtime Information
+
+Added:
+
+- `AiRuntimeRecoveryReplacementInfo`
+
+Captures:
+
+- replacement runtime instance id
+- replacement local run id
+- dispatch reason
+- replacement selection timestamp
+- local run registration timestamp
+
+This makes recreated runtime state visible.
+
+### Context Recovery Information
+
+Added:
+
+- `AiRuntimeRecoveryContextInfo`
+
+Captures:
+
+- snapshot context key
+- durable execution record context key
+- context key mismatch
+- execution-bound context rehydration
+- rehydration reason
+
+This is important because real recovery can involve a mismatch between `ExecutionContextSnapshot.ContextKey` and `AiExecutionRecord.ContextKey`.
+
+### DAG Recovery Information
+
+Added:
+
+- `AiRuntimeRecoveryDagInfo`
+
+Captures:
+
+- step count
+- completed steps before recovery
+- recovered-from step
+- final completed steps
+- whether completed steps were replayed
+- final DAG outcome
+
+This prepares the forensic proof that DAG recovery resumed from the correct point and did not replay completed steps.
+
+### Recovery Artifacts
+
+Added:
+
+- `AiRuntimeRecoveryArtifacts`
+- `AiRuntimeRecoveryArtifactName`
+
+Artifacts are grouped into:
+
+- restored artifacts
+- recreated artifacts
+- lost volatile artifacts
+
+Known artifact names include:
+
+Restored:
+
+- `DurableExecutionId`
+- `DagExecutionRecord`
+- `DagState`
+- `CompletedDagSteps`
+- `ExecutionContextSnapshot`
+- `RehydratedRbacContext`
+- `SharedRunMetadata`
+- `RecoveryMetadata`
+
+Recreated:
+
+- `ReplacementRuntimeInstance`
+- `ReplacementLocalRunId`
+- `ReplacementLocalQueueItem`
+- `RuntimeRunExecutionIndexEntry`
+- `DispatchAssignment`
+- `NewClaimToken`
+- `NewLease`
+
+Lost / intentionally not restored:
+
+- `FailedRuntimeLocalQueueMemory`
+- `FailedRuntimeProcessMemory`
+- `OldWorkerOwnership`
+- `OldClaimToken`
+- `OldLease`
+- `OldLocalRunAsActiveWork`
+
+### Forensics Events
+
+Added:
+
+- `AiRuntimeRecoveryForensicsEvent`
+- `AiRuntimeRecoveryForensicsEventType`
+
+Known event types include:
+
+- `runtime.failure.detected`
+- `runtime.health.suppressed`
+- `runtime.capacity.removed`
+- `execution.recovery.candidate.detected`
+- `shared.run.requeued.for.resume`
+- `failed.local.run.marked.requeued.for.recovery`
+- `replacement.runtime.selected`
+- `replacement.local.run.registered`
+- `resume.context.seeded`
+- `dag.resume.started`
+- `dag.resume.completed`
+- `execution.recovery.completed`
+- `execution.recovery.failed`
+
+The event timeline is append-only and will be used to reconstruct the recovery story.
+
+### Store and Recorder Contracts
+
+Added:
+
+- `IAiRuntimeRecoveryForensicsStore`
+- `IAiRuntimeRecoveryForensicsRecorder`
+
+The store supports:
+
+- upsert by forensics id
+- append event
+- get by forensics id
+- list by execution id
+- list by shared run id
+- list by runtime instance id
+- list by runtime failure incident id
+- list recent records
+
+The recorder supports:
+
+- recording/upserting a full recovery forensic record
+- appending recovery forensic events
+
+### Noop Recorder
+
+Added:
+
+- `NoopAiRuntimeRecoveryForensicsRecorder`
+
+This provides a safe fallback when forensics is disabled or not configured.
+
+### InMemory Store
+
+Added:
+
+- `InMemoryAiRuntimeRecoveryForensicsStore`
+
+This supports fast tests and local validation without external infrastructure.
+
+The in-memory store supports:
+
+- record upsert
+- event append
+- query by execution
+- query by shared run
+- query by runtime instance
+- query by runtime failure incident
+- recent records listing
+
+### Best-Effort Recorder
+
+Added:
+
+- `BestEffortAiRuntimeRecoveryForensicsRecorder`
+
+This recorder wraps the store and makes forensics persistence safe by default.
+
+Behavior:
+
+- if forensics is disabled, no persistence happens
+- if persistence fails and strict mode is disabled, recovery continues
+- if strict mode is enabled, persistence failures can fail the caller
+
+This keeps recovery correctness independent from forensic storage availability.
+
+### Options
+
+Added:
+
+- `AiRuntimeRecoveryForensicsOptions`
+- `AiRuntimeRecoveryForensicsMongoOptions`
+
+Runtime options include:
+
+- `Enabled`
+- `StrictPersistence`
+- `MaxEventsPerRecord`
+
+Mongo options include:
+
+- `ConnectionString`
+- `DatabaseName`
+- `CollectionName`
+- `EnsureIndexes`
+
+Default Mongo collection:
+
+```text
+ai_runtime_recovery_forensics
+```
+
+### Mongo Store
+
+Added:
+
+- `MongoAiRuntimeRecoveryForensicsStore`
+
+The Mongo store persists forensic records as rich documents.
+
+It supports:
+
+- upsert by `Identity.ForensicsId`
+- append events
+- query by `Identity.ExecutionId`
+- query by `Identity.SharedRunId`
+- query by failed/replacement runtime instance
+- query by runtime failure incident id
+- list recent recovery records
+
+### Mongo Indexes
+
+Added indexes for:
+
+- `Identity.ForensicsId`
+- `Identity.ExecutionId`
+- `Identity.SharedRunId`
+- `Identity.TenantId + CreatedAtUtc`
+- `Identity.ControlPlaneId + CreatedAtUtc`
+- `Failure.FailedRuntimeInstanceId`
+- `Failure.RuntimeFailureIncidentId`
+- `Replacement.ReplacementRuntimeInstanceId`
+- `Recovery.RecoveryMode + Recovery.Outcome + CreatedAtUtc`
+
+Index initialization uses existing Mongo infrastructure resilience behavior.
+
+### DI Extensions
+
+Added:
+
+- `AddNoopAiRuntimeRecoveryForensics`
+- `AddInMemoryAiRuntimeRecoveryForensics`
+- `AddMongoAiRuntimeRecoveryForensics`
+
+These allow tests, local runtime, and production persistence to select the appropriate implementation.
+
+## Design Principles
+
+Runtime Recovery Forensics follows these rules:
+
+- forensics observes recovery
+- forensics does not drive recovery
+- forensics is not the source of truth
+- recovery remains based on shared queue, shared run store, execution index, DAG store and snapshots
+- Mongo is used as durable forensic proof
+- InMemory is used for fast tests
+- Noop is available as safe fallback
+- best-effort persistence is the default
+- strict persistence can be enabled for audit-sensitive environments
+
+## Value
+
+This feature prepares the runtime to prove:
+
+- which runtime failed
+- which execution was affected
+- which local run was lost
+- which replacement runtime resumed the work
+- which new local run was created
+- which durable execution id was preserved
+- which state was restored
+- which runtime state was recreated
+- which volatile state was intentionally not restored
+- whether completed DAG steps were replayed
+- whether the execution converged
+
+This turns recovery from a hidden internal behavior into a persisted, inspectable and auditable recovery report.
+
+## Next
+
+Next implementation steps:
+
+1. Add basic InMemory store tests.
+2. Add Mongo store tests.
+3. Register forensics in the HTTP process-host test setup.
+4. Integrate recorder into recovery transition service.
+5. Integrate recorder into execution recovery reconciler.
+6. Integrate recorder into shared queue dispatcher.
+7. Integrate recorder into runtime pipeline background controller.
+8. Validate single DAG recovery forensic proof.
+9. Validate multiple assigned local queued runs recovery.
+10. Validate multiple in-flight executions recovery.
+11. Validate mixed queued + in-flight recovery from one failed runtime.
+
+
+---
+
 ## [1.0.6.9] - 2026-06-25 — Execution Recovery / HTTP Process Host DAG Resume
 
 ### Summary
