@@ -1,6 +1,7 @@
 ﻿using Microsoft.Extensions.Logging;
 using Multiplexed.Abstractions.AI.ControlPlane.Admission;
 using Multiplexed.Abstractions.AI.ControlPlane.Admission.Reservations;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Forensics;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Dispatch;
@@ -10,6 +11,7 @@ using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Claiming;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Dispatch;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Queue;
 using Multiplexed.Abstractions.Core.ExecutionContext;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics;
 using Multiplexed.Rbac.Core.ExecutionContext;
 using RbacExecutionContext = Multiplexed.Rbac.Core.ExecutionContext.ExecutionContext;
 
@@ -43,7 +45,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
         private const string ScaleOutIntentMetadataKey = "scaleout.intent";
         private const string ScaleOutIntentSharedQueueRedispatchReplacement = "shared-queue-redispatch-replacement";
         private const string SharedQueueRedispatchReplacementReason = "Shared queue redispatch requested replacement runtime capacity.";
+        private const string RecoveryForensicsIdMetadataKey = "recovery.forensicsId";
+        private const string RecoveryFailedExecutionIdMetadataKey = "recovery.failedExecutionId";
         private const string RecoveryFailedRuntimeInstanceIdMetadataKey = "recovery.failedRuntimeInstanceId";
+        private const string RecoveryFailedLocalRunIdMetadataKey = "recovery.failedLocalRunId";
 
         private readonly IAiSharedQueue _sharedQueue;
         private readonly IAiSharedRunStore _sharedRunStore;
@@ -54,6 +59,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
         private readonly IAiRuntimeScaleOutRequestPublisher _scaleOutPublisher;
         private readonly IAiTenantRuntimeSettingsProvider _tenantRuntimeSettingsProvider;
         private readonly IExecutionContextAccessor _executionContextAccessor;
+        private readonly IAiRuntimeRecoveryForensicsRecorder _forensicsRecorder;
         private readonly ILogger<AiSharedQueueDispatcher> _logger;
 
         /// <summary>
@@ -70,6 +76,36 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
             IAiTenantRuntimeSettingsProvider tenantRuntimeSettingsProvider,
             IExecutionContextAccessor executionContextAccessor,
             ILogger<AiSharedQueueDispatcher> logger)
+            : this(
+                sharedQueue,
+                sharedRunStore,
+                sharedRunDispatcher,
+                admissionController,
+                reservationStore,
+                runtimeInstanceRegistry,
+                scaleOutPublisher,
+                tenantRuntimeSettingsProvider,
+                executionContextAccessor,
+                logger,
+                new NoopAiRuntimeRecoveryForensicsRecorder())
+        {
+        }
+
+        /// <summary>
+        /// Initializes a new instance of the <see cref="AiSharedQueueDispatcher"/> class.
+        /// </summary>
+        public AiSharedQueueDispatcher(
+            IAiSharedQueue sharedQueue,
+            IAiSharedRunStore sharedRunStore,
+            IAiSharedRunDispatcher sharedRunDispatcher,
+            IAiRunAdmissionController admissionController,
+            IAiRuntimeAdmissionReservationStore reservationStore,
+            IAiRuntimeInstanceRegistry runtimeInstanceRegistry,
+            IAiRuntimeScaleOutRequestPublisher scaleOutPublisher,
+            IAiTenantRuntimeSettingsProvider tenantRuntimeSettingsProvider,
+            IExecutionContextAccessor executionContextAccessor,
+            ILogger<AiSharedQueueDispatcher> logger,
+            IAiRuntimeRecoveryForensicsRecorder forensicsRecorder)
         {
             _sharedQueue = sharedQueue ?? throw new ArgumentNullException(nameof(sharedQueue));
             _sharedRunStore = sharedRunStore ?? throw new ArgumentNullException(nameof(sharedRunStore));
@@ -81,6 +117,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
             _tenantRuntimeSettingsProvider = tenantRuntimeSettingsProvider ?? throw new ArgumentNullException(nameof(tenantRuntimeSettingsProvider));
             _executionContextAccessor = executionContextAccessor ?? throw new ArgumentNullException(nameof(executionContextAccessor));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+            _forensicsRecorder = forensicsRecorder ?? throw new ArgumentNullException(nameof(forensicsRecorder));
         }
 
         /// <inheritdoc />
@@ -564,6 +601,15 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                             dispatchResult.LocalRunId,
                             dispatchResult.ExecutionId);
 
+                        await RecordReplacementRuntimeSelectedForensicsAsync(
+                                queueItem,
+                                sharedRun,
+                                operationMetadata,
+                                targetRuntimeInstanceId,
+                                dispatchResult,
+                                cancellationToken)
+                            .ConfigureAwait(false);
+
                         var completed =
                             dispatchedRun ?? sharedRun;
 
@@ -634,6 +680,141 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                     Diagnostics = new[] { exception.Message }
                 };
             }
+        }
+
+        /// <summary>
+        /// Records that a replacement runtime instance was selected for a recovered shared run.
+        /// </summary>
+        /// <param name="queueItem">The claimed shared queue item.</param>
+        /// <param name="sharedRun">The shared run record.</param>
+        /// <param name="metadata">The merged operation metadata.</param>
+        /// <param name="replacementRuntimeInstanceId">The replacement runtime instance identifier.</param>
+        /// <param name="dispatchResult">The shared run dispatch result.</param>
+        /// <param name="cancellationToken">A token used to cancel the operation.</param>
+        /// <returns>A task that completes when the forensics event has been recorded.</returns>
+        private async Task RecordReplacementRuntimeSelectedForensicsAsync(
+            AiSharedQueueItem queueItem,
+            AiSharedRunRecord sharedRun,
+            IReadOnlyDictionary<string, string> metadata,
+            string replacementRuntimeInstanceId,
+            AiSharedRunDispatchResult dispatchResult,
+            CancellationToken cancellationToken)
+        {
+            if (!TryResolveRecoveryForensicsId(
+                    queueItem,
+                    sharedRun,
+                    metadata,
+                    out var forensicsId,
+                    out var executionId,
+                    out var failedLocalRunId))
+            {
+                return;
+            }
+
+            await _forensicsRecorder
+                .RecordEventAsync(
+                    new AiRuntimeRecoveryForensicsEvent
+                    {
+                        EventId = string.Join(
+                            ":",
+                            forensicsId,
+                            AiRuntimeRecoveryForensicsEventType.ReplacementRuntimeSelected,
+                            replacementRuntimeInstanceId,
+                            dispatchResult.LocalRunId ?? string.Empty),
+                        ForensicsId = forensicsId,
+                        TimestampUtc = DateTimeOffset.UtcNow,
+                        EventType = AiRuntimeRecoveryForensicsEventType.ReplacementRuntimeSelected,
+                        Outcome = "selected",
+                        Reason = "replacement-runtime-selected-for-recovery-redispatch",
+                        ExecutionId = executionId,
+                        SharedRunId = sharedRun.SharedRunId,
+                        LocalRunId = dispatchResult.LocalRunId,
+                        RuntimeInstanceId = replacementRuntimeInstanceId,
+                        Metadata = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                        {
+                            ["tenant.id"] = sharedRun.ExecutionContextSnapshot.TenantId ?? string.Empty,
+                            ["tenant.group.id"] = sharedRun.ExecutionContextSnapshot.TenantGroupId ?? string.Empty,
+                            ["replacement.runtimeInstanceId"] = replacementRuntimeInstanceId,
+                            ["replacement.localRunId"] = dispatchResult.LocalRunId ?? string.Empty,
+                            ["replacement.executionId"] = dispatchResult.ExecutionId ?? executionId ?? string.Empty,
+                            ["failed.runtimeInstanceId"] = ResolveMetadataValue(metadata, RecoveryFailedRuntimeInstanceIdMetadataKey),
+                            ["failed.localRunId"] = failedLocalRunId ?? string.Empty,
+                            ["queue.claimToken"] = queueItem.ClaimToken ?? string.Empty
+                        }
+                    },
+                    cancellationToken)
+                .ConfigureAwait(false);
+        }
+
+        /// <summary>
+        /// Tries to resolve recovery forensics identity from dispatch metadata.
+        /// </summary>
+        /// <param name="queueItem">The claimed queue item.</param>
+        /// <param name="sharedRun">The shared run record.</param>
+        /// <param name="metadata">The merged operation metadata.</param>
+        /// <param name="forensicsId">The resolved forensics identifier.</param>
+        /// <param name="executionId">The resolved durable execution identifier.</param>
+        /// <param name="failedLocalRunId">The failed local run identifier.</param>
+        /// <returns><c>true</c> when the recovery forensics identity can be resolved; otherwise, <c>false</c>.</returns>
+        private static bool TryResolveRecoveryForensicsId(
+            AiSharedQueueItem queueItem,
+            AiSharedRunRecord sharedRun,
+            IReadOnlyDictionary<string, string> metadata,
+            out string forensicsId,
+            out string? executionId,
+            out string? failedLocalRunId)
+        {
+            if (TryGetMetadataValue(
+                    metadata,
+                    RecoveryForensicsIdMetadataKey,
+                    out var explicitForensicsId))
+            {
+                forensicsId = explicitForensicsId;
+                executionId = ResolveMetadataValue(metadata, RecoveryFailedExecutionIdMetadataKey);
+                failedLocalRunId = ResolveMetadataValue(metadata, RecoveryFailedLocalRunIdMetadataKey);
+
+                return true;
+            }
+
+            executionId =
+                ResolveMetadataValue(metadata, RecoveryFailedExecutionIdMetadataKey);
+
+            failedLocalRunId =
+                ResolveMetadataValue(metadata, RecoveryFailedLocalRunIdMetadataKey);
+
+            if (string.IsNullOrWhiteSpace(executionId) ||
+                string.IsNullOrWhiteSpace(failedLocalRunId))
+            {
+                forensicsId = string.Empty;
+                return false;
+            }
+
+            forensicsId = string.Join(
+                ":",
+                "runtime-recovery",
+                executionId,
+                sharedRun.SharedRunId,
+                failedLocalRunId);
+
+            return !string.IsNullOrWhiteSpace(queueItem.SharedRunId);
+        }
+
+        /// <summary>
+        /// Resolves a metadata value or an empty string.
+        /// </summary>
+        /// <param name="metadata">The metadata dictionary.</param>
+        /// <param name="key">The metadata key.</param>
+        /// <returns>The metadata value when present; otherwise, an empty string.</returns>
+        private static string ResolveMetadataValue(
+            IReadOnlyDictionary<string, string> metadata,
+            string key)
+        {
+            return TryGetMetadataValue(
+                metadata,
+                key,
+                out var value)
+                ? value
+                : string.Empty;
         }
 
         /// <summary>
