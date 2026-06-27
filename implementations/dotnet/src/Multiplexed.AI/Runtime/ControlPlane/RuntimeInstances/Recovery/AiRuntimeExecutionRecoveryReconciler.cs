@@ -192,15 +192,18 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery
                     var dryRun = options.DryRun ||
                         !options.RequeueUnfinishedRuns;
 
+                    var transitionReason =
+                        CreateTransitionReason(
+                            unfinishedRun,
+                            dryRun);
+
                     var transition = await transitionService
                         .ApplyAsync(
                             new AiRuntimeExecutionRecoveryTransitionRequest
                             {
                                 Ownership = ownership,
                                 DryRun = dryRun,
-                                Reason = dryRun
-                                    ? "dry-run-runtime-execution-recovery"
-                                    : "runtime-execution-recovery-requeue"
+                                Reason = transitionReason
                             },
                             cancellationToken)
                         .ConfigureAwait(false);
@@ -233,6 +236,48 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery
                 RecoveredRunCount = recoveredRunCount,
                 Decisions = decisions
             };
+        }
+
+
+        /// <summary>
+        /// Creates the transition reason used by the recovery transition service.
+        /// </summary>
+        /// <param name="unfinishedRun">The unfinished runtime run index entry.</param>
+        /// <param name="dryRun">A value indicating whether the transition is a dry run.</param>
+        /// <returns>The transition reason.</returns>
+        private static string CreateTransitionReason(
+            AiRuntimeRunExecutionIndexEntry unfinishedRun,
+            bool dryRun)
+        {
+            ArgumentNullException.ThrowIfNull(unfinishedRun);
+
+            if (IsLocalQueuedRecoveryCandidate(unfinishedRun))
+            {
+                return dryRun
+                    ? "dry-run-runtime-local-queued-recovery"
+                    : "runtime-local-queued-recovery-requeue";
+            }
+
+            return dryRun
+                ? "dry-run-runtime-execution-recovery"
+                : "runtime-execution-recovery-requeue";
+        }
+
+        /// <summary>
+        /// Determines whether the unfinished run represents local queued work that has not yet started an execution.
+        /// </summary>
+        /// <param name="unfinishedRun">The unfinished runtime run index entry.</param>
+        /// <returns><c>true</c> when the run is local queued work without an execution identifier; otherwise, <c>false</c>.</returns>
+        private static bool IsLocalQueuedRecoveryCandidate(
+            AiRuntimeRunExecutionIndexEntry unfinishedRun)
+        {
+            ArgumentNullException.ThrowIfNull(unfinishedRun);
+
+            return string.Equals(
+                    unfinishedRun.Status,
+                    "queued",
+                    StringComparison.OrdinalIgnoreCase) &&
+                string.IsNullOrWhiteSpace(unfinishedRun.ExecutionId);
         }
 
         /// <summary>

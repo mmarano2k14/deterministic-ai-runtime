@@ -366,7 +366,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue.Redis
             CancellationToken cancellationToken = default)
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(runId);
-            ArgumentException.ThrowIfNullOrWhiteSpace(executionId);
             ArgumentException.ThrowIfNullOrWhiteSpace(reason);
 
             cancellationToken.ThrowIfCancellationRequested();
@@ -398,6 +397,18 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue.Redis
                 return false;
             }
 
+            if (!CanMarkRequeuedForRecovery(
+                    existing,
+                    executionId))
+            {
+                return false;
+            }
+
+            var effectiveExecutionId =
+                string.IsNullOrWhiteSpace(executionId)
+                    ? existing.ExecutionId ?? string.Empty
+                    : executionId;
+
             var now = DateTimeOffset.UtcNow;
 
             await _database
@@ -405,7 +416,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue.Redis
                     BuildItemKey(controlPlaneId, runId),
                     new HashEntry[]
                     {
-                        new("executionId", executionId),
+                        new("executionId", effectiveExecutionId),
                         new("status", StatusRequeuedForRecovery),
                         new("failureReason", reason),
                         new("completedAtUtc", FormatDate(now))
@@ -413,6 +424,30 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue.Redis
                 .ConfigureAwait(false);
 
             return true;
+        }
+
+        /// <summary>
+        /// Determines whether the runtime run index entry can be marked as requeued for recovery.
+        /// </summary>
+        /// <param name="existing">The existing runtime run index entry.</param>
+        /// <param name="requestedExecutionId">The optional execution identifier requested by the recovery transition.</param>
+        /// <returns><c>true</c> when the recovery marker is safe to apply; otherwise, <c>false</c>.</returns>
+        private static bool CanMarkRequeuedForRecovery(
+            AiRuntimeRunExecutionIndexEntry existing,
+            string? requestedExecutionId)
+        {
+            ArgumentNullException.ThrowIfNull(existing);
+
+            if (!string.IsNullOrWhiteSpace(requestedExecutionId))
+            {
+                return string.IsNullOrWhiteSpace(existing.ExecutionId) ||
+                    string.Equals(
+                        existing.ExecutionId,
+                        requestedExecutionId,
+                        StringComparison.Ordinal);
+            }
+
+            return string.IsNullOrWhiteSpace(existing.ExecutionId);
         }
 
         /// <inheritdoc />

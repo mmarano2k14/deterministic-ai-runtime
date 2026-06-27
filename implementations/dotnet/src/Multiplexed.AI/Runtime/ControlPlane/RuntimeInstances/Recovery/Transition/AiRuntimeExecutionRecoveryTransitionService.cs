@@ -30,6 +30,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery.Transiti
         private const string RecoveryForensicsIdMetadataKey = "recovery.forensicsId";
         private const string RecoveryModeMetadataKey = "recovery.mode";
         private const string RecoveryModeResumeExistingExecution = "resume-existing-execution";
+        private const string RecoveryModeRequeueLocalQueuedRun = "requeue-local-queued-run";
         private const string RecoveryKindInFlightExecutionResume = "in-flight-execution-resume";
         private const string RecoveryFailedExecutionIdMetadataKey = "recovery.failedExecutionId";
         private const string RecoveryFailedRuntimeInstanceIdMetadataKey = "recovery.failedRuntimeInstanceId";
@@ -187,23 +188,18 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery.Transiti
                 };
             }
 
-            if (string.IsNullOrWhiteSpace(ownership.ExecutionId))
-            {
-                return new AiRuntimeExecutionRecoveryTransitionResult
-                {
-                    Accepted = false,
-                    Changed = false,
-                    SharedRunId = ownership.SharedRunId,
-                    RuntimeInstanceId = ownership.RuntimeInstanceId,
-                    LocalRunId = ownership.LocalRunId,
-                    ExecutionId = ownership.ExecutionId,
-                    Action = "none",
-                    Reason = "execution-id-missing"
-                };
-            }
+            var isLocalQueuedRecovery =
+                IsLocalQueuedRecovery(ownership);
 
-            var reason = request.Reason ?? "runtime-execution-recovery-requeue";
-            var forensicsId = CreateForensicsId(ownership);
+            var reason =
+                request.Reason ?? (isLocalQueuedRecovery
+                    ? "runtime-local-queued-recovery-requeue"
+                    : "runtime-execution-recovery-requeue");
+
+            var forensicsId =
+                isLocalQueuedRecovery
+                    ? null
+                    : CreateForensicsId(ownership);
 
             if (request.DryRun)
             {
@@ -222,10 +218,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery.Transiti
 
             var metadata =
                 this.options.EnableDagExecutionResume
-                    ? CreateDagResumeRecoveryMetadata(
+                    ? CreateRecoveryMetadata(
                         ownership,
                         reason,
-                        forensicsId)
+                        forensicsId,
+                        isLocalQueuedRecovery)
                     : null;
 
             var requeued = await this.sharedQueue
@@ -275,12 +272,16 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery.Transiti
                 };
             }
 
-            await this.RecordSuccessfulRecoveryTransitionForensicsAsync(
-                    ownership,
-                    reason,
-                    forensicsId,
-                    cancellationToken)
-                .ConfigureAwait(false);
+            if (!isLocalQueuedRecovery &&
+                !string.IsNullOrWhiteSpace(forensicsId))
+            {
+                await this.RecordSuccessfulRecoveryTransitionForensicsAsync(
+                        ownership,
+                        reason,
+                        forensicsId,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+            }
 
             return new AiRuntimeExecutionRecoveryTransitionResult
             {
@@ -296,21 +297,25 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery.Transiti
         }
 
         /// <summary>
-        /// Creates metadata instructing the next runtime dispatch to resume the existing durable DAG execution.
+        /// Creates metadata instructing the next runtime dispatch how to recover the shared run.
         /// </summary>
         /// <param name="ownership">The resolved shared run ownership.</param>
         /// <param name="reason">The recovery reason.</param>
-        /// <param name="forensicsId">The recovery forensics identifier.</param>
+        /// <param name="forensicsId">The optional recovery forensics identifier.</param>
+        /// <param name="isLocalQueuedRecovery">A value indicating whether the recovery candidate is local queued work without an execution id.</param>
         /// <returns>The recovery metadata.</returns>
-        private static IReadOnlyDictionary<string, string> CreateDagResumeRecoveryMetadata(
+        private static IReadOnlyDictionary<string, string> CreateRecoveryMetadata(
             AiSharedRunOwnershipResolutionResult ownership,
             string reason,
-            string forensicsId)
+            string? forensicsId,
+            bool isLocalQueuedRecovery)
         {
             return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
             {
-                [RecoveryForensicsIdMetadataKey] = forensicsId,
-                [RecoveryModeMetadataKey] = RecoveryModeResumeExistingExecution,
+                [RecoveryForensicsIdMetadataKey] = forensicsId ?? string.Empty,
+                [RecoveryModeMetadataKey] = isLocalQueuedRecovery
+                    ? RecoveryModeRequeueLocalQueuedRun
+                    : RecoveryModeResumeExistingExecution,
                 [RecoveryFailedExecutionIdMetadataKey] = ownership.ExecutionId ?? string.Empty,
                 [RecoveryFailedRuntimeInstanceIdMetadataKey] = ownership.RuntimeInstanceId ?? string.Empty,
                 [RecoveryFailedLocalRunIdMetadataKey] = ownership.LocalRunId ?? string.Empty,
@@ -416,6 +421,20 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery.Transiti
                     record,
                     cancellationToken)
                 .ConfigureAwait(false);
+        }
+
+
+        /// <summary>
+        /// Determines whether the ownership represents local queued work that has not yet started a durable execution.
+        /// </summary>
+        /// <param name="ownership">The resolved shared run ownership.</param>
+        /// <returns><c>true</c> when the ownership has no execution id; otherwise, <c>false</c>.</returns>
+        private static bool IsLocalQueuedRecovery(
+            AiSharedRunOwnershipResolutionResult ownership)
+        {
+            ArgumentNullException.ThrowIfNull(ownership);
+
+            return string.IsNullOrWhiteSpace(ownership.ExecutionId);
         }
 
         /// <summary>
