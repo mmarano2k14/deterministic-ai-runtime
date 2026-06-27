@@ -1,9 +1,11 @@
 ﻿using Microsoft.Extensions.Options;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Forensics;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Recovery;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Recovery.Transition;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Ownership;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Queue;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery.Transition
@@ -27,6 +29,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery.Transiti
     {
         private const string RecoveryModeMetadataKey = "recovery.mode";
         private const string RecoveryModeResumeExistingExecution = "resume-existing-execution";
+        private const string RecoveryKindInFlightExecutionResume = "in-flight-execution-resume";
         private const string RecoveryFailedExecutionIdMetadataKey = "recovery.failedExecutionId";
         private const string RecoveryFailedRuntimeInstanceIdMetadataKey = "recovery.failedRuntimeInstanceId";
         private const string RecoveryFailedLocalRunIdMetadataKey = "recovery.failedLocalRunId";
@@ -34,6 +37,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery.Transiti
 
         private readonly IAiSharedQueue sharedQueue;
         private readonly IAiRuntimeRunExecutionIndex runtimeRunExecutionIndex;
+        private readonly IAiRuntimeRecoveryForensicsRecorder forensicsRecorder;
         private readonly AiRuntimeExecutionRecoveryReconciliationOptions options;
 
         /// <summary>
@@ -47,7 +51,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery.Transiti
             : this(
                 sharedQueue,
                 runtimeRunExecutionIndex,
-                Options.Create(new AiRuntimeExecutionRecoveryReconciliationOptions()))
+                Options.Create(new AiRuntimeExecutionRecoveryReconciliationOptions()),
+                new NoopAiRuntimeRecoveryForensicsRecorder())
         {
         }
 
@@ -61,13 +66,35 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery.Transiti
             IAiSharedQueue sharedQueue,
             IAiRuntimeRunExecutionIndex runtimeRunExecutionIndex,
             IOptions<AiRuntimeExecutionRecoveryReconciliationOptions> options)
+            : this(
+                sharedQueue,
+                runtimeRunExecutionIndex,
+                options,
+                new NoopAiRuntimeRecoveryForensicsRecorder())
+        {
+        }
+
+        /// <summary>
+        /// Initializes a new instance of the <see cref="AiRuntimeExecutionRecoveryTransitionService"/> class.
+        /// </summary>
+        /// <param name="sharedQueue">The shared queue.</param>
+        /// <param name="runtimeRunExecutionIndex">The runtime run execution index.</param>
+        /// <param name="options">The runtime execution recovery reconciliation options.</param>
+        /// <param name="forensicsRecorder">The runtime recovery forensics recorder.</param>
+        public AiRuntimeExecutionRecoveryTransitionService(
+            IAiSharedQueue sharedQueue,
+            IAiRuntimeRunExecutionIndex runtimeRunExecutionIndex,
+            IOptions<AiRuntimeExecutionRecoveryReconciliationOptions> options,
+            IAiRuntimeRecoveryForensicsRecorder forensicsRecorder)
         {
             ArgumentNullException.ThrowIfNull(sharedQueue);
             ArgumentNullException.ThrowIfNull(runtimeRunExecutionIndex);
             ArgumentNullException.ThrowIfNull(options);
+            ArgumentNullException.ThrowIfNull(forensicsRecorder);
 
             this.sharedQueue = sharedQueue;
             this.runtimeRunExecutionIndex = runtimeRunExecutionIndex;
+            this.forensicsRecorder = forensicsRecorder;
             this.options = options.Value;
         }
 
@@ -229,6 +256,12 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery.Transiti
                     cancellationToken)
                 .ConfigureAwait(false);
 
+            await this.RecordSuccessfulRecoveryTransitionForensicsAsync(
+                    ownership,
+                    reason,
+                    cancellationToken)
+                .ConfigureAwait(false);
+
             return new AiRuntimeExecutionRecoveryTransitionResult
             {
                 Accepted = true,
@@ -259,6 +292,174 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery.Transiti
                 [RecoveryFailedRuntimeInstanceIdMetadataKey] = ownership.RuntimeInstanceId ?? string.Empty,
                 [RecoveryFailedLocalRunIdMetadataKey] = ownership.LocalRunId ?? string.Empty,
                 [RecoveryReasonMetadataKey] = reason
+            };
+        }
+
+        /// <summary>
+        /// Records forensics evidence after a successful recovery transition mutation.
+        /// </summary>
+        /// <param name="ownership">The resolved shared run ownership.</param>
+        /// <param name="reason">The recovery reason.</param>
+        /// <param name="cancellationToken">A token used to cancel the operation.</param>
+        /// <returns>A task that completes when the forensics evidence has been recorded.</returns>
+        private async Task RecordSuccessfulRecoveryTransitionForensicsAsync(
+            AiSharedRunOwnershipResolutionResult ownership,
+            string reason,
+            CancellationToken cancellationToken)
+        {
+            var now = DateTimeOffset.UtcNow;
+            var forensicsId = CreateForensicsId(ownership);
+            var runtimeFailureIncidentId = CreateRuntimeFailureIncidentId(ownership);
+
+            var record = new AiRuntimeRecoveryForensicsRecord
+            {
+                Identity = new AiRuntimeRecoveryForensicsIdentity
+                {
+                    ForensicsId = forensicsId,
+                    ExecutionId = ownership.ExecutionId ?? string.Empty,
+                    SharedRunId = ownership.SharedRunId
+                },
+                Failure = new AiRuntimeRecoveryFailureInfo
+                {
+                    RuntimeFailureIncidentId = runtimeFailureIncidentId,
+                    FailedRuntimeInstanceId = ownership.RuntimeInstanceId,
+                    FailedLocalRunId = ownership.LocalRunId,
+                    FailureSignal = "runtime-execution-recovery",
+                    SuppressCapacityReason = reason,
+                    FailureDetectedAtUtc = now
+                },
+                Recovery = new AiRuntimeRecoveryInfo
+                {
+                    RecoveryMode = RecoveryModeResumeExistingExecution,
+                    RecoveryKind = RecoveryKindInFlightExecutionResume,
+                    Outcome = "requeued",
+                    Reason = reason,
+                    RecoveryStartedAtUtc = now
+                },
+                Artifacts = new AiRuntimeRecoveryArtifacts
+                {
+                    Restored =
+                    [
+                        AiRuntimeRecoveryArtifactName.DurableExecutionId,
+                        AiRuntimeRecoveryArtifactName.SharedRunMetadata,
+                        AiRuntimeRecoveryArtifactName.RecoveryMetadata
+                    ],
+                    Recreated =
+                    [
+                        AiRuntimeRecoveryArtifactName.DispatchAssignment
+                    ],
+                    LostVolatile =
+                    [
+                        AiRuntimeRecoveryArtifactName.FailedRuntimeLocalQueueMemory,
+                        AiRuntimeRecoveryArtifactName.OldClaimToken,
+                        AiRuntimeRecoveryArtifactName.OldLease,
+                        AiRuntimeRecoveryArtifactName.OldLocalRunAsActiveWork
+                    ]
+                },
+                Events =
+                [
+                    CreateForensicsEvent(
+                        forensicsId,
+                        AiRuntimeRecoveryForensicsEventType.SharedRunRequeuedForResume,
+                        "requeued",
+                        reason,
+                        ownership,
+                        now),
+                    CreateForensicsEvent(
+                        forensicsId,
+                        AiRuntimeRecoveryForensicsEventType.FailedLocalRunMarkedRequeuedForRecovery,
+                        "requeued",
+                        reason,
+                        ownership,
+                        now)
+                ],
+                Metadata = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    [RecoveryModeMetadataKey] = RecoveryModeResumeExistingExecution,
+                    [RecoveryFailedExecutionIdMetadataKey] = ownership.ExecutionId ?? string.Empty,
+                    [RecoveryFailedRuntimeInstanceIdMetadataKey] = ownership.RuntimeInstanceId ?? string.Empty,
+                    [RecoveryFailedLocalRunIdMetadataKey] = ownership.LocalRunId ?? string.Empty,
+                    [RecoveryReasonMetadataKey] = reason
+                },
+                CreatedAtUtc = now,
+                UpdatedAtUtc = now
+            };
+
+            await this.forensicsRecorder
+                .RecordAsync(
+                    record,
+                    cancellationToken)
+                .ConfigureAwait(false);
+        }
+
+        /// <summary>
+        /// Creates a deterministic forensics identifier for the recovery attempt.
+        /// </summary>
+        /// <param name="ownership">The resolved shared run ownership.</param>
+        /// <returns>The forensics identifier.</returns>
+        private static string CreateForensicsId(
+            AiSharedRunOwnershipResolutionResult ownership)
+        {
+            return string.Join(
+                ":",
+                "runtime-recovery",
+                ownership.ExecutionId,
+                ownership.SharedRunId,
+                ownership.LocalRunId);
+        }
+
+        /// <summary>
+        /// Creates a deterministic runtime failure incident identifier.
+        /// </summary>
+        /// <param name="ownership">The resolved shared run ownership.</param>
+        /// <returns>The runtime failure incident identifier.</returns>
+        private static string CreateRuntimeFailureIncidentId(
+            AiSharedRunOwnershipResolutionResult ownership)
+        {
+            return string.Join(
+                ":",
+                "runtime-failure",
+                ownership.RuntimeInstanceId);
+        }
+
+        /// <summary>
+        /// Creates a recovery forensics event.
+        /// </summary>
+        /// <param name="forensicsId">The forensics identifier.</param>
+        /// <param name="eventType">The event type.</param>
+        /// <param name="outcome">The event outcome.</param>
+        /// <param name="reason">The event reason.</param>
+        /// <param name="ownership">The resolved shared run ownership.</param>
+        /// <param name="timestampUtc">The event timestamp.</param>
+        /// <returns>The recovery forensics event.</returns>
+        private static AiRuntimeRecoveryForensicsEvent CreateForensicsEvent(
+            string forensicsId,
+            string eventType,
+            string outcome,
+            string reason,
+            AiSharedRunOwnershipResolutionResult ownership,
+            DateTimeOffset timestampUtc)
+        {
+            return new AiRuntimeRecoveryForensicsEvent
+            {
+                EventId = string.Join(
+                    ":",
+                    forensicsId,
+                    eventType),
+                ForensicsId = forensicsId,
+                TimestampUtc = timestampUtc,
+                EventType = eventType,
+                Outcome = outcome,
+                Reason = reason,
+                ExecutionId = ownership.ExecutionId,
+                SharedRunId = ownership.SharedRunId,
+                LocalRunId = ownership.LocalRunId,
+                RuntimeInstanceId = ownership.RuntimeInstanceId,
+                Metadata = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    [RecoveryModeMetadataKey] = RecoveryModeResumeExistingExecution,
+                    [RecoveryReasonMetadataKey] = reason
+                }
             };
         }
     }
