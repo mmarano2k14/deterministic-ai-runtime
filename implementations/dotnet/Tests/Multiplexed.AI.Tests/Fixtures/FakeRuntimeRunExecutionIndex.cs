@@ -1,9 +1,14 @@
-﻿using Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue;
+﻿using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue;
 
 namespace Multiplexed.AI.Tests.Fixtures
 {
     /// <summary>
-    /// Fake runtime run execution index used by transition service tests.
+    /// Fake runtime run execution index used by transition service and reconciler tests.
     /// </summary>
     public sealed class FakeRuntimeRunExecutionIndex : IAiRuntimeRunExecutionIndex
     {
@@ -36,6 +41,11 @@ namespace Multiplexed.AI.Tests.Fixtures
         /// Gets the registered queued entries.
         /// </summary>
         public List<AiRuntimeRunExecutionIndexEntry> RegisteredEntries { get; } = [];
+
+        /// <summary>
+        /// Gets unfinished runs returned by runtime-instance recovery scans.
+        /// </summary>
+        public List<AiRuntimeRunExecutionIndexEntry> UnfinishedRuns { get; } = [];
 
         /// <inheritdoc />
         public Task RegisterQueuedAsync(
@@ -105,7 +115,14 @@ namespace Multiplexed.AI.Tests.Fixtures
             string runId,
             CancellationToken cancellationToken = default)
         {
-            return Task.FromResult<AiRuntimeRunExecutionIndexEntry?>(null);
+            var entry = RegisteredEntries
+                .Concat(UnfinishedRuns)
+                .FirstOrDefault(x => string.Equals(
+                    x.RunId,
+                    runId,
+                    StringComparison.OrdinalIgnoreCase));
+
+            return Task.FromResult<AiRuntimeRunExecutionIndexEntry?>(entry);
         }
 
         /// <inheritdoc />
@@ -113,7 +130,14 @@ namespace Multiplexed.AI.Tests.Fixtures
             string runtimeInstanceId,
             CancellationToken cancellationToken = default)
         {
-            return Task.FromResult<IReadOnlyList<AiRuntimeRunExecutionIndexEntry>>([]);
+            var matches = UnfinishedRuns
+                .Where(x => string.Equals(
+                    x.RuntimeInstanceId,
+                    runtimeInstanceId,
+                    StringComparison.OrdinalIgnoreCase))
+                .ToList();
+
+            return Task.FromResult<IReadOnlyList<AiRuntimeRunExecutionIndexEntry>>(matches);
         }
     }
 }
