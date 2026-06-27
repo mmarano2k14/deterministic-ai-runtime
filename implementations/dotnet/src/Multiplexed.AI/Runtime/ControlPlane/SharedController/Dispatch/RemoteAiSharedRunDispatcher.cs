@@ -1,8 +1,10 @@
 ﻿using Microsoft.Extensions.Logging;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Forensics;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.SharedInstance;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Dispatch;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Dispatch
 {
@@ -44,8 +46,14 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Dispatch
     /// </remarks>
     public sealed class RemoteAiSharedRunDispatcher : IAiSharedRunDispatcher
     {
+        private const string RecoveryForensicsIdMetadataKey = "recovery.forensicsId";
+        private const string RecoveryFailedExecutionIdMetadataKey = "recovery.failedExecutionId";
+        private const string RecoveryFailedLocalRunIdMetadataKey = "recovery.failedLocalRunId";
+        private const string RecoveryFailedRuntimeInstanceIdMetadataKey = "recovery.failedRuntimeInstanceId";
+
         private readonly IAiRuntimeInstanceProviderCapabilityResolver providerCapabilityResolver;
         private readonly IAiRuntimeInstanceRegistry runtimeInstanceRegistry;
+        private readonly IAiRuntimeRecoveryForensicsRecorder forensicsRecorder;
         private readonly ILogger<RemoteAiSharedRunDispatcher> logger;
 
         /// <summary>
@@ -60,6 +68,28 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Dispatch
             IAiRuntimeInstanceProviderCapabilityResolver providerCapabilityResolver,
             IAiRuntimeInstanceRegistry runtimeInstanceRegistry,
             ILogger<RemoteAiSharedRunDispatcher> logger)
+            : this(
+                providerCapabilityResolver,
+                runtimeInstanceRegistry,
+                logger,
+                new NoopAiRuntimeRecoveryForensicsRecorder())
+        {
+        }
+
+        /// <summary>
+        /// Initializes a new instance of the <see cref="RemoteAiSharedRunDispatcher"/> class.
+        /// </summary>
+        /// <param name="providerCapabilityResolver">
+        /// The provider capability resolver used to resolve the dispatch provider for the target runtime instance.
+        /// </param>
+        /// <param name="runtimeInstanceRegistry">The runtime instance registry used for final dispatch safety checks.</param>
+        /// <param name="logger">The logger used for diagnostics.</param>
+        /// <param name="forensicsRecorder">The runtime recovery forensics recorder.</param>
+        public RemoteAiSharedRunDispatcher(
+            IAiRuntimeInstanceProviderCapabilityResolver providerCapabilityResolver,
+            IAiRuntimeInstanceRegistry runtimeInstanceRegistry,
+            ILogger<RemoteAiSharedRunDispatcher> logger,
+            IAiRuntimeRecoveryForensicsRecorder forensicsRecorder)
         {
             this.providerCapabilityResolver =
                 providerCapabilityResolver
@@ -72,6 +102,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Dispatch
             this.logger =
                 logger
                 ?? throw new ArgumentNullException(nameof(logger));
+
+            this.forensicsRecorder =
+                forensicsRecorder
+                ?? throw new ArgumentNullException(nameof(forensicsRecorder));
         }
 
         /// <inheritdoc />
@@ -289,6 +323,17 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Dispatch
                     instanceResult.Success,
                     instanceResult.FailureReason);
 
+            if (instanceResult.Success)
+            {
+                await RecordRemoteRecoveryDispatchForensicsAsync(
+                        request,
+                        resultMetadata,
+                        instanceResult.LocalRunId,
+                        instanceResult.ExecutionId,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+            }
+
             return new AiSharedRunDispatchResult
             {
                 Success = instanceResult.Success,
@@ -308,6 +353,240 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Dispatch
                 DurationMs = durationMs,
                 Metadata = resultMetadata
             };
+        }
+
+        /// <summary>
+        /// Records remote runtime recovery dispatch forensics after a replacement local run has been created by the target runtime instance.
+        /// </summary>
+        /// <param name="request">The shared run dispatch request.</param>
+        /// <param name="metadata">The merged operation metadata.</param>
+        /// <param name="localRunId">The replacement local run identifier.</param>
+        /// <param name="executionId">The durable execution identifier.</param>
+        /// <param name="cancellationToken">A token used to cancel the operation.</param>
+        /// <returns>A task that completes when the forensics events have been recorded.</returns>
+        private async Task RecordRemoteRecoveryDispatchForensicsAsync(
+            AiSharedRunDispatchRequest request,
+            IReadOnlyDictionary<string, string> metadata,
+            string? localRunId,
+            string? executionId,
+            CancellationToken cancellationToken)
+        {
+            if (string.IsNullOrWhiteSpace(localRunId))
+            {
+                return;
+            }
+
+            if (!TryResolveRecoveryForensicsId(
+                    request,
+                    metadata,
+                    out var forensicsId,
+                    out var resolvedExecutionId,
+                    out var failedLocalRunId))
+            {
+                return;
+            }
+
+            var durableExecutionId =
+                !string.IsNullOrWhiteSpace(executionId)
+                    ? executionId
+                    : resolvedExecutionId;
+
+            await forensicsRecorder
+                .RecordEventAsync(
+                    new AiRuntimeRecoveryForensicsEvent
+                    {
+                        EventId = string.Join(
+                            ":",
+                            forensicsId,
+                            AiRuntimeRecoveryForensicsEventType.ReplacementLocalRunRegistered,
+                            request.RuntimeInstanceId,
+                            localRunId),
+                        ForensicsId = forensicsId,
+                        TimestampUtc = DateTimeOffset.UtcNow,
+                        EventType = AiRuntimeRecoveryForensicsEventType.ReplacementLocalRunRegistered,
+                        Outcome = "registered",
+                        Reason = "remote-replacement-local-run-registered-for-recovery-redispatch",
+                        ExecutionId = durableExecutionId,
+                        SharedRunId = request.SharedRun.SharedRunId,
+                        LocalRunId = localRunId,
+                        RuntimeInstanceId = request.RuntimeInstanceId,
+                        Metadata = CreateRecoveryDispatchEventMetadata(
+                            request,
+                            metadata,
+                            localRunId,
+                            durableExecutionId,
+                            failedLocalRunId)
+                    },
+                    cancellationToken)
+                .ConfigureAwait(false);
+
+            await forensicsRecorder
+                .RecordEventAsync(
+                    new AiRuntimeRecoveryForensicsEvent
+                    {
+                        EventId = string.Join(
+                            ":",
+                            forensicsId,
+                            AiRuntimeRecoveryForensicsEventType.ResumeContextSeeded,
+                            request.RuntimeInstanceId,
+                            localRunId),
+                        ForensicsId = forensicsId,
+                        TimestampUtc = DateTimeOffset.UtcNow,
+                        EventType = AiRuntimeRecoveryForensicsEventType.ResumeContextSeeded,
+                        Outcome = "seeded",
+                        Reason = "remote-resume-context-seeded-from-shared-run-snapshot",
+                        ExecutionId = durableExecutionId,
+                        SharedRunId = request.SharedRun.SharedRunId,
+                        LocalRunId = localRunId,
+                        RuntimeInstanceId = request.RuntimeInstanceId,
+                        Metadata = CreateRecoveryDispatchEventMetadata(
+                            request,
+                            metadata,
+                            localRunId,
+                            durableExecutionId,
+                            failedLocalRunId)
+                    },
+                    cancellationToken)
+                .ConfigureAwait(false);
+        }
+
+        /// <summary>
+        /// Creates metadata for remote recovery dispatch forensics events.
+        /// </summary>
+        /// <param name="request">The shared run dispatch request.</param>
+        /// <param name="metadata">The merged operation metadata.</param>
+        /// <param name="localRunId">The replacement local run identifier.</param>
+        /// <param name="executionId">The durable execution identifier.</param>
+        /// <param name="failedLocalRunId">The failed local run identifier.</param>
+        /// <returns>The metadata dictionary.</returns>
+        private static IReadOnlyDictionary<string, string> CreateRecoveryDispatchEventMetadata(
+            AiSharedRunDispatchRequest request,
+            IReadOnlyDictionary<string, string> metadata,
+            string localRunId,
+            string? executionId,
+            string? failedLocalRunId)
+        {
+            return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["tenant.id"] = request.SharedRun.ExecutionContextSnapshot.TenantId ?? string.Empty,
+                ["tenant.group.id"] = request.SharedRun.ExecutionContextSnapshot.TenantGroupId ?? string.Empty,
+                ["replacement.runtimeInstanceId"] = request.RuntimeInstanceId,
+                ["replacement.localRunId"] = localRunId,
+                ["replacement.executionId"] = executionId ?? string.Empty,
+                ["failed.runtimeInstanceId"] = ResolveMetadataValue(metadata, RecoveryFailedRuntimeInstanceIdMetadataKey),
+                ["failed.localRunId"] = failedLocalRunId ?? string.Empty,
+                ["claim.token"] = request.ClaimToken ?? string.Empty,
+                ["resume.contextKey"] = request.SharedRun.ExecutionContextSnapshot.ContextKey ?? string.Empty,
+                ["resume.source"] = "shared-run.execution-context-snapshot",
+                ["remote.dispatch"] = "true"
+            };
+        }
+
+        /// <summary>
+        /// Tries to resolve recovery forensics identity from dispatch metadata.
+        /// </summary>
+        /// <param name="request">The shared run dispatch request.</param>
+        /// <param name="metadata">The merged operation metadata.</param>
+        /// <param name="forensicsId">The resolved forensics identifier.</param>
+        /// <param name="executionId">The resolved durable execution identifier.</param>
+        /// <param name="failedLocalRunId">The failed local run identifier.</param>
+        /// <returns><c>true</c> when the recovery forensics identity can be resolved; otherwise, <c>false</c>.</returns>
+        private static bool TryResolveRecoveryForensicsId(
+            AiSharedRunDispatchRequest request,
+            IReadOnlyDictionary<string, string> metadata,
+            out string forensicsId,
+            out string? executionId,
+            out string? failedLocalRunId)
+        {
+            if (TryGetMetadataValue(
+                    metadata,
+                    RecoveryForensicsIdMetadataKey,
+                    out var explicitForensicsId))
+            {
+                forensicsId = explicitForensicsId;
+                executionId = ResolveMetadataValue(metadata, RecoveryFailedExecutionIdMetadataKey);
+                failedLocalRunId = ResolveMetadataValue(metadata, RecoveryFailedLocalRunIdMetadataKey);
+
+                return true;
+            }
+
+            executionId =
+                ResolveMetadataValue(metadata, RecoveryFailedExecutionIdMetadataKey);
+
+            failedLocalRunId =
+                ResolveMetadataValue(metadata, RecoveryFailedLocalRunIdMetadataKey);
+
+            if (string.IsNullOrWhiteSpace(executionId) ||
+                string.IsNullOrWhiteSpace(failedLocalRunId))
+            {
+                forensicsId = string.Empty;
+                return false;
+            }
+
+            forensicsId = string.Join(
+                ":",
+                "runtime-recovery",
+                executionId,
+                request.SharedRun.SharedRunId,
+                failedLocalRunId);
+
+            return !string.IsNullOrWhiteSpace(request.SharedRun.SharedRunId);
+        }
+
+        /// <summary>
+        /// Resolves a metadata value or an empty string.
+        /// </summary>
+        /// <param name="metadata">The metadata dictionary.</param>
+        /// <param name="key">The metadata key.</param>
+        /// <returns>The metadata value when present; otherwise, an empty string.</returns>
+        private static string ResolveMetadataValue(
+            IReadOnlyDictionary<string, string> metadata,
+            string key)
+        {
+            return TryGetMetadataValue(
+                metadata,
+                key,
+                out var value)
+                ? value
+                : string.Empty;
+        }
+
+        /// <summary>
+        /// Attempts to read a metadata value by key using ordinal ignore-case matching.
+        /// </summary>
+        /// <param name="metadata">The metadata dictionary.</param>
+        /// <param name="key">The metadata key.</param>
+        /// <param name="value">The resolved value.</param>
+        /// <returns><c>true</c> when a non-empty value is found; otherwise, <c>false</c>.</returns>
+        private static bool TryGetMetadataValue(
+            IReadOnlyDictionary<string, string> metadata,
+            string key,
+            out string value)
+        {
+            if (metadata.TryGetValue(
+                    key,
+                    out var directValue) &&
+                !string.IsNullOrWhiteSpace(directValue))
+            {
+                value = directValue;
+                return true;
+            }
+
+            foreach (var pair in metadata)
+            {
+                if (string.Equals(
+                        pair.Key,
+                        key,
+                        StringComparison.OrdinalIgnoreCase) &&
+                    !string.IsNullOrWhiteSpace(pair.Value))
+                {
+                    value = pair.Value;
+                    return true;
+                }
+            }
+
+            value = string.Empty;
+            return false;
         }
 
         /// <summary>
