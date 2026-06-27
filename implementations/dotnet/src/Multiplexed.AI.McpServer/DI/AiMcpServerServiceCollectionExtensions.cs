@@ -26,6 +26,7 @@ namespace Multiplexed.AI.McpServer.DependencyInjection
             services.AddSingleton<ExecutionControlMcpTools>();
             services.AddSingleton<RuntimeQueueMcpTools>();
             services.AddSingleton<ObservabilityMcpTools>();
+            services.AddSingleton<RuntimeRecoveryForensicsMcpTools>();
 
             return services;
         }

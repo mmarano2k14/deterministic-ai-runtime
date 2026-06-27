@@ -15,6 +15,7 @@ using Multiplexed.AI.Observability.Ledger;
 using Multiplexed.AI.Runtime;
 using Multiplexed.AI.Runtime.AI.Providers.Llm.OpenAI.DI;
 using Multiplexed.AI.Runtime.AI.Rag.DI;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Isolation;
 using Multiplexed.AI.Runtime.DependencyInjection;
 using Multiplexed.AI.Runtime.Execution.Persistence.Replay.Metadata;
@@ -143,6 +144,10 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
             services.AddAiExecutionReplay();
 
             ConfigureReplayMetadataStore(
+                services,
+                configuration);
+
+            ConfigureRuntimeRecoveryForensics(
                 services,
                 configuration);
         }
@@ -311,6 +316,54 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
             options.PayloadStore.Mongo.Enabled = true;
             options.PayloadStore.Mongo.ConnectionString ??= connectionString;
             options.PayloadStore.Mongo.DatabaseName ??= databaseName;
+        }
+
+        /// <summary>
+        /// Configures the runtime recovery forensics store and read model provider.
+        /// </summary>
+        /// <param name="services">The service collection.</param>
+        /// <param name="configuration">The application configuration.</param>
+        private static void ConfigureRuntimeRecoveryForensics(
+            IServiceCollection services,
+            IConfiguration configuration)
+        {
+            var provider =
+                configuration["AiRuntimeRecoveryForensics:Provider"]
+                ?? configuration["AiRuntimeRecoveryForensics:Store:Provider"]
+                ?? "mongo";
+
+            if (!string.Equals(provider, "mongo", StringComparison.OrdinalIgnoreCase) &&
+                !string.Equals(provider, "mongodb", StringComparison.OrdinalIgnoreCase))
+            {
+                services.AddInMemoryAiRuntimeRecoveryForensics();
+                return;
+            }
+
+            var connectionString =
+                configuration.GetConnectionString("Mongo")
+                ?? configuration["Mongo:ConnectionString"]
+                ?? "mongodb://localhost:27017";
+
+            var databaseName =
+                configuration["Mongo:DatabaseName"]
+                ?? "multiplexed-ai";
+
+            var collectionName =
+                configuration["AiRuntimeRecoveryForensics:Mongo:CollectionName"]
+                ?? configuration["AiRuntimeRecoveryForensics:Store:Mongo:CollectionName"]
+                ?? "ai_runtime_recovery_forensics";
+
+            services.TryAddSingleton<IMongoClient>(
+                _ => new MongoClient(connectionString));
+
+            services.AddMongoAiRuntimeRecoveryForensics(
+                configureMongo: options =>
+                {
+                    options.ConnectionString = connectionString;
+                    options.DatabaseName = databaseName;
+                    options.CollectionName = collectionName;
+                    options.EnsureIndexes = true;
+                });
         }
     }
 }

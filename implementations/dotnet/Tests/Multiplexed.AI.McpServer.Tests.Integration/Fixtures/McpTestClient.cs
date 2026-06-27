@@ -1,5 +1,6 @@
 ﻿using Multiplexed.Abstractions.AI.ControlPlane.Execution;
 using Multiplexed.Abstractions.AI.ControlPlane.Replay;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Forensics;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Controller;
@@ -390,6 +391,42 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures
                 cancellationToken);
         }
 
+        public Task<AiRuntimeRecoveryForensicsReadModel?> GetRuntimeRecoveryForensicsAsync(
+            string forensicsId,
+            CancellationToken cancellationToken = default)
+        {
+            return CallToolAsync<AiRuntimeRecoveryForensicsReadModel?>(
+                "runtime.recovery.forensics.get",
+                new
+                {
+                    forensicsId
+                },
+                cancellationToken);
+        }
+
+        public Task<AiRuntimeRecoveryForensicsQueryResult> SearchRuntimeRecoveryForensicsAsync(
+            AiRuntimeRecoveryForensicsQuery query,
+            CancellationToken cancellationToken = default)
+        {
+            return CallToolAsync<AiRuntimeRecoveryForensicsQueryResult>(
+                "runtime.recovery.forensics.search",
+                query,
+                cancellationToken);
+        }
+
+        public Task<IReadOnlyList<AiRuntimeRecoveryForensicsTimelineItem>> GetRuntimeRecoveryForensicsTimelineAsync(
+            string forensicsId,
+            CancellationToken cancellationToken = default)
+        {
+            return CallToolAsync<IReadOnlyList<AiRuntimeRecoveryForensicsTimelineItem>>(
+                "runtime.recovery.forensics.timeline",
+                new
+                {
+                    forensicsId
+                },
+                cancellationToken);
+        }
+
         private async Task<T> CallToolAsync<T>(
             string toolName,
             object arguments,
@@ -424,6 +461,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures
                 AiExecutionControlPlaneRequest request => new { request },
                 AiReplayControlRequest request => new { request },
                 AiDecisionLedgerQuery query => new { query },
+                AiRuntimeRecoveryForensicsQuery query => new { query },
                 AiSharedQueueActivityRequest request => new { request },
                 _ => arguments
             };
