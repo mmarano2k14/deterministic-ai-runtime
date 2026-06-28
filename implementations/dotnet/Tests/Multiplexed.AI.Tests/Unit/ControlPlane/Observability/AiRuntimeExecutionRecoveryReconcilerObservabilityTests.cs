@@ -4,6 +4,8 @@ using Multiplexed.Abstractions.AI.ControlPlane.Observability.Area;
 using Multiplexed.Abstractions.AI.ControlPlane.Observability.Events;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Recovery;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
+using Multiplexed.Abstractions.AI.Observability.Ledger;
+using Multiplexed.AI.Runtime.ControlPlane.Observability;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery;
 using Multiplexed.AI.Tests.Fixtures;
@@ -133,6 +135,97 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.Observability
             Assert.NotNull(observer.Events[1].Properties);
             Assert.Equal(typeof(InvalidOperationException).FullName, observer.Events[1].Properties!["exception.type"]?.ToString());
             Assert.Equal("registry failed", observer.Events[1].Properties!["exception.message"]?.ToString());
+        }
+
+        /// <summary>
+        /// Verifies that recovery reconciliation control-plane events can be recorded to the decision ledger through the composite observer.
+        /// </summary>
+        /// <returns>A task representing the asynchronous test operation.</returns>
+        [Fact]
+        public async Task ReconcileAsync_Should_Record_Recovery_ControlPlane_Events_To_Ledger()
+        {
+            var ledger = new CapturingDecisionLedgerRecorder();
+
+            var observability = new FakeRuntimeObservability(ledger);
+
+            var observer = new CompositeAiControlPlaneObserver(
+                new IAiControlPlaneEventSink[]
+                {
+            new RuntimeObservabilityAiControlPlaneEventSink(observability)
+                });
+
+            var reconciler = new AiRuntimeExecutionRecoveryReconciler(
+                new FakeRuntimeInstanceRegistry(),
+                new FakeRuntimeRunExecutionIndex(),
+                new FakeSharedRunOwnershipResolver(),
+                new FakeRuntimeExecutionRecoveryTransitionService(),
+                Options.Create(
+                    new AiRuntimeExecutionRecoveryReconciliationOptions
+                    {
+                        Enabled = true
+                    }),
+                new NoopAiRuntimeRecoveryForensicsRecorder(),
+                observer);
+
+            await reconciler.ReconcileAsync(CancellationToken.None).ConfigureAwait(false);
+
+            Assert.Equal(2, ledger.Entries.Count);
+
+            Assert.Equal(AiDecisionLedgerCategory.Recovery, ledger.Entries[0].Category);
+            Assert.Equal(AiDecisionLedgerOutcome.Started, ledger.Entries[0].Outcome);
+            Assert.Equal("control.recovery.runtime-execution-recovery-reconcile.operationstarted", ledger.Entries[0].EventType);
+
+            Assert.Equal(AiDecisionLedgerCategory.Recovery, ledger.Entries[1].Category);
+            Assert.Equal(AiDecisionLedgerOutcome.Succeeded, ledger.Entries[1].Outcome);
+            Assert.Equal("control.recovery.runtime-execution-recovery-reconcile.succeeded", ledger.Entries[1].EventType);
+        }
+
+        /// <summary>
+        /// Verifies that failed recovery reconciliation control-plane events can be recorded to the decision ledger through the composite observer.
+        /// </summary>
+        /// <returns>A task representing the asynchronous test operation.</returns>
+        [Fact]
+        public async Task ReconcileAsync_Should_Record_Failed_Recovery_ControlPlane_Event_To_Ledger()
+        {
+            var ledger = new CapturingDecisionLedgerRecorder();
+
+            var observability = new FakeRuntimeObservability(ledger);
+
+            var observer = new CompositeAiControlPlaneObserver(
+                new IAiControlPlaneEventSink[]
+                {
+            new RuntimeObservabilityAiControlPlaneEventSink(observability)
+                });
+
+            var reconciler = new AiRuntimeExecutionRecoveryReconciler(
+                new ThrowingRuntimeInstanceRegistry(),
+                new FakeRuntimeRunExecutionIndex(),
+                new FakeSharedRunOwnershipResolver(),
+                new FakeRuntimeExecutionRecoveryTransitionService(),
+                Options.Create(
+                    new AiRuntimeExecutionRecoveryReconciliationOptions
+                    {
+                        Enabled = true
+                    }),
+                new NoopAiRuntimeRecoveryForensicsRecorder(),
+                observer);
+
+            await Assert.ThrowsAsync<InvalidOperationException>(
+                    () => reconciler.ReconcileAsync(CancellationToken.None))
+                .ConfigureAwait(false);
+
+            Assert.Equal(2, ledger.Entries.Count);
+
+            Assert.Equal(AiDecisionLedgerCategory.Recovery, ledger.Entries[0].Category);
+            Assert.Equal(AiDecisionLedgerOutcome.Started, ledger.Entries[0].Outcome);
+            Assert.Equal("control.recovery.runtime-execution-recovery-reconcile.operationstarted", ledger.Entries[0].EventType);
+
+            Assert.Equal(AiDecisionLedgerCategory.Recovery, ledger.Entries[1].Category);
+            Assert.Equal(AiDecisionLedgerOutcome.Failed, ledger.Entries[1].Outcome);
+            Assert.Equal(nameof(InvalidOperationException), ledger.Entries[1].Reason);
+            Assert.Equal("control.recovery.runtime-execution-recovery-reconcile.failed", ledger.Entries[1].EventType);
+            Assert.Equal(typeof(InvalidOperationException).FullName, ledger.Entries[1].Metadata!["exception.type"]);
+            Assert.Equal("registry failed", ledger.Entries[1].Metadata!["exception.message"]);
         }
 
         /// <summary>
