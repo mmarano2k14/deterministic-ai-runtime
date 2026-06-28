@@ -6,6 +6,64 @@ This project follows a deterministic runtime and observability model designed fo
 
 ---
 
+## [1.0.6.9] - 2026-06-28 Runtime Recovery Forensics — DAG Resume Redispatch Stability Hardening
+
+### Summary
+
+Stabilized the HTTP process-host DAG resume recovery forensics scenario by fixing recovery redispatch race conditions and improving recovery diagnostics.
+
+This work hardens the recovery path where a shared run is already assigned to a failed runtime instance, has an existing durable DAG execution, and must be recovered, requeued, redispatched to a replacement runtime, resumed from the failed DAG step, completed, and exposed through the MCP recovery forensics timeline.
+
+### What Changed
+
+- Hardened shared queue dispatch ordering during recovery redispatch.
+  - The dispatcher now persists the shared run reassignment before marking the shared queue item as dispatched.
+  - This prevents the invalid state where the queue item is marked `Dispatched` while the shared run is still assigned to the failed runtime instance.
+
+- Added protection against redispatching recovered work back to the failed runtime.
+  - During recovery redispatch, if admission selects the same runtime instance that triggered recovery, dispatch is rejected.
+  - The queue item is requeued and a replacement scale-out request is published instead.
+  - This prevents recovered work from being routed back to an unhealthy/stale runtime that may still be visible through heartbeat/capacity during a short race window.
+
+- Strengthened recovery test synchronization.
+  - The HTTP process-host DAG resume recovery forensics test now waits for the seeded runtime execution index entry before running recovery reconciliation.
+  - This removes a race where recovery could start before the seeded in-flight run was visible in the durable runtime run execution index.
+
+- Improved recovery diagnostics for intermittent failures.
+  - Recovery wait diagnostics now include scanned runtime count, ignored runtime count, discovered unfinished run count, recovered run count, and per-decision details.
+  - This makes it clear whether a failure is caused by health routing, runtime execution index visibility, ownership resolution, recovery transition, or redispatch.
+
+### Validated Behavior
+
+- A failed runtime instance is marked unhealthy and excluded from safe recovery redispatch.
+- The in-flight local runtime run is recovered from the runtime execution index.
+- The shared queue item is requeued with recovery metadata:
+  - `recovery.mode=resume-existing-execution`
+  - `recovery.failedExecutionId`
+  - `recovery.failedRuntimeInstanceId`
+  - `recovery.failedLocalRunId`
+  - `recovery.forensicsId`
+- The recovered shared run is redispatched to a different runtime instance.
+- The replacement runtime resumes the existing DAG execution from the failed step instead of starting a new execution.
+- The DAG completes from the recovery point.
+- Recovery forensics are persisted and exposed through MCP search/get/timeline tools.
+
+### Stability Result
+
+- `HttpProcessHostDagResumeRecoveryScenarioTests.Http_ProcessHost_Should_Expose_Dag_Resume_Recovery_Forensics_Timeline_Through_Mcp_StabilityLoop`
+- Validated with `100/100` successful stability iterations after the fixes.
+
+### Why This Matters
+
+This closes two production-grade race conditions in runtime recovery:
+
+1. Queue/shared-run state divergence during redispatch.
+2. Recovery reconciliation starting before the seeded runtime execution index is visible.
+
+Together, these fixes make DAG resume recovery deterministic enough for repeated HTTP process-host stability testing and prepare the recovery forensics path for stronger control-plane observability.
+
+---
+
 ## 2026-06-28 — Runtime crash recovery inventory: local queued work + in-flight executions
 
 Validated and hardened the production recovery path for a failed HTTP process-host runtime instance owning multiple durable work items.

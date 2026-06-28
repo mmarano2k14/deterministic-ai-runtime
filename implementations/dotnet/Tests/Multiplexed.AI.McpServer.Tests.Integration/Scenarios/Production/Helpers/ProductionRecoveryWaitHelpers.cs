@@ -1,4 +1,5 @@
-﻿using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Health;
+﻿using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Forensics;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Health;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Recovery;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue;
@@ -7,8 +8,10 @@ using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Dispatch;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Queue;
 using Multiplexed.Abstractions.AI.Execution;
 using Multiplexed.Abstractions.AI.Execution.State;
+using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Models;
 using Multiplexed.AI.Stores;
 using Xunit;
+using Xunit.Abstractions;
 
 namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helpers
 {
@@ -362,6 +365,54 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
         }
 
         /// <summary>
+        /// Waits until the runtime run execution index exposes any execution for the local runtime run.
+        /// </summary>
+        /// <param name="runExecutionIndex">The runtime run execution index.</param>
+        /// <param name="localRunId">The local runtime run identifier.</param>
+        /// <param name="timeout">The maximum wait duration.</param>
+        /// <returns>The runtime run execution index entry.</returns>
+        public static async Task<AiRuntimeRunExecutionIndexEntry> WaitForAnyRunExecutionIndexAsync(
+            IAiRuntimeRunExecutionIndex runExecutionIndex,
+            string localRunId,
+            TimeSpan timeout)
+        {
+            ArgumentNullException.ThrowIfNull(runExecutionIndex);
+            ArgumentException.ThrowIfNullOrWhiteSpace(localRunId);
+
+            var deadline =
+                DateTimeOffset.UtcNow.Add(timeout);
+
+            AiRuntimeRunExecutionIndexEntry? lastEntry = null;
+
+            while (DateTimeOffset.UtcNow < deadline)
+            {
+                lastEntry =
+                    await runExecutionIndex
+                        .GetAsync(localRunId)
+                        .ConfigureAwait(false);
+
+                if (lastEntry is not null &&
+                    !string.IsNullOrWhiteSpace(lastEntry.ExecutionId))
+                {
+                    return lastEntry;
+                }
+
+                await Task
+                    .Delay(TimeSpan.FromMilliseconds(100))
+                    .ConfigureAwait(false);
+            }
+
+            Assert.Fail(
+                $"Runtime run execution index entry was not found within '{timeout}'. " +
+                $"LocalRunId='{localRunId}', " +
+                $"LastEntryExecutionId='{lastEntry?.ExecutionId}', " +
+                $"LastEntryStatus='{lastEntry?.Status}'.");
+
+            throw new InvalidOperationException(
+                "Unreachable assertion path.");
+        }
+
+        /// <summary>
         /// Formats runtime run execution index entries for test diagnostics.
         /// </summary>
         /// <param name="entries">The index entries.</param>
@@ -645,6 +696,194 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
 
             throw new InvalidOperationException(
                 "Unreachable assertion path.");
+        }
+
+        /// <summary>
+        /// Marks the failed runtime unhealthy and repeatedly runs real recovery until all seeded work is marked recovered.
+        /// </summary>
+        public static async Task MarkUnhealthyAndReconcileUntilAllSeededWorkRecoveredAsync(
+            IAiRuntimeInstanceRegistry registry,
+            IAiRuntimeInstanceHealthReconciler healthReconciler,
+            IAiRuntimeExecutionRecoveryReconciler recoveryReconciler,
+            IAiRuntimeRunExecutionIndex runExecutionIndex,
+            string failedRuntimeInstanceId,
+            IReadOnlyList<FailedRuntimeWorkSeed> seededWorks,
+            TimeSpan timeout)
+        {
+            ArgumentNullException.ThrowIfNull(registry);
+            ArgumentNullException.ThrowIfNull(healthReconciler);
+            ArgumentNullException.ThrowIfNull(recoveryReconciler);
+            ArgumentNullException.ThrowIfNull(runExecutionIndex);
+            ArgumentNullException.ThrowIfNull(seededWorks);
+            ArgumentException.ThrowIfNullOrWhiteSpace(failedRuntimeInstanceId);
+
+            var deadline =
+                DateTimeOffset.UtcNow.Add(timeout);
+
+            AiRuntimeExecutionRecoveryReconciliationResult? lastResult = null;
+            AiRuntimeInstanceSnapshot? lastSnapshot = null;
+            var lastStatuses =
+                new Dictionary<string, string?>(StringComparer.Ordinal);
+
+            while (DateTimeOffset.UtcNow < deadline)
+            {
+                await registry
+                    .MarkUnhealthyAsync(failedRuntimeInstanceId)
+                    .ConfigureAwait(false);
+
+                await healthReconciler
+                    .ReconcileAsync()
+                    .ConfigureAwait(false);
+
+                lastSnapshot =
+                    await registry
+                        .GetAsync(failedRuntimeInstanceId)
+                        .ConfigureAwait(false);
+
+                lastResult =
+                    await recoveryReconciler
+                        .ReconcileAsync()
+                        .ConfigureAwait(false);
+
+                lastStatuses.Clear();
+
+                foreach (var work in seededWorks)
+                {
+                    var entry =
+                        await runExecutionIndex
+                            .GetAsync(work.FailedLocalRunId)
+                            .ConfigureAwait(false);
+
+                    lastStatuses[work.FailedLocalRunId] =
+                        entry?.Status;
+                }
+
+                if (seededWorks.All(work =>
+                        string.Equals(
+                            lastStatuses[work.FailedLocalRunId],
+                            "requeued-for-recovery",
+                            StringComparison.OrdinalIgnoreCase)))
+                {
+                    return;
+                }
+
+                await Task
+                    .Delay(TimeSpan.FromMilliseconds(250))
+                    .ConfigureAwait(false);
+            }
+
+            Assert.Fail(
+                "Runtime execution recovery did not recover all seeded failed-runtime work within the timeout. " +
+                $"FailedRuntimeInstanceId='{failedRuntimeInstanceId}', Timeout='{timeout}', LastRuntimeStatus='{lastSnapshot?.Status}', " +
+                $"LastRecoveredRunCount='{lastResult?.RecoveredRunCount}', " +
+                $"LastStatuses='{string.Join(",", lastStatuses.Select(pair => $"{pair.Key}:{pair.Value}"))}'.");
+
+            throw new InvalidOperationException(
+                "Unreachable assertion path.");
+        }
+
+        /// <summary>
+        /// Writes the failed runtime inventory before recovery.
+        /// </summary>
+        public static void WriteFailedRuntimeWorkInventory(
+            ITestOutputHelper output,
+            string failedRuntimeInstanceId,
+            IReadOnlyList<FailedRuntimeWorkSeed> seededWorks)
+        {
+            ArgumentNullException.ThrowIfNull(output);
+            ArgumentException.ThrowIfNullOrWhiteSpace(failedRuntimeInstanceId);
+            ArgumentNullException.ThrowIfNull(seededWorks);
+
+            output.WriteLine("[FAILED RUNTIME WORK INVENTORY]");
+            output.WriteLine($"RuntimeInstanceId='{failedRuntimeInstanceId}'");
+            output.WriteLine($"LocalQueuedRunCount='{seededWorks.Count(work => work.Kind == FailedRuntimeWorkKind.LocalQueued)}'");
+            output.WriteLine($"InFlightExecutionCount='{seededWorks.Count(work => work.Kind == FailedRuntimeWorkKind.InFlightExecution)}'");
+            output.WriteLine($"TotalRecoverableWorkCount='{seededWorks.Count}'");
+
+            var index =
+                1;
+
+            foreach (var work in seededWorks)
+            {
+                output.WriteLine(
+                    $"{index:00}. Kind='{work.Kind}', SharedRunId='{work.SharedRunId}', FailedLocalRunId='{work.FailedLocalRunId}', ExecutionId='{work.ExecutionId}'.");
+
+                index++;
+            }
+        }
+
+        /// <summary>
+        /// Writes the recovered runtime inventory after redispatch.
+        /// </summary>
+        public static void WriteRecoveredRuntimeWorkInventory(
+            ITestOutputHelper output,
+            string failedRuntimeInstanceId,
+            IReadOnlyList<FailedRuntimeWorkSeed> seededWorks,
+            IReadOnlyList<AiSharedRunRecord> redispatchedRuns)
+        {
+            ArgumentNullException.ThrowIfNull(output);
+            ArgumentException.ThrowIfNullOrWhiteSpace(failedRuntimeInstanceId);
+            ArgumentNullException.ThrowIfNull(seededWorks);
+            ArgumentNullException.ThrowIfNull(redispatchedRuns);
+
+            output.WriteLine("[RECOVERED RUNTIME WORK INVENTORY]");
+            output.WriteLine($"FailedRuntimeInstanceId='{failedRuntimeInstanceId}'");
+            output.WriteLine($"RecoveredCount='{redispatchedRuns.Count}'");
+
+            var index =
+                1;
+
+            foreach (var work in seededWorks)
+            {
+                var recoveredRun =
+                    redispatchedRuns.Single(run =>
+                        string.Equals(run.SharedRunId, work.SharedRunId, StringComparison.Ordinal));
+
+                output.WriteLine(
+                    $"{index:00}. " +
+                    $"Kind='{work.Kind}', " +
+                    $"SharedRunId='{work.SharedRunId}', " +
+                    $"FailedLocalRunId='{work.FailedLocalRunId}', " +
+                    $"ReplacementRuntimeInstanceId='{recoveredRun.AssignedRuntimeInstanceId}', " +
+                    $"ReplacementLocalRunId='{recoveredRun.LocalRunId}', " +
+                    $"ExecutionIdBefore='{work.ExecutionId}', " +
+                    $"ExecutionIdAfter='{recoveredRun.ExecutionId}'.");
+
+                index++;
+            }
+        }
+
+        /// <summary>
+        /// Writes the forensics records linked to the recovered failed-runtime inventory.
+        /// </summary>
+        public static void WriteRuntimeRecoveryInventoryForensics(
+            ITestOutputHelper output,
+            string failedRuntimeInstanceId,
+            IReadOnlyList<AiRuntimeRecoveryForensicsReadModel> records)
+        {
+            ArgumentNullException.ThrowIfNull(output);
+            ArgumentException.ThrowIfNullOrWhiteSpace(failedRuntimeInstanceId);
+            ArgumentNullException.ThrowIfNull(records);
+
+            output.WriteLine("[RUNTIME RECOVERY INVENTORY FORENSICS]");
+            output.WriteLine($"FailedRuntimeInstanceId='{failedRuntimeInstanceId}'");
+            output.WriteLine($"ForensicsRecordCount='{records.Count}'");
+
+            var index =
+                1;
+
+            foreach (var record in records)
+            {
+                output.WriteLine(
+                    $"{index:00}. " +
+                    $"ForensicsId='{record.ForensicsId}', " +
+                    $"ExecutionId='{record.ExecutionId}', " +
+                    $"SharedRunId='{record.SharedRunId}', " +
+                    $"TenantId='{record.TenantId}', " +
+                    $"Timeline='{string.Join(" -> ", record.Timeline.Select(item => item.EventType))}'.");
+
+                index++;
+            }
         }
     }
 }

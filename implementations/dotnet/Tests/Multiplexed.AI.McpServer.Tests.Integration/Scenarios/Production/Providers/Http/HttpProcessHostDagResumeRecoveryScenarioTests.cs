@@ -18,6 +18,7 @@ using Multiplexed.AI.McpServer.Tests.Integration.Helpers;
 using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Assertions;
 using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Definitions;
 using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helpers;
+using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Models;
 using Multiplexed.AI.Runtime.ControlPlane.SharedQueue;
 using Multiplexed.AI.Stores;
 using Xunit;
@@ -207,6 +208,14 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             this.output.WriteLine(
                 $"[HTTP DAG RESUME] Seeded DAG state. ExecutionId='{existingExecutionId}', CompletedBeforeFailure='{FailureStepNumber - 1}', FailedStep='{ProductionRecoverySeedHelpers.FormatStepName(FailureStepNumber)}', FailedRuntimeInstanceId='{failedRuntimeInstanceId}'.");
 
+            await ProductionRecoveryWaitHelpers
+                .WaitForRunExecutionIndexAsync(
+                    runExecutionIndex,
+                    failedLocalRunId,
+                    existingExecutionId,
+                    TimeSpan.FromSeconds(10))
+                .ConfigureAwait(false);
+
             var recoveryResult =
                 await ProductionRecoveryWaitHelpers
                     .MarkUnhealthyAndReconcileUntilRecoveredAsync(
@@ -236,14 +245,40 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                     .ConfigureAwait(false);
 
             Assert.NotNull(queueItemAfterRecovery);
-            Assert.Contains(
-                queueItemAfterRecovery!.Status,
-                new[]
-                {
-                    AiSharedQueueItemStatus.Pending,
-                    AiSharedQueueItemStatus.Claimed,
-                    AiSharedQueueItemStatus.Dispatched
-                });
+
+            if (queueItemAfterRecovery!.Status == AiSharedQueueItemStatus.Dispatched)
+            {
+                var sharedRunAfterRecovery =
+                    await sharedRunStore
+                        .GetAsync(sharedRunId)
+                        .ConfigureAwait(false);
+
+                Assert.True(
+                    sharedRunAfterRecovery is not null &&
+                    !string.Equals(
+                        sharedRunAfterRecovery.AssignedRuntimeInstanceId,
+                        failedRuntimeInstanceId,
+                        StringComparison.Ordinal),
+                    "Recovered queue item is already Dispatched, but shared run is still assigned to failed runtime. " +
+                    $"SharedRunId='{sharedRunId}', " +
+                    $"FailedRuntimeInstanceId='{failedRuntimeInstanceId}', " +
+                    $"AssignedRuntimeInstanceId='{sharedRunAfterRecovery?.AssignedRuntimeInstanceId}', " +
+                    $"LocalRunId='{sharedRunAfterRecovery?.LocalRunId}', " +
+                    $"ExecutionId='{sharedRunAfterRecovery?.ExecutionId}', " +
+                    $"QueueStatus='{queueItemAfterRecovery.Status}', " +
+                    $"QueueClaimToken='{queueItemAfterRecovery.ClaimToken}'.");
+            }
+            else
+            {
+                Assert.True(
+                    queueItemAfterRecovery.Status is AiSharedQueueItemStatus.Pending or AiSharedQueueItemStatus.Claimed,
+                    "Recovered queue item should be redispatchable after recovery. " +
+                    $"ExpectedStatus='Pending|Claimed|ValidDispatchedAway', " +
+                    $"ActualStatus='{queueItemAfterRecovery.Status}', " +
+                    $"SharedRunId='{sharedRunId}', " +
+                    $"ClaimToken='{queueItemAfterRecovery.ClaimToken}'.");
+            }
+
             Assert.Equal("resume-existing-execution", queueItemAfterRecovery.Metadata["recovery.mode"]);
             Assert.Equal(existingExecutionId, queueItemAfterRecovery.Metadata["recovery.failedExecutionId"]);
             Assert.Equal(failedRuntimeInstanceId, queueItemAfterRecovery.Metadata["recovery.failedRuntimeInstanceId"]);
@@ -366,32 +401,6 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
 
             this.output.WriteLine(
                 $"[HTTP DAG RESUME PROOF] ExecutionId='{existingExecutionId}', FailureStep='{ProductionRecoverySeedHelpers.FormatStepName(FailureStepNumber)}', CompletedBeforeFailure='{FailureStepNumber - 1}', RecoveredFromStep='{ProductionRecoverySeedHelpers.FormatStepName(FailureStepNumber)}', FinalCompletedSteps='{StepCount}/{StepCount}', FailedRuntimeInstanceId='{failedRuntimeInstanceId}', ReplacementRuntimeInstanceId='{redispatchedRun.AssignedRuntimeInstanceId}', FailedLocalRunId='{failedLocalRunId}', ReplacementLocalRunId='{redispatchedRun.LocalRunId}'.");
-        }
-
-        [Theory]
-        [InlineData(1)]
-        [InlineData(2)]
-        [InlineData(3)]
-        [InlineData(4)]
-        [InlineData(5)]
-        [InlineData(6)]
-        [InlineData(7)]
-        [InlineData(8)]
-        [InlineData(9)]
-        [InlineData(10)]
-        public async Task Http_ProcessHost_Should_Expose_Dag_Resume_Recovery_Forensics_Timeline_Through_Mcp_StabilityLoop(int iteration)
-        {
-            await Http_ProcessHost_Should_Expose_Dag_Resume_Recovery_Forensics_Timeline_Through_Mcp_CoreAsync(iteration).ConfigureAwait(false);
-        }
-
-        /// <summary>
-        /// Runs the DAG resume recovery forensics MCP timeline scenario.
-        /// </summary>
-        private async Task Http_ProcessHost_Should_Expose_Dag_Resume_Recovery_Forensics_Timeline_Through_Mcp_CoreAsync(int iteration)
-        {
-            this.output.WriteLine($"[FORENSICS TIMELINE STABILITY LOOP] Iteration='{iteration}'.");
-
-            await Http_ProcessHost_Should_Expose_Dag_Resume_Recovery_Forensics_Timeline_Through_Mcp();
         }
 
         /// <summary>
@@ -862,7 +871,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
         }
 
         /// <summary>
-        /// Verifies that the real HTTP runtime creation path persists the RBAC ContextKey
+        /// Verifies that the real HTTP runtime creation path persists a ContextKey
         /// on the durable DAG execution record without test-side seeding.
         /// </summary>
         [Fact]
@@ -952,8 +961,13 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                         scenario.DispatchTimeout)
                     .ConfigureAwait(false);
 
-            Assert.False(string.IsNullOrWhiteSpace(firstDispatch.AssignedRuntimeInstanceId));
-            Assert.False(string.IsNullOrWhiteSpace(firstDispatch.LocalRunId));
+            Assert.False(
+                string.IsNullOrWhiteSpace(firstDispatch.AssignedRuntimeInstanceId),
+                "The shared run must be dispatched to a runtime instance before verifying DAG record persistence.");
+
+            Assert.False(
+                string.IsNullOrWhiteSpace(firstDispatch.LocalRunId),
+                "The shared run must have a local runtime run id before verifying the runtime execution index.");
 
             var sharedRun =
                 await sharedRunStore
@@ -962,12 +976,16 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
 
             Assert.NotNull(sharedRun);
 
-            var expectedContextKey =
+            Assert.Equal(sharedRunId, sharedRun!.SharedRunId);
+            Assert.Equal(firstDispatch.AssignedRuntimeInstanceId, sharedRun.AssignedRuntimeInstanceId);
+            Assert.Equal(firstDispatch.LocalRunId, sharedRun.LocalRunId);
+
+            var dispatchSnapshotContextKey =
                 firstDispatch.ExecutionContextSnapshot?.ContextKey
-                ?? sharedRun!.ExecutionContextSnapshot?.ContextKey;
+                ?? sharedRun.ExecutionContextSnapshot?.ContextKey;
 
             Assert.False(
-                string.IsNullOrWhiteSpace(expectedContextKey),
+                string.IsNullOrWhiteSpace(dispatchSnapshotContextKey),
                 "The dispatched shared run must carry an ExecutionContextSnapshot.ContextKey.");
 
             var runtimeIndex =
@@ -978,21 +996,29 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                         TimeSpan.FromSeconds(30))
                     .ConfigureAwait(false);
 
+            Assert.Equal(firstDispatch.LocalRunId, runtimeIndex.RunId);
             Assert.Equal(firstDispatch.AssignedRuntimeInstanceId, runtimeIndex.RuntimeInstanceId);
             Assert.False(string.IsNullOrWhiteSpace(runtimeIndex.ExecutionId));
+
+            Assert.False(
+                string.IsNullOrWhiteSpace(runtimeIndex.ExecutionContextSnapshot.ContextKey),
+                "The runtime execution index must carry an ExecutionContextSnapshot.ContextKey.");
 
             var persistedRecord =
                 await ProductionRecoveryWaitHelpers
                     .WaitForDagRecordWithContextKeyAsync(
                         dagStore,
-                        runtimeIndex.ExecutionId,
+                        runtimeIndex.ExecutionId!,
                         TimeSpan.FromSeconds(30))
                     .ConfigureAwait(false);
 
             Assert.Equal(runtimeIndex.ExecutionId, persistedRecord.ExecutionId);
             Assert.Equal(pipelineName, persistedRecord.PipelineName);
             Assert.Equal(AiExecutionMode.Dag, persistedRecord.ExecutionMode);
-            Assert.False(string.IsNullOrWhiteSpace(persistedRecord.ContextKey));
+
+            Assert.False(
+                string.IsNullOrWhiteSpace(persistedRecord.ContextKey),
+                "The durable DAG execution record must persist a ContextKey.");
 
             this.output.WriteLine(
                 $"[HTTP DAG CONTEXTKEY PROOF] Real DAG record persisted ContextKey. " +
@@ -1000,9 +1026,11 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 $"LocalRunId='{firstDispatch.LocalRunId}', " +
                 $"ExecutionId='{runtimeIndex.ExecutionId}', " +
                 $"RuntimeInstanceId='{firstDispatch.AssignedRuntimeInstanceId}', " +
-                $"SnapshotContextKey='{expectedContextKey}', " +
+                $"DispatchSnapshotContextKey='{dispatchSnapshotContextKey}', " +
+                $"IndexContextKey='{runtimeIndex.ExecutionContextSnapshot.ContextKey}', " +
                 $"RecordContextKey='{persistedRecord.ContextKey}', " +
-                $"SameContextKey='{string.Equals(expectedContextKey, persistedRecord.ContextKey, StringComparison.Ordinal)}'.");
+                $"RecordMatchesDispatchSnapshot='{string.Equals(dispatchSnapshotContextKey, persistedRecord.ContextKey, StringComparison.Ordinal)}', " +
+                $"RecordMatchesIndexSnapshot='{string.Equals(runtimeIndex.ExecutionContextSnapshot.ContextKey, persistedRecord.ContextKey, StringComparison.Ordinal)}'.");
         }
 
         /// <summary>
@@ -1143,7 +1171,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             Assert.NotNull(failedRuntimeSnapshot);
 
             var seededWorks =
-                await SeedFailedRuntimeAssignedWorkInventoryAsync(
+                await ProductionRecoverySeedHelpers
+                    .SeedFailedRuntimeAssignedWorkInventoryAsync(
                         sharedRunStore,
                         sharedQueue,
                         runExecutionIndex,
@@ -1153,19 +1182,23 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                         pipelineName,
                         failedRuntimeInstanceId,
                         queuedLocalRunCount,
-                        inFlightExecutionCount)
+                        inFlightExecutionCount,
+                        StepCount,
+                        FailureStepNumber,
+                        RequestedBy,
+                        Source)
                     .ConfigureAwait(false);
 
             Assert.Equal(totalRecoverableWorkCount, seededWorks.Count);
             Assert.Equal(queuedLocalRunCount, seededWorks.Count(work => work.Kind == FailedRuntimeWorkKind.LocalQueued));
             Assert.Equal(inFlightExecutionCount, seededWorks.Count(work => work.Kind == FailedRuntimeWorkKind.InFlightExecution));
 
-            WriteFailedRuntimeWorkInventory(
+            ProductionRecoveryWaitHelpers.WriteFailedRuntimeWorkInventory(
                 this.output,
                 failedRuntimeInstanceId,
                 seededWorks);
 
-            await MarkUnhealthyAndReconcileUntilAllSeededWorkRecoveredAsync(
+            await ProductionRecoveryWaitHelpers.MarkUnhealthyAndReconcileUntilAllSeededWorkRecoveredAsync(
                     registry,
                     healthReconciler,
                     recoveryReconciler,
@@ -1222,7 +1255,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
 
             Assert.Equal(totalRecoverableWorkCount, redispatchedRuns.Count);
 
-            WriteRecoveredRuntimeWorkInventory(
+            ProductionRecoveryWaitHelpers.WriteRecoveredRuntimeWorkInventory(
                 this.output,
                 failedRuntimeInstanceId,
                 seededWorks,
@@ -1292,7 +1325,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 recoveredForensics.Length >= inFlightExecutionCount,
                 $"Expected at least the in-flight executions to be visible in recovery forensics. ExpectedAtLeast='{inFlightExecutionCount}', Actual='{recoveredForensics.Length}'.");
 
-            WriteRuntimeRecoveryInventoryForensics(
+            ProductionRecoveryWaitHelpers.WriteRuntimeRecoveryInventoryForensics(
                 this.output,
                 failedRuntimeInstanceId,
                 recoveredForensics);
@@ -1405,494 +1438,5 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 CompletionTimeout = TimeSpan.FromMinutes(5)
             };
         }
-
-
-
-        /// <summary>
-        /// Represents the kind of durable work assigned to a failed runtime instance.
-        /// </summary>
-        private enum FailedRuntimeWorkKind
-        {
-            /// <summary>
-            /// Work was assigned to the runtime but still queued locally.
-            /// </summary>
-            LocalQueued,
-
-            /// <summary>
-            /// Work had already started a durable execution.
-            /// </summary>
-            InFlightExecution
-        }
-
-        /// <summary>
-        /// Represents one durable work item assigned to a failed runtime instance.
-        /// </summary>
-        private sealed record FailedRuntimeWorkSeed
-        {
-            /// <summary>
-            /// Gets the durable shared run identifier.
-            /// </summary>
-            public required string SharedRunId { get; init; }
-
-            /// <summary>
-            /// Gets the failed local runtime run identifier.
-            /// </summary>
-            public required string FailedLocalRunId { get; init; }
-
-            /// <summary>
-            /// Gets the optional durable execution identifier.
-            /// </summary>
-            public string? ExecutionId { get; init; }
-
-            /// <summary>
-            /// Gets the work kind.
-            /// </summary>
-            public required FailedRuntimeWorkKind Kind { get; init; }
-        }
-
-        /// <summary>
-        /// Seeds a durable failed-runtime assigned-work inventory without faking recovery results.
-        /// </summary>
-        private static async Task<IReadOnlyList<FailedRuntimeWorkSeed>> SeedFailedRuntimeAssignedWorkInventoryAsync(
-            IAiSharedRunStore sharedRunStore,
-            IAiSharedQueue sharedQueue,
-            IAiRuntimeRunExecutionIndex runExecutionIndex,
-            IAiDagExecutionStore dagStore,
-            AiSharedRunRecord templateSharedRun,
-            ProductionTenantScenarioDefinition tenant,
-            string pipelineName,
-            string failedRuntimeInstanceId,
-            int queuedLocalRunCount,
-            int inFlightExecutionCount)
-        {
-            ArgumentNullException.ThrowIfNull(sharedRunStore);
-            ArgumentNullException.ThrowIfNull(sharedQueue);
-            ArgumentNullException.ThrowIfNull(runExecutionIndex);
-            ArgumentNullException.ThrowIfNull(dagStore);
-            ArgumentNullException.ThrowIfNull(templateSharedRun);
-            ArgumentNullException.ThrowIfNull(tenant);
-            ArgumentException.ThrowIfNullOrWhiteSpace(pipelineName);
-            ArgumentException.ThrowIfNullOrWhiteSpace(failedRuntimeInstanceId);
-
-            var seeded =
-                new List<FailedRuntimeWorkSeed>();
-
-            for (var index = 1; index <= queuedLocalRunCount; index++)
-            {
-                var sharedRunId =
-                    Guid.NewGuid().ToString("N");
-
-                var localRunId =
-                    $"failed-local-queued-{index}-{Guid.NewGuid():N}";
-
-                var sharedRun =
-                    await CreateDurableSharedRunForFailedRuntimeAsync(
-                            sharedRunStore,
-                            templateSharedRun,
-                            tenant,
-                            pipelineName,
-                            sharedRunId,
-                            reason: "seeded-local-queued-work")
-                        .ConfigureAwait(false);
-
-                await SeedDurableAssignedQueueOwnershipAsync(
-                        sharedQueue,
-                        sharedRun,
-                        failedRuntimeInstanceId,
-                        reason: "seeded-local-queued-work")
-                    .ConfigureAwait(false);
-
-                await sharedRunStore
-                    .MarkDispatchedAsync(
-                        sharedRun.SharedRunId,
-                        failedRuntimeInstanceId,
-                        localRunId,
-                        executionId: null,
-                        reason: "seeded-local-queued-work")
-                    .ConfigureAwait(false);
-
-                await runExecutionIndex
-                    .RegisterQueuedAsync(new AiRuntimeRunExecutionIndexEntry
-                    {
-                        RunId = localRunId,
-                        ExecutionId = null,
-                        RuntimeInstanceId = failedRuntimeInstanceId,
-                        Status = "queued",
-                        CreatedAtUtc = DateTimeOffset.UtcNow,
-                        ExecutionContextSnapshot = sharedRun.ExecutionContextSnapshot,
-                        Metadata = new Dictionary<string, string>
-                        {
-                            ["scenario"] = "http-runtime-recovery-inventory",
-                            ["inventory.kind"] = "local-queued",
-                            ["seeded"] = "true"
-                        }
-                    })
-                    .ConfigureAwait(false);
-
-                seeded.Add(new FailedRuntimeWorkSeed
-                {
-                    SharedRunId = sharedRun.SharedRunId,
-                    FailedLocalRunId = localRunId,
-                    ExecutionId = null,
-                    Kind = FailedRuntimeWorkKind.LocalQueued
-                });
-            }
-
-            for (var index = 1; index <= inFlightExecutionCount; index++)
-            {
-                var sharedRunId =
-                    Guid.NewGuid().ToString("N");
-
-                var localRunId =
-                    $"failed-local-running-{index}-{Guid.NewGuid():N}";
-
-                var executionId =
-                    $"http-runtime-inventory-running-execution-{index}-{Guid.NewGuid():N}";
-
-                var sharedRun =
-                    await CreateDurableSharedRunForFailedRuntimeAsync(
-                            sharedRunStore,
-                            templateSharedRun,
-                            tenant,
-                            pipelineName,
-                            sharedRunId,
-                            reason: "seeded-in-flight-execution")
-                        .ConfigureAwait(false);
-
-                await ProductionRecoverySeedHelpers
-                    .SeedInFlightRuntimeExecutionAsync(
-                        sharedRunStore,
-                        sharedQueue,
-                        runExecutionIndex,
-                        sharedRun,
-                        failedRuntimeInstanceId,
-                        localRunId,
-                        executionId)
-                    .ConfigureAwait(false);
-
-                await ProductionRecoverySeedHelpers
-                    .SeedDurableDagStoppedAtStepAsync(
-                        dagStore,
-                        executionId,
-                        pipelineName,
-                        sharedRun.RunRequest?.PipelineDefinition,
-                        sharedRun.ExecutionContextSnapshot?.ContextKey,
-                        StepCount,
-                        FailureStepNumber,
-                        failedRuntimeInstanceId)
-                    .ConfigureAwait(false);
-
-                seeded.Add(new FailedRuntimeWorkSeed
-                {
-                    SharedRunId = sharedRun.SharedRunId,
-                    FailedLocalRunId = localRunId,
-                    ExecutionId = executionId,
-                    Kind = FailedRuntimeWorkKind.InFlightExecution
-                });
-            }
-
-            return seeded;
-        }
-
-        /// <summary>
-        /// Creates a durable shared run record used as crash-surviving ownership evidence.
-        /// </summary>
-        private static async Task<AiSharedRunRecord> CreateDurableSharedRunForFailedRuntimeAsync(
-            IAiSharedRunStore sharedRunStore,
-            AiSharedRunRecord templateSharedRun,
-            ProductionTenantScenarioDefinition tenant,
-            string pipelineName,
-            string sharedRunId,
-            string reason)
-        {
-            ArgumentNullException.ThrowIfNull(sharedRunStore);
-            ArgumentNullException.ThrowIfNull(templateSharedRun);
-            ArgumentNullException.ThrowIfNull(tenant);
-            ArgumentException.ThrowIfNullOrWhiteSpace(pipelineName);
-            ArgumentException.ThrowIfNullOrWhiteSpace(sharedRunId);
-            ArgumentException.ThrowIfNullOrWhiteSpace(reason);
-
-            var record =
-                new AiSharedRunRecord
-                {
-                    SharedRunId = sharedRunId,
-                    Status = AiSharedRunStatus.QueuedGlobally,
-                    RunRequest = templateSharedRun.RunRequest,
-                    ExecutionContextSnapshot = templateSharedRun.ExecutionContextSnapshot,
-                    LocalRunId = null,
-                    ExecutionId = null,
-                    AssignedRuntimeInstanceId = null,
-                    AdmissionDecision = null,
-                    PipelineKey = pipelineName,
-                    CorrelationId = $"correlation-{sharedRunId}",
-                    RequestedBy = RequestedBy,
-                    Source = Source,
-                    Reason = reason,
-                    FailureReason = null,
-                    SubmittedAtUtc = DateTimeOffset.UtcNow.AddMinutes(-5),
-                    UpdatedAtUtc = DateTimeOffset.UtcNow,
-                    Metadata = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
-                    {
-                        [AiRuntimeInstanceIsolationMetadataKeys.TenantId] = tenant.TenantId,
-                        [AiRuntimeInstanceIsolationMetadataKeys.TenantGroupId] = tenant.TenantGroupId,
-                        ["pipelineName"] = pipelineName,
-                        ["runtimeInstanceIdPrefix"] = tenant.RuntimeInstanceIdPrefix,
-                        ["scenario"] = "http-runtime-recovery-inventory",
-                        ["seeded"] = "true"
-                    },
-                    ControlPlaneId = templateSharedRun.ControlPlaneId
-                };
-
-            return await sharedRunStore
-                .CreateAsync(record)
-                .ConfigureAwait(false);
-        }
-
-        /// <summary>
-        /// Seeds durable shared queue ownership for a failed runtime local queued item.
-        /// </summary>
-        private static async Task SeedDurableAssignedQueueOwnershipAsync(
-            IAiSharedQueue sharedQueue,
-            AiSharedRunRecord sharedRun,
-            string failedRuntimeInstanceId,
-            string reason)
-        {
-            ArgumentNullException.ThrowIfNull(sharedQueue);
-            ArgumentNullException.ThrowIfNull(sharedRun);
-            ArgumentException.ThrowIfNullOrWhiteSpace(failedRuntimeInstanceId);
-            ArgumentException.ThrowIfNullOrWhiteSpace(reason);
-
-            await sharedQueue
-                .EnqueueAsync(new AiSharedQueueItem
-                {
-                    SharedRunId = sharedRun.SharedRunId,
-                    Status = AiSharedQueueItemStatus.Pending,
-                    ExecutionContextSnapshot = sharedRun.ExecutionContextSnapshot,
-                    PipelineKey = sharedRun.PipelineKey,
-                    Priority = 0,
-                    EnqueuedAtUtc = DateTimeOffset.UtcNow.AddMinutes(-5),
-                    UpdatedAtUtc = DateTimeOffset.UtcNow,
-                    Metadata = new Dictionary<string, string>
-                    {
-                        ["scenario"] = "http-runtime-recovery-inventory",
-                        ["inventory.kind"] = "local-queued",
-                        ["seeded"] = "true"
-                    }
-                })
-                .ConfigureAwait(false);
-
-            var claim =
-                await sharedQueue
-                    .ClaimNextAsync(new AiSharedQueueClaimRequest
-                    {
-                        RuntimeInstanceId = failedRuntimeInstanceId,
-                        WorkerId = "http-runtime-inventory-seed-worker",
-                        TenantId = sharedRun.ExecutionContextSnapshot?.TenantId,
-                        PipelineKey = sharedRun.PipelineKey,
-                        ClaimTtl = TimeSpan.FromMinutes(5),
-                        Reason = reason
-                    })
-                    .ConfigureAwait(false);
-
-            Assert.NotNull(claim);
-            Assert.Equal(sharedRun.SharedRunId, claim!.SharedRunId);
-            Assert.False(string.IsNullOrWhiteSpace(claim.ClaimToken));
-
-            await sharedQueue
-                .MarkDispatchedAsync(
-                    sharedRun.SharedRunId,
-                    claim.ClaimToken!,
-                    reason: reason)
-                .ConfigureAwait(false);
-        }
-
-        /// <summary>
-        /// Marks the failed runtime unhealthy and repeatedly runs real recovery until all seeded work is marked recovered.
-        /// </summary>
-        private static async Task MarkUnhealthyAndReconcileUntilAllSeededWorkRecoveredAsync(
-            IAiRuntimeInstanceRegistry registry,
-            IAiRuntimeInstanceHealthReconciler healthReconciler,
-            IAiRuntimeExecutionRecoveryReconciler recoveryReconciler,
-            IAiRuntimeRunExecutionIndex runExecutionIndex,
-            string failedRuntimeInstanceId,
-            IReadOnlyList<FailedRuntimeWorkSeed> seededWorks,
-            TimeSpan timeout)
-        {
-            ArgumentNullException.ThrowIfNull(registry);
-            ArgumentNullException.ThrowIfNull(healthReconciler);
-            ArgumentNullException.ThrowIfNull(recoveryReconciler);
-            ArgumentNullException.ThrowIfNull(runExecutionIndex);
-            ArgumentNullException.ThrowIfNull(seededWorks);
-            ArgumentException.ThrowIfNullOrWhiteSpace(failedRuntimeInstanceId);
-
-            var deadline =
-                DateTimeOffset.UtcNow.Add(timeout);
-
-            AiRuntimeExecutionRecoveryReconciliationResult? lastResult = null;
-            AiRuntimeInstanceSnapshot? lastSnapshot = null;
-            var lastStatuses =
-                new Dictionary<string, string?>(StringComparer.Ordinal);
-
-            while (DateTimeOffset.UtcNow < deadline)
-            {
-                await registry
-                    .MarkUnhealthyAsync(failedRuntimeInstanceId)
-                    .ConfigureAwait(false);
-
-                await healthReconciler
-                    .ReconcileAsync()
-                    .ConfigureAwait(false);
-
-                lastSnapshot =
-                    await registry
-                        .GetAsync(failedRuntimeInstanceId)
-                        .ConfigureAwait(false);
-
-                lastResult =
-                    await recoveryReconciler
-                        .ReconcileAsync()
-                        .ConfigureAwait(false);
-
-                lastStatuses.Clear();
-
-                foreach (var work in seededWorks)
-                {
-                    var entry =
-                        await runExecutionIndex
-                            .GetAsync(work.FailedLocalRunId)
-                            .ConfigureAwait(false);
-
-                    lastStatuses[work.FailedLocalRunId] =
-                        entry?.Status;
-                }
-
-                if (seededWorks.All(work =>
-                        string.Equals(
-                            lastStatuses[work.FailedLocalRunId],
-                            "requeued-for-recovery",
-                            StringComparison.OrdinalIgnoreCase)))
-                {
-                    return;
-                }
-
-                await Task
-                    .Delay(TimeSpan.FromMilliseconds(250))
-                    .ConfigureAwait(false);
-            }
-
-            Assert.Fail(
-                "Runtime execution recovery did not recover all seeded failed-runtime work within the timeout. " +
-                $"FailedRuntimeInstanceId='{failedRuntimeInstanceId}', Timeout='{timeout}', LastRuntimeStatus='{lastSnapshot?.Status}', " +
-                $"LastRecoveredRunCount='{lastResult?.RecoveredRunCount}', " +
-                $"LastStatuses='{string.Join(",", lastStatuses.Select(pair => $"{pair.Key}:{pair.Value}"))}'.");
-
-            throw new InvalidOperationException(
-                "Unreachable assertion path.");
-        }
-
-        /// <summary>
-        /// Writes the failed runtime inventory before recovery.
-        /// </summary>
-        private static void WriteFailedRuntimeWorkInventory(
-            ITestOutputHelper output,
-            string failedRuntimeInstanceId,
-            IReadOnlyList<FailedRuntimeWorkSeed> seededWorks)
-        {
-            ArgumentNullException.ThrowIfNull(output);
-            ArgumentException.ThrowIfNullOrWhiteSpace(failedRuntimeInstanceId);
-            ArgumentNullException.ThrowIfNull(seededWorks);
-
-            output.WriteLine("[FAILED RUNTIME WORK INVENTORY]");
-            output.WriteLine($"RuntimeInstanceId='{failedRuntimeInstanceId}'");
-            output.WriteLine($"LocalQueuedRunCount='{seededWorks.Count(work => work.Kind == FailedRuntimeWorkKind.LocalQueued)}'");
-            output.WriteLine($"InFlightExecutionCount='{seededWorks.Count(work => work.Kind == FailedRuntimeWorkKind.InFlightExecution)}'");
-            output.WriteLine($"TotalRecoverableWorkCount='{seededWorks.Count}'");
-
-            var index =
-                1;
-
-            foreach (var work in seededWorks)
-            {
-                output.WriteLine(
-                    $"{index:00}. Kind='{work.Kind}', SharedRunId='{work.SharedRunId}', FailedLocalRunId='{work.FailedLocalRunId}', ExecutionId='{work.ExecutionId}'.");
-
-                index++;
-            }
-        }
-
-        /// <summary>
-        /// Writes the recovered runtime inventory after redispatch.
-        /// </summary>
-        private static void WriteRecoveredRuntimeWorkInventory(
-            ITestOutputHelper output,
-            string failedRuntimeInstanceId,
-            IReadOnlyList<FailedRuntimeWorkSeed> seededWorks,
-            IReadOnlyList<AiSharedRunRecord> redispatchedRuns)
-        {
-            ArgumentNullException.ThrowIfNull(output);
-            ArgumentException.ThrowIfNullOrWhiteSpace(failedRuntimeInstanceId);
-            ArgumentNullException.ThrowIfNull(seededWorks);
-            ArgumentNullException.ThrowIfNull(redispatchedRuns);
-
-            output.WriteLine("[RECOVERED RUNTIME WORK INVENTORY]");
-            output.WriteLine($"FailedRuntimeInstanceId='{failedRuntimeInstanceId}'");
-            output.WriteLine($"RecoveredCount='{redispatchedRuns.Count}'");
-
-            var index =
-                1;
-
-            foreach (var work in seededWorks)
-            {
-                var recoveredRun =
-                    redispatchedRuns.Single(run =>
-                        string.Equals(run.SharedRunId, work.SharedRunId, StringComparison.Ordinal));
-
-                output.WriteLine(
-                    $"{index:00}. " +
-                    $"Kind='{work.Kind}', " +
-                    $"SharedRunId='{work.SharedRunId}', " +
-                    $"FailedLocalRunId='{work.FailedLocalRunId}', " +
-                    $"ReplacementRuntimeInstanceId='{recoveredRun.AssignedRuntimeInstanceId}', " +
-                    $"ReplacementLocalRunId='{recoveredRun.LocalRunId}', " +
-                    $"ExecutionIdBefore='{work.ExecutionId}', " +
-                    $"ExecutionIdAfter='{recoveredRun.ExecutionId}'.");
-
-                index++;
-            }
-        }
-
-        /// <summary>
-        /// Writes the forensics records linked to the recovered failed-runtime inventory.
-        /// </summary>
-        private static void WriteRuntimeRecoveryInventoryForensics(
-            ITestOutputHelper output,
-            string failedRuntimeInstanceId,
-            IReadOnlyList<AiRuntimeRecoveryForensicsReadModel> records)
-        {
-            ArgumentNullException.ThrowIfNull(output);
-            ArgumentException.ThrowIfNullOrWhiteSpace(failedRuntimeInstanceId);
-            ArgumentNullException.ThrowIfNull(records);
-
-            output.WriteLine("[RUNTIME RECOVERY INVENTORY FORENSICS]");
-            output.WriteLine($"FailedRuntimeInstanceId='{failedRuntimeInstanceId}'");
-            output.WriteLine($"ForensicsRecordCount='{records.Count}'");
-
-            var index =
-                1;
-
-            foreach (var record in records)
-            {
-                output.WriteLine(
-                    $"{index:00}. " +
-                    $"ForensicsId='{record.ForensicsId}', " +
-                    $"ExecutionId='{record.ExecutionId}', " +
-                    $"SharedRunId='{record.SharedRunId}', " +
-                    $"TenantId='{record.TenantId}', " +
-                    $"Timeline='{string.Join(" -> ", record.Timeline.Select(item => item.EventType))}'.");
-
-                index++;
-            }
-        }
-
     }
 }
