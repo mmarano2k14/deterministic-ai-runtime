@@ -84,7 +84,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.Observability
             Assert.Equal("test-correlation", ledger.Entries[0].Context.CorrelationId);
             Assert.Equal("runtime-1", ledger.Entries[0].Context.RuntimeInstanceId);
             Assert.Equal("worker-1", ledger.Entries[0].Context.WorkerId);
-            Assert.Equal(AiDecisionLedgerCategory.Execution, ledger.Entries[0].Category);
+            Assert.Equal(AiDecisionLedgerCategory.Control, ledger.Entries[0].Category);
             Assert.Equal(AiDecisionLedgerOutcome.Succeeded, ledger.Entries[0].Outcome);
             Assert.Equal("control.executioncontrol.pause.succeeded", ledger.Entries[0].EventType);
         }
@@ -411,6 +411,163 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.Observability
             Assert.Equal("control.executioncontrol.pause.operationstarted", ledger.Entries[0].EventType);
             Assert.Equal("OperationStarted", ledger.Entries[0].Metadata!["eventType"]);
             Assert.Null(ledger.Entries[0].Metadata!["outcome"]);
+        }
+
+        /// <summary>
+        /// Verifies that admission control-plane events are recorded under the policy ledger category.
+        /// </summary>
+        /// <returns>A task representing the asynchronous test operation.</returns>
+        [Fact]
+        public async Task RecordAsync_Should_Map_Admission_Area_To_Policy_Ledger_Category()
+        {
+            var ledger = new CapturingDecisionLedgerRecorder();
+            var observability = new FakeRuntimeObservability(ledger);
+
+            var sink = new RuntimeObservabilityAiControlPlaneEventSink(observability);
+
+            var controlPlaneEvent = new AiControlPlaneEvent
+            {
+                EventType = AiControlPlaneEventType.OperationCompleted,
+                Area = AiControlPlaneArea.Admission,
+                Operation = "select-runtime-instance",
+                Outcome = AiControlPlaneOperationOutcome.Denied,
+                FailureReason = "no-capacity",
+                Correlation = new AiRuntimeExecutionCorrelationContext
+                {
+                    CorrelationId = "test-correlation",
+                    RunId = "run-1"
+                }
+            };
+
+            await sink.RecordAsync(controlPlaneEvent, CancellationToken.None).ConfigureAwait(false);
+
+            Assert.Single(ledger.Entries);
+            Assert.Equal(AiDecisionLedgerCategory.Admission, ledger.Entries[0].Category);
+            Assert.Equal(AiDecisionLedgerOutcome.Denied, ledger.Entries[0].Outcome);
+        }
+
+        /// <summary>
+        /// Verifies that instance registry control-plane events are recorded under the runtime instance ledger category.
+        /// </summary>
+        /// <returns>A task representing the asynchronous test operation.</returns>
+        [Fact]
+        public async Task RecordAsync_Should_Map_InstanceRegistry_Area_To_RuntimeInstance_Ledger_Category()
+        {
+            var ledger = new CapturingDecisionLedgerRecorder();
+            var observability = new FakeRuntimeObservability(ledger);
+
+            var sink = new RuntimeObservabilityAiControlPlaneEventSink(observability);
+
+            var controlPlaneEvent = new AiControlPlaneEvent
+            {
+                EventType = AiControlPlaneEventType.OperationCompleted,
+                Area = AiControlPlaneArea.InstanceRegistry,
+                Operation = "heartbeat",
+                Outcome = AiControlPlaneOperationOutcome.Succeeded,
+                Correlation = new AiRuntimeExecutionCorrelationContext
+                {
+                    CorrelationId = "test-correlation",
+                    RuntimeInstanceId = "runtime-1"
+                }
+            };
+
+            await sink.RecordAsync(controlPlaneEvent, CancellationToken.None).ConfigureAwait(false);
+
+            Assert.Single(ledger.Entries);
+            Assert.Equal(AiDecisionLedgerCategory.RuntimeInstance, ledger.Entries[0].Category);
+        }
+
+        /// <summary>
+        /// Verifies that shared controller control-plane events are recorded under the shared controller ledger category.
+        /// </summary>
+        /// <returns>A task representing the asynchronous test operation.</returns>
+        [Fact]
+        public async Task RecordAsync_Should_Map_SharedController_Area_To_SharedController_Ledger_Category()
+        {
+            var ledger = new CapturingDecisionLedgerRecorder();
+            var observability = new FakeRuntimeObservability(ledger);
+
+            var sink = new RuntimeObservabilityAiControlPlaneEventSink(observability);
+
+            var controlPlaneEvent = new AiControlPlaneEvent
+            {
+                EventType = AiControlPlaneEventType.OperationCompleted,
+                Area = AiControlPlaneArea.SharedController,
+                Operation = "assign",
+                Outcome = AiControlPlaneOperationOutcome.Succeeded,
+                Correlation = new AiRuntimeExecutionCorrelationContext
+                {
+                    CorrelationId = "test-correlation",
+                    RunId = "run-1"
+                }
+            };
+
+            await sink.RecordAsync(controlPlaneEvent, CancellationToken.None).ConfigureAwait(false);
+
+            Assert.Single(ledger.Entries);
+            Assert.Equal(AiDecisionLedgerCategory.SharedController, ledger.Entries[0].Category);
+        }
+
+        /// <summary>
+        /// Verifies that scaling control-plane events are recorded under the scaling ledger category.
+        /// </summary>
+        /// <returns>A task representing the asynchronous test operation.</returns>
+        [Fact]
+        public async Task RecordAsync_Should_Map_Scaling_Area_To_Scaling_Ledger_Category()
+        {
+            var ledger = new CapturingDecisionLedgerRecorder();
+            var observability = new FakeRuntimeObservability(ledger);
+
+            var sink = new RuntimeObservabilityAiControlPlaneEventSink(observability);
+
+            var controlPlaneEvent = new AiControlPlaneEvent
+            {
+                EventType = AiControlPlaneEventType.OperationCompleted,
+                Area = AiControlPlaneArea.Scaling,
+                Operation = "scale-out-requested",
+                Outcome = AiControlPlaneOperationOutcome.Succeeded,
+                Correlation = new AiRuntimeExecutionCorrelationContext
+                {
+                    CorrelationId = "test-correlation",
+                    RunId = "run-1"
+                }
+            };
+
+            await sink.RecordAsync(controlPlaneEvent, CancellationToken.None).ConfigureAwait(false);
+
+            Assert.Single(ledger.Entries);
+            Assert.Equal(AiDecisionLedgerCategory.Scaling, ledger.Entries[0].Category);
+        }
+
+        /// <summary>
+        /// Verifies that recovery control-plane events are recorded under the recovery ledger category.
+        /// </summary>
+        /// <returns>A task representing the asynchronous test operation.</returns>
+        [Fact]
+        public async Task RecordAsync_Should_Map_Recovery_Area_To_Recovery_Ledger_Category()
+        {
+            var ledger = new CapturingDecisionLedgerRecorder();
+            var observability = new FakeRuntimeObservability(ledger);
+
+            var sink = new RuntimeObservabilityAiControlPlaneEventSink(observability);
+
+            var controlPlaneEvent = new AiControlPlaneEvent
+            {
+                EventType = AiControlPlaneEventType.OperationCompleted,
+                Area = AiControlPlaneArea.Recovery,
+                Operation = "requeue-unfinished-runs",
+                Outcome = AiControlPlaneOperationOutcome.Succeeded,
+                Correlation = new AiRuntimeExecutionCorrelationContext
+                {
+                    CorrelationId = "test-correlation",
+                    RuntimeInstanceId = "runtime-1"
+                }
+            };
+
+            await sink.RecordAsync(controlPlaneEvent, CancellationToken.None).ConfigureAwait(false);
+
+            Assert.Single(ledger.Entries);
+            Assert.Equal(AiDecisionLedgerCategory.Recovery, ledger.Entries[0].Category);
         }
 
         /// <summary>

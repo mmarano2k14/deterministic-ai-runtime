@@ -97,6 +97,31 @@
         /// <summary>
         /// Represents execution finalization decisions.
         /// </summary>
-        Finalization
+        Finalization,
+
+        /// <summary>
+        /// Represents runtime instance registration, heartbeat, health, draining, and lifecycle decisions.
+        /// </summary>
+        RuntimeInstance,
+
+        /// <summary>
+        /// Represents run admission, capacity selection, routing, and assignment decisions.
+        /// </summary>
+        Admission,
+
+        /// <summary>
+        /// Represents shared runtime controller assignment, reassignment, failover, and ownership decisions.
+        /// </summary>
+        SharedController,
+
+        /// <summary>
+        /// Represents runtime-aware scale-out and scale-in decisions.
+        /// </summary>
+        Scaling,
+
+
+
+
+
     }
 }

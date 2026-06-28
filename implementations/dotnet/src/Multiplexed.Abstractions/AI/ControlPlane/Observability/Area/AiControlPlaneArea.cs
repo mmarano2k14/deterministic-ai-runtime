@@ -43,6 +43,11 @@
         /// <summary>
         /// Runtime-aware scale-out and scale-in decisions.
         /// </summary>
-        Scaling = 7
+        Scaling = 7,
+
+        /// <summary>
+        /// Runtime execution recovery, failed instance reconciliation, requeue, restore, and forensic repair operations.
+        /// </summary>
+        Recovery = 8
     }
 }

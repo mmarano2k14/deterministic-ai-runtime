@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
+using Multiplexed.Abstractions.AI.ControlPlane.Observability.Area;
 using Multiplexed.Abstractions.AI.ControlPlane.Observability.Events;
 using Multiplexed.Abstractions.AI.Observability;
 using Multiplexed.Abstractions.AI.Observability.Context;
@@ -54,7 +55,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Observability
             {
                 await this.observability.Ledger.RecordAsync(
                     context,
-                    AiDecisionLedgerCategory.Execution,
+                    GetLedgerCategory(controlPlaneEvent),
                     GetEventType(controlPlaneEvent),
                     GetLedgerOutcome(controlPlaneEvent),
                     controlPlaneEvent.FailureReason,
@@ -174,6 +175,29 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Observability
                 "Failed" => AiDecisionLedgerOutcome.Failed,
                 "CompletedWithIssues" => AiDecisionLedgerOutcome.CompletedWithIssues,
                 _ => AiDecisionLedgerOutcome.None
+            };
+        }
+
+        /// <summary>
+        /// Maps the control-plane area to a decision ledger category.
+        /// </summary>
+        /// <param name="controlPlaneEvent">The control-plane event.</param>
+        /// <returns>The matching decision ledger category.</returns>
+        private static AiDecisionLedgerCategory GetLedgerCategory(
+            AiControlPlaneEvent controlPlaneEvent)
+        {
+            return controlPlaneEvent.Area switch
+            {
+                AiControlPlaneArea.Replay => AiDecisionLedgerCategory.Replay,
+                AiControlPlaneArea.ExecutionControl => AiDecisionLedgerCategory.Control,
+                AiControlPlaneArea.RunControl => AiDecisionLedgerCategory.Run,
+                AiControlPlaneArea.InstanceRegistry => AiDecisionLedgerCategory.RuntimeInstance,
+                AiControlPlaneArea.Admission => AiDecisionLedgerCategory.Admission,
+                AiControlPlaneArea.SharedQueue => AiDecisionLedgerCategory.Queue,
+                AiControlPlaneArea.SharedController => AiDecisionLedgerCategory.SharedController,
+                AiControlPlaneArea.Scaling => AiDecisionLedgerCategory.Scaling,
+                AiControlPlaneArea.Recovery => AiDecisionLedgerCategory.Recovery,
+                _ => AiDecisionLedgerCategory.Control
             };
         }
     }
