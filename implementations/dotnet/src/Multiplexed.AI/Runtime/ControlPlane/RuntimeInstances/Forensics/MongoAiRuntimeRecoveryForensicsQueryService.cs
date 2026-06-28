@@ -201,6 +201,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics
                 SharedRunId = record.Identity.SharedRunId,
                 TenantId = record.Identity.TenantId,
                 ControlPlaneId = record.Identity.ControlPlaneId,
+                RuntimeFailureIncidentId = record.Failure?.RuntimeFailureIncidentId,
                 CreatedAtUtc = record.CreatedAtUtc,
                 UpdatedAtUtc = record.UpdatedAtUtc,
                 Timeline = record.Events

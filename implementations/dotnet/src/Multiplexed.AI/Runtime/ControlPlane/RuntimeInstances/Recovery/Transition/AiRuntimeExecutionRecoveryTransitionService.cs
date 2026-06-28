@@ -197,9 +197,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery.Transiti
                     : "runtime-execution-recovery-requeue");
 
             var forensicsId =
-                isLocalQueuedRecovery
-                    ? null
-                    : CreateForensicsId(ownership);
+                CreateForensicsId(
+                    ownership,
+                    isLocalQueuedRecovery);
 
             if (request.DryRun)
             {
@@ -272,13 +272,13 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery.Transiti
                 };
             }
 
-            if (!isLocalQueuedRecovery &&
-                !string.IsNullOrWhiteSpace(forensicsId))
+            if (!string.IsNullOrWhiteSpace(forensicsId))
             {
                 await this.RecordSuccessfulRecoveryTransitionForensicsAsync(
                         ownership,
                         reason,
                         forensicsId,
+                        isLocalQueuedRecovery,
                         cancellationToken)
                     .ConfigureAwait(false);
             }
@@ -331,17 +331,31 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery.Transiti
         /// <param name="ownership">The resolved shared run ownership.</param>
         /// <param name="reason">The recovery reason.</param>
         /// <param name="forensicsId">The recovery forensics identifier.</param>
+        /// <param name="isLocalQueuedRecovery">A value indicating whether the recovered work was local queued work without a durable execution id.</param>
         /// <param name="cancellationToken">A token used to cancel the operation.</param>
         /// <returns>A task that completes when the forensics evidence has been recorded.</returns>
         private async Task RecordSuccessfulRecoveryTransitionForensicsAsync(
             AiSharedRunOwnershipResolutionResult ownership,
             string reason,
             string forensicsId,
+            bool isLocalQueuedRecovery,
             CancellationToken cancellationToken)
         {
             var now = DateTimeOffset.UtcNow;
             var runtimeFailureIncidentId = CreateRuntimeFailureIncidentId(ownership);
-            var metadata = CreateRecoveryForensicsMetadata(ownership, reason, forensicsId);
+            var metadata = CreateRecoveryForensicsMetadata(
+                ownership,
+                reason,
+                forensicsId,
+                isLocalQueuedRecovery);
+
+            var recoveryMode = isLocalQueuedRecovery
+                ? RecoveryModeRequeueLocalQueuedRun
+                : RecoveryModeResumeExistingExecution;
+
+            var recoveryKind = isLocalQueuedRecovery
+                ? "local-queued-run-requeue"
+                : RecoveryKindInFlightExecutionResume;
 
             var record = new AiRuntimeRecoveryForensicsRecord
             {
@@ -366,20 +380,26 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery.Transiti
                 },
                 Recovery = new AiRuntimeRecoveryInfo
                 {
-                    RecoveryMode = RecoveryModeResumeExistingExecution,
-                    RecoveryKind = RecoveryKindInFlightExecutionResume,
+                    RecoveryMode = recoveryMode,
+                    RecoveryKind = recoveryKind,
                     Outcome = "requeued",
                     Reason = reason,
                     RecoveryStartedAtUtc = now
                 },
                 Artifacts = new AiRuntimeRecoveryArtifacts
                 {
-                    Restored =
-                    [
-                        AiRuntimeRecoveryArtifactName.DurableExecutionId,
-                        AiRuntimeRecoveryArtifactName.SharedRunMetadata,
-                        AiRuntimeRecoveryArtifactName.RecoveryMetadata
-                    ],
+                    Restored = isLocalQueuedRecovery
+                        ?
+                        [
+                            AiRuntimeRecoveryArtifactName.SharedRunMetadata,
+                            AiRuntimeRecoveryArtifactName.RecoveryMetadata
+                        ]
+                        :
+                        [
+                            AiRuntimeRecoveryArtifactName.DurableExecutionId,
+                            AiRuntimeRecoveryArtifactName.SharedRunMetadata,
+                            AiRuntimeRecoveryArtifactName.RecoveryMetadata
+                        ],
                     Recreated =
                     [
                         AiRuntimeRecoveryArtifactName.DispatchAssignment
@@ -396,7 +416,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery.Transiti
                 [
                     CreateForensicsEvent(
                         forensicsId,
-                        AiRuntimeRecoveryForensicsEventType.SharedRunRequeuedForResume,
+                        isLocalQueuedRecovery
+                            ? "SharedRunRequeuedForLocalQueuedRecovery"
+                            : AiRuntimeRecoveryForensicsEventType.SharedRunRequeuedForResume,
                         "requeued",
                         reason,
                         ownership,
@@ -441,14 +463,18 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery.Transiti
         /// Creates a deterministic forensics identifier for the recovery attempt.
         /// </summary>
         /// <param name="ownership">The resolved shared run ownership.</param>
+        /// <param name="isLocalQueuedRecovery">A value indicating whether the recovered work was local queued work without a durable execution id.</param>
         /// <returns>The forensics identifier.</returns>
         private static string CreateForensicsId(
-            AiSharedRunOwnershipResolutionResult ownership)
+            AiSharedRunOwnershipResolutionResult ownership,
+            bool isLocalQueuedRecovery)
         {
             return string.Join(
                 ":",
                 "runtime-recovery",
-                ownership.ExecutionId,
+                isLocalQueuedRecovery
+                    ? "local-queued"
+                    : ownership.ExecutionId,
                 ownership.SharedRunId,
                 ownership.LocalRunId);
         }
@@ -473,16 +499,20 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery.Transiti
         /// <param name="ownership">The resolved shared run ownership.</param>
         /// <param name="reason">The recovery reason.</param>
         /// <param name="forensicsId">The recovery forensics identifier.</param>
+        /// <param name="isLocalQueuedRecovery">A value indicating whether the recovered work was local queued work without a durable execution id.</param>
         /// <returns>The metadata dictionary.</returns>
         private static IReadOnlyDictionary<string, string> CreateRecoveryForensicsMetadata(
             AiSharedRunOwnershipResolutionResult ownership,
             string reason,
-            string forensicsId)
+            string forensicsId,
+            bool isLocalQueuedRecovery)
         {
             return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
             {
                 [RecoveryForensicsIdMetadataKey] = forensicsId,
-                [RecoveryModeMetadataKey] = RecoveryModeResumeExistingExecution,
+                [RecoveryModeMetadataKey] = isLocalQueuedRecovery
+                    ? RecoveryModeRequeueLocalQueuedRun
+                    : RecoveryModeResumeExistingExecution,
                 [RecoveryFailedExecutionIdMetadataKey] = ownership.ExecutionId ?? string.Empty,
                 [RecoveryFailedRuntimeInstanceIdMetadataKey] = ownership.RuntimeInstanceId ?? string.Empty,
                 [RecoveryFailedLocalRunIdMetadataKey] = ownership.LocalRunId ?? string.Empty,

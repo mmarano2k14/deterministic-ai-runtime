@@ -42,8 +42,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics
             CancellationToken cancellationToken = default)
         {
             ArgumentNullException.ThrowIfNull(record);
+            ArgumentNullException.ThrowIfNull(record.Identity);
             ArgumentException.ThrowIfNullOrWhiteSpace(record.Identity.ForensicsId);
-            ArgumentException.ThrowIfNullOrWhiteSpace(record.Identity.ExecutionId);
+            ArgumentException.ThrowIfNullOrWhiteSpace(record.Identity.SharedRunId);
 
             await EnsureIndexesAsync(cancellationToken).ConfigureAwait(false);
 

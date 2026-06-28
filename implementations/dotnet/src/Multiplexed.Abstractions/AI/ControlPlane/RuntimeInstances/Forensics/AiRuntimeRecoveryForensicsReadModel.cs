@@ -16,6 +16,10 @@ namespace Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Forensics
         /// <summary>
         /// Gets the durable execution identifier.
         /// </summary>
+        /// <remarks>
+        /// This value can be empty for local queued recovery records because no durable DAG execution
+        /// had been started on the failed runtime yet.
+        /// </remarks>
         public required string ExecutionId { get; init; }
 
         /// <summary>
@@ -32,6 +36,11 @@ namespace Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Forensics
         /// Gets the optional control-plane identifier.
         /// </summary>
         public string? ControlPlaneId { get; init; }
+
+        /// <summary>
+        /// Gets the optional runtime failure incident identifier.
+        /// </summary>
+        public string? RuntimeFailureIncidentId { get; init; }
 
         /// <summary>
         /// Gets the record creation time.
