@@ -6,6 +6,146 @@ This project follows a deterministic runtime and observability model designed fo
 
 ---
 
+## 2026-06-28 — Runtime crash recovery inventory: local queued work + in-flight executions
+
+Validated and hardened the production recovery path for a failed HTTP process-host runtime instance owning multiple durable work items.
+
+This change closes the runtime recovery inventory proof: when a stateful runtime instance becomes unhealthy or crashes, the control plane can now enumerate and recover both local queued work that had not yet started an execution and in-flight executions that already had a durable execution id.
+
+### What was validated
+
+A new production integration scenario was added:
+
+`Http_ProcessHost_Should_Recover_Durable_Assigned_Work_Inventory_From_Failed_Runtime`
+
+The scenario proves a failed runtime with 5 assigned durable work items:
+
+- 3 local queued runs without `ExecutionId`
+- 2 in-flight executions with existing durable `ExecutionId`
+
+Recovery result:
+
+- 3/3 local queued runs recovered
+- 2/2 in-flight executions recovered
+- 5/5 total assigned work items recovered
+- all recovered work redispatched from failed `runtime-1` to replacement `runtime-2`
+- local queued runs receive new replacement `LocalRunId`
+- in-flight executions preserve their original durable `ExecutionId`
+- recovery forensics remains execution-level and records full timelines for the in-flight DAG resume executions
+
+### Production fixes added
+
+#### Local queued runtime work recovery
+
+`AiRuntimeExecutionRecoveryTransitionService` now supports recovery candidates that have a valid failed `LocalRunId` and `SharedRunId`, but no `ExecutionId` yet.
+
+This is the correct state for work that was assigned to a runtime local queue but had not started execution before the runtime failed.
+
+For this case, recovery uses:
+
+- `recovery.mode = requeue-local-queued-run`
+- `recovery.failedRuntimeInstanceId`
+- `recovery.failedLocalRunId`
+- empty `recovery.failedExecutionId`
+
+The transition service no longer rejects these candidates with `execution-id-missing`.
+
+#### Runtime run index recovery marker for queued work
+
+`RedisAiRuntimeRunExecutionIndex.MarkRequeuedForRecoveryAsync(...)` now safely supports local queued recovery without an execution id.
+
+Safety rules:
+
+- `runId` remains required
+- `reason` remains required
+- tenant isolation remains enforced
+- terminal entries are still protected
+- if an execution id is provided, it must match the existing entry or the existing entry must be empty
+- if no execution id is provided, the existing entry must also have no execution id
+
+This prevents accidentally marking an already-started execution without validating its execution id, while allowing legitimate local queued recovery.
+
+### Recovery behavior now proven
+
+Before recovery:
+
+```text
+Failed runtime: runtime-1
+
+Assigned durable work:
+├── LocalQueued x3
+│   ├── SharedRunId present
+│   ├── FailedLocalRunId present
+│   └── ExecutionId empty
+└── InFlightExecution x2
+    ├── SharedRunId present
+    ├── FailedLocalRunId present
+    └── ExecutionId present
+```
+
+After recovery:
+
+```text
+Replacement runtime: runtime-2
+
+Recovered work:
+├── LocalQueued x3
+│   ├── old LocalRunId marked requeued-for-recovery
+│   ├── SharedRun requeued
+│   ├── redispatched to runtime-2
+│   └── new replacement LocalRunId created
+└── InFlightExecution x2
+    ├── old LocalRunId marked requeued-for-recovery
+    ├── SharedRun requeued for resume
+    ├── redispatched to runtime-2
+    ├── same ExecutionId preserved
+    └── DAG resume completed
+```
+
+### Proof output
+
+The production test now emits a clear recovery inventory proof:
+
+```text
+[RUNTIME RECOVERY INVENTORY PROOF]
+QueuedLocalRunsRecovered='3/3'
+InFlightExecutionsRecovered='2/2'
+TotalRecovered='5/5'
+ReplacementRuntimeInstances='runtime-2'
+```
+
+### Design clarification
+
+This does not recover volatile local memory. The local runtime queue memory is still considered lost when a process crashes.
+
+The important production guarantee is stronger and cleaner:
+
+```text
+Local memory is lost, but durable ownership survives.
+```
+
+The control plane now proves that it can reconstruct the failed runtime work inventory from durable stores, classify local queued work versus in-flight executions, recover both categories, and redispatch them to replacement runtime capacity without faking recovery results.
+
+### Architectural impact
+
+This closes the recovery gap between:
+
+- runtime health reconciliation
+- unsafe capacity suppression
+- durable assigned work inventory
+- local queued work recovery
+- in-flight execution resume
+- replacement runtime redispatch
+- DAG resume for durable executions
+- execution-level recovery forensics
+
+The runtime recovery story now covers both major failure states of a stateful runtime instance:
+
+1. work assigned but still queued locally
+2. work already executing with durable DAG state
+
+---
+
 ## 2026-06-27 — Production recovery test helper extraction
 
 ### Changed

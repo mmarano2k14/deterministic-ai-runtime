@@ -9,6 +9,7 @@ using Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Scaling;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Store;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Claiming;
+using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Dispatch;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Queue;
 using Multiplexed.Abstractions.AI.Execution;
 using Multiplexed.AI.McpServer.Tests.Integration.Fixtures;
@@ -17,6 +18,7 @@ using Multiplexed.AI.McpServer.Tests.Integration.Helpers;
 using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Assertions;
 using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Definitions;
 using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helpers;
+using Multiplexed.AI.Runtime.ControlPlane.SharedQueue;
 using Multiplexed.AI.Stores;
 using Xunit;
 using Xunit.Abstractions;
@@ -265,12 +267,17 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 FailureStepNumber,
                 StepCount);
 
+            var sharedQueueDispatcher =
+                host.Services.GetRequiredService<IAiSharedQueueDispatcher>();
+
             var redispatchedRun =
                 await ProductionRecoveryWaitHelpers
                     .WaitForSharedRunAssignedAwayFromRuntimeAsync(
                         registry,
                         healthReconciler,
                         sharedRunStore,
+                        sharedQueue,
+                        sharedQueueDispatcher,
                         sharedRunId,
                         failedRuntimeInstanceId,
                         scenario.DispatchTimeout)
@@ -289,7 +296,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 await McpTestWaitHelpers
                     .WaitForTerminalRuntimeRunStatusesAsync(
                         mcp,
-                        new[] { redispatchedRun },
+                        new AiSharedRunRecord[] { redispatchedRun },
                         timeout: scenario.CompletionTimeout)
                     .ConfigureAwait(false);
 
@@ -361,6 +368,32 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 $"[HTTP DAG RESUME PROOF] ExecutionId='{existingExecutionId}', FailureStep='{ProductionRecoverySeedHelpers.FormatStepName(FailureStepNumber)}', CompletedBeforeFailure='{FailureStepNumber - 1}', RecoveredFromStep='{ProductionRecoverySeedHelpers.FormatStepName(FailureStepNumber)}', FinalCompletedSteps='{StepCount}/{StepCount}', FailedRuntimeInstanceId='{failedRuntimeInstanceId}', ReplacementRuntimeInstanceId='{redispatchedRun.AssignedRuntimeInstanceId}', FailedLocalRunId='{failedLocalRunId}', ReplacementLocalRunId='{redispatchedRun.LocalRunId}'.");
         }
 
+        [Theory]
+        [InlineData(1)]
+        [InlineData(2)]
+        [InlineData(3)]
+        [InlineData(4)]
+        [InlineData(5)]
+        [InlineData(6)]
+        [InlineData(7)]
+        [InlineData(8)]
+        [InlineData(9)]
+        [InlineData(10)]
+        public async Task Http_ProcessHost_Should_Expose_Dag_Resume_Recovery_Forensics_Timeline_Through_Mcp_StabilityLoop(int iteration)
+        {
+            await Http_ProcessHost_Should_Expose_Dag_Resume_Recovery_Forensics_Timeline_Through_Mcp_CoreAsync(iteration).ConfigureAwait(false);
+        }
+
+        /// <summary>
+        /// Runs the DAG resume recovery forensics MCP timeline scenario.
+        /// </summary>
+        private async Task Http_ProcessHost_Should_Expose_Dag_Resume_Recovery_Forensics_Timeline_Through_Mcp_CoreAsync(int iteration)
+        {
+            this.output.WriteLine($"[FORENSICS TIMELINE STABILITY LOOP] Iteration='{iteration}'.");
+
+            await Http_ProcessHost_Should_Expose_Dag_Resume_Recovery_Forensics_Timeline_Through_Mcp();
+        }
+
         /// <summary>
         /// Verifies that HTTP process-host DAG resume recovery forensics are exposed through MCP search/get/timeline tools.
         /// </summary>
@@ -417,6 +450,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 host.Services
                     .GetRequiredService<IOptions<AiRuntimeExecutionRecoveryReconciliationOptions>>()
                     .Value;
+
+            var sharedQueueDispatcher =
+                host.Services.GetRequiredService<IAiSharedQueueDispatcher>();
 
             ProductionRecoveryOptionsAssertions.AssertDagResumeRecoveryEnabled(recoveryOptions);
 
@@ -526,6 +562,14 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             this.output.WriteLine(
                 $"[HTTP DAG RESUME] Seeded DAG state. ExecutionId='{existingExecutionId}', CompletedBeforeFailure='{FailureStepNumber - 1}', FailedStep='{ProductionRecoverySeedHelpers.FormatStepName(FailureStepNumber)}', FailedRuntimeInstanceId='{failedRuntimeInstanceId}'.");
 
+            await ProductionRecoveryWaitHelpers
+                .WaitForRunExecutionIndexAsync(
+                    runExecutionIndex,
+                    failedLocalRunId,
+                    existingExecutionId,
+                    TimeSpan.FromSeconds(10))
+                .ConfigureAwait(false);
+
             var recoveryResult =
                 await ProductionRecoveryWaitHelpers
                     .MarkUnhealthyAndReconcileUntilRecoveredAsync(
@@ -555,14 +599,39 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                     .ConfigureAwait(false);
 
             Assert.NotNull(queueItemAfterRecovery);
-            Assert.Contains(
-                queueItemAfterRecovery!.Status,
-                new[]
-                {
-                    AiSharedQueueItemStatus.Pending,
-                    AiSharedQueueItemStatus.Claimed,
-                    AiSharedQueueItemStatus.Dispatched
-                });
+
+            if (queueItemAfterRecovery!.Status == AiSharedQueueItemStatus.Dispatched)
+            {
+                var sharedRunAfterRecovery =
+                    await sharedRunStore
+                        .GetAsync(sharedRunId)
+                        .ConfigureAwait(false);
+
+                Assert.True(
+                    sharedRunAfterRecovery is not null &&
+                    !string.Equals(
+                        sharedRunAfterRecovery.AssignedRuntimeInstanceId,
+                        failedRuntimeInstanceId,
+                        StringComparison.Ordinal),
+                    "Recovered queue item is already Dispatched, but shared run is still assigned to failed runtime. " +
+                    $"SharedRunId='{sharedRunId}', " +
+                    $"FailedRuntimeInstanceId='{failedRuntimeInstanceId}', " +
+                    $"AssignedRuntimeInstanceId='{sharedRunAfterRecovery?.AssignedRuntimeInstanceId}', " +
+                    $"LocalRunId='{sharedRunAfterRecovery?.LocalRunId}', " +
+                    $"ExecutionId='{sharedRunAfterRecovery?.ExecutionId}', " +
+                    $"QueueStatus='{queueItemAfterRecovery.Status}', " +
+                    $"QueueClaimToken='{queueItemAfterRecovery.ClaimToken}'.");
+            }
+            else
+            {
+                Assert.True(
+                    queueItemAfterRecovery.Status is AiSharedQueueItemStatus.Pending or AiSharedQueueItemStatus.Claimed,
+                    "Recovered queue item should be redispatchable after recovery. " +
+                    $"ExpectedStatus='Pending|Claimed|ValidDispatchedAway', " +
+                    $"ActualStatus='{queueItemAfterRecovery.Status}', " +
+                    $"SharedRunId='{sharedRunId}', " +
+                    $"ClaimToken='{queueItemAfterRecovery.ClaimToken}'.");
+            }
             Assert.Equal("resume-existing-execution", queueItemAfterRecovery.Metadata["recovery.mode"]);
             Assert.Equal(existingExecutionId, queueItemAfterRecovery.Metadata["recovery.failedExecutionId"]);
             Assert.Equal(failedRuntimeInstanceId, queueItemAfterRecovery.Metadata["recovery.failedRuntimeInstanceId"]);
@@ -593,6 +662,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                         registry,
                         healthReconciler,
                         sharedRunStore,
+                        sharedQueue,
+                        sharedQueueDispatcher,
                         sharedRunId,
                         failedRuntimeInstanceId,
                         scenario.DispatchTimeout)
@@ -1118,18 +1189,23 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             var redispatchedRuns =
                 new List<AiSharedRunRecord>();
 
+            var sharedQueueDispatcher =
+                host.Services.GetRequiredService<IAiSharedQueueDispatcher>();
+
             foreach (var work in seededWorks)
             {
                 var redispatchedRun =
-                    await ProductionRecoveryWaitHelpers
-                        .WaitForSharedRunAssignedAwayFromRuntimeAsync(
-                            registry,
-                            healthReconciler,
-                            sharedRunStore,
-                            work.SharedRunId,
-                            failedRuntimeInstanceId,
-                            scenario.DispatchTimeout)
-                        .ConfigureAwait(false);
+                await ProductionRecoveryWaitHelpers
+                    .WaitForSharedRunAssignedAwayFromRuntimeAsync(
+                        registry,
+                        healthReconciler,
+                        sharedRunStore,
+                        sharedQueue,
+                        sharedQueueDispatcher,
+                        work.SharedRunId,
+                        failedRuntimeInstanceId,
+                        scenario.DispatchTimeout)
+                    .ConfigureAwait(false);
 
                 Assert.False(string.IsNullOrWhiteSpace(redispatchedRun.AssignedRuntimeInstanceId));
                 Assert.False(string.IsNullOrWhiteSpace(redispatchedRun.LocalRunId));

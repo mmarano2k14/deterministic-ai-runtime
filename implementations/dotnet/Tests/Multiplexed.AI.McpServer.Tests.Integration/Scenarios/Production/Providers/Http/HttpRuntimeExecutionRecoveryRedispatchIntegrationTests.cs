@@ -750,7 +750,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             }
 
             Assert.Fail(
-                $"Shared run was not redispatched away from failed runtime within '{timeout}'. " +
+                $"Shared run was not redispatched away from failed runtime within 2 '{timeout}'. " +
                 $"SharedRunId='{sharedRunId}', FailedRuntimeInstanceId='{failedRuntimeInstanceId}', " +
                 $"LastFailedRuntimeStatus='{lastFailedRuntimeSnapshot?.Status}', " +
                 $"LastFailedRuntimeCanAcceptRun='{lastFailedRuntimeSnapshot?.CanAcceptRun}', " +
