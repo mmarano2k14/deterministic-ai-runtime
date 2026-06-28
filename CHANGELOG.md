@@ -6,6 +6,75 @@ This project follows a deterministic runtime and observability model designed fo
 
 ---
 
+## [1.0.6.9] - 2026-06-28 - HTTP Process-Host DAG Resume Recovery — Test Suite Consolidation & Stability Loops
+
+Consolidated and stabilized the HTTP process-host DAG resume recovery test suite.
+
+This update makes the recovery scenarios cleaner, more reusable, and more reliable by extracting internal seed/wait/output helpers, strengthening recovery assertions, and isolating stability loops into a dedicated test class.
+
+### What Changed
+
+- Added a dedicated stability-loop test class:
+  - `HttpProcessHostDagResumeRecoveryScenarioStabilityLoopTests`
+  - Keeps repeated stability runs outside the main scenario test class.
+  - Uses composition to call the existing scenario tests without duplicating test logic.
+
+- Added stability loops for:
+  - DAG resume recovery forensics timeline through MCP.
+  - Real HTTP runtime DAG record `ContextKey` persistence.
+  - Durable assigned-work inventory recovery from a failed runtime.
+
+- Consolidated failed-runtime assigned-work inventory helpers:
+  - Moved inventory seed logic out of the scenario test class.
+  - Moved failed-runtime work seed models into reusable helper scope.
+  - Updated helper signatures to avoid depending on private test constants:
+    - `StepCount`
+    - `FailureStepNumber`
+    - `RequestedBy`
+    - `Source`
+
+- Hardened recovery inventory validation:
+  - The inventory scenario now proves recovery of both local queued runs and in-flight durable DAG executions.
+  - Local queued work is redispatched as new runtime work.
+  - In-flight executions preserve their original durable `ExecutionId` and resume existing DAG state.
+
+- Consolidated recovery output helpers:
+  - Failed-runtime inventory output.
+  - Recovered-runtime inventory output.
+  - Runtime recovery forensics output.
+
+- Kept HTTP process-host scenario factories local to the scenario test class for now:
+  - `CreateHttpDagResumeRecoveryScenario`
+  - `CreateHttpRuntimeRecoveryInventoryScenario`
+
+### Validated Behavior
+
+- Failed runtime assigned-work inventory is recovered from durable state.
+- Queued local runs are requeued and redispatched to a replacement runtime.
+- In-flight executions are recovered with their existing durable execution ids.
+- Replacement runtime resumes DAG execution instead of creating a new execution for recovered in-flight work.
+- Recovery forensics are emitted for in-flight recovered executions.
+- All recovered work reaches terminal successful completion.
+
+### Stability Results
+
+- DAG resume recovery forensics timeline stability loop: green.
+- ContextKey real-create stability loop: green.
+- Durable assigned-work inventory recovery stability loop: `5/5` green.
+- Full inventory scenario validated with:
+  - `3/3` queued local runs recovered.
+  - `2/2` in-flight executions recovered.
+  - `5/5` total work items recovered.
+  - Recovery dispatched away from the failed runtime to the replacement runtime.
+
+### Why This Matters
+
+This makes the HTTP process-host recovery test suite easier to maintain and safer to extend.
+
+The main scenario tests remain focused on behavior, while reusable helpers now own seed, wait, and diagnostic output responsibilities. Stability loops can now be executed independently without polluting the core test class.
+
+---
+
 ## [1.0.6.9] - 2026-06-28 Runtime Recovery Forensics — DAG Resume Redispatch Stability Hardening
 
 ### Summary
