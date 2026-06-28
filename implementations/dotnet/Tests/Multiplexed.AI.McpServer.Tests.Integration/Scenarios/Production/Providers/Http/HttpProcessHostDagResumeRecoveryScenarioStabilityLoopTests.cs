@@ -11,6 +11,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
     public sealed class HttpProcessHostDagResumeRecoveryScenarioStabilityLoopTests
     {
         private readonly HttpProcessHostDagResumeRecoveryScenarioTests scenarioTests;
+        private readonly HttpProcessHostConcurrentRuntimeRecoveryScenarioTests concurrentRuntimeRecoveryScenarioTests;
 
         /// <summary>
         /// Initializes a new instance of the <see cref="HttpProcessHostDagResumeRecoveryScenarioStabilityLoopTests"/> class.
@@ -21,6 +22,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
         {
             this.Output = output ?? throw new ArgumentNullException(nameof(output));
             this.scenarioTests = new HttpProcessHostDagResumeRecoveryScenarioTests(output);
+            this.concurrentRuntimeRecoveryScenarioTests = new HttpProcessHostConcurrentRuntimeRecoveryScenarioTests(output);
         }
 
         /// <summary>
@@ -103,6 +105,28 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
 
             await this.scenarioTests
                 .Http_ProcessHost_Should_Recover_Durable_Assigned_Work_Inventory_From_Failed_Runtime()
+                .ConfigureAwait(false);
+        }
+
+        /// <summary>
+        /// Repeatedly verifies that two failed tenants can recover concurrently while a third tenant remains untouched.
+        /// </summary>
+        /// <param name="iteration">The stability loop iteration.</param>
+        /// <returns>A task representing the asynchronous operation.</returns>
+        [Theory]
+        [InlineData(1)]
+        [InlineData(2)]
+        [InlineData(3)]
+        [InlineData(4)]
+        [InlineData(5)]
+        public async Task Http_ProcessHost_Should_Recover_Two_Failed_Tenants_While_Leaving_Third_Tenant_Untouched_StabilityLoop(
+            int iteration)
+        {
+            this.Output.WriteLine(
+                $"[MULTI-TENANT SAFE RECOVERY STABILITY LOOP] Iteration='{iteration}'.");
+
+            await this.concurrentRuntimeRecoveryScenarioTests
+                .Http_ProcessHost_Should_Recover_Two_Failed_Tenants_While_Leaving_Third_Tenant_Untouched()
                 .ConfigureAwait(false);
         }
     }

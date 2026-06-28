@@ -6,6 +6,119 @@ This project follows a deterministic runtime and observability model designed fo
 
 ---
 
+## [1.0.6.9] - 2026-06-28 — Concurrent Runtime Recovery Forensics + Safe Tenant Isolation
+
+### Added
+
+- Added a new HTTP process-host concurrent recovery scenario covering **three tenants**:
+  - Tenant A has a failed runtime and recovered assigned work.
+  - Tenant B has a failed runtime and recovered assigned work.
+  - Tenant C remains safe and untouched during the recovery operation.
+
+- Added test coverage for:
+
+  ```text
+  Http_ProcessHost_Should_Recover_Two_Failed_Tenants_While_Leaving_Third_Tenant_Untouched
+  ```
+
+- Added stability-loop coverage for the new safe-tenant concurrent recovery scenario:
+
+  ```text
+  Http_ProcessHost_Should_Recover_Two_Failed_Tenants_While_Leaving_Third_Tenant_Untouched_StabilityLoop
+  ```
+
+- Added a dedicated safe-tenant scenario factory so the existing concurrent recovery test keeps its own isolated setup:
+
+  ```text
+  CreateConcurrentMultiInstanceRecoveryScenario()
+  CreateConcurrentSafeTenantRecoveryScenario()
+  ```
+
+### Changed
+
+- Extended runtime recovery forensics to support **AllRecoveredWork**, not only in-flight DAG executions.
+
+- Local queued recovery now produces a recovery forensics record even when no durable execution id exists yet.
+
+- Local queued recovery forensics now uses deterministic ids in this format:
+
+  ```text
+  runtime-recovery:local-queued:{sharedRunId}:{failedLocalRunId}
+  ```
+
+- `AiRuntimeExecutionRecoveryTransitionService` now records forensics for both:
+  - in-flight execution resume recovery;
+  - local queued run requeue recovery.
+
+- `MongoAiRuntimeRecoveryForensicsStore` now accepts recovery forensics records with an empty `ExecutionId`, as long as `ForensicsId` and `SharedRunId` are present.
+
+- `AiRuntimeRecoveryForensicsReadModel` now exposes `RuntimeFailureIncidentId` directly as a top-level read-model field.
+
+- `MongoAiRuntimeRecoveryForensicsQueryService` now maps:
+
+  ```csharp
+  RuntimeFailureIncidentId = record.Failure?.RuntimeFailureIncidentId
+  ```
+
+### Fixed
+
+- Fixed missing forensics records for recovered local queued work.
+
+- Fixed the previous behavior where only in-flight execution recovery produced forensics.
+
+- Fixed concurrent recovery validation so expected forensics count is based on all seeded recoverable work, including:
+  - local queued work;
+  - in-flight execution work.
+
+- Fixed Mongo persistence validation that previously rejected local queued recovery forensics because `ExecutionId` was empty.
+
+- Avoided changing existing Mongo index options in-place to prevent index option conflicts during test runs.
+
+### Validated
+
+- Existing concurrent runtime recovery scenario remains green.
+
+- New safe-tenant scenario is green and proves:
+
+  ```text
+  Tenant A recovered: 3/3
+  Tenant B recovered: 2/2
+  Tenant C safe: untouched, 0 forensics
+  ExpectedForensics: 5
+  ActualForensics: 5
+  CrossTenantLeakDetected: false
+  CrossIncidentLeakDetected: false
+  DuplicateRecoveryDetected: false
+  SelfRedispatchDetected: false
+  ```
+
+- Confirmed that local queued forensics records are persisted and returned with:
+
+  ```text
+  ExecutionId=''
+  Timeline='SharedRunRequeuedForLocalQueuedRecovery -> failed.local.run.marked.requeued.for.recovery -> replacement.runtime.selected -> replacement.local.run.registered -> resume.context.seeded'
+  ```
+
+### Production Impact
+
+- Runtime recovery forensics now represents the complete recovered work inventory, not only durable DAG resume cases.
+
+- Operators can now inspect recovery evidence for work that was still in the failed runtime local queue and had not yet started a durable DAG execution.
+
+- Recovery incident grouping is stronger because `RuntimeFailureIncidentId` is exposed directly in the read model.
+
+- Multi-tenant safety is now validated across:
+  - failed tenant A;
+  - failed tenant B;
+  - unaffected safe tenant C.
+
+### Notes
+
+- The original concurrent recovery test was intentionally kept unchanged.
+- The new safe-tenant test was added separately to avoid overloading the existing scenario and to keep each recovery proof focused.
+
+---
+
 ## [1.0.6.9] - 2026-06-28 - HTTP Process-Host DAG Resume Recovery — Test Suite Consolidation & Stability Loops
 
 Consolidated and stabilized the HTTP process-host DAG resume recovery test suite.
