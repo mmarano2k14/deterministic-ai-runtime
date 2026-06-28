@@ -206,7 +206,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
             services.AddOptions<SimulatedAiRuntimeScaleOutProviderOptions>();
             services.AddOptions<RedisAiRuntimeRunExecutionIndexOptions>();
 
-            services.TryAddSingleton<IAiControlPlaneObserver, NoopAiControlPlaneObserver>();
+            services.TryAddSingleton<IAiControlPlaneObserver, CompositeAiControlPlaneObserver>();
+            services.TryAddEnumerable(
+                ServiceDescriptor.Singleton<IAiControlPlaneEventSink, RuntimeObservabilityAiControlPlaneEventSink>());
 
             services.TryAddSingleton<IAiReplayControlPlane, AiReplayControlPlane>();
             services.TryAddSingleton<IAiExecutionControlPlane, AiExecutionControlPlane>();
@@ -644,8 +646,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
         /// <summary>
         /// Enables structured logging for AI control-plane events.
         ///
-        /// This replaces the default no-op observer with a logging observer
-        /// that forwards control-plane events to the runtime logging layer.
+        /// This adds a logging sink to the composite control-plane observer
+        /// so control-plane events are forwarded to the runtime logging layer
+        /// without replacing other observability sinks.
         /// </summary>
         /// <param name="services">The service collection.</param>
         /// <returns>The same service collection for chaining.</returns>
@@ -656,8 +659,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
 
             services.TryAddSingleton<IAiControlPlaneLogger, AiControlPlaneLogger>();
 
-            services.RemoveAll<IAiControlPlaneObserver>();
-            services.AddSingleton<IAiControlPlaneObserver, LoggedAiControlPlaneObserver>();
+            services.TryAddEnumerable(
+                ServiceDescriptor.Singleton<IAiControlPlaneEventSink, LoggingAiControlPlaneEventSink>());
 
             return services;
         }
