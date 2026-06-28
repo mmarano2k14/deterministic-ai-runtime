@@ -451,6 +451,479 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 $"CrossTenantLeakDetected='false', CrossIncidentLeakDetected='false', DuplicateRecoveryDetected='false', SelfRedispatchDetected='false'.");
         }
 
+
+        /// <summary>
+        /// Verifies that concurrent failures in two tenants do not leak recovery, forensics,
+        /// incidents, or redispatch into a third tenant that remains healthy.
+        /// </summary>
+        [Fact]
+        public async Task Http_ProcessHost_Should_Recover_Two_Failed_Tenants_While_Leaving_Third_Tenant_Untouched()
+        {
+            var scenario =
+                CreateConcurrentSafeTenantRecoveryScenario();
+
+            scenario.DispatchTimeout = TimeSpan.FromMinutes(2);
+            scenario.CompletionTimeout = TimeSpan.FromMinutes(5);
+
+            var controlPlaneId =
+                GenericMcpServerTestSettings.CreateControlPlaneId(
+                    scenario.ControlPlaneIdPrefix);
+
+            var runtimeHostAssemblyPath =
+                GenericMcpRuntimeHostAssemblyResolver.ResolveRuntimeHostAssemblyPath();
+
+            var settings =
+                HttpProcessHostProductionScenarioSettingsBuilder.Build(
+                    scenario,
+                    controlPlaneId,
+                    runtimeHostAssemblyPath);
+
+            await using var host =
+                new GenericMcpServerTestHost(settings);
+
+            var registry =
+                host.Services.GetRequiredService<IAiRuntimeInstanceRegistry>();
+
+            var healthReconciler =
+                host.Services.GetRequiredService<IAiRuntimeInstanceHealthReconciler>();
+
+            var runExecutionIndex =
+                host.Services.GetRequiredService<IAiRuntimeRunExecutionIndex>();
+
+            var sharedRunStore =
+                host.Services.GetRequiredService<IAiSharedRunStore>();
+
+            var sharedQueue =
+                host.Services.GetRequiredService<IAiSharedQueue>();
+
+            var scaleOutRequestStore =
+                host.Services.GetRequiredService<IAiRuntimeScaleOutRequestStore>();
+
+            var scaleOutPublisher =
+                host.Services.GetRequiredService<IAiRuntimeScaleOutRequestPublisher>();
+
+            var recoveryReconciler =
+                host.Services.GetRequiredService<IAiRuntimeExecutionRecoveryReconciler>();
+
+            var dagStore =
+                host.Services.GetRequiredService<IAiDagExecutionStore>();
+
+            var sharedQueueDispatcher =
+                host.Services.GetRequiredService<IAiSharedQueueDispatcher>();
+
+            var queryService =
+                host.Services.GetRequiredService<IAiRuntimeRecoveryForensicsQueryService>();
+
+            var recoveryOptions =
+                host.Services
+                    .GetRequiredService<IOptions<AiRuntimeExecutionRecoveryReconciliationOptions>>()
+                    .Value;
+
+            ProductionRecoveryOptionsAssertions.AssertDagResumeRecoveryEnabled(recoveryOptions);
+
+            var tenantA =
+                scenario.Tenants.Single(tenant =>
+                    string.Equals(tenant.TenantId, "tenant-concurrent-a", StringComparison.Ordinal));
+
+            var tenantB =
+                scenario.Tenants.Single(tenant =>
+                    string.Equals(tenant.TenantId, "tenant-concurrent-b", StringComparison.Ordinal));
+
+            var tenantC =
+                scenario.Tenants.Single(tenant =>
+                    string.Equals(tenant.TenantId, "tenant-concurrent-c", StringComparison.Ordinal));
+
+            using var tenantAHttpClient =
+                host.CreateClient();
+
+            using var tenantBHttpClient =
+                host.CreateClient();
+
+            using var tenantCHttpClient =
+                host.CreateClient();
+
+            var tenantAMcp =
+                await McpRbacTestClientHelper
+                    .CreateConfiguredClientAsync(
+                        host,
+                        tenantAHttpClient,
+                        RequestedBy,
+                        tenantId: tenantA.TenantId,
+                        tenantGroupId: tenantA.TenantGroupId)
+                    .ConfigureAwait(false);
+
+            var tenantBMcp =
+                await McpRbacTestClientHelper
+                    .CreateConfiguredClientAsync(
+                        host,
+                        tenantBHttpClient,
+                        RequestedBy,
+                        tenantId: tenantB.TenantId,
+                        tenantGroupId: tenantB.TenantGroupId)
+                    .ConfigureAwait(false);
+
+            var tenantCMcp =
+                await McpRbacTestClientHelper
+                    .CreateConfiguredClientAsync(
+                        host,
+                        tenantCHttpClient,
+                        RequestedBy,
+                        tenantId: tenantC.TenantId,
+                        tenantGroupId: tenantC.TenantGroupId)
+                    .ConfigureAwait(false);
+
+            var tenantAPipelineName =
+                $"{scenario.Name}-{tenantA.TenantId}-concurrent-recovery-{Guid.NewGuid():N}";
+
+            var tenantAControlPipelineName =
+                $"{scenario.Name}-{tenantA.TenantId}-control-runtime-{Guid.NewGuid():N}";
+
+            var tenantBPipelineName =
+                $"{scenario.Name}-{tenantB.TenantId}-concurrent-recovery-{Guid.NewGuid():N}";
+
+            var tenantCSafePipelineName =
+                $"{scenario.Name}-{tenantC.TenantId}-safe-runtime-{Guid.NewGuid():N}";
+
+            this.output.WriteLine(
+                $"[MULTI-TENANT SAFE RECOVERY] Starting. ControlPlaneId='{controlPlaneId}', TenantAPipeline='{tenantAPipelineName}', TenantAControlPipeline='{tenantAControlPipelineName}', TenantBPipeline='{tenantBPipelineName}', TenantCSafePipeline='{tenantCSafePipelineName}', RuntimeHostAssemblyPath='{runtimeHostAssemblyPath}'.");
+
+            var tenantAFailedBootstrap =
+                await SubmitAndDispatchOneRunAsync(
+                        tenantAMcp,
+                        scaleOutRequestStore,
+                        tenantA,
+                        controlPlaneId,
+                        tenantAPipelineName,
+                        scenario.ScaleOutTimeout,
+                        scenario.DispatchTimeout)
+                    .ConfigureAwait(false);
+
+            var tenantAControlRuntimeInstanceId =
+                await PublishScaleOutAndWaitForAdditionalTenantRuntimeInstanceAsync(
+                        scaleOutPublisher,
+                        registry,
+                        tenantAFailedBootstrap,
+                        tenantA,
+                        controlPlaneId,
+                        tenantAControlPipelineName,
+                        tenantAFailedBootstrap.AssignedRuntimeInstanceId!,
+                        scenario.ScaleOutTimeout)
+                    .ConfigureAwait(false);
+
+            var tenantBFailedBootstrap =
+                await SubmitAndDispatchOneRunAsync(
+                        tenantBMcp,
+                        scaleOutRequestStore,
+                        tenantB,
+                        controlPlaneId,
+                        tenantBPipelineName,
+                        scenario.ScaleOutTimeout,
+                        scenario.DispatchTimeout)
+                    .ConfigureAwait(false);
+
+            var tenantCSafeBootstrap =
+                await SubmitAndDispatchOneRunAsync(
+                        tenantCMcp,
+                        scaleOutRequestStore,
+                        tenantC,
+                        controlPlaneId,
+                        tenantCSafePipelineName,
+                        scenario.ScaleOutTimeout,
+                        scenario.DispatchTimeout)
+                    .ConfigureAwait(false);
+
+            Assert.False(string.IsNullOrWhiteSpace(tenantAFailedBootstrap.AssignedRuntimeInstanceId));
+            Assert.False(string.IsNullOrWhiteSpace(tenantAFailedBootstrap.LocalRunId));
+            Assert.False(string.IsNullOrWhiteSpace(tenantBFailedBootstrap.AssignedRuntimeInstanceId));
+            Assert.False(string.IsNullOrWhiteSpace(tenantBFailedBootstrap.LocalRunId));
+            Assert.False(string.IsNullOrWhiteSpace(tenantCSafeBootstrap.AssignedRuntimeInstanceId));
+            Assert.False(string.IsNullOrWhiteSpace(tenantCSafeBootstrap.LocalRunId));
+
+            var tenantAFailedRuntimeInstanceId =
+                tenantAFailedBootstrap.AssignedRuntimeInstanceId!;
+
+            var tenantBFailedRuntimeInstanceId =
+                tenantBFailedBootstrap.AssignedRuntimeInstanceId!;
+
+            var tenantCSafeRuntimeInstanceId =
+                tenantCSafeBootstrap.AssignedRuntimeInstanceId!;
+
+            this.output.WriteLine(
+                "[MULTI-TENANT SAFE RUNTIME SELECTION] " +
+                $"TenantAFailedRuntime='{tenantAFailedRuntimeInstanceId}', " +
+                $"TenantAControlRuntime='{tenantAControlRuntimeInstanceId}', " +
+                $"TenantBFailedRuntime='{tenantBFailedRuntimeInstanceId}', " +
+                $"TenantCSafeRuntime='{tenantCSafeRuntimeInstanceId}'.");
+
+            Assert.NotEqual(tenantAFailedRuntimeInstanceId, tenantAControlRuntimeInstanceId);
+            Assert.NotEqual(tenantAFailedRuntimeInstanceId, tenantBFailedRuntimeInstanceId);
+            Assert.NotEqual(tenantAFailedRuntimeInstanceId, tenantCSafeRuntimeInstanceId);
+            Assert.NotEqual(tenantAControlRuntimeInstanceId, tenantBFailedRuntimeInstanceId);
+            Assert.NotEqual(tenantAControlRuntimeInstanceId, tenantCSafeRuntimeInstanceId);
+            Assert.NotEqual(tenantBFailedRuntimeInstanceId, tenantCSafeRuntimeInstanceId);
+
+            AssertRuntimeBelongsToTenant(tenantAFailedRuntimeInstanceId, tenantA);
+            AssertRuntimeBelongsToTenant(tenantAControlRuntimeInstanceId, tenantA);
+            AssertRuntimeBelongsToTenant(tenantBFailedRuntimeInstanceId, tenantB);
+            AssertRuntimeBelongsToTenant(tenantCSafeRuntimeInstanceId, tenantC);
+
+            await AssertSafeTenantUntouchedAsync(
+                    registry,
+                    queryService,
+                    tenantC,
+                    tenantCSafeRuntimeInstanceId,
+                    allForensics: Array.Empty<AiRuntimeRecoveryForensicsReadModel>())
+                .ConfigureAwait(false);
+
+            var tenantASeededWorks =
+                await ProductionRecoverySeedHelpers
+                    .SeedFailedRuntimeAssignedWorkInventoryAsync(
+                        sharedRunStore,
+                        sharedQueue,
+                        runExecutionIndex,
+                        dagStore,
+                        tenantAFailedBootstrap,
+                        tenantA,
+                        tenantAPipelineName,
+                        tenantAFailedRuntimeInstanceId,
+                        queuedLocalRunCount: 1,
+                        inFlightExecutionCount: TenantAFailedWorkCount - 1,
+                        stepCount: StepCount,
+                        failureStepNumber: FailureStepNumber,
+                        requestedBy: RequestedBy,
+                        source: Source)
+                    .ConfigureAwait(false);
+
+            var tenantBSeededWorks =
+                await ProductionRecoverySeedHelpers
+                    .SeedFailedRuntimeAssignedWorkInventoryAsync(
+                        sharedRunStore,
+                        sharedQueue,
+                        runExecutionIndex,
+                        dagStore,
+                        tenantBFailedBootstrap,
+                        tenantB,
+                        tenantBPipelineName,
+                        tenantBFailedRuntimeInstanceId,
+                        queuedLocalRunCount: 1,
+                        inFlightExecutionCount: TenantBFailedWorkCount - 1,
+                        stepCount: StepCount,
+                        failureStepNumber: FailureStepNumber,
+                        requestedBy: RequestedBy,
+                        source: Source)
+                    .ConfigureAwait(false);
+
+            var tenantAGroup =
+                new FailedRuntimeRecoveryGroup
+                {
+                    Tenant = tenantA,
+                    FailedRuntimeInstanceId = tenantAFailedRuntimeInstanceId,
+                    SeededWorks = tenantASeededWorks
+                };
+
+            var tenantBGroup =
+                new FailedRuntimeRecoveryGroup
+                {
+                    Tenant = tenantB,
+                    FailedRuntimeInstanceId = tenantBFailedRuntimeInstanceId,
+                    SeededWorks = tenantBSeededWorks
+                };
+
+            var failedRuntimeGroups =
+                new[]
+                {
+                    tenantAGroup,
+                    tenantBGroup
+                };
+
+            WriteFailedRuntimeWorkInventory(
+                this.output,
+                tenantAFailedRuntimeInstanceId,
+                tenantASeededWorks);
+
+            WriteFailedRuntimeWorkInventory(
+                this.output,
+                tenantBFailedRuntimeInstanceId,
+                tenantBSeededWorks);
+
+            await WaitForSeededRuntimeGroupsVisibleAsync(
+                    runExecutionIndex,
+                    failedRuntimeGroups,
+                    TimeSpan.FromSeconds(30))
+                .ConfigureAwait(false);
+
+            await MarkUnhealthyAndReconcileUntilAllRuntimeGroupsRecoveredAsync(
+                    registry,
+                    healthReconciler,
+                    recoveryReconciler,
+                    runExecutionIndex,
+                    failedRuntimeGroups,
+                    TimeSpan.FromSeconds(120))
+                .ConfigureAwait(false);
+
+            await AssertControlRuntimeUntouchedBeforeRedispatchAsync(
+                    registry,
+                    queryService,
+                    tenantA,
+                    tenantAControlRuntimeInstanceId)
+                .ConfigureAwait(false);
+
+            await AssertSafeTenantUntouchedAsync(
+                    registry,
+                    queryService,
+                    tenantC,
+                    tenantCSafeRuntimeInstanceId,
+                    allForensics: Array.Empty<AiRuntimeRecoveryForensicsReadModel>())
+                .ConfigureAwait(false);
+
+            var tenantARedispatchedRuns =
+                await WaitForRedispatchedRunsAsync(
+                        registry,
+                        healthReconciler,
+                        sharedRunStore,
+                        sharedQueue,
+                        sharedQueueDispatcher,
+                        tenantAGroup,
+                        scenario.DispatchTimeout)
+                    .ConfigureAwait(false);
+
+            var tenantBRedispatchedRuns =
+                await WaitForRedispatchedRunsAsync(
+                        registry,
+                        healthReconciler,
+                        sharedRunStore,
+                        sharedQueue,
+                        sharedQueueDispatcher,
+                        tenantBGroup,
+                        scenario.DispatchTimeout)
+                    .ConfigureAwait(false);
+
+            var allRedispatchedRuns =
+                tenantARedispatchedRuns
+                    .Concat(tenantBRedispatchedRuns)
+                    .ToArray();
+
+            Assert.Equal(CountSeededWork(failedRuntimeGroups), allRedispatchedRuns.Length);
+
+            AssertNoSelfRedispatch(
+                failedRuntimeGroups,
+                allRedispatchedRuns);
+
+            AssertNoCrossTenantRedispatch(
+                tenantAGroup,
+                tenantARedispatchedRuns,
+                tenantBGroup,
+                tenantBRedispatchedRuns);
+
+            Assert.DoesNotContain(
+                allRedispatchedRuns,
+                run =>
+                    string.Equals(run.AssignedRuntimeInstanceId, tenantCSafeRuntimeInstanceId, StringComparison.Ordinal) ||
+                    string.Equals(run.SharedRunId, tenantCSafeBootstrap.SharedRunId, StringComparison.Ordinal));
+
+            WriteRecoveredRuntimeWorkInventory(
+                this.output,
+                tenantAFailedRuntimeInstanceId,
+                tenantASeededWorks,
+                tenantARedispatchedRuns);
+
+            WriteRecoveredRuntimeWorkInventory(
+                this.output,
+                tenantBFailedRuntimeInstanceId,
+                tenantBSeededWorks,
+                tenantBRedispatchedRuns);
+
+            var tenantAFinalStatuses =
+                await McpTestWaitHelpers
+                    .WaitForTerminalRuntimeRunStatusesAsync(
+                        tenantAMcp,
+                        tenantARedispatchedRuns,
+                        timeout: scenario.CompletionTimeout)
+                    .ConfigureAwait(false);
+
+            var tenantBFinalStatuses =
+                await McpTestWaitHelpers
+                    .WaitForTerminalRuntimeRunStatusesAsync(
+                        tenantBMcp,
+                        tenantBRedispatchedRuns,
+                        timeout: scenario.CompletionTimeout)
+                    .ConfigureAwait(false);
+
+            AssertAllRecoveredRunsCompleted(tenantAFinalStatuses);
+            AssertAllRecoveredRunsCompleted(tenantBFinalStatuses);
+
+            await AssertRecoveredExecutionIndexesCompletedAsync(
+                    runExecutionIndex,
+                    tenantAGroup,
+                    tenantARedispatchedRuns)
+                .ConfigureAwait(false);
+
+            await AssertRecoveredExecutionIndexesCompletedAsync(
+                    runExecutionIndex,
+                    tenantBGroup,
+                    tenantBRedispatchedRuns)
+                .ConfigureAwait(false);
+
+            var tenantAForensics =
+                await WaitForRecoveredForensicsAsync(
+                        queryService,
+                        tenantAGroup,
+                        TimeSpan.FromSeconds(45))
+                    .ConfigureAwait(false);
+
+            var tenantBForensics =
+                await WaitForRecoveredForensicsAsync(
+                        queryService,
+                        tenantBGroup,
+                        TimeSpan.FromSeconds(45))
+                    .ConfigureAwait(false);
+
+            var allForensics =
+                tenantAForensics
+                    .Concat(tenantBForensics)
+                    .ToArray();
+
+            Assert.Equal(CountSeededWork(failedRuntimeGroups), allForensics.Length);
+
+            AssertNoDuplicateForensics(allForensics);
+            AssertNoCrossTenantForensicsLeak(tenantAGroup, tenantAForensics, tenantBGroup, tenantBForensics);
+            AssertNoCrossIncidentForensicsLeak(tenantAForensics, tenantBForensics);
+
+            await AssertControlRuntimeUntouchedAfterRecoveryAsync(
+                    registry,
+                    queryService,
+                    tenantA,
+                    tenantAControlRuntimeInstanceId,
+                    allForensics)
+                .ConfigureAwait(false);
+
+            await AssertSafeTenantUntouchedAsync(
+                    registry,
+                    queryService,
+                    tenantC,
+                    tenantCSafeRuntimeInstanceId,
+                    allForensics)
+                .ConfigureAwait(false);
+
+            WriteRuntimeRecoveryInventoryForensics(
+                this.output,
+                tenantAFailedRuntimeInstanceId,
+                tenantAForensics);
+
+            WriteRuntimeRecoveryInventoryForensics(
+                this.output,
+                tenantBFailedRuntimeInstanceId,
+                tenantBForensics);
+
+            this.output.WriteLine(
+                "[MULTI-TENANT SAFE RECOVERY PROOF] " +
+                $"RuntimeA='{tenantAFailedRuntimeInstanceId}' -> '{tenantARedispatchedRuns.Count}/{tenantASeededWorks.Count}' recovered -> ReplacementRuntimeInstances='{string.Join(",", tenantARedispatchedRuns.Select(run => run.AssignedRuntimeInstanceId).Distinct(StringComparer.Ordinal))}', " +
+                $"RuntimeB='{tenantBFailedRuntimeInstanceId}' -> '{tenantBRedispatchedRuns.Count}/{tenantBSeededWorks.Count}' recovered -> ReplacementRuntimeInstances='{string.Join(",", tenantBRedispatchedRuns.Select(run => run.AssignedRuntimeInstanceId).Distinct(StringComparer.Ordinal))}', " +
+                $"SafeTenant='{tenantC.TenantId}', SafeRuntime='{tenantCSafeRuntimeInstanceId}' -> untouched, 0 forensics events, " +
+                $"ExpectedForensics='{CountSeededWork(failedRuntimeGroups)}', ActualForensics='{allForensics.Length}', " +
+                $"CrossTenantLeakDetected='false', CrossIncidentLeakDetected='false', DuplicateRecoveryDetected='false', SelfRedispatchDetected='false'.");
+        }
+
         private sealed record FailedRuntimeRecoveryGroup
         {
             public required ProductionTenantScenarioDefinition Tenant { get; init; }
@@ -1105,6 +1578,71 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                     record.ForensicsId.Contains(controlRuntimeInstanceId, StringComparison.Ordinal));
         }
 
+
+        /// <summary>
+        /// Asserts that a safe tenant runtime remains healthy and has no recovery forensics.
+        /// </summary>
+        /// <param name="registry">The runtime instance registry.</param>
+        /// <param name="queryService">The recovery forensics query service.</param>
+        /// <param name="tenant">The safe tenant definition.</param>
+        /// <param name="safeRuntimeInstanceId">The safe runtime instance identifier.</param>
+        /// <param name="allForensics">The recovered forensics records already collected by the test.</param>
+        private static async Task AssertSafeTenantUntouchedAsync(
+            IAiRuntimeInstanceRegistry registry,
+            IAiRuntimeRecoveryForensicsQueryService queryService,
+            ProductionTenantScenarioDefinition tenant,
+            string safeRuntimeInstanceId,
+            IReadOnlyCollection<AiRuntimeRecoveryForensicsReadModel> allForensics)
+        {
+            var safeSnapshot =
+                await registry
+                    .GetAsync(safeRuntimeInstanceId)
+                    .ConfigureAwait(false);
+
+            Assert.NotNull(safeSnapshot);
+
+            Assert.False(
+                string.Equals(safeSnapshot!.Status.ToString(), "Unhealthy", StringComparison.OrdinalIgnoreCase),
+                $"Safe tenant runtime should not be unhealthy. TenantId='{tenant.TenantId}', RuntimeInstanceId='{safeRuntimeInstanceId}', Status='{safeSnapshot.Status}'.");
+
+            Assert.False(
+                string.Equals(safeSnapshot.Status.ToString(), "Draining", StringComparison.OrdinalIgnoreCase),
+                $"Safe tenant runtime should not be draining. TenantId='{tenant.TenantId}', RuntimeInstanceId='{safeRuntimeInstanceId}', Status='{safeSnapshot.Status}'.");
+
+            var tenantForensics =
+                await queryService
+                    .SearchAsync(
+                        new AiRuntimeRecoveryForensicsQuery
+                        {
+                            TenantId = tenant.TenantId,
+                            Limit = 200
+                        })
+                    .ConfigureAwait(false);
+
+            Assert.Empty(tenantForensics.Items);
+
+            var runtimeForensics =
+                await queryService
+                    .SearchAsync(
+                        new AiRuntimeRecoveryForensicsQuery
+                        {
+                            RuntimeInstanceId = safeRuntimeInstanceId,
+                            TenantId = tenant.TenantId,
+                            Limit = 200
+                        })
+                    .ConfigureAwait(false);
+
+            Assert.Empty(runtimeForensics.Items);
+
+            Assert.DoesNotContain(
+                allForensics,
+                record =>
+                    string.Equals(record.TenantId, tenant.TenantId, StringComparison.Ordinal) ||
+                    string.Equals(record.Record.Failure?.FailedRuntimeInstanceId, safeRuntimeInstanceId, StringComparison.Ordinal) ||
+                    string.Equals(record.Record.Replacement?.ReplacementRuntimeInstanceId, safeRuntimeInstanceId, StringComparison.Ordinal) ||
+                    record.ForensicsId.Contains(safeRuntimeInstanceId, StringComparison.Ordinal));
+        }
+
         private static void AssertAllRecoveredRunsCompleted(
             IReadOnlyCollection<AiRuntimeQueueControlPlaneResult> finalStatuses)
         {
@@ -1381,6 +1919,19 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
 
         private static ProductionRuntimeScenarioDefinition CreateConcurrentMultiInstanceRecoveryScenario()
         {
+            return CreateConcurrentMultiInstanceRecoveryScenarioCore(
+                includeSafeTenant: false);
+        }
+
+        private static ProductionRuntimeScenarioDefinition CreateConcurrentSafeTenantRecoveryScenario()
+        {
+            return CreateConcurrentMultiInstanceRecoveryScenarioCore(
+                includeSafeTenant: true);
+        }
+
+        private static ProductionRuntimeScenarioDefinition CreateConcurrentMultiInstanceRecoveryScenarioCore(
+            bool includeSafeTenant)
+        {
             var baseScenario =
                 ProductionRuntimeScenarioFactory.CreateSingleTenantDedicatedRuntimeModeScenario();
 
@@ -1427,15 +1978,45 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                     }
                 };
 
-            return baseScenario with
-            {
-                Name = "http-process-host-dag-resume-concurrent-runtime-recovery",
-                ControlPlaneIdPrefix = "http-process-host-concurrent-runtime-recovery",
-                Tenants = new[]
+            var tenants =
+                new List<ProductionTenantScenarioDefinition>
                 {
                     tenantA,
                     tenantB
-                },
+                };
+
+            if (includeSafeTenant)
+            {
+                tenants.Add(
+                    templateTenant with
+                    {
+                        TenantId = "tenant-concurrent-c",
+                        TenantGroupId = "tenant-concurrent-c-group",
+                        RuntimeInstanceIdPrefix = "tenant-concurrent-c-runtime",
+                        MaxRuntimeInstances = 1,
+                        WorkerCountPerInstance = 1,
+                        MaxConcurrentRunsPerInstance = 1,
+                        LocalQueueCapacity = 0,
+                        Run = templateTenant.Run with
+                        {
+                            RunCount = 1,
+                            StepCount = StepCount,
+                            DelayMs = 750,
+                            FlakyStepInterval = 0,
+                            EnableRetention = true
+                        }
+                    });
+            }
+
+            return baseScenario with
+            {
+                Name = includeSafeTenant
+                    ? "http-process-host-dag-resume-concurrent-runtime-recovery-safe-tenant"
+                    : "http-process-host-dag-resume-concurrent-runtime-recovery",
+                ControlPlaneIdPrefix = includeSafeTenant
+                    ? "http-process-host-concurrent-runtime-recovery-safe-tenant"
+                    : "http-process-host-concurrent-runtime-recovery",
+                Tenants = tenants.ToArray(),
                 PersistenceProfile = ProductionRuntimePersistenceProfile.MongoRedis,
                 ObservabilityProfile = ProductionRuntimeObservabilityProfile.DurableMongo,
                 HostCreationMode = ProductionRuntimeHostCreationMode.Process,
@@ -1457,5 +2038,6 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 }
             };
         }
+
     }
 }
