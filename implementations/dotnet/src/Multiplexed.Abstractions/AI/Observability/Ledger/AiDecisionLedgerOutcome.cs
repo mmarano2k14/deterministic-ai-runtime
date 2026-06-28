@@ -25,6 +25,16 @@
         Completed,
 
         /// <summary>
+        /// The runtime operation completed with validation, diagnostic, or partial-state issues.
+        /// </summary>
+        /// <remarks>
+        /// This outcome is used when an operation reached a completed state but produced warnings,
+        /// partial results, degraded diagnostics, or non-fatal issues that should remain visible
+        /// in ledger timelines and replay/forensics views.
+        /// </remarks>
+        CompletedWithIssues,
+
+        /// <summary>
         /// The runtime operation failed.
         /// </summary>
         Failed,
