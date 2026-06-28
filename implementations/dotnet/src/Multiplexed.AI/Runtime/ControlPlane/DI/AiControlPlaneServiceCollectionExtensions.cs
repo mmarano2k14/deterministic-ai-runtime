@@ -1,4 +1,5 @@
-﻿using Microsoft.Extensions.Configuration;
+﻿using System;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
@@ -70,8 +71,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
         /// <summary>
         /// Registers AI runtime control-plane services.
         ///
-        /// By default, a no-op control-plane observer is registered so the runtime
-        /// can operate without logging, metrics, tracing, or ledger exporters.
+        /// By default, a composite control-plane observer is registered without mandatory sinks
+        /// so the runtime can operate without logging, metrics, tracing, or ledger exporters.
         /// </summary>
         /// <param name="services">The service collection.</param>
         /// <param name="configureReplay">Optional replay control-plane options configuration.</param>
@@ -207,8 +208,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
             services.AddOptions<RedisAiRuntimeRunExecutionIndexOptions>();
 
             services.TryAddSingleton<IAiControlPlaneObserver, CompositeAiControlPlaneObserver>();
-            services.TryAddEnumerable(
-                ServiceDescriptor.Singleton<IAiControlPlaneEventSink, RuntimeObservabilityAiControlPlaneEventSink>());
 
             services.TryAddSingleton<IAiReplayControlPlane, AiReplayControlPlane>();
             services.TryAddSingleton<IAiExecutionControlPlane, AiExecutionControlPlane>();
@@ -661,6 +660,26 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
 
             services.TryAddEnumerable(
                 ServiceDescriptor.Singleton<IAiControlPlaneEventSink, LoggingAiControlPlaneEventSink>());
+
+            return services;
+        }
+
+        /// <summary>
+        /// Enables runtime observability for AI control-plane events.
+        ///
+        /// This adds a runtime observability sink to the composite control-plane observer
+        /// so control-plane events can be forwarded to ledger, tracing, metrics, and correlation
+        /// through the central runtime observability facade.
+        /// </summary>
+        /// <param name="services">The service collection.</param>
+        /// <returns>The same service collection for chaining.</returns>
+        public static IServiceCollection AddAiControlPlaneRuntimeObservability(
+            this IServiceCollection services)
+        {
+            ArgumentNullException.ThrowIfNull(services);
+
+            services.TryAddEnumerable(
+                ServiceDescriptor.Singleton<IAiControlPlaneEventSink, RuntimeObservabilityAiControlPlaneEventSink>());
 
             return services;
         }

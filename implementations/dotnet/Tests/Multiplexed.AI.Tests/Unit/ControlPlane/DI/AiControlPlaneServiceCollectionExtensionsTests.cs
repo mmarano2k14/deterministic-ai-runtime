@@ -729,5 +729,96 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.DI
             Assert.False(options.RequeueUnfinishedRuns);
             Assert.True(options.DryRun);
         }
+
+        [Fact]
+        public void AddAiControlPlane_Should_Not_Register_RuntimeObservability_Sink_By_Default()
+        {
+            var services = new ServiceCollection();
+
+            services.AddAiControlPlane();
+
+            var runtimeObservabilitySinkRegistrations =
+                services.Where(
+                    serviceDescriptor =>
+                        serviceDescriptor.ServiceType == typeof(IAiControlPlaneEventSink) &&
+                        serviceDescriptor.ImplementationType == typeof(RuntimeObservabilityAiControlPlaneEventSink));
+
+            Assert.Empty(runtimeObservabilitySinkRegistrations);
+        }
+
+        /// <summary>
+        /// Verifies that runtime observability can be enabled explicitly for control-plane events.
+        /// </summary>
+        [Fact]
+        public void AddAiControlPlaneRuntimeObservability_Should_Register_RuntimeObservability_Sink()
+        {
+            var services = new ServiceCollection();
+
+            services.AddAiControlPlane();
+            services.AddAiControlPlaneRuntimeObservability();
+
+            var runtimeObservabilitySinkRegistrations =
+                services.Where(
+                    serviceDescriptor =>
+                        serviceDescriptor.ServiceType == typeof(IAiControlPlaneEventSink) &&
+                        serviceDescriptor.ImplementationType == typeof(RuntimeObservabilityAiControlPlaneEventSink));
+
+            Assert.Single(runtimeObservabilitySinkRegistrations);
+        }
+
+        /// <summary>
+        /// Verifies that control-plane logging adds a logging sink without replacing the composite observer.
+        /// </summary>
+        [Fact]
+        public void AddAiControlPlaneLogging_Should_Register_Logging_Sink_And_Keep_Composite_Observer()
+        {
+            var services = new ServiceCollection();
+
+            services.AddAiControlPlane();
+            services.AddAiControlPlaneLogging();
+
+            var observerRegistration =
+                services.Single(
+                    serviceDescriptor =>
+                        serviceDescriptor.ServiceType == typeof(IAiControlPlaneObserver));
+
+            var loggingSinkRegistrations =
+                services.Where(
+                    serviceDescriptor =>
+                        serviceDescriptor.ServiceType == typeof(IAiControlPlaneEventSink) &&
+                        serviceDescriptor.ImplementationType == typeof(LoggingAiControlPlaneEventSink));
+
+            Assert.Equal(typeof(CompositeAiControlPlaneObserver), observerRegistration.ImplementationType);
+            Assert.Single(loggingSinkRegistrations);
+        }
+
+        /// <summary>
+        /// Verifies that logging and runtime observability sinks can be registered together.
+        /// </summary>
+        [Fact]
+        public void AddAiControlPlaneLogging_And_RuntimeObservability_Should_Register_Both_Sinks()
+        {
+            var services = new ServiceCollection();
+
+            services.AddAiControlPlane();
+            services.AddAiControlPlaneLogging();
+            services.AddAiControlPlaneRuntimeObservability();
+
+            var sinkRegistrations =
+                services.Where(
+                    serviceDescriptor =>
+                        serviceDescriptor.ServiceType == typeof(IAiControlPlaneEventSink))
+                    .ToArray();
+
+            Assert.Contains(
+                sinkRegistrations,
+                serviceDescriptor =>
+                    serviceDescriptor.ImplementationType == typeof(LoggingAiControlPlaneEventSink));
+
+            Assert.Contains(
+                sinkRegistrations,
+                serviceDescriptor =>
+                    serviceDescriptor.ImplementationType == typeof(RuntimeObservabilityAiControlPlaneEventSink));
+        }
     }
 }

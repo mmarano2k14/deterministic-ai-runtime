@@ -8,7 +8,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Xunit;
 
-namespace Multiplexed.AI.McpServer.Tests.Unit.ControlPlane.Observability
+namespace Multiplexed.AI.Tests.Unit.ControlPlane.Observability
 {
     /// <summary>
     /// Tests the composite control-plane observer.
