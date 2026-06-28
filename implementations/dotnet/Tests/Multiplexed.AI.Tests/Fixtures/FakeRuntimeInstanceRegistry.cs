@@ -131,7 +131,7 @@ namespace Multiplexed.AI.Tests.Fixtures
         }
 
         /// <inheritdoc />
-        public Task<IReadOnlyList<AiRuntimeInstanceSnapshot>> ListAsync(
+        public  Task<IReadOnlyList<AiRuntimeInstanceSnapshot>> ListAsync(
             bool includeStopped = false,
             CancellationToken cancellationToken = default)
         {
