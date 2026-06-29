@@ -294,6 +294,40 @@ namespace Multiplexed.Abstractions.AI.Execution
         /// </remarks>
         public bool IsEvictedFromHotState { get; set; }
 
+        /// <summary>
+        /// Gets or sets a value indicating whether the step result has been compacted out of hot state.
+        /// </summary>
+        /// <remarks>
+        /// The step shell remains in the DAG state so that scheduling, convergence,
+        /// dependencies, retry diagnostics, and replay metadata remain structurally stable.
+        ///
+        /// When this value is <see langword="true"/>, the heavy result payload may have been
+        /// removed from <see cref="Result"/> after it was archived in the durable step payload store.
+        /// Replay validation must treat a completed step with a null result as valid only when
+        /// either this marker or <see cref="IsEvictedFromHotState"/> explains why the result is absent.
+        /// </remarks>
+        public bool IsCompacted { get; set; }
+
+        /// <summary>
+        /// Gets or sets the UTC timestamp when the step result was compacted out of hot state.
+        /// </summary>
+        public DateTime? CompactedAtUtc { get; set; }
+
+        /// <summary>
+        /// Gets or sets the durable archived payload artifact identifier produced during compaction.
+        /// </summary>
+        /// <remarks>
+        /// This identifier points to the archived step payload stored by the durable payload store.
+        /// It allows replay, audit, and diagnostics to distinguish intentional compaction from
+        /// accidental result loss.
+        /// </remarks>
+        public string? ArchivePayloadId { get; set; }
+
+        /// <summary>
+        /// Gets or sets the reason why the step result was compacted.
+        /// </summary>
+        public string? CompactionReason { get; set; }
+
         // ---------------------------------------------------------------------
         // SETTERS
         // ---------------------------------------------------------------------
@@ -501,6 +535,11 @@ namespace Multiplexed.Abstractions.AI.Execution
             Status = AiStepExecutionStatus.Completed;
             Result = result;
             Error = null;
+
+            IsCompacted = false;
+            CompactedAtUtc = null;
+            ArchivePayloadId = null;
+            CompactionReason = null;
 
             if (RetryState is not null)
             {

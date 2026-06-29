@@ -105,15 +105,54 @@ namespace Multiplexed.AI.Runtime.Execution.Persistence.Replay.Validators
             if (step.Status == AiStepExecutionStatus.Completed &&
                 step.Result is null &&
                 !step.IsEvictedFromHotState &&
-                step.InlinePayloadSizeBytes != 0)
+                !step.IsCompacted)
             {
                 issues.Add(new AiExecutionReplayIssue
                 {
                     Code = "replay.step.completed.result_missing",
                     StepKey = stepKey,
-                    Message = "Completed step has no result and is not marked as evicted or compacted."
+                    Message =
+                        $"Completed step has no result and is not marked as evicted or compacted. " +
+                        $"StepKey='{stepKey}', " +
+                        $"StepName='{step.StepName}', " +
+                        $"IsEvictedFromHotState='{step.IsEvictedFromHotState}', " +
+                        $"IsCompacted='{step.IsCompacted}', " +
+                        $"ArchivePayloadId='{step.ArchivePayloadId ?? string.Empty}', " +
+                        $"CompactionReason='{step.CompactionReason ?? string.Empty}', " +
+                        $"RetentionReason='{ResolveOptionalStringProperty(step, "RetentionReason")}', " +
+                        $"InlinePayloadSizeBytes='{step.InlinePayloadSizeBytes}'."
                 });
             }
+
+            if (step.IsCompacted &&
+                string.IsNullOrWhiteSpace(step.ArchivePayloadId))
+            {
+                issues.Add(new AiExecutionReplayIssue
+                {
+                    Code = "replay.step.compacted.archive_missing",
+                    StepKey = stepKey,
+                    Message = "Compacted step does not reference an archived payload artifact."
+                });
+            }
+        }
+
+        /// <summary>
+        /// Resolves an optional string property by reflection for replay diagnostics without requiring
+        /// every retention metadata field to exist on older step-state contracts.
+        /// </summary>
+        /// <param name="instance">The object instance.</param>
+        /// <param name="propertyName">The property name.</param>
+        /// <returns>The string value when available; otherwise, an empty string.</returns>
+        private static string ResolveOptionalStringProperty(
+            object instance,
+            string propertyName)
+        {
+            var property = instance
+                .GetType()
+                .GetProperty(propertyName);
+
+            return property?.GetValue(instance)?.ToString()
+                ?? string.Empty;
         }
     }
 }

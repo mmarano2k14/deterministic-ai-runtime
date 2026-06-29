@@ -125,7 +125,7 @@ namespace Multiplexed.AI.Runtime.Execution.Retention.Services
         /// The step state from the local execution state snapshot.
         /// </param>
         /// <returns>
-        /// <c>true</c> when the snapshot represents a terminal non-evicted step; otherwise, <c>false</c>.
+        /// <c>true</c> when the snapshot represents a terminal non-evicted and non-compacted step; otherwise, <c>false</c>.
         /// </returns>
         /// <remarks>
         /// <para>
@@ -134,21 +134,22 @@ namespace Multiplexed.AI.Runtime.Execution.Retention.Services
         /// </para>
         ///
         /// <para>
-        /// The method intentionally does not check <c>IsCompacted</c> because the current
-        /// <see cref="AiStepState"/> model does not expose that property yet.
-        /// </para>
-        ///
-        /// <para>
         /// A completed or failed step may still contain an old claim token as audit metadata.
         /// Therefore this method intentionally does not reject terminal steps based only on
         /// <c>ClaimToken</c>.
+        /// </para>
+        ///
+        /// <para>
+        /// Already compacted steps are ignored because their heavy result payload has already
+        /// been archived and removed from hot state by a previous retention patch.
         /// </para>
         /// </remarks>
         private static bool IsSafeCandidateSnapshot(
             AiStepState step)
         {
             return step.Status is AiStepExecutionStatus.Completed or AiStepExecutionStatus.Failed &&
-                   !step.IsEvictedFromHotState;
+                   !step.IsEvictedFromHotState &&
+                   !step.IsCompacted;
         }
     }
 }

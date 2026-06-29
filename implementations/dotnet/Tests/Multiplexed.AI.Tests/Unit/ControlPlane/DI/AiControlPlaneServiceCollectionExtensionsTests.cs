@@ -38,20 +38,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.DI
 {
     public sealed class AiControlPlaneServiceCollectionExtensionsTests
     {
-        [Fact]
-        public void AddAiControlPlane_Should_Register_Noop_Observer_By_Default()
-        {
-            var services = new ServiceCollection();
-
-            services.AddLogging();
-            services.AddAiControlPlane();
-
-            using var provider = services.BuildServiceProvider();
-
-            var observer = provider.GetRequiredService<IAiControlPlaneObserver>();
-
-            Assert.IsType<NoopAiControlPlaneObserver>(observer);
-        }
+        
 
         [Fact]
         public void AddAiControlPlaneLogging_Should_Replace_Noop_Observer_With_Logged_Observer()

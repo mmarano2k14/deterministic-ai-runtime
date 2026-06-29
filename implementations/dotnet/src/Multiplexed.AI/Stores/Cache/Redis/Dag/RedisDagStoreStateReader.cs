@@ -131,8 +131,31 @@ namespace Multiplexed.AI.Stores.Cache.Redis.Dag
                 return stateBlob.HasValue ? state : null;
             }
 
+            var beforeNormalizeMissingResults = CountInvalidCompletedMissingResults(state);
+            var beforeNormalizeCompacted = CountCompacted(state);
+            var beforeNormalizeEvicted = CountEvicted(state);
+
             // CRITICAL: normalize AFTER full state reconstruction
             _services.StepResultNormalizerPipeline.Normalize(state);
+
+            var afterNormalizeMissingResults = CountInvalidCompletedMissingResults(state);
+            var afterNormalizeCompacted = CountCompacted(state);
+            var afterNormalizeEvicted = CountEvicted(state);
+
+            if (beforeNormalizeMissingResults != afterNormalizeMissingResults ||
+                beforeNormalizeCompacted != afterNormalizeCompacted ||
+                beforeNormalizeEvicted != afterNormalizeEvicted)
+            {
+                _services.Logger.Engine.LogWarning(
+                    $"[AI DAG STORE] Step result normalization diagnostics. " +
+                    $"ExecutionId='{executionId}', " +
+                    $"BeforeMissingResults='{beforeNormalizeMissingResults}', " +
+                    $"AfterMissingResults='{afterNormalizeMissingResults}', " +
+                    $"BeforeCompacted='{beforeNormalizeCompacted}', " +
+                    $"AfterCompacted='{afterNormalizeCompacted}', " +
+                    $"BeforeEvicted='{beforeNormalizeEvicted}', " +
+                    $"AfterEvicted='{afterNormalizeEvicted}'.");
+            }
 
             return state;
         }
@@ -154,6 +177,43 @@ namespace Multiplexed.AI.Stores.Cache.Redis.Dag
 
             var repairedJson = JsonSerializationHelpers.RepairRecordJson((string)value!);
             return JsonSerializer.Deserialize<AiExecutionRecord>(repairedJson, _services.JsonOptions);
+        }
+
+        /// <summary>
+        /// Counts completed steps that have no result and no durable retention marker explaining it.
+        /// </summary>
+        /// <param name="state">The execution state.</param>
+        /// <returns>The invalid completed missing result count.</returns>
+        private static int CountInvalidCompletedMissingResults(
+            AiExecutionState state)
+        {
+            return state.Steps.Values.Count(step =>
+                step.Status == AiStepExecutionStatus.Completed &&
+                step.Result is null &&
+                !step.IsEvictedFromHotState &&
+                !step.IsCompacted);
+        }
+
+        /// <summary>
+        /// Counts compacted steps.
+        /// </summary>
+        /// <param name="state">The execution state.</param>
+        /// <returns>The compacted step count.</returns>
+        private static int CountCompacted(
+            AiExecutionState state)
+        {
+            return state.Steps.Values.Count(step => step.IsCompacted);
+        }
+
+        /// <summary>
+        /// Counts steps evicted from hot state.
+        /// </summary>
+        /// <param name="state">The execution state.</param>
+        /// <returns>The evicted step count.</returns>
+        private static int CountEvicted(
+            AiExecutionState state)
+        {
+            return state.Steps.Values.Count(step => step.IsEvictedFromHotState);
         }
     }
 }

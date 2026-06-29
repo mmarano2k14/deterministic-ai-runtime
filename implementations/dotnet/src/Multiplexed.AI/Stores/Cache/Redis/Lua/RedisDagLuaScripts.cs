@@ -208,6 +208,11 @@ namespace Multiplexed.AI.Stores.Cache.Redis.Lua
             step.ClaimedAtUtc = cjson.null
             step.LeaseExpiresAtUtc = cjson.null
             step.InlinePayloadSizeBytes = inlinePayloadSizeBytes
+            step.IsCompacted = false
+            step.CompactedAtUtc = cjson.null
+            step.CompactedAtUnixMs = cjson.null
+            step.ArchivePayloadId = cjson.null
+            step.CompactionReason = cjson.null
 
             if step.RetryState ~= nil and step.RetryState ~= cjson.null then
                 step.RetryState.NextRetryAtUtc = cjson.null
@@ -882,7 +887,15 @@ namespace Multiplexed.AI.Stores.Cache.Redis.Lua
                                 safe = false
                             end
 
-                            if step.IsEvictedFromHotState == true then
+                            if action == 'Evict' and step.IsEvictedFromHotState == true then
+                                safe = false
+                            end
+
+                            if action == 'Compact' and step.IsCompacted == true then
+                                safe = false
+                            end
+
+                            if action == 'Compact' and step.IsEvictedFromHotState == true then
                                 safe = false
                             end
 
@@ -894,6 +907,7 @@ namespace Multiplexed.AI.Stores.Cache.Redis.Lua
                                     step.RetentionReason = candidate.Reason
                                     step.IsEvictedFromHotState = true
                                     step.EvictedAtUnixMs = nowUnix
+                                    step.UpdatedAtUtc = nowUnix
                                     step.UpdatedAtUnixMs = nowUnix
 
                                     clear_heavy_payload(step)
@@ -904,8 +918,11 @@ namespace Multiplexed.AI.Stores.Cache.Redis.Lua
                                 elseif action == 'Compact' then
                                     step.ArchivePayloadId = candidate.ArchivePayloadId
                                     step.RetentionReason = candidate.Reason
+                                    step.CompactionReason = candidate.Reason
                                     step.IsCompacted = true
+                                    step.CompactedAtUtc = nowUnix
                                     step.CompactedAtUnixMs = nowUnix
+                                    step.UpdatedAtUtc = nowUnix
                                     step.UpdatedAtUnixMs = nowUnix
 
                                     clear_heavy_payload(step)

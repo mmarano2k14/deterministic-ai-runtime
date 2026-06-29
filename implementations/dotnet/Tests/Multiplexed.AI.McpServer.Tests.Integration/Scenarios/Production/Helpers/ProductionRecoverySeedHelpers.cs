@@ -7,6 +7,7 @@ using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Queue;
 using Multiplexed.Abstractions.AI.Execution;
 using Multiplexed.Abstractions.AI.Execution.State;
 using Multiplexed.Abstractions.AI.Pipeline;
+using Multiplexed.Abstractions.AI.Steps;
 using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Definitions;
 using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Models;
 using Multiplexed.AI.Stores;
@@ -229,6 +230,23 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
                     step.Status = AiStepExecutionStatus.Completed;
                     step.StartedAtUtc = DateTime.UtcNow.AddMinutes(-5);
                     step.CompletedAtUtc = DateTime.UtcNow.AddMinutes(-4);
+                    step.UpdatedAtUtc = step.CompletedAtUtc;
+                    step.Duration = TimeSpan.FromMinutes(1);
+                    step.Result = CreateSeededCompletedStepResult(
+                        executionId,
+                        pipelineName,
+                        stepName,
+                        stepNumber,
+                        failedRuntimeInstanceId);
+                    step.Error = null;
+                    step.ClaimedBy = null;
+                    step.ClaimToken = null;
+                    step.ClaimedAtUtc = null;
+                    step.LeaseExpiresAtUtc = null;
+                    step.IsCompacted = false;
+                    step.CompactedAtUtc = null;
+                    step.ArchivePayloadId = null;
+                    step.CompactionReason = null;
                 }
                 else if (stepNumber == failureStepNumber)
                 {
@@ -237,11 +255,14 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
                     step.ClaimToken = $"claim-token-{Guid.NewGuid():N}";
                     step.ClaimedAtUtc = DateTime.UtcNow.AddMinutes(-10);
                     step.LeaseExpiresAtUtc = DateTime.UtcNow.AddMinutes(-9);
+                    step.StartedAtUtc = DateTime.UtcNow.AddMinutes(-10);
+                    step.UpdatedAtUtc = DateTime.UtcNow.AddMinutes(-9);
                     step.RecoveryCount = 0;
                 }
                 else
                 {
                     step.Status = AiStepExecutionStatus.Ready;
+                    step.UpdatedAtUtc = DateTime.UtcNow.AddMinutes(-5);
                 }
 
                 state.Steps[stepName] = step;
@@ -494,6 +515,36 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
             int stepNumber)
         {
             return $"step-{stepNumber:000}";
+        }
+
+        /// <summary>
+        /// Creates a durable synthetic result for a pre-crash completed seeded step.
+        /// </summary>
+        /// <param name="executionId">The execution identifier.</param>
+        /// <param name="pipelineName">The pipeline name.</param>
+        /// <param name="stepName">The step name.</param>
+        /// <param name="stepNumber">The one-based step number.</param>
+        /// <param name="failedRuntimeInstanceId">The failed runtime instance identifier.</param>
+        /// <returns>The seeded completed step result.</returns>
+        private static AiStepResult CreateSeededCompletedStepResult(
+            string executionId,
+            string pipelineName,
+            string stepName,
+            int stepNumber,
+            string failedRuntimeInstanceId)
+        {
+            var result =
+                new AiStepResult();
+
+            result.Data["seeded"] = true;
+            result.Data["seeded.reason"] = "pre-crash-completed-step";
+            result.Data["executionId"] = executionId;
+            result.Data["pipelineName"] = pipelineName;
+            result.Data["stepName"] = stepName;
+            result.Data["stepNumber"] = stepNumber;
+            result.Data["failedRuntimeInstanceId"] = failedRuntimeInstanceId;
+
+            return result;
         }
 
         /// <summary>
