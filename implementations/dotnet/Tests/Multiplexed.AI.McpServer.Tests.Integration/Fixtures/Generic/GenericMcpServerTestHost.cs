@@ -41,6 +41,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic
         private const string LocalControlPlaneMode = "ControlPlaneWithLocalRuntimeInstances";
         private const string HttpScaleOutHostManagerMode = "HostManager";
 
+        private const string UseCapturingLedgerRecorderSettingKey = "Tests:UseCapturingLedgerRecorder";
+
         /// <summary>
         /// The configuration settings used to start the test host.
         /// </summary>
@@ -189,7 +191,14 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic
                 services.Configure<AiRuntimeProcessHostCreationOptions>(
                     testConfiguration.GetSection("AiRuntimeProcessHostCreation"));
 
-                RegisterIntegrationLedgerProofServices(services);
+                if (ShouldUseCapturingLedgerRecorder(settings))
+                {
+                    RegisterIntegrationLedgerProofServices(services);
+                }
+                else
+                {
+                    services.AddAiControlPlaneRuntimeObservability();
+                }
 
                 RegisterHostManagerModeTestServices(services);
             });
@@ -225,6 +234,12 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic
             });
         }
 
+        private static bool ShouldUseCapturingLedgerRecorder(
+            IReadOnlyDictionary<string, string?> settings)
+        {
+            return !settings.TryGetValue(UseCapturingLedgerRecorderSettingKey, out var value) ||
+                bool.Parse(value ?? "true");
+        }
 
         /// <summary>
         /// Registers test-only ledger capture services used by production scenario proof outputs.

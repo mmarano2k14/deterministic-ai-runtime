@@ -11,6 +11,8 @@ using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Store;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Dispatch;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Queue;
 using Multiplexed.Abstractions.AI.Execution;
+using Multiplexed.Abstractions.AI.Observability.Context;
+using Multiplexed.Abstractions.AI.Observability.Ledger;
 using Multiplexed.AI.McpServer.Tests.Integration.Fixtures;
 using Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic;
 using Multiplexed.AI.McpServer.Tests.Integration.Helpers;
@@ -19,7 +21,9 @@ using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Definition
 using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helpers;
 using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Ledger;
 using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Models;
+using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Output;
 using Multiplexed.AI.Stores;
+using System.Globalization;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -60,6 +64,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
         {
             var scenario =
                 CreateConcurrentMultiInstanceRecoveryScenario();
+
+            ProductionRuntimeScenarioSummaryOutput.WriteConcurrentMultiInstanceRecoveryIntro(this.output, scenario);
 
             scenario.DispatchTimeout = TimeSpan.FromMinutes(2);
             scenario.CompletionTimeout = TimeSpan.FromMinutes(5);
@@ -480,6 +486,778 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                     SelfRedispatchDetected = false
                 });
         }
+
+        /// <summary>
+        /// Verifies that concurrent HTTP runtime instance failures recover isolated assigned-work inventories
+        /// without cross-tenant leak, cross-incident leak, duplicate recovery, or self-redispatch,
+        /// and then proves the resulting control-plane ledger through the existing MCP observability.ledger.query tool.
+        /// </summary>
+        [Fact]
+        public async Task Http_ProcessHost_Should_Recover_Concurrent_MultiInstance_Failures_Without_CrossTenant_Or_CrossIncident_Leak_MCP_Ledger()
+        {
+            var scenario =
+                CreateConcurrentMultiInstanceRecoveryScenario();
+
+            ProductionRuntimeScenarioSummaryOutput.WriteConcurrentMultiInstanceRecoveryIntro(this.output, scenario);
+
+            scenario.DispatchTimeout = TimeSpan.FromMinutes(2);
+            scenario.CompletionTimeout = TimeSpan.FromMinutes(5);
+
+            var controlPlaneId =
+                GenericMcpServerTestSettings.CreateControlPlaneId(
+                    scenario.ControlPlaneIdPrefix);
+
+            var runtimeHostAssemblyPath =
+                GenericMcpRuntimeHostAssemblyResolver.ResolveRuntimeHostAssemblyPath();
+
+            var settings =
+                HttpProcessHostProductionScenarioSettingsBuilder.Build(
+                    scenario,
+                    controlPlaneId,
+                    runtimeHostAssemblyPath);
+
+            settings["Tests:UseCapturingLedgerRecorder"] = "false";
+
+            await using var host =
+                new GenericMcpServerTestHost(settings);
+
+            var registry =
+                host.Services.GetRequiredService<IAiRuntimeInstanceRegistry>();
+
+            var healthReconciler =
+                host.Services.GetRequiredService<IAiRuntimeInstanceHealthReconciler>();
+
+            var runExecutionIndex =
+                host.Services.GetRequiredService<IAiRuntimeRunExecutionIndex>();
+
+            var sharedRunStore =
+                host.Services.GetRequiredService<IAiSharedRunStore>();
+
+            var sharedQueue =
+                host.Services.GetRequiredService<IAiSharedQueue>();
+
+            var scaleOutRequestStore =
+                host.Services.GetRequiredService<IAiRuntimeScaleOutRequestStore>();
+
+            var scaleOutPublisher =
+                host.Services.GetRequiredService<IAiRuntimeScaleOutRequestPublisher>();
+
+            var recoveryReconciler =
+                host.Services.GetRequiredService<IAiRuntimeExecutionRecoveryReconciler>();
+
+            var dagStore =
+                host.Services.GetRequiredService<IAiDagExecutionStore>();
+
+            var sharedQueueDispatcher =
+                host.Services.GetRequiredService<IAiSharedQueueDispatcher>();
+
+            var queryService =
+                host.Services.GetRequiredService<IAiRuntimeRecoveryForensicsQueryService>();
+
+            var recoveryOptions =
+                host.Services
+                    .GetRequiredService<IOptions<AiRuntimeExecutionRecoveryReconciliationOptions>>()
+                    .Value;
+
+            ProductionRecoveryOptionsAssertions.AssertDagResumeRecoveryEnabled(recoveryOptions);
+
+            var tenantA =
+                scenario.Tenants.Single(tenant =>
+                    string.Equals(tenant.TenantId, "tenant-concurrent-a", StringComparison.Ordinal));
+
+            var tenantB =
+                scenario.Tenants.Single(tenant =>
+                    string.Equals(tenant.TenantId, "tenant-concurrent-b", StringComparison.Ordinal));
+
+            using var tenantAHttpClient =
+                host.CreateClient();
+
+            using var tenantBHttpClient =
+                host.CreateClient();
+
+            var tenantAMcp =
+                await McpRbacTestClientHelper
+                    .CreateConfiguredClientAsync(
+                        host,
+                        tenantAHttpClient,
+                        RequestedBy,
+                        tenantId: tenantA.TenantId,
+                        tenantGroupId: tenantA.TenantGroupId)
+                    .ConfigureAwait(false);
+
+            var tenantBMcp =
+                await McpRbacTestClientHelper
+                    .CreateConfiguredClientAsync(
+                        host,
+                        tenantBHttpClient,
+                        RequestedBy,
+                        tenantId: tenantB.TenantId,
+                        tenantGroupId: tenantB.TenantGroupId)
+                    .ConfigureAwait(false);
+
+            var ledgerTimelineFromUtc =
+                DateTimeOffset.UtcNow.AddSeconds(-5);
+
+            var tenantAPipelineName =
+                $"{scenario.Name}-{tenantA.TenantId}-concurrent-recovery-{Guid.NewGuid():N}";
+
+            var tenantAControlPipelineName =
+                $"{scenario.Name}-{tenantA.TenantId}-control-runtime-{Guid.NewGuid():N}";
+
+            var tenantBPipelineName =
+                $"{scenario.Name}-{tenantB.TenantId}-concurrent-recovery-{Guid.NewGuid():N}";
+
+            this.output.WriteLine(
+                $"[MULTI-INSTANCE RECOVERY] Starting. ControlPlaneId='{controlPlaneId}', TenantAPipeline='{tenantAPipelineName}', TenantAControlPipeline='{tenantAControlPipelineName}', TenantBPipeline='{tenantBPipelineName}', RuntimeHostAssemblyPath='{runtimeHostAssemblyPath}'.");
+
+            var tenantAFailedBootstrap =
+                await SubmitAndDispatchOneRunAsync(
+                        tenantAMcp,
+                        scaleOutRequestStore,
+                        tenantA,
+                        controlPlaneId,
+                        tenantAPipelineName,
+                        scenario.ScaleOutTimeout,
+                        scenario.DispatchTimeout)
+                    .ConfigureAwait(false);
+
+            var tenantAControlRuntimeInstanceId =
+                await PublishScaleOutAndWaitForAdditionalTenantRuntimeInstanceAsync(
+                        scaleOutPublisher,
+                        registry,
+                        tenantAFailedBootstrap,
+                        tenantA,
+                        controlPlaneId,
+                        tenantAControlPipelineName,
+                        tenantAFailedBootstrap.AssignedRuntimeInstanceId!,
+                        scenario.ScaleOutTimeout)
+                    .ConfigureAwait(false);
+
+            var tenantBFailedBootstrap =
+                await SubmitAndDispatchOneRunAsync(
+                        tenantBMcp,
+                        scaleOutRequestStore,
+                        tenantB,
+                        controlPlaneId,
+                        tenantBPipelineName,
+                        scenario.ScaleOutTimeout,
+                        scenario.DispatchTimeout)
+                    .ConfigureAwait(false);
+
+            Assert.False(string.IsNullOrWhiteSpace(tenantAFailedBootstrap.AssignedRuntimeInstanceId));
+            Assert.False(string.IsNullOrWhiteSpace(tenantAFailedBootstrap.LocalRunId));
+            Assert.False(string.IsNullOrWhiteSpace(tenantBFailedBootstrap.AssignedRuntimeInstanceId));
+            Assert.False(string.IsNullOrWhiteSpace(tenantBFailedBootstrap.LocalRunId));
+
+            var tenantAFailedRuntimeInstanceId =
+                tenantAFailedBootstrap.AssignedRuntimeInstanceId!;
+
+            var tenantBFailedRuntimeInstanceId =
+                tenantBFailedBootstrap.AssignedRuntimeInstanceId!;
+
+            this.output.WriteLine(
+                "[MULTI-INSTANCE RUNTIME SELECTION] " +
+                $"TenantAFailedRuntime='{tenantAFailedRuntimeInstanceId}', " +
+                $"TenantAControlRuntime='{tenantAControlRuntimeInstanceId}', " +
+                $"TenantBFailedRuntime='{tenantBFailedRuntimeInstanceId}'.");
+
+            Assert.NotEqual(tenantAFailedRuntimeInstanceId, tenantAControlRuntimeInstanceId);
+            Assert.NotEqual(tenantAFailedRuntimeInstanceId, tenantBFailedRuntimeInstanceId);
+            Assert.NotEqual(tenantAControlRuntimeInstanceId, tenantBFailedRuntimeInstanceId);
+
+            AssertRuntimeBelongsToTenant(tenantAFailedRuntimeInstanceId, tenantA);
+            AssertRuntimeBelongsToTenant(tenantAControlRuntimeInstanceId, tenantA);
+            AssertRuntimeBelongsToTenant(tenantBFailedRuntimeInstanceId, tenantB);
+
+            var tenantASeededWorks =
+                await ProductionRecoverySeedHelpers
+                    .SeedFailedRuntimeAssignedWorkInventoryAsync(
+                        sharedRunStore,
+                        sharedQueue,
+                        runExecutionIndex,
+                        dagStore,
+                        tenantAFailedBootstrap,
+                        tenantA,
+                        tenantAPipelineName,
+                        tenantAFailedRuntimeInstanceId,
+                        queuedLocalRunCount: 1,
+                        inFlightExecutionCount: TenantAFailedWorkCount - 1,
+                        stepCount: StepCount,
+                        failureStepNumber: FailureStepNumber,
+                        requestedBy: RequestedBy,
+                        source: Source)
+                    .ConfigureAwait(false);
+
+            var tenantBSeededWorks =
+                await ProductionRecoverySeedHelpers
+                    .SeedFailedRuntimeAssignedWorkInventoryAsync(
+                        sharedRunStore,
+                        sharedQueue,
+                        runExecutionIndex,
+                        dagStore,
+                        tenantBFailedBootstrap,
+                        tenantB,
+                        tenantBPipelineName,
+                        tenantBFailedRuntimeInstanceId,
+                        queuedLocalRunCount: 1,
+                        inFlightExecutionCount: TenantBFailedWorkCount - 1,
+                        stepCount: StepCount,
+                        failureStepNumber: FailureStepNumber,
+                        requestedBy: RequestedBy,
+                        source: Source)
+                    .ConfigureAwait(false);
+
+            var tenantAGroup =
+                new FailedRuntimeRecoveryGroup
+                {
+                    Tenant = tenantA,
+                    FailedRuntimeInstanceId = tenantAFailedRuntimeInstanceId,
+                    SeededWorks = tenantASeededWorks
+                };
+
+            var tenantBGroup =
+                new FailedRuntimeRecoveryGroup
+                {
+                    Tenant = tenantB,
+                    FailedRuntimeInstanceId = tenantBFailedRuntimeInstanceId,
+                    SeededWorks = tenantBSeededWorks
+                };
+
+            var failedRuntimeGroups =
+                new[]
+                {
+            tenantAGroup,
+            tenantBGroup
+                };
+
+            WriteFailedRuntimeWorkInventory(
+                this.output,
+                tenantAFailedRuntimeInstanceId,
+                tenantASeededWorks);
+
+            WriteFailedRuntimeWorkInventory(
+                this.output,
+                tenantBFailedRuntimeInstanceId,
+                tenantBSeededWorks);
+
+            await WaitForSeededRuntimeGroupsVisibleAsync(
+                    runExecutionIndex,
+                    failedRuntimeGroups,
+                    TimeSpan.FromSeconds(30))
+                .ConfigureAwait(false);
+
+            await MarkUnhealthyAndReconcileUntilAllRuntimeGroupsRecoveredAsync(
+                    registry,
+                    healthReconciler,
+                    recoveryReconciler,
+                    runExecutionIndex,
+                    failedRuntimeGroups,
+                    TimeSpan.FromSeconds(120))
+                .ConfigureAwait(false);
+
+            await AssertControlRuntimeUntouchedBeforeRedispatchAsync(
+                    registry,
+                    queryService,
+                    tenantA,
+                    tenantAControlRuntimeInstanceId)
+                .ConfigureAwait(false);
+
+            var tenantARedispatchedRuns =
+                await WaitForRedispatchedRunsAsync(
+                        registry,
+                        healthReconciler,
+                        sharedRunStore,
+                        sharedQueue,
+                        sharedQueueDispatcher,
+                        tenantAGroup,
+                        scenario.DispatchTimeout)
+                    .ConfigureAwait(false);
+
+            var tenantBRedispatchedRuns =
+                await WaitForRedispatchedRunsAsync(
+                        registry,
+                        healthReconciler,
+                        sharedRunStore,
+                        sharedQueue,
+                        sharedQueueDispatcher,
+                        tenantBGroup,
+                        scenario.DispatchTimeout)
+                    .ConfigureAwait(false);
+
+            var allRedispatchedRuns =
+                tenantARedispatchedRuns
+                    .Concat(tenantBRedispatchedRuns)
+                    .ToArray();
+
+            Assert.Equal(CountSeededWork(failedRuntimeGroups), allRedispatchedRuns.Length);
+
+            AssertNoSelfRedispatch(
+                failedRuntimeGroups,
+                allRedispatchedRuns);
+
+            AssertNoCrossTenantRedispatch(
+                tenantAGroup,
+                tenantARedispatchedRuns,
+                tenantBGroup,
+                tenantBRedispatchedRuns);
+
+            WriteRecoveredRuntimeWorkInventory(
+                this.output,
+                tenantAFailedRuntimeInstanceId,
+                tenantASeededWorks,
+                tenantARedispatchedRuns);
+
+            WriteRecoveredRuntimeWorkInventory(
+                this.output,
+                tenantBFailedRuntimeInstanceId,
+                tenantBSeededWorks,
+                tenantBRedispatchedRuns);
+
+            var tenantAFinalStatuses =
+                await McpTestWaitHelpers
+                    .WaitForTerminalRuntimeRunStatusesAsync(
+                        tenantAMcp,
+                        tenantARedispatchedRuns,
+                        timeout: scenario.CompletionTimeout)
+                    .ConfigureAwait(false);
+
+            var tenantBFinalStatuses =
+                await McpTestWaitHelpers
+                    .WaitForTerminalRuntimeRunStatusesAsync(
+                        tenantBMcp,
+                        tenantBRedispatchedRuns,
+                        timeout: scenario.CompletionTimeout)
+                    .ConfigureAwait(false);
+
+            AssertAllRecoveredRunsCompleted(tenantAFinalStatuses);
+            AssertAllRecoveredRunsCompleted(tenantBFinalStatuses);
+
+            await AssertRecoveredExecutionIndexesCompletedAsync(
+                    runExecutionIndex,
+                    tenantAGroup,
+                    tenantARedispatchedRuns)
+                .ConfigureAwait(false);
+
+            await AssertRecoveredExecutionIndexesCompletedAsync(
+                    runExecutionIndex,
+                    tenantBGroup,
+                    tenantBRedispatchedRuns)
+                .ConfigureAwait(false);
+
+            var tenantAForensics =
+                await WaitForRecoveredForensicsAsync(
+                        queryService,
+                        tenantAGroup,
+                        TimeSpan.FromSeconds(45))
+                    .ConfigureAwait(false);
+
+            var tenantBForensics =
+                await WaitForRecoveredForensicsAsync(
+                        queryService,
+                        tenantBGroup,
+                        TimeSpan.FromSeconds(45))
+                    .ConfigureAwait(false);
+
+            var allForensics =
+                tenantAForensics
+                    .Concat(tenantBForensics)
+                    .ToArray();
+
+            Assert.Equal(CountSeededWork(failedRuntimeGroups), allForensics.Length);
+
+            AssertNoDuplicateForensics(allForensics);
+            AssertNoCrossTenantForensicsLeak(tenantAGroup, tenantAForensics, tenantBGroup, tenantBForensics);
+            AssertNoCrossIncidentForensicsLeak(tenantAForensics, tenantBForensics);
+
+            await AssertControlRuntimeUntouchedAfterRecoveryAsync(
+                    registry,
+                    queryService,
+                    tenantA,
+                    tenantAControlRuntimeInstanceId,
+                    allForensics)
+                .ConfigureAwait(false);
+
+            WriteRuntimeRecoveryInventoryForensics(
+                this.output,
+                tenantAFailedRuntimeInstanceId,
+                tenantAForensics);
+
+            WriteRuntimeRecoveryInventoryForensics(
+                this.output,
+                tenantBFailedRuntimeInstanceId,
+                tenantBForensics);
+
+            this.output.WriteLine(
+                "[MULTI-INSTANCE RECOVERY PROOF] " +
+                $"RuntimeA='{tenantAFailedRuntimeInstanceId}' -> '{tenantARedispatchedRuns.Count}/{tenantASeededWorks.Count}' recovered -> ReplacementRuntimeInstances='{string.Join(",", tenantARedispatchedRuns.Select(run => run.AssignedRuntimeInstanceId).Distinct(StringComparer.Ordinal))}', " +
+                $"RuntimeB='{tenantBFailedRuntimeInstanceId}' -> '{tenantBRedispatchedRuns.Count}/{tenantBSeededWorks.Count}' recovered -> ReplacementRuntimeInstances='{string.Join(",", tenantBRedispatchedRuns.Select(run => run.AssignedRuntimeInstanceId).Distinct(StringComparer.Ordinal))}', " +
+                $"ControlRuntime='{tenantAControlRuntimeInstanceId}' -> untouched, 0 forensics events, " +
+                $"ExpectedForensics='{CountSeededWork(failedRuntimeGroups)}', ActualForensics='{allForensics.Length}', " +
+                $"CrossTenantLeakDetected='false', CrossIncidentLeakDetected='false', DuplicateRecoveryDetected='false', SelfRedispatchDetected='false'.");
+
+
+
+
+            var ledgerRecords =
+                await QueryControlPlaneLedgerRecordsThroughMcpAsync(
+                        tenantAMcp,
+                        tenantBMcp,
+                        ledgerTimelineFromUtc,
+                        controlPlaneId,
+                        tenantA,
+                        tenantB,
+                        tenantAPipelineName,
+                        tenantAControlPipelineName,
+                        tenantBPipelineName,
+                        tenantAFailedRuntimeInstanceId,
+                        tenantAControlRuntimeInstanceId,
+                        tenantBFailedRuntimeInstanceId)
+                    .ConfigureAwait(false);
+
+            this.output.WriteLine(
+                $"[MCP LEDGER QUERY PROOF] Queried ledger through MCP tool 'observability.ledger.query'. " +
+                $"ScenarioEntries='{ledgerRecords.Count}', " +
+                $"ControlPlaneEntries='{ledgerRecords.Count(record => record.EventType.StartsWith("control.", StringComparison.Ordinal))}'.");
+
+            Assert.Contains(
+                ledgerRecords,
+                record => record.EventType.StartsWith("control.", StringComparison.Ordinal));
+
+            ProductionControlPlaneLedgerProofAssertions.AssertScaleOutAndRuntimeVisibilityProof(ledgerRecords);
+            ProductionControlPlaneLedgerProofAssertions.AssertConcurrentRecoveryProof(ledgerRecords);
+            ProductionControlPlaneLedgerProofAssertions.AssertContainsTenant(ledgerRecords, tenantA.TenantId);
+            ProductionControlPlaneLedgerProofAssertions.AssertContainsTenant(ledgerRecords, tenantB.TenantId);
+
+            ProductionControlPlaneLedgerProofOutput.WriteConcurrentRuntimeRecoveryProof(
+                this.output,
+                ledgerRecords,
+                new ProductionControlPlaneLedgerProofContext
+                {
+                    ControlPlaneId = controlPlaneId,
+                    TenantAId = tenantA.TenantId,
+                    TenantBId = tenantB.TenantId,
+                    TenantAFailedRuntimeInstanceId = tenantAFailedRuntimeInstanceId,
+                    TenantBFailedRuntimeInstanceId = tenantBFailedRuntimeInstanceId,
+                    ControlRuntimeInstanceId = tenantAControlRuntimeInstanceId,
+                    ExpectedRecoveredWorkCount = CountSeededWork(failedRuntimeGroups),
+                    RecoveredWorkCount = allRedispatchedRuns.Length,
+                    CrossTenantLeakDetected = false,
+                    CrossIncidentLeakDetected = false,
+                    DuplicateRecoveryDetected = false,
+                    SelfRedispatchDetected = false
+                });
+        }
+
+        /// <summary>
+        /// Queries control-plane ledger records through the existing MCP observability ledger query tool and converts them to the assertion/output shape.
+        /// </summary>
+        /// <param name="tenantAMcp">The tenant A MCP client.</param>
+        /// <param name="tenantBMcp">The tenant B MCP client.</param>
+        /// <param name="timestampFromUtc">The inclusive lower timestamp bound.</param>
+        /// <param name="controlPlaneId">The control-plane identifier.</param>
+        /// <param name="tenantA">Tenant A.</param>
+        /// <param name="tenantB">Tenant B.</param>
+        /// <param name="tenantAPipelineName">The tenant A workload pipeline name.</param>
+        /// <param name="tenantAControlPipelineName">The tenant A control-runtime pipeline name.</param>
+        /// <param name="tenantBPipelineName">The tenant B workload pipeline name.</param>
+        /// <param name="tenantAFailedRuntimeInstanceId">The tenant A failed runtime instance identifier.</param>
+        /// <param name="tenantAControlRuntimeInstanceId">The tenant A control runtime instance identifier.</param>
+        /// <param name="tenantBFailedRuntimeInstanceId">The tenant B failed runtime instance identifier.</param>
+        /// <returns>The scenario ledger records queried through MCP.</returns>
+        private async Task<IReadOnlyCollection<CapturedIntegrationLedgerRecord>> QueryControlPlaneLedgerRecordsThroughMcpAsync(
+            McpTestClient tenantAMcp,
+            McpTestClient tenantBMcp,
+            DateTimeOffset timestampFromUtc,
+            string controlPlaneId,
+            ProductionTenantScenarioDefinition tenantA,
+            ProductionTenantScenarioDefinition tenantB,
+            string tenantAPipelineName,
+            string tenantAControlPipelineName,
+            string tenantBPipelineName,
+            string tenantAFailedRuntimeInstanceId,
+            string tenantAControlRuntimeInstanceId,
+            string tenantBFailedRuntimeInstanceId)
+        {
+            ArgumentNullException.ThrowIfNull(tenantAMcp);
+            ArgumentNullException.ThrowIfNull(tenantBMcp);
+            ArgumentException.ThrowIfNullOrWhiteSpace(controlPlaneId);
+            ArgumentNullException.ThrowIfNull(tenantA);
+            ArgumentNullException.ThrowIfNull(tenantB);
+
+            var query =
+                new AiDecisionLedgerQuery
+                {
+                    TimestampFromUtc = timestampFromUtc,
+                    Limit = 10000
+                };
+
+            var tenantAEntries =
+                await tenantAMcp
+                    .QueryLedgerAsync(query)
+                    .ConfigureAwait(false);
+
+            var tenantBEntries =
+                await tenantBMcp
+                    .QueryLedgerAsync(query)
+                    .ConfigureAwait(false);
+
+            var entries =
+                tenantAEntries
+                    .Concat(tenantBEntries)
+                    .Where(entry =>
+                        IsScenarioLedgerEntry(
+                            entry,
+                            controlPlaneId,
+                            tenantA,
+                            tenantB,
+                            tenantAPipelineName,
+                            tenantAControlPipelineName,
+                            tenantBPipelineName,
+                            tenantAFailedRuntimeInstanceId,
+                            tenantAControlRuntimeInstanceId,
+                            tenantBFailedRuntimeInstanceId))
+                    .GroupBy(
+                        CreateDecisionLedgerEntryDeduplicationKey,
+                        StringComparer.Ordinal)
+                    .Select(group => group.First())
+                    .OrderBy(entry => entry.TimestampUtc)
+                    .Select(ConvertDecisionLedgerEntryToCapturedRecord)
+                    .ToArray();
+
+            this.output.WriteLine(
+                $"[MCP LEDGER QUERY PROOF] Queried ledger through MCP tool 'observability.ledger.query'. TenantAEntries='{tenantAEntries.Count}', TenantBEntries='{tenantBEntries.Count}', ScenarioEntries='{entries.Length}'.");
+
+            return entries;
+        }
+
+        /// <summary>
+        /// Determines whether a durable ledger entry belongs to the current scenario.
+        /// </summary>
+        /// <param name="entry">The ledger entry.</param>
+        /// <param name="controlPlaneId">The control-plane identifier.</param>
+        /// <param name="tenantA">Tenant A.</param>
+        /// <param name="tenantB">Tenant B.</param>
+        /// <param name="tenantAPipelineName">The tenant A workload pipeline name.</param>
+        /// <param name="tenantAControlPipelineName">The tenant A control-runtime pipeline name.</param>
+        /// <param name="tenantBPipelineName">The tenant B workload pipeline name.</param>
+        /// <param name="tenantAFailedRuntimeInstanceId">The tenant A failed runtime instance identifier.</param>
+        /// <param name="tenantAControlRuntimeInstanceId">The tenant A control runtime instance identifier.</param>
+        /// <param name="tenantBFailedRuntimeInstanceId">The tenant B failed runtime instance identifier.</param>
+        /// <returns><c>true</c> when the entry belongs to the scenario; otherwise, <c>false</c>.</returns>
+        private static bool IsScenarioLedgerEntry(
+            AiDecisionLedgerEntry entry,
+            string controlPlaneId,
+            ProductionTenantScenarioDefinition tenantA,
+            ProductionTenantScenarioDefinition tenantB,
+            string tenantAPipelineName,
+            string tenantAControlPipelineName,
+            string tenantBPipelineName,
+            string tenantAFailedRuntimeInstanceId,
+            string tenantAControlRuntimeInstanceId,
+            string tenantBFailedRuntimeInstanceId)
+        {
+            ArgumentNullException.ThrowIfNull(entry);
+
+            if (MetadataEquals(entry, "controlPlaneId", controlPlaneId) ||
+                MetadataEquals(entry, "control.plane.id", controlPlaneId))
+            {
+                return true;
+            }
+
+            if (MetadataEquals(entry, "tenantId", tenantA.TenantId) ||
+                MetadataEquals(entry, "tenant.id", tenantA.TenantId) ||
+                MetadataEquals(entry, "tenantId", tenantB.TenantId) ||
+                MetadataEquals(entry, "tenant.id", tenantB.TenantId))
+            {
+                return true;
+            }
+
+            if (MetadataEquals(entry, "pipelineKey", tenantAPipelineName) ||
+                MetadataEquals(entry, "pipeline.key", tenantAPipelineName) ||
+                MetadataEquals(entry, "pipelineKey", tenantAControlPipelineName) ||
+                MetadataEquals(entry, "pipeline.key", tenantAControlPipelineName) ||
+                MetadataEquals(entry, "pipelineKey", tenantBPipelineName) ||
+                MetadataEquals(entry, "pipeline.key", tenantBPipelineName))
+            {
+                return true;
+            }
+
+            var context =
+                entry.CorrelationContext;
+
+            if (string.Equals(context.RuntimeInstanceId, tenantAFailedRuntimeInstanceId, StringComparison.Ordinal) ||
+                string.Equals(context.RuntimeInstanceId, tenantAControlRuntimeInstanceId, StringComparison.Ordinal) ||
+                string.Equals(context.RuntimeInstanceId, tenantBFailedRuntimeInstanceId, StringComparison.Ordinal))
+            {
+                return true;
+            }
+
+            if (MetadataEquals(entry, "runtimeInstanceId", tenantAFailedRuntimeInstanceId) ||
+                MetadataEquals(entry, "runtime.instance.id", tenantAFailedRuntimeInstanceId) ||
+                MetadataEquals(entry, "runtimeInstanceId", tenantAControlRuntimeInstanceId) ||
+                MetadataEquals(entry, "runtime.instance.id", tenantAControlRuntimeInstanceId) ||
+                MetadataEquals(entry, "runtimeInstanceId", tenantBFailedRuntimeInstanceId) ||
+                MetadataEquals(entry, "runtime.instance.id", tenantBFailedRuntimeInstanceId))
+            {
+                return true;
+            }
+
+            return IsControlPlaneInfrastructureLedgerEntry(entry);
+        }
+
+        /// <summary>
+        /// Determines whether the entry is a control-plane infrastructure event that should be included in the scenario proof.
+        /// </summary>
+        /// <param name="entry">The ledger entry.</param>
+        /// <returns><c>true</c> when the entry is an infrastructure proof event; otherwise, <c>false</c>.</returns>
+        private static bool IsControlPlaneInfrastructureLedgerEntry(
+            AiDecisionLedgerEntry entry)
+        {
+            return entry.EventType.Contains("runtime-instance-list", StringComparison.Ordinal) ||
+                entry.EventType.Contains("runtime-instance-get", StringComparison.Ordinal) ||
+                entry.EventType.Contains("runtime-instance-capacity-get", StringComparison.Ordinal) ||
+                entry.EventType.Contains("runtime-instance-capacity-publish", StringComparison.Ordinal) ||
+                entry.EventType.Contains("runtime-instance-mark-unhealthy", StringComparison.Ordinal) ||
+                entry.EventType.Contains("runtime-execution-recovery-reconcile", StringComparison.Ordinal) ||
+                entry.EventType.Contains("shared-queue-pump-cycle", StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Converts a durable decision ledger entry into the captured integration ledger shape.
+        /// </summary>
+        /// <param name="entry">The durable ledger entry.</param>
+        /// <returns>The captured integration ledger record.</returns>
+        private static CapturedIntegrationLedgerRecord ConvertDecisionLedgerEntryToCapturedRecord(
+            AiDecisionLedgerEntry entry)
+        {
+            ArgumentNullException.ThrowIfNull(entry);
+
+            var metadata =
+                NormalizeLedgerMetadata(entry.Metadata);
+
+            return new CapturedIntegrationLedgerRecord(
+                entry.TimestampUtc,
+                entry.CorrelationContext,
+                entry.Category,
+                entry.EventType,
+                entry.Outcome,
+                entry.Reason,
+                metadata);
+        }
+
+        /// <summary>
+        /// Normalizes ledger metadata so proof output can safely read string values.
+        /// </summary>
+        /// <param name="metadata">The ledger metadata.</param>
+        /// <returns>The normalized metadata.</returns>
+        private static IReadOnlyDictionary<string, string?> NormalizeLedgerMetadata(
+            IReadOnlyDictionary<string, string?>? metadata)
+        {
+            if (metadata is null)
+            {
+                return new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
+            }
+
+            return new Dictionary<string, string?>(metadata, StringComparer.OrdinalIgnoreCase);
+        }
+
+        /// <summary>
+        /// Creates a stable deduplication key for durable ledger entries returned by multiple MCP tenant clients.
+        /// </summary>
+        /// <param name="entry">The ledger entry.</param>
+        /// <returns>The deduplication key.</returns>
+        private static string CreateDecisionLedgerEntryDeduplicationKey(
+            AiDecisionLedgerEntry entry)
+        {
+            if (!string.IsNullOrWhiteSpace(entry.EntryId))
+            {
+                return entry.EntryId;
+            }
+
+            return string.Join(
+                "|",
+                entry.TimestampUtc.ToString("O", CultureInfo.InvariantCulture),
+                entry.Sequence.ToString(CultureInfo.InvariantCulture),
+                entry.EventType ?? string.Empty,
+                entry.Outcome.ToString(),
+                entry.CorrelationContext.ExecutionId ?? string.Empty,
+                entry.CorrelationContext.RunId ?? string.Empty,
+                entry.CorrelationContext.RuntimeInstanceId ?? string.Empty);
+        }
+
+        /// <summary>
+        /// Determines whether a metadata value equals the expected value.
+        /// </summary>
+        /// <param name="entry">The ledger entry.</param>
+        /// <param name="key">The metadata key.</param>
+        /// <param name="expectedValue">The expected value.</param>
+        /// <returns><c>true</c> when the metadata value equals the expected value; otherwise, <c>false</c>.</returns>
+        private static bool MetadataEquals(
+            AiDecisionLedgerEntry entry,
+            string key,
+            string expectedValue)
+        {
+            return TryGetMetadataValue(entry, key, out var value) &&
+                string.Equals(value, expectedValue, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Tries to get a metadata value.
+        /// </summary>
+        /// <param name="entry">The ledger entry.</param>
+        /// <param name="key">The metadata key.</param>
+        /// <param name="value">The metadata value.</param>
+        /// <returns><c>true</c> when the metadata value exists; otherwise, <c>false</c>.</returns>
+        private static bool TryGetMetadataValue(
+            AiDecisionLedgerEntry entry,
+            string key,
+            out string? value)
+        {
+            value = null;
+
+            if (entry.Metadata is null)
+            {
+                return false;
+            }
+
+            return entry.Metadata.TryGetValue(key, out value);
+        }
+
+
+        
+
+        /// <summary>
+        /// Parses a ledger category returned by MCP.
+        /// </summary>
+        /// <param name="category">The category value.</param>
+        /// <returns>The parsed ledger category.</returns>
+        private static AiDecisionLedgerCategory ParseLedgerCategory(
+            string? category)
+        {
+            return Enum.TryParse<AiDecisionLedgerCategory>(
+                category,
+                ignoreCase: true,
+                out var parsed)
+                ? parsed
+                : AiDecisionLedgerCategory.Control;
+        }
+
+        /// <summary>
+        /// Parses a ledger outcome returned by MCP.
+        /// </summary>
+        /// <param name="outcome">The outcome value.</param>
+        /// <returns>The parsed ledger outcome.</returns>
+        private static AiDecisionLedgerOutcome ParseLedgerOutcome(
+            string? outcome)
+        {
+            return Enum.TryParse<AiDecisionLedgerOutcome>(
+                outcome,
+                ignoreCase: true,
+                out var parsed)
+                ? parsed
+                : AiDecisionLedgerOutcome.CompletedWithIssues;
+        }
+
 
 
         /// <summary>
