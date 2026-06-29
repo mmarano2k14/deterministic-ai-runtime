@@ -2,9 +2,14 @@
 using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.ControlPlane.Admission;
 using Multiplexed.Abstractions.AI.ControlPlane.Admission.Reservations;
+using Multiplexed.Abstractions.AI.ControlPlane.Observability;
+using Multiplexed.Abstractions.AI.ControlPlane.Observability.Area;
+using Multiplexed.Abstractions.AI.ControlPlane.Observability.Events;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Capacity;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
+using Multiplexed.Abstractions.AI.Observability.Context;
+using Multiplexed.AI.Runtime.ControlPlane.Observability;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.Admission
 {
@@ -21,12 +26,15 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission
     /// </remarks>
     public sealed class AiRunAdmissionController : IAiRunAdmissionController
     {
+        private const string RuntimeAdmissionDecisionOperation = "runtime-admission-decision";
+
         private readonly IAiRuntimeInstanceRegistry _registry;
         private readonly IAiRuntimeAdmissionReservationStore _reservationStore;
         private readonly IAiRuntimeInstanceCapacityStore _capacityStore;
         private readonly IAiTenantRuntimeSettingsProvider _tenantRuntimeSettingsProvider;
         private readonly AiRunAdmissionOptions _options;
         private readonly ILogger<AiRunAdmissionController> _logger;
+        private readonly IAiControlPlaneObserver _observer;
         private long _admissionSequence;
 
         /// <summary>
@@ -45,6 +53,35 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission
             IAiTenantRuntimeSettingsProvider tenantRuntimeSettingsProvider,
             IOptions<AiRunAdmissionOptions> options,
             ILogger<AiRunAdmissionController> logger)
+            : this(
+                registry,
+                reservationStore,
+                capacityStore,
+                tenantRuntimeSettingsProvider,
+                options,
+                logger,
+                new NoopAiControlPlaneObserver())
+        {
+        }
+
+        /// <summary>
+        /// Initializes a new instance of the <see cref="AiRunAdmissionController"/> class.
+        /// </summary>
+        /// <param name="registry">The runtime instance registry used to discover visible runtime instances.</param>
+        /// <param name="reservationStore">The admission reservation store used to account for temporary reserved capacity.</param>
+        /// <param name="capacityStore">The runtime instance capacity store used to verify dispatchable runtime capacity.</param>
+        /// <param name="tenantRuntimeSettingsProvider">The tenant runtime settings provider.</param>
+        /// <param name="options">The run admission options.</param>
+        /// <param name="logger">The logger.</param>
+        /// <param name="observer">The control-plane observer.</param>
+        public AiRunAdmissionController(
+            IAiRuntimeInstanceRegistry registry,
+            IAiRuntimeAdmissionReservationStore reservationStore,
+            IAiRuntimeInstanceCapacityStore capacityStore,
+            IAiTenantRuntimeSettingsProvider tenantRuntimeSettingsProvider,
+            IOptions<AiRunAdmissionOptions> options,
+            ILogger<AiRunAdmissionController> logger,
+            IAiControlPlaneObserver observer)
         {
             _registry = registry ?? throw new ArgumentNullException(nameof(registry));
             _reservationStore = reservationStore ?? throw new ArgumentNullException(nameof(reservationStore));
@@ -52,6 +89,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission
             _tenantRuntimeSettingsProvider = tenantRuntimeSettingsProvider ?? throw new ArgumentNullException(nameof(tenantRuntimeSettingsProvider));
             _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+            _observer = observer ?? throw new ArgumentNullException(nameof(observer));
         }
 
         /// <summary>
@@ -69,6 +107,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission
 
             cancellationToken.ThrowIfCancellationRequested();
 
+            var startedAtUtc = DateTimeOffset.UtcNow;
+
             var tenantRuntimeSettings =
                 _tenantRuntimeSettingsProvider.GetSettings(
                     request.TenantId,
@@ -78,209 +118,282 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission
                 ResolveEffectiveMaxInstanceCount(
                     tenantRuntimeSettings);
 
-            if (!_options.Enabled)
-            {
-                _logger.LogWarning(
-                    "Admission rejected because run admission is disabled. RunId={RunId}, TenantId={TenantId}, PipelineKey={PipelineKey}",
-                    request.RunId,
-                    request.TenantId,
-                    request.PipelineKey);
-
-                return CreateDecision(
-                    AiRunAdmissionDecisionType.Reject,
-                    reason: "Run admission is disabled.",
-                    visibleInstances: Array.Empty<AiRuntimeInstanceSnapshot>(),
-                    availableInstances: Array.Empty<AiRuntimeInstanceSnapshot>(),
-                    currentInstanceCount: 0,
-                    maxInstanceCount: effectiveMaxInstanceCount,
-                    tenantRuntimeSettings: tenantRuntimeSettings);
-            }
-
-            var instances = await _registry
-                .ListAsync(includeStopped: false, cancellationToken)
-                .ConfigureAwait(false);
-
-            _logger.LogInformation(
-                "Admission started. RunId={RunId}, TenantId={TenantId}, TenantGroupId={TenantGroupId}, PipelineKey={PipelineKey}, PreferredRuntimeInstanceId={PreferredRuntimeInstanceId}, VisibleInstanceCount={VisibleInstanceCount}, EnableScaleOutRequest={EnableScaleOutRequest}, MaxInstanceCount={MaxInstanceCount}, TenantIsolationMode={TenantIsolationMode}, TenantMaxRuntimeInstances={TenantMaxRuntimeInstances}, EffectiveMaxInstanceCount={EffectiveMaxInstanceCount}, EnableGlobalQueueFallback={EnableGlobalQueueFallback}, RejectWhenNoCapacity={RejectWhenNoCapacity}",
-                request.RunId,
-                tenantRuntimeSettings.TenantId,
-                tenantRuntimeSettings.TenantGroupId,
-                request.PipelineKey,
-                request.PreferredRuntimeInstanceId,
-                instances.Count,
-                _options.EnableScaleOutRequest,
-                _options.MaxInstanceCount,
-                tenantRuntimeSettings.IsolationMode,
-                tenantRuntimeSettings.MaxRuntimeInstances,
-                effectiveMaxInstanceCount,
-                _options.EnableGlobalQueueFallback,
-                _options.RejectWhenNoCapacity);
-
-            foreach (var instance in instances)
-            {
-                _logger.LogInformation(
-                    "Admission visible instance. RunId={RunId}, RuntimeInstanceId={RuntimeInstanceId}, Role={Role}, Status={Status}, CanAcceptRun={CanAcceptRun}, IsQueuePaused={IsQueuePaused}, QueuedRunCount={QueuedRunCount}, RunningRunCount={RunningRunCount}, ActiveRunCount={ActiveRunCount}, AvailableRunSlots={AvailableRunSlots}, WorkerCount={WorkerCount}, ActiveWorkerCount={ActiveWorkerCount}, AvailableWorkerCount={AvailableWorkerCount}",
-                    request.RunId,
-                    instance.RuntimeInstanceId,
-                    instance.Role,
-                    instance.Status,
-                    instance.CanAcceptRun,
-                    instance.IsQueuePaused,
-                    instance.QueuedRunCount,
-                    instance.RunningRunCount,
-                    instance.ActiveRunCount,
-                    instance.AvailableRunSlots,
-                    instance.WorkerCount,
-                    instance.ActiveWorkerCount,
-                    instance.AvailableWorkerCount);
-            }
-
-            var countableRuntimeInstances = instances
-                .Where(instance => instance.Role == AiRuntimeInstanceRole.Runtime)
-                .Where(IsCountableForMaxRuntimeInstances)
-                .ToArray();
-
-            var runtimeCandidates = instances
-                .Where(instance => instance.Role == AiRuntimeInstanceRole.Runtime)
-                .Where(instance =>
-                {
-                    var eligible = IsEligibleForAdmission(instance);
-
-                    if (!eligible)
-                    {
-                        _logger.LogInformation(
-                            "Admission runtime instance rejected before capacity evaluation. RunId={RunId}, RuntimeInstanceId={RuntimeInstanceId}, Status={Status}, CanAcceptRun={CanAcceptRun}, IsQueuePaused={IsQueuePaused}, Reason={Reason}",
-                            request.RunId,
-                            instance.RuntimeInstanceId,
-                            instance.Status,
-                            instance.CanAcceptRun,
-                            instance.IsQueuePaused,
-                            "Runtime instance snapshot is not eligible for admission.");
-                    }
-
-                    return eligible;
-                })
-                .ToArray();
-
-            var availableCandidates = await BuildAvailableAdmissionCandidatesAsync(
+            await RecordAdmissionEventAsync(
+                    AiControlPlaneEventType.OperationStarted,
                     request,
-                    runtimeCandidates,
+                    null,
+                    null,
+                    null,
+                    null,
+                    new Dictionary<string, object?>
+                    {
+                        ["tenantId"] = tenantRuntimeSettings.TenantId,
+                        ["tenantGroupId"] = tenantRuntimeSettings.TenantGroupId,
+                        ["pipelineKey"] = request.PipelineKey,
+                        ["preferredRuntimeInstanceId"] = request.PreferredRuntimeInstanceId,
+                        ["enableScaleOutRequest"] = _options.EnableScaleOutRequest,
+                        ["enableGlobalQueueFallback"] = _options.EnableGlobalQueueFallback,
+                        ["rejectWhenNoCapacity"] = _options.RejectWhenNoCapacity,
+                        ["maxInstanceCount"] = effectiveMaxInstanceCount,
+                        ["tenantIsolationMode"] = tenantRuntimeSettings.IsolationMode.ToString()
+                    },
                     cancellationToken)
                 .ConfigureAwait(false);
 
-            var availableInstances =
-                availableCandidates
-                    .Select(candidate => candidate.Instance)
+            try
+            {
+                if (!_options.Enabled)
+                {
+                    _logger.LogWarning(
+                        "Admission rejected because run admission is disabled. RunId={RunId}, TenantId={TenantId}, PipelineKey={PipelineKey}",
+                        request.RunId,
+                        request.TenantId,
+                        request.PipelineKey);
+
+                    return await RecordAdmissionDecisionAsync(
+                        request,
+                        CreateDecision(
+                        AiRunAdmissionDecisionType.Reject,
+                        reason: "Run admission is disabled.",
+                        visibleInstances: Array.Empty<AiRuntimeInstanceSnapshot>(),
+                        availableInstances: Array.Empty<AiRuntimeInstanceSnapshot>(),
+                        currentInstanceCount: 0,
+                        maxInstanceCount: effectiveMaxInstanceCount,
+                        tenantRuntimeSettings: tenantRuntimeSettings),
+                        startedAtUtc,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+                }
+
+                var instances = await _registry
+                    .ListAsync(includeStopped: false, cancellationToken)
+                    .ConfigureAwait(false);
+
+                _logger.LogInformation(
+                    "Admission started. RunId={RunId}, TenantId={TenantId}, TenantGroupId={TenantGroupId}, PipelineKey={PipelineKey}, PreferredRuntimeInstanceId={PreferredRuntimeInstanceId}, VisibleInstanceCount={VisibleInstanceCount}, EnableScaleOutRequest={EnableScaleOutRequest}, MaxInstanceCount={MaxInstanceCount}, TenantIsolationMode={TenantIsolationMode}, TenantMaxRuntimeInstances={TenantMaxRuntimeInstances}, EffectiveMaxInstanceCount={EffectiveMaxInstanceCount}, EnableGlobalQueueFallback={EnableGlobalQueueFallback}, RejectWhenNoCapacity={RejectWhenNoCapacity}",
+                    request.RunId,
+                    tenantRuntimeSettings.TenantId,
+                    tenantRuntimeSettings.TenantGroupId,
+                    request.PipelineKey,
+                    request.PreferredRuntimeInstanceId,
+                    instances.Count,
+                    _options.EnableScaleOutRequest,
+                    _options.MaxInstanceCount,
+                    tenantRuntimeSettings.IsolationMode,
+                    tenantRuntimeSettings.MaxRuntimeInstances,
+                    effectiveMaxInstanceCount,
+                    _options.EnableGlobalQueueFallback,
+                    _options.RejectWhenNoCapacity);
+
+                foreach (var instance in instances)
+                {
+                    _logger.LogInformation(
+                        "Admission visible instance. RunId={RunId}, RuntimeInstanceId={RuntimeInstanceId}, Role={Role}, Status={Status}, CanAcceptRun={CanAcceptRun}, IsQueuePaused={IsQueuePaused}, QueuedRunCount={QueuedRunCount}, RunningRunCount={RunningRunCount}, ActiveRunCount={ActiveRunCount}, AvailableRunSlots={AvailableRunSlots}, WorkerCount={WorkerCount}, ActiveWorkerCount={ActiveWorkerCount}, AvailableWorkerCount={AvailableWorkerCount}",
+                        request.RunId,
+                        instance.RuntimeInstanceId,
+                        instance.Role,
+                        instance.Status,
+                        instance.CanAcceptRun,
+                        instance.IsQueuePaused,
+                        instance.QueuedRunCount,
+                        instance.RunningRunCount,
+                        instance.ActiveRunCount,
+                        instance.AvailableRunSlots,
+                        instance.WorkerCount,
+                        instance.ActiveWorkerCount,
+                        instance.AvailableWorkerCount);
+                }
+
+                var countableRuntimeInstances = instances
+                    .Where(instance => instance.Role == AiRuntimeInstanceRole.Runtime)
+                    .Where(IsCountableForMaxRuntimeInstances)
                     .ToArray();
 
-            _logger.LogInformation(
-                "Admission candidates resolved. RunId={RunId}, VisibleInstanceCount={VisibleInstanceCount}, CountableRuntimeInstanceCount={CountableRuntimeInstanceCount}, RuntimeCandidateCount={RuntimeCandidateCount}, AvailableCandidateCount={AvailableCandidateCount}",
-                request.RunId,
-                instances.Count,
-                countableRuntimeInstances.Length,
-                runtimeCandidates.Length,
-                availableCandidates.Count);
+                var runtimeCandidates = instances
+                    .Where(instance => instance.Role == AiRuntimeInstanceRole.Runtime)
+                    .Where(instance =>
+                    {
+                        var eligible = IsEligibleForAdmission(instance);
 
-            var preferred = TrySelectPreferredInstance(
-                request,
-                availableCandidates);
+                        if (!eligible)
+                        {
+                            _logger.LogInformation(
+                                "Admission runtime instance rejected before capacity evaluation. RunId={RunId}, RuntimeInstanceId={RuntimeInstanceId}, Status={Status}, CanAcceptRun={CanAcceptRun}, IsQueuePaused={IsQueuePaused}, Reason={Reason}",
+                                request.RunId,
+                                instance.RuntimeInstanceId,
+                                instance.Status,
+                                instance.CanAcceptRun,
+                                instance.IsQueuePaused,
+                                "Runtime instance snapshot is not eligible for admission.");
+                        }
 
-            if (preferred is not null)
-            {
+                        return eligible;
+                    })
+                    .ToArray();
+
+                var availableCandidates = await BuildAvailableAdmissionCandidatesAsync(
+                        request,
+                        runtimeCandidates,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+                var availableInstances =
+                    availableCandidates
+                        .Select(candidate => candidate.Instance)
+                        .ToArray();
+
                 _logger.LogInformation(
-                    "Admission selected preferred runtime instance. RunId={RunId}, RuntimeInstanceId={RuntimeInstanceId}, EffectiveAvailableRunSlots={EffectiveAvailableRunSlots}, ReservedRunCount={ReservedRunCount}",
+                    "Admission candidates resolved. RunId={RunId}, VisibleInstanceCount={VisibleInstanceCount}, CountableRuntimeInstanceCount={CountableRuntimeInstanceCount}, RuntimeCandidateCount={RuntimeCandidateCount}, AvailableCandidateCount={AvailableCandidateCount}",
                     request.RunId,
-                    preferred.Instance.RuntimeInstanceId,
-                    preferred.EffectiveAvailableRunSlots,
-                    preferred.ReservedRunCount);
-
-                return CreateAssignmentDecision(
-                    preferred,
-                    instances,
-                    availableInstances,
+                    instances.Count,
                     countableRuntimeInstances.Length,
-                    effectiveMaxInstanceCount,
-                    tenantRuntimeSettings,
-                    "Preferred runtime instance selected for run admission.");
-            }
+                    runtimeCandidates.Length,
+                    availableCandidates.Count);
 
-            var selected =
-                SelectRuntimeInstanceForAdmission(
+                var preferred = TrySelectPreferredInstance(
+                    request,
                     availableCandidates);
 
-            if (selected is not null)
-            {
-                _logger.LogInformation(
-                    "Admission selected runtime instance. RunId={RunId}, RuntimeInstanceId={RuntimeInstanceId}, EffectiveAvailableRunSlots={EffectiveAvailableRunSlots}, ReservedRunCount={ReservedRunCount}, AvailableWorkerCount={AvailableWorkerCount}, RunningRunCount={RunningRunCount}, QueuedRunCount={QueuedRunCount}",
-                    request.RunId,
-                    selected.Instance.RuntimeInstanceId,
-                    selected.EffectiveAvailableRunSlots,
-                    selected.ReservedRunCount,
-                    GetAvailableWorkerCount(selected),
-                    GetRunningRunCount(selected),
-                    GetQueuedRunCount(selected));
+                if (preferred is not null)
+                {
+                    _logger.LogInformation(
+                        "Admission selected preferred runtime instance. RunId={RunId}, RuntimeInstanceId={RuntimeInstanceId}, EffectiveAvailableRunSlots={EffectiveAvailableRunSlots}, ReservedRunCount={ReservedRunCount}",
+                        request.RunId,
+                        preferred.Instance.RuntimeInstanceId,
+                        preferred.EffectiveAvailableRunSlots,
+                        preferred.ReservedRunCount);
 
-                return CreateAssignmentDecision(
-                    selected,
-                    instances,
-                    availableInstances,
-                    countableRuntimeInstances.Length,
-                    effectiveMaxInstanceCount,
-                    tenantRuntimeSettings,
-                    "Runtime instance selected for run admission.");
-            }
+                    return await RecordAdmissionDecisionAsync(
+                        request,
+                        CreateAssignmentDecision(
+                        preferred,
+                        instances,
+                        availableInstances,
+                        countableRuntimeInstances.Length,
+                        effectiveMaxInstanceCount,
+                        tenantRuntimeSettings,
+                        "Preferred runtime instance selected for run admission."),
+                        startedAtUtc,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+                }
 
-            if (ShouldRequestScaleOut(countableRuntimeInstances.Length, effectiveMaxInstanceCount))
-            {
+                var selected =
+                    SelectRuntimeInstanceForAdmission(
+                        availableCandidates);
+
+                if (selected is not null)
+                {
+                    _logger.LogInformation(
+                        "Admission selected runtime instance. RunId={RunId}, RuntimeInstanceId={RuntimeInstanceId}, EffectiveAvailableRunSlots={EffectiveAvailableRunSlots}, ReservedRunCount={ReservedRunCount}, AvailableWorkerCount={AvailableWorkerCount}, RunningRunCount={RunningRunCount}, QueuedRunCount={QueuedRunCount}",
+                        request.RunId,
+                        selected.Instance.RuntimeInstanceId,
+                        selected.EffectiveAvailableRunSlots,
+                        selected.ReservedRunCount,
+                        GetAvailableWorkerCount(selected),
+                        GetRunningRunCount(selected),
+                        GetQueuedRunCount(selected));
+
+                    return await RecordAdmissionDecisionAsync(
+                        request,
+                        CreateAssignmentDecision(
+                        selected,
+                        instances,
+                        availableInstances,
+                        countableRuntimeInstances.Length,
+                        effectiveMaxInstanceCount,
+                        tenantRuntimeSettings,
+                        "Runtime instance selected for run admission."),
+                        startedAtUtc,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+                }
+
+                if (ShouldRequestScaleOut(countableRuntimeInstances.Length, effectiveMaxInstanceCount))
+                {
+                    _logger.LogWarning(
+                        "Admission requesting scale-out. RunId={RunId}, TenantId={TenantId}, TenantGroupId={TenantGroupId}, TenantIsolationMode={TenantIsolationMode}, VisibleInstanceCount={VisibleInstanceCount}, RuntimeCandidateCount={RuntimeCandidateCount}, AvailableCandidateCount={AvailableCandidateCount}, CurrentRuntimeInstanceCount={CurrentRuntimeInstanceCount}, MaxInstanceCount={MaxInstanceCount}, Reason={Reason}",
+                        request.RunId,
+                        tenantRuntimeSettings.TenantId,
+                        tenantRuntimeSettings.TenantGroupId,
+                        tenantRuntimeSettings.IsolationMode,
+                        instances.Count,
+                        runtimeCandidates.Length,
+                        availableCandidates.Count,
+                        countableRuntimeInstances.Length,
+                        effectiveMaxInstanceCount,
+                        "No runtime instance can currently accept the run and scale-out is allowed.");
+
+                    return await RecordAdmissionDecisionAsync(
+                        request,
+                        CreateDecision(
+                        AiRunAdmissionDecisionType.RequestScaleOut,
+                        reason: "No runtime instance can currently accept the run and scale-out is allowed.",
+                        visibleInstances: instances,
+                        availableInstances: availableInstances,
+                        currentInstanceCount: countableRuntimeInstances.Length,
+                        maxInstanceCount: effectiveMaxInstanceCount,
+                        tenantRuntimeSettings: tenantRuntimeSettings),
+                        startedAtUtc,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+                }
+
+                if (_options.EnableGlobalQueueFallback)
+                {
+                    _logger.LogWarning(
+                        "Admission falling back to global queue. RunId={RunId}, TenantId={TenantId}, TenantGroupId={TenantGroupId}, VisibleInstanceCount={VisibleInstanceCount}, RuntimeCandidateCount={RuntimeCandidateCount}, AvailableCandidateCount={AvailableCandidateCount}, Reason={Reason}",
+                        request.RunId,
+                        tenantRuntimeSettings.TenantId,
+                        tenantRuntimeSettings.TenantGroupId,
+                        instances.Count,
+                        runtimeCandidates.Length,
+                        availableCandidates.Count,
+                        "No runtime instance can currently accept the run; global queue fallback is allowed.");
+
+                    return await RecordAdmissionDecisionAsync(
+                        request,
+                        CreateDecision(
+                        AiRunAdmissionDecisionType.QueueGlobally,
+                        reason: "No runtime instance can currently accept the run; global queue fallback is allowed.",
+                        visibleInstances: instances,
+                        availableInstances: availableInstances,
+                        currentInstanceCount: countableRuntimeInstances.Length,
+                        maxInstanceCount: effectiveMaxInstanceCount,
+                        tenantRuntimeSettings: tenantRuntimeSettings),
+                        startedAtUtc,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+                }
+
+                if (_options.RejectWhenNoCapacity)
+                {
+                    _logger.LogWarning(
+                        "Admission rejecting run because no capacity is available. RunId={RunId}, TenantId={TenantId}, TenantGroupId={TenantGroupId}, VisibleInstanceCount={VisibleInstanceCount}, RuntimeCandidateCount={RuntimeCandidateCount}, AvailableCandidateCount={AvailableCandidateCount}",
+                        request.RunId,
+                        tenantRuntimeSettings.TenantId,
+                        tenantRuntimeSettings.TenantGroupId,
+                        instances.Count,
+                        runtimeCandidates.Length,
+                        availableCandidates.Count);
+
+                    return await RecordAdmissionDecisionAsync(
+                        request,
+                        CreateDecision(
+                        AiRunAdmissionDecisionType.Reject,
+                        reason: "No runtime instance can currently accept the run.",
+                        visibleInstances: instances,
+                        availableInstances: availableInstances,
+                        currentInstanceCount: countableRuntimeInstances.Length,
+                        maxInstanceCount: effectiveMaxInstanceCount,
+                        tenantRuntimeSettings: tenantRuntimeSettings),
+                        startedAtUtc,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+                }
+
                 _logger.LogWarning(
-                    "Admission requesting scale-out. RunId={RunId}, TenantId={TenantId}, TenantGroupId={TenantGroupId}, TenantIsolationMode={TenantIsolationMode}, VisibleInstanceCount={VisibleInstanceCount}, RuntimeCandidateCount={RuntimeCandidateCount}, AvailableCandidateCount={AvailableCandidateCount}, CurrentRuntimeInstanceCount={CurrentRuntimeInstanceCount}, MaxInstanceCount={MaxInstanceCount}, Reason={Reason}",
-                    request.RunId,
-                    tenantRuntimeSettings.TenantId,
-                    tenantRuntimeSettings.TenantGroupId,
-                    tenantRuntimeSettings.IsolationMode,
-                    instances.Count,
-                    runtimeCandidates.Length,
-                    availableCandidates.Count,
-                    countableRuntimeInstances.Length,
-                    effectiveMaxInstanceCount,
-                    "No runtime instance can currently accept the run and scale-out is allowed.");
-
-                return CreateDecision(
-                    AiRunAdmissionDecisionType.RequestScaleOut,
-                    reason: "No runtime instance can currently accept the run and scale-out is allowed.",
-                    visibleInstances: instances,
-                    availableInstances: availableInstances,
-                    currentInstanceCount: countableRuntimeInstances.Length,
-                    maxInstanceCount: effectiveMaxInstanceCount,
-                    tenantRuntimeSettings: tenantRuntimeSettings);
-            }
-
-            if (_options.EnableGlobalQueueFallback)
-            {
-                _logger.LogWarning(
-                    "Admission falling back to global queue. RunId={RunId}, TenantId={TenantId}, TenantGroupId={TenantGroupId}, VisibleInstanceCount={VisibleInstanceCount}, RuntimeCandidateCount={RuntimeCandidateCount}, AvailableCandidateCount={AvailableCandidateCount}, Reason={Reason}",
-                    request.RunId,
-                    tenantRuntimeSettings.TenantId,
-                    tenantRuntimeSettings.TenantGroupId,
-                    instances.Count,
-                    runtimeCandidates.Length,
-                    availableCandidates.Count,
-                    "No runtime instance can currently accept the run; global queue fallback is allowed.");
-
-                return CreateDecision(
-                    AiRunAdmissionDecisionType.QueueGlobally,
-                    reason: "No runtime instance can currently accept the run; global queue fallback is allowed.",
-                    visibleInstances: instances,
-                    availableInstances: availableInstances,
-                    currentInstanceCount: countableRuntimeInstances.Length,
-                    maxInstanceCount: effectiveMaxInstanceCount,
-                    tenantRuntimeSettings: tenantRuntimeSettings);
-            }
-
-            if (_options.RejectWhenNoCapacity)
-            {
-                _logger.LogWarning(
-                    "Admission rejecting run because no capacity is available. RunId={RunId}, TenantId={TenantId}, TenantGroupId={TenantGroupId}, VisibleInstanceCount={VisibleInstanceCount}, RuntimeCandidateCount={RuntimeCandidateCount}, AvailableCandidateCount={AvailableCandidateCount}",
+                    "Admission produced unknown decision. RunId={RunId}, TenantId={TenantId}, TenantGroupId={TenantGroupId}, VisibleInstanceCount={VisibleInstanceCount}, RuntimeCandidateCount={RuntimeCandidateCount}, AvailableCandidateCount={AvailableCandidateCount}",
                     request.RunId,
                     tenantRuntimeSettings.TenantId,
                     tenantRuntimeSettings.TenantGroupId,
@@ -288,33 +401,273 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission
                     runtimeCandidates.Length,
                     availableCandidates.Count);
 
-                return CreateDecision(
-                    AiRunAdmissionDecisionType.Reject,
-                    reason: "No runtime instance can currently accept the run.",
+                return await RecordAdmissionDecisionAsync(
+                        request,
+                        CreateDecision(
+                    AiRunAdmissionDecisionType.Unknown,
+                    reason: "No admission policy produced a terminal decision.",
                     visibleInstances: instances,
                     availableInstances: availableInstances,
                     currentInstanceCount: countableRuntimeInstances.Length,
                     maxInstanceCount: effectiveMaxInstanceCount,
-                    tenantRuntimeSettings: tenantRuntimeSettings);
+                    tenantRuntimeSettings: tenantRuntimeSettings),
+                        startedAtUtc,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception exception)
+            {
+                var completedAtUtc = DateTimeOffset.UtcNow;
+                var durationMs = CalculateDurationMs(startedAtUtc, completedAtUtc);
+
+                await RecordAdmissionEventAsync(
+                        AiControlPlaneEventType.OperationFailed,
+                        request,
+                        null,
+                        AiControlPlaneOperationOutcome.Failed,
+                        exception.GetType().Name,
+                        durationMs,
+                        new Dictionary<string, object?>
+                        {
+                            ["runId"] = request.RunId,
+                            ["tenantId"] = tenantRuntimeSettings.TenantId ?? request.TenantId,
+                            ["tenantGroupId"] = tenantRuntimeSettings.TenantGroupId ?? request.RunRequest.ExecutionContextSnapshot?.TenantGroupId,
+                            ["pipelineKey"] = request.PipelineKey,
+                            ["preferredRuntimeInstanceId"] = request.PreferredRuntimeInstanceId,
+                            ["durationMs"] = durationMs,
+                            ["exception.type"] = exception.GetType().FullName,
+                            ["exception.message"] = exception.Message
+                        },
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+                throw;
+            }
+        }
+
+        /// <summary>
+        /// Records a completed admission decision and returns it unchanged.
+        /// </summary>
+        /// <param name="request">The admission request.</param>
+        /// <param name="decision">The admission decision.</param>
+        /// <param name="startedAtUtc">The admission start timestamp.</param>
+        /// <param name="cancellationToken">A token used to cancel the operation.</param>
+        /// <returns>The original admission decision.</returns>
+        private async Task<AiRunAdmissionDecision> RecordAdmissionDecisionAsync(
+            AiRunAdmissionRequest request,
+            AiRunAdmissionDecision decision,
+            DateTimeOffset startedAtUtc,
+            CancellationToken cancellationToken)
+        {
+            var completedAtUtc = DateTimeOffset.UtcNow;
+            var durationMs = CalculateDurationMs(startedAtUtc, completedAtUtc);
+            var eventType = ResolveAdmissionEventType(decision);
+            var outcome = ResolveAdmissionOutcome(decision);
+            var failureReason = ResolveAdmissionFailureReason(decision);
+
+            await RecordAdmissionEventAsync(
+                    eventType,
+                    request,
+                    decision,
+                    outcome,
+                    failureReason,
+                    durationMs,
+                    BuildAdmissionDecisionProperties(request, decision, durationMs),
+                    cancellationToken)
+                .ConfigureAwait(false);
+
+            return decision;
+        }
+
+        /// <summary>
+        /// Records an admission control-plane event.
+        /// </summary>
+        /// <param name="eventType">The control-plane event type.</param>
+        /// <param name="request">The admission request.</param>
+        /// <param name="decision">The optional admission decision.</param>
+        /// <param name="outcome">The optional control-plane outcome.</param>
+        /// <param name="failureReason">The optional failure reason.</param>
+        /// <param name="durationMs">The optional duration in milliseconds.</param>
+        /// <param name="properties">The event properties.</param>
+        /// <param name="cancellationToken">A token used to cancel the operation.</param>
+        /// <returns>A task that completes when the event has been recorded.</returns>
+        private async Task RecordAdmissionEventAsync(
+            AiControlPlaneEventType eventType,
+            AiRunAdmissionRequest request,
+            AiRunAdmissionDecision? decision,
+            AiControlPlaneOperationOutcome? outcome,
+            string? failureReason,
+            long? durationMs,
+            IReadOnlyDictionary<string, object?>? properties,
+            CancellationToken cancellationToken)
+        {
+            try
+            {
+                await _observer.RecordAsync(
+                        new AiControlPlaneEvent
+                        {
+                            EventType = eventType,
+                            Area = AiControlPlaneArea.Admission,
+                            Operation = RuntimeAdmissionDecisionOperation,
+                            Outcome = outcome,
+                            FailureReason = failureReason,
+                            DurationMs = durationMs,
+                            Correlation = new AiRuntimeExecutionCorrelationContext
+                            {
+                                CorrelationId = string.IsNullOrWhiteSpace(request.RunId)
+                                    ? Guid.NewGuid().ToString("N")
+                                    : request.RunId,
+                                RunId = request.RunId,
+                                RuntimeInstanceId = decision?.AssignedRuntimeInstanceId,
+                                PipelineKey = request.PipelineKey
+                            },
+                            Properties = MergeEventProperties(
+                                properties,
+                                new Dictionary<string, object?>
+                                {
+                                    ["tenantId"] = decision?.TenantId ?? request.TenantId,
+                                    ["tenantGroupId"] = decision?.TenantGroupId ?? request.RunRequest.ExecutionContextSnapshot?.TenantGroupId,
+                                    ["pipelineKey"] = request.PipelineKey,
+                                    ["preferredRuntimeInstanceId"] = request.PreferredRuntimeInstanceId,
+                                    ["assignedRuntimeInstanceId"] = decision?.AssignedRuntimeInstanceId,
+                                    ["decisionType"] = decision?.DecisionType.ToString(),
+                                    ["reason"] = decision?.Reason
+                                })
+                        },
+                        cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            catch
+            {
+                // Control-plane observability must not break admission decisions.
+            }
+        }
+
+        /// <summary>
+        /// Builds admission decision event properties.
+        /// </summary>
+        /// <param name="request">The admission request.</param>
+        /// <param name="decision">The admission decision.</param>
+        /// <param name="durationMs">The decision duration.</param>
+        /// <returns>The event properties.</returns>
+        private static IReadOnlyDictionary<string, object?> BuildAdmissionDecisionProperties(
+            AiRunAdmissionRequest request,
+            AiRunAdmissionDecision decision,
+            long durationMs)
+        {
+            var properties = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["runId"] = request.RunId,
+                ["tenantId"] = decision.TenantId ?? request.TenantId,
+                ["tenantGroupId"] = decision.TenantGroupId ?? request.RunRequest.ExecutionContextSnapshot?.TenantGroupId,
+                ["pipelineKey"] = request.PipelineKey,
+                ["preferredRuntimeInstanceId"] = request.PreferredRuntimeInstanceId,
+                ["assignedRuntimeInstanceId"] = decision.AssignedRuntimeInstanceId,
+                ["decisionType"] = decision.DecisionType.ToString(),
+                ["reason"] = decision.Reason,
+                ["visibleInstanceCount"] = decision.VisibleInstanceCount,
+                ["availableInstanceCount"] = decision.AvailableInstanceCount,
+                ["currentInstanceCount"] = decision.CurrentInstanceCount,
+                ["maxInstanceCount"] = decision.MaxInstanceCount,
+                ["durationMs"] = durationMs
+            };
+
+            foreach (var item in decision.Metadata)
+            {
+                properties[item.Key] = item.Value;
+                properties[$"admission.{item.Key}"] = item.Value;
             }
 
-            _logger.LogWarning(
-                "Admission produced unknown decision. RunId={RunId}, TenantId={TenantId}, TenantGroupId={TenantGroupId}, VisibleInstanceCount={VisibleInstanceCount}, RuntimeCandidateCount={RuntimeCandidateCount}, AvailableCandidateCount={AvailableCandidateCount}",
-                request.RunId,
-                tenantRuntimeSettings.TenantId,
-                tenantRuntimeSettings.TenantGroupId,
-                instances.Count,
-                runtimeCandidates.Length,
-                availableCandidates.Count);
+            return properties;
+        }
 
-            return CreateDecision(
-                AiRunAdmissionDecisionType.Unknown,
-                reason: "No admission policy produced a terminal decision.",
-                visibleInstances: instances,
-                availableInstances: availableInstances,
-                currentInstanceCount: countableRuntimeInstances.Length,
-                maxInstanceCount: effectiveMaxInstanceCount,
-                tenantRuntimeSettings: tenantRuntimeSettings);
+        /// <summary>
+        /// Resolves the control-plane event type for an admission decision.
+        /// </summary>
+        /// <param name="decision">The admission decision.</param>
+        /// <returns>The control-plane event type.</returns>
+        private static AiControlPlaneEventType ResolveAdmissionEventType(
+            AiRunAdmissionDecision decision)
+        {
+            return decision.DecisionType is AiRunAdmissionDecisionType.Reject or AiRunAdmissionDecisionType.Unknown
+                ? AiControlPlaneEventType.OperationFailed
+                : AiControlPlaneEventType.OperationCompleted;
+        }
+
+        /// <summary>
+        /// Resolves the control-plane outcome for an admission decision.
+        /// </summary>
+        /// <param name="decision">The admission decision.</param>
+        /// <returns>The control-plane outcome.</returns>
+        private static AiControlPlaneOperationOutcome ResolveAdmissionOutcome(
+            AiRunAdmissionDecision decision)
+        {
+            return decision.DecisionType switch
+            {
+                AiRunAdmissionDecisionType.AssignToInstance => AiControlPlaneOperationOutcome.Succeeded,
+                AiRunAdmissionDecisionType.Reject => AiControlPlaneOperationOutcome.Denied,
+                AiRunAdmissionDecisionType.RequestScaleOut => AiControlPlaneOperationOutcome.CompletedWithIssues,
+                AiRunAdmissionDecisionType.QueueGlobally => AiControlPlaneOperationOutcome.CompletedWithIssues,
+                _ => AiControlPlaneOperationOutcome.CompletedWithIssues
+            };
+        }
+
+        /// <summary>
+        /// Resolves the control-plane failure reason for an admission decision.
+        /// </summary>
+        /// <param name="decision">The admission decision.</param>
+        /// <returns>The failure reason when relevant; otherwise, null.</returns>
+        private static string? ResolveAdmissionFailureReason(
+            AiRunAdmissionDecision decision)
+        {
+            return decision.DecisionType is AiRunAdmissionDecisionType.AssignToInstance
+                ? null
+                : decision.Reason;
+        }
+
+        /// <summary>
+        /// Merges control-plane event properties.
+        /// </summary>
+        /// <param name="properties">The base event properties.</param>
+        /// <param name="additionalProperties">The additional event properties.</param>
+        /// <returns>The merged event properties.</returns>
+        private static IReadOnlyDictionary<string, object?> MergeEventProperties(
+            IReadOnlyDictionary<string, object?>? properties,
+            IReadOnlyDictionary<string, object?> additionalProperties)
+        {
+            var merged = new Dictionary<string, object?>();
+
+            if (properties is not null)
+            {
+                foreach (var item in properties)
+                {
+                    merged[item.Key] = item.Value;
+                }
+            }
+
+            foreach (var item in additionalProperties)
+            {
+                merged[item.Key] = item.Value;
+            }
+
+            return merged;
+        }
+
+        /// <summary>
+        /// Calculates duration in milliseconds.
+        /// </summary>
+        /// <param name="startedAtUtc">The start timestamp.</param>
+        /// <param name="completedAtUtc">The completion timestamp.</param>
+        /// <returns>The duration in milliseconds.</returns>
+        private static long CalculateDurationMs(
+            DateTimeOffset startedAtUtc,
+            DateTimeOffset completedAtUtc)
+        {
+            return (long)(completedAtUtc - startedAtUtc).TotalMilliseconds;
         }
 
         /// <summary>
