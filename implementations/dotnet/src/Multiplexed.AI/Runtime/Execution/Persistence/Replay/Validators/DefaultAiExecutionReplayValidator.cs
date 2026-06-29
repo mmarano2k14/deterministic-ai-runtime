@@ -123,6 +123,27 @@ namespace Multiplexed.AI.Runtime.Execution.Persistence.Replay.Validators
 
             issues.AddRange(dependencyGraphValidation.Issues);
 
+            var totalSteps =
+                state.Steps.Count;
+
+            var completedSteps =
+                state.Steps.Values.Count(x => x.IsCompleted);
+
+            var failedSteps =
+                state.Steps.Values.Count(x => x.Status == AiStepExecutionStatus.Failed);
+
+            var waitingForRetrySteps =
+                state.Steps.Values.Count(x => x.Status == AiStepExecutionStatus.WaitingForRetry);
+
+            var runningSteps =
+                state.Steps.Values.Count(x => x.Status == AiStepExecutionStatus.Running);
+
+            var retryCount =
+                state.Steps.Values.Sum(x => x.RetryState?.RetryCount ?? 0);
+
+            var recoveryCount =
+                state.Steps.Values.Sum(x => x.RecoveryCount);
+
             var steps = request.IncludeStepDetails
                 ? state.Steps
                     .OrderBy(x => x.Key, StringComparer.Ordinal)
@@ -170,40 +191,92 @@ namespace Multiplexed.AI.Runtime.Execution.Persistence.Replay.Validators
                 PipelineName = record.PipelineName,
                 Status = record.Status.ToString(),
 
-                TotalSteps = state.Steps.Count,
-                CompletedSteps = state.Steps.Values.Count(
-                    x => x.IsCompleted),
-
-                FailedSteps = state.Steps.Values.Count(
-                    x => x.Status == AiStepExecutionStatus.Failed),
-
-                WaitingForRetrySteps = state.Steps.Values.Count(
-                    x => x.Status == AiStepExecutionStatus.WaitingForRetry),
-
-                RunningSteps = state.Steps.Values.Count(
-                    x => x.Status == AiStepExecutionStatus.Running),
-
-                RetryCount = state.Steps.Values.Sum(
-                    x => x.RetryState?.RetryCount ?? 0),
-
-                RecoveryCount = state.Steps.Values.Sum(
-                    x => x.RecoveryCount),
+                TotalSteps = totalSteps,
+                CompletedSteps = completedSteps,
+                FailedSteps = failedSteps,
+                WaitingForRetrySteps = waitingForRetrySteps,
+                RunningSteps = runningSteps,
+                RetryCount = retryCount,
+                RecoveryCount = recoveryCount,
 
                 FailureReason = replayValid
                     ? null
-                    : !fingerprintFound
-                        ? "Replay fingerprint metadata not found."
-                        : !fingerprintMatches
-                            ? "Replay fingerprint mismatch."
-                            : !payloadValidation.IsValid
-                                ? "Replay payload reference validation failed."
-                                : !stepStateValidation.IsValid
-                                    ? "Replay step state validation failed."
-                                    : "Replay dependency graph validation failed.",
+                    : BuildFailureReason(
+                        fingerprintFound,
+                        fingerprintMatches,
+                        payloadValidation,
+                        stepStateValidation,
+                        dependencyGraphValidation,
+                        totalSteps,
+                        completedSteps,
+                        runningSteps,
+                        failedSteps,
+                        waitingForRetrySteps,
+                        retryCount,
+                        recoveryCount),
 
                 Issues = issues,
                 Steps = steps
             };
+        }
+
+        private static string BuildFailureReason(
+            bool fingerprintFound,
+            bool fingerprintMatches,
+            AiExecutionReplayPayloadValidationResult payloadValidation,
+            AiExecutionReplayStepStateValidationResult stepStateValidation,
+            AiExecutionReplayDependencyGraphValidationResult dependencyGraphValidation,
+            int totalSteps,
+            int completedSteps,
+            int runningSteps,
+            int failedSteps,
+            int waitingForRetrySteps,
+            int retryCount,
+            int recoveryCount)
+        {
+            if (!fingerprintFound)
+            {
+                return "Replay fingerprint metadata not found.";
+            }
+
+            if (!fingerprintMatches)
+            {
+                return "Replay fingerprint mismatch.";
+            }
+
+            if (!payloadValidation.IsValid)
+            {
+                return
+                    "Replay payload reference validation failed. " +
+                    $"TotalSteps='{totalSteps}', CompletedSteps='{completedSteps}', RunningSteps='{runningSteps}', FailedSteps='{failedSteps}', WaitingForRetrySteps='{waitingForRetrySteps}', RetryCount='{retryCount}', RecoveryCount='{recoveryCount}', " +
+                    $"Issues='{FormatIssues(payloadValidation.Issues)}'.";
+            }
+
+            if (!stepStateValidation.IsValid)
+            {
+                return
+                    "Replay step state validation failed. " +
+                    $"TotalSteps='{totalSteps}', CompletedSteps='{completedSteps}', RunningSteps='{runningSteps}', FailedSteps='{failedSteps}', WaitingForRetrySteps='{waitingForRetrySteps}', RetryCount='{retryCount}', RecoveryCount='{recoveryCount}', " +
+                    $"Issues='{FormatIssues(stepStateValidation.Issues)}'.";
+            }
+
+            return
+                "Replay dependency graph validation failed. " +
+                $"TotalSteps='{totalSteps}', CompletedSteps='{completedSteps}', RunningSteps='{runningSteps}', FailedSteps='{failedSteps}', WaitingForRetrySteps='{waitingForRetrySteps}', RetryCount='{retryCount}', RecoveryCount='{recoveryCount}', " +
+                $"Issues='{FormatIssues(dependencyGraphValidation.Issues)}'.";
+        }
+
+        private static string FormatIssues(
+            IReadOnlyCollection<AiExecutionReplayIssue> issues)
+        {
+            if (issues.Count == 0)
+            {
+                return "-";
+            }
+
+            return string.Join(
+                "; ",
+                issues.Select(issue => $"{issue.Code}: {issue.Message}"));
         }
     }
 }

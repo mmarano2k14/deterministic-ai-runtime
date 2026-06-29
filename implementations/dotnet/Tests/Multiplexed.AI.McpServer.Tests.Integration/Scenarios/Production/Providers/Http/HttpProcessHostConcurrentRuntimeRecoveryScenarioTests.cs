@@ -1,5 +1,6 @@
 ﻿using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
+using Multiplexed.Abstractions.AI.ControlPlane.Replay;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Forensics;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Health;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
@@ -832,6 +833,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             AssertAllRecoveredRunsCompleted(tenantAFinalStatuses);
             AssertAllRecoveredRunsCompleted(tenantBFinalStatuses);
 
+
+           
+
             await AssertRecoveredExecutionIndexesCompletedAsync(
                     runExecutionIndex,
                     tenantAGroup,
@@ -895,8 +899,28 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 $"ExpectedForensics='{CountSeededWork(failedRuntimeGroups)}', ActualForensics='{allForensics.Length}', " +
                 $"CrossTenantLeakDetected='false', CrossIncidentLeakDetected='false', DuplicateRecoveryDetected='false', SelfRedispatchDetected='false'.");
 
+            var tenantAReplayProofs = await
+           AssertRecoveredExecutionsReplayableThroughMcpAsync(
+               tenantAMcp,
+               tenantA.TenantId,
+               tenantAFinalStatuses,
+               RequestedBy,
+               Source)
+            .ConfigureAwait(false);
 
+            var tenantBReplayProofs = await
+            AssertRecoveredExecutionsReplayableThroughMcpAsync(
+                        tenantBMcp,
+                        tenantB.TenantId,
+                        tenantBFinalStatuses,
+                        RequestedBy,
+                        Source)
+                    .ConfigureAwait(false);
 
+            ProductionRuntimeReplayOutput.WriteRecoveredExecutionReplayProof(
+                 this.output,
+                 tenantAReplayProofs,
+                 tenantBReplayProofs);
 
             var ledgerRecords =
                 await QueryControlPlaneLedgerRecordsThroughMcpAsync(
@@ -946,6 +970,163 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                     DuplicateRecoveryDetected = false,
                     SelfRedispatchDetected = false
                 });
+
+            ProductionControlPlaneLedgerTenantOutput.WriteTenantLedgerSummary(
+                this.output,
+                ledgerRecords,
+                new[]
+                {
+                    tenantA.TenantId,
+                    tenantB.TenantId
+                },
+                maxEventsPerTenant: 300);
+        }
+
+
+        /// <summary>
+        /// Verifies that recovered executions can be replayed through MCP and that their execution evidence
+        /// is available through MCP ledger and trace APIs.
+        /// </summary>
+        /// <param name="mcp">The tenant-scoped MCP client.</param>
+        /// <param name="tenantId">The tenant identifier.</param>
+        /// <param name="finalStatuses">The recovered terminal runtime statuses.</param>
+        /// <param name="requestedBy">The requested-by value.</param>
+        /// <param name="source">The source value.</param>
+        /// <returns>The recovered execution replay proof records.</returns>
+        public static async Task<IReadOnlyCollection<RecoveredExecutionReplayProofRecord>> AssertRecoveredExecutionsReplayableThroughMcpAsync(
+            McpTestClient mcp,
+            string tenantId,
+            IReadOnlyCollection<AiRuntimeQueueControlPlaneResult> finalStatuses,
+            string requestedBy,
+            string source)
+        {
+            ArgumentNullException.ThrowIfNull(mcp);
+            ArgumentException.ThrowIfNullOrWhiteSpace(tenantId);
+            ArgumentNullException.ThrowIfNull(finalStatuses);
+            ArgumentException.ThrowIfNullOrWhiteSpace(requestedBy);
+            ArgumentException.ThrowIfNullOrWhiteSpace(source);
+
+            var results =
+                new List<RecoveredExecutionReplayProofRecord>();
+
+            foreach (var status in finalStatuses)
+            {
+                var executionId =
+                    status.ExecutionId ??
+                    status.RunState?.ExecutionId;
+
+                Assert.False(
+                    string.IsNullOrWhiteSpace(executionId),
+                    $"Recovered runtime status did not expose an execution id. TenantId='{tenantId}', RuntimeInstanceId='{status.RuntimeInstanceId}', RunId='{status.RunId}', Status='{status.RunState?.Status}'.");
+
+                var replayRequest =
+                    new AiReplayControlRequest
+                    {
+                        ExecutionId = executionId!,
+                        CorrelationId = $"recovered-execution-replay-{Guid.NewGuid():N}",
+                        RequestedBy = requestedBy,
+                        Source = source,
+                        Operation = AiReplayOperation.Replay
+                    };
+
+                var replayResult =
+                    await mcp.ReplayExecutionAsync(replayRequest)
+                        .ConfigureAwait(false);
+
+                var replayFailureReason =
+                    replayResult.FailureReason ??
+                    replayResult.Message;
+
+                var isSyntheticRecoveredExecution =
+                    executionId.StartsWith(
+                        "http-runtime-inventory-running-execution-",
+                        StringComparison.Ordinal);
+
+                /*
+                if (!isSyntheticRecoveredExecution)
+                {
+                    Assert.True(
+                        replayResult.Success,
+                        replayFailureReason);
+                }
+                */
+
+
+                Assert.True(
+                    replayResult.Success,
+                    $"Recovered execution is not replayable through MCP. TenantId='{tenantId}', ExecutionId='{executionId}', RuntimeInstanceId='{status.RuntimeInstanceId}', RunId='{status.RunId}', Failure='{replayFailureReason}'.");
+
+                replayRequest.Operation =
+                    AiReplayOperation.GetReport;
+
+                var replayReport =
+                    await mcp.GetReplayReportAsync(replayRequest)
+                        .ConfigureAwait(false);
+
+                replayRequest.Operation =
+                    AiReplayOperation.GetLedger;
+
+                var replayLedger =
+                    await mcp.GetReplayLedgerAsync(replayRequest)
+                        .ConfigureAwait(false);
+
+                replayRequest.Operation =
+                    AiReplayOperation.GetTimeline;
+
+                var replayTrace =
+                    await mcp.GetReplayTraceAsync(replayRequest)
+                        .ConfigureAwait(false);
+
+                var executionLedger =
+                    await mcp.GetLedgerByExecutionAsync(executionId!)
+                        .ConfigureAwait(false);
+
+                Assert.NotEmpty(executionLedger);
+
+                var hasCompletionEvidence =
+                    executionLedger.Any(entry =>
+                        string.Equals(entry.EventType, "execution.completed", StringComparison.OrdinalIgnoreCase) ||
+                        string.Equals(entry.EventType, "finalization.completed", StringComparison.OrdinalIgnoreCase));
+
+                var hasStepCompletionEvidence =
+                    executionLedger.Any(entry =>
+                        string.Equals(entry.EventType, "step.completed", StringComparison.OrdinalIgnoreCase));
+
+                Assert.True(
+                    hasCompletionEvidence,
+                    $"Recovered execution has no completion ledger evidence. TenantId='{tenantId}', ExecutionId='{executionId}'.");
+
+                Assert.True(
+                    hasStepCompletionEvidence,
+                    $"Recovered execution has no step completion ledger evidence. TenantId='{tenantId}', ExecutionId='{executionId}'.");
+
+                var executionTrace =
+                    await mcp.GetTraceByExecutionAsync(executionId!)
+                        .ConfigureAwait(false);
+
+                Assert.NotEmpty(executionTrace);
+
+                results.Add(
+                    new RecoveredExecutionReplayProofRecord
+                    {
+                        TenantId = tenantId,
+                        RuntimeInstanceId = status.RuntimeInstanceId,
+                        LocalRunId = status.RunId,
+                        ExecutionId = executionId!,
+                        ReplaySucceeded = replayResult.Success,
+                        ReplayFailureReason = replayFailureReason,
+                        SyntheticRecoveredExecution = isSyntheticRecoveredExecution,
+                        ReplayReportAvailable = replayReport.Success,
+                        ReplayLedgerAvailable = replayLedger.Success,
+                        ReplayTraceAvailable = replayTrace.Success,
+                        ExecutionLedgerAvailable = executionLedger.Count > 0,
+                        ExecutionTraceAvailable = executionTrace.Count > 0,
+                        CompletionLedgerEvidenceAvailable = hasCompletionEvidence,
+                        StepCompletionLedgerEvidenceAvailable = hasStepCompletionEvidence
+                    });
+            }
+
+            return results;
         }
 
         /// <summary>
