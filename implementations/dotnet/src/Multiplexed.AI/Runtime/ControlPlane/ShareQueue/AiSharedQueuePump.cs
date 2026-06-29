@@ -1,7 +1,12 @@
 ﻿using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Multiplexed.Abstractions.AI.ControlPlane.Observability;
+using Multiplexed.Abstractions.AI.ControlPlane.Observability.Area;
+using Multiplexed.Abstractions.AI.ControlPlane.Observability.Events;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Dispatch;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Pump;
+using Multiplexed.Abstractions.AI.Observability.Context;
+using Multiplexed.AI.Runtime.ControlPlane.Observability;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
 {
@@ -28,9 +33,12 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
     /// </remarks>
     public sealed class AiSharedQueuePump : IAiSharedQueuePump
     {
+        private const string SharedQueuePumpOperation = "shared-queue-pump-cycle";
+
         private readonly IAiSharedQueueDispatcher _dispatcher;
         private readonly AiSharedQueuePumpOptions _options;
         private readonly ILogger<AiSharedQueuePump> _logger;
+        private readonly IAiControlPlaneObserver _observer;
 
         /// <summary>
         /// Initializes a new instance of the <see cref="AiSharedQueuePump"/> class.
@@ -45,10 +53,34 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
             IAiSharedQueueDispatcher dispatcher,
             IOptions<AiSharedQueuePumpOptions> options,
             ILogger<AiSharedQueuePump> logger)
+            : this(
+                dispatcher,
+                options,
+                logger,
+                new NoopAiControlPlaneObserver())
+        {
+        }
+
+        /// <summary>
+        /// Initializes a new instance of the <see cref="AiSharedQueuePump"/> class.
+        /// </summary>
+        /// <param name="dispatcher">The shared queue dispatcher.</param>
+        /// <param name="options">The pump options.</param>
+        /// <param name="logger">The logger.</param>
+        /// <param name="observer">The control-plane observer.</param>
+        /// <exception cref="ArgumentNullException">
+        /// Thrown when <paramref name="dispatcher"/>, <paramref name="options"/>, <paramref name="logger"/>, or <paramref name="observer"/> is null.
+        /// </exception>
+        public AiSharedQueuePump(
+            IAiSharedQueueDispatcher dispatcher,
+            IOptions<AiSharedQueuePumpOptions> options,
+            ILogger<AiSharedQueuePump> logger,
+            IAiControlPlaneObserver observer)
         {
             _dispatcher = dispatcher ?? throw new ArgumentNullException(nameof(dispatcher));
             _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+            _observer = observer ?? throw new ArgumentNullException(nameof(observer));
         }
 
         /// <inheritdoc />
@@ -60,8 +92,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
             ArgumentException.ThrowIfNullOrWhiteSpace(request.PumpRuntimeInstanceId);
 
             var startedAtUtc = DateTimeOffset.UtcNow;
-            var controlPlaneId =
-                ResolveControlPlaneId(request.Metadata);
+            var controlPlaneId = ResolveControlPlaneId(request.Metadata);
 
             if (!_options.Enabled)
             {
@@ -74,6 +105,21 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                     request.PumpWorkerId,
                     request.TenantId,
                     request.PipelineKey);
+
+                await RecordSharedQueuePumpEventAsync(
+                        AiControlPlaneEventType.OperationCompleted,
+                        request,
+                        request.PumpWorkerId,
+                        AiControlPlaneOperationOutcome.Denied,
+                        "shared-queue-pump-disabled",
+                        new Dictionary<string, object?>
+                        {
+                            ["controlPlaneId"] = controlPlaneId,
+                            ["enabled"] = false,
+                            ["durationMs"] = CalculateDurationMs(startedAtUtc, disabledCompletedAtUtc)
+                        },
+                        cancellationToken)
+                    .ConfigureAwait(false);
 
                 return new AiSharedQueuePumpResult
                 {
@@ -91,6 +137,23 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
             var claimTtl = ResolveClaimTtl(request);
             var workerId = ResolveWorkerId(request);
             var source = ResolveSource(request);
+
+            await RecordSharedQueuePumpEventAsync(
+                    AiControlPlaneEventType.OperationStarted,
+                    request,
+                    workerId,
+                    null,
+                    null,
+                    new Dictionary<string, object?>
+                    {
+                        ["controlPlaneId"] = controlPlaneId,
+                        ["maxDispatches"] = maxDispatches,
+                        ["claimTtlMs"] = claimTtl.TotalMilliseconds,
+                        ["source"] = source,
+                        ["reason"] = request.Reason
+                    },
+                    cancellationToken)
+                .ConfigureAwait(false);
 
             _logger.LogInformation(
                 "Shared queue pump cycle started. ControlPlaneId={ControlPlaneId}, RuntimeInstanceId={RuntimeInstanceId}, WorkerId={WorkerId}, TenantId={TenantId}, PipelineKey={PipelineKey}, MaxDispatches={MaxDispatches}, ClaimTtlMs={ClaimTtlMs}, Source={Source}, Reason={Reason}",
@@ -210,6 +273,30 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
 
                 var completedAtUtc = DateTimeOffset.UtcNow;
                 var durationMs = CalculateDurationMs(startedAtUtc, completedAtUtc);
+                var outcome = failedDispatches > 0
+                    ? AiControlPlaneOperationOutcome.CompletedWithIssues
+                    : AiControlPlaneOperationOutcome.Succeeded;
+
+                await RecordSharedQueuePumpEventAsync(
+                        AiControlPlaneEventType.OperationCompleted,
+                        request,
+                        workerId,
+                        outcome,
+                        failedDispatches > 0 ? "shared-queue-dispatch-failures-detected" : null,
+                        new Dictionary<string, object?>
+                        {
+                            ["controlPlaneId"] = controlPlaneId,
+                            ["attemptedDispatchCount"] = dispatchResults.Count,
+                            ["successfulDispatchCount"] = successfulDispatches,
+                            ["failedDispatchCount"] = failedDispatches,
+                            ["stoppedBecauseNoItemAvailable"] = stoppedBecauseNoItemAvailable,
+                            ["durationMs"] = durationMs,
+                            ["maxDispatches"] = maxDispatches,
+                            ["claimTtlMs"] = claimTtl.TotalMilliseconds,
+                            ["source"] = source
+                        },
+                        cancellationToken)
+                    .ConfigureAwait(false);
 
                 _logger.LogInformation(
                     "Shared queue pump cycle completed. Success=True, ControlPlaneId={ControlPlaneId}, RuntimeInstanceId={RuntimeInstanceId}, WorkerId={WorkerId}, TenantId={TenantId}, PipelineKey={PipelineKey}, AttemptedDispatchCount={AttemptedDispatchCount}, SuccessfulDispatchCount={SuccessfulDispatchCount}, FailedDispatchCount={FailedDispatchCount}, StoppedBecauseNoItemAvailable={StoppedBecauseNoItemAvailable}, DurationMs={DurationMs}, Diagnostics={Diagnostics}",
@@ -245,6 +332,26 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                 var completedAtUtc = DateTimeOffset.UtcNow;
                 var durationMs = CalculateDurationMs(startedAtUtc, completedAtUtc);
 
+                await RecordSharedQueuePumpEventAsync(
+                        AiControlPlaneEventType.OperationFailed,
+                        request,
+                        workerId,
+                        AiControlPlaneOperationOutcome.Failed,
+                        exception.GetType().Name,
+                        new Dictionary<string, object?>
+                        {
+                            ["controlPlaneId"] = controlPlaneId,
+                            ["attemptedDispatchCount"] = dispatchResults.Count,
+                            ["successfulDispatchCount"] = successfulDispatches,
+                            ["failedDispatchCount"] = failedDispatches,
+                            ["stoppedBecauseNoItemAvailable"] = stoppedBecauseNoItemAvailable,
+                            ["durationMs"] = durationMs,
+                            ["exception.type"] = exception.GetType().FullName,
+                            ["exception.message"] = exception.Message
+                        },
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
                 _logger.LogError(
                     exception,
                     "Shared queue pump cycle failed. ControlPlaneId={ControlPlaneId}, RuntimeInstanceId={RuntimeInstanceId}, WorkerId={WorkerId}, TenantId={TenantId}, PipelineKey={PipelineKey}, AttemptedDispatchCount={AttemptedDispatchCount}, SuccessfulDispatchCount={SuccessfulDispatchCount}, FailedDispatchCount={FailedDispatchCount}, StoppedBecauseNoItemAvailable={StoppedBecauseNoItemAvailable}, DurationMs={DurationMs}, FailureReason={FailureReason}",
@@ -276,6 +383,92 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                     Diagnostics = new[] { exception.Message }
                 };
             }
+        }
+
+        /// <summary>
+        /// Records a shared queue pump control-plane event.
+        /// </summary>
+        /// <param name="eventType">The control-plane event type.</param>
+        /// <param name="request">The pump request.</param>
+        /// <param name="workerId">The resolved worker identifier.</param>
+        /// <param name="outcome">The optional control-plane operation outcome.</param>
+        /// <param name="failureReason">The optional failure reason.</param>
+        /// <param name="properties">The optional event properties.</param>
+        /// <param name="cancellationToken">A token used to cancel the operation.</param>
+        /// <returns>A task that completes when the control-plane event has been recorded.</returns>
+        private async Task RecordSharedQueuePumpEventAsync(
+            AiControlPlaneEventType eventType,
+            AiSharedQueuePumpRequest request,
+            string? workerId,
+            AiControlPlaneOperationOutcome? outcome,
+            string? failureReason,
+            IReadOnlyDictionary<string, object?>? properties,
+            CancellationToken cancellationToken)
+        {
+            try
+            {
+                await _observer.RecordAsync(
+                        new AiControlPlaneEvent
+                        {
+                            EventType = eventType,
+                            Area = AiControlPlaneArea.SharedQueue,
+                            Operation = SharedQueuePumpOperation,
+                            Outcome = outcome,
+                            FailureReason = failureReason,
+                            Correlation = new AiRuntimeExecutionCorrelationContext
+                            {
+                                CorrelationId = string.IsNullOrWhiteSpace(request.CorrelationId)
+                                    ? Guid.NewGuid().ToString("N")
+                                    : request.CorrelationId,
+                                RuntimeInstanceId = request.PumpRuntimeInstanceId,
+                                WorkerId = workerId,
+                                PipelineKey = request.PipelineKey
+                            },
+                            Properties = MergeEventProperties(
+                                properties,
+                                new Dictionary<string, object?>
+                                {
+                                    ["tenantId"] = request.TenantId,
+                                    ["pipelineKey"] = request.PipelineKey,
+                                    ["runtimeInstanceId"] = request.PumpRuntimeInstanceId,
+                                    ["workerId"] = workerId
+                                })
+                        },
+                        cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            catch
+            {
+                // Control-plane observability must not break shared queue pumping.
+            }
+        }
+
+        /// <summary>
+        /// Merges control-plane event properties.
+        /// </summary>
+        /// <param name="properties">The base event properties.</param>
+        /// <param name="additionalProperties">The additional event properties.</param>
+        /// <returns>The merged event properties.</returns>
+        private static IReadOnlyDictionary<string, object?> MergeEventProperties(
+            IReadOnlyDictionary<string, object?>? properties,
+            IReadOnlyDictionary<string, object?> additionalProperties)
+        {
+            var merged = new Dictionary<string, object?>();
+
+            if (properties is not null)
+            {
+                foreach (var item in properties)
+                {
+                    merged[item.Key] = item.Value;
+                }
+            }
+
+            foreach (var item in additionalProperties)
+            {
+                merged[item.Key] = item.Value;
+            }
+
+            return merged;
         }
 
         /// <summary>

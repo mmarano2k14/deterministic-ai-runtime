@@ -15,8 +15,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Observability
     /// </summary>
     /// <remarks>
     /// This sink forwards control-plane events to the runtime decision ledger through
-    /// <see cref="IAiRuntimeObservability"/>. It is intentionally best-effort so ledger
-    /// failures do not break control-plane execution.
+    /// <see cref="IAiRuntimeObservability"/>.
+    ///
+    /// It is intentionally best-effort so ledger failures do not break control-plane execution.
     /// </remarks>
     public sealed class RuntimeObservabilityAiControlPlaneEventSink : IAiControlPlaneEventSink
     {
@@ -53,14 +54,16 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Observability
 
             try
             {
-                await this.observability.Ledger.RecordAsync(
-                    context,
-                    GetLedgerCategory(controlPlaneEvent),
-                    GetEventType(controlPlaneEvent),
-                    GetLedgerOutcome(controlPlaneEvent),
-                    controlPlaneEvent.FailureReason,
-                    metadata,
-                    cancellationToken).ConfigureAwait(false);
+                await this.observability.Ledger
+                    .RecordAsync(
+                        context,
+                        GetLedgerCategory(controlPlaneEvent),
+                        GetEventType(controlPlaneEvent),
+                        GetLedgerOutcome(controlPlaneEvent),
+                        controlPlaneEvent.FailureReason,
+                        metadata,
+                        cancellationToken)
+                    .ConfigureAwait(false);
             }
             catch
             {
@@ -79,31 +82,87 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Observability
         {
             var metadata = new Dictionary<string, string?>
             {
+                ["event.type"] = controlPlaneEvent.EventType.ToString(),
                 ["eventType"] = controlPlaneEvent.EventType.ToString(),
+
                 ["area"] = controlPlaneEvent.Area.ToString(),
                 ["operation"] = controlPlaneEvent.Operation,
                 ["outcome"] = controlPlaneEvent.Outcome?.ToString(),
+                ["duration.ms"] = controlPlaneEvent.DurationMs?.ToString(),
                 ["durationMs"] = controlPlaneEvent.DurationMs?.ToString(),
+                ["failure.reason"] = controlPlaneEvent.FailureReason,
                 ["failureReason"] = controlPlaneEvent.FailureReason,
+
+                ["correlation.id"] = controlPlaneEvent.Correlation.CorrelationId,
                 ["correlationId"] = controlPlaneEvent.Correlation.CorrelationId,
+
+                ["run.id"] = controlPlaneEvent.Correlation.RunId,
                 ["runId"] = controlPlaneEvent.Correlation.RunId,
+
+                ["execution.id"] = controlPlaneEvent.Correlation.ExecutionId,
                 ["executionId"] = controlPlaneEvent.Correlation.ExecutionId,
+
+                ["pipeline.name"] = controlPlaneEvent.Correlation.PipelineName,
                 ["pipelineName"] = controlPlaneEvent.Correlation.PipelineName,
+
+                ["pipeline.version"] = controlPlaneEvent.Correlation.PipelineVersion,
                 ["pipelineVersion"] = controlPlaneEvent.Correlation.PipelineVersion,
+
+                ["pipeline.key"] = controlPlaneEvent.Correlation.PipelineKey,
                 ["pipelineKey"] = controlPlaneEvent.Correlation.PipelineKey,
+
+                ["runtime.instance.id"] = controlPlaneEvent.Correlation.RuntimeInstanceId,
                 ["runtimeInstanceId"] = controlPlaneEvent.Correlation.RuntimeInstanceId,
+
+                ["worker.id"] = controlPlaneEvent.Correlation.WorkerId,
                 ["workerId"] = controlPlaneEvent.Correlation.WorkerId
             };
 
-            if (controlPlaneEvent.Properties is not null)
+            foreach (var property in controlPlaneEvent.Properties)
             {
-                foreach (var property in controlPlaneEvent.Properties)
-                {
-                    metadata[property.Key] = property.Value?.ToString();
-                }
+                metadata[property.Key] = property.Value?.ToString();
+                metadata["property." + property.Key] = property.Value?.ToString();
             }
 
+            TryAddMetadataFromProperty(metadata, controlPlaneEvent, "tenantId", "tenant.id");
+            TryAddMetadataFromProperty(metadata, controlPlaneEvent, "tenant.id", "tenant.id");
+            TryAddMetadataFromProperty(metadata, controlPlaneEvent, "controlPlaneId", "control.plane.id");
+            TryAddMetadataFromProperty(metadata, controlPlaneEvent, "control.plane.id", "control.plane.id");
+            TryAddMetadataFromProperty(metadata, controlPlaneEvent, "runtimeInstanceId", "runtime.instance.id");
+            TryAddMetadataFromProperty(metadata, controlPlaneEvent, "runtime.instance.id", "runtime.instance.id");
+            TryAddMetadataFromProperty(metadata, controlPlaneEvent, "workerId", "worker.id");
+            TryAddMetadataFromProperty(metadata, controlPlaneEvent, "worker.id", "worker.id");
+            TryAddMetadataFromProperty(metadata, controlPlaneEvent, "pipelineKey", "pipeline.key");
+            TryAddMetadataFromProperty(metadata, controlPlaneEvent, "pipeline.key", "pipeline.key");
+
             return metadata;
+        }
+
+        /// <summary>
+        /// Adds a normalized ledger metadata value from a control-plane event property when available.
+        /// </summary>
+        /// <param name="metadata">The metadata dictionary to enrich.</param>
+        /// <param name="controlPlaneEvent">The control-plane event.</param>
+        /// <param name="propertyKey">The source property key.</param>
+        /// <param name="metadataKey">The target metadata key.</param>
+        private static void TryAddMetadataFromProperty(
+            IDictionary<string, string?> metadata,
+            AiControlPlaneEvent controlPlaneEvent,
+            string propertyKey,
+            string metadataKey)
+        {
+            if (!controlPlaneEvent.Properties.TryGetValue(propertyKey, out var value) ||
+                value is null)
+            {
+                return;
+            }
+
+            var text = value.ToString();
+
+            if (!string.IsNullOrWhiteSpace(text))
+            {
+                metadata[metadataKey] = text;
+            }
         }
 
         /// <summary>
