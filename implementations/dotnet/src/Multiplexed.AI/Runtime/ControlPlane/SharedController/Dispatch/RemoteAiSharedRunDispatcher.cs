@@ -1,9 +1,14 @@
 ﻿using Microsoft.Extensions.Logging;
+using Multiplexed.Abstractions.AI.ControlPlane.Observability;
+using Multiplexed.Abstractions.AI.ControlPlane.Observability.Area;
+using Multiplexed.Abstractions.AI.ControlPlane.Observability.Events;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Forensics;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.SharedInstance;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Dispatch;
+using Multiplexed.Abstractions.AI.Observability.Context;
+using Multiplexed.AI.Runtime.ControlPlane.Observability;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Dispatch
@@ -46,6 +51,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Dispatch
     /// </remarks>
     public sealed class RemoteAiSharedRunDispatcher : IAiSharedRunDispatcher
     {
+        private const string RemoteSharedRunDispatchOperation = "remote-shared-run-dispatch";
         private const string RecoveryForensicsIdMetadataKey = "recovery.forensicsId";
         private const string RecoveryFailedExecutionIdMetadataKey = "recovery.failedExecutionId";
         private const string RecoveryFailedLocalRunIdMetadataKey = "recovery.failedLocalRunId";
@@ -54,14 +60,13 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Dispatch
         private readonly IAiRuntimeInstanceProviderCapabilityResolver providerCapabilityResolver;
         private readonly IAiRuntimeInstanceRegistry runtimeInstanceRegistry;
         private readonly IAiRuntimeRecoveryForensicsRecorder forensicsRecorder;
+        private readonly IAiControlPlaneObserver observer;
         private readonly ILogger<RemoteAiSharedRunDispatcher> logger;
 
         /// <summary>
         /// Initializes a new instance of the <see cref="RemoteAiSharedRunDispatcher"/> class.
         /// </summary>
-        /// <param name="providerCapabilityResolver">
-        /// The provider capability resolver used to resolve the dispatch provider for the target runtime instance.
-        /// </param>
+        /// <param name="providerCapabilityResolver">The provider capability resolver used to resolve the dispatch provider for the target runtime instance.</param>
         /// <param name="runtimeInstanceRegistry">The runtime instance registry used for final dispatch safety checks.</param>
         /// <param name="logger">The logger used for diagnostics.</param>
         public RemoteAiSharedRunDispatcher(
@@ -72,16 +77,36 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Dispatch
                 providerCapabilityResolver,
                 runtimeInstanceRegistry,
                 logger,
-                new NoopAiRuntimeRecoveryForensicsRecorder())
+                new NoopAiRuntimeRecoveryForensicsRecorder(),
+                new NoopAiControlPlaneObserver())
         {
         }
 
         /// <summary>
         /// Initializes a new instance of the <see cref="RemoteAiSharedRunDispatcher"/> class.
         /// </summary>
-        /// <param name="providerCapabilityResolver">
-        /// The provider capability resolver used to resolve the dispatch provider for the target runtime instance.
-        /// </param>
+        /// <param name="providerCapabilityResolver">The provider capability resolver used to resolve the dispatch provider for the target runtime instance.</param>
+        /// <param name="runtimeInstanceRegistry">The runtime instance registry used for final dispatch safety checks.</param>
+        /// <param name="logger">The logger used for diagnostics.</param>
+        /// <param name="observer">The control-plane observer.</param>
+        public RemoteAiSharedRunDispatcher(
+            IAiRuntimeInstanceProviderCapabilityResolver providerCapabilityResolver,
+            IAiRuntimeInstanceRegistry runtimeInstanceRegistry,
+            ILogger<RemoteAiSharedRunDispatcher> logger,
+            IAiControlPlaneObserver observer)
+            : this(
+                providerCapabilityResolver,
+                runtimeInstanceRegistry,
+                logger,
+                new NoopAiRuntimeRecoveryForensicsRecorder(),
+                observer)
+        {
+        }
+
+        /// <summary>
+        /// Initializes a new instance of the <see cref="RemoteAiSharedRunDispatcher"/> class.
+        /// </summary>
+        /// <param name="providerCapabilityResolver">The provider capability resolver used to resolve the dispatch provider for the target runtime instance.</param>
         /// <param name="runtimeInstanceRegistry">The runtime instance registry used for final dispatch safety checks.</param>
         /// <param name="logger">The logger used for diagnostics.</param>
         /// <param name="forensicsRecorder">The runtime recovery forensics recorder.</param>
@@ -90,22 +115,35 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Dispatch
             IAiRuntimeInstanceRegistry runtimeInstanceRegistry,
             ILogger<RemoteAiSharedRunDispatcher> logger,
             IAiRuntimeRecoveryForensicsRecorder forensicsRecorder)
+            : this(
+                providerCapabilityResolver,
+                runtimeInstanceRegistry,
+                logger,
+                forensicsRecorder,
+                new NoopAiControlPlaneObserver())
         {
-            this.providerCapabilityResolver =
-                providerCapabilityResolver
-                ?? throw new ArgumentNullException(nameof(providerCapabilityResolver));
+        }
 
-            this.runtimeInstanceRegistry =
-                runtimeInstanceRegistry
-                ?? throw new ArgumentNullException(nameof(runtimeInstanceRegistry));
-
-            this.logger =
-                logger
-                ?? throw new ArgumentNullException(nameof(logger));
-
-            this.forensicsRecorder =
-                forensicsRecorder
-                ?? throw new ArgumentNullException(nameof(forensicsRecorder));
+        /// <summary>
+        /// Initializes a new instance of the <see cref="RemoteAiSharedRunDispatcher"/> class.
+        /// </summary>
+        /// <param name="providerCapabilityResolver">The provider capability resolver used to resolve the dispatch provider for the target runtime instance.</param>
+        /// <param name="runtimeInstanceRegistry">The runtime instance registry used for final dispatch safety checks.</param>
+        /// <param name="logger">The logger used for diagnostics.</param>
+        /// <param name="forensicsRecorder">The runtime recovery forensics recorder.</param>
+        /// <param name="observer">The control-plane observer.</param>
+        public RemoteAiSharedRunDispatcher(
+            IAiRuntimeInstanceProviderCapabilityResolver providerCapabilityResolver,
+            IAiRuntimeInstanceRegistry runtimeInstanceRegistry,
+            ILogger<RemoteAiSharedRunDispatcher> logger,
+            IAiRuntimeRecoveryForensicsRecorder forensicsRecorder,
+            IAiControlPlaneObserver observer)
+        {
+            this.providerCapabilityResolver = providerCapabilityResolver ?? throw new ArgumentNullException(nameof(providerCapabilityResolver));
+            this.runtimeInstanceRegistry = runtimeInstanceRegistry ?? throw new ArgumentNullException(nameof(runtimeInstanceRegistry));
+            this.logger = logger ?? throw new ArgumentNullException(nameof(logger));
+            this.forensicsRecorder = forensicsRecorder ?? throw new ArgumentNullException(nameof(forensicsRecorder));
+            this.observer = observer ?? throw new ArgumentNullException(nameof(observer));
         }
 
         /// <inheritdoc />
@@ -117,10 +155,31 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Dispatch
             ArgumentException.ThrowIfNullOrWhiteSpace(request.RuntimeInstanceId);
             ArgumentNullException.ThrowIfNull(request.SharedRun);
 
-            var startedAtUtc =
-                DateTimeOffset.UtcNow;
+            var startedAtUtc = DateTimeOffset.UtcNow;
 
-            logger.LogInformation(
+            await this.RecordRemoteDispatchEventAsync(
+                    AiControlPlaneEventType.OperationStarted,
+                    request,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    new Dictionary<string, object?>
+                    {
+                        ["sharedRunId"] = request.SharedRun.SharedRunId,
+                        ["runtimeInstanceId"] = request.RuntimeInstanceId,
+                        ["claimToken"] = request.ClaimToken,
+                        ["requestedBy"] = request.RequestedBy,
+                        ["source"] = request.Source,
+                        ["reason"] = request.Reason,
+                        ["tenantId"] = request.SharedRun.ExecutionContextSnapshot.TenantId,
+                        ["tenantGroupId"] = request.SharedRun.ExecutionContextSnapshot.TenantGroupId
+                    },
+                    cancellationToken)
+                .ConfigureAwait(false);
+
+            this.logger.LogInformation(
                 "REMOTE DISPATCH START RuntimeInstanceId={RuntimeInstanceId} SharedRunId={SharedRunId}",
                 request.RuntimeInstanceId,
                 request.SharedRun.SharedRunId);
@@ -130,7 +189,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Dispatch
 
             if (request.SharedRun.RunRequest is null)
             {
-                logger.LogWarning(
+                this.logger.LogWarning(
                     "REMOTE DISPATCH FAILED RuntimeInstanceId={RuntimeInstanceId} SharedRunId={SharedRunId} Reason={Reason}",
                     request.RuntimeInstanceId,
                     request.SharedRun.SharedRunId,
@@ -139,25 +198,34 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Dispatch
                 Console.WriteLine(
                     $"[REMOTE DISPATCH] FAILED RuntimeInstanceId='{request.RuntimeInstanceId}' SharedRunId='{request.SharedRun.SharedRunId}' Reason='missing-run-request'");
 
-                return CreateFailedResult(
+                var failedResult = CreateFailedResult(
                     request,
                     startedAtUtc,
                     request.RuntimeInstanceId,
                     "missing-run-request",
                     "Shared run does not contain a runtime pipeline run request.");
-            }
 
-            var runtimeSafetySnapshot =
-                await runtimeInstanceRegistry
-                    .GetAsync(
-                        request.RuntimeInstanceId,
+                await this.RecordRemoteDispatchResultEventAsync(
+                        request,
+                        failedResult,
+                        AiControlPlaneOperationOutcome.Failed,
+                        "missing-run-request",
                         cancellationToken)
                     .ConfigureAwait(false);
+
+                return failedResult;
+            }
+
+            var runtimeSafetySnapshot = await this.runtimeInstanceRegistry
+                .GetAsync(
+                    request.RuntimeInstanceId,
+                    cancellationToken)
+                .ConfigureAwait(false);
 
             if (runtimeSafetySnapshot is null ||
                 !runtimeSafetySnapshot.CanAcceptRun)
             {
-                logger.LogWarning(
+                this.logger.LogWarning(
                     "REMOTE DISPATCH BLOCKED RuntimeInstanceId={RuntimeInstanceId} SharedRunId={SharedRunId} Status={Status} CanAcceptRun={CanAcceptRun} Reason={Reason}",
                     request.RuntimeInstanceId,
                     request.SharedRun.SharedRunId,
@@ -168,22 +236,31 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Dispatch
                 Console.WriteLine(
                     $"[REMOTE DISPATCH] BLOCKED RuntimeInstanceId='{request.RuntimeInstanceId}' SharedRunId='{request.SharedRun.SharedRunId}' Status='{runtimeSafetySnapshot?.Status}' CanAcceptRun='{runtimeSafetySnapshot?.CanAcceptRun}' Reason='runtime-instance-not-routable'");
 
-                return CreateFailedResult(
+                var failedResult = CreateFailedResult(
                     request,
                     startedAtUtc,
                     request.RuntimeInstanceId,
                     "runtime-instance-not-routable",
                     $"Runtime instance '{request.RuntimeInstanceId}' is not routable.");
-            }
 
-            var resolution =
-                await providerCapabilityResolver
-                    .ResolveAsync<IAiRuntimeInstanceDispatchProvider>(
-                        request.RuntimeInstanceId,
+                await this.RecordRemoteDispatchResultEventAsync(
+                        request,
+                        failedResult,
+                        AiControlPlaneOperationOutcome.Denied,
+                        "runtime-instance-not-routable",
                         cancellationToken)
                     .ConfigureAwait(false);
 
-            logger.LogInformation(
+                return failedResult;
+            }
+
+            var resolution = await this.providerCapabilityResolver
+                .ResolveAsync<IAiRuntimeInstanceDispatchProvider>(
+                    request.RuntimeInstanceId,
+                    cancellationToken)
+                .ConfigureAwait(false);
+
+            this.logger.LogInformation(
                 "REMOTE DISPATCH CAPABILITY RuntimeInstanceId={RuntimeInstanceId} Success={Success} Reason={Reason}",
                 request.RuntimeInstanceId,
                 resolution.Success,
@@ -196,7 +273,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Dispatch
                 resolution.Provider is null ||
                 resolution.Descriptor is null)
             {
-                logger.LogWarning(
+                this.logger.LogWarning(
                     "REMOTE DISPATCH FAILED RuntimeInstanceId={RuntimeInstanceId} SharedRunId={SharedRunId} Reason={Reason}",
                     request.RuntimeInstanceId,
                     request.SharedRun.SharedRunId,
@@ -205,25 +282,30 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Dispatch
                 Console.WriteLine(
                     $"[REMOTE DISPATCH] FAILED RuntimeInstanceId='{request.RuntimeInstanceId}' SharedRunId='{request.SharedRun.SharedRunId}' Reason='runtime-instance-dispatch-provider-not-found'");
 
-                return CreateFailedResult(
+                var failedResult = CreateFailedResult(
                     request,
                     startedAtUtc,
                     request.RuntimeInstanceId,
                     "runtime-instance-dispatch-provider-not-found",
                     resolution.FailureReason ??
                     $"No dispatch provider was found for runtime instance '{request.RuntimeInstanceId}'.");
+
+                await this.RecordRemoteDispatchResultEventAsync(
+                        request,
+                        failedResult,
+                        AiControlPlaneOperationOutcome.Failed,
+                        "runtime-instance-dispatch-provider-not-found",
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+                return failedResult;
             }
 
-            var descriptor =
-                resolution.Descriptor;
+            var descriptor = resolution.Descriptor;
+            var provider = resolution.Provider;
+            var providerTypeName = provider.GetType().FullName ?? provider.GetType().Name;
 
-            var provider =
-                resolution.Provider;
-
-            var providerTypeName =
-                provider.GetType().FullName ?? provider.GetType().Name;
-
-            logger.LogInformation(
+            this.logger.LogInformation(
                 "REMOTE DISPATCH PROVIDER RuntimeInstanceId={RuntimeInstanceId} SharedRunId={SharedRunId} ProviderType={ProviderType}",
                 request.RuntimeInstanceId,
                 request.SharedRun.SharedRunId,
@@ -232,20 +314,19 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Dispatch
             Console.WriteLine(
                 $"[REMOTE DISPATCH] PROVIDER RuntimeInstanceId='{request.RuntimeInstanceId}' SharedRunId='{request.SharedRun.SharedRunId}' ProviderType='{providerTypeName}'");
 
-            var dispatchMetadata =
-                MergeMetadata(
-                    request.Metadata,
-                    request.SharedRun.Metadata,
-                    request.SharedRun.SharedRunId,
-                    request.RuntimeInstanceId,
-                    request.ClaimToken,
-                    providerTypeName);
+            var dispatchMetadata = MergeMetadata(
+                request.Metadata,
+                request.SharedRun.Metadata,
+                request.SharedRun.SharedRunId,
+                request.RuntimeInstanceId,
+                request.ClaimToken,
+                providerTypeName);
 
             AiSharedRuntimeInstanceDispatchResult instanceResult;
 
             try
             {
-                logger.LogInformation(
+                this.logger.LogInformation(
                     "REMOTE DISPATCH CALL RuntimeInstanceId={RuntimeInstanceId} SharedRunId={SharedRunId}",
                     request.RuntimeInstanceId,
                     request.SharedRun.SharedRunId);
@@ -253,28 +334,25 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Dispatch
                 Console.WriteLine(
                     $"[REMOTE DISPATCH] CALL RuntimeInstanceId='{request.RuntimeInstanceId}' SharedRunId='{request.SharedRun.SharedRunId}'");
 
-                instanceResult =
-                    await provider
-                        .DispatchAsync(
-                            descriptor,
-                            new AiSharedRuntimeInstanceDispatchRequest
-                            {
-                                RuntimeInstanceId = request.RuntimeInstanceId,
-                                SharedRun = request.SharedRun,
-                                RunRequest = request.SharedRun.RunRequest,
-                                ClaimToken = request.ClaimToken,
-                                CorrelationId =
-                                    request.CorrelationId ??
-                                    request.SharedRun.CorrelationId,
-                                RequestedBy = request.RequestedBy,
-                                Source = request.Source,
-                                Reason = request.Reason,
-                                Metadata = dispatchMetadata
-                            },
-                            cancellationToken)
-                        .ConfigureAwait(false);
+                instanceResult = await provider
+                    .DispatchAsync(
+                        descriptor,
+                        new AiSharedRuntimeInstanceDispatchRequest
+                        {
+                            RuntimeInstanceId = request.RuntimeInstanceId,
+                            SharedRun = request.SharedRun,
+                            RunRequest = request.SharedRun.RunRequest,
+                            ClaimToken = request.ClaimToken,
+                            CorrelationId = request.CorrelationId ?? request.SharedRun.CorrelationId,
+                            RequestedBy = request.RequestedBy,
+                            Source = request.Source,
+                            Reason = request.Reason,
+                            Metadata = dispatchMetadata
+                        },
+                        cancellationToken)
+                    .ConfigureAwait(false);
 
-                logger.LogInformation(
+                this.logger.LogInformation(
                     "REMOTE DISPATCH RESULT RuntimeInstanceId={RuntimeInstanceId} SharedRunId={SharedRunId} Success={Success} LocalRunId={LocalRunId} ExecutionId={ExecutionId} FailureReason={FailureReason}",
                     request.RuntimeInstanceId,
                     request.SharedRun.SharedRunId,
@@ -288,7 +366,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Dispatch
             }
             catch (Exception exception) when (exception is not OperationCanceledException)
             {
-                logger.LogError(
+                this.logger.LogError(
                     exception,
                     "REMOTE DISPATCH EXCEPTION RuntimeInstanceId={RuntimeInstanceId} SharedRunId={SharedRunId}",
                     request.RuntimeInstanceId,
@@ -297,35 +375,42 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Dispatch
                 Console.WriteLine(
                     $"[REMOTE DISPATCH] EXCEPTION RuntimeInstanceId='{request.RuntimeInstanceId}' SharedRunId='{request.SharedRun.SharedRunId}' Exception='{exception}'");
 
-                return CreateFailedResult(
+                var failedResult = CreateFailedResult(
                     request,
                     startedAtUtc,
                     request.RuntimeInstanceId,
                     "exception",
                     exception.Message,
                     exception);
+
+                await this.RecordRemoteDispatchResultEventAsync(
+                        request,
+                        failedResult,
+                        AiControlPlaneOperationOutcome.Failed,
+                        exception.GetType().Name,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+                return failedResult;
             }
 
-            var completedAtUtcFinal =
-                DateTimeOffset.UtcNow;
+            var completedAtUtcFinal = DateTimeOffset.UtcNow;
 
-            var durationMs =
-                Math.Max(
-                    0,
-                    (long)(completedAtUtcFinal - startedAtUtc).TotalMilliseconds);
+            var durationMs = Math.Max(
+                0,
+                (long)(completedAtUtcFinal - startedAtUtc).TotalMilliseconds);
 
-            var resultMetadata =
-                MergeResultMetadata(
-                    dispatchMetadata,
-                    instanceResult.Metadata,
-                    instanceResult.LocalRunId,
-                    instanceResult.ExecutionId,
-                    instanceResult.Success,
-                    instanceResult.FailureReason);
+            var resultMetadata = MergeResultMetadata(
+                dispatchMetadata,
+                instanceResult.Metadata,
+                instanceResult.LocalRunId,
+                instanceResult.ExecutionId,
+                instanceResult.Success,
+                instanceResult.FailureReason);
 
             if (instanceResult.Success)
             {
-                await RecordRemoteRecoveryDispatchForensicsAsync(
+                await this.RecordRemoteRecoveryDispatchForensicsAsync(
                         request,
                         resultMetadata,
                         instanceResult.LocalRunId,
@@ -334,18 +419,14 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Dispatch
                     .ConfigureAwait(false);
             }
 
-            return new AiSharedRunDispatchResult
+            var result = new AiSharedRunDispatchResult
             {
                 Success = instanceResult.Success,
-                SharedRunId =
-                    instanceResult.SharedRunId ??
-                    request.SharedRun.SharedRunId,
+                SharedRunId = instanceResult.SharedRunId ?? request.SharedRun.SharedRunId,
                 RuntimeInstanceId = request.RuntimeInstanceId,
                 LocalRunId = instanceResult.LocalRunId,
                 ExecutionId = instanceResult.ExecutionId,
-                ClaimToken =
-                    instanceResult.ClaimToken ??
-                    request.ClaimToken,
+                ClaimToken = instanceResult.ClaimToken ?? request.ClaimToken,
                 Message = instanceResult.Message,
                 FailureReason = instanceResult.FailureReason,
                 StartedAtUtc = startedAtUtc,
@@ -353,6 +434,154 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Dispatch
                 DurationMs = durationMs,
                 Metadata = resultMetadata
             };
+
+            await this.RecordRemoteDispatchResultEventAsync(
+                    request,
+                    result,
+                    instanceResult.Success
+                        ? AiControlPlaneOperationOutcome.Succeeded
+                        : AiControlPlaneOperationOutcome.CompletedWithIssues,
+                    instanceResult.Success ? null : instanceResult.FailureReason,
+                    cancellationToken)
+                .ConfigureAwait(false);
+
+            return result;
+        }
+
+        /// <summary>
+        /// Records a remote shared run dispatch result control-plane event.
+        /// </summary>
+        /// <param name="request">The shared run dispatch request.</param>
+        /// <param name="result">The shared run dispatch result.</param>
+        /// <param name="outcome">The control-plane operation outcome.</param>
+        /// <param name="failureReason">The optional failure reason.</param>
+        /// <param name="cancellationToken">A token used to cancel the operation.</param>
+        /// <returns>A task that completes when the control-plane event has been recorded.</returns>
+        private Task RecordRemoteDispatchResultEventAsync(
+            AiSharedRunDispatchRequest request,
+            AiSharedRunDispatchResult result,
+            AiControlPlaneOperationOutcome outcome,
+            string? failureReason,
+            CancellationToken cancellationToken)
+        {
+            return this.RecordRemoteDispatchEventAsync(
+                result.Success ? AiControlPlaneEventType.OperationCompleted : AiControlPlaneEventType.OperationFailed,
+                request,
+                result.LocalRunId,
+                result.ExecutionId,
+                outcome,
+                failureReason,
+                result.DurationMs,
+                new Dictionary<string, object?>
+                {
+                    ["sharedRunId"] = result.SharedRunId,
+                    ["runtimeInstanceId"] = result.RuntimeInstanceId,
+                    ["localRunId"] = result.LocalRunId,
+                    ["executionId"] = result.ExecutionId,
+                    ["claimToken"] = result.ClaimToken,
+                    ["success"] = result.Success,
+                    ["message"] = result.Message,
+                    ["failureReason"] = result.FailureReason,
+                    ["durationMs"] = result.DurationMs,
+                    ["tenantId"] = request.SharedRun.ExecutionContextSnapshot.TenantId,
+                    ["tenantGroupId"] = request.SharedRun.ExecutionContextSnapshot.TenantGroupId
+                },
+                cancellationToken);
+        }
+
+        /// <summary>
+        /// Records a remote shared run dispatch control-plane event.
+        /// </summary>
+        /// <param name="eventType">The control-plane event type.</param>
+        /// <param name="request">The shared run dispatch request.</param>
+        /// <param name="localRunId">The optional local run identifier.</param>
+        /// <param name="executionId">The optional execution identifier.</param>
+        /// <param name="outcome">The optional control-plane operation outcome.</param>
+        /// <param name="failureReason">The optional failure reason.</param>
+        /// <param name="durationMs">The optional duration in milliseconds.</param>
+        /// <param name="properties">The optional event properties.</param>
+        /// <param name="cancellationToken">A token used to cancel the operation.</param>
+        /// <returns>A task that completes when the control-plane event has been recorded.</returns>
+        private async Task RecordRemoteDispatchEventAsync(
+            AiControlPlaneEventType eventType,
+            AiSharedRunDispatchRequest request,
+            string? localRunId,
+            string? executionId,
+            AiControlPlaneOperationOutcome? outcome,
+            string? failureReason,
+            long? durationMs,
+            IReadOnlyDictionary<string, object?>? properties,
+            CancellationToken cancellationToken)
+        {
+            try
+            {
+                await this.observer.RecordAsync(
+                        new AiControlPlaneEvent
+                        {
+                            EventType = eventType,
+                            Area = AiControlPlaneArea.SharedController,
+                            Operation = RemoteSharedRunDispatchOperation,
+                            Outcome = outcome,
+                            FailureReason = failureReason,
+                            DurationMs = durationMs,
+                            Correlation = new AiRuntimeExecutionCorrelationContext
+                            {
+                                CorrelationId = string.IsNullOrWhiteSpace(request.CorrelationId)
+                                    ? request.SharedRun.CorrelationId ?? Guid.NewGuid().ToString("N")
+                                    : request.CorrelationId,
+                                RunId = request.SharedRun.SharedRunId,
+                                ExecutionId = executionId,
+                                RuntimeInstanceId = request.RuntimeInstanceId,
+                                PipelineKey = request.SharedRun.ExecutionContextSnapshot.ContextKey
+                            },
+                            Properties = MergeEventProperties(
+                                properties,
+                                new Dictionary<string, object?>
+                                {
+                                    ["sharedRunId"] = request.SharedRun.SharedRunId,
+                                    ["localRunId"] = localRunId,
+                                    ["executionId"] = executionId,
+                                    ["runtimeInstanceId"] = request.RuntimeInstanceId,
+                                    ["tenantId"] = request.SharedRun.ExecutionContextSnapshot.TenantId,
+                                    ["tenantGroupId"] = request.SharedRun.ExecutionContextSnapshot.TenantGroupId,
+                                    ["claimToken"] = request.ClaimToken
+                                })
+                        },
+                        cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            catch
+            {
+                // Control-plane observability must not break remote shared run dispatch.
+            }
+        }
+
+        /// <summary>
+        /// Merges control-plane event properties.
+        /// </summary>
+        /// <param name="properties">The base event properties.</param>
+        /// <param name="additionalProperties">The additional event properties.</param>
+        /// <returns>The merged event properties.</returns>
+        private static IReadOnlyDictionary<string, object?> MergeEventProperties(
+            IReadOnlyDictionary<string, object?>? properties,
+            IReadOnlyDictionary<string, object?> additionalProperties)
+        {
+            var merged = new Dictionary<string, object?>();
+
+            if (properties is not null)
+            {
+                foreach (var item in properties)
+                {
+                    merged[item.Key] = item.Value;
+                }
+            }
+
+            foreach (var item in additionalProperties)
+            {
+                merged[item.Key] = item.Value;
+            }
+
+            return merged;
         }
 
         /// <summary>
@@ -386,12 +615,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Dispatch
                 return;
             }
 
-            var durableExecutionId =
-                !string.IsNullOrWhiteSpace(executionId)
-                    ? executionId
-                    : resolvedExecutionId;
+            var durableExecutionId = !string.IsNullOrWhiteSpace(executionId)
+                ? executionId
+                : resolvedExecutionId;
 
-            await forensicsRecorder
+            await this.forensicsRecorder
                 .RecordEventAsync(
                     new AiRuntimeRecoveryForensicsEvent
                     {
@@ -420,7 +648,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Dispatch
                     cancellationToken)
                 .ConfigureAwait(false);
 
-            await forensicsRecorder
+            await this.forensicsRecorder
                 .RecordEventAsync(
                     new AiRuntimeRecoveryForensicsEvent
                     {
@@ -510,11 +738,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Dispatch
                 return true;
             }
 
-            executionId =
-                ResolveMetadataValue(metadata, RecoveryFailedExecutionIdMetadataKey);
-
-            failedLocalRunId =
-                ResolveMetadataValue(metadata, RecoveryFailedLocalRunIdMetadataKey);
+            executionId = ResolveMetadataValue(metadata, RecoveryFailedExecutionIdMetadataKey);
+            failedLocalRunId = ResolveMetadataValue(metadata, RecoveryFailedLocalRunIdMetadataKey);
 
             if (string.IsNullOrWhiteSpace(executionId) ||
                 string.IsNullOrWhiteSpace(failedLocalRunId))
@@ -563,9 +788,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Dispatch
             string key,
             out string value)
         {
-            if (metadata.TryGetValue(
-                    key,
-                    out var directValue) &&
+            if (metadata.TryGetValue(key, out var directValue) &&
                 !string.IsNullOrWhiteSpace(directValue))
             {
                 value = directValue;
@@ -574,10 +797,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Dispatch
 
             foreach (var pair in metadata)
             {
-                if (string.Equals(
-                        pair.Key,
-                        key,
-                        StringComparison.OrdinalIgnoreCase) &&
+                if (string.Equals(pair.Key, key, StringComparison.OrdinalIgnoreCase) &&
                     !string.IsNullOrWhiteSpace(pair.Value))
                 {
                     value = pair.Value;
@@ -607,8 +827,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Dispatch
             string failureReason,
             Exception? exception = null)
         {
-            var completedAtUtc =
-                DateTimeOffset.UtcNow;
+            var completedAtUtc = DateTimeOffset.UtcNow;
 
             return new AiSharedRunDispatchResult
             {
@@ -738,13 +957,12 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Dispatch
             string failureCode,
             Exception? exception = null)
         {
-            var metadata =
-                MergeMetadata(
-                    request.Metadata,
-                    request.SharedRun.Metadata,
-                    request.SharedRun.SharedRunId,
-                    request.RuntimeInstanceId,
-                    request.ClaimToken);
+            var metadata = MergeMetadata(
+                request.Metadata,
+                request.SharedRun.Metadata,
+                request.SharedRun.SharedRunId,
+                request.RuntimeInstanceId,
+                request.ClaimToken);
 
             var result = new Dictionary<string, string>(
                 metadata,
