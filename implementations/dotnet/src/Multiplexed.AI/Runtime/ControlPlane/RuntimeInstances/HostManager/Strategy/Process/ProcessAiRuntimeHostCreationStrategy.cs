@@ -10,9 +10,14 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Multiplexed.Abstractions.AI.ControlPlane.Observability;
+using Multiplexed.Abstractions.AI.ControlPlane.Observability.Area;
+using Multiplexed.Abstractions.AI.ControlPlane.Observability.Events;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers.Transport;
+using Multiplexed.Abstractions.AI.Observability.Context;
+using Multiplexed.AI.Runtime.ControlPlane.Observability;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strategy.Process
 {
@@ -21,8 +26,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
     /// </summary>
     public sealed class ProcessAiRuntimeHostCreationStrategy : IAiRuntimeHostCreationStrategy, IAsyncDisposable
     {
+        private const string ProcessRuntimeHostCreationOperation = "runtime-process-host-creation";
+
         private readonly AiRuntimeProcessHostCreationOptions options;
         private readonly ILogger<ProcessAiRuntimeHostCreationStrategy> logger;
+        private readonly IAiControlPlaneObserver observer;
         private readonly ConcurrentDictionary<string, System.Diagnostics.Process> processesByRuntimeInstanceId = new(StringComparer.OrdinalIgnoreCase);
         private readonly SemaphoreSlim portAllocationLock = new(1, 1);
         private int nextPort;
@@ -30,9 +38,21 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
         public ProcessAiRuntimeHostCreationStrategy(
             IOptions<AiRuntimeProcessHostCreationOptions> options,
             ILogger<ProcessAiRuntimeHostCreationStrategy> logger)
+            : this(
+                options,
+                logger,
+                new NoopAiControlPlaneObserver())
+        {
+        }
+
+        public ProcessAiRuntimeHostCreationStrategy(
+            IOptions<AiRuntimeProcessHostCreationOptions> options,
+            ILogger<ProcessAiRuntimeHostCreationStrategy> logger,
+            IAiControlPlaneObserver observer)
         {
             this.options = options?.Value ?? throw new ArgumentNullException(nameof(options));
             this.logger = logger ?? throw new ArgumentNullException(nameof(logger));
+            this.observer = observer ?? throw new ArgumentNullException(nameof(observer));
             this.nextPort = this.options.BasePort;
         }
 
@@ -43,20 +63,79 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
             CancellationToken cancellationToken = default)
         {
             ArgumentNullException.ThrowIfNull(request);
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var startedAtUtc = DateTimeOffset.UtcNow;
+
+            await this.RecordProcessHostCreationEventAsync(
+                    AiControlPlaneEventType.OperationStarted,
+                    request,
+                    null,
+                    null,
+                    null,
+                    null,
+                    BuildStartProperties(request),
+                    cancellationToken)
+                .ConfigureAwait(false);
 
             if (!this.options.Enabled)
             {
-                return AiRuntimeHostStartResult.Rejected(request.ExecutionContextSnapshot, request.RuntimeInstanceId, request.ProviderName, request.TransportName, request.TransportEndpoint, "process-host-creation-disabled");
+                var disabledResult = AiRuntimeHostStartResult.Rejected(
+                    request.ExecutionContextSnapshot,
+                    request.RuntimeInstanceId,
+                    request.ProviderName,
+                    request.TransportName,
+                    request.TransportEndpoint,
+                    "process-host-creation-disabled");
+
+                await this.RecordProcessHostCreationResultAsync(
+                        request,
+                        disabledResult,
+                        startedAtUtc,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+                return disabledResult;
             }
 
             if (string.IsNullOrWhiteSpace(this.options.RuntimeHostAssemblyPath))
             {
-                return AiRuntimeHostStartResult.Rejected(request.ExecutionContextSnapshot, request.RuntimeInstanceId, request.ProviderName, request.TransportName, request.TransportEndpoint, "process-runtime-host-assembly-path-missing");
+                var missingAssemblyPathResult = AiRuntimeHostStartResult.Rejected(
+                    request.ExecutionContextSnapshot,
+                    request.RuntimeInstanceId,
+                    request.ProviderName,
+                    request.TransportName,
+                    request.TransportEndpoint,
+                    "process-runtime-host-assembly-path-missing");
+
+                await this.RecordProcessHostCreationResultAsync(
+                        request,
+                        missingAssemblyPathResult,
+                        startedAtUtc,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+                return missingAssemblyPathResult;
             }
 
             if (!File.Exists(this.options.RuntimeHostAssemblyPath))
             {
-                return AiRuntimeHostStartResult.Rejected(request.ExecutionContextSnapshot, request.RuntimeInstanceId, request.ProviderName, request.TransportName, request.TransportEndpoint, $"process-runtime-host-assembly-not-found:{this.options.RuntimeHostAssemblyPath}");
+                var assemblyNotFoundResult = AiRuntimeHostStartResult.Rejected(
+                    request.ExecutionContextSnapshot,
+                    request.RuntimeInstanceId,
+                    request.ProviderName,
+                    request.TransportName,
+                    request.TransportEndpoint,
+                    $"process-runtime-host-assembly-not-found:{this.options.RuntimeHostAssemblyPath}");
+
+                await this.RecordProcessHostCreationResultAsync(
+                        request,
+                        assemblyNotFoundResult,
+                        startedAtUtc,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+                return assemblyNotFoundResult;
             }
 
             var port = await AllocatePortAsync(cancellationToken).ConfigureAwait(false);
@@ -70,7 +149,24 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
 
                 if (process is null)
                 {
-                    return AiRuntimeHostStartResult.Rejected(request.ExecutionContextSnapshot, request.RuntimeInstanceId, request.ProviderName, request.TransportName, endpoint, "process-start-returned-null", retryable: true, metadata);
+                    var nullProcessResult = AiRuntimeHostStartResult.Rejected(
+                        request.ExecutionContextSnapshot,
+                        request.RuntimeInstanceId,
+                        request.ProviderName,
+                        request.TransportName,
+                        endpoint,
+                        "process-start-returned-null",
+                        retryable: true,
+                        metadata);
+
+                    await this.RecordProcessHostCreationResultAsync(
+                            request,
+                            nullProcessResult,
+                            startedAtUtc,
+                            cancellationToken)
+                        .ConfigureAwait(false);
+
+                    return nullProcessResult;
                 }
 
                 AttachOutputLogging(request, process);
@@ -79,7 +175,24 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
                 {
                     TryKillProcess(process);
 
-                    return AiRuntimeHostStartResult.Rejected(request.ExecutionContextSnapshot, request.RuntimeInstanceId, request.ProviderName, request.TransportName, endpoint, $"process-runtime-instance-already-started:{request.RuntimeInstanceId}", retryable: false, metadata);
+                    var duplicateProcessResult = AiRuntimeHostStartResult.Rejected(
+                        request.ExecutionContextSnapshot,
+                        request.RuntimeInstanceId,
+                        request.ProviderName,
+                        request.TransportName,
+                        endpoint,
+                        $"process-runtime-instance-already-started:{request.RuntimeInstanceId}",
+                        retryable: false,
+                        metadata);
+
+                    await this.RecordProcessHostCreationResultAsync(
+                            request,
+                            duplicateProcessResult,
+                            startedAtUtc,
+                            cancellationToken)
+                        .ConfigureAwait(false);
+
+                    return duplicateProcessResult;
                 }
 
                 this.logger.LogInformation(
@@ -91,13 +204,22 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
 
                 await EnsureProcessDidNotExitImmediatelyAsync(request, process, endpoint, metadata, cancellationToken).ConfigureAwait(false);
 
-                return AiRuntimeHostStartResult.Started(
+                var startedResult = AiRuntimeHostStartResult.Started(
                     request.ExecutionContextSnapshot,
                     request.RuntimeInstanceId,
                     request.ProviderName,
                     request.TransportName ?? AiRuntimeInstanceCommandTransportMetadataKeys.HttpTransportName,
                     endpoint,
                     metadata);
+
+                await this.RecordProcessHostCreationResultAsync(
+                        request,
+                        startedResult,
+                        startedAtUtc,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+                return startedResult;
             }
             catch (Exception exception) when (exception is not OperationCanceledException)
             {
@@ -107,8 +229,182 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
                     request.RuntimeInstanceId,
                     endpoint);
 
-                return AiRuntimeHostStartResult.Rejected(request.ExecutionContextSnapshot, request.RuntimeInstanceId, request.ProviderName, request.TransportName, endpoint, $"process-start-failed:{exception.GetType().Name}", retryable: true, metadata);
+                var failedResult = AiRuntimeHostStartResult.Rejected(
+                    request.ExecutionContextSnapshot,
+                    request.RuntimeInstanceId,
+                    request.ProviderName,
+                    request.TransportName,
+                    endpoint,
+                    $"process-start-failed:{exception.GetType().Name}",
+                    retryable: true,
+                    metadata);
+
+                await this.RecordProcessHostCreationResultAsync(
+                        request,
+                        failedResult,
+                        startedAtUtc,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+                return failedResult;
             }
+        }
+
+        private async Task RecordProcessHostCreationResultAsync(
+            AiRuntimeHostStartRequest request,
+            AiRuntimeHostStartResult result,
+            DateTimeOffset startedAtUtc,
+            CancellationToken cancellationToken)
+        {
+            var completedAtUtc = DateTimeOffset.UtcNow;
+            var durationMs = CalculateDurationMs(startedAtUtc, completedAtUtc);
+            var eventType = result.Success
+                ? AiControlPlaneEventType.OperationCompleted
+                : AiControlPlaneEventType.OperationFailed;
+            var outcome = result.Success
+                ? AiControlPlaneOperationOutcome.Succeeded
+                : AiControlPlaneOperationOutcome.Denied;
+            var failureReason = result.Success
+                ? null
+                : result.FailureReason;
+
+            await this.RecordProcessHostCreationEventAsync(
+                    eventType,
+                    request,
+                    result,
+                    outcome,
+                    failureReason,
+                    durationMs,
+                    BuildResultProperties(request, result, durationMs),
+                    cancellationToken)
+                .ConfigureAwait(false);
+        }
+
+        private async Task RecordProcessHostCreationEventAsync(
+            AiControlPlaneEventType eventType,
+            AiRuntimeHostStartRequest request,
+            AiRuntimeHostStartResult? result,
+            AiControlPlaneOperationOutcome? outcome,
+            string? failureReason,
+            long? durationMs,
+            IReadOnlyDictionary<string, object?>? properties,
+            CancellationToken cancellationToken)
+        {
+            try
+            {
+                await this.observer
+                    .RecordAsync(
+                        new AiControlPlaneEvent
+                        {
+                            EventType = eventType,
+                            Area = AiControlPlaneArea.Scaling,
+                            Operation = ProcessRuntimeHostCreationOperation,
+                            Outcome = outcome,
+                            FailureReason = failureReason,
+                            DurationMs = durationMs,
+                            Correlation = new AiRuntimeExecutionCorrelationContext
+                            {
+                                CorrelationId = string.IsNullOrWhiteSpace(request.RuntimeInstanceId)
+                                    ? Guid.NewGuid().ToString("N")
+                                    : request.RuntimeInstanceId,
+                                RuntimeInstanceId = result?.RuntimeInstanceId ?? request.RuntimeInstanceId,
+                                PipelineKey = request.ExecutionContextSnapshot?.ContextKey
+                            },
+                            Properties = MergeEventProperties(
+                                properties,
+                                new Dictionary<string, object?>
+                                {
+                                    ["runtimeInstanceId"] = result?.RuntimeInstanceId ?? request.RuntimeInstanceId,
+                                    ["providerName"] = result?.ProviderName ?? request.ProviderName,
+                                    ["transportName"] = result?.TransportName ?? request.TransportName,
+                                    ["transportEndpoint"] = result?.TransportEndpoint ?? request.TransportEndpoint,
+                                    ["hostCreationMode"] = AiRuntimeHostCreationMode.Process.ToString(),
+                                    ["tenantId"] = request.ExecutionContextSnapshot?.TenantId ?? request.TenantId,
+                                    ["tenantGroupId"] = request.ExecutionContextSnapshot?.TenantGroupId ?? request.TenantGroupId,
+                                    ["pipelineKey"] = request.ExecutionContextSnapshot?.ContextKey,
+                                    ["success"] = result?.Success,
+                                    ["failureReason"] = result?.FailureReason
+                                })
+                        },
+                        cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            catch
+            {
+                // Control-plane observability must not break process host creation.
+            }
+        }
+
+        private IReadOnlyDictionary<string, object?> BuildStartProperties(
+            AiRuntimeHostStartRequest request)
+        {
+            return new Dictionary<string, object?>
+            {
+                ["runtimeInstanceId"] = request.RuntimeInstanceId,
+                ["providerName"] = request.ProviderName,
+                ["transportName"] = request.TransportName,
+                ["transportEndpoint"] = request.TransportEndpoint,
+                ["hostCreationMode"] = AiRuntimeHostCreationMode.Process.ToString(),
+                ["enabled"] = this.options.Enabled,
+                ["runtimeHostAssemblyPath"] = this.options.RuntimeHostAssemblyPath,
+                ["dotnetExecutablePath"] = this.options.DotnetExecutablePath,
+                ["basePort"] = this.options.BasePort,
+                ["maxPort"] = this.options.MaxPort,
+                ["redirectOutput"] = this.options.RedirectOutput,
+                ["tenantId"] = request.TenantId,
+                ["tenantGroupId"] = request.TenantGroupId,
+                ["pipelineKey"] = request.ExecutionContextSnapshot?.ContextKey
+            };
+        }
+
+        private static IReadOnlyDictionary<string, object?> BuildResultProperties(
+            AiRuntimeHostStartRequest request,
+            AiRuntimeHostStartResult result,
+            long durationMs)
+        {
+            return new Dictionary<string, object?>
+            {
+                ["runtimeInstanceId"] = result.RuntimeInstanceId ?? request.RuntimeInstanceId,
+                ["providerName"] = result.ProviderName ?? request.ProviderName,
+                ["transportName"] = result.TransportName ?? request.TransportName,
+                ["transportEndpoint"] = result.TransportEndpoint ?? request.TransportEndpoint,
+                ["hostCreationMode"] = AiRuntimeHostCreationMode.Process.ToString(),
+                ["success"] = result.Success,
+                ["failureReason"] = result.FailureReason,
+                ["durationMs"] = durationMs,
+                ["tenantId"] = request.TenantId,
+                ["tenantGroupId"] = request.TenantGroupId,
+                ["pipelineKey"] = request.ExecutionContextSnapshot?.ContextKey
+            };
+        }
+
+        private static IReadOnlyDictionary<string, object?> MergeEventProperties(
+            IReadOnlyDictionary<string, object?>? properties,
+            IReadOnlyDictionary<string, object?> additionalProperties)
+        {
+            var merged = new Dictionary<string, object?>();
+
+            if (properties is not null)
+            {
+                foreach (var item in properties)
+                {
+                    merged[item.Key] = item.Value;
+                }
+            }
+
+            foreach (var item in additionalProperties)
+            {
+                merged[item.Key] = item.Value;
+            }
+
+            return merged;
+        }
+
+        private static long CalculateDurationMs(
+            DateTimeOffset startedAtUtc,
+            DateTimeOffset completedAtUtc)
+        {
+            return (long)(completedAtUtc - startedAtUtc).TotalMilliseconds;
         }
 
         public async ValueTask DisposeAsync()
