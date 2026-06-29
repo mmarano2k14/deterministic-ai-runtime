@@ -1,6 +1,11 @@
-﻿using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Forensics;
+﻿using Multiplexed.Abstractions.AI.ControlPlane.Observability;
+using Multiplexed.Abstractions.AI.ControlPlane.Observability.Area;
+using Multiplexed.Abstractions.AI.ControlPlane.Observability.Events;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Forensics;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Dispatch;
+using Multiplexed.Abstractions.AI.Observability.Context;
+using Multiplexed.AI.Runtime.ControlPlane.Observability;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.SharedController
@@ -20,6 +25,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController
     /// </remarks>
     public sealed class LocalAiSharedRunDispatcher : IAiSharedRunDispatcher
     {
+        private const string LocalSharedRunDispatchOperation = "local-shared-run-dispatch";
         private const string RecoveryForensicsIdMetadataKey = "recovery.forensicsId";
         private const string RecoveryFailedExecutionIdMetadataKey = "recovery.failedExecutionId";
         private const string RecoveryFailedLocalRunIdMetadataKey = "recovery.failedLocalRunId";
@@ -27,6 +33,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController
 
         private readonly IAiRuntimeQueueControlPlane _runtimeQueue;
         private readonly IAiRuntimeRecoveryForensicsRecorder _forensicsRecorder;
+        private readonly IAiControlPlaneObserver _observer;
 
         /// <summary>
         /// Initializes a new instance of the <see cref="LocalAiSharedRunDispatcher"/> class.
@@ -39,7 +46,26 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController
             IAiRuntimeQueueControlPlane runtimeQueue)
             : this(
                 runtimeQueue,
-                new NoopAiRuntimeRecoveryForensicsRecorder())
+                new NoopAiRuntimeRecoveryForensicsRecorder(),
+                new NoopAiControlPlaneObserver())
+        {
+        }
+
+        /// <summary>
+        /// Initializes a new instance of the <see cref="LocalAiSharedRunDispatcher"/> class.
+        /// </summary>
+        /// <param name="runtimeQueue">The local runtime queue control-plane facade.</param>
+        /// <param name="observer">The control-plane observer.</param>
+        /// <exception cref="ArgumentNullException">
+        /// Thrown when <paramref name="runtimeQueue"/> or <paramref name="observer"/> is null.
+        /// </exception>
+        public LocalAiSharedRunDispatcher(
+            IAiRuntimeQueueControlPlane runtimeQueue,
+            IAiControlPlaneObserver observer)
+            : this(
+                runtimeQueue,
+                new NoopAiRuntimeRecoveryForensicsRecorder(),
+                observer)
         {
         }
 
@@ -54,9 +80,30 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController
         public LocalAiSharedRunDispatcher(
             IAiRuntimeQueueControlPlane runtimeQueue,
             IAiRuntimeRecoveryForensicsRecorder forensicsRecorder)
+            : this(
+                runtimeQueue,
+                forensicsRecorder,
+                new NoopAiControlPlaneObserver())
+        {
+        }
+
+        /// <summary>
+        /// Initializes a new instance of the <see cref="LocalAiSharedRunDispatcher"/> class.
+        /// </summary>
+        /// <param name="runtimeQueue">The local runtime queue control-plane facade.</param>
+        /// <param name="forensicsRecorder">The runtime recovery forensics recorder.</param>
+        /// <param name="observer">The control-plane observer.</param>
+        /// <exception cref="ArgumentNullException">
+        /// Thrown when <paramref name="runtimeQueue"/>, <paramref name="forensicsRecorder"/>, or <paramref name="observer"/> is null.
+        /// </exception>
+        public LocalAiSharedRunDispatcher(
+            IAiRuntimeQueueControlPlane runtimeQueue,
+            IAiRuntimeRecoveryForensicsRecorder forensicsRecorder,
+            IAiControlPlaneObserver observer)
         {
             _runtimeQueue = runtimeQueue ?? throw new ArgumentNullException(nameof(runtimeQueue));
             _forensicsRecorder = forensicsRecorder ?? throw new ArgumentNullException(nameof(forensicsRecorder));
+            _observer = observer ?? throw new ArgumentNullException(nameof(observer));
         }
 
         /// <inheritdoc />
@@ -84,6 +131,29 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController
 
             var startedAtUtc = DateTimeOffset.UtcNow;
 
+            await RecordLocalDispatchEventAsync(
+                    AiControlPlaneEventType.OperationStarted,
+                    request,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    new Dictionary<string, object?>
+                    {
+                        ["sharedRunId"] = request.SharedRun.SharedRunId,
+                        ["runtimeInstanceId"] = request.RuntimeInstanceId,
+                        ["claimToken"] = request.ClaimToken,
+                        ["requestedBy"] = request.RequestedBy,
+                        ["source"] = request.Source,
+                        ["reason"] = request.Reason,
+                        ["tenantId"] = request.SharedRun.ExecutionContextSnapshot.TenantId,
+                        ["tenantGroupId"] = request.SharedRun.ExecutionContextSnapshot.TenantGroupId,
+                        ["controlPlaneId"] = request.SharedRun.ControlPlaneId
+                    },
+                    cancellationToken)
+                .ConfigureAwait(false);
+
             try
             {
                 var operationMetadata =
@@ -110,7 +180,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController
 
                 if (!queueResult.Success)
                 {
-                    return new AiSharedRunDispatchResult
+                    var failedResult = new AiSharedRunDispatchResult
                     {
                         Success = false,
                         SharedRunId = request.SharedRun.SharedRunId,
@@ -123,6 +193,16 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController
                         DurationMs = CalculateDurationMs(startedAtUtc, completedAtUtc),
                         Diagnostics = queueResult.Diagnostics
                     };
+
+                    await RecordLocalDispatchResultEventAsync(
+                            request,
+                            failedResult,
+                            AiControlPlaneOperationOutcome.CompletedWithIssues,
+                            failedResult.FailureReason,
+                            cancellationToken)
+                        .ConfigureAwait(false);
+
+                    return failedResult;
                 }
 
                 await RecordLocalRecoveryDispatchForensicsAsync(
@@ -133,7 +213,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController
                         cancellationToken)
                     .ConfigureAwait(false);
 
-                return new AiSharedRunDispatchResult
+                var succeededResult = new AiSharedRunDispatchResult
                 {
                     Success = true,
                     SharedRunId = request.SharedRun.SharedRunId,
@@ -147,12 +227,22 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController
                     DurationMs = CalculateDurationMs(startedAtUtc, completedAtUtc),
                     Diagnostics = queueResult.Diagnostics
                 };
+
+                await RecordLocalDispatchResultEventAsync(
+                        request,
+                        succeededResult,
+                        AiControlPlaneOperationOutcome.Succeeded,
+                        null,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+                return succeededResult;
             }
             catch (Exception exception)
             {
                 var completedAtUtc = DateTimeOffset.UtcNow;
 
-                return new AiSharedRunDispatchResult
+                var failedResult = new AiSharedRunDispatchResult
                 {
                     Success = false,
                     SharedRunId = request.SharedRun.SharedRunId,
@@ -165,7 +255,155 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController
                     DurationMs = CalculateDurationMs(startedAtUtc, completedAtUtc),
                     Diagnostics = new[] { exception.Message }
                 };
+
+                await RecordLocalDispatchResultEventAsync(
+                        request,
+                        failedResult,
+                        AiControlPlaneOperationOutcome.Failed,
+                        exception.GetType().Name,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+                return failedResult;
             }
+        }
+
+        /// <summary>
+        /// Records a local shared run dispatch result control-plane event.
+        /// </summary>
+        /// <param name="request">The shared run dispatch request.</param>
+        /// <param name="result">The shared run dispatch result.</param>
+        /// <param name="outcome">The control-plane operation outcome.</param>
+        /// <param name="failureReason">The optional failure reason.</param>
+        /// <param name="cancellationToken">A token used to cancel the operation.</param>
+        /// <returns>A task that completes when the control-plane event has been recorded.</returns>
+        private Task RecordLocalDispatchResultEventAsync(
+            AiSharedRunDispatchRequest request,
+            AiSharedRunDispatchResult result,
+            AiControlPlaneOperationOutcome outcome,
+            string? failureReason,
+            CancellationToken cancellationToken)
+        {
+            return RecordLocalDispatchEventAsync(
+                result.Success ? AiControlPlaneEventType.OperationCompleted : AiControlPlaneEventType.OperationFailed,
+                request,
+                result.LocalRunId,
+                result.ExecutionId,
+                outcome,
+                failureReason,
+                result.DurationMs,
+                new Dictionary<string, object?>
+                {
+                    ["sharedRunId"] = result.SharedRunId,
+                    ["runtimeInstanceId"] = result.RuntimeInstanceId,
+                    ["localRunId"] = result.LocalRunId,
+                    ["executionId"] = result.ExecutionId,
+                    ["claimToken"] = result.ClaimToken,
+                    ["success"] = result.Success,
+                    ["message"] = result.Message,
+                    ["failureReason"] = result.FailureReason,
+                    ["durationMs"] = result.DurationMs,
+                    ["tenantId"] = request.SharedRun.ExecutionContextSnapshot.TenantId,
+                    ["tenantGroupId"] = request.SharedRun.ExecutionContextSnapshot.TenantGroupId,
+                    ["controlPlaneId"] = request.SharedRun.ControlPlaneId
+                },
+                cancellationToken);
+        }
+
+        /// <summary>
+        /// Records a local shared run dispatch control-plane event.
+        /// </summary>
+        /// <param name="eventType">The control-plane event type.</param>
+        /// <param name="request">The shared run dispatch request.</param>
+        /// <param name="localRunId">The optional local run identifier.</param>
+        /// <param name="executionId">The optional execution identifier.</param>
+        /// <param name="outcome">The optional control-plane operation outcome.</param>
+        /// <param name="failureReason">The optional failure reason.</param>
+        /// <param name="durationMs">The optional duration in milliseconds.</param>
+        /// <param name="properties">The optional event properties.</param>
+        /// <param name="cancellationToken">A token used to cancel the operation.</param>
+        /// <returns>A task that completes when the control-plane event has been recorded.</returns>
+        private async Task RecordLocalDispatchEventAsync(
+            AiControlPlaneEventType eventType,
+            AiSharedRunDispatchRequest request,
+            string? localRunId,
+            string? executionId,
+            AiControlPlaneOperationOutcome? outcome,
+            string? failureReason,
+            long? durationMs,
+            IReadOnlyDictionary<string, object?>? properties,
+            CancellationToken cancellationToken)
+        {
+            try
+            {
+                await _observer.RecordAsync(
+                        new AiControlPlaneEvent
+                        {
+                            EventType = eventType,
+                            Area = AiControlPlaneArea.SharedController,
+                            Operation = LocalSharedRunDispatchOperation,
+                            Outcome = outcome,
+                            FailureReason = failureReason,
+                            DurationMs = durationMs,
+                            Correlation = new AiRuntimeExecutionCorrelationContext
+                            {
+                                CorrelationId = string.IsNullOrWhiteSpace(request.CorrelationId)
+                                    ? request.SharedRun.CorrelationId ?? Guid.NewGuid().ToString("N")
+                                    : request.CorrelationId,
+                                RunId = request.SharedRun.SharedRunId,
+                                ExecutionId = executionId,
+                                RuntimeInstanceId = request.RuntimeInstanceId,
+                                PipelineKey = request.SharedRun.PipelineKey
+                            },
+                            Properties = MergeEventProperties(
+                                properties,
+                                new Dictionary<string, object?>
+                                {
+                                    ["sharedRunId"] = request.SharedRun.SharedRunId,
+                                    ["localRunId"] = localRunId,
+                                    ["executionId"] = executionId,
+                                    ["runtimeInstanceId"] = request.RuntimeInstanceId,
+                                    ["tenantId"] = request.SharedRun.ExecutionContextSnapshot.TenantId,
+                                    ["tenantGroupId"] = request.SharedRun.ExecutionContextSnapshot.TenantGroupId,
+                                    ["claimToken"] = request.ClaimToken,
+                                    ["controlPlaneId"] = request.SharedRun.ControlPlaneId
+                                })
+                        },
+                        cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            catch
+            {
+                // Control-plane observability must not break local shared run dispatch.
+            }
+        }
+
+        /// <summary>
+        /// Merges control-plane event properties.
+        /// </summary>
+        /// <param name="properties">The base event properties.</param>
+        /// <param name="additionalProperties">The additional event properties.</param>
+        /// <returns>The merged event properties.</returns>
+        private static IReadOnlyDictionary<string, object?> MergeEventProperties(
+            IReadOnlyDictionary<string, object?>? properties,
+            IReadOnlyDictionary<string, object?> additionalProperties)
+        {
+            var merged = new Dictionary<string, object?>();
+
+            if (properties is not null)
+            {
+                foreach (var item in properties)
+                {
+                    merged[item.Key] = item.Value;
+                }
+            }
+
+            foreach (var item in additionalProperties)
+            {
+                merged[item.Key] = item.Value;
+            }
+
+            return merged;
         }
 
         /// <summary>
