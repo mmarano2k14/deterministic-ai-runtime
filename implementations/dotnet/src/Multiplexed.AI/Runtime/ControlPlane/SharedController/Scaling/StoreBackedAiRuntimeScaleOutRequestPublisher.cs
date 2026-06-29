@@ -1,5 +1,10 @@
 ﻿using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.ControlPlane.Discovery;
+using Multiplexed.Abstractions.AI.ControlPlane.Observability;
+using Multiplexed.Abstractions.AI.ControlPlane.Observability.Area;
+using Multiplexed.Abstractions.AI.ControlPlane.Observability.Events;
+using Multiplexed.Abstractions.AI.Observability.Context;
+using Multiplexed.AI.Runtime.ControlPlane.Observability;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Scaling;
@@ -27,6 +32,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
         private const string ScaleOutRequestIdMetadataKey = "scaleout.requestId";
 
         /// <summary>
+        /// The control-plane operation name used for scale-out request publication events.
+        /// </summary>
+        private const string RuntimeScaleOutRequestPublishOperation = "runtime-scale-out-request-publish";
+
+        /// <summary>
         /// Persists scale-out requests created by this publisher.
         /// </summary>
         private readonly IAiRuntimeScaleOutRequestStore store;
@@ -42,6 +52,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
         private readonly AiRuntimeInstanceRegistrationOptions registrationOptions;
 
         /// <summary>
+        /// Records scale-out publication control-plane events.
+        /// </summary>
+        private readonly IAiControlPlaneObserver observer;
+
+        /// <summary>
         /// Initializes a new instance of the <see cref="StoreBackedAiRuntimeScaleOutRequestPublisher" /> class.
         /// </summary>
         /// <param name="store">The scale-out request store.</param>
@@ -51,6 +66,26 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
             IAiRuntimeScaleOutRequestStore store,
             IAiControlPlaneIdResolver controlPlaneIdResolver,
             IOptions<AiRuntimeInstanceRegistrationOptions>? registrationOptions = null)
+            : this(
+                store,
+                controlPlaneIdResolver,
+                registrationOptions,
+                new NoopAiControlPlaneObserver())
+        {
+        }
+
+        /// <summary>
+        /// Initializes a new instance of the <see cref="StoreBackedAiRuntimeScaleOutRequestPublisher" /> class.
+        /// </summary>
+        /// <param name="store">The scale-out request store.</param>
+        /// <param name="controlPlaneIdResolver">The logical control-plane identifier resolver.</param>
+        /// <param name="registrationOptions">The runtime instance registration options.</param>
+        /// <param name="observer">The control-plane observer.</param>
+        public StoreBackedAiRuntimeScaleOutRequestPublisher(
+            IAiRuntimeScaleOutRequestStore store,
+            IAiControlPlaneIdResolver controlPlaneIdResolver,
+            IOptions<AiRuntimeInstanceRegistrationOptions>? registrationOptions,
+            IAiControlPlaneObserver observer)
         {
             this.store =
                 store
@@ -63,6 +98,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
             this.registrationOptions =
                 registrationOptions?.Value
                 ?? new AiRuntimeInstanceRegistrationOptions();
+
+            this.observer =
+                observer
+                ?? throw new ArgumentNullException(nameof(observer));
         }
 
         /// <inheritdoc />
@@ -77,78 +116,316 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
 
             cancellationToken.ThrowIfCancellationRequested();
 
-            var controlPlaneId =
-                await this.ResolveControlPlaneIdAsync(
-                        request,
-                        cancellationToken)
-                    .ConfigureAwait(false);
+            var startedAtUtc = DateTimeOffset.UtcNow;
+            var scaleOutRequestId = CreateRequestId(request);
+            var providerHint = this.ResolveProviderHint();
 
-            var targetInstanceCount =
-                GetRequestedTargetInstanceCount(
-                    request);
-
-            var providerHint =
-                this.ResolveProviderHint();
-
-            var record = new AiRuntimeScaleOutRequestRecord
-            {
-                RequestId = CreateRequestId(request),
-                ControlPlaneId = controlPlaneId,
-                SharedRunId = request.SharedRunId,
-                ExecutionContextSnapshot = request.ExecutionContextSnapshot,
-
-                TenantId = request.TenantId,
-                TenantGroupId = request.TenantGroupId,
-                PipelineKey = request.PipelineKey,
-
-                IsolationMode = request.IsolationMode,
-                PreferDedicatedCapacity = request.PreferDedicatedCapacity,
-                AllowSharedFallback = request.AllowSharedFallback,
-                MaxRuntimeInstances = request.MaxRuntimeInstances,
-                RuntimeInstanceIdPrefix = request.RuntimeInstanceIdPrefix,
-                WorkerCountPerInstance = request.WorkerCountPerInstance,
-                MaxConcurrentRunsPerInstance = request.MaxConcurrentRunsPerInstance,
-                LocalQueueCapacity = request.LocalQueueCapacity,
-
-                Status = AiRuntimeScaleOutRequestStatus.Pending,
-                Reason = GetReason(request),
-
-                VisibleInstanceCount = request.VisibleInstanceCount,
-                AvailableInstanceCount = request.AvailableInstanceCount,
-                CurrentInstanceCount = request.CurrentInstanceCount,
-                MaxInstanceCount = request.MaxInstanceCount,
-                RequestedTargetInstanceCount = targetInstanceCount,
-
-                ProviderHint = providerHint,
-                RequestedBy = request.RequestedBy,
-                Source = request.Source,
-                CorrelationId = request.CorrelationId,
-                CreatedAtUtc = DateTimeOffset.UtcNow,
-
-                Metadata = CreateMetadata(
+            await this.RecordScaleOutPublishEventAsync(
+                    AiControlPlaneEventType.OperationStarted,
                     request,
-                    controlPlaneId,
-                    providerHint)
-            };
+                    scaleOutRequestId,
+                    null,
+                    providerHint,
+                    null,
+                    null,
+                    null,
+                    this.BuildScaleOutPublishProperties(
+                        request,
+                        scaleOutRequestId,
+                        null,
+                        providerHint,
+                        null,
+                        null),
+                    cancellationToken)
+                .ConfigureAwait(false);
 
-            var created =
-                await this.store
-                    .CreateAsync(
-                        record,
+            try
+            {
+                var controlPlaneId =
+                    await this.ResolveControlPlaneIdAsync(
+                            request,
+                            cancellationToken)
+                        .ConfigureAwait(false);
+
+                var targetInstanceCount =
+                    GetRequestedTargetInstanceCount(
+                        request);
+
+                var record = new AiRuntimeScaleOutRequestRecord
+                {
+                    RequestId = scaleOutRequestId,
+                    ControlPlaneId = controlPlaneId,
+                    SharedRunId = request.SharedRunId,
+                    ExecutionContextSnapshot = request.ExecutionContextSnapshot,
+
+                    TenantId = request.TenantId,
+                    TenantGroupId = request.TenantGroupId,
+                    PipelineKey = request.PipelineKey,
+
+                    IsolationMode = request.IsolationMode,
+                    PreferDedicatedCapacity = request.PreferDedicatedCapacity,
+                    AllowSharedFallback = request.AllowSharedFallback,
+                    MaxRuntimeInstances = request.MaxRuntimeInstances,
+                    RuntimeInstanceIdPrefix = request.RuntimeInstanceIdPrefix,
+                    WorkerCountPerInstance = request.WorkerCountPerInstance,
+                    MaxConcurrentRunsPerInstance = request.MaxConcurrentRunsPerInstance,
+                    LocalQueueCapacity = request.LocalQueueCapacity,
+
+                    Status = AiRuntimeScaleOutRequestStatus.Pending,
+                    Reason = GetReason(request),
+
+                    VisibleInstanceCount = request.VisibleInstanceCount,
+                    AvailableInstanceCount = request.AvailableInstanceCount,
+                    CurrentInstanceCount = request.CurrentInstanceCount,
+                    MaxInstanceCount = request.MaxInstanceCount,
+                    RequestedTargetInstanceCount = targetInstanceCount,
+
+                    ProviderHint = providerHint,
+                    RequestedBy = request.RequestedBy,
+                    Source = request.Source,
+                    CorrelationId = request.CorrelationId,
+                    CreatedAtUtc = DateTimeOffset.UtcNow,
+
+                    Metadata = CreateMetadata(
+                        request,
+                        controlPlaneId,
+                        providerHint)
+                };
+
+                var created =
+                    await this.store
+                        .CreateAsync(
+                            record,
+                            cancellationToken)
+                        .ConfigureAwait(false);
+
+                var result = new AiRuntimeScaleOutRequestResult
+                {
+                    Success = true,
+                    SharedRunId = request.SharedRunId,
+                    ScaleOutRequestId = created.RequestId,
+                    RequestedTargetInstanceCount = created.RequestedTargetInstanceCount,
+                    Message = string.Equals(created.RequestId, record.RequestId, StringComparison.Ordinal)
+                        ? "Scale-out request persisted."
+                        : "Scale-out request deduplicated against an existing pending request.",
+                    PublishedAtUtc = DateTimeOffset.UtcNow
+                };
+
+                await this.RecordScaleOutPublishEventAsync(
+                        AiControlPlaneEventType.OperationCompleted,
+                        request,
+                        result.ScaleOutRequestId,
+                        controlPlaneId,
+                        providerHint,
+                        AiControlPlaneOperationOutcome.Succeeded,
+                        null,
+                        CalculateDurationMs(startedAtUtc, DateTimeOffset.UtcNow),
+                        this.BuildScaleOutPublishProperties(
+                            request,
+                            result.ScaleOutRequestId,
+                            controlPlaneId,
+                            providerHint,
+                            result,
+                            null),
                         cancellationToken)
                     .ConfigureAwait(false);
 
-            return new AiRuntimeScaleOutRequestResult
+                return result;
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException)
             {
-                Success = true,
-                SharedRunId = request.SharedRunId,
-                ScaleOutRequestId = created.RequestId,
-                RequestedTargetInstanceCount = created.RequestedTargetInstanceCount,
-                Message = string.Equals(created.RequestId, record.RequestId, StringComparison.Ordinal)
-                    ? "Scale-out request persisted."
-                    : "Scale-out request deduplicated against an existing pending request.",
-                PublishedAtUtc = DateTimeOffset.UtcNow
+                await this.RecordScaleOutPublishEventAsync(
+                        AiControlPlaneEventType.OperationFailed,
+                        request,
+                        scaleOutRequestId,
+                        null,
+                        providerHint,
+                        AiControlPlaneOperationOutcome.Failed,
+                        exception.GetType().Name,
+                        CalculateDurationMs(startedAtUtc, DateTimeOffset.UtcNow),
+                        this.BuildScaleOutPublishProperties(
+                            request,
+                            scaleOutRequestId,
+                            null,
+                            providerHint,
+                            null,
+                            exception),
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+                throw;
+            }
+        }
+
+        /// <summary>
+        /// Records a scale-out request publication control-plane event.
+        /// </summary>
+        /// <param name="eventType">The control-plane event type.</param>
+        /// <param name="request">The scale-out request.</param>
+        /// <param name="scaleOutRequestId">The scale-out request identifier.</param>
+        /// <param name="controlPlaneId">The optional control-plane identifier.</param>
+        /// <param name="providerHint">The provider hint.</param>
+        /// <param name="outcome">The optional control-plane outcome.</param>
+        /// <param name="failureReason">The optional failure reason.</param>
+        /// <param name="durationMs">The optional duration in milliseconds.</param>
+        /// <param name="properties">The event properties.</param>
+        /// <param name="cancellationToken">A token used to cancel the operation.</param>
+        /// <returns>A task that completes when the control-plane event has been recorded.</returns>
+        private async Task RecordScaleOutPublishEventAsync(
+            AiControlPlaneEventType eventType,
+            AiRuntimeScaleOutRequest request,
+            string scaleOutRequestId,
+            string? controlPlaneId,
+            string providerHint,
+            AiControlPlaneOperationOutcome? outcome,
+            string? failureReason,
+            long? durationMs,
+            IReadOnlyDictionary<string, object?> properties,
+            CancellationToken cancellationToken)
+        {
+            try
+            {
+                await this.observer
+                    .RecordAsync(
+                        new AiControlPlaneEvent
+                        {
+                            EventType = eventType,
+                            Area = AiControlPlaneArea.Scaling,
+                            Operation = RuntimeScaleOutRequestPublishOperation,
+                            Outcome = outcome,
+                            FailureReason = failureReason,
+                            DurationMs = durationMs,
+                            Correlation = new AiRuntimeExecutionCorrelationContext
+                            {
+                                CorrelationId = string.IsNullOrWhiteSpace(request.CorrelationId)
+                                    ? request.SharedRunId
+                                    : request.CorrelationId,
+                                RunId = request.SharedRunId,
+                                PipelineKey = request.PipelineKey
+                            },
+                            Properties = MergeEventProperties(
+                                properties,
+                                new Dictionary<string, object?>
+                                {
+                                    ["scaleOutRequestId"] = scaleOutRequestId,
+                                    ["controlPlaneId"] = controlPlaneId ?? string.Empty,
+                                    ["providerHint"] = providerHint,
+                                    ["tenantId"] = request.TenantId,
+                                    ["tenantGroupId"] = request.TenantGroupId,
+                                    ["pipelineKey"] = request.PipelineKey,
+                                    ["sharedRunId"] = request.SharedRunId
+                                })
+                        },
+                        cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            catch
+            {
+                // Control-plane observability must not break scale-out request publication.
+            }
+        }
+
+        /// <summary>
+        /// Builds scale-out publication event properties.
+        /// </summary>
+        /// <param name="request">The scale-out request.</param>
+        /// <param name="scaleOutRequestId">The scale-out request identifier.</param>
+        /// <param name="controlPlaneId">The optional control-plane identifier.</param>
+        /// <param name="providerHint">The provider hint.</param>
+        /// <param name="result">The optional publication result.</param>
+        /// <param name="exception">The optional exception.</param>
+        /// <returns>The event properties.</returns>
+        private IReadOnlyDictionary<string, object?> BuildScaleOutPublishProperties(
+            AiRuntimeScaleOutRequest request,
+            string scaleOutRequestId,
+            string? controlPlaneId,
+            string providerHint,
+            AiRuntimeScaleOutRequestResult? result,
+            Exception? exception)
+        {
+            var properties = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["scaleOutRequestId"] = scaleOutRequestId,
+                ["controlPlaneId"] = controlPlaneId ?? string.Empty,
+                ["providerHint"] = providerHint,
+                ["sharedRunId"] = request.SharedRunId,
+                ["tenantId"] = request.TenantId,
+                ["tenantGroupId"] = request.TenantGroupId,
+                ["pipelineKey"] = request.PipelineKey,
+                ["requestedBy"] = request.RequestedBy,
+                ["source"] = request.Source,
+                ["reason"] = GetReason(request),
+                ["visibleInstanceCount"] = request.VisibleInstanceCount,
+                ["availableInstanceCount"] = request.AvailableInstanceCount,
+                ["currentInstanceCount"] = request.CurrentInstanceCount,
+                ["maxInstanceCount"] = request.MaxInstanceCount,
+                ["requestedTargetInstanceCount"] = GetRequestedTargetInstanceCount(request),
+                ["isolationMode"] = request.IsolationMode.ToString(),
+                ["preferDedicatedCapacity"] = request.PreferDedicatedCapacity,
+                ["allowSharedFallback"] = request.AllowSharedFallback,
+                ["runtimeInstanceIdPrefix"] = request.RuntimeInstanceIdPrefix
             };
+
+            if (result is not null)
+            {
+                properties["success"] = result.Success;
+                properties["message"] = result.Message;
+                properties["publishedScaleOutRequestId"] = result.ScaleOutRequestId;
+                properties["publishedRequestedTargetInstanceCount"] = result.RequestedTargetInstanceCount;
+            }
+
+            if (exception is not null)
+            {
+                properties["exception.type"] = exception.GetType().FullName;
+                properties["exception.message"] = exception.Message;
+                properties["failureReason"] = exception.GetType().Name;
+            }
+
+            foreach (var pair in request.Metadata)
+            {
+                properties[pair.Key] = pair.Value;
+                properties[$"scaleout.{pair.Key}"] = pair.Value;
+            }
+
+            return properties;
+        }
+
+        /// <summary>
+        /// Merges control-plane event properties.
+        /// </summary>
+        /// <param name="properties">The base event properties.</param>
+        /// <param name="additionalProperties">The additional event properties.</param>
+        /// <returns>The merged event properties.</returns>
+        private static IReadOnlyDictionary<string, object?> MergeEventProperties(
+            IReadOnlyDictionary<string, object?> properties,
+            IReadOnlyDictionary<string, object?> additionalProperties)
+        {
+            var merged = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var item in properties)
+            {
+                merged[item.Key] = item.Value;
+            }
+
+            foreach (var item in additionalProperties)
+            {
+                merged[item.Key] = item.Value;
+            }
+
+            return merged;
+        }
+
+        /// <summary>
+        /// Calculates duration in milliseconds.
+        /// </summary>
+        /// <param name="startedAtUtc">The start timestamp.</param>
+        /// <param name="completedAtUtc">The completion timestamp.</param>
+        /// <returns>The duration in milliseconds.</returns>
+        private static long CalculateDurationMs(
+            DateTimeOffset startedAtUtc,
+            DateTimeOffset completedAtUtc)
+        {
+            return (long)(completedAtUtc - startedAtUtc).TotalMilliseconds;
         }
 
         /// <summary>
