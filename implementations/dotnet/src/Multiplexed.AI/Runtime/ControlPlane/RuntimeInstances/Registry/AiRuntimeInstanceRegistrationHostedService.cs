@@ -26,6 +26,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
     /// - This service is provider-neutral.
     /// - Environment-specific metadata comes from <see cref="IAiRuntimeEnvironmentProvider"/>.
     /// - This service does not dispatch runs and does not execute DAG steps.
+    /// - Registry and capacity observability is intentionally provided by decorators around
+    ///   <see cref="IAiRuntimeInstanceRegistry"/> and <see cref="IAiRuntimeInstanceCapacityStore"/>.
+    /// - This keeps registration lifecycle logic independent from Redis, in-memory, logging,
+    ///   tracing, ledger, and future Kubernetes-backed stores.
     /// </remarks>
     public sealed class AiRuntimeInstanceRegistrationHostedService : BackgroundService
     {
@@ -63,9 +67,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
             this.logger = logger ?? throw new ArgumentNullException(nameof(logger));
 
             SafeLogInformation(
-                "Runtime capacity stores resolved. Count={StoreCount}, Stores={Stores}",
+                "Runtime capacity stores resolved. Count={StoreCount}, Stores={Stores}, RegistryType={RegistryType}",
                 this.capacityStores.Count,
-                string.Join(",", this.capacityStores.Select(store => store.GetType().FullName)));
+                string.Join(",", this.capacityStores.Select(store => store.GetType().FullName)),
+                this.registry.GetType().FullName);
         }
 
         /// <inheritdoc />
