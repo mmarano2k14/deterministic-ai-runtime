@@ -17,6 +17,7 @@ using Multiplexed.AI.McpServer.Tests.Integration.Helpers;
 using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Assertions;
 using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Definitions;
 using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helpers;
+using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Ledger;
 using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Models;
 using Multiplexed.AI.Stores;
 using Xunit;
@@ -116,6 +117,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 host.Services
                     .GetRequiredService<IOptions<AiRuntimeExecutionRecoveryReconciliationOptions>>()
                     .Value;
+
+            var ledger = host.Services.GetRequiredService<CapturingIntegrationDecisionLedgerRecorder>();
+            ledger.Clear();
 
             ProductionRecoveryOptionsAssertions.AssertDagResumeRecoveryEnabled(recoveryOptions);
 
@@ -449,6 +453,32 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 $"ControlRuntime='{tenantAControlRuntimeInstanceId}' -> untouched, 0 forensics events, " +
                 $"ExpectedForensics='{CountSeededWork(failedRuntimeGroups)}', ActualForensics='{allForensics.Length}', " +
                 $"CrossTenantLeakDetected='false', CrossIncidentLeakDetected='false', DuplicateRecoveryDetected='false', SelfRedispatchDetected='false'.");
+
+            var ledgerRecords = ledger.Records;
+
+            ProductionControlPlaneLedgerProofAssertions.AssertScaleOutAndRuntimeVisibilityProof(ledgerRecords);
+            ProductionControlPlaneLedgerProofAssertions.AssertConcurrentRecoveryProof(ledgerRecords);
+            ProductionControlPlaneLedgerProofAssertions.AssertContainsTenant(ledgerRecords, tenantA.TenantId);
+            ProductionControlPlaneLedgerProofAssertions.AssertContainsTenant(ledgerRecords, tenantB.TenantId);
+
+            ProductionControlPlaneLedgerProofOutput.WriteConcurrentRuntimeRecoveryProof(
+                this.output,
+                ledgerRecords,
+                new ProductionControlPlaneLedgerProofContext
+                {
+                    ControlPlaneId = controlPlaneId,
+                    TenantAId = tenantA.TenantId,
+                    TenantBId = tenantB.TenantId,
+                    TenantAFailedRuntimeInstanceId = tenantAFailedRuntimeInstanceId,
+                    TenantBFailedRuntimeInstanceId = tenantBFailedRuntimeInstanceId,
+                    ControlRuntimeInstanceId = tenantAControlRuntimeInstanceId,
+                    ExpectedRecoveredWorkCount = CountSeededWork(failedRuntimeGroups),
+                    RecoveredWorkCount = allRedispatchedRuns.Length,
+                    CrossTenantLeakDetected = false,
+                    CrossIncidentLeakDetected = false,
+                    DuplicateRecoveryDetected = false,
+                    SelfRedispatchDetected = false
+                });
         }
 
 

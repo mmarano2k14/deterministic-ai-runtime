@@ -12,9 +12,12 @@ using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers.Transport;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
+using Multiplexed.Abstractions.AI.Observability.Ledger;
 using Multiplexed.AI.McpServer.Host;
 using Multiplexed.AI.McpServer.Tests.Integration.Auth;
 using Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Http;
+using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Ledger;
+using Multiplexed.AI.Runtime.ControlPlane.DI;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strategy.Process;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http.ScaleOut;
 using System.Globalization;
@@ -186,6 +189,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic
                 services.Configure<AiRuntimeProcessHostCreationOptions>(
                     testConfiguration.GetSection("AiRuntimeProcessHostCreation"));
 
+                RegisterIntegrationLedgerProofServices(services);
+
                 RegisterHostManagerModeTestServices(services);
             });
 
@@ -218,6 +223,24 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic
                 Console.WriteLine(
                     $"[TEST MCP HOST] Runtime HTTP client factory injected into control-plane host. RuntimeClientCount='{runtimeClientsByRuntimeInstanceId.Count}', RuntimeInstances='{string.Join(", ", runtimeClientsByRuntimeInstanceId.Keys)}'.");
             });
+        }
+
+
+        /// <summary>
+        /// Registers test-only ledger capture services used by production scenario proof outputs.
+        /// </summary>
+        /// <param name="services">The service collection.</param>
+        private static void RegisterIntegrationLedgerProofServices(
+            IServiceCollection services)
+        {
+            services.TryAddSingleton<CapturingIntegrationDecisionLedgerRecorder>();
+            services.RemoveAll<IAiDecisionLedgerRecorder>();
+            services.AddSingleton<IAiDecisionLedgerRecorder>(serviceProvider =>
+                serviceProvider.GetRequiredService<CapturingIntegrationDecisionLedgerRecorder>());
+            services.AddAiControlPlaneRuntimeObservability();
+
+            Console.WriteLine(
+                "[TEST MCP HOST] Integration control-plane ledger recorder registered.");
         }
 
         /// <summary>
