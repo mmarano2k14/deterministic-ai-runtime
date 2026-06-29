@@ -2,12 +2,17 @@
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
+using Multiplexed.Abstractions.AI.ControlPlane.Observability;
+using Multiplexed.Abstractions.AI.ControlPlane.Observability.Area;
+using Multiplexed.Abstractions.AI.ControlPlane.Observability.Events;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Capacity;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers.Transport;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
+using Multiplexed.Abstractions.AI.Observability.Context;
+using Multiplexed.AI.Runtime.ControlPlane.Observability;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strategy
 {
@@ -16,6 +21,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
     /// </summary>
     public sealed class FixtureAiRuntimeHostCreationStrategy : IAiRuntimeHostCreationStrategy
     {
+        private const string FixtureHostCreationOperation = "runtime-fixture-host-creation";
+
         /// <summary>
         /// The runtime instance registry used to publish the fixture runtime host registration.
         /// </summary>
@@ -27,6 +34,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
         private readonly IAiRuntimeInstanceCapacityStore runtimeInstanceCapacityStore;
 
         /// <summary>
+        /// The control-plane observer.
+        /// </summary>
+        private readonly IAiControlPlaneObserver observer;
+
+        /// <summary>
         /// Initializes a new instance of the <see cref="FixtureAiRuntimeHostCreationStrategy"/> class.
         /// </summary>
         /// <param name="runtimeInstanceRegistry">The runtime instance registry.</param>
@@ -34,9 +46,27 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
         public FixtureAiRuntimeHostCreationStrategy(
             IAiRuntimeInstanceRegistry runtimeInstanceRegistry,
             IAiRuntimeInstanceCapacityStore runtimeInstanceCapacityStore)
+            : this(
+                runtimeInstanceRegistry,
+                runtimeInstanceCapacityStore,
+                new NoopAiControlPlaneObserver())
+        {
+        }
+
+        /// <summary>
+        /// Initializes a new instance of the <see cref="FixtureAiRuntimeHostCreationStrategy"/> class.
+        /// </summary>
+        /// <param name="runtimeInstanceRegistry">The runtime instance registry.</param>
+        /// <param name="runtimeInstanceCapacityStore">The runtime instance capacity store.</param>
+        /// <param name="observer">The control-plane observer.</param>
+        public FixtureAiRuntimeHostCreationStrategy(
+            IAiRuntimeInstanceRegistry runtimeInstanceRegistry,
+            IAiRuntimeInstanceCapacityStore runtimeInstanceCapacityStore,
+            IAiControlPlaneObserver observer)
         {
             this.runtimeInstanceRegistry = runtimeInstanceRegistry ?? throw new ArgumentNullException(nameof(runtimeInstanceRegistry));
             this.runtimeInstanceCapacityStore = runtimeInstanceCapacityStore ?? throw new ArgumentNullException(nameof(runtimeInstanceCapacityStore));
+            this.observer = observer ?? throw new ArgumentNullException(nameof(observer));
         }
 
         /// <inheritdoc />
@@ -48,54 +78,227 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
             CancellationToken cancellationToken = default)
         {
             ArgumentNullException.ThrowIfNull(request);
+            cancellationToken.ThrowIfCancellationRequested();
 
-            var metadata = CreateMetadata(request);
-            var now = DateTimeOffset.UtcNow;
+            var startedAtUtc = DateTimeOffset.UtcNow;
 
-            await this.runtimeInstanceRegistry.RegisterAsync(
-                new AiRuntimeInstanceRegistration
-                {
-                    RuntimeInstanceId = request.RuntimeInstanceId,
-                    ControlPlaneId = request.ControlPlaneId,
-                    WorkerCount = request.WorkerCountPerInstance,
-                    MaxConcurrentRuns = request.MaxConcurrentRunsPerInstance,
-                    QueueCapacity = request.LocalQueueCapacity,
-                    Metadata = metadata,
-                    RegisteredAtUtc = now
-                },
-                cancellationToken).ConfigureAwait(false);
+            await this.RecordFixtureHostCreationEventAsync(
+                    AiControlPlaneEventType.OperationStarted,
+                    request,
+                    null,
+                    null,
+                    null,
+                    null,
+                    new Dictionary<string, object?>
+                    {
+                        ["runtimeInstanceId"] = request.RuntimeInstanceId,
+                        ["controlPlaneId"] = request.ControlPlaneId,
+                        ["providerName"] = request.ProviderName,
+                        ["transportName"] = request.TransportName,
+                        ["transportEndpoint"] = request.TransportEndpoint,
+                        ["hostCreationMode"] = request.HostCreationMode.ToString(),
+                        ["tenantId"] = request.TenantId,
+                        ["tenantGroupId"] = request.TenantGroupId,
+                        ["pipelineKey"] = request.ExecutionContextSnapshot?.ContextKey
+                    },
+                    cancellationToken)
+                .ConfigureAwait(false);
 
-            await this.runtimeInstanceCapacityStore.PublishAsync(
-                new AiRuntimeInstanceCapacityDescriptor
-                {
-                    RuntimeInstanceId = request.RuntimeInstanceId,
-                    Status = AiRuntimeInstanceStatus.Ready,
-                    WorkerCount = request.WorkerCountPerInstance,
-                    ActiveWorkerCount = 0,
-                    AvailableWorkerCount = request.WorkerCountPerInstance,
-                    MaxConcurrentRuns = request.MaxConcurrentRunsPerInstance,
-                    MaxRunSlots = request.MaxConcurrentRunsPerInstance,
-                    AvailableRunSlots = request.MaxConcurrentRunsPerInstance,
-                    ReservedRunSlots = 0,
-                    EffectiveAvailableRunSlots = request.MaxConcurrentRunsPerInstance,
-                    QueuedRunCount = 0,
-                    RunningRunCount = 0,
-                    ActiveRunCount = 0,
-                    IsQueuePaused = false,
-                    CanAcceptRun = true,
-                    LastHeartbeatAtUtc = now,
-                    ControlPlaneId = request.ControlPlaneId,
-                    Metadata = metadata
-                },
-                cancellationToken).ConfigureAwait(false);
+            try
+            {
+                var metadata = CreateMetadata(request);
+                var now = DateTimeOffset.UtcNow;
 
-            return AiRuntimeHostStartResult.Started(
-                request.ExecutionContextSnapshot,
-                request.RuntimeInstanceId,
-                request.ProviderName,
-                request.TransportName,
-                request.TransportEndpoint,
-                metadata);
+                await this.runtimeInstanceRegistry.RegisterAsync(
+                    new AiRuntimeInstanceRegistration
+                    {
+                        RuntimeInstanceId = request.RuntimeInstanceId,
+                        ControlPlaneId = request.ControlPlaneId,
+                        WorkerCount = request.WorkerCountPerInstance,
+                        MaxConcurrentRuns = request.MaxConcurrentRunsPerInstance,
+                        QueueCapacity = request.LocalQueueCapacity,
+                        Metadata = metadata,
+                        RegisteredAtUtc = now
+                    },
+                    cancellationToken).ConfigureAwait(false);
+
+                await this.runtimeInstanceCapacityStore.PublishAsync(
+                    new AiRuntimeInstanceCapacityDescriptor
+                    {
+                        RuntimeInstanceId = request.RuntimeInstanceId,
+                        Status = AiRuntimeInstanceStatus.Ready,
+                        WorkerCount = request.WorkerCountPerInstance,
+                        ActiveWorkerCount = 0,
+                        AvailableWorkerCount = request.WorkerCountPerInstance,
+                        MaxConcurrentRuns = request.MaxConcurrentRunsPerInstance,
+                        MaxRunSlots = request.MaxConcurrentRunsPerInstance,
+                        AvailableRunSlots = request.MaxConcurrentRunsPerInstance,
+                        ReservedRunSlots = 0,
+                        EffectiveAvailableRunSlots = request.MaxConcurrentRunsPerInstance,
+                        QueuedRunCount = 0,
+                        RunningRunCount = 0,
+                        ActiveRunCount = 0,
+                        IsQueuePaused = false,
+                        CanAcceptRun = true,
+                        LastHeartbeatAtUtc = now,
+                        ControlPlaneId = request.ControlPlaneId,
+                        Metadata = metadata
+                    },
+                    cancellationToken).ConfigureAwait(false);
+
+                var result = AiRuntimeHostStartResult.Started(
+                    request.ExecutionContextSnapshot,
+                    request.RuntimeInstanceId,
+                    request.ProviderName,
+                    request.TransportName,
+                    request.TransportEndpoint,
+                    metadata);
+
+                await this.RecordFixtureHostCreationResultAsync(
+                        request,
+                        result,
+                        startedAtUtc,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+                return result;
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException)
+            {
+                var completedAtUtc = DateTimeOffset.UtcNow;
+                var durationMs = CalculateDurationMs(startedAtUtc, completedAtUtc);
+
+                await this.RecordFixtureHostCreationEventAsync(
+                        AiControlPlaneEventType.OperationFailed,
+                        request,
+                        null,
+                        AiControlPlaneOperationOutcome.Failed,
+                        exception.GetType().Name,
+                        durationMs,
+                        new Dictionary<string, object?>
+                        {
+                            ["runtimeInstanceId"] = request.RuntimeInstanceId,
+                            ["controlPlaneId"] = request.ControlPlaneId,
+                            ["providerName"] = request.ProviderName,
+                            ["transportName"] = request.TransportName,
+                            ["transportEndpoint"] = request.TransportEndpoint,
+                            ["hostCreationMode"] = request.HostCreationMode.ToString(),
+                            ["durationMs"] = durationMs,
+                            ["exception.type"] = exception.GetType().FullName,
+                            ["exception.message"] = exception.Message
+                        },
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+                throw;
+            }
+        }
+
+        /// <summary>
+        /// Records a fixture host creation result.
+        /// </summary>
+        /// <param name="request">The host start request.</param>
+        /// <param name="result">The host start result.</param>
+        /// <param name="startedAtUtc">The operation start timestamp.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <returns>A task representing the asynchronous operation.</returns>
+        private async Task RecordFixtureHostCreationResultAsync(
+            AiRuntimeHostStartRequest request,
+            AiRuntimeHostStartResult result,
+            DateTimeOffset startedAtUtc,
+            CancellationToken cancellationToken)
+        {
+            var completedAtUtc = DateTimeOffset.UtcNow;
+            var durationMs = CalculateDurationMs(startedAtUtc, completedAtUtc);
+
+            await this.RecordFixtureHostCreationEventAsync(
+                    AiControlPlaneEventType.OperationCompleted,
+                    request,
+                    result,
+                    AiControlPlaneOperationOutcome.Succeeded,
+                    null,
+                    durationMs,
+                    new Dictionary<string, object?>
+                    {
+                        ["runtimeInstanceId"] = result.RuntimeInstanceId ?? request.RuntimeInstanceId,
+                        ["controlPlaneId"] = request.ControlPlaneId,
+                        ["providerName"] = result.ProviderName ?? request.ProviderName,
+                        ["transportName"] = result.TransportName ?? request.TransportName,
+                        ["transportEndpoint"] = result.TransportEndpoint ?? request.TransportEndpoint,
+                        ["hostCreationMode"] = request.HostCreationMode.ToString(),
+                        ["success"] = result.Success,
+                        ["durationMs"] = durationMs
+                    },
+                    cancellationToken)
+                .ConfigureAwait(false);
+        }
+
+        /// <summary>
+        /// Records a fixture host creation control-plane event.
+        /// </summary>
+        /// <param name="eventType">The control-plane event type.</param>
+        /// <param name="request">The host start request.</param>
+        /// <param name="result">The optional host start result.</param>
+        /// <param name="outcome">The optional outcome.</param>
+        /// <param name="failureReason">The optional failure reason.</param>
+        /// <param name="durationMs">The optional duration in milliseconds.</param>
+        /// <param name="properties">The event properties.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <returns>A task representing the asynchronous operation.</returns>
+        private async Task RecordFixtureHostCreationEventAsync(
+            AiControlPlaneEventType eventType,
+            AiRuntimeHostStartRequest request,
+            AiRuntimeHostStartResult? result,
+            AiControlPlaneOperationOutcome? outcome,
+            string? failureReason,
+            long? durationMs,
+            IReadOnlyDictionary<string, object?>? properties,
+            CancellationToken cancellationToken)
+        {
+            try
+            {
+                await this.observer
+                    .RecordAsync(
+                        new AiControlPlaneEvent
+                        {
+                            EventType = eventType,
+                            Area = AiControlPlaneArea.Scaling,
+                            Operation = FixtureHostCreationOperation,
+                            Outcome = outcome,
+                            FailureReason = failureReason,
+                            DurationMs = durationMs,
+                            Correlation = new AiRuntimeExecutionCorrelationContext
+                            {
+                                CorrelationId = string.IsNullOrWhiteSpace(request.RuntimeInstanceId)
+                                    ? Guid.NewGuid().ToString("N")
+                                    : request.RuntimeInstanceId,
+                                RuntimeInstanceId = result?.RuntimeInstanceId ?? request.RuntimeInstanceId,
+                                PipelineKey = request.ExecutionContextSnapshot?.ContextKey
+                            },
+                            Properties = MergeEventProperties(
+                                properties,
+                                new Dictionary<string, object?>
+                                {
+                                    ["runtimeInstanceId"] = result?.RuntimeInstanceId ?? request.RuntimeInstanceId,
+                                    ["controlPlaneId"] = request.ControlPlaneId,
+                                    ["providerName"] = result?.ProviderName ?? request.ProviderName,
+                                    ["transportName"] = result?.TransportName ?? request.TransportName,
+                                    ["transportEndpoint"] = result?.TransportEndpoint ?? request.TransportEndpoint,
+                                    ["hostCreationMode"] = request.HostCreationMode.ToString(),
+                                    ["tenantId"] = request.TenantId,
+                                    ["tenantGroupId"] = request.TenantGroupId,
+                                    ["pipelineKey"] = request.ExecutionContextSnapshot?.ContextKey,
+                                    ["success"] = result?.Success,
+                                    ["failureReason"] = result?.FailureReason
+                                })
+                        },
+                        cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            catch
+            {
+                // Control-plane observability must not break fixture host creation.
+            }
         }
 
         /// <summary>
@@ -144,6 +347,47 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
             }
 
             return metadata;
+        }
+
+        /// <summary>
+        /// Merges control-plane event properties.
+        /// </summary>
+        /// <param name="properties">The base event properties.</param>
+        /// <param name="additionalProperties">The additional event properties.</param>
+        /// <returns>The merged event properties.</returns>
+        private static IReadOnlyDictionary<string, object?> MergeEventProperties(
+            IReadOnlyDictionary<string, object?>? properties,
+            IReadOnlyDictionary<string, object?> additionalProperties)
+        {
+            var merged = new Dictionary<string, object?>();
+
+            if (properties is not null)
+            {
+                foreach (var item in properties)
+                {
+                    merged[item.Key] = item.Value;
+                }
+            }
+
+            foreach (var item in additionalProperties)
+            {
+                merged[item.Key] = item.Value;
+            }
+
+            return merged;
+        }
+
+        /// <summary>
+        /// Calculates duration in milliseconds.
+        /// </summary>
+        /// <param name="startedAtUtc">The start timestamp.</param>
+        /// <param name="completedAtUtc">The completion timestamp.</param>
+        /// <returns>The duration in milliseconds.</returns>
+        private static long CalculateDurationMs(
+            DateTimeOffset startedAtUtc,
+            DateTimeOffset completedAtUtc)
+        {
+            return (long)(completedAtUtc - startedAtUtc).TotalMilliseconds;
         }
     }
 }

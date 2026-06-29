@@ -214,7 +214,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
             services.TryAddSingleton<IAiRuntimeRunExecutionIndex, InMemoryAiRuntimeRunExecutionIndex>();
             services.TryAddSingleton<IAiRuntimeQueueControlPlane, AiRuntimeQueueControlPlane>();
 
-            services.TryAddSingleton<IAiRuntimeInstanceRegistry>(serviceProvider =>
+            services.TryAddSingleton<RedisAiRuntimeInstanceRegistry>(serviceProvider =>
             {
                 var redis =
                     serviceProvider.GetRequiredService<IConnectionMultiplexer>();
@@ -238,6 +238,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
                     visibilityEvaluator,
                     executionContextSnapshotProvider);
             });
+
+            services.TryAddSingleton<IAiRuntimeInstanceRegistry>(serviceProvider =>
+                new ObservedAiRuntimeInstanceRegistry(
+                    serviceProvider.GetRequiredService<RedisAiRuntimeInstanceRegistry>(),
+                    serviceProvider.GetRequiredService<IAiControlPlaneObserver>()));
 
             services.TryAddSingleton<IAiRuntimeInstanceControlPlane, AiRuntimeInstanceControlPlane>();
             services.TryAddSingleton<IAiRuntimeEnvironmentProvider, LocalAiRuntimeEnvironmentProvider>();
@@ -279,7 +284,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
 
             services.TryAddSingleton<IAiSharedRuntimeController, AiSharedRuntimeController>();
 
-            services.TryAddSingleton<IAiRuntimeInstanceCapacityStore>(serviceProvider =>
+            services.TryAddSingleton<RedisAiRuntimeInstanceCapacityStore>(serviceProvider =>
             {
                 var redis =
                     serviceProvider.GetRequiredService<IConnectionMultiplexer>();
@@ -303,6 +308,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
                     visibilityEvaluator,
                     executionContextSnapshotProvider);
             });
+
+            services.TryAddSingleton<IAiRuntimeInstanceCapacityStore>(serviceProvider =>
+                new ObservedAiRuntimeInstanceCapacityStore(
+                    serviceProvider.GetRequiredService<RedisAiRuntimeInstanceCapacityStore>(),
+                    serviceProvider.GetRequiredService<IAiControlPlaneObserver>()));
 
             services.TryAddSingleton<IAiRuntimeHostIdentity, AiRuntimeHostIdentity>();
             services.TryAddSingleton<IAiControlPlaneHostIdentity, AiControlPlaneHostIdentity>();

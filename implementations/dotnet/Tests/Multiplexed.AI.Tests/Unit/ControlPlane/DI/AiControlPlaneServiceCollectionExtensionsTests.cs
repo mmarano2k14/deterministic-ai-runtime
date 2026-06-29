@@ -3,8 +3,10 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.ControlPlane.Admission;
+using Multiplexed.Abstractions.AI.ControlPlane.Discovery;
 using Multiplexed.Abstractions.AI.ControlPlane.Observability;
 using Multiplexed.Abstractions.AI.ControlPlane.Replay;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Capacity;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Control;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Health;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Recovery;
@@ -19,6 +21,7 @@ using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Queue;
 using Multiplexed.AI.Runtime.ControlPlane.DI;
 using Multiplexed.AI.Runtime.ControlPlane.Observability;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Capacity;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Health;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue;
@@ -28,6 +31,7 @@ using Multiplexed.AI.Runtime.ControlPlane.SharedController.Store;
 using Multiplexed.AI.Runtime.ControlPlane.SharedQueue;
 using Multiplexed.AI.Runtime.ControlPlane.ShareQueue;
 using Multiplexed.AI.Runtime.Observability.Logging;
+using Multiplexed.AI.Tests.Fixtures;
 using StackExchange.Redis;
 
 namespace Multiplexed.AI.Tests.Unit.ControlPlane.DI
@@ -819,6 +823,45 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.DI
                 sinkRegistrations,
                 serviceDescriptor =>
                     serviceDescriptor.ImplementationType == typeof(RuntimeObservabilityAiControlPlaneEventSink));
+        }
+
+        /// <summary>
+        /// Verifies that AddAiControlPlane wires observed runtime instance stores without requiring Redis resolution.
+        /// </summary>
+        [Fact]
+        public void AddAiControlPlane_Should_Register_Observed_RuntimeInstance_Registry_And_CapacityStore_Descriptors()
+        {
+            var services = new ServiceCollection();
+
+            services.AddLogging();
+            services.AddAiControlPlane();
+
+            var registryDescriptor = services.SingleOrDefault(service =>
+                service.ServiceType == typeof(IAiRuntimeInstanceRegistry));
+
+            var capacityStoreDescriptor = services.SingleOrDefault(service =>
+                service.ServiceType == typeof(IAiRuntimeInstanceCapacityStore));
+
+            var redisRegistryDescriptor = services.SingleOrDefault(service =>
+                service.ServiceType == typeof(RedisAiRuntimeInstanceRegistry));
+
+            var redisCapacityStoreDescriptor = services.SingleOrDefault(service =>
+                service.ServiceType == typeof(RedisAiRuntimeInstanceCapacityStore));
+
+            Assert.NotNull(registryDescriptor);
+            Assert.NotNull(capacityStoreDescriptor);
+            Assert.NotNull(redisRegistryDescriptor);
+            Assert.NotNull(redisCapacityStoreDescriptor);
+
+            Assert.Equal(ServiceLifetime.Singleton, registryDescriptor.Lifetime);
+            Assert.Equal(ServiceLifetime.Singleton, capacityStoreDescriptor.Lifetime);
+            Assert.Equal(ServiceLifetime.Singleton, redisRegistryDescriptor.Lifetime);
+            Assert.Equal(ServiceLifetime.Singleton, redisCapacityStoreDescriptor.Lifetime);
+
+            Assert.NotNull(registryDescriptor.ImplementationFactory);
+            Assert.NotNull(capacityStoreDescriptor.ImplementationFactory);
+            Assert.NotNull(redisRegistryDescriptor.ImplementationFactory);
+            Assert.NotNull(redisCapacityStoreDescriptor.ImplementationFactory);
         }
     }
 }
