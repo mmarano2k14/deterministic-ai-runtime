@@ -121,7 +121,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
         }
 
         /// <inheritdoc />
-        /// <inheritdoc />
         public async Task<AiSharedQueueDispatchResult> DispatchNextAsync(
             AiSharedQueueDispatchRequest request,
             CancellationToken cancellationToken = default)
@@ -311,6 +310,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                         await PublishScaleOutRequestAsync(
                                 sharedRun,
                                 admissionDecision,
+                                operationMetadata,
                                 cancellationToken)
                             .ConfigureAwait(false);
 
@@ -394,6 +394,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                         await PublishScaleOutRequestAsync(
                                 sharedRun,
                                 admissionDecision,
+                                operationMetadata,
                                 cancellationToken)
                             .ConfigureAwait(false);
 
@@ -977,10 +978,12 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
         /// </summary>
         /// <param name="sharedRun">The shared run record.</param>
         /// <param name="admissionDecision">The scale-out admission decision.</param>
+        /// <param name="operationMetadata">The merged dispatch metadata, including queue item recovery metadata.</param>
         /// <param name="cancellationToken">A token used to cancel the operation.</param>
         private async Task PublishScaleOutRequestAsync(
             AiSharedRunRecord sharedRun,
             AiRunAdmissionDecision admissionDecision,
+            IReadOnlyDictionary<string, string> operationMetadata,
             CancellationToken cancellationToken)
         {
             var tenantRuntimeSettings =
@@ -1001,7 +1004,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
 
             var metadata =
                 CreateScaleOutRedispatchMetadata(
-                    sharedRun);
+                    sharedRun,
+                    operationMetadata);
 
             var publishResult =
                 await _scaleOutPublisher
@@ -1055,14 +1059,25 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
         /// Creates metadata for replacement scale-out requests emitted from shared queue redispatch.
         /// </summary>
         /// <param name="sharedRun">The shared run record.</param>
+        /// <param name="operationMetadata">The merged dispatch metadata to propagate to the replacement scale-out request.</param>
         /// <returns>The scale-out metadata.</returns>
         private static IReadOnlyDictionary<string, string> CreateScaleOutRedispatchMetadata(
-            AiSharedRunRecord sharedRun)
+            AiSharedRunRecord sharedRun,
+            IReadOnlyDictionary<string, string> operationMetadata)
         {
             var metadata =
                 new Dictionary<string, string>(
                     sharedRun.Metadata,
                     StringComparer.OrdinalIgnoreCase);
+
+            foreach (var item in operationMetadata)
+            {
+                if (!string.IsNullOrWhiteSpace(item.Key))
+                {
+                    metadata[item.Key] =
+                        item.Value ?? string.Empty;
+                }
+            }
 
             metadata[ScaleOutIntentMetadataKey] =
                 ScaleOutIntentSharedQueueRedispatchReplacement;

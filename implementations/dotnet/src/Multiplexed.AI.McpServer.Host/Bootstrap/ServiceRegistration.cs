@@ -931,6 +931,11 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
                 options.RequeueUnfinishedRuns = true;
             }
 
+            if (section["EnableDagExecutionResume"] is null)
+            {
+                options.EnableDagExecutionResume = true;
+            }
+
             if (section["DryRun"] is null)
             {
                 options.DryRun = false;

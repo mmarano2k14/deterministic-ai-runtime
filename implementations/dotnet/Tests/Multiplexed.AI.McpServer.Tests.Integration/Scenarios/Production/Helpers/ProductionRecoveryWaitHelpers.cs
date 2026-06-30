@@ -885,5 +885,425 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
                 index++;
             }
         }
+
+        /// <summary>
+        /// Waits until a real durable DAG execution has reached the expected completed step count.
+        /// </summary>
+        /// <param name="dagStore">The DAG execution store.</param>
+        /// <param name="executionId">The execution identifier.</param>
+        /// <param name="minimumCompletedSteps">The minimum completed step count.</param>
+        /// <param name="timeout">The wait timeout.</param>
+        /// <returns>A task that completes when the expected progress is visible.</returns>
+        public static async Task WaitForDagCompletedStepCountAsync(
+            IAiDagExecutionStore dagStore,
+            string executionId,
+            int minimumCompletedSteps,
+            TimeSpan timeout)
+        {
+            ArgumentNullException.ThrowIfNull(dagStore);
+            ArgumentException.ThrowIfNullOrWhiteSpace(executionId);
+            ArgumentOutOfRangeException.ThrowIfNegativeOrZero(minimumCompletedSteps);
+
+            var deadline =
+                DateTimeOffset.UtcNow.Add(timeout);
+
+            var lastCompletedCount =
+                0;
+
+            var lastStatusBreakdown =
+                string.Empty;
+
+            while (DateTimeOffset.UtcNow < deadline)
+            {
+                var state =
+                    await dagStore
+                        .GetStateAsync(executionId)
+                        .ConfigureAwait(false);
+
+                if (state is not null)
+                {
+                    lastCompletedCount =
+                        state.Steps.Values.Count(step =>
+                            step.Status == AiStepExecutionStatus.Completed);
+
+                    lastStatusBreakdown =
+                        string.Join(
+                            ",",
+                            state.Steps.Values
+                                .GroupBy(step => step.Status)
+                                .OrderBy(group => group.Key.ToString(), StringComparer.Ordinal)
+                                .Select(group => $"{group.Key}:{group.Count()}"));
+
+                    if (lastCompletedCount >= minimumCompletedSteps)
+                    {
+                        return;
+                    }
+                }
+
+                await Task
+                    .Delay(TimeSpan.FromMilliseconds(250))
+                    .ConfigureAwait(false);
+            }
+
+            Assert.Fail(
+                "The real DAG execution did not reach the expected progress before process kill. " +
+                $"ExecutionId='{executionId}', ExpectedCompletedSteps='{minimumCompletedSteps}', LastCompletedSteps='{lastCompletedCount}', LastStatusBreakdown='{lastStatusBreakdown}'.");
+
+            throw new InvalidOperationException(
+                "Unreachable assertion path.");
+        }
+
+        /// <summary>
+        /// Waits until a shared run has a real runtime execution identifier assigned.
+        /// </summary>
+        /// <param name="sharedRunStore">The shared run store.</param>
+        /// <param name="sharedRunId">The shared run identifier.</param>
+        /// <param name="timeout">The wait timeout.</param>
+        /// <returns>The shared run record containing the assigned execution identifier.</returns>
+        public static async Task<AiSharedRunRecord> WaitForSharedRunExecutionIdAsync(
+            IAiSharedRunStore sharedRunStore,
+            string sharedRunId,
+            TimeSpan timeout)
+        {
+            ArgumentNullException.ThrowIfNull(sharedRunStore);
+            ArgumentException.ThrowIfNullOrWhiteSpace(sharedRunId);
+
+            var deadline =
+                DateTimeOffset.UtcNow.Add(timeout);
+
+            AiSharedRunRecord? lastRun =
+                null;
+
+            while (DateTimeOffset.UtcNow < deadline)
+            {
+                lastRun =
+                    await sharedRunStore
+                        .GetAsync(sharedRunId)
+                        .ConfigureAwait(false);
+
+                if (!string.IsNullOrWhiteSpace(lastRun?.ExecutionId))
+                {
+                    return lastRun;
+                }
+
+                await Task
+                    .Delay(TimeSpan.FromMilliseconds(250))
+                    .ConfigureAwait(false);
+            }
+
+            Assert.Fail(
+                "Shared run did not expose a real execution id within the timeout. " +
+                $"SharedRunId='{sharedRunId}', LastStatus='{lastRun?.Status}', LastRuntimeInstanceId='{lastRun?.AssignedRuntimeInstanceId}', LastLocalRunId='{lastRun?.LocalRunId}', LastExecutionId='{lastRun?.ExecutionId}'.");
+
+            throw new InvalidOperationException(
+                "Unreachable assertion path.");
+        }
+
+        /// <summary>
+        /// Waits until a dispatched shared run exposes a durable DAG execution identifier.
+        /// </summary>
+        /// <param name="sharedRunStore">The shared run store.</param>
+        /// <param name="runExecutionIndex">The runtime run execution index.</param>
+        /// <param name="dagStore">The DAG execution store.</param>
+        /// <param name="sharedRunId">The shared run identifier.</param>
+        /// <param name="timeout">The wait timeout.</param>
+        /// <returns>The shared run record and the resolved DAG execution identifier.</returns>
+        public static async Task<(AiSharedRunRecord SharedRun, string ExecutionId)> WaitForDurableDagExecutionAsync(
+            IAiSharedRunStore sharedRunStore,
+            IAiRuntimeRunExecutionIndex runExecutionIndex,
+            IAiDagExecutionStore dagStore,
+            string sharedRunId,
+            TimeSpan timeout)
+        {
+            ArgumentNullException.ThrowIfNull(sharedRunStore);
+            ArgumentNullException.ThrowIfNull(runExecutionIndex);
+            ArgumentNullException.ThrowIfNull(dagStore);
+            ArgumentException.ThrowIfNullOrWhiteSpace(sharedRunId);
+
+            var deadline =
+                DateTimeOffset.UtcNow.Add(timeout);
+
+            AiSharedRunRecord? lastRun =
+                null;
+
+            AiRuntimeRunExecutionIndexEntry? lastIndexEntry =
+                null;
+
+            string? lastCandidateExecutionId =
+                null;
+
+            while (DateTimeOffset.UtcNow < deadline)
+            {
+                lastRun =
+                    await sharedRunStore
+                        .GetAsync(sharedRunId)
+                        .ConfigureAwait(false);
+
+                if (lastRun is not null)
+                {
+                    if (!string.IsNullOrWhiteSpace(lastRun.LocalRunId))
+                    {
+                        lastIndexEntry =
+                            await runExecutionIndex
+                                .GetAsync(lastRun.LocalRunId)
+                                .ConfigureAwait(false);
+                    }
+
+                    var candidates =
+                        new[]
+                        {
+                    lastRun.ExecutionId,
+                    lastIndexEntry?.ExecutionId,
+                    lastRun.LocalRunId
+                        };
+
+                    foreach (var candidate in candidates)
+                    {
+                        if (string.IsNullOrWhiteSpace(candidate))
+                        {
+                            continue;
+                        }
+
+                        lastCandidateExecutionId =
+                            candidate;
+
+                        var state =
+                            await dagStore
+                                .GetStateAsync(candidate)
+                                .ConfigureAwait(false);
+
+                        if (state is not null)
+                        {
+                            return (lastRun, candidate);
+                        }
+                    }
+                }
+
+                await Task
+                    .Delay(TimeSpan.FromMilliseconds(250))
+                    .ConfigureAwait(false);
+            }
+
+            Assert.Fail(
+                "Shared run did not expose a durable DAG execution within the timeout. " +
+                $"SharedRunId='{sharedRunId}', LastStatus='{lastRun?.Status}', LastRuntimeInstanceId='{lastRun?.AssignedRuntimeInstanceId}', " +
+                $"LastLocalRunId='{lastRun?.LocalRunId}', LastExecutionId='{lastRun?.ExecutionId}', LastIndexExecutionId='{lastIndexEntry?.ExecutionId}', " +
+                $"LastIndexStatus='{lastIndexEntry?.Status}', LastIndexRuntimeInstanceId='{lastIndexEntry?.RuntimeInstanceId}', LastCandidateExecutionId='{lastCandidateExecutionId}'.");
+
+            throw new InvalidOperationException(
+                "Unreachable assertion path.");
+        }
+
+        /// <summary>
+        /// Waits until a runtime execution is requeued for recovery.
+        /// </summary>
+        /// <param name="runExecutionIndex">The runtime run execution index.</param>
+        /// <param name="localRunId">The local run identifier.</param>
+        /// <param name="executionId">The expected execution identifier.</param>
+        /// <param name="timeout">The wait timeout.</param>
+        /// <returns>The runtime run execution index entry observed as requeued.</returns>
+        public static async Task<AiRuntimeRunExecutionIndexEntry> WaitForRuntimeExecutionRequeuedAsync(
+            IAiRuntimeRunExecutionIndex runExecutionIndex,
+            string localRunId,
+            string executionId,
+            TimeSpan timeout)
+        {
+            ArgumentNullException.ThrowIfNull(runExecutionIndex);
+            ArgumentException.ThrowIfNullOrWhiteSpace(localRunId);
+            ArgumentException.ThrowIfNullOrWhiteSpace(executionId);
+
+            var deadline =
+                DateTimeOffset.UtcNow.Add(timeout);
+
+            AiRuntimeRunExecutionIndexEntry? lastEntry =
+                null;
+
+            while (DateTimeOffset.UtcNow < deadline)
+            {
+                lastEntry =
+                    await runExecutionIndex
+                        .GetAsync(localRunId)
+                        .ConfigureAwait(false);
+
+                if (IsRuntimeExecutionRequeued(lastEntry, executionId))
+                {
+                    return lastEntry!;
+                }
+
+                await Task
+                    .Delay(TimeSpan.FromMilliseconds(250))
+                    .ConfigureAwait(false);
+            }
+
+            Assert.Fail(
+                "Runtime execution was not automatically requeued for recovery within the timeout. " +
+                $"LocalRunId='{localRunId}', ExecutionId='{executionId}', " +
+                $"LastIndexStatus='{lastEntry?.Status}', LastIndexExecutionId='{lastEntry?.ExecutionId}', LastIndexRuntimeInstanceId='{lastEntry?.RuntimeInstanceId}'.");
+
+            throw new InvalidOperationException(
+                "Unreachable assertion path.");
+        }
+
+        /// <summary>
+        /// Determines whether the runtime execution index entry is requeued for recovery.
+        /// </summary>
+        /// <param name="entry">The runtime run execution index entry.</param>
+        /// <param name="executionId">The expected execution identifier.</param>
+        /// <returns><c>true</c> when the entry is requeued for recovery; otherwise, <c>false</c>.</returns>
+        private static bool IsRuntimeExecutionRequeued(
+            AiRuntimeRunExecutionIndexEntry? entry,
+            string executionId)
+        {
+            if (!string.Equals(entry?.ExecutionId, executionId, StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            return string.Equals(entry.Status, "requeued-for-recovery", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(entry.Status, "requeued", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(entry.Status, "queued", StringComparison.OrdinalIgnoreCase);
+        }
+
+
+        /// <summary>
+        /// Waits until a runtime instance is no longer considered safe for routing.
+        /// </summary>
+        /// <param name="registry">The runtime instance registry.</param>
+        /// <param name="runtimeInstanceId">The runtime instance identifier.</param>
+        /// <param name="timeout">The wait timeout.</param>
+        /// <returns>A task that completes when the runtime instance is no longer safe.</returns>
+        public static async Task WaitForRuntimeInstanceUnsafeAsync(
+            IAiRuntimeInstanceRegistry registry,
+            string runtimeInstanceId,
+            TimeSpan timeout)
+        {
+            ArgumentNullException.ThrowIfNull(registry);
+            ArgumentException.ThrowIfNullOrWhiteSpace(runtimeInstanceId);
+
+            var deadline =
+                DateTimeOffset.UtcNow.Add(timeout);
+
+            object? lastInstance =
+                null;
+
+            var lastObservedCount =
+                0;
+
+            while (DateTimeOffset.UtcNow < deadline)
+            {
+                var instances =
+                    await registry
+                        .ListAsync()
+                        .ConfigureAwait(false);
+
+                lastObservedCount =
+                    instances.Count;
+
+                lastInstance =
+                    instances.FirstOrDefault(instance =>
+                        string.Equals(
+                            instance.RuntimeInstanceId,
+                            runtimeInstanceId,
+                            StringComparison.OrdinalIgnoreCase));
+
+                if (lastInstance is null)
+                {
+                    return;
+                }
+
+                var type =
+                    lastInstance.GetType();
+
+                var status =
+                    type.GetProperty("Status")?.GetValue(lastInstance)?.ToString();
+
+                var isHealthy =
+                    type.GetProperty("IsHealthy")?.GetValue(lastInstance) as bool?;
+
+                var isDraining =
+                    type.GetProperty("IsDraining")?.GetValue(lastInstance) as bool?;
+
+                var isAvailable =
+                    type.GetProperty("IsAvailable")?.GetValue(lastInstance) as bool?;
+
+                if (string.Equals(status, "Unhealthy", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(status, "Draining", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(status, "Offline", StringComparison.OrdinalIgnoreCase) ||
+                    isHealthy == false ||
+                    isDraining == true ||
+                    isAvailable == false)
+                {
+                    return;
+                }
+
+                await Task
+                    .Delay(TimeSpan.FromMilliseconds(250))
+                    .ConfigureAwait(false);
+            }
+
+            Assert.Fail(
+                "Runtime instance was not automatically marked unsafe after process kill within the timeout. " +
+                $"RuntimeInstanceId='{runtimeInstanceId}', LastObservedRegistryCount='{lastObservedCount}', LastInstance='{lastInstance}'.");
+
+            throw new InvalidOperationException(
+                "Unreachable assertion path.");
+        }
+
+        /// <summary>
+        /// Waits until a recovered shared run is redispatched with a new local runtime run identifier.
+        /// </summary>
+        /// <param name="sharedRunStore">The shared run store.</param>
+        /// <param name="sharedRunId">The shared run identifier.</param>
+        /// <param name="failedRuntimeInstanceId">The failed runtime instance identifier.</param>
+        /// <param name="failedLocalRunId">The failed local run identifier.</param>
+        /// <param name="timeout">The wait timeout.</param>
+        /// <returns>The redispatched shared run record.</returns>
+        public static async Task<AiSharedRunRecord> WaitForRecoveredRunRedispatchedAsync(
+            IAiSharedRunStore sharedRunStore,
+            string sharedRunId,
+            string failedRuntimeInstanceId,
+            string failedLocalRunId,
+            TimeSpan timeout)
+        {
+            ArgumentNullException.ThrowIfNull(sharedRunStore);
+            ArgumentException.ThrowIfNullOrWhiteSpace(sharedRunId);
+            ArgumentException.ThrowIfNullOrWhiteSpace(failedRuntimeInstanceId);
+            ArgumentException.ThrowIfNullOrWhiteSpace(failedLocalRunId);
+
+            var deadline =
+                DateTimeOffset.UtcNow.Add(timeout);
+
+            AiSharedRunRecord? lastRun =
+                null;
+
+            while (DateTimeOffset.UtcNow < deadline)
+            {
+                lastRun =
+                    await sharedRunStore
+                        .GetAsync(sharedRunId)
+                        .ConfigureAwait(false);
+
+                if (lastRun is not null &&
+                    !string.IsNullOrWhiteSpace(lastRun.AssignedRuntimeInstanceId) &&
+                    !string.IsNullOrWhiteSpace(lastRun.LocalRunId) &&
+                    !string.Equals(lastRun.LocalRunId, failedLocalRunId, StringComparison.Ordinal))
+                {
+                    return lastRun;
+                }
+
+                await Task
+                    .Delay(TimeSpan.FromMilliseconds(250))
+                    .ConfigureAwait(false);
+            }
+
+            Assert.Fail(
+                "Recovered shared run was not redispatched with a new local runtime run id within the timeout. " +
+                $"SharedRunId='{sharedRunId}', FailedRuntimeInstanceId='{failedRuntimeInstanceId}', FailedLocalRunId='{failedLocalRunId}', " +
+                $"LastStatus='{lastRun?.Status}', LastRuntimeInstanceId='{lastRun?.AssignedRuntimeInstanceId}', LastLocalRunId='{lastRun?.LocalRunId}', LastExecutionId='{lastRun?.ExecutionId}'.");
+
+            throw new InvalidOperationException(
+                "Unreachable assertion path.");
+        }
+
     }
 }

@@ -262,11 +262,31 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeQueue
             }
 
             /// <inheritdoc />
-            public Task<IReadOnlyList<AiRuntimeRunExecutionIndexEntry>> ListUnfinishedByRuntimeInstanceAsync(string runtimeInstanceId, CancellationToken cancellationToken = default)
+            public Task<IReadOnlyList<AiRuntimeRunExecutionIndexEntry>> ListUnfinishedByRuntimeInstanceAsync(
+                string runtimeInstanceId,
+                CancellationToken cancellationToken = default)
             {
+                ArgumentException.ThrowIfNullOrWhiteSpace(runtimeInstanceId);
+
+                cancellationToken.ThrowIfCancellationRequested();
+
                 return Task.FromResult<IReadOnlyList<AiRuntimeRunExecutionIndexEntry>>(
                     RegisteredEntries
                         .Where(entry => string.Equals(entry.RuntimeInstanceId, runtimeInstanceId, StringComparison.Ordinal))
+                        .OrderBy(entry => entry.CreatedAtUtc)
+                        .ThenBy(entry => entry.RunId, StringComparer.Ordinal)
+                        .ToList());
+            }
+
+            public Task<IReadOnlyList<AiRuntimeRunExecutionIndexEntry>> ListUnfinishedAsync(
+                CancellationToken cancellationToken = default)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                return Task.FromResult<IReadOnlyList<AiRuntimeRunExecutionIndexEntry>>(
+                    RegisteredEntries
+                        .OrderBy(entry => entry.CreatedAtUtc)
+                        .ThenBy(entry => entry.RunId, StringComparer.Ordinal)
                         .ToList());
             }
         }

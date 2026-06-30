@@ -84,17 +84,24 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
         /// <param name="settings">The settings dictionary to mutate.</param>
         /// <param name="scenario">The production runtime scenario definition.</param>
         /// <remarks>
-        /// DAG resume is intentionally opt-in. Legacy redispatch recovery scenarios
-        /// must keep creating a new recovered execution, while focused DAG resume
-        /// scenarios explicitly keep the existing execution identifier.
+        /// DAG execution resume is enabled for process-host crash recovery scenarios because
+        /// strict recovery must preserve the durable execution identifier across runtime
+        /// process failure, shared queue requeue, scale-out replacement, HTTP redispatch,
+        /// and runtime queue resume.
         /// </remarks>
         private static void ApplyRuntimeExecutionRecoverySettings(
             Dictionary<string, string?> settings,
             ProductionRuntimeScenarioDefinition scenario)
         {
+            ArgumentNullException.ThrowIfNull(settings);
+            ArgumentNullException.ThrowIfNull(scenario);
+
             var enableDagExecutionResume =
                 scenario.Name.Contains(
                     "dag-resume",
+                    StringComparison.OrdinalIgnoreCase) ||
+                scenario.Name.Contains(
+                    "real-runtime-crash-recovery",
                     StringComparison.OrdinalIgnoreCase);
 
             settings["AiRuntimeExecutionRecoveryReconciliation:Enabled"] = "true";

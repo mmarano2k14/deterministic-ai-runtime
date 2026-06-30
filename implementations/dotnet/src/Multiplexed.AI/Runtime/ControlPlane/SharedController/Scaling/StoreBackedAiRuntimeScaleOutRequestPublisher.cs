@@ -151,6 +151,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
                     GetRequestedTargetInstanceCount(
                         request);
 
+                Console.WriteLine($"[SCALEOUT PUBLISH INPUT METADATA] SharedRunId='{request.SharedRunId}', RequestId='{scaleOutRequestId}', Metadata='{string.Join(";", request.Metadata.Select(pair => $"{pair.Key}={pair.Value}"))}'");
+
                 var record = new AiRuntimeScaleOutRequestRecord
                 {
                     RequestId = scaleOutRequestId,
@@ -191,6 +193,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
                         controlPlaneId,
                         providerHint)
                 };
+
+                Console.WriteLine($"[SCALEOUT RECORD METADATA] SharedRunId='{record.SharedRunId}', RequestId='{record.RequestId}', Metadata='{string.Join(";", record.Metadata.Select(pair => $"{pair.Key}={pair.Value}"))}'");
 
                 var created =
                     await this.store

@@ -1,4 +1,5 @@
-﻿using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
+﻿using ModelContextProtocol.Protocol;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Controller;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Scaling;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Store;
@@ -229,6 +230,46 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
 
             throw new InvalidOperationException(
                 $"Could not extract SharedRunId from submit result type '{resultType.FullName}'.");
+        }
+
+
+        public static async Task<AiSharedRunRecord> SubmitAndDispatchOneRunAsync(
+            McpTestClient mcp,
+            IAiRuntimeScaleOutRequestStore scaleOutRequestStore,
+            ProductionTenantScenarioDefinition tenant,
+            string controlPlaneId,
+            string pipelineName,
+            string requestedBy,
+            string source,
+            TimeSpan scaleOutTimeout,
+            TimeSpan dispatchTimeout)
+        {
+            var sharedRunId =
+                await ProductionSharedRunTestHelpers
+                    .SubmitOneRunAsync(
+                        mcp,
+                        tenant,
+                        pipelineName,
+                        requestedBy,
+                        source)
+                    .ConfigureAwait(false);
+
+            await ProductionSharedRunTestHelpers
+                .WaitForAnyTenantScaleOutRequestFulfilledAsync(
+                    scaleOutRequestStore,
+                    controlPlaneId,
+                    tenant,
+                    pipelineName,
+                    scaleOutTimeout)
+                .ConfigureAwait(false);
+
+            return await ProductionSharedRunTestHelpers
+                .WaitForSingleDispatchedRunAsync(
+                    mcp,
+                    pipelineName,
+                    sharedRunId,
+                    dispatchTimeout)
+                .ConfigureAwait(false);
         }
     }
 }

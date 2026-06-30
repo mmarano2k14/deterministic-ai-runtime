@@ -147,5 +147,26 @@ namespace Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue
         Task<IReadOnlyList<AiRuntimeRunExecutionIndexEntry>> ListUnfinishedByRuntimeInstanceAsync(
             string runtimeInstanceId,
             CancellationToken cancellationToken = default);
+
+        /// <summary>
+        /// Lists all unfinished runtime run execution index entries.
+        /// </summary>
+        /// <param name="cancellationToken">A token used to cancel the operation.</param>
+        /// <returns>
+        /// The unfinished index entries visible to the current tenant context.
+        /// </returns>
+        /// <remarks>
+        /// This method is used by control-plane recovery reconciliation to detect orphaned
+        /// in-flight executions assigned to runtime instances that are no longer present
+        /// in the runtime instance registry.
+        /// 
+        /// Terminal entries such as completed, failed, cancelled, and requeued-for-recovery runs
+        /// must not be returned.
+        /// 
+        /// Implementations must preserve tenant isolation when a tenant-scoped execution context
+        /// is active.
+        /// </remarks>
+        Task<IReadOnlyList<AiRuntimeRunExecutionIndexEntry>> ListUnfinishedAsync(
+            CancellationToken cancellationToken = default);
     }
 }

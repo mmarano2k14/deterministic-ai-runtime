@@ -1,4 +1,15 @@
-﻿using System;
+﻿using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
+using Multiplexed.Abstractions.AI.ControlPlane.Observability;
+using Multiplexed.Abstractions.AI.ControlPlane.Observability.Area;
+using Multiplexed.Abstractions.AI.ControlPlane.Observability.Events;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager.ProcessControl;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers.Transport;
+using Multiplexed.Abstractions.AI.Observability.Context;
+using Multiplexed.AI.Runtime.ControlPlane.Observability;
+using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -8,23 +19,13 @@ using System.Net;
 using System.Net.Sockets;
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
-using Multiplexed.Abstractions.AI.ControlPlane.Observability;
-using Multiplexed.Abstractions.AI.ControlPlane.Observability.Area;
-using Multiplexed.Abstractions.AI.ControlPlane.Observability.Events;
-using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager;
-using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
-using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers.Transport;
-using Multiplexed.Abstractions.AI.Observability.Context;
-using Multiplexed.AI.Runtime.ControlPlane.Observability;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strategy.Process
 {
     /// <summary>
     /// Starts runtime hosts as external dotnet processes.
     /// </summary>
-    public sealed class ProcessAiRuntimeHostCreationStrategy : IAiRuntimeHostCreationStrategy, IAsyncDisposable
+    public sealed class ProcessAiRuntimeHostCreationStrategy : IAiRuntimeHostCreationStrategy, IAiRuntimeHostProcessControl, IAsyncDisposable
     {
         private const string ProcessRuntimeHostCreationOperation = "runtime-process-host-creation";
 
@@ -405,6 +406,74 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
             DateTimeOffset completedAtUtc)
         {
             return (long)(completedAtUtc - startedAtUtc).TotalMilliseconds;
+        }
+
+        /// <summary>
+        /// Kills a runtime host process by runtime instance identifier.
+        /// </summary>
+        /// <param name="runtimeInstanceId">The runtime instance identifier.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <returns><c>true</c> when a process was found and killed or was already exited; otherwise, <c>false</c>.</returns>
+        public async Task<bool> KillAsync(
+            string runtimeInstanceId,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(runtimeInstanceId);
+            cancellationToken.ThrowIfCancellationRequested();
+
+            if (!this.processesByRuntimeInstanceId.TryRemove(runtimeInstanceId, out var process))
+            {
+                this.logger.LogWarning(
+                    "Runtime host process kill requested but no process was registered. RuntimeInstanceId={RuntimeInstanceId}.",
+                    runtimeInstanceId);
+
+                return false;
+            }
+
+            try
+            {
+                if (process.HasExited)
+                {
+                    this.logger.LogInformation(
+                        "Runtime host process kill requested but process had already exited. RuntimeInstanceId={RuntimeInstanceId}, ProcessId={ProcessId}, ExitCode={ExitCode}.",
+                        runtimeInstanceId,
+                        process.Id,
+                        process.ExitCode);
+
+                    process.Dispose();
+                    return true;
+                }
+
+                this.logger.LogWarning(
+                    "Killing runtime host process on demand. RuntimeInstanceId={RuntimeInstanceId}, ProcessId={ProcessId}.",
+                    runtimeInstanceId,
+                    process.Id);
+
+                process.Kill(entireProcessTree: true);
+
+                await process
+                    .WaitForExitAsync(cancellationToken)
+                    .ConfigureAwait(false);
+
+                this.logger.LogWarning(
+                    "Runtime host process killed on demand. RuntimeInstanceId={RuntimeInstanceId}, ProcessId={ProcessId}, ExitCode={ExitCode}.",
+                    runtimeInstanceId,
+                    process.Id,
+                    process.ExitCode);
+
+                process.Dispose();
+                return true;
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException)
+            {
+                this.logger.LogWarning(
+                    exception,
+                    "Failed to kill runtime host process on demand. RuntimeInstanceId={RuntimeInstanceId}.",
+                    runtimeInstanceId);
+
+                process.Dispose();
+                return false;
+            }
         }
 
         public async ValueTask DisposeAsync()

@@ -139,5 +139,19 @@ namespace Multiplexed.AI.Tests.Fixtures
 
             return Task.FromResult<IReadOnlyList<AiRuntimeRunExecutionIndexEntry>>(matches);
         }
+
+        public Task<IReadOnlyList<AiRuntimeRunExecutionIndexEntry>> ListUnfinishedAsync(
+             CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var matches =
+                UnfinishedRuns
+                    .OrderBy(entry => entry.CreatedAtUtc)
+                    .ThenBy(entry => entry.RunId, StringComparer.Ordinal)
+                    .ToList();
+
+            return Task.FromResult<IReadOnlyList<AiRuntimeRunExecutionIndexEntry>>(matches);
+        }
     }
 }

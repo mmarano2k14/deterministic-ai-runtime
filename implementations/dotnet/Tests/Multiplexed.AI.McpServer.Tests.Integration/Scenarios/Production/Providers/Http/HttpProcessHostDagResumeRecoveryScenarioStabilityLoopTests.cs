@@ -12,6 +12,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
     {
         private readonly HttpProcessHostDagResumeRecoveryScenarioTests scenarioTests;
         private readonly HttpProcessHostConcurrentRuntimeRecoveryScenarioTests concurrentRuntimeRecoveryScenarioTests;
+        private readonly HttpProcessHostRealRuntimeCrashRecoveryScenarioTests realRuntimeCrashRecoveryScenarioTests;
 
         /// <summary>
         /// Initializes a new instance of the <see cref="HttpProcessHostDagResumeRecoveryScenarioStabilityLoopTests"/> class.
@@ -23,6 +24,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             this.Output = output ?? throw new ArgumentNullException(nameof(output));
             this.scenarioTests = new HttpProcessHostDagResumeRecoveryScenarioTests(output);
             this.concurrentRuntimeRecoveryScenarioTests = new HttpProcessHostConcurrentRuntimeRecoveryScenarioTests(output);
+            this.realRuntimeCrashRecoveryScenarioTests = new HttpProcessHostRealRuntimeCrashRecoveryScenarioTests(output);
         }
 
         /// <summary>
@@ -127,6 +129,34 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
 
             await this.concurrentRuntimeRecoveryScenarioTests
                 .Http_ProcessHost_Should_Recover_Two_Failed_Tenants_While_Leaving_Third_Tenant_Untouched()
+                .ConfigureAwait(false);
+        }
+
+        /// <summary>
+        /// Repeatedly verifies that a real HTTP runtime process crash automatically resumes
+        /// the original durable DAG execution on replacement runtime capacity.
+        /// </summary>
+        /// <param name="iteration">The stability loop iteration.</param>
+        /// <returns>A task representing the asynchronous operation.</returns>
+        [Theory]
+        [InlineData(1)]
+        [InlineData(2)]
+        [InlineData(3)]
+        [InlineData(4)]
+        [InlineData(5)]
+        [InlineData(6)]
+        [InlineData(7)]
+        [InlineData(8)]
+        [InlineData(9)]
+        [InlineData(10)]
+        public async Task Http_ProcessHost_Should_Requeue_Real_InFlight_Dag_After_Runtime_Process_Kill_StabilityLoop(
+            int iteration)
+        {
+            this.Output.WriteLine(
+                $"[REAL RUNTIME CRASH RECOVERY STABILITY LOOP] Iteration='{iteration}'.");
+
+            await this.realRuntimeCrashRecoveryScenarioTests
+                .Http_ProcessHost_Should_Requeue_Real_InFlight_Dag_After_Runtime_Process_Kill()
                 .ConfigureAwait(false);
         }
     }

@@ -314,6 +314,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue
                 TryResolveResumeExecutionId(
                     request.Metadata);
 
+            Console.WriteLine(
+                $"[RUNTIME QUEUE RECOVERY RESUME] ResumeExecutionId='{resumeExecutionId ?? string.Empty}', HasMetadata='{request.Metadata is not null}', Metadata='{string.Join(";", request.Metadata?.Select(pair => $"{pair.Key}={pair.Value}") ?? Array.Empty<string>())}'");
+
             var enrichedRunRequest =
                 CreateMetadataEnrichedRunRequest(
                     request.RunRequest!,

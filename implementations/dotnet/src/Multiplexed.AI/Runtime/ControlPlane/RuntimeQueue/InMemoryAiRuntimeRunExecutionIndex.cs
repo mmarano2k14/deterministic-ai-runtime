@@ -337,6 +337,24 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue
         }
 
         /// <inheritdoc />
+        public Task<IReadOnlyList<AiRuntimeRunExecutionIndexEntry>> ListUnfinishedAsync(
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var entries = _entries
+                .Values
+                .Where(entry =>
+                    IsUnfinished(entry) &&
+                    BelongsToCurrentTenant(entry))
+                .OrderBy(entry => entry.CreatedAtUtc)
+                .ThenBy(entry => entry.RunId, StringComparer.Ordinal)
+                .ToArray();
+
+            return Task.FromResult<IReadOnlyList<AiRuntimeRunExecutionIndexEntry>>(entries);
+        }
+
+        /// <inheritdoc />
         public Task<AiRuntimeRunExecutionIndexEntry?> GetAsync(
             string runId,
             CancellationToken cancellationToken = default)

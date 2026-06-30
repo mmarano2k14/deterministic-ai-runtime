@@ -2,6 +2,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager.ProcessControl;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager.Readiness;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager;
@@ -50,9 +51,16 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
                     FixtureAiRuntimeHostCreationStrategy>());
 
             services.TryAddEnumerable(
-                ServiceDescriptor.Singleton<
-                    IAiRuntimeHostCreationStrategy,
-                    ProcessAiRuntimeHostCreationStrategy>());
+                ServiceDescriptor.Singleton<IAiRuntimeHostCreationStrategy, FixtureAiRuntimeHostCreationStrategy>());
+
+            services.TryAddEnumerable(
+                ServiceDescriptor.Singleton<IAiRuntimeHostCreationStrategy, ProcessAiRuntimeHostCreationStrategy>());
+
+            services.TryAddSingleton<IAiRuntimeHostProcessControl>(
+                provider => provider
+                    .GetRequiredService<IEnumerable<IAiRuntimeHostCreationStrategy>>()
+                    .OfType<ProcessAiRuntimeHostCreationStrategy>()
+                    .Single());
 
             services.TryAddSingleton<
                 IAiRuntimeHostManager,

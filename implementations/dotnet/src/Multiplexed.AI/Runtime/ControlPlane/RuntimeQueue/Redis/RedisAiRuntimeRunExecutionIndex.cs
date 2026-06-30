@@ -570,6 +570,81 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue.Redis
                 .ToArray();
         }
 
+        /// <inheritdoc />
+        public async Task<IReadOnlyList<AiRuntimeRunExecutionIndexEntry>> ListUnfinishedAsync(
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var controlPlaneId =
+                await ResolveControlPlaneIdAsync(cancellationToken)
+                    .ConfigureAwait(false);
+
+            var runIds =
+                await _database
+                    .SortedSetRangeByRankAsync(
+                        BuildAllIndexKey(controlPlaneId),
+                        order: Order.Ascending)
+                    .ConfigureAwait(false);
+
+            cancellationToken.ThrowIfCancellationRequested();
+
+            if (runIds.Length == 0)
+            {
+                return Array.Empty<AiRuntimeRunExecutionIndexEntry>();
+            }
+
+            var tenantId =
+                TryResolveTenantId();
+
+            var entries =
+                new List<AiRuntimeRunExecutionIndexEntry>(runIds.Length);
+
+            foreach (var runIdValue in runIds)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                var runId =
+                    runIdValue.ToString();
+
+                if (string.IsNullOrWhiteSpace(runId))
+                {
+                    continue;
+                }
+
+                var entry =
+                    await GetRawAsync(
+                            controlPlaneId,
+                            runId,
+                            cancellationToken)
+                        .ConfigureAwait(false);
+
+                if (entry is null)
+                {
+                    continue;
+                }
+
+                if (!IsUnfinished(entry))
+                {
+                    continue;
+                }
+
+                if (!BelongsToTenant(
+                        entry,
+                        tenantId))
+                {
+                    continue;
+                }
+
+                entries.Add(entry);
+            }
+
+            return entries
+                .OrderBy(entry => entry.CreatedAtUtc)
+                .ThenBy(entry => entry.RunId, StringComparer.Ordinal)
+                .ToArray();
+        }
+
         /// <summary>
         /// Determines whether the current tenant context is allowed to mutate the specified runtime run entry.
         /// </summary>

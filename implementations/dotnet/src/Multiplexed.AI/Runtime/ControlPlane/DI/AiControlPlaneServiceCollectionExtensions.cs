@@ -144,7 +144,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
             services.AddAiRuntimeInstanceHealthReconciliation(
                 configureRuntimeInstanceHealthReconciliation);
 
-            services.AddAiRuntimeExecutionRecoveryReconciliation(
+            services.AddAiRuntimeExecutionRecoveryReconcilerHostedService(
                 configureRuntimeExecutionRecoveryReconciliation);
 
             if (configureAdmission is null)
@@ -715,6 +715,31 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
             }
 
             services.AddSingleton<IAiTenantRuntimeSettingsProvider, HardcodedAiTenantRuntimeSettingsProvider>();
+        }
+
+        /// <summary>
+        /// Registers the runtime execution recovery reconciler hosted service.
+        /// </summary>
+        /// <param name="services">The service collection.</param>
+        /// <param name="configure">Optional runtime execution recovery reconciliation options configuration.</param>
+        /// <returns>The same service collection for chaining.</returns>
+        /// <remarks>
+        /// This method registers the automatic hosted recovery reconciliation loop.
+        /// The hosted service remains inactive unless <see cref="AiRuntimeExecutionRecoveryReconciliationOptions.Enabled" />
+        /// is set to <see langword="true" />.
+        /// </remarks>
+        public static IServiceCollection AddAiRuntimeExecutionRecoveryReconcilerHostedService(
+            this IServiceCollection services,
+            Action<AiRuntimeExecutionRecoveryReconciliationOptions>? configure = null)
+        {
+            ArgumentNullException.ThrowIfNull(services);
+
+            services.AddAiRuntimeExecutionRecoveryReconciliation(configure);
+
+            services.TryAddEnumerable(
+                ServiceDescriptor.Singleton<IHostedService, AiRuntimeExecutionRecoveryReconcilerHostedService>());
+
+            return services;
         }
     }
 }

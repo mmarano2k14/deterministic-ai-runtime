@@ -595,6 +595,11 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Recovery.Trans
             {
                 return Task.FromResult<IReadOnlyList<AiRuntimeRunExecutionIndexEntry>>([]);
             }
+
+            public Task<IReadOnlyList<AiRuntimeRunExecutionIndexEntry>> ListUnfinishedAsync(CancellationToken cancellationToken = default)
+            {
+                return Task.FromResult<IReadOnlyList<AiRuntimeRunExecutionIndexEntry>>([]);
+            }
         }
     }
 }
