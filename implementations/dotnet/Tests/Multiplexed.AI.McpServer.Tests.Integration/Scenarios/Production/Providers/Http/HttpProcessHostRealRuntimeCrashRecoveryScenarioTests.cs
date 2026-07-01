@@ -14,6 +14,8 @@ using Multiplexed.AI.McpServer.Tests.Integration.Helpers;
 using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Assertions;
 using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Definitions;
 using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helpers;
+using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Ledger;
+using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Models;
 using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Output;
 using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Scenarios;
 using Multiplexed.AI.Stores;
@@ -34,7 +36,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
         private const int StepCount = 100;
         private const int MultiTenantStepCount = 50;
         private const int KillAfterCompletedStepCount = 25;
-        private const int FlakyStepIntervalMs = 500;
+        private const int FlakyStepIntervalMs = 1000;
         private const string RequestedBy = "http-process-host-real-runtime-crash-recovery-test";
         private const string Source = "integration-test";
 
@@ -276,12 +278,87 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             var phaseStopwatch =
                 System.Diagnostics.Stopwatch.StartNew();
 
+            var timings =
+                new Dictionary<string, TimeSpan>(StringComparer.Ordinal);
+
             void WriteTiming(string phaseName)
             {
+                var elapsed =
+                    phaseStopwatch.Elapsed;
+
+                timings[phaseName] = elapsed;
+
                 this.output.WriteLine(
-                    $"[REAL RUNTIME TWO-TENANT CRASH TIMING] Phase='{phaseName}', Duration='{phaseStopwatch.Elapsed}', TotalElapsed='{scenarioStopwatch.Elapsed}'.");
+                    $"[REAL RUNTIME TWO-TENANT CRASH TIMING] Phase='{phaseName}', Duration='{elapsed}', TotalElapsed='{scenarioStopwatch.Elapsed}'.");
 
                 phaseStopwatch.Restart();
+            }
+
+            void WritePhaseHeader(
+                int number,
+                string title,
+                string proof)
+            {
+                this.output.WriteLine(string.Empty);
+                this.output.WriteLine($"# PHASE {number}/8 - {title}");
+                this.output.WriteLine(proof);
+            }
+
+            void WriteScenarioIntro(
+                string currentControlPlaneId,
+                string currentRuntimeHostAssemblyPath,
+                string currentTenantAPipelinePrefix,
+                string currentTenantBPipelinePrefix)
+            {
+                this.output.WriteLine("# SCENARIO INTRO - REAL PROCESS-HOST TWO-TENANT CRASH RECOVERY");
+                this.output.WriteLine("Executive proof: this scenario kills one real external runtime process per tenant, recovers in-flight DAG work with strict resume, recovers volatile local queued work through durable redispatch, and proves forensics, replay, ledger, trace, and tenant isolation.");
+                this.output.WriteLine(string.Empty);
+                this.output.WriteLine("Scenario contract:");
+                this.output.WriteLine("  - [ON] Real external runtime host processes are used; no fixture runtime is accepted for this scenario.");
+                this.output.WriteLine("  - [ON] Two isolated tenants must each lose one unsafe runtime instance.");
+                this.output.WriteLine("  - [ON] In-flight DAG executions must resume with the same durable execution id.");
+                this.output.WriteLine("  - [ON] Local queued work must be recovered through durable shared-run redispatch.");
+                this.output.WriteLine("  - [ON] Runtime recovery forensics must exist for every recovered work item.");
+                this.output.WriteLine("  - [ON] Recovered executions must expose MCP replay, ledger, and trace evidence.");
+                this.output.WriteLine("  - [ON] No cross-tenant leak, duplicate recovery, or self-redispatch is allowed.");
+                this.output.WriteLine(string.Empty);
+                this.output.WriteLine("Workload summary:");
+                this.output.WriteLine($"  StepCount='{MultiTenantStepCount}'");
+                this.output.WriteLine($"  KillAfterCompletedStepCount='{KillAfterCompletedStepCount}'");
+                this.output.WriteLine($"  FlakyStepIntervalMs='{FlakyStepIntervalMs}'");
+                this.output.WriteLine("  TenantCount='2'");
+                this.output.WriteLine("  RunsPerTenant='3'");
+                this.output.WriteLine("  SubmittedRuns='6'");
+                this.output.WriteLine("  ExpectedRecoveredWork='6'");
+                this.output.WriteLine("  ExpectedReplayValidatedExecutions='6'");
+                this.output.WriteLine("  TotalValidatedExecutionFlows='12'");
+                this.output.WriteLine(string.Empty);
+                this.output.WriteLine("Runtime profile:");
+                this.output.WriteLine($"  ControlPlaneId='{currentControlPlaneId}'");
+                this.output.WriteLine($"  HostCreationMode='{scenario.HostCreationMode}'");
+                this.output.WriteLine($"  PersistenceProfile='{scenario.PersistenceProfile}'");
+                this.output.WriteLine($"  ObservabilityProfile='{scenario.ObservabilityProfile}'");
+                this.output.WriteLine($"  RuntimeHostAssemblyPath='{currentRuntimeHostAssemblyPath}'");
+                this.output.WriteLine(string.Empty);
+                this.output.WriteLine("Timeout budget:");
+                this.output.WriteLine($"  ScaleOutTimeout: {scenario.ScaleOutTimeout}");
+                this.output.WriteLine($"  DispatchTimeout: {scenario.DispatchTimeout}");
+                this.output.WriteLine($"  CompletionTimeout: {scenario.CompletionTimeout}");
+                this.output.WriteLine(string.Empty);
+                this.output.WriteLine($"[REAL RUNTIME TWO-TENANT CRASH PROOF] Starting. ControlPlaneId='{currentControlPlaneId}', TenantAPipelinePrefix='{currentTenantAPipelinePrefix}', TenantBPipelinePrefix='{currentTenantBPipelinePrefix}', RuntimeHostAssemblyPath='{currentRuntimeHostAssemblyPath}'.");
+            }
+
+            void WriteTimingSummary()
+            {
+                this.output.WriteLine(string.Empty);
+                this.output.WriteLine("# REAL RUNTIME TWO-TENANT CRASH TIMING SUMMARY");
+
+                foreach (var timing in timings)
+                {
+                    this.output.WriteLine($"  - {timing.Key}: {timing.Value}");
+                }
+
+                this.output.WriteLine($"  - Total: {scenarioStopwatch.Elapsed}");
             }
 
             var controlPlaneId =
@@ -382,16 +459,18 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             var tenantBPipelinePrefix =
                 $"{scenario.Name}-{tenantB.TenantId}-real-crash-{Guid.NewGuid():N}";
 
-            this.output.WriteLine(
-                "# SCENARIO INTRO - REAL PROCESS-HOST TWO-TENANT CRASH RECOVERY");
-
-            this.output.WriteLine(
-                $"This test kills one real external runtime process per tenant, recovers in-flight DAG work with strict resume, recovers volatile local queued work by durable redispatch, then proves forensics, replay, ledger, trace, and tenant isolation. ControlPlaneId='{controlPlaneId}'.");
-
-            this.output.WriteLine(
-                $"[REAL RUNTIME TWO-TENANT CRASH PROOF] Starting. ControlPlaneId='{controlPlaneId}', TenantAPipelinePrefix='{tenantAPipelinePrefix}', TenantBPipelinePrefix='{tenantBPipelinePrefix}', RuntimeHostAssemblyPath='{runtimeHostAssemblyPath}'.");
+            WriteScenarioIntro(
+                controlPlaneId,
+                runtimeHostAssemblyPath,
+                tenantAPipelinePrefix,
+                tenantBPipelinePrefix);
 
             WriteTiming("Scenario identifiers and intro output");
+
+            WritePhaseHeader(
+                1,
+                "BUILD ASSIGNED WORK INVENTORY",
+                "[PASS TARGET] Submit three runs per tenant and capture one in-flight execution plus local queued work on the failed runtime candidate.");
 
             var tenantAInventoryTask =
                 ProductionRealRuntimeCrashRecoveryTestHelpers
@@ -465,6 +544,11 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
 
             WriteTiming("Validate selected failed runtime tenant ownership");
 
+            WritePhaseHeader(
+                2,
+                "KILL REAL RUNTIME PROCESSES AND WAIT AUTOMATIC RECOVERY",
+                "[PASS TARGET] Kill one real process per tenant, wait for unsafe detection, automatic requeue, replacement selection, and redispatch without manual reconciliation.");
+
             var tenantARecoveryTask =
                 ProductionRealRuntimeCrashRecoveryTestHelpers
                     .KillRuntimeAndRecoverAssignedInventoryAsync(
@@ -509,11 +593,16 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
 
             WriteTiming("Kill real runtime processes and wait for automatic recovery");
 
+            WritePhaseHeader(
+                3,
+                "MCP RUNTIME RECOVERY FORENSICS PROOF",
+                "[PASS TARGET] Every recovered work item must have runtime recovery forensics with no cross-tenant leak and no duplicate recovery record.");
+
             var recoveries =
                 new[]
                 {
-            tenantARecovery,
-            tenantBRecovery
+                    tenantARecovery,
+                    tenantBRecovery
                 };
 
             this.output.WriteLine(
@@ -561,6 +650,11 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
 
             WriteTiming("Validate no cross-tenant inventory recovery leak");
 
+            WritePhaseHeader(
+                4,
+                "RECOVERED DAG COMPLETION",
+                "[PASS TARGET] All recovered DAG executions must complete the configured step count after strict resume or durable redispatch.");
+
             await ProductionRealRuntimeCrashRecoveryTestHelpers
                 .AssertRecoveredInventoryDagCompletedAsync(
                     this.output,
@@ -580,6 +674,11 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 .ConfigureAwait(false);
 
             WriteTiming("Wait for recovered DAG completion");
+
+            WritePhaseHeader(
+                5,
+                "TERMINAL RUNTIME RUN STATUS CONVERGENCE",
+                "[PASS TARGET] MCP runtime queue status must converge to completed for all recovered local runs.");
 
             var tenantARedispatchedRuns =
                 tenantARecovery.RecoveredWorks
@@ -615,8 +714,10 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
 
             WriteTiming("Wait for terminal runtime run statuses");
 
-            this.output.WriteLine(
-                "[REAL RUNTIME TWO-TENANT CRASH STEP 2 - MCP REPLAY TRACE PROOF] Starting replay, ledger evidence, and trace evidence validation for recovered executions.");
+            WritePhaseHeader(
+                6,
+                "MCP REPLAY LEDGER TRACE PROOF",
+                "[PASS TARGET] MCP replay tooling must expose replay report, replay ledger, replay trace, execution ledger, execution trace, completion evidence, and step-completion evidence.");
 
             var tenantAReplayProofs =
                 await HttpProcessHostConcurrentRuntimeRecoveryScenarioTests
@@ -645,32 +746,47 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
 
             WriteTiming("Validate MCP replay ledger and trace proof");
 
-            this.output.WriteLine(
-                "[REAL RUNTIME TWO-TENANT CRASH STEP 3 - MCP LEDGER PROOF] Querying tenant-scoped MCP ledger evidence.");
+            WritePhaseHeader(
+                7,
+                "MCP TENANT-SCOPED LEDGER PROOF",
+                "[PASS TARGET] Tenant-scoped MCP ledger queries must expose control-plane, runtime-instance, and recovery evidence for both tenants.");
+
+            var ledgerTimelineToUtc =
+                DateTimeOffset.UtcNow.AddSeconds(5);
+
+            var tenantALedgerQuery =
+                await ProductionControlPlaneLedgerTenantQuery
+                    .QueryRecoveredTenantLedgerEvidenceAsync(
+                        tenantAMcp,
+                        tenantARecovery,
+                        tenantAReplayProofs.Select(proof => proof.ExecutionId).ToArray(),
+                        ledgerTimelineFromUtc,
+                        ledgerTimelineToUtc)
+                    .ConfigureAwait(false);
+
+            var tenantBLedgerQuery =
+                await ProductionControlPlaneLedgerTenantQuery
+                    .QueryRecoveredTenantLedgerEvidenceAsync(
+                        tenantBMcp,
+                        tenantBRecovery,
+                        tenantBReplayProofs.Select(proof => proof.ExecutionId).ToArray(),
+                        ledgerTimelineFromUtc,
+                        ledgerTimelineToUtc)
+                    .ConfigureAwait(false);
 
             var tenantALedgerEntries =
-                await tenantAMcp
-                    .QueryLedgerAsync(
-                        new AiDecisionLedgerQuery
-                        {
-                            TimestampFromUtc = ledgerTimelineFromUtc,
-                            Limit = 10000
-                        })
-                    .ConfigureAwait(false);
+                tenantALedgerQuery.Entries;
 
             var tenantBLedgerEntries =
-                await tenantBMcp
-                    .QueryLedgerAsync(
-                        new AiDecisionLedgerQuery
-                        {
-                            TimestampFromUtc = ledgerTimelineFromUtc,
-                            Limit = 10000
-                        })
-                    .ConfigureAwait(false);
+                tenantBLedgerQuery.Entries;
 
             var ledgerEntries =
                 tenantALedgerEntries
                     .Concat(tenantBLedgerEntries)
+                    .GroupBy(entry => entry.EntryId, StringComparer.Ordinal)
+                    .Select(group => group.OrderBy(entry => entry.TimestampUtc).ThenBy(entry => entry.Sequence).First())
+                    .OrderBy(entry => entry.TimestampUtc)
+                    .ThenBy(entry => entry.Sequence)
                     .ToArray();
 
             Assert.NotEmpty(
@@ -703,21 +819,253 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                         entry,
                         tenantB.TenantId));
 
+            var tenantBEntriesVisibleFromTenantA =
+                tenantALedgerEntries.Count(entry =>
+                    LedgerEntryContainsTenant(
+                        entry,
+                        tenantB.TenantId));
+
+            var tenantAEntriesVisibleFromTenantB =
+                tenantBLedgerEntries.Count(entry =>
+                    LedgerEntryContainsTenant(
+                        entry,
+                        tenantA.TenantId));
+
+            var crossTenantLedgerLeakDetected =
+                tenantBEntriesVisibleFromTenantA > 0 ||
+                tenantAEntriesVisibleFromTenantB > 0;
+
+            var tenantAInfraEntries =
+                tenantALedgerEntries.Count(IsInfraLedgerEntry);
+
+            var tenantBInfraEntries =
+                tenantBLedgerEntries.Count(IsInfraLedgerEntry);
+
+            var infraLedgerValidated =
+                tenantAInfraEntries > 0 &&
+                tenantBInfraEntries > 0;
+
+            Assert.False(
+                crossTenantLedgerLeakDetected,
+                $"Cross-tenant ledger leak detected. TenantBEntriesVisibleFromTenantA='{tenantBEntriesVisibleFromTenantA}', TenantAEntriesVisibleFromTenantB='{tenantAEntriesVisibleFromTenantB}'.");
+
+            Assert.True(
+                tenantAInfraEntries > 0,
+                $"Tenant A scoped ledger query did not return infra/control-plane/runtime recovery evidence. TenantId='{tenantA.TenantId}', RuntimeIds='{string.Join(",", tenantALedgerQuery.RuntimeInstanceIds)}', ExecutionIds='{string.Join(",", tenantALedgerQuery.ExecutionIds)}'.");
+
+            Assert.True(
+                tenantBInfraEntries > 0,
+                $"Tenant B scoped ledger query did not return infra/control-plane/runtime recovery evidence. TenantId='{tenantB.TenantId}', RuntimeIds='{string.Join(",", tenantBLedgerQuery.RuntimeInstanceIds)}', ExecutionIds='{string.Join(",", tenantBLedgerQuery.ExecutionIds)}'.");
+
             this.output.WriteLine(
                 "[REAL RUNTIME TWO-TENANT CRASH STEP 3 - MCP LEDGER PROOF] " +
-                $"TenantAEntries='{tenantALedgerEntries.Count}', TenantBEntries='{tenantBLedgerEntries.Count}', CombinedEntries='{ledgerEntries.Length}'.");
+                $"TenantAEntries='{tenantALedgerEntries.Count}', TenantARuntimeIds='{tenantALedgerQuery.RuntimeInstanceIds.Count}', TenantAExecutionIds='{tenantALedgerQuery.ExecutionIds.Count}', TenantAInfraEntries='{tenantAInfraEntries}', TenantBEntriesVisibleFromTenantA='{tenantBEntriesVisibleFromTenantA}', " +
+                $"TenantBEntries='{tenantBLedgerEntries.Count}', TenantBRuntimeIds='{tenantBLedgerQuery.RuntimeInstanceIds.Count}', TenantBExecutionIds='{tenantBLedgerQuery.ExecutionIds.Count}', TenantBInfraEntries='{tenantBInfraEntries}', TenantAEntriesVisibleFromTenantB='{tenantAEntriesVisibleFromTenantB}', " +
+                $"CombinedScenarioEntries='{ledgerEntries.Length}', QueryScope='runtime-instance + execution', IncludesInfra='true', InfraLedgerValidated='{infraLedgerValidated.ToString().ToLowerInvariant()}', CrossTenantLedgerLeakDetected='{crossTenantLedgerLeakDetected.ToString().ToLowerInvariant()}', TimestampFromUtc='{ledgerTimelineFromUtc:O}', TimestampToUtc='{ledgerTimelineToUtc:O}'.");
 
-            WriteTiming("Query and validate tenant scoped MCP ledger");
+            var expectedRecoveredWorkCount = 6;
+
+            var causalChainLedgerEntries =
+                await ProductionControlPlaneLedgerCausalChainQuery
+                    .QueryRecoveredScenarioCausalChainEvidenceAsync(
+                        tenantAMcp,
+                        controlPlaneId,
+                        new[] { tenantA.TenantId, tenantB.TenantId },
+                        new[] { tenantARecovery, tenantBRecovery },
+                        tenantAReplayProofs.Concat(tenantBReplayProofs).Select(proof => proof.ExecutionId).ToArray(),
+                        new[] { tenantAPipelinePrefix, tenantBPipelinePrefix },
+                        ledgerTimelineFromUtc,
+                        ledgerTimelineToUtc)
+                    .ConfigureAwait(false);
+
+            Assert.NotEmpty(
+                causalChainLedgerEntries);
+
+            var failedRuntimeUnsafeValidated =
+                tenantARecovery.RecoveredWorks.Count == tenantAInventory.Works.Count &&
+                tenantBRecovery.RecoveredWorks.Count == tenantBInventory.Works.Count;
+
+            var causalChainProof =
+                ProductionControlPlaneLedgerCausalChainProof.Validate(
+                    causalChainLedgerEntries,
+                    expectedRecoveredWorkCount,
+                    tenantARecovery.RecoveredWorks.Count + tenantBRecovery.RecoveredWorks.Count,
+                    failedRuntimeUnsafeValidated);
+
+            this.output.WriteLine(
+                "[REAL RUNTIME TWO-TENANT CRASH MCP CONTROL-PLANE LEDGER QUERY PROOF] " +
+                $"ScenarioCausalChainEntries='{causalChainLedgerEntries.Count}', ControlPlaneEntries='{causalChainLedgerEntries.Count(entry => entry.EventType.StartsWith("control.", StringComparison.Ordinal))}', QueryScope='runtime-instance ids + execution ids + control-plane run execution ids + scenario membership filter'.");
+
+            ProductionControlPlaneLedgerCausalChainProofOutput.Write(
+                this.output,
+                controlPlaneId,
+                tenantA.TenantId,
+                tenantB.TenantId,
+                tenantAInventory.RuntimeInstanceId,
+                tenantBInventory.RuntimeInstanceId,
+                causalChainProof,
+                crossTenantLedgerLeakDetected,
+                infraLedgerValidated);
+
+            WriteTiming("Query and validate tenant scoped MCP ledger and control-plane causal chain");
+
+            WritePhaseHeader(
+                8,
+                "FINAL PRODUCTION PROOF",
+                "[PASS TARGET] Re-query final runtime recovery forensics after completion, print the causal forensics timeline first, then summarize recovery, replay, ledger, trace, timing, and safety invariants in one operator-readable line.");
+
+            var tenantAFinalForensics =
+                await ProductionRealRuntimeCrashRecoveryTestHelpers
+                    .AssertRecoveredInventoryForensicsAsync(
+                        this.output,
+                        forensicsQueryService,
+                        tenantARecovery,
+                        TimeSpan.FromSeconds(60))
+                    .ConfigureAwait(false);
+
+            var tenantBFinalForensics =
+                await ProductionRealRuntimeCrashRecoveryTestHelpers
+                    .AssertRecoveredInventoryForensicsAsync(
+                        this.output,
+                        forensicsQueryService,
+                        tenantBRecovery,
+                        TimeSpan.FromSeconds(60))
+                    .ConfigureAwait(false);
+
+            ProductionRealRuntimeCrashRecoveryTestHelpers.AssertNoCrossTenantRecoveryForensicsLeak(
+                tenantARecovery,
+                tenantAFinalForensics,
+                tenantBRecovery,
+                tenantBFinalForensics);
+
+            ProductionRealRuntimeCrashRecoveryTestHelpers.AssertNoDuplicateRecoveryForensics(
+                tenantAFinalForensics
+                    .Concat(tenantBFinalForensics)
+                    .ToArray());
+
+            this.output.WriteLine(string.Empty);
+            this.output.WriteLine("# FINAL FORENSICS TIMELINE PROOF");
+            this.output.WriteLine("Source: runtime recovery forensics queried after recovered DAG completion, terminal runtime status convergence, replay, ledger, and trace validation.");
+            this.output.WriteLine(string.Empty);
+
+            ProductionTenantRecoveryFinalProofHelper.WriteForensicsTimelineProof(
+                this.output.WriteLine,
+                tenantA.TenantId,
+                tenantAFinalForensics,
+                record => record.ForensicsId,
+                record => record.ExecutionId,
+                record => record.SharedRunId,
+                record => record.TenantId,
+                record => record.RuntimeFailureIncidentId,
+                record => record.Timeline.Select(item => item.EventType).ToArray());
+
+            this.output.WriteLine(string.Empty);
+
+            ProductionTenantRecoveryFinalProofHelper.WriteForensicsTimelineProof(
+                this.output.WriteLine,
+                tenantB.TenantId,
+                tenantBFinalForensics,
+                record => record.ForensicsId,
+                record => record.ExecutionId,
+                record => record.SharedRunId,
+                record => record.TenantId,
+                record => record.RuntimeFailureIncidentId,
+                record => record.Timeline.Select(item => item.EventType).ToArray());
+
+            this.output.WriteLine(string.Empty);
+
+            WriteTiming("Query final runtime recovery forensics timelines");
+
+            var tenantAFinalRecoveryProof =
+                ProductionTenantRecoveryFinalProofHelper.Build(
+                    tenantA.TenantId,
+                    tenantARecovery.RecoveredWorks,
+                    tenantAFinalForensics,
+                    work => work.Original.Kind == RealRuntimeCrashWorkKind.InFlightExecution,
+                    record => record.RuntimeFailureIncidentId,
+                    record => record.ForensicsId,
+                    record => record.Timeline.Select(item => item.EventType).ToArray());
+
+            var tenantBFinalRecoveryProof =
+                ProductionTenantRecoveryFinalProofHelper.Build(
+                    tenantB.TenantId,
+                    tenantBRecovery.RecoveredWorks,
+                    tenantBFinalForensics,
+                    work => work.Original.Kind == RealRuntimeCrashWorkKind.InFlightExecution,
+                    record => record.RuntimeFailureIncidentId,
+                    record => record.ForensicsId,
+                    record => record.Timeline.Select(item => item.EventType).ToArray());
 
             WriteTiming("Scenario finalization");
 
-            this.output.WriteLine(
-                "[REAL RUNTIME TWO-TENANT CRASH FINAL PROOF] " +
-                $"ControlPlaneId='{controlPlaneId}', " +
-                $"TotalElapsed='{scenarioStopwatch.Elapsed}', " +
-                $"TenantA='{tenantA.TenantId}', FailedRuntimeA='{tenantAInventory.RuntimeInstanceId}', RecoveredA='{tenantARecovery.RecoveredWorks.Count}', ForensicsA='{tenantAForensics.Count}', ReplayProofA='{tenantAReplayProofs.Count}', " +
-                $"TenantB='{tenantB.TenantId}', FailedRuntimeB='{tenantBInventory.RuntimeInstanceId}', RecoveredB='{tenantBRecovery.RecoveredWorks.Count}', ForensicsB='{tenantBForensics.Count}', ReplayProofB='{tenantBReplayProofs.Count}', " +
-                $"ForensicsValidated='true', StrictResumeValidated='true', ReplayValidated='true', LedgerValidated='true', TraceValidated='true', CrossTenantLeakDetected='false', DuplicateRecoveryDetected='false'.");
+            WriteTimingSummary();
+
+            this.output.WriteLine(string.Empty);
+
+            ProductionTenantLedgerSummaryOutput.Write(
+                this.output,
+                "TENANT-SCOPED LEDGER SUMMARY",
+                new[]
+                {
+                    new ProductionTenantLedgerSummary(
+                        tenantA.TenantId,
+                        tenantALedgerQuery.RuntimeInstanceIds,
+                        tenantALedgerQuery.ExecutionIds,
+                        tenantALedgerEntries),
+                    new ProductionTenantLedgerSummary(
+                        tenantB.TenantId,
+                        tenantBLedgerQuery.RuntimeInstanceIds,
+                        tenantBLedgerQuery.ExecutionIds,
+                        tenantBLedgerEntries)
+                },
+                maxLedgerEntriesPerTenant: 50,
+                maxEventTypeRowsPerTenant: 30,
+                maxLedgerEntriesPerExecution: 25);
+
+            this.output.WriteLine(string.Empty);
+
+            this.output.WriteLine("[REAL RUNTIME TWO-TENANT CRASH FINAL PROOF]");
+            this.output.WriteLine($"ControlPlaneId='{controlPlaneId}'");
+            this.output.WriteLine($"TotalElapsed='{scenarioStopwatch.Elapsed}'");
+
+            this.output.WriteLine(string.Empty);
+            this.output.WriteLine("TenantA:");
+            this.output.WriteLine($"  TenantId='{tenantA.TenantId}'");
+            this.output.WriteLine($"  FailedRuntime='{tenantAInventory.RuntimeInstanceId}'");
+            this.output.WriteLine($"  ForensicsTimelineTypes='{ProductionTenantRecoveryFinalProofHelper.FormatForensicsTimelineTypes(tenantAFinalRecoveryProof)}'");
+            this.output.WriteLine($"  RecoveryModes='{ProductionTenantRecoveryFinalProofHelper.FormatRecoveryModes(tenantAFinalRecoveryProof)}'");
+            this.output.WriteLine($"  RuntimeFailureIncidentIds='{ProductionTenantRecoveryFinalProofHelper.FormatRuntimeFailureIncidentIds(tenantAFinalRecoveryProof)}'");
+            this.output.WriteLine($"  ForensicsIds='{ProductionTenantRecoveryFinalProofHelper.FormatForensicsIds(tenantAFinalRecoveryProof)}'");
+            this.output.WriteLine($"  Recovered='{tenantARecovery.RecoveredWorks.Count}'");
+            this.output.WriteLine($"  Forensics='{tenantAFinalForensics.Count}'");
+            this.output.WriteLine($"  ReplayProof='{tenantAReplayProofs.Count}'");
+
+            this.output.WriteLine(string.Empty);
+            this.output.WriteLine("TenantB:");
+            this.output.WriteLine($"  TenantId='{tenantB.TenantId}'");
+            this.output.WriteLine($"  FailedRuntime='{tenantBInventory.RuntimeInstanceId}'");
+            this.output.WriteLine($"  ForensicsTimelineTypes='{ProductionTenantRecoveryFinalProofHelper.FormatForensicsTimelineTypes(tenantBFinalRecoveryProof)}'");
+            this.output.WriteLine($"  RecoveryModes='{ProductionTenantRecoveryFinalProofHelper.FormatRecoveryModes(tenantBFinalRecoveryProof)}'");
+            this.output.WriteLine($"  RuntimeFailureIncidentIds='{ProductionTenantRecoveryFinalProofHelper.FormatRuntimeFailureIncidentIds(tenantBFinalRecoveryProof)}'");
+            this.output.WriteLine($"  ForensicsIds='{ProductionTenantRecoveryFinalProofHelper.FormatForensicsIds(tenantBFinalRecoveryProof)}'");
+            this.output.WriteLine($"  Recovered='{tenantBRecovery.RecoveredWorks.Count}'");
+            this.output.WriteLine($"  Forensics='{tenantBFinalForensics.Count}'");
+            this.output.WriteLine($"  ReplayProof='{tenantBReplayProofs.Count}'");
+
+            this.output.WriteLine(string.Empty);
+            this.output.WriteLine("Safety:");
+            this.output.WriteLine("  ForensicsValidated='true'");
+            this.output.WriteLine("  StrictResumeValidated='true'");
+            this.output.WriteLine("  ReplayValidated='true'");
+            this.output.WriteLine("  LedgerValidated='true'");
+            this.output.WriteLine("  TraceValidated='true'");
+            this.output.WriteLine($"  InfraLedgerValidated='{infraLedgerValidated.ToString().ToLowerInvariant()}'");
+            this.output.WriteLine($"  ControlPlaneCausalChainValidated='{causalChainProof.IsValidated.ToString().ToLowerInvariant()}'");
+            this.output.WriteLine("  CrossTenantLeakDetected='false'");
+            this.output.WriteLine($"  CrossTenantLedgerLeakDetected='{crossTenantLedgerLeakDetected.ToString().ToLowerInvariant()}'");
+            this.output.WriteLine("  DuplicateRecoveryDetected='false'");
+
+            this.output.WriteLine(string.Empty);
         }
 
         private static void AssertAllRuntimeStatusesCompleted(
@@ -733,6 +1081,29 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                     string.Equals(finalStatus.RunState?.Status, "completed", StringComparison.OrdinalIgnoreCase),
                     $"Recovered work did not complete. RuntimeInstanceId='{finalStatus.RuntimeInstanceId}', RunId='{finalStatus.RunId}', ExecutionId='{finalStatus.ExecutionId}', Status='{finalStatus.RunState?.Status}', FailureReason='{finalStatus.FailureReason}', Message='{finalStatus.Message}'.");
             }
+        }
+
+        private static bool IsInfraLedgerEntry(
+            AiDecisionLedgerEntry entry)
+        {
+            ArgumentNullException.ThrowIfNull(entry);
+
+            return entry.EventType.StartsWith(
+                    "control.",
+                    StringComparison.Ordinal) ||
+                entry.EventType.Contains(
+                    "runtime-instance",
+                    StringComparison.Ordinal) ||
+                entry.EventType.Contains(
+                    "runtime-execution-recovery",
+                    StringComparison.Ordinal) ||
+                entry.EventType.Contains(
+                    "recovery",
+                    StringComparison.Ordinal) ||
+                string.Equals(
+                    entry.CorrelationContext.Operation,
+                    "control-plane",
+                    StringComparison.OrdinalIgnoreCase);
         }
 
         private static bool LedgerEntryContainsTenant(
@@ -830,6 +1201,87 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                     AssertReplayTrace = true
                 }
             };
+        }
+
+        private void DumpLedgerEventTypes(
+            string title,
+            IReadOnlyCollection<AiDecisionLedgerEntry> entries)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(title);
+            ArgumentNullException.ThrowIfNull(entries);
+
+            this.output.WriteLine(string.Empty);
+            this.output.WriteLine($"# LEDGER EVENT TYPE DUMP - {title}");
+            this.output.WriteLine($"TotalEntries='{entries.Count}'");
+
+            foreach (var group in entries
+                .Where(entry => !string.IsNullOrWhiteSpace(entry.EventType))
+                .GroupBy(entry => entry.EventType, StringComparer.Ordinal)
+                .Select(group => new
+                {
+                    EventType = group.Key,
+                    Count = group.Count(),
+                    FirstTimestampUtc = group.Min(entry => entry.TimestampUtc),
+                    LastTimestampUtc = group.Max(entry => entry.TimestampUtc),
+                    DistinctCorrelationIds = group
+                        .Select(entry => entry.CorrelationContext.CorrelationId)
+                        .Where(value => !string.IsNullOrWhiteSpace(value))
+                        .Distinct(StringComparer.Ordinal)
+                        .Count(),
+                    DistinctRuntimeInstanceIds = group
+                        .Select(entry => entry.CorrelationContext.RuntimeInstanceId)
+                        .Where(value => !string.IsNullOrWhiteSpace(value))
+                        .Distinct(StringComparer.Ordinal)
+                        .Count(),
+                    DistinctExecutionIds = group
+                        .Select(entry => entry.CorrelationContext.ExecutionId)
+                        .Where(value => !string.IsNullOrWhiteSpace(value))
+                        .Distinct(StringComparer.Ordinal)
+                        .Count(),
+                    DistinctRunIds = group
+                        .Select(entry => entry.CorrelationContext.RunId)
+                        .Where(value => !string.IsNullOrWhiteSpace(value))
+                        .Distinct(StringComparer.Ordinal)
+                        .Count()
+                })
+                .OrderByDescending(group => group.Count)
+                .ThenBy(group => group.EventType, StringComparer.Ordinal))
+            {
+                this.output.WriteLine(
+                    $"EventType='{group.EventType}', Count='{group.Count}', DistinctCorrelationIds='{group.DistinctCorrelationIds}', DistinctRuntimeInstanceIds='{group.DistinctRuntimeInstanceIds}', DistinctExecutionIds='{group.DistinctExecutionIds}', DistinctRunIds='{group.DistinctRunIds}', First='{group.FirstTimestampUtc:O}', Last='{group.LastTimestampUtc:O}'.");
+            }
+        }
+
+        private void DumpLedgerEventSamples(
+            string title,
+            IReadOnlyCollection<AiDecisionLedgerEntry> entries,
+            string eventTypeToken,
+            int maxSamples)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(title);
+            ArgumentNullException.ThrowIfNull(entries);
+            ArgumentException.ThrowIfNullOrWhiteSpace(eventTypeToken);
+
+            this.output.WriteLine(string.Empty);
+            this.output.WriteLine($"# LEDGER EVENT SAMPLE DUMP - {title}");
+            this.output.WriteLine($"Token='{eventTypeToken}', TotalMatchingEntries='{entries.Count(entry => !string.IsNullOrWhiteSpace(entry.EventType) && entry.EventType.Contains(eventTypeToken, StringComparison.Ordinal))}', MaxSamples='{maxSamples}'");
+
+            foreach (var entry in entries
+                .Where(entry =>
+                    !string.IsNullOrWhiteSpace(entry.EventType) &&
+                    entry.EventType.Contains(eventTypeToken, StringComparison.Ordinal))
+                .OrderBy(entry => entry.TimestampUtc)
+                .ThenBy(entry => entry.Sequence)
+                .Take(maxSamples))
+            {
+                var metadata =
+                    entry.Metadata is null
+                        ? string.Empty
+                        : string.Join(",", entry.Metadata.Select(pair => $"{pair.Key}={pair.Value}"));
+
+                this.output.WriteLine(
+                    $"EventType='{entry.EventType}', Timestamp='{entry.TimestampUtc:O}', Sequence='{entry.Sequence}', Category='{entry.Category}', Outcome='{entry.Outcome}', Reason='{entry.Reason}', Operation='{entry.CorrelationContext.Operation}', CorrelationId='{entry.CorrelationContext.CorrelationId}', TraceId='{entry.CorrelationContext.TraceId}', RuntimeInstanceId='{entry.CorrelationContext.RuntimeInstanceId}', WorkerId='{entry.CorrelationContext.WorkerId}', ExecutionId='{entry.CorrelationContext.ExecutionId}', RunId='{entry.CorrelationContext.RunId}', PipelineName='{entry.CorrelationContext.PipelineName}', StepId='{entry.CorrelationContext.StepId}', StepKey='{entry.CorrelationContext.StepKey}', Metadata='{metadata}'.");
+            }
         }
     }
 }
