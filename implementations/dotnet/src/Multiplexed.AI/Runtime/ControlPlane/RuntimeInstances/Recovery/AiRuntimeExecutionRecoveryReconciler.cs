@@ -398,6 +398,15 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery
                 unfinishedRun.ExecutionContextSnapshot?.TenantGroupId ??
                 fallbackTenantGroupId;
 
+            var sharedRunId =
+                TryGetMetadataValue(
+                    unfinishedRun.Metadata,
+                    "sharedRunId",
+                    "shared.run.id",
+                    "sharedRun.id",
+                    "recovery.sharedRunId",
+                    "recovery.shared.run.id");
+
             var ownership = await this.sharedRunOwnershipResolver
                 .ResolveAsync(
                     new AiSharedRunOwnershipResolutionRequest
@@ -405,11 +414,26 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery
                         RuntimeInstanceId = runtimeInstanceId,
                         LocalRunId = unfinishedRun.RunId,
                         ExecutionId = unfinishedRun.ExecutionId,
+                        SharedRunId = sharedRunId,
                         TenantId = tenantId,
                         TenantGroupId = tenantGroupId
                     },
                     cancellationToken)
                 .ConfigureAwait(false);
+
+            decisions.Add(new AiRuntimeExecutionRecoveryDecision
+            {
+                RuntimeInstanceId = runtimeInstanceId,
+                LocalRunId = unfinishedRun.RunId,
+                ExecutionId = unfinishedRun.ExecutionId,
+                SharedRunId = ownership.SharedRunId ?? sharedRunId,
+                TenantId = tenantId,
+                TenantGroupId = tenantGroupId,
+                Action = "ownership-resolution",
+                Reason =
+                    $"resolved={ownership.Resolved};canRecover={ownership.CanRecover};reason={ownership.Reason};queueStatus={ownership.QueueStatus};sharedRunStatus={ownership.SharedRunStatus};claimTokenPresent={!string.IsNullOrWhiteSpace(ownership.ClaimToken)};requestSharedRunIdPresent={!string.IsNullOrWhiteSpace(sharedRunId)}",
+                Changed = false
+            });
 
             await this.RecordRecoveryCandidateDetectedForensicsAsync(
                     runtimeInstanceId,
@@ -447,11 +471,12 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery
                 RuntimeInstanceId = runtimeInstanceId,
                 LocalRunId = unfinishedRun.RunId,
                 ExecutionId = unfinishedRun.ExecutionId,
-                SharedRunId = ownership.SharedRunId,
+                SharedRunId = ownership.SharedRunId ?? sharedRunId,
                 TenantId = tenantId,
                 TenantGroupId = tenantGroupId,
                 Action = transition.Action,
-                Reason = transition.Reason,
+                Reason =
+                    $"transitionReason={transition.Reason};accepted={transition.Accepted};changed={transition.Changed};ownershipReason={ownership.Reason};queueStatus={ownership.QueueStatus};sharedRunStatus={ownership.SharedRunStatus};claimTokenPresent={!string.IsNullOrWhiteSpace(ownership.ClaimToken)};requestSharedRunIdPresent={!string.IsNullOrWhiteSpace(sharedRunId)}",
                 Changed = transition.Changed
             });
 
@@ -540,6 +565,48 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery
                     "queued",
                     StringComparison.OrdinalIgnoreCase) &&
                 string.IsNullOrWhiteSpace(unfinishedRun.ExecutionId);
+        }
+
+        /// <summary>
+        /// Attempts to get the first non-empty metadata value matching one of the provided keys.
+        /// </summary>
+        /// <param name="metadata">The optional metadata dictionary.</param>
+        /// <param name="keys">The metadata keys to inspect.</param>
+        /// <returns>The first non-empty metadata value, or null when none is available.</returns>
+        private static string? TryGetMetadataValue(
+            IReadOnlyDictionary<string, string>? metadata,
+            params string[] keys)
+        {
+            if (metadata is null)
+            {
+                return null;
+            }
+
+            foreach (var key in keys)
+            {
+                if (metadata.TryGetValue(key, out var value) &&
+                    !string.IsNullOrWhiteSpace(value))
+                {
+                    return value;
+                }
+            }
+
+            foreach (var key in keys)
+            {
+                var match =
+                    metadata.FirstOrDefault(pair =>
+                        string.Equals(
+                            pair.Key,
+                            key,
+                            StringComparison.OrdinalIgnoreCase));
+
+                if (!string.IsNullOrWhiteSpace(match.Value))
+                {
+                    return match.Value;
+                }
+            }
+
+            return null;
         }
 
         /// <summary>

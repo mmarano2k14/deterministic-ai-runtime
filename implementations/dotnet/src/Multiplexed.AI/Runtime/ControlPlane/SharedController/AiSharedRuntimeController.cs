@@ -10,6 +10,7 @@ using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Dispatch;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Scaling;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Store;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Queue;
+using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Claiming;
 using Multiplexed.Abstractions.AI.Execution.Instance.Worker;
 using Multiplexed.Abstractions.AI.Observability.Context;
 using Multiplexed.Abstractions.Core.ExecutionContext;
@@ -495,6 +496,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController
             AiRunAdmissionDecision admissionDecision,
             CancellationToken cancellationToken)
         {
+            var dispatchReason =
+                admissionDecision.Reason ??
+                "Admission assigned shared run to runtime instance.";
+
             var dispatchResult = await _dispatcher
                 .DispatchAsync(
                     new AiSharedRunDispatchRequest
@@ -504,7 +509,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController
                         CorrelationId = created.CorrelationId,
                         RequestedBy = created.RequestedBy,
                         Source = created.Source,
-                        Reason = admissionDecision.Reason ?? "Admission assigned shared run to runtime instance.",
+                        Reason = dispatchReason,
                         Metadata = created.Metadata
                     },
                     cancellationToken)
@@ -522,7 +527,29 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController
                     .ConfigureAwait(false) ?? created;
             }
 
-            return await _store
+            if (string.IsNullOrWhiteSpace(dispatchResult.LocalRunId))
+            {
+                return await _store
+                    .MarkDispatchFailedAsync(
+                        created.SharedRunId,
+                        created.AssignedRuntimeInstanceId!,
+                        "Direct dispatch succeeded but did not return a local run id.",
+                        dispatchResult.Message,
+                        cancellationToken)
+                    .ConfigureAwait(false) ?? created;
+            }
+
+            var dispatchedQueueItem = await EnsureSharedQueueDispatchedOwnershipAsync(
+                    created,
+                    created.AssignedRuntimeInstanceId!,
+                    dispatchResult.LocalRunId,
+                    dispatchResult.ExecutionId,
+                    dispatchResult.Message ?? dispatchReason,
+                    created.Metadata,
+                    cancellationToken)
+                .ConfigureAwait(false);
+
+            var dispatchedRun = await _store
                 .MarkDispatchedAsync(
                     created.SharedRunId,
                     created.AssignedRuntimeInstanceId!,
@@ -530,7 +557,198 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController
                     dispatchResult.ExecutionId,
                     dispatchResult.Message,
                     cancellationToken)
+                .ConfigureAwait(false);
+
+            if (dispatchedRun is not null)
+            {
+                return dispatchedRun;
+            }
+
+            await RequeueDispatchedOwnershipBestEffortAsync(
+                    dispatchedQueueItem,
+                    "Shared run store rejected direct dispatch persistence after queue ownership was materialized.",
+                    created.Metadata,
+                    cancellationToken)
+                .ConfigureAwait(false);
+
+            return await _store
+                .MarkDispatchFailedAsync(
+                    created.SharedRunId,
+                    created.AssignedRuntimeInstanceId!,
+                    "Shared run store rejected direct dispatch persistence.",
+                    dispatchResult.Message,
+                    cancellationToken)
                 .ConfigureAwait(false) ?? created;
+        }
+
+        /// <summary>
+        /// Ensures that a direct-dispatched shared run has durable shared queue ownership.
+        /// </summary>
+        /// <param name="sharedRun">The shared run record.</param>
+        /// <param name="runtimeInstanceId">The runtime instance identifier that owns the local run.</param>
+        /// <param name="localRunId">The local runtime run identifier returned by dispatch.</param>
+        /// <param name="executionId">The optional execution identifier returned by dispatch.</param>
+        /// <param name="reason">The ownership materialization reason.</param>
+        /// <param name="metadata">Additional metadata to persist on the queue item.</param>
+        /// <param name="cancellationToken">A token used to cancel the operation.</param>
+        /// <returns>The dispatched shared queue item.</returns>
+        private async Task<AiSharedQueueItem> EnsureSharedQueueDispatchedOwnershipAsync(
+            AiSharedRunRecord sharedRun,
+            string runtimeInstanceId,
+            string localRunId,
+            string? executionId,
+            string? reason,
+            IReadOnlyDictionary<string, string>? metadata,
+            CancellationToken cancellationToken)
+        {
+            ArgumentNullException.ThrowIfNull(sharedRun);
+            ArgumentException.ThrowIfNullOrWhiteSpace(runtimeInstanceId);
+            ArgumentException.ThrowIfNullOrWhiteSpace(localRunId);
+
+            var existing = await _sharedQueue
+                .GetAsync(
+                    sharedRun.SharedRunId,
+                    cancellationToken)
+                .ConfigureAwait(false);
+
+            if (existing is { Status: AiSharedQueueItemStatus.Dispatched } &&
+                !string.IsNullOrWhiteSpace(existing.ClaimToken))
+            {
+                return existing;
+            }
+
+            var ownershipMetadata = MergeMetadata(
+                sharedRun.Metadata,
+                metadata ?? new Dictionary<string, string>(),
+                new Dictionary<string, string>
+                {
+                    ["sharedRunId"] = sharedRun.SharedRunId,
+                    ["shared.run.id"] = sharedRun.SharedRunId,
+                    ["runtimeInstanceId"] = runtimeInstanceId,
+                    ["runtime.instance.id"] = runtimeInstanceId,
+                    ["localRunId"] = localRunId,
+                    ["local.run.id"] = localRunId,
+                    ["executionId"] = executionId ?? string.Empty,
+                    ["execution.id"] = executionId ?? string.Empty,
+                    ["claim.owner.runtimeInstanceId"] = runtimeInstanceId,
+                    ["ownership.source"] = "shared-runtime-controller-direct-dispatch"
+                });
+
+            if (existing is null)
+            {
+                await _sharedQueue
+                    .EnqueueAsync(
+                        new AiSharedQueueItem
+                        {
+                            SharedRunId = sharedRun.SharedRunId,
+                            ControlPlaneId = sharedRun.ControlPlaneId,
+                            Status = AiSharedQueueItemStatus.Pending,
+                            ExecutionContextSnapshot = sharedRun.ExecutionContextSnapshot,
+                            PipelineKey = sharedRun.PipelineKey,
+                            Priority = 0,
+                            EnqueuedAtUtc = sharedRun.SubmittedAtUtc == default
+                                ? DateTimeOffset.UtcNow
+                                : sharedRun.SubmittedAtUtc,
+                            UpdatedAtUtc = DateTimeOffset.UtcNow,
+                            Reason = reason ?? "Direct dispatch ownership materialized.",
+                            Metadata = ownershipMetadata
+                        },
+                        cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            else if (existing.Status == AiSharedQueueItemStatus.Claimed &&
+                !string.IsNullOrWhiteSpace(existing.ClaimToken))
+            {
+                var claimedDispatched = await _sharedQueue
+                    .MarkDispatchedAsync(
+                        existing.SharedRunId,
+                        existing.ClaimToken,
+                        reason ?? "Direct dispatch ownership marked as dispatched from existing claim.",
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+                if (claimedDispatched is not null)
+                {
+                    return claimedDispatched;
+                }
+            }
+
+            var claim = await _sharedQueue
+                .ClaimNextAsync(
+                    new AiSharedQueueClaimRequest
+                    {
+                        RuntimeInstanceId = runtimeInstanceId,
+                        WorkerId = $"direct-dispatch-{localRunId}",
+                        TenantId = sharedRun.ExecutionContextSnapshot.TenantId,
+                        PipelineKey = sharedRun.PipelineKey,
+                        ClaimTtl = TimeSpan.FromMinutes(30),
+                        CorrelationId = sharedRun.CorrelationId,
+                        Reason = reason ?? "Direct dispatch ownership claimed."
+                    },
+                    cancellationToken)
+                .ConfigureAwait(false);
+
+            if (claim is null ||
+                !string.Equals(
+                    claim.SharedRunId,
+                    sharedRun.SharedRunId,
+                    StringComparison.Ordinal) ||
+                string.IsNullOrWhiteSpace(claim.ClaimToken))
+            {
+                throw new InvalidOperationException(
+                    $"Direct dispatch ownership could not be claimed for shared run '{sharedRun.SharedRunId}'.");
+            }
+
+            var dispatched = await _sharedQueue
+                .MarkDispatchedAsync(
+                    sharedRun.SharedRunId,
+                    claim.ClaimToken,
+                    reason ?? "Direct dispatch ownership marked as dispatched.",
+                    cancellationToken)
+                .ConfigureAwait(false);
+
+            if (dispatched is null)
+            {
+                throw new InvalidOperationException(
+                    $"Direct dispatch ownership could not be marked as dispatched for shared run '{sharedRun.SharedRunId}'.");
+            }
+
+            return dispatched;
+        }
+
+        /// <summary>
+        /// Attempts to requeue a dispatched queue item without masking the original failure.
+        /// </summary>
+        /// <param name="queueItem">The dispatched queue item.</param>
+        /// <param name="reason">The requeue reason.</param>
+        /// <param name="metadata">The metadata to merge into the queue item.</param>
+        /// <param name="cancellationToken">A token used to cancel the operation.</param>
+        private async Task RequeueDispatchedOwnershipBestEffortAsync(
+            AiSharedQueueItem queueItem,
+            string reason,
+            IReadOnlyDictionary<string, string>? metadata,
+            CancellationToken cancellationToken)
+        {
+            if (string.IsNullOrWhiteSpace(queueItem.ClaimToken))
+            {
+                return;
+            }
+
+            try
+            {
+                await _sharedQueue
+                    .RequeueDispatchedAsync(
+                        queueItem.SharedRunId,
+                        queueItem.ClaimToken,
+                        reason,
+                        metadata,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            catch
+            {
+                // Best-effort rollback. The original dispatch failure must remain the visible outcome.
+            }
         }
 
         /// <summary>

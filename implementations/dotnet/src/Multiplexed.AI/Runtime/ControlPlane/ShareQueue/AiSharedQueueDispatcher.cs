@@ -622,6 +622,68 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                             };
                         }
 
+                        var dispatchedQueueItem = await _sharedQueue
+                            .MarkDispatchedAsync(
+                                queueItem.SharedRunId,
+                                queueItem.ClaimToken!,
+                                dispatchResult.Message,
+                                cancellationToken)
+                            .ConfigureAwait(false);
+
+                        if (dispatchedQueueItem is null)
+                        {
+                            _logger.LogWarning(
+                                "Shared queue item could not be marked as dispatched before marking the shared run as dispatched. SharedRunId={SharedRunId}, ControlPlaneId={ControlPlaneId}, RuntimeInstanceId={RuntimeInstanceId}, ClaimToken={ClaimToken}, LocalRunId={LocalRunId}, ExecutionId={ExecutionId}",
+                                queueItem.SharedRunId,
+                                controlPlaneId,
+                                targetRuntimeInstanceId,
+                                queueItem.ClaimToken,
+                                dispatchResult.LocalRunId,
+                                dispatchResult.ExecutionId);
+
+                            var failedSharedRun = await _sharedRunStore
+                                .MarkDispatchFailedAsync(
+                                    sharedRun.SharedRunId,
+                                    targetRuntimeInstanceId,
+                                    "Shared queue item could not be marked as dispatched.",
+                                    "Shared queue item could not be marked as dispatched before shared run dispatch persistence.",
+                                    cancellationToken)
+                                .ConfigureAwait(false);
+
+                            var completedAtUtc = DateTimeOffset.UtcNow;
+
+                            return new AiSharedQueueDispatchResult
+                            {
+                                Success = false,
+                                SharedRunId = queueItem.SharedRunId,
+                                RuntimeInstanceId = targetRuntimeInstanceId,
+                                QueueItem = queueItem,
+                                SharedRun = failedSharedRun ?? sharedRun,
+                                DispatchResult = dispatchResult,
+                                Message = "Shared queue item could not be marked as dispatched, so the shared run record was not marked as dispatched.",
+                                FailureReason = "shared-queue-mark-dispatched-rejected",
+                                StartedAtUtc = startedAtUtc,
+                                CompletedAtUtc = completedAtUtc,
+                                DurationMs = CalculateDurationMs(startedAtUtc, completedAtUtc),
+                                Diagnostics = new[]
+                                {
+                                    "Shared queue item could not be marked as dispatched.",
+                                    $"SharedRunId='{queueItem.SharedRunId}'",
+                                    $"RuntimeInstanceId='{targetRuntimeInstanceId}'",
+                                    $"ClaimTokenPresent='{!string.IsNullOrWhiteSpace(queueItem.ClaimToken)}'",
+                                    $"LocalRunId='{dispatchResult.LocalRunId}'",
+                                    $"ExecutionId='{dispatchResult.ExecutionId}'"
+                                }
+                            };
+                        }
+
+                        _logger.LogDebug(
+                            "Shared queue item marked as dispatched before shared run persistence. SharedRunId={SharedRunId}, ControlPlaneId={ControlPlaneId}, RuntimeInstanceId={RuntimeInstanceId}, ClaimToken={ClaimToken}",
+                            queueItem.SharedRunId,
+                            controlPlaneId,
+                            targetRuntimeInstanceId,
+                            queueItem.ClaimToken);
+
                         var dispatchedRun = await _sharedRunStore
                             .MarkDispatchedAsync(
                                 sharedRun.SharedRunId,
@@ -635,16 +697,17 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                         if (dispatchedRun is null)
                         {
                             _logger.LogWarning(
-                                "Shared run record could not be marked as dispatched. Requeuing shared queue item before marking the queue item as dispatched. SharedRunId={SharedRunId}, ControlPlaneId={ControlPlaneId}, RuntimeInstanceId={RuntimeInstanceId}, LocalRunId={LocalRunId}, ExecutionId={ExecutionId}",
+                                "Shared run record could not be marked as dispatched after the shared queue item was marked as dispatched. Requeueing dispatched queue item for safety. SharedRunId={SharedRunId}, ControlPlaneId={ControlPlaneId}, RuntimeInstanceId={RuntimeInstanceId}, LocalRunId={LocalRunId}, ExecutionId={ExecutionId}",
                                 sharedRun.SharedRunId,
                                 controlPlaneId,
                                 targetRuntimeInstanceId,
                                 dispatchResult.LocalRunId,
                                 dispatchResult.ExecutionId);
 
-                            await RequeueBestEffortAsync(
-                                    queueItem,
-                                    "Shared run record could not be marked as dispatched.",
+                            await RequeueDispatchedBestEffortAsync(
+                                    dispatchedQueueItem,
+                                    "Shared run record could not be marked as dispatched after queue dispatch persistence.",
+                                    operationMetadata,
                                     cancellationToken)
                                 .ConfigureAwait(false);
 
@@ -655,7 +718,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                                 Success = false,
                                 SharedRunId = queueItem.SharedRunId,
                                 RuntimeInstanceId = targetRuntimeInstanceId,
-                                QueueItem = queueItem,
+                                QueueItem = dispatchedQueueItem,
                                 SharedRun = sharedRun,
                                 DispatchResult = dispatchResult,
                                 Message = "Shared queue item was requeued because the shared run record could not be marked as dispatched.",
@@ -691,7 +754,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                                 StringComparison.Ordinal))
                         {
                             _logger.LogWarning(
-                                "Shared run dispatch assignment verification failed. Requeuing shared queue item before marking queue item as dispatched. SharedRunId={SharedRunId}, ControlPlaneId={ControlPlaneId}, ExpectedRuntimeInstanceId={ExpectedRuntimeInstanceId}, ActualRuntimeInstanceId={ActualRuntimeInstanceId}, LocalRunId={LocalRunId}, ExecutionId={ExecutionId}",
+                                "Shared run dispatch assignment verification failed after queue dispatch persistence. Requeueing dispatched queue item for safety. SharedRunId={SharedRunId}, ControlPlaneId={ControlPlaneId}, ExpectedRuntimeInstanceId={ExpectedRuntimeInstanceId}, ActualRuntimeInstanceId={ActualRuntimeInstanceId}, LocalRunId={LocalRunId}, ExecutionId={ExecutionId}",
                                 sharedRun.SharedRunId,
                                 controlPlaneId,
                                 targetRuntimeInstanceId,
@@ -699,9 +762,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                                 dispatchResult.LocalRunId,
                                 dispatchResult.ExecutionId);
 
-                            await RequeueBestEffortAsync(
-                                    queueItem,
-                                    "Shared run dispatch assignment verification failed.",
+                            await RequeueDispatchedBestEffortAsync(
+                                    dispatchedQueueItem,
+                                    "Shared run dispatch assignment verification failed after queue dispatch persistence.",
+                                    operationMetadata,
                                     cancellationToken)
                                 .ConfigureAwait(false);
 
@@ -712,7 +776,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                                 Success = false,
                                 SharedRunId = queueItem.SharedRunId,
                                 RuntimeInstanceId = targetRuntimeInstanceId,
-                                QueueItem = queueItem,
+                                QueueItem = dispatchedQueueItem,
                                 SharedRun = verifyDispatchedRun ?? sharedRun,
                                 DispatchResult = dispatchResult,
                                 Message = "Shared queue item was requeued because shared run dispatch assignment verification failed.",
@@ -726,52 +790,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                                 }
                             };
                         }
-
-                        var dispatchedQueueItem = await _sharedQueue
-                            .MarkDispatchedAsync(
-                                queueItem.SharedRunId,
-                                queueItem.ClaimToken!,
-                                dispatchResult.Message,
-                                cancellationToken)
-                            .ConfigureAwait(false);
-
-                        if (dispatchedQueueItem is null)
-                        {
-                            _logger.LogWarning(
-                                "Shared queue item could not be marked as dispatched after the shared run was marked as dispatched. SharedRunId={SharedRunId}, ControlPlaneId={ControlPlaneId}, RuntimeInstanceId={RuntimeInstanceId}, ClaimToken={ClaimToken}",
-                                queueItem.SharedRunId,
-                                controlPlaneId,
-                                targetRuntimeInstanceId,
-                                queueItem.ClaimToken);
-
-                            var completedAtUtc = DateTimeOffset.UtcNow;
-
-                            return new AiSharedQueueDispatchResult
-                            {
-                                Success = false,
-                                SharedRunId = queueItem.SharedRunId,
-                                RuntimeInstanceId = targetRuntimeInstanceId,
-                                QueueItem = queueItem,
-                                SharedRun = dispatchedRun,
-                                DispatchResult = dispatchResult,
-                                Message = "Shared run was marked as dispatched, but the shared queue item could not be marked as dispatched.",
-                                FailureReason = "shared-queue-mark-dispatched-rejected",
-                                StartedAtUtc = startedAtUtc,
-                                CompletedAtUtc = completedAtUtc,
-                                DurationMs = CalculateDurationMs(startedAtUtc, completedAtUtc),
-                                Diagnostics = new[]
-                                {
-                                    "Shared queue item could not be marked as dispatched."
-                                }
-                            };
-                        }
-
-                        _logger.LogDebug(
-                            "Shared queue item marked as dispatched. SharedRunId={SharedRunId}, ControlPlaneId={ControlPlaneId}, RuntimeInstanceId={RuntimeInstanceId}, ClaimToken={ClaimToken}",
-                            queueItem.SharedRunId,
-                            controlPlaneId,
-                            targetRuntimeInstanceId,
-                            queueItem.ClaimToken);
 
                         var completedAtUtcSuccess =
                             DateTimeOffset.UtcNow;
@@ -1235,6 +1253,73 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
 
             return snapshot is not null &&
                    snapshot.CanAcceptRun;
+        }
+
+        /// <summary>
+        /// Attempts to requeue a dispatched queue item without masking the original failure.
+        /// </summary>
+        /// <param name="queueItem">The dispatched queue item.</param>
+        /// <param name="reason">The requeue reason.</param>
+        /// <param name="metadata">The metadata to merge into the queue item before making it pending again.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        private async Task RequeueDispatchedBestEffortAsync(
+            AiSharedQueueItem queueItem,
+            string reason,
+            IReadOnlyDictionary<string, string>? metadata,
+            CancellationToken cancellationToken)
+        {
+            if (string.IsNullOrWhiteSpace(queueItem.ClaimToken))
+            {
+                _logger.LogWarning(
+                    "Dispatched shared queue item could not be requeued because claim token is missing. SharedRunId={SharedRunId}, ControlPlaneId={ControlPlaneId}, Reason={Reason}",
+                    queueItem.SharedRunId,
+                    queueItem.ControlPlaneId,
+                    reason);
+
+                return;
+            }
+
+            try
+            {
+                var requeued = await _sharedQueue
+                    .RequeueDispatchedAsync(
+                        queueItem.SharedRunId,
+                        queueItem.ClaimToken,
+                        reason,
+                        metadata,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+                if (requeued is null)
+                {
+                    _logger.LogWarning(
+                        "Dispatched shared queue item requeue was rejected. SharedRunId={SharedRunId}, ControlPlaneId={ControlPlaneId}, ClaimToken={ClaimToken}, Status={Status}, Reason={Reason}",
+                        queueItem.SharedRunId,
+                        queueItem.ControlPlaneId,
+                        queueItem.ClaimToken,
+                        queueItem.Status,
+                        reason);
+
+                    return;
+                }
+
+                _logger.LogDebug(
+                    "Dispatched shared queue item requeued. SharedRunId={SharedRunId}, ControlPlaneId={ControlPlaneId}, ClaimToken={ClaimToken}, Reason={Reason}",
+                    queueItem.SharedRunId,
+                    queueItem.ControlPlaneId,
+                    queueItem.ClaimToken,
+                    reason);
+            }
+            catch (Exception exception)
+            {
+                _logger.LogWarning(
+                    exception,
+                    "Dispatched shared queue item requeue failed. SharedRunId={SharedRunId}, ControlPlaneId={ControlPlaneId}, ClaimToken={ClaimToken}, Reason={Reason}",
+                    queueItem.SharedRunId,
+                    queueItem.ControlPlaneId,
+                    queueItem.ClaimToken,
+                    reason);
+            }
         }
 
         /// <summary>

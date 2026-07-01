@@ -977,6 +977,11 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
                     0,
                     _options.MaxConcurrentRuns - runningRunCount);
 
+            var availableQueueSlots =
+                Math.Max(
+                    0,
+                    _options.QueueCapacity - queuedRunCount);
+
             var workerCount =
                 _options.Distributed.Enabled
                     ? Math.Max(
@@ -996,9 +1001,7 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
 
             var canAcceptRun =
                 !_queuePaused &&
-                queuedRunCount < _options.QueueCapacity &&
-                availableRunSlots > 0 &&
-                availableWorkerCount > 0;
+                availableQueueSlots > 0;
 
             return Task.FromResult(
                 new AiRuntimePipelineQueueState

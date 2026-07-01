@@ -44,14 +44,26 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Ownership
             ArgumentException.ThrowIfNullOrWhiteSpace(request.RuntimeInstanceId);
 
             if (string.IsNullOrWhiteSpace(request.LocalRunId) &&
-                string.IsNullOrWhiteSpace(request.ExecutionId))
+                string.IsNullOrWhiteSpace(request.ExecutionId) &&
+                string.IsNullOrWhiteSpace(request.SharedRunId))
             {
                 return CreateUnresolved(
                     request,
-                    "missing-local-run-id-and-execution-id");
+                    "missing-shared-run-id-local-run-id-and-execution-id");
             }
 
-            var queueItems = await sharedQueue
+            var directResolution =
+                await this.TryResolveBySharedRunIdAsync(
+                        request,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+            if (directResolution is not null)
+            {
+                return directResolution;
+            }
+
+            var queueItems = await this.sharedQueue
                 .ListAsync(includeTerminal: true, cancellationToken)
                 .ConfigureAwait(false);
 
@@ -64,7 +76,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Ownership
                     continue;
                 }
 
-                var sharedRun = await sharedRunStore
+                var sharedRun = await this.sharedRunStore
                     .GetAsync(queueItem.SharedRunId, cancellationToken)
                     .ConfigureAwait(false);
 
@@ -89,7 +101,75 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Ownership
 
             return CreateUnresolved(
                 request,
-                "shared-run-ownership-not-found");
+                string.IsNullOrWhiteSpace(request.SharedRunId)
+                    ? "shared-run-ownership-not-found"
+                    : "shared-run-ownership-not-found-after-direct-shared-run-id-lookup");
+        }
+
+        /// <summary>
+        /// Attempts to resolve ownership directly by shared run identifier.
+        /// </summary>
+        /// <param name="request">The ownership resolution request.</param>
+        /// <param name="cancellationToken">A token used to cancel the operation.</param>
+        /// <returns>The resolved ownership result, or null when direct resolution cannot be used.</returns>
+        private async Task<AiSharedRunOwnershipResolutionResult?> TryResolveBySharedRunIdAsync(
+            AiSharedRunOwnershipResolutionRequest request,
+            CancellationToken cancellationToken)
+        {
+            if (string.IsNullOrWhiteSpace(request.SharedRunId))
+            {
+                return null;
+            }
+
+            var queueItem = await this.sharedQueue
+                .GetAsync(request.SharedRunId, cancellationToken)
+                .ConfigureAwait(false);
+
+            var sharedRun = await this.sharedRunStore
+                .GetAsync(request.SharedRunId, cancellationToken)
+                .ConfigureAwait(false);
+
+            if (queueItem is null &&
+                sharedRun is null)
+            {
+                return CreateUnresolved(
+                    request,
+                    "direct-shared-run-id-queue-and-shared-run-missing");
+            }
+
+            if (queueItem is null)
+            {
+                return CreateUnresolved(
+                    request,
+                    "direct-shared-run-id-queue-item-missing");
+            }
+
+            if (!MatchesQueueOwnership(queueItem, request))
+            {
+                return CreateUnresolved(
+                    request,
+                    "direct-shared-run-id-queue-tenant-mismatch");
+            }
+
+            if (sharedRun is null)
+            {
+                return CreateResolvedFromQueueOnly(
+                    request,
+                    queueItem,
+                    "direct-shared-run-id-queue-ownership-resolved-shared-run-missing");
+            }
+
+            if (!MatchesSharedRunOwnership(sharedRun, request))
+            {
+                return CreateUnresolved(
+                    request,
+                    "direct-shared-run-id-shared-run-ownership-mismatch");
+            }
+
+            return CreateResolved(
+                request,
+                queueItem,
+                sharedRun);
         }
 
         /// <summary>
@@ -317,6 +397,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Ownership
             return new AiSharedRunOwnershipResolutionResult
             {
                 Resolved = false,
+                SharedRunId = request.SharedRunId,
                 RuntimeInstanceId = request.RuntimeInstanceId,
                 LocalRunId = request.LocalRunId,
                 ExecutionId = request.ExecutionId,

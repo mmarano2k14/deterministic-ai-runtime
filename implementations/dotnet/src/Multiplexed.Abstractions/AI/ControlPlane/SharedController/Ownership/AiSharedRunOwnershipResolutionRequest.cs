@@ -5,6 +5,7 @@
     /// </summary>
     public sealed class AiSharedRunOwnershipResolutionRequest
     {
+
         /// <summary>
         /// Gets the runtime instance identifier that owns or owned the local runtime run.
         /// </summary>
@@ -14,6 +15,11 @@
         /// Gets the local runtime queue run identifier.
         /// </summary>
         public string? LocalRunId { get; init; }
+
+        /// <summary>
+        /// Gets or sets the optional shared run identifier when the runtime index already knows it.
+        /// </summary>
+        public string? SharedRunId { get; set; }
 
         /// <summary>
         /// Gets the durable DAG execution identifier.
