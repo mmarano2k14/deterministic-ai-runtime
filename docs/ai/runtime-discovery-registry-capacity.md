@@ -1,10 +1,10 @@
 # Runtime Discovery, Registry, and Capacity
 
-Status: Implemented foundation / validated for MCP, Redis, local runtime pools, Redis-backed scale-out request lifecycle, local runtime scale-out, fulfilled-run requeue, HTTP pooled runtime scenarios, and multi-tenant runtime isolation across shared, dedicated, and hybrid tenant modes.
+Status: Implemented foundation / validated for MCP, Redis, local runtime pools, Redis-backed scale-out request lifecycle, local runtime scale-out, fulfilled-run requeue, HTTP pooled runtime scenarios, process-host HTTP runtime crash recovery, unsafe runtime capacity suppression, fulfilled replacement capacity visibility, and multi-tenant runtime isolation across shared, dedicated, and hybrid tenant modes.
 
 This document describes the runtime discovery, registry, and capacity model used by the Deterministic AI Runtime control plane.
 
-It explains how MCP control-plane hosts, runtime-only hosts, runtime instance registration, runtime capacity publication, tenant-aware runtime visibility, shared queue pump readiness, provider dispatch, provider-based scale-out, fulfilled-run requeue, and shutdown cleanup work together.
+It explains how MCP control-plane hosts, runtime-only hosts, runtime instance registration, runtime capacity publication, tenant-aware runtime visibility, shared queue pump readiness, provider dispatch, provider-based scale-out, fulfilled-run requeue, unsafe runtime detection, crash recovery visibility, replacement runtime capacity, and shutdown cleanup work together.
 
 This document complements:
 
@@ -39,6 +39,10 @@ They answer operational questions such as:
 - Can the shared queue pump safely start dispatching?
 - Can scale-out create new tenant-scoped runtime capacity when no runtime instance is available?
 - Can a fulfilled scale-out request make the original shared run dispatchable again?
+- Which runtime instances became unsafe and must no longer receive new work?
+- Can assigned work from an unsafe runtime be recovered without using local queue state as durable truth?
+- Can replacement capacity become visible only to the impacted tenant?
+- Can safe tenants remain visible, dispatchable, and unaffected while other tenants recover?
 - Can shutdown cleanup happen without rediscovering a control-plane id?
 
 This layer is required for:
@@ -54,6 +58,10 @@ This layer is required for:
 - provider-based scale-out
 - tenant-scoped local runtime scale-out
 - fulfilled scale-out run requeue
+- runtime instance health reconciliation
+- runtime crash recovery reconciliation
+- tenant-scoped replacement capacity selection
+- safe-tenant non-impact validation
 - future Kubernetes runtime pods
 - future autoscaling and dashboards.
 
@@ -123,6 +131,36 @@ Shared queue pump restores ExecutionContextSnapshot
 Tenant-aware dispatch-time admission
     ↓
 Runtime instance dispatch
+```
+
+The same registry and capacity visibility model is also part of runtime crash recovery:
+
+```text
+Runtime heartbeat becomes stale or unsafe
+    ↓
+Health reconciliation suppresses unsafe capacity
+    ↓
+Admission stops selecting the unsafe runtime
+    ↓
+Execution recovery reconciliation enumerates assigned work
+    ↓
+In-flight executions resume with the same ExecutionId
+    ↓
+Local queued shared runs are redispatched through durable SharedRunId
+    ↓
+Replacement capacity is created or selected inside the same tenant scope
+    ↓
+Registry and capacity expose only tenant-visible replacement runtime capacity
+    ↓
+Ledger, trace, replay, and forensics prove recovery after convergence
+```
+
+Important boundary:
+
+```text
+Runtime health reconciliation decides whether capacity is safe for routing.
+Execution recovery reconciliation recovers work already assigned to unsafe capacity.
+Provider transport failures are signals, not lifecycle ownership.
 ```
 
 ---
@@ -760,6 +798,62 @@ For scale-out-created runtime instances, the first registration/capacity publica
 
 ---
 
+## Crash Recovery Visibility
+
+Registry and capacity stores are not only used for normal dispatch and scale-out. They are also part of the crash recovery safety model.
+
+When a runtime instance becomes unsafe, it must stop being eligible for new admission. Existing work assigned to that runtime is then handled by execution recovery reconciliation.
+
+The important distinction is:
+
+```text
+Unsafe capacity suppression
+    = stop routing new work to an unsafe runtime
+
+Assigned work recovery
+    = recover work that was already dispatched to that runtime
+```
+
+These responsibilities must remain separate. A health reconciler should not execute DAG recovery directly. A provider should not restart or kill runtimes directly. The execution recovery reconciler should recover assigned work using durable state.
+
+Recovery source of truth:
+
+```text
+shared run store
+shared queue
+runtime run execution index
+DAG execution store
+runtime registry
+runtime capacity store
+ledger / trace / forensics evidence
+```
+
+The local runtime queue is intentionally not the source of truth. It can disappear with the process.
+
+Validated process-host crash recovery uses this model:
+
+```text
+real RuntimeInstanceOnly process killed
+    ↓
+heartbeat stops
+    ↓
+runtime becomes unsafe for admission
+    ↓
+assigned work is enumerated
+    ↓
+in-flight execution resumes with preserved ExecutionId
+    ↓
+local queued work is redispatched through SharedRunId
+    ↓
+replacement runtime registers and publishes tenant-scoped capacity
+    ↓
+safe tenant capacity remains visible and unaffected
+```
+
+Recovery is complete only after the recovered work has converged and the proof surface is available through ledger, trace, replay, and recovery forensics.
+
+---
+
 ## Shared Queue Pump Readiness
 
 The background shared queue pump should not dispatch before runtime capacity is visible.
@@ -1226,7 +1320,23 @@ Full regression evidence:
 1036 tests passing
 ```
 
----
+Real process-host crash recovery evidence:
+
+```text
+Tenant A runtime process killed
+Tenant B runtime process killed
+Safe tenant runtime process not killed
+Impacted in-flight executions resumed with preserved ExecutionId
+Impacted local queued work redispatched through durable SharedRunId
+Replacement runtime capacity registered and visible per tenant
+Safe tenant completed normal runs with zero recovery work
+Safe tenant recovery forensics = 0
+Safe tenant recovery contamination visible from impacted ledger queries = 0
+Cross-tenant ledger leak detected = false
+Replay / ledger / trace / forensics proof validated after convergence
+```
+
+--- 
 
 ## Current Status
 
@@ -1248,6 +1358,10 @@ Full regression evidence:
 | Runtime capacity publication | Implemented / validated |
 | Runtime capacity cleanup | Implemented / validated |
 | Runtime heartbeat | Implemented / validated |
+| Runtime unsafe-capacity suppression | Implemented / validated |
+| Runtime crash recovery visibility | Implemented / validated |
+| Process-host replacement capacity visibility | Implemented / validated |
+| Safe tenant non-impact during crash recovery | Implemented / validated |
 | Runtime role separation | Implemented / validated |
 | MCP runtime visibility | Implemented / validated |
 | Shared queue pump readiness gate | Implemented / validated |
@@ -1330,6 +1444,6 @@ These are intentionally separate from the current validated discovery, registry,
 
 ## Documentation Rule
 
-This document describes the runtime discovery, registry, capacity, and tenant visibility foundation.
+This document describes the runtime discovery, registry, capacity, tenant visibility, unsafe runtime visibility, and crash recovery capacity foundation.
 
 Do not present Kubernetes autoscaling, gRPC dispatch, Redis command queue dispatch, production dashboard features, database-backed tenant settings, or production multi-control-plane leader election as completed capabilities until they are implemented and validated.

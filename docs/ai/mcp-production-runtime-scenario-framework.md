@@ -4,9 +4,9 @@
 
 This document describes the MCP production runtime scenario framework introduced for validating the deterministic AI runtime in production-like conditions.
 
-The framework validates more than isolated unit behavior. It proves the full HTTP process-host execution path with real runtime host processes, tenant-aware scale-out, runtime registration, capacity publication, dispatch, DAG execution, durable observability, and replay.
+The framework validates more than isolated unit behavior. It proves the full HTTP process-host execution path with real runtime host processes, tenant-aware scale-out, runtime registration, capacity publication, dispatch, DAG execution, durable observability, and replay. It now also validates real runtime process crash recovery: unsafe runtime detection, assigned-work reconciliation, in-flight DAG resume, local-queued redispatch, runtime recovery forensics, control-plane ledger causal chain evidence, and safe-tenant non-impact.
 
-The main production flow validated by this framework is:
+The main production execution flow validated by this framework is:
 
 ```text
 Submit
@@ -23,11 +23,29 @@ Submit
 → ledger / trace / replay validation
 ```
 
-This workstream covers three related areas:
+The main production recovery flow validated by this framework is:
+
+```text
+real RuntimeInstanceOnly process killed
+→ heartbeat becomes stale / runtime becomes unsafe
+→ unsafe runtime capacity is no longer selected
+→ execution recovery reconciler enumerates assigned work
+→ in-flight DAG execution resumes with the same ExecutionId
+→ local queued shared runs are redispatched through durable SharedRunId state
+→ replacement runtime capacity is selected or created when required
+→ recovered executions complete
+→ runtime recovery forensics are queryable
+→ ledger / trace / replay / control-plane causal chain proof is validated
+→ safe tenant remains untouched
+```
+
+This workstream covers five related areas:
 
 1. MCP Runtime Host Manager and host creation modes.
 2. HTTP process-host scale-out with real `RuntimeInstanceOnly` processes.
 3. MCP production scenario tests validating Dedicated / Shared / Hybrid tenant runtime modes.
+4. Real process-host runtime crash recovery with durable DAG resume and local-queued redispatch.
+5. Tenant-scoped recovery proof through forensics, ledger, trace, replay, and safe-tenant isolation.
 
 ---
 
@@ -48,13 +66,18 @@ The production scenario framework exists to prove that the control plane can:
 - dispatch queued runs to that runtime;
 - execute DAG workloads;
 - observe execution through durable stores;
-- replay execution after crossing a process boundary.
+- replay execution after crossing a process boundary;
+- kill real runtime host processes and recover only the work assigned to those unsafe runtimes;
+- preserve durable `ExecutionId` for in-flight DAG recovery;
+- redispatch volatile local-queued work through durable `SharedRunId` state;
+- prove that an unrelated safe tenant receives no recovery work, no recovery forensics, and no ledger contamination.
 
-The key validation goal is:
+The key validation goals are:
 
 ```text
 No fake runtime capacity is required for the final HTTP process-host production scenario.
 The runtime instance is a real RuntimeInstanceOnly process.
+Crash recovery is validated by killing real process-host runtimes, not by simulating recovery in memory.
 ```
 
 ---
@@ -173,6 +196,8 @@ For the current production HTTP process-host scenario, the watcher routes pendin
 
 The HTTP runtime provider owns HTTP transport-based runtime dispatch and HTTP runtime scale-out.
 
+It reports transport and endpoint failures through structured provider results. It does not own runtime crash recovery, kill/restart policy, or assigned-work recovery. Those responsibilities remain separated between runtime health reconciliation, execution recovery reconciliation, and the runtime lifecycle owner.
+
 In process-host production scenarios, the provider uses:
 
 ```text
@@ -182,7 +207,7 @@ AiHttpRuntimeScaleOutProvisioner
 → RuntimeInstanceOnly host process
 ```
 
-The provider is responsible for materializing capacity metadata and for routing queued runs to runtime instances through HTTP commands.
+The provider is responsible for materializing capacity metadata and for routing queued runs to runtime instances through HTTP commands. It is also part of the validated transport-health boundary: HTTP failures can become endpoint health signals, but unsafe capacity selection and assigned-work recovery are owned above the transport layer.
 
 ---
 
@@ -587,6 +612,44 @@ HTTP provider options are technical defaults only and should not override tenant
 
 ---
 
+## Runtime health, recovery, and lifecycle boundaries
+
+The framework validates the separation between transport health, runtime safety, assigned-work recovery, and runtime lifecycle ownership.
+
+The boundary is:
+
+```text
+HTTP provider
+    reports transport / endpoint failure signals
+
+RuntimeInstanceHealthReconciler
+    detects stale or unsafe runtime capacity
+    prevents unsafe capacity from receiving new dispatch
+
+Execution recovery reconciler
+    enumerates work assigned to the unsafe runtime
+    resumes in-flight DAG executions
+    redispatches local queued shared runs
+
+Runtime lifecycle owner
+    creates or attaches replacement runtime capacity when required
+```
+
+The HTTP provider must not kill, restart, or directly recover runtime instances. It only reports transport outcomes such as timeout, endpoint unavailable, or circuit open.
+
+A local runtime queue is volatile. It is allowed to die with the process. The source of truth for recovery is durable control-plane and DAG state:
+
+```text
+SharedRunStore
+SharedQueue
+RuntimeRunExecutionIndex
+DAG execution store
+Runtime registry / capacity stores
+Ledger / trace / replay / recovery forensics
+```
+
+Recovery completion is not the same as replacement runtime creation. Recovery is considered validated only after assigned work is reconciled, resumed or redispatched, completed, and observable through replay, ledger, trace, and runtime recovery forensics.
+
 ## Process-boundary observability
 
 Process-host mode validates an important production constraint:
@@ -639,6 +702,41 @@ It creates:
 ---
 
 ## Scenario types
+
+### Real runtime crash recovery scenarios
+
+The framework now validates process-host crash recovery with real `RuntimeInstanceOnly` host processes.
+
+Validated crash recovery scenarios include:
+
+- one tenant runtime process killed and recovered;
+- two tenant runtime processes killed in the same recovery window;
+- a safe tenant running concurrently without recovery contamination;
+- in-flight DAG resume with preserved durable `ExecutionId`;
+- local queued work redispatched through durable `SharedRunId` state;
+- final runtime recovery forensics queried after completion;
+- replay, ledger, trace, and control-plane causal chain proof after recovery;
+- no cross-tenant ledger leak, no duplicate recovery, and no safe-tenant recovery forensics.
+
+Representative tests:
+
+```text
+Http_ProcessHost_Should_Recover_Two_Tenants_After_Real_Runtime_Process_Kills_With_Strict_Dag_Resume_Replay_Ledger_And_Trace
+
+Http_ProcessHost_Should_Recover_Two_Tenants_After_Real_Runtime_Process_Kills_Without_Impacting_Safe_Tenant_With_Strict_Dag_Resume_Replay_Ledger_And_Trace
+```
+
+The safe-tenant scenario is the strongest isolation proof. Tenant A and tenant B each lose one real runtime process. Tenant C, represented by `tenant-real-crash-safe`, is never killed, receives no recovery forensics, has zero recovered work, completes its three normal runs, and still produces replay, ledger, and trace evidence.
+
+Validated safe-tenant invariants:
+
+```text
+SafeTenantRecoveryLeakDetected = false
+SafeTenantNonImpactValidated = true
+CrashImpacted = false
+CrossTenantLedgerLeakDetected = false
+SafeTenantRecoveryEntriesVisibleFromImpactedQueries = 0
+```
 
 ### Focused tenant runtime mode scenarios
 
@@ -725,7 +823,12 @@ The production scenario framework validates the following behavior:
 - Dedicated tenants do not reuse another tenant's dedicated runtime;
 - tenant runtime settings override request-level runtime sizing;
 - child process execution remains observable from the parent MCP process;
-- ledger, trace, replay report, replay ledger, and replay timeline work across process boundaries.
+- ledger, trace, replay report, replay ledger, and replay timeline work across process boundaries;
+- runtime process crash recovery resumes in-flight DAG executions with preserved `ExecutionId`;
+- volatile local queued work is redispatched through durable `SharedRunId` state;
+- runtime recovery forensics are durable and queryable after convergence;
+- control-plane ledger causal chain evidence is available for scale-out, host creation, recovery, and redispatch;
+- safe tenant non-impact is validated with zero recovery work, zero recovery forensics, and zero recovery ledger contamination.
 
 ---
 
@@ -735,19 +838,28 @@ Before merging this workstream, run:
 
 ```bash
 dotnet test --filter "FullyQualifiedName~HttpProcessHostProductionScenarioTests"
+dotnet test --filter "FullyQualifiedName~HttpProcessHostRealRuntimeCrashRecoveryScenarioTests"
 dotnet test --filter "FullyQualifiedName~AiRuntimeInstanceVisibilityEvaluatorTests"
 dotnet test --filter "FullyQualifiedName~ProductionTenantRuntimeModeMapperTests"
 dotnet test --filter "FullyQualifiedName~AiHttpRuntimeScaleOutProvisionerTests"
 dotnet test --filter "FullyQualifiedName~HttpAiRuntimeInstanceProviderServiceCollectionExtensionsTests"
 ```
 
-The most important end-to-end validation is:
+The most important end-to-end execution validation is:
 
 ```text
 Http_ProcessHost_Should_Run_MixedTenant_Full_Production_Validation_Scenario
 ```
 
-This validates:
+The most important end-to-end recovery validations are:
+
+```text
+Http_ProcessHost_Should_Recover_Two_Tenants_After_Real_Runtime_Process_Kills_With_Strict_Dag_Resume_Replay_Ledger_And_Trace
+
+Http_ProcessHost_Should_Recover_Two_Tenants_After_Real_Runtime_Process_Kills_Without_Impacting_Safe_Tenant_With_Strict_Dag_Resume_Replay_Ledger_And_Trace
+```
+
+These validate:
 
 - all tenant modes;
 - real process-host runtime instances;
@@ -758,7 +870,13 @@ This validates:
 - ledger;
 - trace;
 - replay;
-- durable process-boundary observability.
+- durable process-boundary observability;
+- real process-host runtime crash detection and unsafe capacity suppression;
+- in-flight DAG resume with preserved durable `ExecutionId`;
+- local queued work redispatch through durable `SharedRunId` state;
+- runtime recovery forensics timelines;
+- control-plane ledger causal chain proof;
+- safe tenant non-impact proof.
 
 ---
 
@@ -780,25 +898,28 @@ Future work should decide between:
 
 Hybrid process-host fallback to shared capacity should be validated only after the shared capacity pooling model is explicit.
 
-### Runtime health reconciliation
+### Runtime health, endpoint signals, and recovery boundary
 
-Runtime health reconciliation is a separate future workstream.
+Runtime health reconciliation and execution recovery are separate responsibilities.
 
-Circuit breaker open events from HTTP transport should be treated as endpoint health signals.
+Circuit breaker open events from HTTP transport are endpoint health signals. They do not directly kill, restart, or recover runtime instances from the HTTP command provider.
 
-They should not directly kill or restart runtime instances from the HTTP command provider.
-
-Expected future behavior:
+Validated transport-health-to-recovery boundary:
 
 ```text
-HTTP circuit open
-→ mark endpoint / runtime unhealthy or draining
-→ stop routing new work to it
-→ request replacement capacity if needed
-→ lifecycle owner performs restart or replacement
+HTTP circuit open / timeout / endpoint unavailable
+→ provider returns structured transport failure
+→ runtime endpoint health signal is observable
+→ health reconciler may mark runtime unhealthy, draining, or unsafe
+→ dispatcher stops selecting unsafe runtime capacity
+→ execution recovery reconciler recovers assigned work if the runtime becomes unsafe
+→ replacement capacity is requested if required
+→ lifecycle owner creates or attaches replacement runtime capacity
 ```
 
 Only the lifecycle owner, such as the Host Manager / Kubernetes provider / local process provider, should restart or replace runtime instances.
+
+The important rule is that transport failure reporting, unsafe-capacity suppression, assigned-work recovery, and runtime lifecycle replacement remain separate. This prevents the HTTP provider from becoming the runtime recovery owner.
 
 ---
 
@@ -811,7 +932,12 @@ This document complements:
 - `runtime-discovery-registry-capacity.md`;
 - `multi-tenant-runtime-flow.md`;
 - `multi-tenant-control-plane-isolation.md`;
-- `testing-strategy.md`.
+- `testing-strategy.md`;
+- `runtime-process-crash-recovery.md`;
+- `runtime-recovery-forensics.md`;
+- `multi-tenant-runtime-crash-isolation.md`;
+- `control-plane-ledger-causal-chain.md`;
+- `recovery-replay-ledger-trace-proof.md`.
 
 Those documents describe the general provider, registry, capacity, multi-tenant, and testing architecture.
 

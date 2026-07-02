@@ -1,14 +1,11 @@
 # Observability, Metrics, and Tracing
 
-Status: Implemented foundation. Production-grade dashboarding, OpenTelemetry exporters, policy-specific tracing, and stricter trace-value validation remain planned improvements.
+Status: Implemented foundation / validated for runtime metrics, trace storage, Mongo-backed trace persistence, process-boundary observability, MCP replay / ledger / trace inspection, runtime crash recovery evidence, and tenant-scoped recovery observability. Production-grade dashboarding, OpenTelemetry exporters, policy-specific tracing, and stricter trace-value validation remain planned improvements.
 
 This document describes the observability, metrics, and tracing foundations of the Deterministic AI Runtime.
 
-The runtime observability layer records structured runtime signals correlated by `CorrelationId`, `RunId`, `ExecutionId`, pipeline identity, step identity, worker/runtime instance, claim token, provider/model/operation metadata, storage operations, and future replay diagnostics.
+The runtime observability layer records structured runtime signals correlated by `CorrelationId`, `SharedRunId`, `RunId`, `LocalRunId`, `ExecutionId`, tenant identity, pipeline identity, step identity, worker/runtime instance, claim token, provider/model/operation metadata, storage operations, replay diagnostics, and runtime recovery evidence.
 
-The complete technical reference is preserved in:
-
-- [runtime-internals.md](../runtime-internals.md)
 
 ---
 
@@ -32,7 +29,9 @@ A distributed AI runtime must answer questions such as:
 - which runtime instance observed terminal completion?
 - where did a trace record get stored?
 - can memory diagnostics and durable MongoDB diagnostics be enabled at the same time?
-- can a future replay API reconstruct enough context to validate behavior?
+- can replay, ledger, and trace evidence be queried after execution or recovery?
+- can runtime crash recovery be explained per work item?
+- can a safe tenant prove that it received no recovery evidence after another tenant crashed?
 
 The observability layer exists to make runtime behavior inspectable without mixing operational concerns into the execution logic.
 
@@ -72,10 +71,16 @@ Implemented observability areas include:
 - metrics diagnostics for distributed worker execution
 - shared runtime correlation context
 - correlation-aware observability composition
+- MCP replay report / replay ledger / replay trace inspection
+- runtime crash recovery trace and ledger evidence
+- runtime recovery forensics integration points
+- control-plane causal chain observability
+- tenant-scoped ledger / trace / replay proof after recovery
+- safe tenant non-impact observability proof
 
 The current implementation is intentionally foundation-first.
 
-OpenTelemetry-style exporters, production dashboards, UI timelines, cost dashboards, and full replay/audit APIs remain planned work.
+OpenTelemetry-style exporters, production dashboards, UI timelines, and cost dashboards remain planned work. MCP replay / ledger / trace inspection and recovery proof validation are implemented and validated in production recovery scenarios; richer public replay/audit APIs and UI experiences remain planned work.
 
 ---
 
@@ -94,6 +99,9 @@ A production AI workflow may involve:
 - distributed concurrency leases
 - retry windows
 - stale worker recovery
+- runtime instance crash recovery
+- local queued work redispatch after runtime loss
+- in-flight DAG resume after process death
 - payload compaction
 - payload rehydration
 - retention and hot-state eviction
@@ -122,6 +130,9 @@ Was the payload externalized?
 Did retention evict hot state?
 Did the resolver reconstruct the step correctly?
 Which finalization worker won the race?
+Which runtime process died?
+Which work was recovered from that runtime?
+Which work was not touched because its tenant was safe?
 ```
 
 Observability turns the runtime from a black box into a diagnosable execution system.
@@ -139,6 +150,7 @@ The runtime uses multiple complementary visibility layers.
 | Traces | Timeline and flow diagnostics for runtime operations. |
 | Trace records | Structured trace data that can be stored in memory and/or MongoDB. |
 | Decision ledger | Structured runtime decisions and lifecycle facts correlated to execution state. |
+| Recovery forensics | Durable per-work-item recovery timelines linked to runtime failure incidents. |
 
 Each layer answers a different question.
 
@@ -187,8 +199,12 @@ The runtime-level correlation context is represented by `AiRuntimeExecutionCorre
 It can carry:
 
 - `CorrelationId`
+- `SharedRunId`
 - `RunId`
+- `LocalRunId`
 - `ExecutionId`
+- `TenantId`
+- `TenantGroupId`
 - `PipelineName`
 - `PipelineVersion`
 - `PipelineKey`
@@ -212,10 +228,13 @@ It can additionally carry:
 - `PromptRef`
 - `TraceId`
 - `TraceScopeId`
+- `ForensicsId`
+- `RuntimeFailureIncidentId`
+- `RecoveryMode`
 - `ParentTraceScopeId`
 - `Source`
 
-The goal is to ensure that logs, metrics, traces, ledger events, and future replay diagnostics can all be connected to the same execution story.
+The goal is to ensure that logs, metrics, traces, ledger events, replay diagnostics, and runtime recovery forensics can all be connected to the same execution story.
 
 ---
 
@@ -248,6 +267,33 @@ Once execution creation succeeds, later traces and metrics should include the du
 
 This separation prevents queue/controller activity from being confused with authoritative DAG execution state.
 
+
+### SharedRunId, LocalRunId, and Recovery Correlation
+
+Runtime crash recovery adds another identity layer that observability must preserve.
+
+```text
+SharedRunId
+= durable shared submission identity used by the control plane and shared queue
+
+LocalRunId
+= runtime-local execution attempt identity on a specific runtime instance
+
+ExecutionId
+= durable DAG execution identity, once the DAG exists
+```
+
+For in-flight recovery, `ExecutionId` must remain stable across the failed runtime and the replacement runtime. Observability must therefore show the same durable execution before and after recovery.
+
+For local-queued recovery, an `ExecutionId` may not exist yet. Observability must correlate the recovery through `SharedRunId` and failed `LocalRunId` until a replacement runtime creates the durable `ExecutionId`.
+
+This distinction is required to prove that:
+
+- in-flight DAG work resumed the same execution;
+- local queued work was redispatched without duplicate submission;
+- recovery did not confuse queue identity with durable execution identity;
+- tenant-scoped observability can distinguish impacted and safe tenants.
+
 ---
 
 ## Observability Facade
@@ -276,6 +322,150 @@ Typical responsibility:
 This keeps runtime code from directly depending on many isolated observability services.
 
 ---
+
+## Runtime Crash Recovery Observability
+
+Runtime crash recovery is observable across multiple layers:
+
+```text
+runtime health signal
+    ↓
+unsafe runtime capacity
+    ↓
+execution recovery reconciliation
+    ↓
+assigned work enumeration
+    ↓
+in-flight resume or local-queued redispatch
+    ↓
+replacement runtime selection
+    ↓
+replay / ledger / trace / forensics proof
+```
+
+The HTTP provider may report transport failures such as `http-circuit-open` or `http-provider-unavailable`, but it does not own recovery. Runtime health reconciliation and execution recovery reconciliation remain separate responsibilities.
+
+The observability boundary is:
+
+```text
+HTTP provider
+= transport signal / dispatch failure reason
+
+RuntimeInstanceHealthReconciler
+= unsafe capacity and routing safety
+
+ExecutionRecoveryReconciler
+= assigned work recovery
+
+Runtime recovery forensics
+= per-work-item recovery timeline
+
+Ledger / trace / replay
+= post-recovery proof surface
+```
+
+This separation matters because a runtime may become unsafe for routing before all assigned work has been recovered. A replacement runtime becoming visible is also not the same as recovery completion.
+
+Recovery is observable only when the assigned work has been reconciled and proof has been written.
+
+## Recovery Forensics and Trace Relationship
+
+Runtime recovery forensics are not normal trace records.
+
+They are durable per-work-item recovery records linked to a `RuntimeFailureIncidentId`.
+
+For an in-flight execution, the recovery timeline includes DAG resume evidence:
+
+```text
+execution.recovery.candidate.detected
+→ shared.run.requeued.for.resume
+→ failed.local.run.marked.requeued.for.recovery
+→ replacement.runtime.selected
+→ replacement.local.run.registered
+→ resume.context.seeded
+→ dag.resume.started
+→ dag.resume.completed
+→ execution.recovery.completed
+```
+
+For local queued work, the timeline is shorter because no DAG execution exists yet:
+
+```text
+SharedRunRequeuedForLocalQueuedRecovery
+→ failed.local.run.marked.requeued.for.recovery
+→ replacement.runtime.selected
+→ replacement.local.run.registered
+→ resume.context.seeded
+```
+
+Trace records show runtime flow.
+
+Ledger entries show structured decisions.
+
+Forensics records show the recovery story for one assigned work item.
+
+Replay validates that the recovered execution remains audit-ready after convergence.
+
+## Tenant-Scoped Recovery Observability
+
+Recovery observability must preserve tenant isolation.
+
+A tenant-scoped query must not expose another tenant's ledger, trace, replay, or forensics evidence.
+
+The validated multi-tenant crash scenario proves this shape:
+
+```text
+Tenant A runtime process killed
+Tenant B runtime process killed
+Tenant C runtime process not killed
+```
+
+Expected observability result:
+
+```text
+Tenant A = recovery evidence exists
+Tenant B = recovery evidence exists
+Tenant C = no recovery evidence
+```
+
+The safe tenant still produces normal execution observability: ledger, trace, replay, completion evidence, and step completion evidence.
+
+But it must not receive recovery evidence.
+
+Important invariants:
+
+```text
+SafeTenantRecoveryLeakDetected = false
+SafeTenantNonImpactValidated = true
+CrossTenantLedgerLeakDetected = false
+SafeTenantRecoveryEntriesVisibleFromImpactedQueries = 0
+```
+
+This is the difference between proving that recovery worked and proving that recovery stayed tenant-scoped.
+
+## Control-Plane Causal Chain Observability
+
+Recovery is not only a runtime-side event.
+
+The control plane also records causal evidence for infrastructure decisions.
+
+Validated causal domains include:
+
+```text
+scale-out request persisted
+scale-out watcher observed request
+provider selected
+runtime host manager created host
+process runtime host started
+runtime capacity became visible
+runtime registry/capacity lookup succeeded
+execution recovery reconciled assigned work
+recovered work redispatched
+```
+
+These records explain how replacement capacity appeared and how recovered work moved back into the normal dispatch path.
+
+The causal chain must remain distinct from execution ledger entries. Execution ledger entries explain what happened inside an execution. Control-plane causal chain entries explain what the control plane decided and did around runtime capacity, scale-out, and recovery.
 
 ## Metrics Scope
 
@@ -837,7 +1027,7 @@ It is especially important for distributed throttling and chaos scenarios.
 
 ## Recovery Tracing
 
-Recovery tracing records stale running-step recovery scans.
+Recovery tracing records stale running-step recovery scans and participates in the wider runtime crash recovery proof surface.
 
 Important recovery trace operations include:
 
@@ -854,6 +1044,20 @@ Useful trace fields include:
 - recovered step names
 
 Recovery tracing helps prove that crashed or stale workers do not permanently block progress.
+
+Runtime instance crash recovery is broader than stale step recovery. A runtime process can die while it owns both in-flight DAG executions and local queued work. In that case, trace evidence must be interpreted together with registry/capacity state, recovery forensics, ledger entries, shared run state, and replay proof.
+
+Important distinction:
+
+```text
+Stale running-step recovery
+= a worker claim expired inside an execution
+
+Runtime instance crash recovery
+= an entire runtime process became unsafe and all assigned work must be reconciled
+```
+
+Both are recovery, but they are not the same recovery scope.
 
 ---
 
@@ -917,6 +1121,12 @@ Observability, metrics, and tracing are validated through tests covering:
 - run id trace lookup
 - trace correlation validation
 - runtime worker participation metrics
+- MCP replay report / ledger / trace retrieval
+- process-boundary observability from child RuntimeInstanceOnly processes
+- runtime crash recovery ledger / trace proof
+- runtime recovery forensics proof
+- safe tenant no-recovery-evidence proof
+- control-plane causal chain evidence
 
 Recent diagnostic tests validate that:
 
@@ -958,6 +1168,12 @@ Recent diagnostic tests validate that:
 | Store-only trace recorder | Implemented |
 | Distributed chaos trace diagnostics | Implemented |
 | Distributed chaos metrics diagnostics | Implemented |
+| MCP replay report / ledger / trace inspection | Implemented / validated |
+| Process-boundary observability | Implemented / validated |
+| Runtime crash recovery observability | Implemented / validated |
+| Runtime recovery forensics integration | Implemented / validated |
+| Tenant-scoped recovery observability | Implemented / validated |
+| Control-plane causal chain observability | Implemented / validated |
 | OpenTelemetry exporter | Planned |
 | Production dashboard | Planned |
 | Trace UI | Planned |
@@ -989,7 +1205,10 @@ Recent diagnostic tests validate that:
 | `CompositeAiRuntimeTraceStore` | Writes traces to memory and MongoDB. |
 | `IAiTraceTimeline` | Provides process-local timeline diagnostics. |
 | `IAiRuntimeCorrelationAccessor` | Provides ambient runtime correlation for async execution flow. |
-| DAG claim service | Emits storage traces for claim, concurrency lease acquisition, and recovery. |
+| DAG claim service | Emits storage traces for claim, concurrency lease acquisition, and stale step recovery. |
+| Runtime health reconciler | Produces unsafe runtime capacity signals used by routing and recovery. |
+| Execution recovery reconciler | Reconciles assigned work on unsafe runtime instances and emits recovery evidence. |
+| Runtime recovery forensics store/API | Persists and exposes per-work-item recovery timelines. |
 | DAG step executor | Emits step traces for claimed step execution. |
 | Retention coordinator | Emits retention traces. |
 | Resolver layer | Emits resolver traces. |
@@ -1154,7 +1373,9 @@ Future provider governance should include:
 
 ### 11. Add Replay-Aware Trace Views
 
-The Replay API should eventually consume observability data.
+MCP replay report, replay ledger, and replay trace retrieval are validated.
+
+The remaining work is to turn this proof surface into richer public API and UI views.
 
 Planned improvement:
 
@@ -1165,6 +1386,7 @@ Planned improvement:
 - compare step outputs
 - show divergence points
 - show missing payload or resolver failures
+- show recovery replay proof next to runtime recovery forensics
 
 ### 12. Add Retention-Aware Trace Views
 
@@ -1243,12 +1465,14 @@ The observability layer follows these principles:
 8. Diagnostic tests should reveal observability quality issues without over-constraining early foundations.
 9. Important runtime decisions should be recorded in the ledger, not only in traces.
 10. Future replay, audit, and dashboard tooling should be able to consume the same correlation model.
+11. Tenant-scoped observability must not leak ledger, trace, replay, or forensics records across tenants.
+12. Safe tenants should produce normal execution observability but no recovery observability when they were not impacted.
 
 ---
 
 ## Relationship to Replay and Audit
 
-Observability is a foundation for future replay and audit capabilities.
+Observability is a foundation for replay and audit capabilities. MCP replay report, replay ledger, and replay trace retrieval are already validated; richer public replay/audit APIs and UI workflows remain future work.
 
 Replay answers:
 
@@ -1286,8 +1510,10 @@ Together they support:
 - retention and compaction inspection
 - finalization race explanation
 - future dashboarding
+- runtime crash recovery audit
+- safe tenant non-impact proof
 
-Replay-specific trace and ledger behavior should be added later by the official Replay API.
+Replay-specific UI and public audit workflows should be expanded later by the official Replay API, but replay/ledger/trace evidence is already part of the validated MCP recovery proof surface.
 
 ---
 
@@ -1303,6 +1529,10 @@ Replay-specific trace and ledger behavior should be added later by the official 
 - [Policy-Driven Execution](policy-driven-execution.md)
 - [Config-Driven Runtime](config-driven-runtime.md)
 - [Replay and Audit](replay-and-audit.md)
+- [Runtime Process Crash Recovery](runtime-process-crash-recovery.md)
+- [Runtime Recovery Forensics](runtime-recovery-forensics.md)
+- [Control-Plane Ledger Causal Chain](control-plane-ledger-causal-chain.md)
+- [Recovery Replay Ledger Trace Proof](recovery-replay-ledger-trace-proof.md)
 - [Testing Strategy](testing-strategy.md)
 
 ---
@@ -1311,8 +1541,3 @@ Replay-specific trace and ledger behavior should be added later by the official 
 
 This document is a focused extraction and update based on the current observability, metrics, and tracing implementation.
 
-The original technical depth remains preserved in:
-
-- [runtime-internals.md](../runtime-internals.md)
-
-Do not remove content from `runtime-internals.md` until the extracted documentation has been reviewed and validated.

@@ -50,8 +50,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             var scenario =
                 CreateHttpRecoveryScenario();
 
-            scenario.DispatchTimeout = TimeSpan.FromMinutes(1);
-            scenario.CompletionTimeout = TimeSpan.FromMinutes(1);
+            scenario.DispatchTimeout = TimeSpan.FromMinutes(3);
+            scenario.CompletionTimeout = TimeSpan.FromMinutes(4);
 
             var controlPlaneId =
                 GenericMcpServerTestSettings.CreateControlPlaneId(
@@ -129,12 +129,19 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                         pipelineName)
                     .ConfigureAwait(false);
 
-            await WaitForAnyTenantScaleOutRequestFulfilledAsync(
-                    scaleOutRequestStore,
-                    controlPlaneId,
-                    tenant,
-                    pipelineName,
-                    scenario.ScaleOutTimeout)
+            var initialRuntimeInstanceId =
+                await WaitForAnyTenantScaleOutRequestFulfilledAsync(
+                        scaleOutRequestStore,
+                        controlPlaneId,
+                        tenant,
+                        pipelineName,
+                        scenario.ScaleOutTimeout)
+                    .ConfigureAwait(false);
+
+            await WaitForRuntimeInstanceAcceptingRunsAsync(
+                    registry,
+                    initialRuntimeInstanceId,
+                    TimeSpan.FromSeconds(30))
                 .ConfigureAwait(false);
 
             var firstDispatch =
@@ -203,7 +210,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                     decision.ExecutionId == failedExecutionId &&
                     decision.SharedRunId == sharedRunId &&
                     decision.Action == "requeue-shared-run" &&
-                    decision.Reason == "runtime-execution-recovery-requeue" &&
+                    decision.Reason.StartsWith(
+                        "transitionReason=runtime-execution-recovery-requeue",
+                        StringComparison.Ordinal) &&
                     decision.Changed);
 
             var failedIndexAfterRecovery =
@@ -768,7 +777,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
         /// <param name="tenant">The tenant scenario definition.</param>
         /// <param name="pipelineName">The pipeline name.</param>
         /// <param name="timeout">The timeout.</param>
-        private static async Task WaitForAnyTenantScaleOutRequestFulfilledAsync(
+        private static async Task<string> WaitForAnyTenantScaleOutRequestFulfilledAsync(
             IAiRuntimeScaleOutRequestStore store,
             string controlPlaneId,
             ProductionTenantScenarioDefinition tenant,
@@ -795,11 +804,14 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                             })
                         .ConfigureAwait(false);
 
-                if (lastRequests.Any(request =>
+                var fulfilledRequest =
+                    lastRequests.FirstOrDefault(request =>
                         request.Status == AiRuntimeScaleOutRequestStatus.Fulfilled &&
-                        !string.IsNullOrWhiteSpace(request.FulfilledRuntimeInstanceId)))
+                        !string.IsNullOrWhiteSpace(request.FulfilledRuntimeInstanceId));
+
+                if (fulfilledRequest is not null)
                 {
-                    return;
+                    return fulfilledRequest.FulfilledRuntimeInstanceId!;
                 }
 
                 await Task
@@ -811,6 +823,54 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 $"No fulfilled scale-out request was observed within '{timeout}'. " +
                 $"ControlPlaneId='{controlPlaneId}', TenantId='{tenant.TenantId}', PipelineKey='{pipelineName}', " +
                 $"ObservedRequests='{lastRequests.Count}'.");
+
+            throw new InvalidOperationException(
+                "Unreachable assertion path.");
+        }
+
+        /// <summary>
+        /// Waits until the fulfilled runtime instance is visible and can accept runs.
+        /// </summary>
+        /// <param name="registry">The runtime instance registry.</param>
+        /// <param name="runtimeInstanceId">The runtime instance id.</param>
+        /// <param name="timeout">The timeout.</param>
+        private static async Task WaitForRuntimeInstanceAcceptingRunsAsync(
+            IAiRuntimeInstanceRegistry registry,
+            string runtimeInstanceId,
+            TimeSpan timeout)
+        {
+            ArgumentNullException.ThrowIfNull(registry);
+            ArgumentException.ThrowIfNullOrWhiteSpace(runtimeInstanceId);
+
+            var deadline =
+                DateTimeOffset.UtcNow.Add(timeout);
+
+            AiRuntimeInstanceSnapshot? lastSnapshot = null;
+
+            while (DateTimeOffset.UtcNow < deadline)
+            {
+                lastSnapshot =
+                    await registry
+                        .GetAsync(runtimeInstanceId)
+                        .ConfigureAwait(false);
+
+                if (lastSnapshot is not null &&
+                    lastSnapshot.CanAcceptRun &&
+                    lastSnapshot.Status != AiRuntimeInstanceStatus.Unhealthy &&
+                    lastSnapshot.Status != AiRuntimeInstanceStatus.Stopped)
+                {
+                    return;
+                }
+
+                await Task
+                    .Delay(TimeSpan.FromMilliseconds(100))
+                    .ConfigureAwait(false);
+            }
+
+            Assert.Fail(
+                $"Fulfilled runtime instance was not ready to accept runs within '{timeout}'. " +
+                $"RuntimeInstanceId='{runtimeInstanceId}', " +
+                $"LastStatus='{lastSnapshot?.Status}', LastCanAcceptRun='{lastSnapshot?.CanAcceptRun}'.");
         }
 
         /// <summary>

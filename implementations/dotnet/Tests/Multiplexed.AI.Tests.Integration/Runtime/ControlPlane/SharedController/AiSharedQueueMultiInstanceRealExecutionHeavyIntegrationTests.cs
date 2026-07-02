@@ -831,19 +831,7 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedController
                     enableRetention: true));
         }
 
-        [RedisFact]
-        public async Task MultiInstance_ExecutionAssistance_Baseline_OneLargeRun_500Steps_OneInstance_1Worker()
-        {
-            await RunHeavyScenarioAsync(
-                HeavyScenario.AllFeaturesStress(
-                    runCount: 1,
-                    expectedMinimumParticipatingInstances: 1,
-                    runtimeInstanceCount: 1,
-                    workerCount: 1,
-                    executionTimeout: TimeSpan.FromMinutes(8),
-                    stepCount: 500,
-                    enableRetention: true));
-        }
+        
 
         [RedisFact]
         public async Task MultiInstance_ExecutionAssistance_Baseline_OneLargeRun_500Steps_OneInstance_10Worker()

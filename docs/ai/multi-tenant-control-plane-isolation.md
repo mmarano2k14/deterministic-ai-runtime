@@ -2,11 +2,11 @@
 
 ## Status
 
-Implemented foundation on branch `feature/multi-tenant-control-plane-isolation`.
+Implemented foundation on branch `feature/multi-tenant-control-plane-isolation`; extended and validated through HTTP process-host runtime scenarios on `feature/control-plane-ledger-tracing`.
 
-This document describes the tenant-aware control-plane and runtime-isolation model added to the deterministic AI runtime. It covers how tenant context flows from MCP to shared runs, admission, registry/capacity filtering, scale-out, dispatch, local runtime execution, and finalization.
+This document describes the tenant-aware control-plane and runtime-isolation model added to the deterministic AI runtime. It covers how tenant context flows from MCP to shared runs, admission, registry/capacity filtering, scale-out, dispatch, local runtime execution, crash recovery, forensics, replay, ledger, trace, and finalization.
 
-The implementation validates Shared, Dedicated, and Hybrid runtime isolation modes with Redis-backed registry/capacity filtering, tenant-aware admission, tenant-scoped scale-out, and background context restoration.
+The implementation validates Shared, Dedicated, and Hybrid runtime isolation modes with Redis-backed registry/capacity filtering, tenant-aware admission, tenant-scoped scale-out, background context restoration, HTTP process-host runtime provisioning, real runtime process crash recovery, and safe-tenant non-impact proof.
 
 ## Core Principle
 
@@ -24,6 +24,30 @@ Metadata                           = observability duplicate only
 ```
 
 Every asynchronous or distributed hop must either carry or restore the `ExecutionContextSnapshot`.
+
+
+Every recovery, ledger, trace, replay, and forensics query must also preserve the same boundary.
+
+Crash recovery does not weaken tenant isolation. It increases the number of places where tenant scope must be proven:
+
+```text
+failed runtime detection
+    ↓
+unsafe capacity suppression
+    ↓
+assigned work reconciliation
+    ↓
+replacement runtime selection
+    ↓
+recovered work redispatch / resume
+    ↓
+forensics record creation
+    ↓
+ledger / trace / replay query
+```
+
+All of these steps must remain scoped by the durable tenant context.
+
 
 ## Tenant Runtime Settings
 
@@ -121,6 +145,38 @@ Hybrid runtime without owner                   => not visible
 Shared runtime + Hybrid tenant fallback true   => visible
 ```
 
+
+## Crash Isolation Principle
+
+Tenant isolation must hold during both normal execution and recovery.
+
+A runtime crash is not a global control-plane event that can indiscriminately affect every tenant. It is a runtime-instance event. Recovery must enumerate only the work assigned to the unsafe runtime instance and must use the durable tenant context attached to that work.
+
+Validated crash isolation scenario:
+
+```text
+Tenant A runtime process is killed.
+Tenant B runtime process is killed.
+Tenant C runtime process is not killed.
+
+Tenant A assigned work is recovered.
+Tenant B assigned work is recovered.
+Tenant C work completes normally.
+Tenant C receives zero recovered work and zero recovery forensics.
+```
+
+The important safety invariants are:
+
+```text
+SafeTenantNonImpactValidated = true
+SafeTenantRecoveryLeakDetected = false
+CrossTenantLedgerLeakDetected = false
+SafeTenantRecoveryEntriesVisibleFromImpactedQueries = 0
+```
+
+This proves that recovery is tenant-scoped. The control plane can recover impacted tenants without contaminating the observability, forensics, or recovery surface of an unrelated active tenant.
+
+
 ## Runtime Instance Identity
 
 Runtime instance identifiers are generated from tenant runtime settings.
@@ -192,6 +248,179 @@ Final AiExecutionRecord
   ↓
 SharedRun final status
 ```
+
+## Runtime Crash Recovery Flow
+
+Runtime crash recovery is an extension of the same tenant isolation model.
+
+The control plane separates three responsibilities:
+
+```text
+RuntimeInstanceHealthReconciler
+    = detects stale / unsafe runtime capacity and prevents unsafe routing
+
+Execution recovery reconciler
+    = recovers work already assigned to the unsafe runtime instance
+
+HTTP provider
+    = reports transport / endpoint failure signals and performs dispatch or scale-out transport work
+```
+
+The HTTP provider does not own recovery. It must not directly restart, kill, or replace runtime instances as a side effect of a dispatch failure. It reports stable failure reasons such as `http-circuit-open` or `http-provider-unavailable`. Health and recovery remain control-plane responsibilities.
+
+Validated transport-health-to-recovery boundary:
+
+```text
+HTTP endpoint failure / heartbeat absence
+  ↓
+runtime endpoint health signal or stale heartbeat
+  ↓
+health reconciler marks runtime capacity unsafe / unavailable for new routing
+  ↓
+dispatcher stops selecting unsafe runtime capacity
+  ↓
+execution recovery reconciler enumerates work assigned to the unsafe runtime
+  ↓
+in-flight executions resume with the same ExecutionId
+  ↓
+local queued work is redispatched through durable SharedRunId
+  ↓
+replacement capacity is selected or requested when required
+  ↓
+ledger / trace / replay / forensics evidence is written
+```
+
+Recovery is complete only when assigned work has either resumed or been redispatched and the observable proof has converged.
+
+Scale-out fulfillment alone is not recovery completion.
+Runtime replacement alone is not recovery completion.
+A completed DAG alone is not an audit proof.
+
+The validated recovery proof requires:
+
+```text
+execution ledger evidence
+execution trace evidence
+completion evidence
+step completion evidence
+strict replay validation
+replay report
+replay ledger
+replay trace
+runtime recovery forensics
+tenant-scoped ledger isolation
+```
+
+### In-flight execution recovery
+
+An in-flight DAG execution already has a durable `ExecutionId`.
+
+When its runtime process dies, recovery must preserve that `ExecutionId` and resume the execution on replacement capacity.
+
+```text
+unsafe runtime detected
+  ↓
+assigned in-flight execution found through runtime execution index
+  ↓
+shared run requeued for resume
+  ↓
+failed local run marked requeued for recovery
+  ↓
+replacement runtime selected
+  ↓
+replacement local run registered
+  ↓
+resume context seeded with existing ExecutionId
+  ↓
+DAG resumes from persisted state
+  ↓
+execution completes under the same durable ExecutionId
+```
+
+The new runtime attempt gets a new `LocalRunId`, but the durable execution identity remains unchanged.
+
+### Local queued work recovery
+
+Local queued work is different.
+
+It has already been dispatched to a runtime-local queue, but the DAG execution may not have started yet. Therefore it may not have a durable `ExecutionId`.
+
+The local queue is volatile and is not the source of truth.
+
+The durable recovery path uses the `SharedRunId`.
+
+```text
+unsafe runtime detected
+  ↓
+assigned local queued shared run found
+  ↓
+shared run requeued for local-queued recovery
+  ↓
+failed local run marked requeued for recovery
+  ↓
+replacement runtime selected
+  ↓
+replacement local run registered
+  ↓
+run executes normally and creates its ExecutionId
+```
+
+This prevents local queued work from being silently dropped and avoids creating duplicate shared submissions.
+
+## Runtime Recovery Forensics Boundary
+
+Recovery writes durable forensics records for impacted work only.
+
+For an in-flight execution:
+
+```text
+runtime-recovery:{ExecutionId}:{SharedRunId}:{LocalRunId}
+```
+
+For local queued work:
+
+```text
+runtime-recovery:local-queued:{SharedRunId}:{LocalRunId}
+```
+
+The safe tenant must not receive any recovery forensics.
+
+Validated safe-tenant proof:
+
+```text
+ExpectedSafeRecovery = 0
+ActualSafeRecovery = 0
+SafeTenantRecoveryForensicsDetected = false
+RuntimeProcessKilled = false
+CrashImpacted = false
+```
+
+Forensics records must be tenant-scoped at write time and query time. Query filtering alone is not enough if records are written into the wrong tenant boundary.
+
+## Ledger and Replay Isolation Boundary
+
+Tenant-scoped observability is part of the isolation contract.
+
+The MCP observability surface must enforce the same tenant boundary for:
+
+```text
+ledger queries
+trace queries
+replay queries
+runtime recovery forensics queries
+runtime registry and capacity queries
+```
+
+Validated ledger isolation evidence includes:
+
+```text
+TenantBEntriesVisibleFromTenantA = 0
+TenantAEntriesVisibleFromTenantB = 0
+SafeTenantRecoveryEntriesVisibleFromImpactedQueries = 0
+CrossTenantLedgerLeakDetected = false
+```
+
+A tenant can query its own execution history, recovery history, replay artifacts, and traces. It must not see another tenant's recovery evidence, and impacted tenants must not see safe-tenant recovery contamination.
 
 ## MCP Context Propagation
 
@@ -468,6 +697,16 @@ Tenant isolation coverage includes:
 - shared queue dispatcher restores ExecutionContextSnapshot before admission
 - direct runtime queued runs require ExecutionContextSnapshot
 - Hybrid runtime without tenant owner is not visible
+- real HTTP process-host runtime instances preserve tenant identity
+- two impacted tenants can recover after real runtime process kills
+- safe tenant completes normally during impacted tenant recovery
+- safe tenant receives zero recovered work
+- safe tenant receives zero recovery forensics
+- in-flight recovery preserves durable ExecutionId
+- local queued recovery uses durable SharedRunId redispatch
+- runtime recovery forensics are tenant-scoped
+- ledger queries prove no cross-tenant leak
+- replay / ledger / trace proof remains readable after recovery
 ```
 
 ## Design Rules
@@ -482,6 +721,11 @@ Tenant isolation coverage includes:
 - Filter registry and capacity before admission decisions.
 - Scope local scale-out by RuntimeInstanceIdPrefix.
 - Treat background workers as contextless until they restore a snapshot.
+- Treat runtime crash recovery as tenant-scoped assigned-work reconciliation.
+- Preserve `ExecutionId` for in-flight recovery.
+- Redispatch local queued work through durable `SharedRunId`.
+- Keep health reconciliation, execution recovery, and provider transport responsibilities separate.
+- Require replay / ledger / trace / forensics proof after recovery convergence.
 ```
 
 ### Do Not
@@ -493,6 +737,11 @@ Tenant isolation coverage includes:
 - Do not count global local hosts for tenant-scoped scale-out.
 - Do not enqueue direct runtime work without ExecutionContextSnapshot.
 - Do not rely on ambient AsyncLocal context inside background dispatch flows.
+- Do not treat HTTP provider failures as direct lifecycle ownership.
+- Do not let runtime replacement imply recovery completion.
+- Do not recover local queued work from volatile local queue memory.
+- Do not write recovery forensics for tenants whose runtime was not impacted.
+- Do not let impacted-tenant ledger queries see safe-tenant recovery evidence.
 ```
 
 ## Future Work
@@ -500,7 +749,6 @@ Tenant isolation coverage includes:
 This foundation prepares the runtime for provider-level tenant isolation across:
 
 ```text
-- HTTP runtime instances
 - gRPC runtime instances
 - Kubernetes runtime pods
 - Mongo-backed tenant settings
@@ -508,11 +756,23 @@ This foundation prepares the runtime for provider-level tenant isolation across:
 - tenant-aware dashboards and observability
 ```
 
-Planned hardening after Kubernetes demo:
+The following capabilities are already part of the validated HTTP/process-host isolation and recovery boundary and must not be described as future work in this document:
 
 ```text
-- HTTP/gRPC circuit breakers
-- dispatch timeouts
+- HTTP process-host runtime instances
+- HTTP dispatch timeout / retry / circuit-breaker hardening
+- transport failure signal mapping
+- RuntimeInstanceHealthReconciler responsibility boundary
+- execution recovery reconciler responsibility boundary
+- real runtime process crash recovery
+- safe-tenant non-impact validation
+- runtime recovery forensics
+- replay / ledger / trace proof after recovery
+```
+
+Remaining hardening and future work:
+
+```text
 - Redis TIME in Lua scripts
 - queue max depth / backpressure
 - DLQ store
@@ -521,6 +781,11 @@ Planned hardening after Kubernetes demo:
 - Redis registry TTL
 - Redis capacity TTL
 - registry self-healing
+- Kubernetes pod metadata propagation
+- Kubernetes scale-out implementation
+- gRPC runtime provider
+- database-backed tenant runtime settings
+- production dashboard UI
 ```
 
 Larger future storage optimizations remain separate:
@@ -543,6 +808,11 @@ docs/ai/mcp-server-control-plane.md
 docs/ai/shared-controller-usage.md
 docs/ai/shared-queue-pump-and-worker-capacity.md
 docs/ai/testing-strategy.md
+docs/ai/runtime-process-crash-recovery.md
+docs/ai/runtime-recovery-forensics.md
+docs/ai/multi-tenant-runtime-crash-isolation.md
+docs/ai/control-plane-ledger-causal-chain.md
+docs/ai/recovery-replay-ledger-trace-proof.md
 docs/ai/context-resolution-and-helpers.md
 docs/ai/config-driven-runtime.md
 ```

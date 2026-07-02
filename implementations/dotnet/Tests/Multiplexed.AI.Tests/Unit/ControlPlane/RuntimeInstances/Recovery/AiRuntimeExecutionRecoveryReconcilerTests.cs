@@ -84,17 +84,45 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Recovery
             Assert.Equal(1, result.DiscoveredUnfinishedRunCount);
             Assert.Equal(0, result.RecoveredRunCount);
 
-            var decision = Assert.Single(result.Decisions);
+            Assert.Equal(2, result.Decisions.Count);
 
-            Assert.Equal("runtime-1", decision.RuntimeInstanceId);
-            Assert.Equal("run-1", decision.LocalRunId);
-            Assert.Equal("execution-1", decision.ExecutionId);
-            Assert.Null(decision.SharedRunId);
-            Assert.Equal("tenant-1", decision.TenantId);
-            Assert.Equal("tenant-group-1", decision.TenantGroupId);
-            Assert.Equal("none", decision.Action);
-            Assert.Equal("ownership-not-resolved", decision.Reason);
-            Assert.False(decision.Changed);
+            var ownershipDecision = Assert.Single(
+                result.Decisions,
+                decision => string.Equals(
+                    decision.Action,
+                    "ownership-resolution",
+                    StringComparison.Ordinal));
+
+            Assert.Equal("runtime-1", ownershipDecision.RuntimeInstanceId);
+            Assert.Equal("run-1", ownershipDecision.LocalRunId);
+            Assert.Equal("execution-1", ownershipDecision.ExecutionId);
+            Assert.Null(ownershipDecision.SharedRunId);
+            Assert.Equal("tenant-1", ownershipDecision.TenantId);
+            Assert.Equal("tenant-group-1", ownershipDecision.TenantGroupId);
+            Assert.StartsWith(
+                "resolved=False;canRecover=False;reason=shared-run-ownership-not-found",
+                ownershipDecision.Reason,
+                StringComparison.Ordinal);
+            Assert.False(ownershipDecision.Changed);
+
+            var transitionDecision = Assert.Single(
+                result.Decisions,
+                decision => string.Equals(
+                    decision.Action,
+                    "none",
+                    StringComparison.Ordinal));
+
+            Assert.Equal("runtime-1", transitionDecision.RuntimeInstanceId);
+            Assert.Equal("run-1", transitionDecision.LocalRunId);
+            Assert.Equal("execution-1", transitionDecision.ExecutionId);
+            Assert.Null(transitionDecision.SharedRunId);
+            Assert.Equal("tenant-1", transitionDecision.TenantId);
+            Assert.Equal("tenant-group-1", transitionDecision.TenantGroupId);
+            Assert.StartsWith(
+                "transitionReason=ownership-not-resolved",
+                transitionDecision.Reason,
+                StringComparison.Ordinal);
+            Assert.False(transitionDecision.Changed);
         }
 
         /// <summary>

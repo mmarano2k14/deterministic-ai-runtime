@@ -6,6 +6,375 @@ This project follows a deterministic runtime and observability model designed fo
 
 ---
 
+## [1.0.7.0] - 2026-07-02 — Runtime Crash Recovery Proof + Replay/Ledger/Trace Documentation Hardening
+
+### Added
+
+- Added the full validated runtime process crash recovery proof as a first-class documented capability, not as a secondary observability or testing detail.
+
+- Added documentation for real process-host crash recovery where failed `RuntimeInstanceOnly` OS processes are killed and assigned work is recovered through the control plane without making the HTTP provider own recovery.
+
+- Added explicit documentation for the validated scenario:
+
+  ```text
+  Http_ProcessHost_Should_Recover_Two_Tenants_After_Real_Runtime_Process_Kills_Without_Impacting_Safe_Tenant_With_Strict_Dag_Resume_Replay_Ledger_And_Trace
+  ```
+
+- Added five new focused AI runtime documentation files:
+
+  ```text
+  docs/ai/runtime-process-crash-recovery.md
+  docs/ai/runtime-recovery-forensics.md
+  docs/ai/multi-tenant-runtime-crash-isolation.md
+  docs/ai/control-plane-ledger-causal-chain.md
+  docs/ai/recovery-replay-ledger-trace-proof.md
+  ```
+
+- Added full documentation for the runtime process crash recovery model:
+  - real external runtime process failure;
+  - runtime endpoint health signal;
+  - unsafe runtime capacity suppression;
+  - replacement capacity provisioning;
+  - assigned-work reconciliation;
+  - in-flight DAG resume;
+  - local queued shared-run redispatch;
+  - replay / ledger / trace validation after recovery.
+
+- Added explicit documentation for the two recovery work types:
+
+  ```text
+  InFlightExecution
+      = durable DAG execution already exists
+      = recovery resumes the same ExecutionId
+
+  LocalQueued
+      = shared run was dispatched to a failed runtime local queue
+      = durable DAG execution does not exist yet
+      = recovery redispatches through SharedRunId
+  ```
+
+- Added documentation for the runtime identity model used by crash recovery:
+
+  ```text
+  ExecutionId
+      = durable DAG execution identity
+
+  SharedRunId
+      = durable shared submission identity
+
+  LocalRunId
+      = runtime-local attempt identity
+  ```
+
+- Added documentation for recovery forensics ids:
+
+  ```text
+  runtime-recovery:{ExecutionId}:{SharedRunId}:{LocalRunId}
+  runtime-recovery:local-queued:{SharedRunId}:{LocalRunId}
+  ```
+
+- Added documentation for runtime failure incident grouping through:
+
+  ```text
+  RuntimeFailureIncidentId
+  ```
+
+- Added documentation for the control-plane causal chain ledger proof covering:
+  - scale-out request persisted;
+  - scale-out watcher observed request;
+  - provider selected;
+  - runtime host manager created host;
+  - process runtime host started;
+  - runtime capacity became visible;
+  - runtime registry became visible;
+  - execution recovery reconciled assigned work;
+  - recovered work redispatched.
+
+- Added documentation for replay / ledger / trace proof after recovery, including:
+  - replay report retrieval;
+  - replay ledger retrieval;
+  - replay trace retrieval;
+  - execution ledger visibility;
+  - trace timeline visibility;
+  - terminal completion validation;
+  - step completion validation.
+
+- Added documentation for safe-tenant non-impact as a first-class crash recovery guarantee.
+
+- Added documentation for tenant-scoped crash recovery isolation across:
+  - failed tenant A;
+  - failed tenant B;
+  - unaffected safe tenant C.
+
+- Added documentation for multi-tenant crash isolation proof fields:
+
+  ```text
+  CrossTenantLedgerLeakDetected = false
+  SafeTenantRecoveryLeakDetected = false
+  SafeTenantNonImpactValidated = true
+  SafeTenantRecoveryEntriesVisibleFromImpactedQueries = 0
+  TenantBEntriesVisibleFromTenantA = 0
+  TenantAEntriesVisibleFromTenantB = 0
+  ```
+
+- Added documentation for the validated safe tenant behavior:
+
+  ```text
+  submitted = 3
+  completed = 3
+  replay proofs = 3
+  recovered work = 0
+  recovery forensics = 0
+  runtime process killed = false
+  crash impacted = false
+  ```
+
+- Added documentation for the in-flight recovery timeline:
+
+  ```text
+  execution.recovery.candidate.detected
+  -> shared.run.requeued.for.resume
+  -> failed.local.run.marked.requeued.for.recovery
+  -> replacement.runtime.selected
+  -> replacement.local.run.registered
+  -> resume.context.seeded
+  -> dag.resume.started
+  -> dag.resume.completed
+  -> execution.recovery.completed
+  ```
+
+- Added documentation for the local queued recovery timeline:
+
+  ```text
+  SharedRunRequeuedForLocalQueuedRecovery
+  -> failed.local.run.marked.requeued.for.recovery
+  -> replacement.runtime.selected
+  -> replacement.local.run.registered
+  -> resume.context.seeded
+  ```
+
+- Added the crash recovery and safe-tenant proof into the documentation index reading paths.
+
+- Added recovery-focused documentation links into the README documentation map.
+
+- Added crash recovery as a main feature in the README instead of treating it as a side effect of observability or testing.
+
+- Added recovery crash as a main roadmap feature and repositioned Kubernetes as a future runtime-operations continuation, not as the recovery mechanism itself.
+
+- Added a more article-style / enterprise-friendly positioning for the comparison, enterprise readiness, roadmap, and road-to-MLOps documentation.
+
+### Changed
+
+- Updated `docs/ai/http-runtime-provider.md` to clarify the validated HTTP provider boundary:
+  - HTTP provider reports transport and endpoint failure signals;
+  - HTTP provider dispatches over HTTP when capacity is safe;
+  - HTTP provider does not own runtime recovery;
+  - HTTP provider does not kill, restart, or replace runtimes;
+  - runtime recovery remains the responsibility of the control-plane recovery layer.
+
+- Updated `docs/ai/runtime-discovery-registry-capacity.md` to document registry/capacity responsibilities during crash recovery:
+  - stale / unsafe runtime suppression;
+  - safe capacity selection;
+  - replacement capacity visibility;
+  - distinction between scale-out fulfillment and recovery completion.
+
+- Updated `docs/ai/mcp-production-runtime-scenario-framework.md` with the real process crash recovery scenarios, safe-tenant non-impact validation, forensics proof, replay proof, and control-plane causal-chain proof.
+
+- Updated `docs/ai/retry-and-recovery.md` to separate:
+
+  ```text
+  Retry
+  Stale Step Recovery
+  Runtime Instance Crash Recovery
+  ```
+
+- Updated `docs/ai/execution-correlated-ledger.md` to document execution ledger versus control-plane ledger responsibilities, tenant-scoped ledger validation, and recovery causal-chain proof.
+
+- Updated `docs/ai/multi-tenant-control-plane-isolation.md` to document crash isolation, local queued recovery, in-flight execution recovery, safe tenant non-impact, and ledger/replay/forensics tenant boundaries.
+
+- Updated `docs/ai/runtime-control-plane.md` to document runtime process crash recovery as a control-plane responsibility, including health/recovery/provider separation and recovery completion evidence.
+
+- Updated `docs/ai/testing-strategy.md` to include production crash recovery scenario tests, runtime recovery forensics tests, safe tenant non-impact tests, and replay/ledger/trace proof tests.
+
+- Updated `docs/ai/observability.md` to include runtime recovery forensics as an observability layer and to classify safe tenant absence from recovery surfaces as an observability result.
+
+- Updated `docs/ai/observability-tracing.md` to document recovery tracing, recovery forensics versus traces, tenant-scoped recovery observability, and replay/ledger/trace recovery proof.
+
+- Updated `docs/ai/architecture-overview.md` to include runtime process crash recovery as an architecture-level capability:
+  - health reconciliation prevents unsafe routing;
+  - execution recovery reconciles assigned work;
+  - local queues are volatile;
+  - durable truth comes from shared run store, shared queue, execution index, DAG store, registry/capacity, ledger, trace, forensics, and replay evidence.
+
+- Updated `docs/index.md` to link the new recovery docs across Start Here, reading paths, Core Documentation, Reliability/Recovery, Observability/Governance, Runtime Control Plane, Documentation Status, and Documentation Rules.
+
+- Updated `docs/comparison-existing-tools.md` with a more nuanced article-style positioning:
+  - less direct “us versus them” language;
+  - clearer positioning beside Temporal, LangGraph, Dapr, Ray, Kubernetes, and observability platforms;
+  - recovery and safe-tenant evidence described as architectural proof rather than marketing comparison.
+
+- Updated `docs/enterprise-readiness.md` to add runtime process death as a main enterprise question, with recovery boundary, forensics, safe tenant non-impact, and replay/ledger/trace proof documented as validated evidence.
+
+- Updated `docs/road-to-mlops.md` to include process crash recovery, multi-tenant crash isolation, recovery forensics, replay/ledger/trace proof, and recovery incident management as part of the longer-term AI operations / MLOps-oriented direction.
+
+- Updated `docs/roadmap.md` to make process-host runtime validation and runtime crash recovery visible as major roadmap capabilities, while keeping future Kubernetes work clearly separated.
+
+- Updated `README.md` so runtime process crash recovery is presented as a main feature of the current runtime foundation.
+
+- Updated README Latest Updates, Core Capabilities, Enterprise Readiness, Current Status, Documentation, and Validation Evidence sections to include crash recovery, forensics, causal-chain proof, and recovery replay/ledger/trace proof.
+
+- Reworded documentation that previously treated replay/ledger/trace behavior as future-only. The docs now distinguish between:
+  - validated MCP replay report / replay ledger / replay trace retrieval;
+  - future public replay APIs, dashboards, and external operational tooling.
+
+- Reworded documentation that previously risked treating runtime health reconciliation or recovery as future-only. The docs now describe the validated transport-health-to-recovery boundary.
+
+### Fixed
+
+- Fixed documentation wording that implied HTTP process-host provisioning was still metadata-only. The docs now correctly state that `HostCreationMode = Process` launches real `RuntimeInstanceOnly` processes.
+
+- Fixed documentation wording that implied runtime endpoint health reconciliation / recovery handoff was future-only. The validated boundary is now documented as current evidence.
+
+- Fixed documentation wording that mixed stale step recovery with runtime process crash recovery. The two are now described as separate reliability mechanisms.
+
+- Fixed documentation wording that could imply local runtime queues are durable truth. The docs now consistently state that local queues are volatile and durable truth lives in shared stores, execution index, DAG state, registry/capacity, and observability proof stores.
+
+- Fixed documentation wording that could imply replacing runtime capacity is equivalent to recovery completion. The docs now state that recovery is complete only when assigned work has been reconciled, redispatched or resumed, and proof has been written.
+
+- Fixed documentation wording that treated safe tenant absence as a missing signal. Safe tenant recovery absence is now documented as a positive proof: no crash impact, no forensics, no recovery leakage.
+
+- Fixed README positioning so runtime crash recovery appears as a main feature, not only as a testing or documentation update.
+
+- Fixed roadmap positioning so Kubernetes remains future runtime operations work, while process-host crash recovery remains validated current capability.
+
+### Validated
+
+- Validated runtime process crash recovery with three tenants in the same shared control plane:
+
+  ```text
+  Tenant A runtime process killed
+  Tenant B runtime process killed
+  Tenant C runtime process not killed
+  ```
+
+- Validated recovery inventory at crash time:
+
+  ```text
+  Tenant A:
+      1 InFlightExecution
+      2 LocalQueued
+
+  Tenant B:
+      1 InFlightExecution
+      2 LocalQueued
+
+  Tenant C:
+      3 normal safe runs
+  ```
+
+- Validated total run outcome:
+
+  ```text
+  total runs = 9
+  completed runs = 9
+  expected recovered work = 6
+  actual recovered work = 6
+  safe tenant recovered work = 0
+  ```
+
+- Validated replay / ledger / trace proof after recovery:
+
+  ```text
+  replay validated = 9/9
+  ledger readable = 9/9
+  trace readable = 9/9
+  completion proof = 9/9
+  step completion proof = 9/9
+  replay report readable = 9/9
+  ```
+
+- Validated safe tenant non-impact:
+
+  ```text
+  safe tenant submitted = 3
+  safe tenant completed = 3
+  safe tenant replay proofs = 3
+  safe tenant recovered work = 0
+  safe tenant recovery forensics = 0
+  safe tenant runtime process killed = false
+  safe tenant crash impacted = false
+  ```
+
+- Validated tenant ledger isolation:
+
+  ```text
+  CrossTenantLedgerLeakDetected = false
+  SafeTenantRecoveryLeakDetected = false
+  SafeTenantNonImpactValidated = true
+  SafeTenantRecoveryEntriesVisibleFromImpactedQueries = 0
+  TenantBEntriesVisibleFromTenantA = 0
+  TenantAEntriesVisibleFromTenantB = 0
+  ```
+
+- Validated in-flight recovery semantics:
+
+  ```text
+  recovery type = InFlightExecution
+  same ExecutionId preserved = true
+  DAG resume started = true
+  DAG resume completed = true
+  ```
+
+- Validated local queued recovery semantics:
+
+  ```text
+  recovery type = LocalQueued
+  durable ExecutionId at failure time = none
+  redispatch through SharedRunId = true
+  new replacement LocalRunId created = true
+  ```
+
+- Validated process-host recovery proof through real runtime processes, not fixture-only runtime capacity.
+
+- Validated the control-plane causal-chain domains required to explain recovery from scale-out request to recovered work redispatch.
+
+- Validated documentation alignment across README, index, architecture, control plane, HTTP provider, discovery/registry/capacity, retry/recovery, tenant isolation, ledger, observability, tracing, testing, enterprise readiness, roadmap, comparison, and road-to-MLOps documents.
+
+### Production Impact
+
+- Runtime crash recovery is now documented and positioned as a core runtime capability.
+
+- Operators can reason about a runtime process crash at three levels:
+  - unsafe runtime capacity suppression;
+  - assigned-work recovery;
+  - post-recovery replay / ledger / trace proof.
+
+- The architecture now clearly separates endpoint health, provider dispatch, host lifecycle, and execution recovery.
+
+- In-flight executions and local queued shared runs are both part of the recovery inventory.
+
+- Recovery forensics now documents both work that already had a durable `ExecutionId` and work that had only reached a failed runtime local queue.
+
+- Multi-tenant crash recovery can prove not only that failed tenants recovered, but also that an unaffected tenant remained untouched.
+
+- Replay, ledger, trace, and forensics can be used together as an audit-grade recovery explanation surface.
+
+- The README, roadmap, and enterprise readiness material now present crash recovery as a main feature rather than an internal test detail.
+
+### Notes
+
+- This changelog entry is incremental on top of `1.0.6.9`.
+
+- No previously validated documentation areas were intentionally removed. The update expands the docs around runtime crash recovery, recovery forensics, control-plane ledger proof, and recovery replay/ledger/trace proof.
+
+- Kubernetes remains planned future runtime operations work. It should not be described as the mechanism that makes crash recovery valid.
+
+- HTTP/gRPC/Kubernetes providers remain future hardening areas beyond the validated local and HTTP process-host paths.
+
+- Public replay APIs, dashboards, OpenTelemetry exporters, and external operational tooling remain planned even though MCP replay report / replay ledger / replay trace proof is already validated in the current process-host scenarios.
+
+---
+
 ## [1.0.6.9] - 2026-06-28 — Concurrent Runtime Recovery Forensics + Safe Tenant Isolation
 
 ### Added

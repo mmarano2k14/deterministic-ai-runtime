@@ -277,7 +277,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Shared
                     decision.ExecutionId == runtimeAExecutionId &&
                     decision.SharedRunId == sharedRunId &&
                     decision.Action == "requeue-shared-run" &&
-                    decision.Reason == "runtime-execution-recovery-requeue" &&
+                    decision.Reason.StartsWith(
+                        "transitionReason=runtime-execution-recovery-requeue",
+                        StringComparison.Ordinal) &&
                     decision.Changed);
 
             Assert.Contains(

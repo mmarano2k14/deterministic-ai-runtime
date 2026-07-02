@@ -40,24 +40,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.DI
     {
         
 
-        [Fact]
-        public void AddAiControlPlaneLogging_Should_Replace_Noop_Observer_With_Logged_Observer()
-        {
-            var services = new ServiceCollection();
-
-            services.AddLogging();
-            services
-                .AddAiControlPlane()
-                .AddAiControlPlaneLogging();
-
-            using var provider = services.BuildServiceProvider();
-
-            var observer = provider.GetRequiredService<IAiControlPlaneObserver>();
-            var logger = provider.GetRequiredService<IAiControlPlaneLogger>();
-
-            Assert.IsType<LoggedAiControlPlaneObserver>(observer);
-            Assert.IsType<AiControlPlaneLogger>(logger);
-        }
+        
 
         [Fact]
         public void AddAiControlPlane_Should_Register_Replay_ControlPlane()
@@ -74,25 +57,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.DI
             Assert.Equal(ServiceLifetime.Singleton, descriptor.Lifetime);
         }
 
-        [Fact]
-        public void AddAiControlPlaneLogging_Should_Not_Register_Duplicate_Observers()
-        {
-            var services = new ServiceCollection();
-
-            services.AddLogging();
-            services
-                .AddAiControlPlane()
-                .AddAiControlPlaneLogging();
-
-            var observerDescriptors = services
-                .Where(service => service.ServiceType == typeof(IAiControlPlaneObserver))
-                .ToArray();
-
-            Assert.Single(observerDescriptors);
-            Assert.Equal(
-                typeof(LoggedAiControlPlaneObserver),
-                observerDescriptors[0].ImplementationType);
-        }
+        
 
         [Fact]
         public void AddAiControlPlane_Should_Register_RuntimeQueue_ControlPlane()

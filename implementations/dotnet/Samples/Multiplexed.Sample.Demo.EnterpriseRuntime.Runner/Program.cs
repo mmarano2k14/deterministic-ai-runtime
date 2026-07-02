@@ -7,6 +7,7 @@ using Multiplexed.AI.DI.Engine;
 using Multiplexed.AI.DI.Persistence;
 using Multiplexed.AI.DI.Persistence.Mongo;
 using Multiplexed.AI.Runtime;
+using Multiplexed.AI.Runtime.ControlPlane.Discovery;
 using Multiplexed.Realtime.Events.Abstractions;
 using Multiplexed.Realtime.Handlers;
 using Multiplexed.Sample.Demo.EnterpriseRuntime.Runner.Runtime;
@@ -240,6 +241,9 @@ namespace Multiplexed.Sample.Demo.EnterpriseRuntime.Runner
                 });
 
             services.AddAiExecutionReplay();
+
+            services.AddAiControlPlaneDiscoveryCore();
+             
 
             services.AddSingleton<IAiRuntimePipelineRunLifecycleHook>(
                 finalizedHook);

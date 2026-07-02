@@ -34,9 +34,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
     public sealed class HttpProcessHostRealRuntimeCrashRecoveryScenarioTests
     {
         private const int StepCount = 100;
-        private const int MultiTenantStepCount = 50;
-        private const int KillAfterCompletedStepCount = 25;
-        private const int FlakyStepIntervalMs = 1000;
+        private const int MultiTenantStepCount = 100;
+        private const int KillAfterCompletedStepCount = 50;
+        private const int FlakyStepIntervalMs = 500;
         private const string RequestedBy = "http-process-host-real-runtime-crash-recovery-test";
         private const string Source = "integration-test";
 

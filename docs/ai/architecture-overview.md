@@ -1,10 +1,10 @@
 # Architecture Overview
 
-Status: Implemented architecture foundation / validated with shared controller, MCP, Redis coordination, Redis-backed scale-out request persistence, local runtime pools, local runtime scale-out, fulfilled-run requeue, HTTP pooled runtime provider scenarios, tenant-aware runtime isolation, shared/dedicated/hybrid runtime visibility, and end-to-end MCP scale-out execution.
+Status: Implemented architecture foundation / validated with shared controller, MCP, Redis coordination, Redis-backed scale-out request persistence, local runtime pools, local runtime scale-out, fulfilled-run requeue, HTTP pooled runtime provider scenarios, HTTP process-host runtime provisioning, tenant-aware runtime isolation, shared/dedicated/hybrid runtime visibility, end-to-end MCP scale-out execution, real runtime process crash recovery, tenant-isolated recovery reconciliation, runtime recovery forensics, control-plane ledger causal chain evidence, and replay / ledger / trace validation after recovery.
 
 This document provides a high-level overview of the **Deterministic AI Runtime** architecture.
 
-It also reflects the current control-plane evolution: shared queue pump, queue-first submit mode, direct-dispatch scale-out mode, dispatch-time admission, tenant-aware admission, runtime instance providers, MCP control-plane integration, Redis discovery/registry/capacity coordination, tenant-filtered runtime visibility, Redis-backed scale-out request coordination, admission reservations, local runtime scale-out, fulfilled-run requeue, HTTP pooled runtime hosting, and worker-capacity visibility.
+It also reflects the current control-plane evolution: shared queue pump, queue-first submit mode, direct-dispatch scale-out mode, dispatch-time admission, tenant-aware admission, runtime instance providers, MCP control-plane integration, Redis discovery/registry/capacity coordination, tenant-filtered runtime visibility, Redis-backed scale-out request coordination, admission reservations, local runtime scale-out, fulfilled-run requeue, HTTP pooled runtime hosting, HTTP process-host runtime provisioning, runtime instance health reconciliation, execution recovery reconciliation, runtime recovery forensics, control-plane ledger tracing, replay / ledger / trace recovery proof, safe-tenant non-impact validation, and worker-capacity visibility.
 
 ---
 
@@ -39,6 +39,12 @@ It is an execution runtime responsible for:
 - supporting provider-based local, local scale-out, and HTTP pooled runtime dispatch
 - carrying durable tenant context across MCP, shared queue, scale-out, dispatch, and runtime execution
 - enforcing shared, dedicated, and hybrid runtime isolation during admission and dispatch
+- detecting unsafe runtime instances through heartbeat/health reconciliation
+- recovering assigned work from failed runtime instances without making the transport provider own recovery
+- resuming in-flight DAG executions with the same durable `ExecutionId`
+- redispatching volatile local-queued work through durable `SharedRunId` state
+- proving safe-tenant non-impact during multi-tenant runtime crashes
+- emitting runtime recovery forensics, control-plane ledger evidence, trace evidence, and replay proof after recovery
 
 The core idea is simple:
 
@@ -58,6 +64,8 @@ RBAC / Execution Context Snapshot Layer
 Control Plane and Shared Queue Layer
         ↓
 Scale-Out Request and Requeue Layer
+        ↓
+Runtime Health and Execution Recovery Layer
         ↓
 Discovery / Registry / Capacity Layer
         ↓
@@ -228,6 +236,10 @@ It is responsible for:
 - execution control
 - replay and observability adapters
 - MCP server tool exposure
+- runtime instance health visibility and unsafe-capacity suppression
+- execution recovery reconciliation for work assigned to unsafe runtimes
+- runtime recovery forensics and incident correlation
+- control-plane ledger causal-chain evidence for scale-out, host creation, recovery, and redispatch
 
 This layer operates above local runtime queues.
 
@@ -309,6 +321,23 @@ The shared run persists `ExecutionContextSnapshot`, and `AiSharedQueueDispatcher
 
 This ensures that Redis registry and capacity queries are evaluated under the correct tenant context even when work is processed by a background pump, manual drain, or future remote control-plane worker.
 
+The control plane also separates runtime health from execution recovery.
+
+```text
+RuntimeInstanceHealthReconciler
+        = detects stale / unsafe / draining runtime capacity and prevents unsafe routing
+
+Runtime execution recovery reconciler
+        = enumerates work assigned to unsafe runtime instances and recovers it
+
+HTTP provider
+        = reports transport and endpoint failure signals; it does not own recovery
+```
+
+This boundary is validated by real process-host crash recovery scenarios. When a runtime process stops heartbeating, the control plane marks the runtime unsafe, suppresses unsafe capacity from admission, reconciles assigned work, selects or creates replacement tenant-visible capacity, resumes in-flight executions, and redispatches local-queued work through durable shared-run state.
+
+The provider may report failures such as `http-circuit-open`, `http-dispatch-timeout`, or `http-provider-unavailable`, but the provider must not directly kill, restart, or recover runtime instances. Runtime replacement belongs to the lifecycle owner, and assigned-work recovery belongs to the execution recovery reconciler.
+
 The current validated control-plane model also includes Redis-backed coordination components:
 
 ```text
@@ -338,7 +367,81 @@ This ensures that MCP, shared queues, runtime registry entries, and capacity des
 
 ---
 
-### 3. Runtime Orchestration Layer
+### 3. Runtime Health and Execution Recovery Layer
+
+Runtime health and runtime execution recovery are related but separate responsibilities.
+
+The health layer answers:
+
+```text
+Is this runtime instance safe to route new work to?
+```
+
+The execution recovery layer answers:
+
+```text
+What work was already assigned to an unsafe runtime, and how must it be recovered?
+```
+
+A runtime instance can become unsafe when heartbeat or endpoint health is lost. The control plane must then stop using that capacity for new admission decisions. That does not automatically recover assigned work. Assigned work must be reconciled from durable control-plane state.
+
+The validated recovery model separates assigned work into two categories.
+
+```text
+InFlightExecution
+    = DAG execution already exists
+    = durable ExecutionId already exists
+    = recovery must resume the same ExecutionId on replacement capacity
+
+LocalQueued
+    = shared run was dispatched to a runtime local queue
+    = DAG execution has not started yet
+    = no durable ExecutionId exists yet
+    = recovery must redispatch the durable SharedRunId without duplicating submission
+```
+
+The local runtime queue is intentionally not treated as durable truth. If the process dies, its local queue dies with it. Recovery reconstructs the correct state from durable control-plane records:
+
+```text
+SharedRunStore
+SharedQueue
+RuntimeRunExecutionIndex
+DAG execution store
+Runtime registry / capacity state
+Ledger / trace / forensics evidence
+```
+
+Real process-host recovery scenarios validate the following flow:
+
+```text
+real RuntimeInstanceOnly process stops heartbeating
+        ↓
+runtime instance becomes unsafe
+        ↓
+unsafe capacity is suppressed from admission
+        ↓
+execution recovery reconciler enumerates assigned work
+        ↓
+in-flight executions are requeued for resume
+        ↓
+local queued shared runs are requeued for redispatch
+        ↓
+replacement tenant-visible runtime capacity is selected or created
+        ↓
+new LocalRun is registered on replacement runtime
+        ↓
+resume context is seeded when ExecutionId already exists
+        ↓
+DAG resumes and completes
+        ↓
+forensics / ledger / trace / replay evidence is validated
+```
+
+In multi-tenant crash scenarios, this layer must recover only the impacted tenants' assigned work. A safe tenant in the same control plane must continue normally, with zero recovered work, zero recovery forensics, and zero recovery contamination visible through tenant-scoped ledger queries.
+
+---
+
+### 4. Runtime Orchestration Layer
 
 The orchestration layer turns an external request into a runtime execution.
 
@@ -355,7 +458,7 @@ This layer separates external lifecycle concerns from internal execution logic.
 
 ---
 
-### 4. Pipeline Resolution Layer
+### 5. Pipeline Resolution Layer
 
 Pipeline definitions describe the workflow declaratively.
 
@@ -376,7 +479,7 @@ The runtime controls execution.
 
 ---
 
-### 5. Context Resolution and Helper Layer
+### 6. Context Resolution and Helper Layer
 
 The context resolution layer transforms configuration and state into concrete runtime context.
 
@@ -407,7 +510,7 @@ The helper layer provides the resolved context.
 
 ---
 
-### 6. DAG Execution Engine
+### 7. DAG Execution Engine
 
 The DAG execution engine is the core execution coordinator.
 
@@ -430,7 +533,7 @@ Context-building logic belongs in context helpers.
 
 ---
 
-### 7. Runtime Instance and Worker Capacity Layer
+### 8. Runtime Instance and Worker Capacity Layer
 
 Runtime instances are the execution participants that own local queues and workers.
 
@@ -551,7 +654,7 @@ This prevents one execution from consuming the whole local worker pool unless ex
 
 ---
 
-### 8. Distributed Coordination Layer
+### 9. Distributed Coordination Layer
 
 The runtime uses Redis as the hot coordination layer.
 
@@ -581,7 +684,7 @@ This allows multiple workers or runtime instances to coordinate safely without d
 
 ---
 
-### 9. Step Execution Layer
+### 10. Step Execution Layer
 
 Steps are executed by registered step executors.
 
@@ -604,7 +707,7 @@ Step executors receive resolved context from the context resolution layer.
 
 ---
 
-### 10. Policy and Governance Layer
+### 11. Policy and Governance Layer
 
 Policies provide reusable runtime decision logic.
 
@@ -636,7 +739,7 @@ The runtime applies state transitions safely.
 
 ---
 
-### 11. Persistence Layer
+### 12. Persistence Layer
 
 The persistence layer stores durable execution data.
 
@@ -656,7 +759,7 @@ MongoDB acts as the cold durable layer.
 
 ---
 
-### 12. Retention and Compaction Layer
+### 13. Retention and Compaction Layer
 
 AI workflows can generate large intermediate payloads.
 
@@ -676,7 +779,7 @@ The context resolver is what allows downstream steps to continue working even wh
 
 ---
 
-### 13. Replay and Audit Foundations
+### 14. Replay and Audit Foundations
 
 The runtime includes foundations for replay and auditability.
 
@@ -687,16 +790,21 @@ Current replay foundations include:
 - deterministic replay validation
 - execution fingerprints
 - restored execution comparison
+- MCP replay report retrieval
+- MCP replay ledger retrieval
+- MCP replay trace retrieval
+- replay validation after process-boundary execution
+- replay validation after runtime crash recovery
 
 Replay depends on context helpers to avoid relying on volatile runtime fields such as claim tokens, leases, or worker-local state.
 
 Replay-safe comparison should use stable execution state, payload references, and deterministic fingerprints.
 
-This creates the basis for future official replay APIs and durable decision ledger support.
+The production recovery scenarios validate replay after recovery, not only replay after normal completion. A recovered execution is not considered fully proven only because the DAG completed. The system also validates ledger evidence, trace evidence, completion evidence, step completion evidence, replay report readability, replay ledger readability, replay trace readability, and strict replay validation.
 
 ---
 
-### 14. Observability Layer
+### 15. Observability Layer
 
 Observability is built into the runtime.
 
@@ -719,6 +827,13 @@ The runtime tracks:
 - scale-out request lifecycle
 - fulfilled scale-out run requeue
 - scale-out dispatch and completion
+- runtime process crash detection evidence
+- execution recovery reconciliation evidence
+- runtime recovery forensics records
+- runtime failure incident correlation
+- control-plane causal chain ledger entries
+- tenant-scoped recovery evidence and safe-tenant non-impact proof
+- replay / ledger / trace proof after recovery
 
 This allows the runtime to be inspected, tested, and eventually monitored through dashboards.
 
@@ -755,6 +870,10 @@ Reservation/provider dispatch path is used
         ↓
 Runtime instance local queue receives run with ExecutionContextSnapshot
         ↓
+If runtime process stays alive: normal local queue execution continues
+        ↓
+If runtime process becomes unsafe: execution recovery reconciler recovers assigned work
+        ↓
 Runtime background controller restores ExecutionContextSnapshot
         ↓
 Runtime creates execution
@@ -783,6 +902,60 @@ Finalization creates terminal state / snapshot
 ```
 
 This flow keeps configuration, context, execution, distributed coordination, and persistence separated.
+
+---
+
+## Runtime Crash Recovery Data Flow
+
+A simplified runtime crash recovery flow is:
+
+```text
+Tenant-scoped runs are submitted
+        ↓
+Runs are dispatched to tenant-visible process-host runtime instances
+        ↓
+Runtime A and Runtime B processes are killed or stop heartbeating
+        ↓
+RuntimeInstanceHealthReconciler marks those runtime instances unsafe
+        ↓
+Admission stops selecting unsafe capacity
+        ↓
+Execution recovery reconciler lists assigned work for each unsafe runtime
+        ↓
+InFlightExecution work is requeued for resume with the same ExecutionId
+        ↓
+LocalQueued work is requeued through durable SharedRunId redispatch
+        ↓
+Replacement tenant-visible capacity is selected or created
+        ↓
+Recovered work is dispatched to replacement runtime instances
+        ↓
+Recovered DAG executions complete
+        ↓
+Forensics records are closed with per-work-item timelines
+        ↓
+Ledger / trace / replay evidence is queried through MCP
+        ↓
+Safe tenant evidence proves zero recovery contamination
+```
+
+Important identity rules:
+
+```text
+ExecutionId
+    durable DAG execution identity; must not change during in-flight resume
+
+SharedRunId
+    durable shared submission identity; used to redispatch local queued work
+
+LocalRunId
+    runtime-local attempt identity; may change after recovery
+
+RuntimeInstanceId
+    process/runtime capacity identity; failed and replacement runtime ids are distinct
+```
+
+This recovery flow is part of the architecture, not a fixture-only test harness. It is validated with real `RuntimeInstanceOnly` OS processes and tenant-scoped process-host runtime instances.
 
 ---
 
@@ -1036,7 +1209,7 @@ Local runtime queue
 DAG execution completed
 ```
 
-Validated HTTP pooled provider shape:
+Validated HTTP process-host / pooled provider shape:
 
 ```text
 MCP Control Plane
@@ -1053,6 +1226,30 @@ runtime-http-3
 ```
 
 Shared queue dispatch should validate assignment to the pooled child runtime instance, not the parent HTTP host identity.
+
+The HTTP provider also participates in process-host scale-out through the Runtime Host Manager:
+
+```text
+MCP Control Plane
+    ↓
+Redis scale-out request / recovery request
+    ↓
+HTTP Runtime Provider
+    ↓
+AiHttpRuntimeScaleOutProvisioner
+    ↓
+IAiRuntimeHostManager
+    ↓
+ProcessAiRuntimeHostCreationStrategy
+    ↓
+real RuntimeInstanceOnly process
+    ↓
+runtime self-registration / heartbeat / capacity
+    ↓
+HTTP dispatch / recovery dispatch
+```
+
+The provider remains responsible for transport and provider-scale-out delegation. It does not own runtime execution recovery.
 
 Future providers may include:
 
@@ -1145,7 +1342,17 @@ Plugins remain responsible for domain-specific execution.
 | Human-in-the-loop foundations | Implemented |
 | Replay and snapshot foundations | Implemented / validated foundations |
 | Decision ledger foundation | Implemented foundations / validated through replay ledger scenarios |
-| Durable decision ledger hardening | Planned |
+| Replay report / ledger / trace through MCP | Implemented / validated |
+| HTTP process-host runtime provisioning | Implemented / validated |
+| Real runtime process crash recovery | Implemented / validated |
+| Runtime instance health reconciliation boundary | Implemented / validated |
+| Execution recovery reconciliation boundary | Implemented / validated |
+| In-flight DAG resume with same `ExecutionId` | Implemented / validated |
+| Local queued redispatch through `SharedRunId` | Implemented / validated |
+| Runtime recovery forensics | Implemented / validated |
+| Control-plane ledger causal chain | Implemented / validated |
+| Multi-tenant crash isolation / safe tenant non-impact | Implemented / validated |
+| Durable decision ledger hardening | Implemented / validated for current recovery/replay scenarios; ongoing for broader audit API |
 | Observability dashboard | Planned |
 | Kubernetes deployment | Planned |
 | Public SDK polish | Planned |
@@ -1154,7 +1361,7 @@ Plugins remain responsible for domain-specific execution.
 
 ## Current Validated Evidence
 
-The current architecture has been validated through MCP, Redis, local runtime pool, local scale-out, and HTTP pooled runtime provider scenarios.
+The current architecture has been validated through MCP, Redis, local runtime pool, local scale-out, HTTP pooled runtime provider scenarios, HTTP process-host runtime scenarios, real runtime process crash recovery, runtime recovery forensics, control-plane ledger causal chain validation, and tenant-isolated recovery proof.
 
 Tenant-aware runtime isolation evidence:
 
@@ -1269,6 +1476,61 @@ These validations prove the current architecture can:
 - enforce shared, dedicated, and hybrid runtime isolation through tests.
 
 
+Runtime process-host crash recovery evidence:
+
+```text
+Real external RuntimeInstanceOnly processes = validated
+Tenant A unsafe runtime process killed = validated
+Tenant B unsafe runtime process killed = validated
+Tenant C / safe tenant process not killed = validated
+Impacted in-flight execution resumes same ExecutionId = validated
+Impacted local queued work redispatched through SharedRunId = validated
+Recovered work = impacted tenants only
+Safe tenant recovered work = 0
+Safe tenant recovery forensics = 0
+Cross-tenant ledger leak = false
+Safe tenant recovery leak = false
+Strict replay validation after recovery = 9/9 in the full safe-tenant scenario
+```
+
+Control-plane causal chain evidence:
+
+```text
+Scale-out request persisted
+Scale-out watcher observed request
+Provider selected
+Runtime Host Manager created host
+Process runtime host started
+Runtime capacity became visible
+Runtime registry/capacity lookup validated
+Execution recovery reconciled assigned work
+Recovered work redispatched
+```
+
+Recovery forensics evidence:
+
+```text
+In-flight recovery timeline includes:
+execution.recovery.candidate.detected
+shared.run.requeued.for.resume
+failed.local.run.marked.requeued.for.recovery
+replacement.runtime.selected
+replacement.local.run.registered
+resume.context.seeded
+dag.resume.started
+dag.resume.completed
+execution.recovery.completed
+
+Local queued recovery timeline includes:
+SharedRunRequeuedForLocalQueuedRecovery
+failed.local.run.marked.requeued.for.recovery
+replacement.runtime.selected
+replacement.local.run.registered
+resume.context.seeded
+```
+
+These validations prove that recovery is not treated as a global panic button. The control plane recovers assigned work for impacted unsafe runtime instances while unrelated tenant runtime capacity continues normally.
+
 ## Related Documents
 
 - [Multi-Tenant Control Plane Isolation](multi-tenant-control-plane-isolation.md)
@@ -1281,6 +1543,11 @@ These validations prove the current architecture can:
 - [Runtime Instance Provider Model](runtime-instance-provider-model.md)
 - [MCP Server as Runtime Control Plane](mcp-server-control-plane.md)
 - [Retry and Recovery](retry-and-recovery.md)
+- [Runtime Process Crash Recovery](runtime-process-crash-recovery.md)
+- [Runtime Recovery Forensics](runtime-recovery-forensics.md)
+- [Multi-Tenant Runtime Crash Isolation](multi-tenant-runtime-crash-isolation.md)
+- [Control-Plane Ledger Causal Chain](control-plane-ledger-causal-chain.md)
+- [Recovery Replay Ledger Trace Proof](recovery-replay-ledger-trace-proof.md)
 - [Retention and Compaction](retention-and-compaction.md)
 - [Distributed Concurrency and Throttling](distributed-concurrency-throttling.md)
 - [Replay and Audit](replay-and-audit.md)

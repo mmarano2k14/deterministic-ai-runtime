@@ -1,8 +1,8 @@
 # Runtime Control Plane
 
-Status: Implemented foundation / validated with shared controller, MCP, Redis stores, Redis scale-out request persistence, local runtime pools, local runtime scale-out, fulfilled-run requeue, HTTP pooled runtime scenarios, tenant-aware runtime isolation, Shared/Dedicated/Hybrid runtime visibility, and end-to-end MCP scale-out execution.
+Status: Implemented foundation / validated with shared controller, MCP, Redis stores, Redis scale-out request persistence, local runtime pools, local runtime scale-out, fulfilled-run requeue, HTTP process-host runtime scenarios, tenant-aware runtime isolation, Shared/Dedicated/Hybrid runtime visibility, real runtime process crash recovery, runtime recovery forensics, tenant-scoped ledger/trace/replay proof, and end-to-end MCP scale-out execution.
 
-This document describes the **Runtime Control Plane foundation** used by the Deterministic AI Runtime, including replay, execution control, runtime queues, runtime instance registry/capacity, Redis discovery, shared queue orchestration, provider-based dispatch, tenant-aware runtime isolation, scale-out coordination, and MCP integration.
+This document describes the **Runtime Control Plane foundation** used by the Deterministic AI Runtime, including replay, execution control, runtime queues, runtime instance registry/capacity, runtime health visibility, Redis discovery, shared queue orchestration, provider-based dispatch, tenant-aware runtime isolation, scale-out coordination, runtime process crash recovery, recovery forensics, control-plane ledger/tracing, and MCP integration.
 
 ---
 
@@ -39,6 +39,12 @@ They need to answer operational questions such as:
 - should a Dedicated tenant be isolated from shared capacity?
 - should a Hybrid tenant fallback to shared capacity when tenant-owned capacity is unavailable?
 - can tenant context survive asynchronous and background control-plane hops?
+- can an unsafe runtime instance be removed from dispatch selection?
+- can assigned work on a dead runtime be recovered without reusing the dead local queue?
+- can in-flight DAG executions resume with the same durable `ExecutionId`?
+- can local queued runs be redispatched through the durable `SharedRunId`?
+- can a safe tenant continue normally while other tenants recover?
+- can recovery be proven through forensics, ledger, trace, and replay after convergence?
 - can these decisions be logged and observed?
 
 This is handled by the runtime control-plane foundation.
@@ -125,8 +131,12 @@ The current control-plane foundation includes these areas:
 | Provider Dispatch | Deliver assigned shared runs to local or remote runtime instance queues. |
 | Admission | Decide whether a run should be assigned, queued globally, scaled out, or rejected. |
 | Tenant Runtime Isolation | Enforce Shared, Dedicated, and Hybrid runtime visibility using durable tenant context. |
-| Scale-Out Lifecycle | Persist scale-out requests, observe pending requests, resolve scale-out-capable providers, create tenant-scoped local runtime capacity, mark requests fulfilled/rejected, and requeue fulfilled shared runs for normal pump dispatch. |
-| Observability | Record started, completed, and failed control-plane operations. |
+| Scale-Out Lifecycle | Persist scale-out requests, observe pending requests, resolve scale-out-capable providers, create tenant-scoped runtime capacity, mark requests fulfilled/rejected, and requeue fulfilled shared runs for normal pump dispatch. |
+| Runtime Health Reconciliation | Detect stale or unsafe runtime capacity and prevent unsafe runtimes from being selected for new work. |
+| Execution Recovery Reconciliation | Recover work already assigned to unsafe runtime instances, including in-flight executions and local queued shared runs. |
+| Runtime Recovery Forensics | Persist per-work-item recovery timelines and failure incident evidence. |
+| Control-Plane Ledger / Trace | Record scale-out, provider selection, host creation, capacity visibility, recovery, redispatch, replay, and tenant-scope proof. |
+| Observability | Record started, completed, and failed control-plane operations, including recovery evidence. |
 
 ---
 
@@ -479,6 +489,245 @@ Direct runtime local queue execution also requires an execution context snapshot
 
 If a local queued run does not carry a snapshot, the background controller fails fast instead of executing without tenant context.
 
+
+---
+
+## Runtime Health and Execution Recovery Boundaries
+
+Runtime health reconciliation and execution recovery are separate control-plane responsibilities.
+
+```text
+RuntimeInstanceHealthReconciler
+    = detects stale / unsafe / draining runtime capacity
+    = prevents unsafe capacity from being selected for new work
+
+ExecutionRecoveryReconciler
+    = enumerates work already assigned to an unsafe runtime
+    = recovers in-flight DAG executions
+    = redispatches local queued shared runs
+
+HTTP provider
+    = reports transport / endpoint failure signals
+    = dispatches over HTTP when capacity is safe
+    = does not own runtime recovery
+    = does not kill, restart, or replace runtimes
+```
+
+This boundary is validated by the HTTP process-host crash recovery scenarios.
+
+The control plane does not treat an HTTP circuit breaker event as a lifecycle command. A circuit-open or endpoint failure is a transport-health signal. Runtime lifecycle decisions remain owned by the health/lifecycle layer, and assigned work recovery remains owned by the execution recovery reconciler.
+
+Validated boundary:
+
+```text
+HTTP dispatch / heartbeat / endpoint visibility signal
+    ↓
+runtime capacity becomes unsafe or unavailable
+    ↓
+health reconciliation stops unsafe capacity from receiving new work
+    ↓
+execution recovery reconciliation enumerates assigned work
+    ↓
+in-flight executions resume with the same ExecutionId
+    ↓
+local queued shared runs are redispatched through SharedRunId
+    ↓
+replacement capacity is selected or created when required
+    ↓
+forensics / ledger / trace / replay evidence is written
+```
+
+Scale-out fulfillment is not recovery completion.
+
+Runtime replacement is not recovery completion.
+
+Recovery is complete only when assigned work has been reconciled, redispatched or resumed, completed when applicable, and observable proof has been written.
+
+---
+
+## Runtime Process Crash Recovery
+
+The control plane now validates recovery after real external `RuntimeInstanceOnly` process death.
+
+In the process-host recovery scenarios, the test host starts a shared control plane and real runtime host processes for tenants. The test then kills selected tenant runtime processes at the OS-process level.
+
+The recovery model distinguishes two assigned work types:
+
+| Work type | Durable identity before crash | Recovery behavior |
+|---|---|---|
+| In-flight DAG execution | `ExecutionId`, `SharedRunId`, `LocalRunId` | Resume the same durable `ExecutionId` on replacement runtime capacity. |
+| Local queued shared run | `SharedRunId`, `LocalRunId` | Redispatch through durable shared-run state because no DAG `ExecutionId` exists yet. |
+
+The local runtime queue is deliberately not treated as durable truth.
+
+```text
+Local queue
+    = volatile runtime-owned queue
+
+SharedRunStore + SharedQueue + RuntimeRunExecutionIndex + DAG store
+    = durable control-plane / execution truth
+```
+
+A dead local queue is not recovered from the local queue. It is reconstructed from durable shared-run records, the shared queue, the runtime execution index, DAG state, registry/capacity state, and recovery forensics.
+
+Validated recovery flow:
+
+```text
+RuntimeInstanceOnly process stops heartbeating
+    ↓
+runtime instance becomes unsafe
+    ↓
+new admission no longer selects unsafe capacity
+    ↓
+execution recovery reconciler finds assigned work
+    ↓
+forensics incident is created
+    ↓
+in-flight work is requeued for resume-existing-execution
+    ↓
+local queued work is requeued for durable shared-run redispatch
+    ↓
+replacement runtime capacity is selected / created
+    ↓
+new LocalRun is registered
+    ↓
+resume context is seeded when ExecutionId already exists
+    ↓
+DAG resumes or local queued run starts normally
+    ↓
+ledger / trace / replay / forensics evidence is validated
+```
+
+Important invariants:
+
+```text
+ExecutionId is durable and must not change during in-flight recovery.
+LocalRunId is attempt-local and may change after recovery.
+SharedRunId is durable submission identity and is used to redispatch local queued work.
+Recovery does not consume business retry budget.
+Unsafe runtime capacity must not receive new work.
+```
+
+---
+
+## Multi-Tenant Runtime Crash Isolation
+
+The runtime control plane now validates that crash recovery remains tenant-isolated.
+
+The strongest validated scenario uses one shared control plane with three tenants:
+
+```text
+Tenant A runtime process killed
+Tenant B runtime process killed
+Tenant C runtime process not killed
+```
+
+Tenant A and Tenant B each recover assigned work. Tenant C continues normal execution and must not receive recovery instructions, recovery forensics, or recovery ledger contamination.
+
+Validated safe-tenant invariants include:
+
+```text
+SafeTenantNonImpactValidated = true
+SafeTenantRecoveryLeakDetected = false
+CrossTenantLedgerLeakDetected = false
+SafeTenantRecoveryEntriesVisibleFromImpactedQueries = 0
+RuntimeProcessKilled = false
+CrashImpacted = false
+RecoveredWork = 0
+RecoveryForensics = 0
+```
+
+This proves that recovery is not a global panic button.
+
+The control plane can recover work for impacted tenants while proving that an unrelated active tenant remained outside the recovery surface.
+
+---
+
+## Runtime Recovery Forensics
+
+Runtime recovery forensics are durable, queryable evidence records created per recovered work item.
+
+Forensics records are scoped by tenant and linked to a runtime failure incident.
+
+Example incident identity:
+
+```text
+runtime-failure:{controlPlaneId}:{runtimeInstanceId}
+```
+
+Example forensics identities:
+
+```text
+runtime-recovery:{ExecutionId}:{SharedRunId}:{LocalRunId}
+runtime-recovery:local-queued:{SharedRunId}:{LocalRunId}
+```
+
+In-flight execution recovery timeline:
+
+```text
+execution.recovery.candidate.detected
+→ shared.run.requeued.for.resume
+→ failed.local.run.marked.requeued.for.recovery
+→ replacement.runtime.selected
+→ replacement.local.run.registered
+→ resume.context.seeded
+→ dag.resume.started
+→ dag.resume.completed
+→ execution.recovery.completed
+```
+
+Local queued recovery timeline:
+
+```text
+SharedRunRequeuedForLocalQueuedRecovery
+→ failed.local.run.marked.requeued.for.recovery
+→ replacement.runtime.selected
+→ replacement.local.run.registered
+→ resume.context.seeded
+```
+
+The forensics layer is not a transient log. It is a durable audit surface exposed through MCP and validated after recovery, completion, replay, ledger, and trace queries.
+
+For a safe tenant whose runtime was not killed, recovery forensics must remain empty.
+
+---
+
+## Control-Plane Ledger and Replay Proof
+
+The control-plane ledger now records infrastructure decisions as well as execution-correlated runtime decisions.
+
+Validated control-plane causal-chain domains include:
+
+```text
+scale-out request persisted
+scale-out watcher observed request
+provider selected
+runtime host manager created host
+process runtime host started
+runtime capacity became visible
+runtime instance visible through registry/capacity lookup
+execution recovery reconciled assigned work
+recovered work redispatched
+```
+
+Recovery is not considered proven only because the DAG eventually completes.
+
+A recovered execution must remain observable after convergence through:
+
+```text
+execution ledger evidence
+execution trace evidence
+completion evidence
+step completion evidence
+replay report
+replay ledger
+replay trace
+strict replay validation
+runtime recovery forensics
+tenant-scoped ledger queries
+```
+
+The MCP observability surface is part of the proof. The same external API path used for replay, ledger, trace, and forensics queries validates recovered executions and safe-tenant non-impact.
 
 ---
 
@@ -1137,6 +1386,15 @@ The implementation is validated by unit and integration tests covering:
 - MCP manual drain and background pump dispatch
 - replay/report/ledger/trace through MCP
 - shutdown cleanup without late rediscovery dependency
+- runtime health/recovery boundary validation
+- real HTTP process-host runtime crash recovery
+- in-flight DAG resume preserving durable `ExecutionId`
+- local queued shared-run redispatch through durable `SharedRunId`
+- runtime recovery forensics per recovered work item
+- multi-tenant process crash recovery with safe tenant non-impact
+- tenant-scoped recovery ledger queries with no cross-tenant leakage
+- replay/report/ledger/trace validation after crash recovery
+- control-plane causal chain validation for scale-out, host creation, capacity visibility, recovery, and redispatch
 
 ---
 
@@ -1178,6 +1436,15 @@ The runtime can now expose or support:
 - persist tenant runtime settings in scale-out requests
 - dispatch with restored tenant execution context
 - create tenant-scoped local runtime instances through provider scale-out
+- detect unsafe runtime capacity through health reconciliation
+- prevent unsafe runtime capacity from receiving new work
+- reconcile assigned work from unsafe runtime instances
+- resume in-flight DAG executions with the same durable `ExecutionId`
+- redispatch local queued shared runs through durable `SharedRunId`
+- create runtime recovery forensics records
+- query tenant-scoped recovery forensics through MCP
+- query tenant-scoped ledger/trace/replay proof after recovery
+- validate safe tenant non-impact during multi-tenant runtime process crash recovery
 
 ---
 
@@ -1202,21 +1469,16 @@ This work prepares Kubernetes support by introducing:
 - observability hooks
 - structured event model
 
-The next Kubernetes-related pieces can now be built on top:
+The next Kubernetes-related pieces can now be built on top the validated control-plane shape:
 
-- Shared Runtime Controller
-- Shared Run Queue
-- Redis-backed Runtime Instance Registry
-- Redis-backed Runtime Instance Capacity Store
-- Redis-backed Control-Plane Discovery Store
-- Control-Plane Id Resolver
-- Redis-backed admission reservation logic
-- Scale-out requested events
-- Redis scale-out request lifecycle
-- Local runtime scale-out execution flow
 - Kubernetes deployment scaler adapter
-- MCP/API control-plane endpoints
+- Kubernetes pod / deployment scale-out implementation
+- Kubernetes metadata provider
+- Kubernetes readiness integration
+- MCP/API control-plane endpoint polish
 - Live observability export to Kibana / Grafana / OpenSearch
+
+The shared controller, shared queue, Redis registry/capacity stores, control-plane discovery, admission reservation foundation, scale-out request lifecycle, provider-based scale-out selection, local/process-host scale-out flow, runtime health boundary, and execution recovery boundary are already validated foundations.
 
 ---
 
@@ -1232,7 +1494,11 @@ The next Kubernetes-related pieces can now be built on top:
 | RunAdmission Controller | Decides assignment, global queue fallback, scale-out, or rejection. |
 | Background Controller | Owns local queue lifecycle and `RunId` state. |
 | DAG Runtime | Executes durable `ExecutionId` workflows. |
-| Observability Layer | Records control-plane operation events. |
+| RuntimeInstanceHealthReconciler | Detects unsafe runtime capacity and prevents new work from being routed there. |
+| ExecutionRecoveryReconciler | Recovers assigned work from unsafe runtime instances. |
+| Runtime Recovery Forensics | Persists per-work-item recovery timelines and incident evidence. |
+| Control-Plane Ledger / Trace | Records infrastructure decisions, recovery chain, tenant-scoped proof, and replay evidence. |
+| Observability Layer | Records control-plane operation events and recovery evidence. |
 
 ---
 
@@ -1256,9 +1522,9 @@ These are intentionally left for the next phases.
 
 ## Next Step
 
-The Shared Runtime Controller, Redis/local scale-out lifecycle, and tenant-aware runtime isolation foundation are now implemented.
+The Shared Runtime Controller, Redis/local scale-out lifecycle, tenant-aware runtime isolation foundation, HTTP process-host scale-out path, runtime health boundary, execution recovery boundary, and real process-host crash recovery proof are now implemented and validated.
 
-The next step is to continue hardening provider-based runtime instance administration, production multi-process coordination, and moving tenant settings from hardcoded provider-backed configuration toward a durable/configurable source.
+The next step is to continue hardening provider-based runtime instance administration, production multi-process coordination, Kubernetes provider integration, and moving tenant settings from hardcoded provider-backed configuration toward a durable/configurable source.
 
 Expected next work:
 
@@ -1273,6 +1539,7 @@ Kubernetes scaling provider
 Production multi-control-plane reservation hardening
 Tenant settings configuration/persistence
 Dashboard/API/MCP operational polish
+Runtime recovery dashboarding / incident browsing
 ```
 
 Future work should preserve the same control-plane boundaries:
@@ -1926,27 +2193,34 @@ These remain intentionally left for the next phases.
 
 ## Updated Next Step
 
-The Shared Runtime Controller V1 and Redis/local scale-out execution flow are now complete.
+The Shared Runtime Controller V1, Redis/local scale-out execution flow, HTTP process-host scale-out path, runtime health boundary, execution recovery reconciliation, runtime recovery forensics, control-plane ledger proof, and multi-tenant crash isolation proof are now complete.
 
 The distributed runtime instance layer now has a validated foundation for:
 
 - shared admission
 - Redis-backed queue coordination
 - provider-based dispatch
-- provider-based local scale-out
+- provider-based local/process-host scale-out
 - fulfilled scale-out run requeue
 - end-to-end execution after dynamic capacity creation
+- unsafe runtime capacity suppression
+- assigned work recovery after process death
+- in-flight DAG resume with preserved `ExecutionId`
+- local queued shared-run redispatch with preserved `SharedRunId`
+- safe tenant non-impact proof
+- replay / ledger / trace / forensics validation after recovery
 
 Expected next work:
 
 - heartbeat TTL / expiration hardening
-- runtime instance health self-healing
+- registry/capacity self-healing cleanup
 - Redis command queue provider
 - gRPC dispatch adapter
 - provider status/control capabilities
 - Kubernetes scaler adapter
 - Kubernetes pod/deployment scaler
 - control-plane API endpoints
+- recovery incident dashboarding
 - Kibana / Grafana / OpenSearch observability export
 - Kubernetes production demo
 
@@ -2028,6 +2302,40 @@ ControlPlaneWithLocalRuntimeInstances_With_No_Runtime_Capacity_Should_ScaleOut_R
 ```
 
 
+Runtime process crash recovery evidence:
+
+```text
+Single shared control plane
+Real external RuntimeInstanceOnly processes
+Tenant A runtime process killed
+Tenant B runtime process killed
+Tenant C safe runtime not killed
+Impacted recovered work = 6
+Safe tenant recovered work = 0
+Safe tenant recovery forensics = 0
+Replay validation = 9/9
+Ledger evidence = 9/9
+Trace evidence = 9/9
+CrossTenantLedgerLeakDetected = false
+SafeTenantRecoveryLeakDetected = false
+SafeTenantNonImpactValidated = true
+```
+
+Control-plane recovery causal chain evidence:
+
+```text
+Scale-out request persisted
+Scale-out watcher observed request
+Provider selected
+Runtime host manager created host
+Process runtime host started
+Runtime capacity became visible
+Runtime instance visible through registry/capacity lookup
+Execution recovery reconciled assigned work
+Recovered work redispatched
+```
+
+
 ## Related Documents
 
 - [Architecture Overview](architecture-overview.md)
@@ -2041,5 +2349,10 @@ ControlPlaneWithLocalRuntimeInstances_With_No_Runtime_Capacity_Should_ScaleOut_R
 - [Replay and Audit](replay-and-audit.md)
 - [Observability and Tracing](observability-tracing.md)
 - [Testing Strategy](testing-strategy.md)
+- [Runtime Process Crash Recovery](runtime-process-crash-recovery.md)
+- [Runtime Recovery Forensics](runtime-recovery-forensics.md)
+- [Multi-Tenant Runtime Crash Isolation](multi-tenant-runtime-crash-isolation.md)
+- [Control-Plane Ledger Causal Chain](control-plane-ledger-causal-chain.md)
+- [Recovery Replay Ledger Trace Proof](recovery-replay-ledger-trace-proof.md)
 
 ---

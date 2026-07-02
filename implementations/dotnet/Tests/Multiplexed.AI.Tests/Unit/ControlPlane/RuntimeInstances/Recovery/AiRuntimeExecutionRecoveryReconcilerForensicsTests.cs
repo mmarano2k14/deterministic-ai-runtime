@@ -79,7 +79,28 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Recovery
             result.IgnoredRuntimeInstanceCount.Should().Be(0);
             result.DiscoveredUnfinishedRunCount.Should().Be(1);
             result.RecoveredRunCount.Should().Be(1);
-            result.Decisions.Should().ContainSingle();
+            result.Decisions.Should().HaveCount(2);
+
+            result.Decisions.Should().Contain(
+                decision =>
+                    decision.RuntimeInstanceId == "runtime-1" &&
+                    decision.LocalRunId == "local-run-1" &&
+                    decision.ExecutionId == "execution-1" &&
+                    decision.SharedRunId == "shared-run-1" &&
+                    decision.Action == "ownership-resolution" &&
+                    !decision.Changed);
+
+            result.Decisions.Should().Contain(
+                decision =>
+                    decision.RuntimeInstanceId == "runtime-1" &&
+                    decision.LocalRunId == "local-run-1" &&
+                    decision.ExecutionId == "execution-1" &&
+                    decision.SharedRunId == "shared-run-1" &&
+                    decision.Action == "requeue-shared-run" &&
+                    decision.Reason.StartsWith(
+                        "transitionReason=runtime-execution-recovery-requeue",
+                        StringComparison.Ordinal) &&
+                    decision.Changed);
 
             ownershipResolver.ResolveCalls.Should().Be(1);
             transitionService.ApplyCalls.Should().Be(1);
@@ -94,9 +115,11 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Recovery
             record.Identity.ExecutionId.Should().Be("execution-1");
             record.Identity.SharedRunId.Should().Be("shared-run-1");
 
-            record.Events.Should().ContainSingle();
+            record.Events.Should().Contain(
+                recoveryEvent => recoveryEvent.EventType == AiRuntimeRecoveryForensicsEventType.ExecutionRecoveryCandidateDetected);
 
-            var evt = record.Events.Single();
+            var evt = record.Events.Single(
+                recoveryEvent => recoveryEvent.EventType == AiRuntimeRecoveryForensicsEventType.ExecutionRecoveryCandidateDetected);
 
             evt.EventType.Should().Be(AiRuntimeRecoveryForensicsEventType.ExecutionRecoveryCandidateDetected);
             evt.Outcome.Should().Be("recoverable");
@@ -168,7 +191,10 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Recovery
 
             records.Should().ContainSingle();
 
-            var evt = records.Single().Events.Single();
+            var evt = records
+                .Single()
+                .Events
+                .Single(recoveryEvent => recoveryEvent.EventType == AiRuntimeRecoveryForensicsEventType.ExecutionRecoveryCandidateDetected);
 
             evt.EventType.Should().Be(AiRuntimeRecoveryForensicsEventType.ExecutionRecoveryCandidateDetected);
             evt.Outcome.Should().Be("not-recoverable");

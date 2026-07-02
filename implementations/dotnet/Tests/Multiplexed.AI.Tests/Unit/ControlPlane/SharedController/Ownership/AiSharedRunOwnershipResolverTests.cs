@@ -213,7 +213,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController.Ownership
             Assert.False(result.Resolved);
             Assert.False(result.CanRecover);
             Assert.Equal("runtime-1", result.RuntimeInstanceId);
-            Assert.Equal("missing-local-run-id-and-execution-id", result.Reason);
+            Assert.Equal("missing-shared-run-id-local-run-id-and-execution-id", result.Reason);
         }
 
         /// <summary>

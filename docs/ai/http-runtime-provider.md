@@ -1,6 +1,6 @@
 # HTTP Runtime Provider
 
-Status: Implemented and validated for hardened HTTP dispatch, provider-based HTTP scale-out, Runtime Host Manager process-host provisioning, Redis-backed scale-out request fulfillment, and tenant-aware Shared / Dedicated / Hybrid runtime policies.
+Status: Implemented and validated for hardened HTTP dispatch, provider-based HTTP scale-out, Runtime Host Manager process-host provisioning, Redis-backed scale-out request fulfillment, tenant-aware Shared / Dedicated / Hybrid runtime policies, and real process-host crash recovery with ledger, trace, replay, and runtime recovery forensics evidence.
 
 This document describes the **HTTP runtime provider** for the Deterministic AI Runtime control plane.
 
@@ -38,7 +38,12 @@ It currently supports the following responsibilities:
 - waiting for runtime registration / capacity readiness;
 - preserving tenant-aware runtime settings during HTTP scale-out;
 - validating Shared, Dedicated, and Hybrid runtime isolation behavior;
-- validating ledger, trace, replay, and retention across process boundaries.
+- validating ledger, trace, replay, and retention across process boundaries;
+- validating real process-host crash recovery for impacted tenants;
+- validating in-flight DAG resume with preserved `ExecutionId`;
+- validating durable redispatch of runtime-local queued work;
+- validating safe-tenant non-impact during concurrent tenant crash recovery;
+- validating runtime recovery forensics and control-plane ledger causal-chain evidence.
 
 The HTTP provider must not execute DAG steps directly.
 
@@ -127,6 +132,63 @@ queued run is dispatched through HTTP
 ```
 
 This proves that HTTP is no longer only a dispatch transport. It can also participate in provider-based runtime capacity creation through the Runtime Host Manager.
+
+---
+
+## Validated Real Process Crash Recovery
+
+The HTTP process-host path is now validated not only for scale-out and dispatch, but also for real runtime process crash recovery.
+
+Validated flow:
+
+```text
+MCP submit
+    ↓
+tenant-aware admission
+    ↓
+HTTP process-host runtime created
+    ↓
+run dispatched to runtime-local queue
+    ↓
+real OS runtime process killed
+    ↓
+heartbeat becomes stale / runtime marked unsafe
+    ↓
+execution recovery reconciler enumerates assigned work
+    ↓
+in-flight DAG execution resumes on replacement runtime
+    ↓
+local queued work is redispatched through durable SharedRun state
+    ↓
+replay / ledger / trace / forensics proof is validated
+```
+
+The HTTP provider does not own recovery. It reports endpoint and transport failure signals and participates in capacity creation when selected by the scale-out provider routing model. Runtime health reconciliation and assigned-work recovery remain separate control-plane responsibilities.
+
+The validated recovery model distinguishes two categories of assigned work:
+
+```text
+In-flight execution
+    durable ExecutionId exists
+    recovery mode = resume-existing-execution
+    replacement runtime must continue the same ExecutionId
+
+Local queued run
+    durable SharedRunId exists
+    no ExecutionId exists yet
+    recovery mode = requeue-local-queued-run
+    replacement runtime must redispatch the SharedRun without duplicate submission
+```
+
+The local runtime queue is intentionally treated as volatile state. If the runtime process dies, the local queue is allowed to die with it. Durable recovery truth comes from the shared run store, shared queue, runtime run execution index, DAG store, registry/capacity state, ledger, trace, replay, and recovery forensics.
+
+Validated multi-tenant safety invariant:
+
+```text
+Tenant A runtime process killed -> only Tenant A assigned work is recovered
+Tenant B runtime process killed -> only Tenant B assigned work is recovered
+Tenant C safe runtime not killed -> zero recovered work, zero recovery forensics, zero recovery contamination
+```
 
 ---
 
@@ -232,9 +294,9 @@ trace timeline
 future dashboards
 ```
 
-The HTTP provider reports endpoint and command failure reasons, but it must not directly kill, restart, or replace runtime instances.
+The HTTP provider reports endpoint and command failure reasons, but it must not directly kill, restart, recover, or replace runtime instances.
 
-Health management and runtime replacement policy belong to a higher-level health reconciler or to the lifecycle owner of the runtime instance.
+Health management belongs to runtime instance health reconciliation. Assigned-work recovery belongs to the runtime execution recovery reconciler. Runtime replacement and host lifecycle mechanics belong to the lifecycle owner of the runtime instance, such as the Runtime Host Manager, process provider, Kubernetes provider, or an external supervisor.
 
 ---
 
@@ -768,6 +830,21 @@ Tenant settings override request-level runtime sizing
 TenantGroupId is preserved for scale-out and requeue scope matching
 ```
 
+
+
+Validated real process-host crash recovery behavior:
+
+```text
+single tenant runtime process kill -> assigned work recovered
+multiple tenant runtime process kills in the same recovery window -> each tenant recovered independently
+in-flight DAG execution -> same durable ExecutionId resumes on replacement runtime
+local queued run -> durable SharedRunId redispatched without duplicate submission
+safe tenant active during crash -> no runtime kill, no recovered work, no recovery forensics
+runtime recovery forensics -> per-work-item timelines persisted and queryable after completion
+control-plane ledger causal chain -> scale-out, host creation, capacity, recovery, redispatch evidence validated
+replay / ledger / trace proof -> recovered and safe executions remain replay-ready and observable
+```
+
 Validated production scenario behavior:
 
 ```text
@@ -814,6 +891,13 @@ durable Mongo / Redis observability
 This scenario validates:
 
 - MCP submission;
+- real process-host crash recovery;
+- runtime unsafe detection through heartbeat / health reconciliation;
+- recovery of in-flight DAG executions with preserved `ExecutionId`;
+- redispatch of local queued work through durable `SharedRunId`;
+- safe-tenant non-impact during impacted tenant recovery;
+- runtime recovery forensics timelines;
+- control-plane ledger causal-chain evidence;
 - tenant-aware admission;
 - Redis scale-out request creation;
 - scale-out watcher processing;
@@ -840,16 +924,17 @@ mcp-production-runtime-scenario-framework.md
 
 ## Current Limitations
 
-The HTTP provider process-host path is validated, but some production lifecycle concerns remain separate future work.
+The HTTP provider process-host path is validated for scale-out, dispatch, tenant-aware runtime policies, and real process-host crash recovery. Some production lifecycle concerns remain separate future work.
 
 Current limitations:
 
 - final shared runtime pooling semantics are not decided yet;
 - Shared mode currently validates shared-mode propagation and execution, not a forced global shared runtime pool;
 - Hybrid fallback to a shared process-host pool should be tested after shared pooling semantics are finalized;
-- provider health reconciliation is still separate from endpoint dispatch failure reporting;
-- circuit-open does not yet automatically mark a runtime unhealthy or request replacement;
-- Kubernetes host creation remains a future provider/host-manager mode.
+- provider endpoint health signals remain separate from runtime instance health reconciliation;
+- circuit-open is still a transport-level signal and does not by itself own runtime recovery;
+- Kubernetes host creation remains a future provider/host-manager mode;
+- crash recovery is validated for process-host runtime instances, not yet for Kubernetes pods or attached external hosts.
 
 These limitations are intentional boundaries.
 
@@ -860,16 +945,15 @@ These limitations are intentional boundaries.
 Recommended next steps:
 
 ```text
-1. Add RuntimeInstanceHealthReconciler.
-2. Mark stale / unhealthy / circuit-open runtime endpoints as draining or unhealthy.
-3. Stop routing new work to unhealthy runtime instances.
-4. Request replacement capacity when needed.
-5. Finalize shared runtime pooling semantics.
-6. Add Hybrid shared fallback process-host validation after shared pooling is explicit.
-7. Reuse the Host Manager readiness model for gRPC and Kubernetes.
+1. Finalize shared runtime pooling semantics.
+2. Add Hybrid shared fallback process-host validation after shared pooling is explicit.
+3. Reuse the Host Manager readiness model for gRPC and Kubernetes.
+4. Add Kubernetes process-equivalent crash recovery validation.
+5. Add Attach-mode crash / disconnect recovery validation.
+6. Expand dashboards over control-plane ledger causal-chain and runtime recovery forensics records.
 ```
 
-Future health flow:
+Future transport-health-to-recovery flow:
 
 ```text
 HTTP circuit open
@@ -878,13 +962,15 @@ failure reason = http-circuit-open
     ↓
 runtime endpoint health signal emitted
     ↓
-health reconciler marks runtime unhealthy or draining
+health reconciler may mark runtime unhealthy or draining
     ↓
-dispatcher stops selecting the runtime
+dispatcher stops selecting unsafe runtime capacity
     ↓
-scale-out replacement requested if required
+execution recovery reconciler recovers assigned work if the runtime becomes unsafe
     ↓
-lifecycle owner replaces runtime
+replacement capacity requested if required
+    ↓
+lifecycle owner creates or attaches replacement runtime capacity
 ```
 
 ---
@@ -896,7 +982,7 @@ Do not treat the HTTP command provider as the runtime lifecycle owner.
 Current completed capability:
 
 ```text
-HTTP provider can participate in provider-based scale-out, use the Runtime Host Manager, launch real RuntimeInstanceOnly processes in process-host mode, wait for runtime registration/capacity readiness, and dispatch queued runs over HTTP.
+HTTP provider can participate in provider-based scale-out, use the Runtime Host Manager, launch real RuntimeInstanceOnly processes in process-host mode, wait for runtime registration/capacity readiness, dispatch queued runs over HTTP, and support validated real process-host crash recovery through control-plane health, assigned-work recovery, ledger, trace, replay, and forensics evidence.
 ```
 
 The runtime boundaries must remain unchanged:
@@ -911,4 +997,9 @@ Shared queue owns queued shared run dispatch.
 Local runtime queues own RunId.
 DAG engine owns ExecutionId.
 ExecutionContextSnapshot carries durable tenant context.
+RuntimeInstanceHealthReconciler detects unsafe capacity.
+Execution recovery reconciler recovers assigned work.
+Local queue state is volatile.
+SharedRunStore + SharedQueue + RuntimeRunExecutionIndex + DAG store are durable recovery truth.
+Ledger / trace / replay / forensics prove recovery after convergence.
 ```

@@ -28,9 +28,14 @@ Focused AI runtime documentation is organized under:
 | [`ai/runtime-instance-provider-model.md`](ai/runtime-instance-provider-model.md) | Provider-based runtime instance administration for local, Redis command queue, HTTP, gRPC, and Kubernetes providers, including tenant-aware dispatch/status/control/scale-out capabilities and provider routing. |
 | [`ai/http-runtime-provider.md`](ai/http-runtime-provider.md) | HTTP runtime provider reference covering hardened dispatch, timeout/retry/circuit breaker behavior, structured failure reasons, HTTP provider scale-out, Runtime Host Manager process-host provisioning, real `RuntimeInstanceOnly` process launch, tenant-aware Shared/Dedicated/Hybrid policy validation, and process-boundary observability. |
 | [`ai/mcp-production-runtime-scenario-framework.md`](ai/mcp-production-runtime-scenario-framework.md) | MCP production runtime scenario framework covering Runtime Host Manager modes, HTTP process-host scale-out, real `RuntimeInstanceOnly` child processes, Dedicated/Shared/Hybrid tenant scenarios, retention, ledger, trace, and replay validation across process boundaries. |
+| [`ai/runtime-process-crash-recovery.md`](ai/runtime-process-crash-recovery.md) | Runtime process crash recovery reference covering health detection, unsafe runtime capacity, execution recovery reconciliation, in-flight DAG resume, local-queued redispatch, replacement runtime selection, and durable recovery truth. |
+| [`ai/runtime-recovery-forensics.md`](ai/runtime-recovery-forensics.md) | Runtime recovery forensics reference covering `ForensicsId`, `RuntimeFailureIncidentId`, per-work-item recovery timelines, duplicate recovery detection, safe tenant non-impact proof, and MCP forensics queries. |
+| [`ai/multi-tenant-runtime-crash-isolation.md`](ai/multi-tenant-runtime-crash-isolation.md) | Multi-tenant runtime crash isolation reference proving tenant A/B crash recovery while a safe tenant remains untouched, with no cross-tenant ledger leak, no recovery contamination, and no safe-tenant forensics. |
+| [`ai/control-plane-ledger-causal-chain.md`](ai/control-plane-ledger-causal-chain.md) | Control-plane ledger causal chain reference covering scale-out, provider selection, host creation, registry/capacity visibility, recovery reconciliation, redispatch, tenant scoping, and audit proof. |
+| [`ai/recovery-replay-ledger-trace-proof.md`](ai/recovery-replay-ledger-trace-proof.md) | Recovery proof reference explaining why recovered work must validate replay, ledger, trace, completion evidence, step evidence, forensics, and tenant-scoped observability after convergence. |
 | [`ai/shared-controller-usage.md`](ai/shared-controller-usage.md) | Shared runtime controller usage, queue-first/direct-dispatch modes, Redis stores, scale-out request persistence, tenant snapshot propagation, manual drain, and background pump setup. |
 | [`ai/shared-queue-pump-and-worker-capacity.md`](ai/shared-queue-pump-and-worker-capacity.md) | Shared queue pump, fulfilled-run requeue, dispatch-time admission, context restoration, worker capacity visibility, and `MaxLocalWorkersPerExecution`. |
-| [`ai/testing-strategy.md`](ai/testing-strategy.md) | Testing strategy and validation approach for distributed runtime guarantees, RBAC context propagation, tenant isolation, Redis/local scale-out, requeue, dispatch, and execution evidence. |
+| [`ai/testing-strategy.md`](ai/testing-strategy.md) | Testing strategy and validation approach for distributed runtime guarantees, RBAC context propagation, tenant isolation, Redis/local scale-out, HTTP process-host provisioning, runtime crash recovery, safe-tenant isolation, recovery forensics, replay/ledger/trace proof, requeue, dispatch, and execution evidence. |
 | [`ai/execution-correlated-ledger.md`](ai/execution-correlated-ledger.md) | Execution-correlated runtime decision ledger, audit foundations, retention auditability, and replay lifecycle event correlation. |
 | [`ai/observability.md`](ai/observability.md) | High-level observability index summarizing ledger, tracing, metrics, logs, correlation, replay diagnostics, and roadmap direction. |
 | [`ai/observability-tracing.md`](ai/observability-tracing.md) | Runtime tracing, trace timelines, correlation, trace storage modes, Mongo trace persistence, MemoryAndMongo mode, and tracing improvements. |
@@ -69,16 +74,21 @@ Start with:
 9. [`ai/runtime-instance-provider-model.md`](ai/runtime-instance-provider-model.md)
 10. [`ai/http-runtime-provider.md`](ai/http-runtime-provider.md)
 11. [`ai/mcp-production-runtime-scenario-framework.md`](ai/mcp-production-runtime-scenario-framework.md)
-12. [`ai/shared-controller-usage.md`](ai/shared-controller-usage.md)
-13. [`ai/shared-queue-pump-and-worker-capacity.md`](ai/shared-queue-pump-and-worker-capacity.md)
-14. [`ai/distributed-execution.md`](ai/distributed-execution.md)
-15. [`ai/execution-control-state.md`](ai/execution-control-state.md)
-16. [`ai/observability.md`](ai/observability.md)
-17. [`ai/execution-correlated-ledger.md`](ai/execution-correlated-ledger.md)
-18. [`ai/observability-tracing.md`](ai/observability-tracing.md)
-19. [`ai/runtime-metrics.md`](ai/runtime-metrics.md)
-20. [`ai/replay-and-audit.md`](ai/replay-and-audit.md)
-21. [`runtime-internals.md`](runtime-internals.md)
+12. [`ai/runtime-process-crash-recovery.md`](ai/runtime-process-crash-recovery.md)
+13. [`ai/runtime-recovery-forensics.md`](ai/runtime-recovery-forensics.md)
+14. [`ai/multi-tenant-runtime-crash-isolation.md`](ai/multi-tenant-runtime-crash-isolation.md)
+15. [`ai/control-plane-ledger-causal-chain.md`](ai/control-plane-ledger-causal-chain.md)
+16. [`ai/recovery-replay-ledger-trace-proof.md`](ai/recovery-replay-ledger-trace-proof.md)
+17. [`ai/shared-controller-usage.md`](ai/shared-controller-usage.md)
+18. [`ai/shared-queue-pump-and-worker-capacity.md`](ai/shared-queue-pump-and-worker-capacity.md)
+19. [`ai/distributed-execution.md`](ai/distributed-execution.md)
+20. [`ai/execution-control-state.md`](ai/execution-control-state.md)
+21. [`ai/observability.md`](ai/observability.md)
+22. [`ai/execution-correlated-ledger.md`](ai/execution-correlated-ledger.md)
+23. [`ai/observability-tracing.md`](ai/observability-tracing.md)
+24. [`ai/runtime-metrics.md`](ai/runtime-metrics.md)
+25. [`ai/replay-and-audit.md`](ai/replay-and-audit.md)
+26. [`runtime-internals.md`](runtime-internals.md)
 
 This path gives both the strategic positioning and the complete technical depth.
 
@@ -99,17 +109,22 @@ Start with:
 11. [`ai/runtime-instance-provider-model.md`](ai/runtime-instance-provider-model.md)
 12. [`ai/http-runtime-provider.md`](ai/http-runtime-provider.md)
 13. [`ai/mcp-production-runtime-scenario-framework.md`](ai/mcp-production-runtime-scenario-framework.md)
-14. [`ai/shared-controller-usage.md`](ai/shared-controller-usage.md)
-15. [`ai/shared-queue-pump-and-worker-capacity.md`](ai/shared-queue-pump-and-worker-capacity.md)
-16. [`ai/distributed-execution.md`](ai/distributed-execution.md)
-17. [`ai/execution-control-state.md`](ai/execution-control-state.md)
-18. [`ai/execution-correlated-ledger.md`](ai/execution-correlated-ledger.md)
-19. [`ai/observability-tracing.md`](ai/observability-tracing.md)
-20. [`ai/runtime-metrics.md`](ai/runtime-metrics.md)
-21. [`ai/replay-and-audit.md`](ai/replay-and-audit.md)
-22. [`ai/testing-strategy.md`](ai/testing-strategy.md)
-23. [`runtime-internals.md`](runtime-internals.md)
-24. [`roadmap.md`](roadmap.md)
+14. [`ai/runtime-process-crash-recovery.md`](ai/runtime-process-crash-recovery.md)
+15. [`ai/runtime-recovery-forensics.md`](ai/runtime-recovery-forensics.md)
+16. [`ai/multi-tenant-runtime-crash-isolation.md`](ai/multi-tenant-runtime-crash-isolation.md)
+17. [`ai/control-plane-ledger-causal-chain.md`](ai/control-plane-ledger-causal-chain.md)
+18. [`ai/recovery-replay-ledger-trace-proof.md`](ai/recovery-replay-ledger-trace-proof.md)
+19. [`ai/shared-controller-usage.md`](ai/shared-controller-usage.md)
+20. [`ai/shared-queue-pump-and-worker-capacity.md`](ai/shared-queue-pump-and-worker-capacity.md)
+21. [`ai/distributed-execution.md`](ai/distributed-execution.md)
+22. [`ai/execution-control-state.md`](ai/execution-control-state.md)
+23. [`ai/execution-correlated-ledger.md`](ai/execution-correlated-ledger.md)
+24. [`ai/observability-tracing.md`](ai/observability-tracing.md)
+25. [`ai/runtime-metrics.md`](ai/runtime-metrics.md)
+26. [`ai/replay-and-audit.md`](ai/replay-and-audit.md)
+27. [`ai/testing-strategy.md`](ai/testing-strategy.md)
+28. [`runtime-internals.md`](runtime-internals.md)
+29. [`roadmap.md`](roadmap.md)
 
 This path gives the current architecture, configuration model, RBAC/context propagation model, tenant isolation model, control-plane/runtime split, extension model, technical reference, and next planned improvements.
 
@@ -429,7 +444,87 @@ This document explains:
 - adversarial multi-tenant Dedicated isolation validation
 - mixed-tenant full production validation scenario
 - retention, ledger, trace, replay report, replay ledger, and replay trace validation across process boundaries
-- remaining boundaries around shared pooling, Hybrid fallback, Kubernetes, and runtime health reconciliation
+- intentional boundaries around shared pooling, Hybrid fallback, Kubernetes, and health/recovery ownership separation
+
+### [`ai/runtime-process-crash-recovery.md`](ai/runtime-process-crash-recovery.md)
+
+Runtime process crash recovery reference.
+
+This document explains:
+
+- the boundary between runtime health reconciliation and execution recovery reconciliation
+- why the HTTP provider reports transport failure signals but does not own recovery
+- how unsafe runtime capacity is removed from admission
+- how assigned work is enumerated after a runtime process stops heartbeating
+- how in-flight DAG executions resume with the same durable `ExecutionId`
+- how local-queued work is redispatched through durable `SharedRunId` state
+- why the local runtime queue is volatile and not the source of truth
+- how replacement runtime capacity is selected or created
+- which stores form the durable recovery truth
+- validated real process-host recovery scenarios
+
+### [`ai/runtime-recovery-forensics.md`](ai/runtime-recovery-forensics.md)
+
+Runtime recovery forensics reference.
+
+This document explains:
+
+- per-work-item recovery forensics
+- `ForensicsId` formats for in-flight and local-queued recovery
+- `RuntimeFailureIncidentId` correlation
+- in-flight resume recovery timelines
+- local-queued recovery timelines
+- duplicate recovery detection and idempotence evidence
+- safe tenant non-impact proof
+- tenant-scoped MCP forensics queries
+- how forensics complements ledger, trace, and replay
+
+### [`ai/multi-tenant-runtime-crash-isolation.md`](ai/multi-tenant-runtime-crash-isolation.md)
+
+Multi-tenant runtime crash isolation reference.
+
+This document explains:
+
+- the three-tenant crash isolation scenario
+- why tenant A and tenant B can recover while tenant C remains untouched
+- safe tenant invariants such as `SafeTenantNonImpactValidated=true` and `SafeTenantRecoveryLeakDetected=false`
+- no cross-tenant ledger leakage
+- no safe-tenant recovery forensics
+- no safe-tenant recovered work
+- tenant-scoped replay, ledger, trace, and recovery evidence
+- why proving non-impact is as important as proving recovery
+
+### [`ai/control-plane-ledger-causal-chain.md`](ai/control-plane-ledger-causal-chain.md)
+
+Control-plane ledger causal chain reference.
+
+This document explains:
+
+- the difference between execution ledger and control-plane causal chain ledger
+- scale-out request persistence evidence
+- watcher/provider/host-manager causal evidence
+- runtime process host creation evidence
+- registry/capacity visibility evidence
+- execution recovery reconciliation evidence
+- recovered work redispatch evidence
+- tenant-scoped control-plane ledger queries
+- how causal chain evidence supports audit-grade recovery proof
+
+### [`ai/recovery-replay-ledger-trace-proof.md`](ai/recovery-replay-ledger-trace-proof.md)
+
+Recovery replay, ledger, and trace proof reference.
+
+This document explains:
+
+- why recovery completion alone is not enough
+- required proof surfaces after recovery convergence
+- strict replay validation for recovered and safe executions
+- replay reports, replay ledger, and replay trace queries
+- execution ledger evidence
+- execution trace evidence
+- completion and step-completion evidence
+- forensics evidence
+- safe-tenant proof and cross-tenant isolation proof
 
 ### [`ai/shared-controller-usage.md`](ai/shared-controller-usage.md)
 
@@ -526,6 +621,11 @@ The project roadmap organized into phases:
 | [`ai/runtime-instance-provider-model.md`](ai/runtime-instance-provider-model.md) | Provider-based runtime instance administration, dispatch, and scale-out model for local, Redis command queue, HTTP, gRPC, and Kubernetes providers. |
 | [`ai/http-runtime-provider.md`](ai/http-runtime-provider.md) | HTTP runtime provider hardening and scale-out reference, including failure reasons, retry/timeout/circuit breaker policy, tenant-aware scale-out, Runtime Host Manager process-host provisioning, real runtime launch, and readiness. |
 | [`ai/mcp-production-runtime-scenario-framework.md`](ai/mcp-production-runtime-scenario-framework.md) | MCP production runtime scenario framework, HTTP process-host flow, Host Manager modes, real `RuntimeInstanceOnly` processes, mixed-tenant production validation, and durable observability/replay evidence. |
+| [`ai/runtime-process-crash-recovery.md`](ai/runtime-process-crash-recovery.md) | Runtime process crash recovery architecture covering unsafe runtime detection, assigned-work reconciliation, in-flight resume, local-queued redispatch, and durable recovery truth. |
+| [`ai/runtime-recovery-forensics.md`](ai/runtime-recovery-forensics.md) | Per-work-item runtime recovery forensics, failure incident correlation, recovery timelines, duplicate recovery detection, and MCP forensics query boundaries. |
+| [`ai/multi-tenant-runtime-crash-isolation.md`](ai/multi-tenant-runtime-crash-isolation.md) | Multi-tenant crash isolation architecture proving impacted tenants recover while safe tenants remain untouched and uncontaminated. |
+| [`ai/control-plane-ledger-causal-chain.md`](ai/control-plane-ledger-causal-chain.md) | Control-plane causal ledger model for scale-out, host creation, recovery reconciliation, redispatch, and tenant-scoped audit evidence. |
+| [`ai/recovery-replay-ledger-trace-proof.md`](ai/recovery-replay-ledger-trace-proof.md) | Recovery proof model requiring replay, ledger, trace, completion evidence, step evidence, forensics, and tenant-scoped observability after recovery. |
 | [`ai/shared-controller-usage.md`](ai/shared-controller-usage.md) | Shared controller setup and usage, Redis shared stores, queue-first/direct-dispatch modes, scale-out lifecycle, and tenant snapshot propagation. |
 | [`ai/shared-queue-pump-and-worker-capacity.md`](ai/shared-queue-pump-and-worker-capacity.md) | Shared queue pump, queue-first submit mode, direct-dispatch scale-out path, fulfilled-run requeue, manual drain, dispatch-time admission, worker capacity visibility, and local worker caps per execution. |
 | [`ai/execution-correlated-ledger.md`](ai/execution-correlated-ledger.md) | Execution-correlated runtime auditability, runtime decision recording, and replay lifecycle event correlation. |
@@ -538,6 +638,10 @@ The project roadmap organized into phases:
 | Document | Purpose |
 |---|---|
 | [`ai/retry-and-recovery.md`](ai/retry-and-recovery.md) | Retry engine, retry state, WaitingForRetry, Redis Lua transitions, and stale worker recovery. |
+| [`ai/runtime-process-crash-recovery.md`](ai/runtime-process-crash-recovery.md) | Runtime process crash recovery for unsafe runtime instances, assigned-work reconciliation, in-flight DAG resume, local-queued redispatch, and replacement runtime selection. |
+| [`ai/runtime-recovery-forensics.md`](ai/runtime-recovery-forensics.md) | Durable forensics records and per-work-item timelines proving how each recovered item moved through detection, redispatch/resume, replacement runtime selection, and completion. |
+| [`ai/multi-tenant-runtime-crash-isolation.md`](ai/multi-tenant-runtime-crash-isolation.md) | Multi-tenant recovery isolation proof showing impacted tenant recovery without safe-tenant recovery contamination or cross-tenant leakage. |
+| [`ai/recovery-replay-ledger-trace-proof.md`](ai/recovery-replay-ledger-trace-proof.md) | Recovery validation proof requiring replay, ledger, trace, completion, step-completion, and forensics evidence for recovered and safe executions. |
 | [`ai/retention-and-compaction.md`](ai/retention-and-compaction.md) | Bounded hot state, compaction, eviction, payload externalization, and resolver safety. |
 | [`ai/replay-and-audit.md`](ai/replay-and-audit.md) | Deterministic Replay Engine V1, snapshot restore, audit-only replay, fingerprint validation, replay metadata, ledger/timeline diagnostics, and future replay APIs. |
 | [`ai/execution-correlated-ledger.md`](ai/execution-correlated-ledger.md) | Execution-correlated decision ledger, retention auditability, control-state auditability, and replay lifecycle evidence. |
@@ -555,6 +659,9 @@ The project roadmap organized into phases:
 | [`ai/observability-tracing.md`](ai/observability-tracing.md) | Runtime tracing, trace timelines, trace records, Mongo trace persistence, Memory/Mongo/MemoryAndMongo modes, and tracing improvements. |
 | [`ai/runtime-metrics.md`](ai/runtime-metrics.md) | Runtime metric domains, metric storage modes, worker/retention/storage/resolver/hot-state/policy metrics, and metrics improvements. |
 | [`ai/execution-correlated-ledger.md`](ai/execution-correlated-ledger.md) | Execution-correlated decision ledger, runtime audit visibility, and structured runtime lifecycle evidence. |
+| [`ai/control-plane-ledger-causal-chain.md`](ai/control-plane-ledger-causal-chain.md) | Control-plane causal ledger evidence for scale-out, provider selection, host creation, runtime capacity visibility, recovery reconciliation, and redispatch. |
+| [`ai/runtime-recovery-forensics.md`](ai/runtime-recovery-forensics.md) | Recovery forensics evidence linking incidents, recovered work items, timelines, runtime replacement, and tenant-scoped MCP queries. |
+| [`ai/recovery-replay-ledger-trace-proof.md`](ai/recovery-replay-ledger-trace-proof.md) | Cross-layer proof model connecting replay, ledger, trace, forensics, completion evidence, and safe-tenant non-impact. |
 | [`ai/testing-strategy.md`](ai/testing-strategy.md) | Integration testing strategy and validation approach for distributed runtime guarantees, RBAC context propagation, tenant isolation, HTTP hardening, Runtime Host Manager process-host provisioning, Redis/local scale-out request, requeue, dispatch, and execution evidence. |
 | [`ai/mcp-production-runtime-scenario-framework.md`](ai/mcp-production-runtime-scenario-framework.md) | Production scenario evidence for HTTP process-host execution, mixed tenant runtime modes, durable ledger/trace/replay, and real process-boundary validation. |
 | [`ai/multi-tenant-runtime-flow.md`](ai/multi-tenant-runtime-flow.md) | Operational context/audit map tying tenant context, correlation ids, shared run ids, local run ids, execution ids, runtime instances, workers, ledger, tracing, metrics, and replay together. |
@@ -573,6 +680,9 @@ The project roadmap organized into phases:
 | [`ai/runtime-instance-provider-model.md`](ai/runtime-instance-provider-model.md) | Runtime instance provider model for provider-based dispatch, HTTP pooled runtime hosting, status, control, capacity, scale-out, descriptor metadata, and provider routing. |
 | [`ai/http-runtime-provider.md`](ai/http-runtime-provider.md) | HTTP provider-specific reference for hardened dispatch, HTTP runtime scale-out, Redis scale-out watcher fulfillment, tenant-aware HTTP capacity, Runtime Host Manager process-host provisioning, and readiness. |
 | [`ai/mcp-production-runtime-scenario-framework.md`](ai/mcp-production-runtime-scenario-framework.md) | End-to-end MCP production scenario reference covering Host Manager modes, HTTP process-host scale-out, real runtime processes, Dedicated/Shared/Hybrid tenants, retention, ledger, trace, and replay. |
+| [`ai/runtime-process-crash-recovery.md`](ai/runtime-process-crash-recovery.md) | Runtime process crash recovery control-plane boundary, including health reconciliation, execution recovery reconciliation, HTTP provider failure signal boundaries, and replacement capacity. |
+| [`ai/control-plane-ledger-causal-chain.md`](ai/control-plane-ledger-causal-chain.md) | Control-plane causal chain evidence for scale-out and recovery operations, including watcher/provider/host-manager/reconciler/redispatch phases. |
+| [`ai/multi-tenant-runtime-crash-isolation.md`](ai/multi-tenant-runtime-crash-isolation.md) | Control-plane isolation proof for simultaneous impacted-tenant recovery and safe-tenant non-impact. |
 | [`ai/shared-controller-usage.md`](ai/shared-controller-usage.md) | Shared controller usage, Redis store configuration, queue-first/direct-dispatch behavior, tenant snapshot propagation, scale-out lifecycle, manual drain, and background pump setup. |
 | [`ai/shared-queue-pump-and-worker-capacity.md`](ai/shared-queue-pump-and-worker-capacity.md) | Shared queue pump/manual drain, queue-first dispatch, direct-dispatch scale-out, fulfilled-run requeue, readiness gate, dispatch-time admission, pump identity separation, runtime worker capacity visibility, and `MaxLocalWorkersPerExecution`. |
 | [`ai/runtime-queue-control.md`](ai/runtime-queue-control.md) | RunId-level local runtime queue control, hot enqueue, queue pause/resume, and queued/running cancellation behavior. |
@@ -642,6 +752,11 @@ Many focused documents started as documentation split placeholders, but several 
 - execution-correlated decision ledger foundations
 - observability/tracing foundations
 - runtime metrics foundations
+- runtime process crash recovery
+- runtime recovery forensics
+- multi-tenant runtime crash isolation
+- control-plane ledger causal chain
+- recovery replay / ledger / trace proof
 - testing strategy
 
 The complete technical reference remains preserved in:
@@ -681,3 +796,8 @@ When adding new documentation:
 17. Keep RBAC documentation connected to MCP tool authorization, `ExecutionContextSnapshot`, tenant-aware admission, runtime visibility, and all background/distributed hops.
 18. Keep the multi-tenant runtime flow document linked with multi-tenant isolation, runtime control-plane, shared controller usage, shared queue pump, distributed execution, execution control state, testing strategy, and README because it is the operational map of the whole tenant-aware execution path.
 19. Keep the MCP production runtime scenario framework linked with HTTP runtime provider, runtime instance provider model, MCP server control-plane, runtime discovery/registry/capacity, multi-tenant isolation, shared controller usage, shared queue pump, testing strategy, replay/audit, ledger, and observability docs because it proves the full HTTP process-host production path across these boundaries.
+20. Keep runtime process crash recovery linked with HTTP runtime provider, runtime control-plane, runtime discovery/registry/capacity, retry-and-recovery, MCP production scenarios, testing strategy, ledger, observability, replay/audit, and recovery forensics because process death crosses all these boundaries.
+21. Keep runtime recovery forensics linked with runtime process crash recovery, multi-tenant crash isolation, observability, execution-correlated ledger, control-plane ledger causal chain, testing strategy, and MCP production scenarios because forensics is the per-work-item audit surface of recovery.
+22. Keep multi-tenant runtime crash isolation linked with multi-tenant control-plane isolation, runtime process crash recovery, recovery forensics, control-plane ledger causal chain, recovery replay/ledger/trace proof, HTTP runtime provider, and testing strategy because safe-tenant non-impact is a core isolation proof.
+23. Keep control-plane ledger causal chain linked with execution-correlated ledger, runtime control-plane, HTTP runtime provider, MCP production scenarios, runtime discovery/registry/capacity, runtime recovery forensics, and observability because it records infrastructure decisions that execution ledger alone does not explain.
+24. Keep recovery replay/ledger/trace proof linked with replay/audit, observability, observability-tracing, execution-correlated ledger, runtime recovery forensics, runtime process crash recovery, and testing strategy because recovery is validated only after replay, ledger, trace, completion evidence, and forensics agree.

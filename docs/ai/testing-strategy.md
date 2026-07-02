@@ -1,6 +1,6 @@
 # Testing Strategy
 
-Status: Actively validated by a large unit and integration test suite, including MCP, Redis, local runtime pools, Redis-backed scale-out request lifecycle, local runtime scale-out, fulfilled-run requeue, HTTP pooled runtime provider scenarios, HTTP runtime provider hardening, HTTP scale-out provider/provisioner behavior, Runtime Host Manager process-host provisioning, MCP production runtime scenario framework, durable replay / ledger / trace validation across process boundaries, and tenant-aware HTTP Shared/Dedicated/Hybrid runtime scenarios.
+Status: Actively validated by a large unit and integration test suite, including MCP, Redis, local runtime pools, Redis-backed scale-out request lifecycle, local runtime scale-out, fulfilled-run requeue, HTTP pooled runtime provider scenarios, HTTP runtime provider hardening, HTTP scale-out provider/provisioner behavior, Runtime Host Manager process-host provisioning, MCP production runtime scenario framework, durable replay / ledger / trace validation across process boundaries, and tenant-aware HTTP Shared/Dedicated/Hybrid runtime scenarios, real process-host runtime crash recovery, multi-tenant crash isolation, safe-tenant non-impact validation, runtime recovery forensics, and recovery replay / ledger / trace proof.
 
 This document describes the testing strategy used to validate the Deterministic AI Runtime.
 
@@ -40,6 +40,12 @@ The runtime must prove that it behaves correctly under:
 - HTTP runtime scale-out provider/provisioner behavior
 - Runtime Host Manager host creation behavior
 - process-host `RuntimeInstanceOnly` scale-out behavior
+- real process-host runtime crash recovery behavior
+- in-flight DAG resume with preserved `ExecutionId`
+- local-queued work redispatch through durable `SharedRunId`
+- safe-tenant non-impact during impacted tenant recovery
+- runtime recovery forensics and incident timelines
+- recovery replay / ledger / trace proof after convergence
 - MCP production runtime scenario framework behavior
 - tenant-aware HTTP Shared/Dedicated/Hybrid scale-out behavior
 - durable replay / ledger / trace validation across process boundaries
@@ -106,6 +112,10 @@ The test suite is used as proof that the runtime can survive:
 - HTTP dispatch failure persistence
 - HTTP runtime scale-out provider/provisioner behavior
 - Runtime Host Manager process-host provisioning
+- real process-host runtime crash recovery
+- multi-tenant runtime crash isolation with safe tenant proof
+- in-flight execution resume and local queued redispatch
+- runtime recovery forensics, replay, ledger, and trace proof after recovery
 - tenant-aware HTTP scale-out and fallback policy behavior
 - Dedicated / Shared / Hybrid process-host production scenarios
 - durable replay / ledger / trace validation across process boundaries
@@ -156,6 +166,9 @@ The runtime should continuously prove answers to the enterprise questions:
 | Enterprise Question | Test Evidence Required |
 |---|---|
 | What happens if a worker crashes? | Recovery tests for stale running steps. |
+| What happens if an entire runtime process dies? | Process-host runtime crash recovery tests. |
+| How do you prove only impacted tenants recovered? | Multi-tenant crash isolation and safe-tenant non-impact tests. |
+| How do you prove recovery is auditable? | Recovery forensics plus replay / ledger / trace validation. |
 | How do you prevent duplicate executions? | Atomic claim and claim-token tests. |
 | How do you replay a workflow? | Snapshot restore and deterministic replay tests. |
 | How do you audit an AI decision? | Observability, trace, policy, and future ledger tests. |
@@ -197,6 +210,10 @@ Main categories include:
 - HTTP runtime scale-out provider tests
 - Runtime Host Manager process-host tests
 - MCP production runtime scenario framework tests
+- production runtime crash recovery scenario tests
+- multi-tenant runtime crash isolation tests
+- runtime recovery forensics tests
+- recovery replay / ledger / trace proof tests
 - tenant-aware HTTP scale-out scenario tests
 - durable process-boundary observability tests
 - Redis discovery and control-plane id resolver tests
@@ -284,6 +301,8 @@ They should cover:
 - HTTP scale-out provisioner behavior
 - Runtime Host Manager provisioning behavior
 - process-host runtime readiness behavior
+- runtime health reconciliation and unsafe capacity suppression behavior
+- execution recovery reconciliation behavior for assigned work
 - local runtime scale-out provider behavior
 - fulfilled scale-out shared run requeue
 - provider model preparation
@@ -772,7 +791,7 @@ The HTTP provisioner should publish registry and capacity descriptors with provi
 
 The HTTP watcher path should mark the Redis scale-out request Fulfilled only after the provider returns success.
 
-The current HTTP provisioner validates the control-plane convergence path but does not start a real remote runtime process yet.
+The validated process-host HTTP provisioner path can delegate to the Runtime Host Manager and launch a real RuntimeInstanceOnly process when HostCreationMode = Process.
 ```
 
 ## Tenant-Aware HTTP Scale-Out Scenario Tests
@@ -931,6 +950,203 @@ Http_ProcessHost_Should_Run_MixedTenant_Full_Production_Validation_Scenario
 ```
 
 
+## Production Runtime Crash Recovery Scenario Tests
+
+Production runtime crash recovery tests validate what happens when real process-host runtime instances disappear while tenant workloads are active.
+
+These tests are different from stale running step recovery.
+
+Stale running step recovery handles abandoned step ownership inside an execution.
+
+Runtime process crash recovery handles all work assigned to an unsafe runtime instance, including:
+
+- in-flight DAG executions that already have a durable `ExecutionId`;
+- local queued shared runs that were dispatched to the dead runtime but did not start execution yet;
+- tenant-scoped replacement runtime selection;
+- recovery forensics for each recovered work item;
+- replay / ledger / trace validation after recovery.
+
+Important assertions:
+
+```text
+A killed runtime process should be detected through missing heartbeat / unsafe runtime capacity.
+
+The health reconciler should prevent unsafe runtime capacity from being selected for new work.
+
+The execution recovery reconciler should enumerate work assigned to the unsafe runtime.
+
+An in-flight DAG execution should resume with the same durable ExecutionId.
+
+A local queued run should be redispatched through its durable SharedRunId without creating a duplicate submission.
+
+The HTTP provider should report transport / endpoint failure signals, but it should not own recovery or runtime lifecycle replacement.
+
+Replacement capacity should be created or attached by the lifecycle owner, such as the Runtime Host Manager.
+
+Recovery should not consume business retry budget.
+
+Recovery should produce durable forensics, ledger, trace, and replay evidence.
+```
+
+Primary process-host recovery scenarios:
+
+```text
+Http_ProcessHost_Should_Recover_Tenant_After_Real_Runtime_Process_Kill_With_Strict_Dag_Resume_Replay_Ledger_And_Trace
+
+Http_ProcessHost_Should_Recover_Two_Tenants_After_Real_Runtime_Process_Kills_With_Strict_Dag_Resume_Replay_Ledger_And_Trace
+
+Http_ProcessHost_Should_Recover_Two_Tenants_After_Real_Runtime_Process_Kills_Without_Impacting_Safe_Tenant_With_Strict_Dag_Resume_Replay_Ledger_And_Trace
+```
+
+Validated recovery evidence:
+
+```text
+InFlightExecution resumes the same ExecutionId.
+LocalQueued work is recovered through SharedRunId redispatch.
+Recovered work count matches expected impacted work.
+No duplicate recovery is allowed.
+Replay reports are readable after recovery.
+Replay ledger is readable after recovery.
+Replay trace is readable after recovery.
+Execution ledger evidence exists after recovery.
+Execution trace evidence exists after recovery.
+Step completion evidence exists after recovery.
+```
+
+---
+
+## Multi-Tenant Runtime Crash Isolation Tests
+
+Multi-tenant crash isolation tests validate that recovery does not become a global panic path.
+
+The strongest scenario runs three tenants in one shared control plane:
+
+```text
+Tenant A runtime process is killed.
+Tenant B runtime process is killed.
+Tenant C runtime process is not killed and remains safe.
+```
+
+The safe tenant proves isolation.
+
+Important assertions:
+
+```text
+Tenant A and tenant B should each recover exactly their impacted assigned work.
+
+Tenant C should complete normally.
+
+Tenant C should have zero recovered work.
+
+Tenant C should have zero runtime recovery forensics.
+
+Tenant C should have no recovery contamination visible from impacted tenant queries.
+
+Cross-tenant ledger leakage should be false.
+
+SafeTenantNonImpactValidated should be true.
+
+SafeTenantRecoveryLeakDetected should be false.
+
+CrashImpacted should be false for the safe tenant.
+```
+
+Representative workload:
+
+```text
+3 tenants
+3 runs per tenant
+50 DAG steps per run
+2 impacted tenants
+1 safe tenant
+6 expected recovered work items
+0 expected safe-tenant recovered work items
+9 replay-validated executions
+```
+
+These tests prove that runtime crash recovery remains tenant-scoped after convergence.
+
+---
+
+## Runtime Recovery Forensics Tests
+
+Runtime recovery forensics tests validate that recovery is queryable as durable audit evidence, not only visible through logs.
+
+They should cover:
+
+- runtime failure incident id creation;
+- per-work-item forensics id creation;
+- in-flight recovery timeline;
+- local-queued recovery timeline;
+- duplicate recovery prevention;
+- forensics query by tenant;
+- no safe-tenant recovery forensics;
+- durable forensics availability after completion, replay, ledger, and trace validation.
+
+Important forensics timelines:
+
+```text
+execution.recovery.candidate.detected
+→ shared.run.requeued.for.resume
+→ failed.local.run.marked.requeued.for.recovery
+→ replacement.runtime.selected
+→ replacement.local.run.registered
+→ resume.context.seeded
+→ dag.resume.started
+→ dag.resume.completed
+→ execution.recovery.completed
+```
+
+```text
+SharedRunRequeuedForLocalQueuedRecovery
+→ failed.local.run.marked.requeued.for.recovery
+→ replacement.runtime.selected
+→ replacement.local.run.registered
+→ resume.context.seeded
+```
+
+Important assertion:
+
+```text
+Recovery forensics should be written only for impacted work and impacted tenants.
+```
+
+---
+
+## Recovery Replay, Ledger, and Trace Proof Tests
+
+Recovery completion is not considered sufficient by itself.
+
+After recovery, the test suite must prove that every recovered or safe execution remains observable and replayable.
+
+These tests should validate:
+
+- strict replay validation;
+- replay report readability;
+- replay ledger readability;
+- replay trace readability;
+- execution ledger evidence;
+- execution trace evidence;
+- completion evidence;
+- step completion evidence;
+- tenant-scoped ledger query isolation;
+- control-plane causal chain evidence.
+
+Important assertions:
+
+```text
+A recovered execution should not only complete; it should remain auditable.
+
+Replay after recovery should validate real recovered executions, not synthetic reconstructions.
+
+Control-plane ledger entries should explain scale-out, provider selection, runtime host creation, capacity visibility, execution recovery reconciliation, and recovered work redispatch.
+
+Tenant-scoped ledger queries should not expose unrelated tenant recovery entries.
+```
+
+---
+
+
 ## Heavy HTTP Dispatch Tests
 
 Heavy HTTP dispatch tests validate Redis-backed shared coordination under pressure.
@@ -1058,22 +1274,43 @@ Retry is runtime state.
 
 ## Recovery Tests
 
-Recovery tests should validate worker crash behavior.
+Recovery tests validate abandoned work at two levels.
 
-They should prove:
+### Stale running step recovery
 
-- a stale running step can return to `Ready`
-- recovery does not consume retry budget
-- another worker can claim recovered work
-- stale worker completion is rejected
-- claim token mismatch protects state
-- recovery works under distributed execution
+Stale running step recovery validates worker crash behavior inside an existing execution.
+
+It should prove:
+
+- a stale running step can return to `Ready`;
+- recovery does not consume retry budget;
+- another worker can claim recovered work;
+- stale worker completion is rejected;
+- claim token mismatch protects state;
+- recovery works under distributed execution.
+
+### Runtime instance crash recovery
+
+Runtime instance crash recovery validates process-level failure.
+
+It should prove:
+
+- a runtime process that stops heartbeating becomes unsafe for admission;
+- unsafe runtime capacity is not selected for new work;
+- the execution recovery reconciler enumerates assigned work;
+- in-flight DAG executions resume the same durable `ExecutionId`;
+- local queued work is redispatched through durable `SharedRunId`;
+- local runtime queue state is treated as volatile, not durable truth;
+- recovery does not consume retry budget;
+- recovery forensics are written for impacted work only;
+- replay, ledger, and trace remain valid after recovery;
+- unrelated safe tenants are not impacted.
 
 Recovery tests are different from retry tests.
 
 Retry means logic failed.
 
-Recovery means ownership was abandoned.
+Recovery means ownership or runtime capacity was abandoned.
 
 ---
 
@@ -1591,6 +1828,8 @@ They may include:
 - tenant-aware HTTP Shared/Dedicated/Hybrid scale-out scenarios
 - Redis-backed shared queue dispatch under pressure
 - shutdown lifecycle races under Redis discovery/registry/capacity
+- real process-host runtime kills during active DAG execution
+- multi-tenant crash recovery with safe-tenant non-impact
 
 These tests help prove that the runtime model survives more than simple happy paths.
 
@@ -1740,6 +1979,16 @@ Hybrid HTTP tenants can fall back to shared HTTP capacity when fallback is enabl
 Runtime Host Manager process mode launches a real RuntimeInstanceOnly process.
 
 The mixed-tenant full production scenario validates Dedicated, Shared, and Hybrid tenants with retention, ledger, trace, and replay enabled.
+
+A killed real RuntimeInstanceOnly process should cause unsafe capacity suppression and assigned-work recovery.
+
+An in-flight recovered DAG execution should preserve the same ExecutionId before and after recovery.
+
+Local queued work assigned to a killed runtime should be redispatched through SharedRunId without duplicate submission.
+
+A safe tenant running in the same control plane should complete normally with zero recovered work and zero recovery forensics.
+
+Recovery validation should include replay report, replay ledger, replay trace, execution ledger, execution trace, completion evidence, and step completion evidence.
 ```
 
 ---
@@ -1795,7 +2044,13 @@ The mixed-tenant full production scenario validates Dedicated, Shared, and Hybri
 | MCP Redis local scale-out execution tests | Implemented / validated |
 | Kubernetes scenario tests | Planned |
 | Full enterprise demo scenario | Planned |
-| Durable decision ledger tests | Implemented foundations / validated through replay ledger scenarios |
+| Durable decision ledger tests | Implemented / validated through replay and recovery ledger scenarios |
+| Production runtime crash recovery scenario tests | Implemented / validated |
+| Multi-tenant runtime crash isolation tests | Implemented / validated |
+| Safe tenant non-impact recovery tests | Implemented / validated |
+| Runtime recovery forensics tests | Implemented / validated |
+| Recovery replay / ledger / trace proof tests | Implemented / validated |
+| Control-plane causal chain ledger tests | Implemented / validated |
 
 ---
 
@@ -1835,6 +2090,11 @@ It proves that:
 - HTTP runtime provider scale-out and provisioner behavior are validated
 - Runtime Host Manager process-host provisioning is validated
 - real `RuntimeInstanceOnly` processes can be launched from HTTP scale-out
+- real `RuntimeInstanceOnly` processes can be killed and recovered through control-plane recovery
+- in-flight DAG recovery preserves durable `ExecutionId`
+- local queued work is recovered through durable `SharedRunId` redispatch
+- safe tenants remain unaffected during impacted tenant recovery
+- runtime recovery forensics, replay, ledger, and trace are validated after recovery
 - tenant-aware HTTP Shared/Dedicated/Hybrid scale-out and fallback policies are validated
 - mixed-tenant production validation proves Dedicated, Shared, and Hybrid execution with retention, ledger, trace, and replay enabled
 - Redis discovery, registry, capacity, and admission reservation flows are validated
@@ -1866,6 +2126,11 @@ The goal is to prove runtime guarantees.
 - [Runtime Instance Provider Model](runtime-instance-provider-model.md)
 - [HTTP Runtime Provider](http-runtime-provider.md)
 - [MCP Production Runtime Scenario Framework](mcp-production-runtime-scenario-framework.md)
+- [Runtime Process Crash Recovery](runtime-process-crash-recovery.md)
+- [Runtime Recovery Forensics](runtime-recovery-forensics.md)
+- [Multi-Tenant Runtime Crash Isolation](multi-tenant-runtime-crash-isolation.md)
+- [Control-Plane Ledger Causal Chain](control-plane-ledger-causal-chain.md)
+- [Recovery Replay Ledger Trace Proof](recovery-replay-ledger-trace-proof.md)
 - [Shared Queue Pump and Worker Capacity](shared-queue-pump-and-worker-capacity.md)
 - [Replay and Audit](replay-and-audit.md)
 - [Observability](observability.md)

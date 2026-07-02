@@ -2,7 +2,7 @@
 
 A deterministic AI execution runtime for production-grade AI workloads.
 
-This repository provides a reference implementation of a distributed, state-driven runtime for executing AI workflows with deterministic DAG orchestration, context resolution, Redis Lua coordination, retry/recovery, retention/compaction, distributed concurrency control, execution control state, replay validation, correlated metrics and tracing, execution-correlated decision ledger, shared runtime control-plane orchestration, Redis-backed shared queue coordination, queue-first submission, shared queue pumping/manual drain, dispatch-time admission, runtime instance provider hosting, Redis control-plane discovery, runtime instance registry and capacity stores, admission reservations, HTTP pooled runtime dispatch, HTTP runtime provider hardening, HTTP provider scale-out foundations, Runtime Host Manager process-host provisioning, real `RuntimeInstanceOnly` host process launch, runtime worker-capacity visibility, RBAC execution-context propagation, tenant-aware control-plane isolation, end-to-end multi-tenant runtime flow documentation, Shared/Dedicated/Hybrid runtime visibility, Redis-backed scale-out request lifecycle, local and HTTP runtime scale-out foundations, fulfilled-run requeue, MCP production runtime scenario validation, durable replay / ledger / trace validation across process boundaries, and executable enterprise demo scenarios.
+This repository provides a reference implementation of a distributed, state-driven runtime for executing AI workflows with deterministic DAG orchestration, context resolution, Redis Lua coordination, retry/recovery, retention/compaction, distributed concurrency control, execution control state, replay validation, correlated metrics and tracing, execution-correlated decision ledger, shared runtime control-plane orchestration, Redis-backed shared queue coordination, queue-first submission, shared queue pumping/manual drain, dispatch-time admission, runtime instance provider hosting, Redis control-plane discovery, runtime instance registry and capacity stores, admission reservations, HTTP pooled runtime dispatch, HTTP runtime provider hardening, HTTP provider scale-out foundations, Runtime Host Manager process-host provisioning, real `RuntimeInstanceOnly` host process launch, validated runtime process crash recovery, multi-tenant crash isolation, recovery forensics, recovery replay / ledger / trace proof, safe tenant non-impact validation, runtime worker-capacity visibility, RBAC execution-context propagation, tenant-aware control-plane isolation, end-to-end multi-tenant runtime flow documentation, Shared/Dedicated/Hybrid runtime visibility, Redis-backed scale-out request lifecycle, local and HTTP runtime scale-out foundations, fulfilled-run requeue, MCP production runtime scenario validation, durable replay / ledger / trace validation across process boundaries, and executable enterprise demo scenarios.
 
 The current runtime foundations are intentionally designed as the base for a broader product platform for deterministic AI execution, runtime control, replay, audit, governance, observability, dashboarding, pipeline building, managed hosting, multi-tenant execution isolation, and enterprise-oriented AI operations.
 
@@ -18,10 +18,15 @@ The current runtime foundations are intentionally designed as the base for a bro
 
 ## Latest Updates
 
-The latest major updates focused on Runtime Host Manager process-host provisioning, HTTP runtime provider hardening, tenant-aware HTTP scale-out validation, MCP production runtime scenario validation, tenant-aware control-plane isolation, RBAC execution-context propagation, end-to-end runtime flow documentation, Redis-backed scale-out lifecycle, and provider-hosting validation.
+The latest major updates focused on runtime process crash recovery as a main runtime feature, Runtime Host Manager process-host provisioning, HTTP runtime provider hardening, tenant-aware HTTP scale-out validation, MCP production runtime scenario validation, tenant-aware control-plane isolation, RBAC execution-context propagation, end-to-end runtime flow documentation, Redis-backed scale-out lifecycle, and provider-hosting validation.
 
 | Area | Summary |
 |---|---|
+| Runtime process crash recovery | Validated recovery after real `RuntimeInstanceOnly` process crashes, including in-flight DAG resume, local queued work redispatch, replacement runtime selection, and completion through normal dispatch paths. |
+| Multi-tenant crash isolation | Validated a three-tenant crash scenario where two tenant runtimes are killed while a safe tenant continues without recovery contamination or cross-tenant ledger/forensics leakage. |
+| Runtime recovery forensics | Added recovery forensics records and timelines that explain why work was recovered, which runtime failed, which durable identities were used, and how replacement dispatch/resume proceeded. |
+| Recovery replay / ledger / trace proof | Validated that recovered executions remain replayable and that ledger, trace, replay report, replay ledger, and replay trace remain readable after process crash recovery. |
+| Control-plane causal-chain proof | Added causal-chain validation across scale-out request persistence, watcher observation, provider selection, host creation, process start, registry/capacity visibility, and recovery redispatch. |
 | RBAC execution-context integration | Integrated RBAC execution context as the entry-point authority for MCP/control-plane operations and persisted a durable `ExecutionContextSnapshot` across shared and local runtime paths. |
 | Multi-tenant control-plane isolation | Added tenant-aware runtime visibility using `ExecutionContextSnapshot.TenantId` as the durable isolation boundary, with Shared, Dedicated, and Hybrid runtime modes. |
 | End-to-end multi-tenant runtime flow | Added `docs/ai/multi-tenant-runtime-flow.md`, a complete ASCII flow showing MCP/RBAC entry, durable snapshot creation, shared run persistence, tenant-aware admission, scale-out, shared queue dispatch, local runtime queue execution, DAG creation, worker loop, execution control, finalization, and observability. |
@@ -45,7 +50,7 @@ The latest major updates focused on Runtime Host Manager process-host provisioni
 | MCP production scenario framework | Added `docs/ai/mcp-production-runtime-scenario-framework.md`, documenting the Host Manager, HTTP process-host flow, tenant runtime modes, final mixed-tenant production validation, and remaining boundaries. |
 | Test validation | The current branch has been validated with the existing large green test suite plus targeted HTTP hardening, Host Manager, process-host, visibility, mapper, provisioner, and mixed-tenant production scenario tests covering 12 runs and 420 DAG steps. |
 
-For detailed changes, see [`CHANGELOG.md`](./CHANGELOG.md), [`docs/index.md`](docs/index.md), [`docs/ai/multi-tenant-control-plane-isolation.md`](docs/ai/multi-tenant-control-plane-isolation.md), [`docs/ai/multi-tenant-runtime-flow.md`](docs/ai/multi-tenant-runtime-flow.md), [`docs/ai/http-runtime-provider.md`](docs/ai/http-runtime-provider.md), [`docs/ai/mcp-production-runtime-scenario-framework.md`](docs/ai/mcp-production-runtime-scenario-framework.md), and the product roadmap documentation under [`docs/product-roadmap/index.md`](docs/product-roadmap/index.md).
+For detailed changes, see [`CHANGELOG.md`](./CHANGELOG.md), [`docs/index.md`](docs/index.md), [`docs/ai/multi-tenant-control-plane-isolation.md`](docs/ai/multi-tenant-control-plane-isolation.md), [`docs/ai/multi-tenant-runtime-flow.md`](docs/ai/multi-tenant-runtime-flow.md), [`docs/ai/http-runtime-provider.md`](docs/ai/http-runtime-provider.md), [`docs/ai/mcp-production-runtime-scenario-framework.md`](docs/ai/mcp-production-runtime-scenario-framework.md), [`docs/ai/runtime-process-crash-recovery.md`](docs/ai/runtime-process-crash-recovery.md), [`docs/ai/runtime-recovery-forensics.md`](docs/ai/runtime-recovery-forensics.md), [`docs/ai/multi-tenant-runtime-crash-isolation.md`](docs/ai/multi-tenant-runtime-crash-isolation.md), [`docs/ai/control-plane-ledger-causal-chain.md`](docs/ai/control-plane-ledger-causal-chain.md), [`docs/ai/recovery-replay-ledger-trace-proof.md`](docs/ai/recovery-replay-ledger-trace-proof.md), and the product roadmap documentation under [`docs/product-roadmap/index.md`](docs/product-roadmap/index.md).
 
 ---
 
@@ -64,6 +69,8 @@ It is designed for workloads such as:
 - shared control-plane orchestration
 - multi-tenant AI runtime hosting
 - Kubernetes-oriented runtime instance pools
+- process crash recovery workflows
+- recovery forensics and incident investigation
 - operational replay and audit workflows
 
 The runtime treats AI orchestration as a systems problem, not only as a prompt engineering problem.
@@ -95,6 +102,9 @@ It provides a state-driven execution layer where:
 - HTTP runtime scale-out foundations validate Redis-backed provider selection, provisioner execution, tenant-aware registry/capacity metadata, and Shared/Dedicated/Hybrid policy behavior
 - Runtime Host Manager process-host provisioning validates `Fixture`, `Process`, `Attach`, and Kubernetes-oriented host creation boundaries, with the `Process` mode launching real `RuntimeInstanceOnly` hosts
 - MCP production runtime scenarios validate full process-boundary execution, durable ledger/trace/replay visibility, retention, and mixed-tenant production behavior
+- runtime process crash recovery validates that killed runtime processes do not imply lost work when durable shared state, execution indexes, DAG state, registry/capacity, ledger, trace, replay, and forensics are available
+- in-flight recovered executions resume with the same durable `ExecutionId`, while local queued work that had not started yet is redispatched through its durable `SharedRunId`
+- safe tenant non-impact is validated as a first-class guarantee: tenants not affected by a crash should not receive recovery entries, recovery forensics, or cross-tenant ledger leakage
 - tenant runtime settings can define the desired isolation mode, fallback behavior, runtime instance prefix, worker count, local queue capacity, max concurrent runs, and max runtime instances
 
 The project should be read as an AI execution infrastructure foundation. The runtime core is already substantial, while the longer-term direction is to evolve toward a broader product platform for deterministic AI execution, operational control, replay/audit, dashboarding, pipeline building, managed hosting, and enterprise AI workflow governance.
@@ -111,7 +121,9 @@ Once AI moves to production, the hard problem becomes execution:
 
 - How do you coordinate multiple workers?
 - How do you avoid duplicate execution?
-- How do you recover after crashes?
+- How do you recover after worker crashes?
+- How do you recover after a full runtime process dies?
+- How do you prove that unrelated tenants were not touched by recovery?
 - How do you replay an execution?
 - How do you control retries?
 - How do you throttle providers and models?
@@ -140,6 +152,8 @@ This runtime is designed to fix the operational problems that appear when AI wor
 |---|---|
 | AI workflows are hard to reproduce | Deterministic DAG execution, persisted execution state, replay metadata, fingerprints, snapshots, and replay validation. |
 | Workers can crash mid-execution | Redis-backed execution state, stale running-step recovery, retry state, and deterministic convergence. |
+| Runtime processes can die with assigned work | Runtime process crash recovery reconciles assigned work, resumes in-flight DAG executions by `ExecutionId`, redispatches local queued shared runs by `SharedRunId`, and validates completion through replacement runtime capacity. |
+| Crash recovery can accidentally affect unrelated tenants | Tenant-scoped recovery queries, runtime visibility filtering, ledger/forensics isolation, and safe tenant non-impact validation prove that unaffected tenants remain outside the recovery surface. |
 | Multiple workers can duplicate work | Redis Lua atomic claims, claim tokens, lease validation, and single-owner step execution. |
 | Retry behavior becomes unpredictable | Step-scoped retry state, retry scheduling, recovery separation, and policy-driven retry behavior. |
 | Provider and model calls can overload external services | Distributed concurrency gates, Redis ZSET leases, provider/model/operation limits, and throttling policies. |
@@ -167,7 +181,7 @@ This runtime is designed to fix the operational problems that appear when AI wor
 | Runtime host lifecycle must not be owned directly by the HTTP command provider | Runtime Host Manager separates provider scale-out from host creation and supports `Fixture`, `Process`, `Attach`, and Kubernetes-oriented modes. |
 | Production tests need to prove real process boundaries | MCP production scenarios launch real `RuntimeInstanceOnly` processes, wait for registration/capacity readiness, dispatch over HTTP, execute DAG workloads, and validate ledger/trace/replay across process boundaries. |
 
-The main goal is to make production AI execution controllable, observable, recoverable, auditable, replayable, tenant-isolated, and eventually scalable across runtime instances without turning the runtime core into a transport-specific scheduler.
+The main goal is to make production AI execution controllable, observable, recoverable after worker and runtime process failures, auditable, replayable, tenant-isolated, and eventually scalable across runtime instances without turning the runtime core into a transport-specific scheduler.
 
 The runtime treats AI execution as infrastructure:
 
@@ -248,6 +262,10 @@ This project explores what an AI execution runtime should look like when reliabi
 | Context resolution and helpers | Foundation available | Input bindings, previous step outputs, provider metadata, policy context, RBAC context, execution snapshots, and payload rehydration are resolved through helper layers. |
 | Deterministic convergence | Implemented | Final state is derived from state transitions, not worker ordering. |
 | Retry and recovery | Implemented | Retry state, waiting windows, and stale running-step recovery are separated. |
+| Runtime process crash recovery | Implemented / validated | Real `RuntimeInstanceOnly` process crashes are recovered through durable shared run state, runtime execution indexes, DAG execution state, replacement runtime capacity, redispatch/resume, and recovery proof. |
+| Multi-tenant runtime crash isolation | Implemented / validated | Process crash recovery is tenant-scoped; impacted tenants recover their assigned work while safe tenants remain completed, replayable, and free of recovery/forensics contamination. |
+| Runtime recovery forensics | Implemented / validated | Recovery records capture incident identity, failed runtime, durable identities, recovery classification, replacement runtime, timeline events, and safe tenant non-impact evidence. |
+| Recovery replay / ledger / trace proof | Implemented / validated | Recovered runs are validated through completion, replay report, replay ledger, replay trace, execution ledger, runtime trace, and tenant-scoped proof queries. |
 | Retention and compaction | Implemented | Hot state can be compacted/evicted while payloads remain resolvable. |
 | Distributed concurrency and throttling | Implemented | Redis ZSET leases enforce global, pipeline, step, execution, instance, provider, model, and operation limits. |
 | Enterprise throttling scenario | Implemented | `throttling-100` demonstrates provider-level distributed throttling with realtime visibility and deterministic convergence. |
@@ -332,6 +350,10 @@ Redis Discovery / Registry / Capacity / Reservation / Scale-Out Request Layer
         v
 Runtime Instance Provider / Scale-Out / HTTP Provider / Local Queue Layer
         |
+        +--> Runtime health signals / unsafe capacity suppression
+        +--> Execution recovery reconciliation
+        +--> In-flight DAG resume / local queued redispatch
+        |
         v
 Pipeline Definition + DAG Resolution
         |
@@ -406,6 +428,7 @@ The runtime is intentionally split into layers:
 - runtime instance providers route selected runs to local or HTTP pooled runtime instances while preserving local queues
 - HTTP runtime provider hardening protects remote dispatch with timeout, retry, circuit-breaker, and structured failure reporting
 - HTTP scale-out validates the control-plane capacity lifecycle through provider selection, registry/capacity publication, tenant visibility, Redis-backed scale-out fulfillment, Runtime Host Manager process launch, registration/capacity readiness, and HTTP dispatch
+- runtime process crash recovery keeps responsibility boundaries explicit: health reconciliation suppresses unsafe capacity, execution recovery reconciles already assigned work, and the HTTP provider reports transport signals without owning recovery
 - runtime capacity snapshots expose run slots, worker pressure, provider metadata, tenant visibility, and worker-aware `CanAcceptRun`
 - correlated observability records runtime behavior across ledger, metrics, traces, workers, tenants, and executions
 
@@ -642,6 +665,9 @@ The project is designed around production questions that enterprise AI systems m
 | Enterprise Question | Runtime Direction |
 |---|---|
 | What happens if a worker crashes? | Running steps can be recovered through stale-claim detection and Redis-backed recovery. |
+| What happens if a runtime process dies? | Assigned work is recovered from durable shared run state, runtime execution indexes, DAG state, registry/capacity state, and recovery forensics rather than from the dead local queue. |
+| How do you recover in-flight work differently from local queued work? | In-flight DAG executions resume with the same `ExecutionId`; local queued work that never started is redispatched through its durable `SharedRunId`. |
+| How do you prove recovery did not affect unrelated tenants? | Safe tenant non-impact is validated through completed safe runs, replay proofs, zero safe-tenant recovered work, zero safe-tenant forensics, and no cross-tenant ledger leakage. |
 | How do you prevent duplicate executions? | Atomic Redis Lua claims and claim tokens enforce single step ownership. |
 | How do you replay a workflow? | Terminal snapshots, replay metadata, deterministic fingerprint validation, audit-only replay, and restore replay provide replay foundations. |
 | How do you audit an AI decision? | Execution-correlated decision ledger events, correlated metrics/traces, execution state, step results, retry metadata, recovery state, snapshots, replay reports, tenant context, and observability provide audit foundations. |
@@ -715,6 +741,8 @@ The control plane currently exposes foundations for:
 - HTTP runtime provider structured dispatch failure persistence
 - HTTP runtime scale-out provider and provisioner foundation
 - Runtime Host Manager process-host provisioning
+- runtime process crash recovery reconciliation
+- runtime recovery forensics and incident evidence
 - tenant-aware HTTP scale-out for Shared, Dedicated, and Hybrid runtime modes
 - MCP production runtime scenario validation
 - Redis-backed scale-out request publication
@@ -1030,6 +1058,10 @@ The runtime includes foundations for production visibility and replayability:
 
 - execution lifecycle metrics
 - retry and recovery metrics
+- runtime process crash recovery events
+- recovery forensics timelines
+- safe tenant non-impact evidence
+- control-plane causal-chain proof
 - retention metrics
 - resolver metrics
 - storage metrics
@@ -1096,6 +1128,10 @@ The strongest areas today are:
 - Redis Lua atomic coordination
 - context resolution and helper foundations
 - retry/recovery semantics
+- runtime process crash recovery
+- multi-tenant crash isolation
+- recovery forensics
+- recovery replay / ledger / trace proof
 - retention/compaction
 - distributed concurrency and throttling
 - executable distributed throttling scenario
@@ -1153,7 +1189,6 @@ Areas still evolving include:
 - provider-based runtime instance administration beyond local/HTTP pooled foundations
 - automatic Kubernetes scaling adapter
 - tenant settings persistence through configuration or database-backed provider
-- RuntimeInstanceHealthReconciler for stale / unhealthy / circuit-open runtime endpoints
 - final shared runtime pooling semantics and Hybrid shared fallback process-host validation
 - HTTP/gRPC/Kubernetes tenant propagation hardening
 - Mongo persistence partitioning and indexes for tenant-aware ledger/replay/correlation
@@ -1236,7 +1271,7 @@ The `throttling-100` scenario demonstrates:
 
 The demo validates the controller execution path, distributed worker participation, runtime controls, realtime logging, correlated observability, tenant/context propagation, and terminal completion behavior. It is intended to show distributed AI execution infrastructure, not only a simple batch or in-memory execution path.
 
-Future demo work will expand further into crash recovery, human-in-the-loop, advanced replay workflows, Kubernetes deployment assets, real enterprise sample workflows, dashboard visibility, pipeline builder direction, MCP control scenarios, tenant-aware operations, memory/context lifecycle diagnostics, and broader product-platform capabilities.
+Future demo work will expand further into human-in-the-loop, advanced replay workflows, Kubernetes deployment assets, real enterprise sample workflows, dashboard visibility, pipeline builder direction, MCP control scenarios, tenant-aware operations, memory/context lifecycle diagnostics, and broader product-platform capabilities.
 
 ---
 
@@ -1249,6 +1284,7 @@ The roadmap is organized into phases.
 | Completed | Core runtime foundations already implemented | Implemented / validated by tests |
 | Phase 0 | README review and documentation restructure | Completed (V1) |
 | Phase 1 | Enterprise demo | Completed (V1) - controller demo, distributed workers, runtime controls, chaos scenarios, retention/replay, throttling scenario, and context snapshot propagation validated |
+| Phase 1.5 | Runtime process crash recovery | Completed / validated - real process kill recovery, in-flight resume, local queued redispatch, safe tenant non-impact, forensics, and replay/ledger/trace proof validated |
 | Phase 2 | Real enterprise sample | Planned |
 | Phase 3 | Correlated observability, tracing, and metrics | Foundations available / active polish |
 | Phase 4 | Kubernetes deployment demo | Planned - shared controller V1, Redis shared queue, Redis discovery/registry/capacity, Redis/local scale-out lifecycle, fulfilled-run requeue, HTTP pooled runtime provider foundations, HTTP provider hardening, HTTP scale-out foundation, and multi-tenant isolation foundations completed |
@@ -1322,6 +1358,11 @@ The full documentation map is available here:
 - [`docs/ai/runtime-instance-provider-model.md`](docs/ai/runtime-instance-provider-model.md) — Provider-based runtime instance administration, dispatch, status/control, and scale-out model for local, Redis command queue, HTTP, gRPC, and Kubernetes providers, including tenant-scoped provider dispatch and scale-out.
 - [`docs/ai/http-runtime-provider.md`](docs/ai/http-runtime-provider.md) — HTTP runtime provider reference covering dispatch hardening, retry, timeout, circuit breaker behavior, structured failure reasons, HTTP scale-out provider capability, Runtime Host Manager process-host provisioning, tenant-aware Shared/Dedicated/Hybrid scale-out validation, and process-boundary readiness.
 - [`docs/ai/mcp-production-runtime-scenario-framework.md`](docs/ai/mcp-production-runtime-scenario-framework.md) — MCP production runtime scenario framework covering Runtime Host Manager modes, HTTP process-host scale-out, real `RuntimeInstanceOnly` child processes, Dedicated/Shared/Hybrid tenant scenarios, retention, ledger, trace, and replay validation across process boundaries.
+- [`docs/ai/runtime-process-crash-recovery.md`](docs/ai/runtime-process-crash-recovery.md) — Runtime process crash recovery reference covering in-flight DAG resume, local queued redispatch, durable identity semantics, health/recovery/provider boundaries, and validated process kill behavior.
+- [`docs/ai/runtime-recovery-forensics.md`](docs/ai/runtime-recovery-forensics.md) — Runtime recovery forensics reference covering incident identity, recovery timelines, recovered work classification, replacement runtime evidence, and audit-safe recovery records.
+- [`docs/ai/multi-tenant-runtime-crash-isolation.md`](docs/ai/multi-tenant-runtime-crash-isolation.md) — Multi-tenant crash isolation proof covering impacted tenants, safe tenant non-impact, tenant-scoped recovery queries, and cross-tenant ledger/forensics leakage prevention.
+- [`docs/ai/control-plane-ledger-causal-chain.md`](docs/ai/control-plane-ledger-causal-chain.md) — Control-plane causal-chain ledger reference covering scale-out request persistence, watcher observation, provider selection, host creation, process start, capacity visibility, and recovery redispatch evidence.
+- [`docs/ai/recovery-replay-ledger-trace-proof.md`](docs/ai/recovery-replay-ledger-trace-proof.md) — Recovery proof reference connecting completion, replay report, replay ledger, replay trace, execution ledger, runtime trace, and recovery forensics after process crash recovery.
 - [`docs/ai/shared-controller-usage.md`](docs/ai/shared-controller-usage.md) — Shared runtime controller usage, Redis shared stores, direct-dispatch and queue-first modes, manual drain, background pump setup, tenant snapshot propagation, and scale-out request lifecycle.
 - [`docs/ai/shared-queue-pump-and-worker-capacity.md`](docs/ai/shared-queue-pump-and-worker-capacity.md) — Shared queue pump, queue-first submit mode, direct-dispatch scale-out path, fulfilled-run requeue, manual drain, dispatch-time admission, pump identity separation, runtime worker capacity visibility, `MaxLocalWorkersPerExecution`, and context restoration during dispatch.
 - [`docs/ai/distributed-execution.md`](docs/ai/distributed-execution.md) — Distributed workers, Redis coordination, claims, leases, deterministic convergence, and execution-context restoration across distributed/background runtime hops.
@@ -1345,6 +1386,11 @@ Focused AI runtime documentation:
 - [`docs/ai/runtime-instance-provider-model.md`](docs/ai/runtime-instance-provider-model.md)
 - [`docs/ai/http-runtime-provider.md`](docs/ai/http-runtime-provider.md)
 - [`docs/ai/mcp-production-runtime-scenario-framework.md`](docs/ai/mcp-production-runtime-scenario-framework.md)
+- [`docs/ai/runtime-process-crash-recovery.md`](docs/ai/runtime-process-crash-recovery.md)
+- [`docs/ai/runtime-recovery-forensics.md`](docs/ai/runtime-recovery-forensics.md)
+- [`docs/ai/multi-tenant-runtime-crash-isolation.md`](docs/ai/multi-tenant-runtime-crash-isolation.md)
+- [`docs/ai/control-plane-ledger-causal-chain.md`](docs/ai/control-plane-ledger-causal-chain.md)
+- [`docs/ai/recovery-replay-ledger-trace-proof.md`](docs/ai/recovery-replay-ledger-trace-proof.md)
 - [`docs/ai/shared-controller-usage.md`](docs/ai/shared-controller-usage.md)
 - [`docs/ai/shared-queue-pump-and-worker-capacity.md`](docs/ai/shared-queue-pump-and-worker-capacity.md)
 - [`docs/ai/retry-and-recovery.md`](docs/ai/retry-and-recovery.md)
@@ -1425,6 +1471,12 @@ Validated areas include:
 - end-to-end multi-tenant runtime flow documented and linked from README/index
 - MCP production runtime scenario framework documented and linked from README/index
 - durable replay / ledger / trace validation across process boundaries
+- runtime process crash recovery after real process kills
+- in-flight execution recovery preserving `ExecutionId`
+- local queued shared-run redispatch using `SharedRunId`
+- safe tenant non-impact during multi-tenant crash recovery
+- tenant-scoped recovery forensics and no cross-tenant leakage
+- control-plane causal-chain proof for scale-out/replacement/recovery
 
 Example scale-out evidence:
 
@@ -1509,6 +1561,24 @@ default/test-tenant
 ```
 
 ---
+
+Example runtime process crash recovery evidence:
+
+```text
+3 tenants
+9 runs total
+2 tenant runtime processes killed
+1 safe tenant runtime not killed
+6 recovered work items
+0 safe tenant recovered work items
+9/9 runs completed
+9/9 replay proofs available
+ledger / trace / replay report / replay ledger / replay trace readable
+cross-tenant ledger leak detected = false
+safe tenant recovery leak detected = false
+```
+
+The crash recovery scenario proves that the runtime can recover assigned work after real runtime process death without treating the dead local queue as durable truth and without contaminating unrelated tenant evidence.
 
 ## License
 

@@ -1,6 +1,6 @@
 # Retry and Recovery
 
-Status: Documentation split in progress.
+Status: Implemented and validated for config-driven retry, policy-driven retry, stale running step recovery, runtime instance crash recovery, real process-host recovery, tenant-isolated recovery, recovery forensics, ledger/trace/replay proof, and safe-tenant non-impact validation.
 
 This document describes the retry and recovery model used by the Deterministic AI Runtime.
 
@@ -56,6 +56,50 @@ Retry and recovery solve different problems.
 This distinction keeps execution deterministic and fair.
 
 A worker crash should not be treated the same way as a business or provider failure.
+
+The same separation now exists at two recovery levels:
+
+```text
+Step-level recovery
+= a worker claimed a step and disappeared before completing or failing it
+
+Runtime-instance crash recovery
+= an entire runtime process became unsafe and the control plane must recover every work item assigned to that runtime
+```
+
+These two levels are related, but they are not the same responsibility.
+
+Step-level recovery repairs abandoned step ownership inside an existing execution.
+
+Runtime-instance crash recovery repairs ownership of assigned shared runs and executions after a runtime process dies.
+
+Both paths must preserve retry fairness: infrastructure failure must not consume business retry budget.
+
+---
+
+## Recovery Layers
+
+The runtime has three distinct failure-handling layers.
+
+| Layer | Trigger | Scope | Durable Identity | Retry Budget Consumed? |
+|---|---|---|---|---|
+| Step retry | Step completed with error or exception. | One step. | `ExecutionId` + step id. | Yes, if retry is allowed. |
+| Stale step recovery | Worker claimed a step and abandoned ownership. | One running step. | `ExecutionId` + claim token. | No. |
+| Runtime instance crash recovery | Runtime process becomes unsafe or disappears. | All work assigned to the failed runtime. | `SharedRunId`, `LocalRunId`, and sometimes `ExecutionId`. | No. |
+
+The important rule is:
+
+```text
+Retry handles business/provider failure.
+Recovery handles infrastructure ownership loss.
+```
+
+Runtime instance crash recovery is intentionally broader than stale step recovery. It can recover:
+
+- in-flight DAG executions that already have a durable `ExecutionId`;
+- local queued shared runs that were assigned to the dead runtime but did not yet create an `ExecutionId`.
+
+This is why recovery cannot be implemented only inside the DAG store. Some recovered work does not have a DAG execution yet.
 
 ---
 
@@ -539,6 +583,267 @@ The retry count reflects step failures, not worker crashes.
 
 ---
 
+## Runtime Instance Crash Recovery
+
+Runtime instance crash recovery handles a stronger failure mode than stale step ownership.
+
+Instead of one worker abandoning one step, an entire runtime process becomes unsafe. At that point, the control plane must recover every work item that was assigned to that runtime instance.
+
+Assigned work can be in different states:
+
+```text
+InFlightExecution
+    SharedRunId exists
+    LocalRunId exists
+    ExecutionId exists
+    DAG execution has already started
+
+LocalQueued
+    SharedRunId exists
+    LocalRunId exists
+    ExecutionId does not exist yet
+    run was dispatched to the runtime-local queue but not started
+```
+
+These states require different recovery paths.
+
+### In-flight execution recovery
+
+An in-flight execution must resume the same durable execution identity.
+
+```text
+failed runtime process
+    ↓
+assigned in-flight execution discovered
+    ↓
+SharedRun requeued for resume
+    ↓
+failed LocalRun marked requeued for recovery
+    ↓
+replacement runtime selected
+    ↓
+replacement LocalRun registered
+    ↓
+resume context seeded
+    ↓
+DAG resumes with the same ExecutionId
+```
+
+The invariant is:
+
+```text
+ExecutionIdBefore == ExecutionIdAfter
+```
+
+A recovered in-flight DAG execution is not a new execution. It is the same durable execution continuing on a replacement runtime instance.
+
+### Local queued run recovery
+
+A local queued run cannot resume a DAG execution because no durable execution has been created yet.
+
+The recovery path is therefore durable redispatch through the shared run identity.
+
+```text
+failed runtime process
+    ↓
+assigned local queued run discovered
+    ↓
+SharedRun requeued for local-queued recovery
+    ↓
+failed LocalRun marked requeued for recovery
+    ↓
+replacement runtime selected
+    ↓
+replacement LocalRun registered
+    ↓
+run executes normally and creates a new ExecutionId
+```
+
+The invariant is:
+
+```text
+SharedRunId is preserved.
+Original LocalRunId is marked failed/requeued.
+Replacement LocalRunId is new.
+ExecutionId is created only when the replacement runtime starts DAG execution.
+```
+
+This avoids duplicate submissions while accepting that the old runtime-local queue is gone.
+
+---
+
+## Recovery Source of Truth
+
+The runtime-local queue is not durable truth.
+
+A local queue is allowed to die with the process that owns it. Recovery must not depend on reading state from the dead runtime.
+
+The durable recovery source of truth is:
+
+```text
+SharedRunStore
+SharedQueue
+RuntimeRunExecutionIndex
+DAG execution store
+Runtime registry
+Runtime capacity store
+Recovery forensics store
+Ledger / trace / replay evidence
+```
+
+This design is intentional.
+
+The system does not pretend a dead local queue survived. It reconstructs the correct recovery path from durable shared-run, runtime-index, registry/capacity, and DAG state.
+
+---
+
+## Health Reconciliation vs Execution Recovery
+
+Runtime health and execution recovery are separate responsibilities.
+
+```text
+RuntimeInstanceHealthReconciler
+    detects stale / unhealthy / draining / unsafe runtime capacity
+    prevents unsafe capacity from being selected for new dispatch
+
+Execution recovery reconciler
+    enumerates work assigned to an unsafe runtime
+    recovers in-flight executions and local queued runs
+    writes recovery forensics and ledger evidence
+```
+
+The HTTP provider is not the lifecycle owner and does not own recovery.
+
+HTTP transport failures such as `http-circuit-open`, timeout, endpoint unavailable, or command failure are transport/endpoint health signals. They can contribute to runtime health decisions, but they must not directly restart or replace the runtime from the HTTP command provider.
+
+The lifecycle owner is the component that creates or attaches runtime capacity, such as:
+
+```text
+Runtime Host Manager
+Process host creation strategy
+Local runtime scaler
+Future Kubernetes provider / host manager mode
+External supervisor
+```
+
+The validated boundary is:
+
+```text
+HTTP provider reports transport failure
+    ↓
+health reconciliation prevents unsafe routing
+    ↓
+execution recovery reconciles assigned work if runtime becomes unsafe
+    ↓
+provider / lifecycle owner creates or attaches replacement capacity when required
+```
+
+---
+
+## Tenant-Isolated Runtime Crash Recovery
+
+Runtime instance crash recovery is tenant-scoped.
+
+The recovery reconciler must not treat a runtime crash as a global panic event. It must recover only the work assigned to the failed tenant runtime instance.
+
+Validated invariants include:
+
+```text
+Impacted tenant work is recovered.
+Unrelated tenant work is not recovered.
+Safe tenant runtime is not killed.
+Safe tenant receives no recovery forensics.
+Safe tenant has zero recovered work.
+Safe tenant has zero recovery entries visible from impacted tenant queries.
+Cross-tenant ledger leakage is zero.
+```
+
+The safe tenant proof matters because it validates isolation, not just recovery.
+
+A system that can recover failed work but contaminates another tenant's observability surface is not tenant-isolated recovery.
+
+---
+
+## Runtime Recovery Forensics
+
+Runtime instance crash recovery writes per-work-item forensics records.
+
+In-flight recovery forensics use a durable identity shape similar to:
+
+```text
+runtime-recovery:{ExecutionId}:{SharedRunId}:{FailedLocalRunId}
+```
+
+Local queued recovery forensics use:
+
+```text
+runtime-recovery:local-queued:{SharedRunId}:{FailedLocalRunId}
+```
+
+Each record is linked to a runtime failure incident:
+
+```text
+runtime-failure:{RuntimeInstanceId}
+```
+
+The in-flight recovery timeline is expected to include:
+
+```text
+execution.recovery.candidate.detected
+→ shared.run.requeued.for.resume
+→ failed.local.run.marked.requeued.for.recovery
+→ replacement.runtime.selected
+→ replacement.local.run.registered
+→ resume.context.seeded
+→ dag.resume.started
+→ dag.resume.completed
+→ execution.recovery.completed
+```
+
+The local queued recovery timeline is expected to include:
+
+```text
+SharedRunRequeuedForLocalQueuedRecovery
+→ failed.local.run.marked.requeued.for.recovery
+→ replacement.runtime.selected
+→ replacement.local.run.registered
+→ resume.context.seeded
+```
+
+Forensics are not transient logs. They are durable, queryable recovery evidence exposed through MCP runtime recovery tooling.
+
+---
+
+## Replay, Ledger, and Trace After Recovery
+
+Recovery is not considered fully proven only because the DAG eventually completes.
+
+A recovered execution must remain observable after convergence.
+
+Validated recovery proof requires:
+
+```text
+execution ledger evidence
+execution trace evidence
+completion evidence
+step completion evidence
+strict replay validation
+replay report
+replay ledger
+replay trace
+runtime recovery forensics
+control-plane causal-chain ledger evidence
+```
+
+This turns recovery from an operational claim into an auditable contract.
+
+```text
+Recovery without replay is operational resilience.
+Recovery with replay, ledger, trace, and forensics is audit resilience.
+```
+
+---
+
 ## Stale Worker Protection
 
 A stale worker may wake up after recovery.
@@ -725,6 +1030,10 @@ These signals make retry behavior debuggable instead of implicit.
 | Retry window not open | Step is not claimable. |
 | Retry budget exhausted | Step becomes `Failed`. |
 | Worker crashes while running | Recovery returns stale step to `Ready`. |
+| Runtime process is killed with in-flight DAG execution | Execution recovery resumes the same `ExecutionId` on replacement runtime capacity. |
+| Runtime process is killed with local queued runs | Shared runs are redispatched through durable `SharedRunId` without duplicate submission. |
+| Two tenant runtime processes crash in the same recovery window | Each tenant recovers only its assigned work. |
+| Third tenant remains safe during other tenant crashes | Safe tenant completes normally with zero recovery work, zero recovery forensics, and zero ledger contamination. |
 | Stale worker completes late | Claim token mismatch rejects update. |
 | Retry-ready step during pause | Claim is blocked by execution control. |
 | Multiple workers claim retry-ready step | Redis Lua allows only one owner. |
@@ -754,6 +1063,14 @@ The retry and recovery implementation is validated through integration tests cov
 - retry-aware claiming after retry window opens
 - execution-control blocking of retry-ready work
 - concurrency denial without retry state mutation
+- runtime instance crash recovery for real process-host runtimes
+- in-flight DAG resume with preserved `ExecutionId`
+- local queued shared-run redispatch through durable `SharedRunId`
+- recovery without business retry budget consumption
+- tenant-isolated recovery across multiple impacted tenants
+- safe tenant non-impact validation during concurrent tenant crashes
+- runtime recovery forensics timelines for in-flight and local queued work
+- recovery ledger, trace, replay, and control-plane causal-chain validation
 
 ---
 
@@ -775,9 +1092,16 @@ The retry and recovery implementation is validated through integration tests cov
 | Recovery without retry budget consumption | Implemented / validated |
 | Distributed retry safety | Implemented / validated |
 | Retry observability foundations | Implemented / foundation available |
+| Runtime instance crash recovery | Implemented / validated |
+| In-flight DAG resume after runtime crash | Implemented / validated |
+| Local queued run recovery after runtime crash | Implemented / validated |
+| Recovery forensics timelines | Implemented / validated |
+| Tenant-isolated crash recovery | Implemented / validated |
+| Safe tenant non-impact proof | Implemented / validated |
+| Recovery ledger / trace / replay proof | Implemented / validated |
+| Control-plane recovery causal-chain ledger | Implemented / validated |
 | Adaptive retry policies | Planned |
 | Rich retry audit history | Planned |
-| Durable decision ledger integration | Planned |
 
 ---
 
@@ -791,6 +1115,11 @@ The retry and recovery implementation is validated through integration tests cov
 | Redis DAG Store | Persists retry/failure transitions atomically through Lua scripts. |
 | Claim Service | Ensures retry-ready steps are claimed safely. |
 | Recovery Logic | Detects stale running steps and releases ownership. |
+| Runtime Instance Health Reconciler | Detects unsafe runtime capacity and prevents unsafe routing. |
+| Execution Recovery Reconciler | Recovers assigned work from unsafe runtime instances, including in-flight executions and local queued runs. |
+| Shared Run Store / Shared Queue | Preserve durable shared-run identity and enable redispatch after runtime crash. |
+| Runtime Run Execution Index | Links shared runs, local runs, runtime assignments, and execution identity for recovery. |
+| Recovery Forensics Store | Records durable per-work-item recovery timelines and runtime failure incidents. |
 | Execution Control Gate | Blocks retry advancement when execution is paused, cancelled, or waiting for input. |
 | Concurrency Engine | Ensures retry-ready work still respects distributed concurrency admission. |
 | Observability Layer | Records retry and recovery behavior. |
@@ -806,6 +1135,11 @@ The retry and recovery implementation is validated through integration tests cov
 - [Retention and Compaction](retention-and-compaction.md)
 - [Replay and Audit](replay-and-audit.md)
 - [Policy-Driven Execution](policy-driven-execution.md)
+- [Runtime Process Crash Recovery](runtime-process-crash-recovery.md)
+- [Runtime Recovery Forensics](runtime-recovery-forensics.md)
+- [Multi-Tenant Runtime Crash Isolation](multi-tenant-runtime-crash-isolation.md)
+- [Control-Plane Ledger Causal Chain](control-plane-ledger-causal-chain.md)
+- [Recovery Replay Ledger Trace Proof](recovery-replay-ledger-trace-proof.md)
 - [Testing Strategy](testing-strategy.md)
 
 ---
@@ -814,8 +1148,4 @@ The retry and recovery implementation is validated through integration tests cov
 
 This document is a focused extraction from the complete technical reference.
 
-The original technical depth remains preserved in:
-
-- [runtime-internals.md](../runtime-internals.md)
-
-Do not remove content from `runtime-internals.md` until the extracted documentation has been reviewed and validated.
+Do not collapse retry, stale step recovery, runtime health reconciliation, and runtime instance crash recovery into a single concept.

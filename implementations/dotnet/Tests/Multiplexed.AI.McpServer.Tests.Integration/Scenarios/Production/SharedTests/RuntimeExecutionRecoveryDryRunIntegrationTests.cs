@@ -194,15 +194,37 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Shared
             Assert.Equal(1, recoveryResult.DiscoveredUnfinishedRunCount);
             Assert.Equal(0, recoveryResult.RecoveredRunCount);
 
-            var decision = Assert.Single(recoveryResult.Decisions);
+            Assert.Equal(2, recoveryResult.Decisions.Count);
+
+            var ownershipDecision = Assert.Single(
+                recoveryResult.Decisions,
+                candidate => string.Equals(
+                    candidate.Action,
+                    "ownership-resolution",
+                    StringComparison.Ordinal));
+
+            Assert.Equal(runtimeInstanceId, ownershipDecision.RuntimeInstanceId);
+            Assert.Equal(localRunId, ownershipDecision.LocalRunId);
+            Assert.Equal(executionId, ownershipDecision.ExecutionId);
+            Assert.Equal(sharedRunId, ownershipDecision.SharedRunId);
+            Assert.Equal("tenant-a", ownershipDecision.TenantId);
+            Assert.Equal("tenant-group-a", ownershipDecision.TenantGroupId);
+            Assert.False(ownershipDecision.Changed);
+
+            var decision = Assert.Single(
+                recoveryResult.Decisions,
+                candidate => string.Equals(
+                    candidate.Action,
+                    "dry-run-requeue-shared-run",
+                    StringComparison.Ordinal));
+
             Assert.Equal(runtimeInstanceId, decision.RuntimeInstanceId);
             Assert.Equal(localRunId, decision.LocalRunId);
             Assert.Equal(executionId, decision.ExecutionId);
             Assert.Equal(sharedRunId, decision.SharedRunId);
             Assert.Equal("tenant-a", decision.TenantId);
             Assert.Equal("tenant-group-a", decision.TenantGroupId);
-            Assert.Equal("dry-run-requeue-shared-run", decision.Action);
-            Assert.Equal("dry-run-runtime-execution-recovery", decision.Reason);
+            Assert.StartsWith("transitionReason=dry-run-runtime-execution-recovery", decision.Reason);
             Assert.False(decision.Changed);
 
             Assert.NotNull(sharedRun);
@@ -404,15 +426,37 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Shared
             Assert.Equal(1, recoveryResult.DiscoveredUnfinishedRunCount);
             Assert.Equal(1, recoveryResult.RecoveredRunCount);
 
-            var decision = Assert.Single(recoveryResult.Decisions);
+            Assert.Equal(2, recoveryResult.Decisions.Count);
+
+            var ownershipDecision = Assert.Single(
+                recoveryResult.Decisions,
+                candidate => string.Equals(
+                    candidate.Action,
+                    "ownership-resolution",
+                    StringComparison.Ordinal));
+
+            Assert.Equal(runtimeInstanceId, ownershipDecision.RuntimeInstanceId);
+            Assert.Equal(localRunId, ownershipDecision.LocalRunId);
+            Assert.Equal(executionId, ownershipDecision.ExecutionId);
+            Assert.Equal(sharedRunId, ownershipDecision.SharedRunId);
+            Assert.Equal("tenant-a", ownershipDecision.TenantId);
+            Assert.Equal("tenant-group-a", ownershipDecision.TenantGroupId);
+            Assert.False(ownershipDecision.Changed);
+
+            var decision = Assert.Single(
+                recoveryResult.Decisions,
+                candidate => string.Equals(
+                    candidate.Action,
+                    "requeue-shared-run",
+                    StringComparison.Ordinal));
+
             Assert.Equal(runtimeInstanceId, decision.RuntimeInstanceId);
             Assert.Equal(localRunId, decision.LocalRunId);
             Assert.Equal(executionId, decision.ExecutionId);
             Assert.Equal(sharedRunId, decision.SharedRunId);
             Assert.Equal("tenant-a", decision.TenantId);
             Assert.Equal("tenant-group-a", decision.TenantGroupId);
-            Assert.Equal("requeue-shared-run", decision.Action);
-            Assert.Equal("runtime-execution-recovery-requeue", decision.Reason);
+            Assert.StartsWith("transitionReason=runtime-execution-recovery-requeue", decision.Reason);
             Assert.True(decision.Changed);
 
             Assert.NotNull(sharedRun);
@@ -600,10 +644,30 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Shared
             Assert.Equal(1, firstRecoveryResult.DiscoveredUnfinishedRunCount);
             Assert.Equal(1, firstRecoveryResult.RecoveredRunCount);
 
-            var firstDecision = Assert.Single(firstRecoveryResult.Decisions);
+            Assert.Equal(2, firstRecoveryResult.Decisions.Count);
+
+            var firstOwnershipDecision = Assert.Single(
+                firstRecoveryResult.Decisions,
+                candidate => string.Equals(
+                    candidate.Action,
+                    "ownership-resolution",
+                    StringComparison.Ordinal));
+
+            Assert.Equal(runtimeInstanceId, firstOwnershipDecision.RuntimeInstanceId);
+            Assert.Equal(localRunId, firstOwnershipDecision.LocalRunId);
+            Assert.Equal(executionId, firstOwnershipDecision.ExecutionId);
+            Assert.Equal(sharedRunId, firstOwnershipDecision.SharedRunId);
+            Assert.False(firstOwnershipDecision.Changed);
+
+            var firstDecision = Assert.Single(
+                firstRecoveryResult.Decisions,
+                candidate => string.Equals(
+                    candidate.Action,
+                    "requeue-shared-run",
+                    StringComparison.Ordinal));
+
             Assert.Equal(sharedRunId, firstDecision.SharedRunId);
-            Assert.Equal("requeue-shared-run", firstDecision.Action);
-            Assert.Equal("runtime-execution-recovery-requeue", firstDecision.Reason);
+            Assert.StartsWith("transitionReason=runtime-execution-recovery-requeue", firstDecision.Reason);
             Assert.True(firstDecision.Changed);
 
             Assert.Equal(0, secondRecoveryResult.DiscoveredUnfinishedRunCount);
@@ -810,15 +874,37 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Shared
                 Assert.Equal(1, recoveryResult.DiscoveredUnfinishedRunCount);
                 Assert.Equal(1, recoveryResult.RecoveredRunCount);
 
-                var decision = Assert.Single(recoveryResult.Decisions);
+                Assert.Equal(2, recoveryResult.Decisions.Count);
+
+                var ownershipDecision = Assert.Single(
+                    recoveryResult.Decisions,
+                    candidate => string.Equals(
+                        candidate.Action,
+                        "ownership-resolution",
+                        StringComparison.Ordinal));
+
+                Assert.Equal(runtimeInstanceId, ownershipDecision.RuntimeInstanceId);
+                Assert.Equal(localRunId, ownershipDecision.LocalRunId);
+                Assert.Equal(executionId, ownershipDecision.ExecutionId);
+                Assert.Equal(sharedRunId, ownershipDecision.SharedRunId);
+                Assert.Equal("tenant-a", ownershipDecision.TenantId);
+                Assert.Equal("tenant-group-a", ownershipDecision.TenantGroupId);
+                Assert.False(ownershipDecision.Changed);
+
+                var decision = Assert.Single(
+                    recoveryResult.Decisions,
+                    candidate => string.Equals(
+                        candidate.Action,
+                        "requeue-shared-run",
+                        StringComparison.Ordinal));
+
                 Assert.Equal(runtimeInstanceId, decision.RuntimeInstanceId);
                 Assert.Equal(localRunId, decision.LocalRunId);
                 Assert.Equal(executionId, decision.ExecutionId);
                 Assert.Equal(sharedRunId, decision.SharedRunId);
                 Assert.Equal("tenant-a", decision.TenantId);
                 Assert.Equal("tenant-group-a", decision.TenantGroupId);
-                Assert.Equal("requeue-shared-run", decision.Action);
-                Assert.Equal("runtime-execution-recovery-requeue", decision.Reason);
+                Assert.StartsWith("transitionReason=runtime-execution-recovery-requeue", decision.Reason);
                 Assert.True(decision.Changed);
 
                 Assert.NotNull(queueItem);

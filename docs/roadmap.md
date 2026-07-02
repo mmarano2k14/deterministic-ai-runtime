@@ -2,7 +2,21 @@
 
 This roadmap describes the planned evolution of **Deterministic AI Runtime**.
 
-The project is under active development. Some capabilities are implemented and validated, some are available as foundations, and some are planned.
+The project is under active development. Some capabilities are implemented and validated, some are available as foundations, and some remain planned.
+
+The roadmap should be read as a progression:
+
+```text
+runtime engine
+    ↓
+distributed AI execution infrastructure
+    ↓
+operational AI control plane
+    ↓
+MLOps-oriented runtime platform
+```
+
+The project is not positioned as a finished commercial platform. It is a serious execution-infrastructure foundation that is being hardened through tests, documentation, and production-like runtime scenarios.
 
 ---
 
@@ -10,18 +24,18 @@ The project is under active development. Some capabilities are implemented and v
 
 | Status | Meaning |
 |---|---|
-| Completed / Implemented | Already built in the runtime. |
+| Completed / Implemented | Already built in the runtime and covered by tests or validated behavior. |
 | Completed (V1) | First complete version delivered; future refinements may continue. |
 | Current | Current active documentation or engineering phase. |
 | Planned | Identified future work. |
-| Foundation available | Core building blocks exist, but the public API or production polish is not complete. |
+| Foundation available | Core building blocks exist, but the public API, external integration, or production polish is not complete. |
 | Platform direction | Long-term evolution path beyond the current runtime foundation. |
 
 ---
 
-## Completed
+## Completed and Validated Foundation
 
-The following capabilities are already implemented or available as runtime foundations.
+The following capabilities are already implemented or available as validated runtime foundations.
 
 | Area | Status |
 |---|---|
@@ -36,8 +50,12 @@ The following capabilities are already implemented or available as runtime found
 | Previous step output resolution | Foundation available |
 | Payload resolver and rehydration | Implemented |
 | Provider/model/operation context | Implemented |
-| Retry and recovery | Implemented |
 | Policy-driven retry | Implemented |
+| Stale step recovery | Implemented |
+| Runtime process crash recovery | Implemented / validated |
+| Real `RuntimeInstanceOnly` process-host recovery | Implemented / validated |
+| Runtime health to execution recovery boundary | Implemented / validated |
+| Retry vs recovery separation | Implemented / validated |
 | Retention and compaction | Implemented |
 | Payload externalization | Implemented |
 | Rehydration resolver | Implemented |
@@ -53,14 +71,24 @@ The following capabilities are already implemented or available as runtime found
 | Queued run cancellation | Implemented |
 | Running run cancellation bridge | Implemented |
 | Hot enqueue | Implemented |
-| RunId vs ExecutionId separation | Implemented |
+| SharedRunId / RunId / ExecutionId separation | Implemented / validated |
 | Terminal snapshots | Foundation available |
 | Replay restoration | Completed (V1) |
 | Replay validation and fingerprint verification | Completed (V1) |
 | Replay metadata, ledger and timeline diagnostics | Completed (V1) |
+| Replay / ledger / trace proof across process boundaries | Implemented / validated |
+| Runtime recovery forensics | Implemented / validated |
+| Control-plane causal-chain ledger proof | Implemented / validated |
+| Safe tenant non-impact validation | Implemented / validated |
 | Runtime metrics and tracing foundations | Foundation available |
 | Enterprise runtime demo scenarios | Completed (V1) |
+| MCP production runtime scenario framework | Implemented / validated |
+| HTTP process-host production scenarios | Implemented / validated |
 | Road to MLOps direction | Platform direction |
+
+The most important recent hardening is the transition from simple runtime execution validation to process-boundary recovery validation.
+
+The runtime now proves that real external runtime processes can die while the control plane preserves durable execution truth, restores assigned work, avoids cross-tenant leakage, and produces replayable evidence after recovery.
 
 ---
 
@@ -77,12 +105,13 @@ Completed V1 work:
 - created `docs/index.md`
 - created `docs/enterprise-readiness.md`
 - created `docs/roadmap.md`
+- created `docs/road-to-mlops.md`
 - created focused AI runtime documentation under `docs/ai/`
-- added architecture documentation centered around the context resolution and helper layer
-- added a documentation map linking strategic, technical, and roadmap documents
+- added architecture documentation centered around control-plane/runtime separation, context resolution, durable identity, observability, and recovery
+- added a documentation map linking strategic, technical, validation, and roadmap documents
 - preserved the original technical depth while making the repository easier to navigate
 
-Focused AI runtime documentation created in V1:
+Focused AI runtime documentation created or expanded in V1:
 
 - `docs/ai/architecture-overview.md`
 - `docs/ai/distributed-execution.md`
@@ -93,12 +122,25 @@ Focused AI runtime documentation created in V1:
 - `docs/ai/distributed-concurrency-throttling.md`
 - `docs/ai/replay-and-audit.md`
 - `docs/ai/observability.md`
+- `docs/ai/observability-tracing.md`
+- `docs/ai/runtime-metrics.md`
 - `docs/ai/testing-strategy.md`
 - `docs/ai/config-driven-runtime.md`
 - `docs/ai/policy-driven-execution.md`
 - `docs/ai/context-resolution-and-helpers.md`
 - `docs/ai/step-plugins.md`
 - `docs/ai/rag-pipelines.md`
+- `docs/ai/runtime-control-plane.md`
+- `docs/ai/runtime-discovery-registry-capacity.md`
+- `docs/ai/http-runtime-provider.md`
+- `docs/ai/mcp-production-runtime-scenario-framework.md`
+- `docs/ai/multi-tenant-control-plane-isolation.md`
+- `docs/ai/multi-tenant-runtime-flow.md`
+- `docs/ai/runtime-process-crash-recovery.md`
+- `docs/ai/runtime-recovery-forensics.md`
+- `docs/ai/multi-tenant-runtime-crash-isolation.md`
+- `docs/ai/control-plane-ledger-causal-chain.md`
+- `docs/ai/recovery-replay-ledger-trace-proof.md`
 
 Future documentation refinement may continue, but the first documentation restructure is complete.
 
@@ -118,13 +160,13 @@ Implemented demo capabilities include:
 - retention and compaction pressure
 - replay validation
 - distributed throttling
-- realtime readable runtime logs
+- readable runtime logs
 - pause/resume/cancel controls
 - interactive console execution
 - runtime progress monitoring
 - deterministic convergence scenarios
 
-Implemented executable scenarios:
+Implemented executable scenarios include:
 
 ```text
 json
@@ -133,11 +175,11 @@ chaos-500
 throttling-100
 ```
 
-The demo now validates:
+The demo validates:
 
 - distributed execution behavior
 - runtime coordination
-- retry recovery
+- retry and stale step recovery
 - retention pressure
 - replay restoration
 - distributed provider throttling
@@ -145,6 +187,116 @@ The demo now validates:
 - execution control state
 
 Future refinements may continue, but the first enterprise demo phase is complete.
+
+---
+
+## Phase 1B — Control-Plane and Process-Host Runtime Validation
+
+**Status:** Completed / Implemented
+
+Goal: prove that the runtime can operate through a real control-plane and provider-hosting model, not only through in-process execution.
+
+Validated capabilities include:
+
+- MCP control-plane host mode
+- local runtime pool mode
+- HTTP runtime provider mode
+- real `RuntimeInstanceOnly` process-host scale-out
+- Redis-backed shared run store
+- Redis-backed shared queue
+- Redis-backed runtime registry
+- Redis-backed runtime capacity store
+- Redis-backed admission reservation store
+- Redis-backed scale-out request store
+- scale-out watcher lifecycle
+- fulfilled scale-out run requeue
+- dispatch-time admission
+- tenant-aware Shared / Dedicated / Hybrid runtime visibility
+- process-boundary retention, ledger, trace, and replay validation
+
+This phase is important because it moves the runtime from an engine proof into a control-plane/runtime-infrastructure proof.
+
+The validated flow is:
+
+```text
+submit run
+    ↓
+admission sees no safe capacity
+    ↓
+scale-out request is persisted
+    ↓
+watcher observes request
+    ↓
+provider is selected
+    ↓
+Runtime Host Manager starts a real runtime process
+    ↓
+runtime registers and publishes capacity
+    ↓
+shared run is requeued
+    ↓
+shared queue pump performs normal dispatch
+    ↓
+runtime executes DAG
+    ↓
+ledger / trace / replay proof remains available
+```
+
+The key architectural boundary is that capacity creation does not complete recovery by itself.
+
+Execution recovery is complete only when assigned work has been reconciled, redispatched or resumed, and observable evidence has been written.
+
+---
+
+## Phase 1C — Runtime Process Crash Recovery
+
+**Status:** Completed / Implemented
+
+Goal: prove that the runtime can recover work after real runtime process failure without relying on volatile local queue state.
+
+Validated crash recovery behavior includes:
+
+- real external runtime process kill
+- runtime endpoint failure signal
+- runtime health reconciliation
+- unsafe capacity suppression
+- execution recovery reconciliation
+- recovery of in-flight DAG executions
+- redispatch of local queued shared runs
+- replacement runtime selection
+- preserved durable execution identity for in-flight work
+- replay / ledger / trace validation after recovery
+- runtime recovery forensics
+- tenant-scoped recovery evidence
+- safe tenant non-impact validation
+
+The core identity model is:
+
+```text
+ExecutionId
+    = durable DAG execution identity
+
+SharedRunId
+    = durable shared submission identity
+
+LocalRunId
+    = runtime-local queue attempt identity
+```
+
+An in-flight execution is recovered by resuming the same `ExecutionId`.
+
+A local queued run that never created an `ExecutionId` is recovered by redispatching the durable `SharedRunId`.
+
+The local runtime queue remains intentionally volatile. Durable truth is held by:
+
+- shared run store
+- shared queue
+- runtime run execution index
+- DAG store
+- registry/capacity state
+- ledger, trace, forensics, and replay evidence
+
+The validated multi-tenant crash scenario proves that two impacted tenants can recover while a safe tenant remains untouched.
 
 ---
 
@@ -162,8 +314,26 @@ Possible scenarios:
 - multi-provider RAG workflow
 - human approval workflow with audit trail
 - policy-driven provider/model governance workflow
+- multi-tenant execution sample with isolated runtime capacity
+- operational incident sample showing recovery proof after runtime failure
 
 The sample should show how the runtime applies to real business processes, not only synthetic tests.
+
+The stronger sample will likely combine:
+
+```text
+long-running AI workflow
+    +
+human control
+    +
+provider governance
+    +
+tenant isolation
+    +
+runtime failure recovery
+    +
+replayable audit evidence
+```
 
 ---
 
@@ -177,12 +347,17 @@ Current observability foundations already include:
 
 - runtime metrics
 - trace recording
-- realtime runtime events
+- runtime events
 - retry diagnostics
+- stale step recovery diagnostics
+- runtime crash recovery diagnostics
+- runtime recovery forensics
+- control-plane causal-chain proof
 - retention diagnostics
 - concurrency admission diagnostics
 - replay diagnostics
-- readable console runtime events
+- ledger diagnostics
+- process-boundary trace validation
 - execution progress monitoring
 
 Future dashboard capabilities may include:
@@ -191,18 +366,25 @@ Future dashboard capabilities may include:
 - DAG visualization
 - step status inspection
 - retry timeline
+- stale step recovery timeline
+- runtime crash recovery timeline
+- recovery incident view
+- safe tenant non-impact view
+- control-plane causal-chain view
+- runtime fleet and capacity view
 - retention and compaction events
 - resolver and context-resolution diagnostics
 - concurrency admission decisions
 - provider/model throttling visibility
 - replay and snapshot visibility
 - execution control actions
+- tenant-scoped operational views
 
 This phase is partially implemented through runtime observability foundations, but visual operational tooling remains planned.
 
 ---
 
-## Phase 4 — Kubernetes Deployment
+## Phase 4 — Kubernetes Deployment and Runtime Operations
 
 **Status:** Planned
 
@@ -212,13 +394,29 @@ Expected infrastructure:
 
 - Redis
 - MongoDB
-- RabbitMQ
+- optional RabbitMQ or command queue infrastructure
 - optional logging stack
 - optional dashboard stack
-- runtime worker instances
+- control-plane process/pod
+- runtime worker instances or runtime-only hosts
 - sample API or controller
 
 This phase should prove that the runtime can run as distributed infrastructure, not only as local integration tests.
+
+The important point is that Kubernetes should not replace the runtime recovery model.
+
+Kubernetes may restart or schedule containers, but the runtime still owns:
+
+```text
+execution state
+assigned work recovery
+shared run lifecycle
+DAG resume
+tenant-aware capacity selection
+replay / ledger / trace proof
+```
+
+Future Kubernetes work should therefore reuse the same provider scale-out and recovery boundaries already validated locally.
 
 ---
 
@@ -234,6 +432,10 @@ Possible work:
 - stable request/response contracts
 - SDK-friendly abstractions
 - clearer controller APIs
+- replay controller contracts
+- recovery incident query contracts
+- forensics query contracts
+- control-plane causal-chain query contracts
 - better examples
 - public helper/context resolver documentation
 - CLI or developer utilities
@@ -272,6 +474,8 @@ Completed V1 capabilities include:
 - DAG-store-aware replay restore support
 - distributed replay integration testing
 - 100-step replay reference scenario with ledger and timeline diagnostics
+- process-boundary replay report validation through MCP scenarios
+- replay / ledger / trace proof after runtime process crash recovery
 
 Replay V1 proves that the runtime can reconstruct and validate a completed distributed execution from durable state while preserving deterministic convergence guarantees.
 
@@ -279,32 +483,44 @@ Future refinements may continue, but the replay engine and audit foundations are
 
 ---
 
-## Phase 7 — Replay Controller, HTTP APIs, Dashboard, and Operational Tooling
+## Phase 7 — Replay Controller, Recovery APIs, HTTP APIs, Dashboard, and Operational Tooling
 
 **Status:** Planned
 
-Goal: expose the completed replay engine through operational entry points that can be used by APIs, CLIs, dashboards, Kubernetes operators, and future audit tooling.
+Goal: expose the completed replay, recovery, and forensics foundations through operational entry points that can be used by APIs, CLIs, dashboards, Kubernetes operators, and future audit tooling.
 
 Possible features:
 
 - `IAiExecutionReplayController`
+- `IAiRuntimeRecoveryForensicsController`
+- `IAiControlPlaneLedgerController`
 - replay controller request/response contracts
+- runtime recovery incident contracts
+- recovery forensics search by `ExecutionId`, `SharedRunId`, `LocalRunId`, tenant, runtime instance, or incident id
 - HTTP replay API
+- HTTP recovery incident API
 - replay summary endpoints
 - replay audit endpoints
 - replay restore endpoints
 - replay ledger endpoints
 - replay timeline endpoints
+- control-plane causal-chain endpoints
 - replay dashboard
+- recovery dashboard
+- runtime incident dashboard
 - replay search by `ExecutionId`
 - replay search by pipeline/date/fingerprint
 - replay export to JSON or Markdown
+- recovery export to JSON or Markdown
 - replay operational tooling for support and incident investigation
-- replay access control
+- recovery operational tooling for support and incident investigation
+- replay and recovery access control
 - replay-safe context resolution documentation
 - integration with future control plane and Kubernetes runtime operations
 
-This phase should avoid coupling the core runtime library directly to ASP.NET. The controller abstraction should be created first, then HTTP/API hosting can be added around it.
+This phase should avoid coupling the core runtime library directly to ASP.NET.
+
+Controller abstractions should be created first, then HTTP/API hosting can be added around them.
 
 ---
 
@@ -322,9 +538,13 @@ Possible capabilities:
 - cost-aware throttling
 - provider fallback policies
 - per-tenant limits
-- observability for provider usage
+- tenant cost attribution
+- execution cost visibility
 - provider/model/operation context-based cost reporting
 - policy-driven cost controls
+- retry cost impact
+- recovery cost impact
+- failed provider call accounting
 
 This extends the existing distributed throttling, context resolution, and policy model into AI cost governance.
 
@@ -332,14 +552,15 @@ This extends the existing distributed throttling, context resolution, and policy
 
 ## Phase 9 — Articles / Public Positioning
 
-**Status:** Planned
+**Status:** Current / Planned
 
-Goal: explain the architectural ideas publicly.
+Goal: explain the architectural ideas publicly without overstating maturity.
 
 Potential topics:
 
 - AI orchestration as a distributed systems problem
 - deterministic convergence for AI workflows
+- when the process dies, the execution does not
 - context resolution as the connective tissue of AI execution runtimes
 - Redis Lua coordination for distributed AI execution
 - retry and recovery without hidden local loops
@@ -347,11 +568,26 @@ Potential topics:
 - bounded memory for long-running AI pipelines
 - pause/resume/cancel for production AI workflows
 - why AI runtimes need replay and auditability
+- why local queues can be volatile when durable truth lives elsewhere
+- why runtime crash recovery needs evidence, not only restart logic
+- how multi-tenant runtime isolation changes recovery expectations
 
-The goal is to position the project seriously without exaggerating its maturity.
+The goal is to position the project seriously and clearly.
+
+The strongest message is not that the runtime replaces existing tools.
+
+The stronger message is that production AI execution needs explicit runtime guarantees:
+
+```text
+durable state
+safe ownership
+recoverable execution
+bounded memory
+tenant-aware control
+explainable evidence
+```
 
 ---
-
 
 ## Long-Term Platform Direction
 
@@ -380,12 +616,14 @@ This broader direction includes areas such as:
 - enterprise AI orchestration
 - runtime governance
 - replay and audit systems
+- recovery and incident forensics
 - distributed AI operations
 - multi-agent coordination
 - execution observability
 - AI memory and decision systems
 - provider governance and cost control
 - tenant-aware runtime controls
+- runtime fleet operations
 - MLOps-oriented runtime infrastructure
 
 See:
@@ -395,6 +633,7 @@ See:
 This keeps the current roadmap focused while documenting the larger platform ambition.
 
 ---
+
 ## Guiding Principles
 
 All roadmap work should respect these principles:
@@ -405,9 +644,14 @@ All roadmap work should respect these principles:
 - keep workers stateless
 - preserve Redis atomic coordination for distributed safety
 - separate hot state from durable payloads
+- treat local runtime queues as volatile
+- keep durable execution truth outside the runtime process
 - preserve replayability
+- preserve recovery evidence
 - keep context resolution explicit and testable
 - avoid scattering context-building logic across the engine
+- separate health reconciliation from execution recovery
+- keep providers responsible for transport, not durable recovery ownership
 - maintain clear documentation
 - avoid overclaiming maturity
 - distinguish implemented features from foundations and planned work
@@ -420,8 +664,10 @@ The current priorities are:
 
 ```text
 Enterprise demo polish
+Process-host recovery documentation
+Recovery / replay / ledger / trace documentation
 Observability polish
-Replay controller and HTTP APIs
+Replay and recovery controller/API design
 Road to MLOps platform direction
 Kubernetes deployment demo
 Articles and public positioning
@@ -429,8 +675,8 @@ Articles and public positioning
 
 Phase 0 documentation restructure is complete as V1.
 
-The runtime foundations are already implemented and validated through distributed integration scenarios.
+The runtime foundations are already implemented and validated through distributed integration scenarios, MCP control-plane scenarios, HTTP process-host scenarios, replay/ledger/trace scenarios, and runtime crash recovery scenarios.
 
-The focus is now shifting toward operational polish, enterprise demonstration, replay controller/API exposure, MLOps-oriented platform direction, and public positioning.
+The focus is now shifting toward operational polish, clearer API/controller surfaces, recovery and replay tooling, MLOps-oriented platform direction, Kubernetes continuity, and public positioning.
 
 The dedicated long-term platform direction is documented in [`docs/road-to-mlops.md`](road-to-mlops.md).

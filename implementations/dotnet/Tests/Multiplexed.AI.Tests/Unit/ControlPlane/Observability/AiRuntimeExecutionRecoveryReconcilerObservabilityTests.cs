@@ -31,7 +31,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.Observability
             var observer = new CapturingControlPlaneObserver();
 
             var reconciler = new AiRuntimeExecutionRecoveryReconciler(
-                new ThrowingRuntimeInstanceRegistry(),
+                new FakeRuntimeInstanceRegistry(),
                 new FakeRuntimeRunExecutionIndex(),
                 new FakeSharedRunOwnershipResolver(),
                 new FakeRuntimeExecutionRecoveryTransitionService(),
@@ -169,15 +169,11 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.Observability
 
             await reconciler.ReconcileAsync(CancellationToken.None).ConfigureAwait(false);
 
-            Assert.Equal(2, ledger.Entries.Count);
+            var entry = Assert.Single(ledger.Entries);
 
-            Assert.Equal(AiDecisionLedgerCategory.Recovery, ledger.Entries[0].Category);
-            Assert.Equal(AiDecisionLedgerOutcome.Started, ledger.Entries[0].Outcome);
-            Assert.Equal("control.recovery.runtime-execution-recovery-reconcile.operationstarted", ledger.Entries[0].EventType);
-
-            Assert.Equal(AiDecisionLedgerCategory.Recovery, ledger.Entries[1].Category);
-            Assert.Equal(AiDecisionLedgerOutcome.Succeeded, ledger.Entries[1].Outcome);
-            Assert.Equal("control.recovery.runtime-execution-recovery-reconcile.succeeded", ledger.Entries[1].EventType);
+            Assert.Equal(AiDecisionLedgerCategory.Recovery, entry.Category);
+            Assert.Equal(AiDecisionLedgerOutcome.Succeeded, entry.Outcome);
+            Assert.Equal("control.recovery.runtime-execution-recovery-reconcile.succeeded", entry.EventType);
         }
 
         /// <summary>
@@ -214,26 +210,16 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.Observability
                     () => reconciler.ReconcileAsync(CancellationToken.None))
                 .ConfigureAwait(false);
 
-            Assert.Equal(2, ledger.Entries.Count);
+            var entry = Assert.Single(ledger.Entries);
 
-            Assert.Equal(AiDecisionLedgerCategory.Recovery, ledger.Entries[0].Category);
-            Assert.Equal(AiDecisionLedgerOutcome.Started, ledger.Entries[0].Outcome);
-            Assert.Equal("control.recovery.runtime-execution-recovery-reconcile.operationstarted", ledger.Entries[0].EventType);
-
-            Assert.Equal(AiDecisionLedgerCategory.Recovery, ledger.Entries[1].Category);
-            Assert.Equal(AiDecisionLedgerOutcome.Failed, ledger.Entries[1].Outcome);
-            Assert.Equal(nameof(InvalidOperationException), ledger.Entries[1].Reason);
-            Assert.Equal("control.recovery.runtime-execution-recovery-reconcile.failed", ledger.Entries[1].EventType);
-            Assert.Equal(typeof(InvalidOperationException).FullName, ledger.Entries[1].Metadata!["exception.type"]);
-            Assert.Equal("registry failed", ledger.Entries[1].Metadata!["exception.message"]);
+            Assert.Equal(AiDecisionLedgerCategory.Recovery, entry.Category);
+            Assert.Equal(AiDecisionLedgerOutcome.Failed, entry.Outcome);
+            Assert.Equal(nameof(InvalidOperationException), entry.Reason);
+            Assert.Equal("control.recovery.runtime-execution-recovery-reconcile.failed", entry.EventType);
+            Assert.Equal(typeof(InvalidOperationException).FullName, entry.Metadata!["exception.type"]);
+            Assert.Equal("registry failed", entry.Metadata!["exception.message"]);
         }
 
-        /// <summary>
-        /// Runtime instance registry that always throws when listed.
-        /// </summary>
-        /// <summary>
-        /// Runtime instance registry that always throws when listed.
-        /// </summary>
         /// <summary>
         /// Runtime instance registry that always throws when listed.
         /// </summary>

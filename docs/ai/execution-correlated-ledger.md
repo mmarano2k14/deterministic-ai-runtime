@@ -1,14 +1,10 @@
 # Execution-Correlated Decision Ledger
 
-Status: Implemented foundation. Replay-specific ledger events are deferred until the official Replay API.
+Status: Implemented and validated for execution-correlated runtime decisions, replay ledger evidence, control-plane causal chain tracing, runtime recovery decisions, tenant-scoped ledger queries, and process-host crash recovery proof.
 
-This document describes the execution-correlated decision ledger foundations of the Deterministic AI Runtime.
+This document describes the execution-correlated decision ledger foundations of the Deterministic AI Runtime, including the newer control-plane ledger and recovery proof surfaces validated by HTTP process-host crash recovery scenarios.
 
 The ledger records structured runtime decisions and lifecycle transitions that are correlated by `ExecutionId`, `RunId`, step identity, worker/runtime instance, claim token, and optional concurrency context.
-
-The complete technical reference is preserved in:
-
-- [runtime-internals.md](../runtime-internals.md)
 
 ---
 
@@ -65,9 +61,120 @@ Implemented ledger areas include:
 - storage persistence failure
 - finalization lifecycle and race outcomes
 
-Replay-specific ledger events are intentionally not implemented yet.
+Replay-specific ledger evidence is now validated through the replay / MCP observability path.
 
-They will be added with the official Replay API, where replay orchestration, replay validation, comparison, and lineage can be recorded at the correct API boundary.
+Replay, ledger, trace, and replay-report readability are part of the production recovery proof. The low-level runtime still avoids emitting replay intent prematurely from places that do not own replay orchestration, but replay evidence itself is no longer only a future concept.
+
+---
+
+## Runtime Ledger vs Control-Plane Ledger
+
+The ledger now covers two complementary evidence surfaces.
+
+```text
+Execution-correlated ledger
+= facts and decisions about a specific DAG execution, run, step, worker, retry, recovery, policy, concurrency lease, snapshot, replay, or trace.
+
+Control-plane ledger
+= facts and decisions about infrastructure orchestration: scale-out request persistence, watcher observation, provider selection, runtime host creation, capacity visibility, registry/capacity lookup, recovery reconciliation, redispatch, and tenant isolation.
+```
+
+Both surfaces are required for production recovery proof.
+
+Execution-correlated evidence can show that an execution resumed and completed.
+
+Control-plane evidence can show why a replacement runtime was created, which provider was selected, when capacity became visible, which assigned work was reconciled, and whether any tenant-scoped query leaked across tenants.
+
+The production process-host crash recovery scenarios validate both surfaces together.
+
+---
+
+## Runtime Crash Recovery Ledger Scope
+
+Runtime instance crash recovery is different from stale step recovery.
+
+Step recovery records that a worker abandoned a claimed step and that the step became eligible again.
+
+Runtime instance crash recovery records that an entire runtime process became unsafe and that all work assigned to it had to be reconciled.
+
+Assigned work can include:
+
+```text
+InFlightExecution
+    Durable ExecutionId already exists.
+    Recovery must resume the same ExecutionId on replacement capacity.
+
+LocalQueued
+    SharedRunId exists.
+    LocalRunId exists.
+    ExecutionId may not exist yet.
+    Recovery must redispatch the durable SharedRunId without duplicate submission.
+```
+
+The ledger must preserve the distinction between these cases.
+
+In-flight recovery is execution-correlated by `ExecutionId`.
+
+Local-queued recovery is primarily correlated by `SharedRunId` and failed `LocalRunId` until the replacement runtime creates the durable `ExecutionId`.
+
+This is why the ledger keeps `RunId`, `LocalRunId`, `SharedRunId`, and `ExecutionId` separate instead of collapsing them into one id.
+
+---
+
+## Validated Control-Plane Causal Chain
+
+The process-host recovery scenario validates a control-plane causal chain across infrastructure and recovery decisions.
+
+Validated domains include:
+
+```text
+scale-out request persisted
+scale-out watcher observed request
+provider selected
+runtime host manager created host
+process runtime host started
+runtime capacity became visible
+runtime instance visible through registry/capacity lookup
+execution recovery reconciled assigned work
+recovered work redispatched
+```
+
+Important boundary:
+
+```text
+Health reconciliation detects unsafe capacity.
+Execution recovery reconciliation recovers assigned work.
+HTTP provider reports transport and endpoint failure reasons.
+HTTP provider does not own runtime recovery.
+Runtime lifecycle owners create or attach replacement capacity.
+```
+
+The ledger should never imply that the HTTP provider directly kills, restarts, or replaces runtime instances.
+
+The HTTP provider can emit or return endpoint failure signals such as `http-circuit-open`, but the control plane health and recovery layers decide what that means for routing and assigned work.
+
+---
+
+## Tenant-Scoped Ledger Proof
+
+The ledger is not only an internal diagnostics stream.
+
+It is queried through the MCP observability surface under a tenant-scoped `ExecutionContext`.
+
+Validated crash recovery proof includes direct tenant-scoped ledger queries showing:
+
+```text
+TenantBEntriesVisibleFromTenantA = 0
+TenantAEntriesVisibleFromTenantB = 0
+SafeTenantRecoveryEntriesVisibleFromImpactedQueries = 0
+CrossTenantLedgerLeakDetected = false
+```
+
+This matters because multi-tenant recovery is not proven only by completing impacted work.
+
+It is also proven by showing that unrelated tenants do not receive recovery entries, recovery forensics, or ledger contamination.
+
+The safe tenant in the production recovery scenario completes normal work, exposes replay / ledger / trace evidence, and remains absent from the recovery ledger surface.
 
 ---
 
@@ -246,7 +353,7 @@ Implemented or foundation-ready categories include:
 - `Finalization`
 - `Replay`
 
-Replay constants exist as a planned category, but replay events are intentionally deferred until the official Replay API.
+Replay constants are used by the replay / MCP observability path where replay intent, replay validation, comparison, and lineage are known.
 
 ---
 
@@ -421,7 +528,7 @@ Typical metadata includes:
 
 ## Recovery Events
 
-Recovery events describe distributed recovery after stale running work is detected.
+Recovery events describe both stale running-step recovery and runtime instance crash recovery.
 
 Current recovery events include:
 
@@ -430,17 +537,32 @@ recovery.detected
 recovery.applied
 recovery.step_recovered
 recovery.execution_recovered
+execution.recovery.candidate.detected
+shared.run.requeued.for.resume
+failed.local.run.marked.requeued.for.recovery
+replacement.runtime.selected
+replacement.local.run.registered
+resume.context.seeded
+dag.resume.started
+dag.resume.completed
+execution.recovery.completed
+SharedRunRequeuedForLocalQueuedRecovery
 ```
 
-The current runtime records step-level recovery events:
+The runtime records step-level recovery events when timed-out running steps are recovered through the distributed DAG store.
 
-- `recovery.detected`
-- `recovery.applied`
-- `recovery.step_recovered`
+The process-host recovery path also validates execution-level and assigned-work recovery evidence:
 
-These events are emitted when timed-out running steps are recovered through the distributed DAG store.
+- in-flight execution recovery candidates are detected;
+- the shared run is requeued for resume;
+- the failed local run is marked requeued for recovery;
+- replacement runtime capacity is selected;
+- replacement local run is registered;
+- resume context is seeded;
+- DAG resume starts and completes;
+- execution recovery is completed.
 
-`recovery.execution_recovered` is reserved for future execution-level recovery flows.
+For local-queued work, the ledger/forensics path records durable shared-run redispatch without pretending that the dead runtime local queue survived.
 
 ---
 
@@ -711,7 +833,7 @@ It is an expected distributed coordination outcome.
 
 ## Replay Events
 
-Replay event constants exist but replay ledger recording is intentionally deferred.
+Replay events are emitted or surfaced by the replay / MCP observability path where replay intent, replay validation, comparison, and lineage are known.
 
 Replay event constants include:
 
@@ -726,11 +848,71 @@ replay.convergence_proof_completed
 replay.convergence_proof_failed
 ```
 
-These events should be recorded later by the official Replay API and replay orchestration layer.
+The core runtime still must not emit replay intent prematurely from low-level execution code.
 
-They should not be emitted prematurely by the core runtime.
+The validated boundary is:
 
-Replay-specific audit should live where replay intent, replay validation, comparison, and lineage are known.
+```text
+runtime execution produces durable state, ledger, trace, and snapshots
+    ↓
+replay / MCP observability owns replay request and validation
+    ↓
+replay report, replay ledger, and replay trace become queryable proof
+```
+
+Production crash recovery scenarios validate replay evidence after recovery for both impacted tenants and the safe tenant.
+
+---
+
+## Recovery Replay / Ledger / Trace Proof
+
+A recovered execution is not considered fully proven only because the DAG reaches `Completed`.
+
+The recovery proof must also show:
+
+```text
+execution ledger evidence
+execution trace evidence
+completion evidence
+step completion evidence
+replay report readable
+replay ledger readable
+replay trace readable
+strict replay validation
+Synthetic = false
+```
+
+The process-host crash recovery scenario validates this for all executions in the scenario, including recovered executions and safe-tenant executions.
+
+This is the difference between operational recovery and audit recovery:
+
+```text
+Operational recovery
+= work completed after failure.
+
+Audit recovery
+= work completed after failure and remains explainable through replay, ledger, trace, and forensics.
+```
+
+---
+
+## Forensics Relationship
+
+The decision ledger and runtime recovery forensics are related but not identical.
+
+```text
+Ledger
+= structured decision and lifecycle evidence across runtime and control-plane domains.
+
+Forensics
+= per-incident / per-work-item recovery timeline tied to a RuntimeFailureIncidentId and ForensicsId.
+```
+
+Forensics gives a compact causal timeline for each recovered work item.
+
+The ledger gives the broader runtime and control-plane evidence surface around those decisions.
+
+A production recovery proof should be able to query both.
 
 ---
 
@@ -909,7 +1091,7 @@ TIMELINE
 
 Some event types exist but are intentionally not fully emitted yet.
 
-Deferred events include:
+Deferred or placement-sensitive events include:
 
 - `dag.step_became_ready`
 - `dag.step_blocked`
@@ -917,8 +1099,8 @@ Deferred events include:
 - `dag.step_skipped`
 - `retry.attempt_started`
 - `retry.attempt_completed`
-- `recovery.execution_recovered`
-- replay events
+
+Execution-level recovery and replay evidence are no longer treated as globally deferred concepts. They are emitted or surfaced at the layers that own the corresponding decision: execution recovery reconciliation, replay orchestration, MCP observability, and recovery forensics.
 
 These are deferred because they require precise runtime placement.
 
@@ -935,7 +1117,7 @@ The ledger follows these principles:
 1. Record structured runtime decisions, not noisy log lines.
 2. Correlate by `ExecutionId` wherever possible.
 3. Preserve `RunId` vs `ExecutionId` separation.
-4. Do not emit replay events before the Replay API owns replay intent.
+4. Emit replay evidence only from the replay / MCP observability boundary that owns replay intent.
 5. Do not put orchestration decisions inside low-level stores unless necessary.
 6. Prefer runtime-layer ledger emission for runtime decisions.
 7. Keep store-level code focused on atomic persistence.
@@ -972,7 +1154,7 @@ Together, snapshots, replay, resolver reconstruction, and decision ledger entrie
 - retention and compaction inspection
 - finalization race explanation
 
-Replay-specific ledger events remain planned for the Replay API.
+Replay-specific ledger evidence is produced by the replay / MCP observability boundary, while low-level runtime code still avoids emitting replay intent prematurely.
 
 ---
 
@@ -986,7 +1168,7 @@ Replay-specific ledger events remain planned for the Replay API.
 | Claim ledger | Implemented |
 | Step execution ledger | Implemented |
 | Retry decision ledger | Implemented |
-| Recovery decision ledger | Implemented |
+| Recovery decision ledger | Implemented / validated for stale step and runtime crash recovery evidence |
 | Policy decision ledger | Implemented |
 | Concurrency ledger | Implemented |
 | Execution control ledger | Implemented |
@@ -995,9 +1177,12 @@ Replay-specific ledger events remain planned for the Replay API.
 | Snapshot created ledger | Implemented |
 | Storage persistence failure ledger | Implemented |
 | Finalization ledger | Implemented |
-| Replay ledger | Deferred until Replay API |
-| Full audit API | Planned |
-| Replay decision lineage | Planned |
+| Control-plane causal chain ledger | Implemented / validated |
+| Runtime recovery causal evidence | Implemented / validated |
+| Safe tenant ledger non-contamination proof | Implemented / validated |
+| Replay ledger / replay evidence | Implemented / validated through replay and MCP observability path |
+| Tenant-scoped MCP ledger query API | Implemented / validated |
+| Replay decision lineage | Foundation implemented / validated where replay evidence is produced |
 | UI / dashboard | Planned |
 
 ---
@@ -1017,7 +1202,9 @@ Replay-specific ledger events remain planned for the Replay API.
 | Retry ledger helper | Records retry decision outcomes after persisted failure transitions. |
 | Snapshot service | Records snapshot persistence and storage failure events. |
 | Finalization service | Records terminal finalization events and race outcomes. |
-| Future Replay API | Will record replay-specific events and decision lineage. |
+| Replay / MCP observability boundary | Records or exposes replay-specific events, replay evidence, replay ledger, replay trace, and decision lineage where replay intent is known. |
+| Runtime health reconciler | Produces unsafe runtime capacity decisions that influence routing and recovery, without owning work redispatch. |
+| Execution recovery reconciler | Records assigned-work recovery decisions for unsafe runtime instances and separates in-flight resume from local-queued redispatch. |
 
 ---
 
@@ -1032,6 +1219,10 @@ Replay-specific ledger events remain planned for the Replay API.
 - [Policy-Driven Execution](policy-driven-execution.md)
 - [Config-Driven Runtime](config-driven-runtime.md)
 - [Replay and Audit](replay-and-audit.md)
+- [Recovery Replay Ledger Trace Proof](recovery-replay-ledger-trace-proof.md)
+- [Runtime Process Crash Recovery](runtime-process-crash-recovery.md)
+- [Runtime Recovery Forensics](runtime-recovery-forensics.md)
+- [Control-Plane Ledger Causal Chain](control-plane-ledger-causal-chain.md)
 - [Observability](observability.md)
 - [Testing Strategy](testing-strategy.md)
 
@@ -1043,6 +1234,3 @@ This document is a focused extraction and update based on the current execution-
 
 The original technical depth remains preserved in:
 
-- [runtime-internals.md](../runtime-internals.md)
-
-Do not remove content from `runtime-internals.md` until the extracted documentation has been reviewed and validated.
