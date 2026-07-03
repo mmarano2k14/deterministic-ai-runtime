@@ -1,0 +1,17 @@
+syntax = "proto3";
+
+option csharp_namespace = "Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Grpc";
+
+package multiplexed.ai.runtime.controlplane.runtimeinstances.providers.grpc;
+
+service AiRuntimeInstanceCommandGrpc {
+  rpc ExecuteCommand (AiRuntimeInstanceGrpcCommandRequest) returns (AiRuntimeInstanceGrpcCommandResponse);
+}
+
+message AiRuntimeInstanceGrpcCommandRequest {
+  string request_json = 1;
+}
+
+message AiRuntimeInstanceGrpcCommandResponse {
+  string response_json = 1;
+}
