@@ -479,7 +479,7 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
                     break;
 
                 case AiMcpHostMode.ControlPlaneWithGrpcRuntimeInstances:
-                    services.AddAiGrpcRuntimeInstanceProvider();
+                    services.AddAiGrpcRuntimeInstanceScaleOutProvider();
 
                     LogHostedServiceRegistrations(
                         services,
@@ -1031,6 +1031,7 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
 
                 case AiMcpHostMode.ControlPlaneWithLocalRuntimeInstances:
                 case AiMcpHostMode.ControlPlaneWithHttpRuntimeInstances:
+                case AiMcpHostMode.ControlPlaneWithGrpcRuntimeInstances:
                     aiEngineOptions.ControlPlane.EnableDiscovery = true;
                     aiEngineOptions.ControlPlane.PublishDiscovery = true;
                     aiEngineOptions.ControlPlane.RequireDiscovery = true;

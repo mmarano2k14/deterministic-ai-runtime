@@ -20,6 +20,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
     /// AiHttpRuntimeScaleOut                 -> disabled
     /// AiGrpcRuntimeScaleOut                 -> HostManager / Process
     /// RuntimeInstanceOnly child transport   -> grpc
+    /// RuntimeInstanceOnly Kestrel transport -> HTTP/2
     /// </code>
     ///
     /// This avoids duplicating the large HTTP production scenario configuration while
@@ -49,10 +50,21 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                     controlPlaneId,
                     runtimeHostAssemblyPath);
 
-            ApplyGrpcControlPlaneMode(settings, controlPlaneId);
-            ApplyGrpcScaleOutSettings(settings);
-            ApplyGrpcRuntimeProcessTransportSettings(settings);
-            ApplyGrpcProviderSettings(settings);
+            ApplyGrpcControlPlaneMode(
+                settings,
+                controlPlaneId);
+
+            ApplyGrpcScaleOutSettings(
+                settings);
+
+            ApplyGrpcRuntimeProcessTransportSettings(
+                settings);
+
+            ApplyGrpcProviderSettings(
+                settings);
+
+            WriteGrpcSettingsDebug(
+                settings);
 
             return settings;
         }
@@ -86,12 +98,14 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
         private static void ApplyGrpcScaleOutSettings(
             Dictionary<string, string?> settings)
         {
+            settings["AiRuntimeScaleOutRequestWatcher:Enabled"] = "true";
+
             settings["AiHttpRuntimeScaleOut:Enabled"] = "false";
 
             settings["AiGrpcRuntimeScaleOut:Enabled"] = "true";
             settings["AiGrpcRuntimeScaleOut:Mode"] = "HostManager";
             settings["AiGrpcRuntimeScaleOut:HostCreationMode"] = "Process";
-            settings["AiGrpcRuntimeScaleOut:RequireReadiness"] = "true";
+            settings["AiGrpcRuntimeScaleOut:RequireReadiness"] = "false";
             settings["AiGrpcRuntimeScaleOut:ReadinessTimeoutSeconds"] = "30";
             settings["AiGrpcRuntimeScaleOut:ReadinessPollIntervalMilliseconds"] = "100";
             settings["AiGrpcRuntimeScaleOut:DefaultRuntimeInstanceIdPrefix"] = "grpc-runtime";
@@ -139,6 +153,11 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 settings,
                 "AiRuntimeInstanceRegistration:Metadata:deployment",
                 "test-grpc-runtime-process");
+
+            ApplyProcessEnvironmentSetting(
+                settings,
+                "Kestrel:EndpointDefaults:Protocols",
+                "Http2");
         }
 
         /// <summary>
@@ -149,6 +168,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             Dictionary<string, string?> settings)
         {
             settings["AiGrpcRuntimeInstanceProvider:DispatchTimeout"] = "00:00:30";
+            settings["AiGrpcRuntimeInstanceProvider:EnableCircuitBreaker"] = "false";
+            settings["AiGrpcRuntimeInstanceProvider:CircuitBreakerFailureThreshold"] = "100";
         }
 
         /// <summary>
@@ -163,6 +184,26 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             string value)
         {
             settings[$"AiRuntimeProcessHostCreation:EnvironmentVariables:{key.Replace(":", "__", StringComparison.Ordinal)}"] = value;
+        }
+
+        /// <summary>
+        /// Writes temporary gRPC settings diagnostics for process-host scale-out debugging.
+        /// </summary>
+        /// <param name="settings">The settings dictionary.</param>
+        private static void WriteGrpcSettingsDebug(
+            Dictionary<string, string?> settings)
+        {
+            foreach (var setting in settings.OrderBy(pair => pair.Key, StringComparer.Ordinal))
+            {
+                if (setting.Key.Contains("Provider", StringComparison.OrdinalIgnoreCase) ||
+                    setting.Key.Contains("ScaleOut", StringComparison.OrdinalIgnoreCase) ||
+                    setting.Key.Contains("Tenant", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(setting.Value, "http", StringComparison.OrdinalIgnoreCase))
+                {
+                    Console.WriteLine(
+                        $"[GRPC SETTINGS DEBUG] {setting.Key}='{setting.Value}'");
+                }
+            }
         }
     }
 }
