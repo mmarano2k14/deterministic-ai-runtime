@@ -1,36 +1,36 @@
 ﻿using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Definitions;
-using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Providers.Base;
+using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Providers.Base.Runners;
 using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Results;
 using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Runners;
 using Xunit.Abstractions;
 
-namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Providers.Grpc
+namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Providers.Http.Runners
 {
     /// <summary>
-    /// Runs provider-agnostic production runtime scenarios against the gRPC provider using process-based runtime host creation.
+    /// Runs provider-agnostic production runtime scenarios against the HTTP provider using process-based runtime host creation.
     /// </summary>
-    public sealed class GrpcProcessHostProductionScenarioRunner : IProductionRuntimeScenarioRunner
+    public sealed class HttpProcessHostProductionScenarioRunner : IProductionRuntimeScenarioRunner
     {
         private readonly ProcessHostProductionScenarioRunner inner;
 
         /// <summary>
-        /// Initializes a new instance of the <see cref="GrpcProcessHostProductionScenarioRunner"/> class.
+        /// Initializes a new instance of the <see cref="HttpProcessHostProductionScenarioRunner"/> class.
         /// </summary>
         /// <param name="output">The test output helper.</param>
-        public GrpcProcessHostProductionScenarioRunner(
+        public HttpProcessHostProductionScenarioRunner(
             ITestOutputHelper output)
         {
             inner =
                 new ProcessHostProductionScenarioRunner(
-                    "grpc-process-host",
-                    "GRPC PROCESS PRODUCTION",
-                    "grpc",
-                    GrpcProcessHostProductionScenarioSettingsBuilder.Build,
+                    "http-process-host",
+                    "HTTP PROCESS PRODUCTION",
+                    "http",
+                    HttpProcessHostProductionScenarioSettingsBuilder.Build,
                     output);
         }
 
         /// <inheritdoc />
-        public string ProviderLabel => "grpc-process-host";
+        public string ProviderLabel => "http-process-host";
 
         /// <inheritdoc />
         public Task<ProductionRuntimeScenarioResult> RunAsync(

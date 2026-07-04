@@ -14,7 +14,7 @@ using System.Text.Json;
 using Xunit;
 using Xunit.Abstractions;
 
-namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Providers.Base
+namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Providers.Base.Runners
 {
     /// <summary>
     /// Runs provider-agnostic production runtime scenarios against process-host remote runtime providers.

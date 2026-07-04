@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic;
 using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Definitions;
 
-namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Providers.Http
+namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Providers.Http.Runners
 {
     /// <summary>
     /// Builds MCP host settings for production HTTP process-host scenarios.

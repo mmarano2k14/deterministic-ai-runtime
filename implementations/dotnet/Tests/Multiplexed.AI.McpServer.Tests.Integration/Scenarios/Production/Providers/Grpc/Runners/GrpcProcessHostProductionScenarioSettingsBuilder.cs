@@ -1,7 +1,7 @@
 ﻿using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Definitions;
-using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Providers.Http;
+using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Providers.Http.Runners;
 
-namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Providers.Grpc
+namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Providers.Grpc.Runners
 {
     /// <summary>
     /// Builds MCP host settings for production gRPC process-host scenarios.
