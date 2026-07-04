@@ -1,10 +1,10 @@
 # Runtime Discovery, Registry, and Capacity
 
-Status: Implemented foundation / validated for MCP, Redis, local runtime pools, Redis-backed scale-out request lifecycle, local runtime scale-out, fulfilled-run requeue, HTTP pooled runtime scenarios, process-host HTTP runtime crash recovery, unsafe runtime capacity suppression, fulfilled replacement capacity visibility, and multi-tenant runtime isolation across shared, dedicated, and hybrid tenant modes.
+Status: Implemented foundation / validated for MCP, Redis, local runtime pools, Redis-backed scale-out request lifecycle, local runtime scale-out, fulfilled-run requeue, HTTP pooled runtime scenarios, process-host HTTP and gRPC runtime crash recovery, gRPC process-host scale-out and dispatch, unsafe runtime capacity suppression, fulfilled replacement capacity visibility, and multi-tenant runtime isolation across shared, dedicated, and hybrid tenant modes.
 
 This document describes the runtime discovery, registry, and capacity model used by the Deterministic AI Runtime control plane.
 
-It explains how MCP control-plane hosts, runtime-only hosts, runtime instance registration, runtime capacity publication, tenant-aware runtime visibility, shared queue pump readiness, provider dispatch, provider-based scale-out, fulfilled-run requeue, unsafe runtime detection, crash recovery visibility, replacement runtime capacity, and shutdown cleanup work together.
+It explains how MCP control-plane hosts, runtime-only hosts, runtime instance registration, runtime capacity publication, tenant-aware runtime visibility, shared queue pump readiness, provider dispatch, provider-based scale-out, fulfilled-run requeue, HTTP/gRPC runtime transport metadata, unsafe runtime detection, crash recovery visibility, replacement runtime capacity, and shutdown cleanup work together.
 
 This document complements:
 
@@ -13,6 +13,10 @@ This document complements:
 - [Multi-Tenant Control Plane Isolation](multi-tenant-control-plane-isolation.md)
 - [MCP Server as Runtime Control Plane](mcp-server-control-plane.md)
 - [Runtime Instance Provider Model](runtime-instance-provider-model.md)
+- [HTTP Runtime Provider](http-runtime-provider.md)
+- [gRPC Runtime Provider](grpc-runtime-provider.md)
+- [HTTP Runtime Provider](http-runtime-provider.md)
+- [gRPC Runtime Provider](grpc-runtime-provider.md)
 - [Shared Queue Pump and Worker Capacity](shared-queue-pump-and-worker-capacity.md)
 - [Testing Strategy](testing-strategy.md)
 
@@ -51,6 +55,7 @@ This layer is required for:
 - runtime-only host registration
 - local runtime instance pools
 - HTTP pooled runtime providers
+- gRPC process-host runtime providers
 - shared queue pump readiness
 - tenant-aware dispatch-time admission
 - tenant-visible registry and capacity filtering
@@ -62,6 +67,7 @@ This layer is required for:
 - runtime crash recovery reconciliation
 - tenant-scoped replacement capacity selection
 - safe-tenant non-impact validation
+- gRPC runtime process-host dispatch and scale-out
 - future Kubernetes runtime pods
 - future autoscaling and dashboards.
 
@@ -277,7 +283,7 @@ This affects:
 - local runtime queue enqueue
 - background controller processing
 - direct runtime integration tests
-- future HTTP/gRPC/Kubernetes provider paths.
+- HTTP, gRPC, and future Kubernetes provider paths.
 
 ---
 
@@ -660,17 +666,22 @@ provider.transport = http
 provider.endpoint = http://localhost:5001/runtime-instance/commands
 ```
 
-Future examples:
+Future Redis command queue example:
 
 ```text
 provider.name = redis-command-queue
 provider.commandQueueKey = ai:runtime:runtime-1:commands
 ```
 
+Validated gRPC process-host example:
+
 ```text
 provider.name = grpc
-provider.endpoint = grpc://runtime-1.ai-runtime.svc.cluster.local:5001
+transport.name = grpc
+transport.endpoint = http://localhost:{port}
 ```
+
+The gRPC runtime provider uses HTTP/2 transport on the runtime endpoint. In local process-host tests, the child `RuntimeInstanceOnly` process is configured with Kestrel HTTP/2 support before it is used for gRPC dispatch.
 
 Provider metadata must identify the transport.
 
@@ -739,6 +750,30 @@ MCP / shared queue pump can dispatch
 The parent HTTP host is not the dispatch target.
 
 The child runtime instances are the dispatch targets.
+
+For gRPC process-host runtime hosting:
+
+```text
+ControlPlaneWithGrpcRuntimeInstances
+    ↓
+Redis scale-out request with providerHint = grpc
+    ↓
+GrpcAiRuntimeInstanceProvider as IAiRuntimeScaleOutProvider
+    ↓
+Grpc runtime scale-out provisioner / Runtime Host Manager
+    ↓
+ProcessAiRuntimeHostCreationStrategy
+    ↓
+RuntimeInstanceOnly process starts with gRPC transport
+    ↓
+runtime registers provider.name = grpc / transport.name = grpc
+    ↓
+capacity descriptor becomes tenant-visible
+    ↓
+shared queue dispatches through gRPC provider
+```
+
+The gRPC process-host model still uses registry and capacity publication as the dispatchability source of truth. The process being started is not enough; the runtime must self-register and publish tenant-visible capacity before admission can select it.
 
 For dynamically created local runtime instances, the scale-out registration flow is:
 
@@ -1186,6 +1221,47 @@ Runtime registry/capacity visibility must remain tenant-aware.
 
 ---
 
+## gRPC Process-Host Runtime Model
+
+The validated gRPC runtime model is:
+
+```text
+MCP Control Plane
+    ↓
+ControlPlaneWithGrpcRuntimeInstances
+    ↓
+Redis scale-out request
+    ↓
+gRPC Runtime Provider
+    ↓
+Runtime Host Manager
+    ↓
+ProcessAiRuntimeHostCreationStrategy
+    ↓
+RuntimeInstanceOnly process
+    ↓
+gRPC command transport over HTTP/2
+    ↓
+runtime local queue
+    ↓
+DAG execution
+```
+
+The same registry and capacity model is used for gRPC as for HTTP. The runtime process must publish:
+
+```text
+ProviderName = grpc
+provider.name = grpc
+transport.name = grpc
+transport.endpoint = http://localhost:{port}
+CanAcceptRun = true
+Status = Ready
+```
+
+The current gRPC process-host validation uses registry/capacity readiness as the practical dispatchability signal. The older HTTP readiness endpoint is not valid for gRPC-only command service mapping. A future hardening step should add provider-aware readiness, either with a gRPC health check or a shared registry/capacity readiness waiter.
+
+The validated gRPC crash recovery scenarios prove that replacement runtime capacity becomes visible through the same registry and capacity path before recovered work is redispatched or resumed.
+
 ## MCP Visibility
 
 MCP runtime instance tools should expose registry and capacity visibility.
@@ -1229,7 +1305,7 @@ MCP visibility must still respect tenant visibility rules when a tenant context 
 
 ## Validated Evidence
 
-The current implementation has been validated through MCP, Redis, local runtime pool, tenant-aware local scale-out, and HTTP pooled runtime provider scenarios.
+The current implementation has been validated through MCP, Redis, local runtime pool, tenant-aware local scale-out, HTTP pooled runtime provider scenarios, HTTP process-host recovery scenarios, and gRPC process-host recovery scenarios.
 
 Tenant isolation evidence:
 
@@ -1336,6 +1412,21 @@ Cross-tenant ledger leak detected = false
 Replay / ledger / trace / forensics proof validated after convergence
 ```
 
+gRPC process-host registry/capacity evidence:
+
+```text
+ControlPlaneWithGrpcRuntimeInstances = validated
+providerHint = grpc = validated
+RuntimeInstanceOnly child process registered ProviderName = grpc
+transport.name = grpc = validated
+Kestrel HTTP/2 transport for gRPC process-host dispatch = validated
+gRPC dispatch to real process-host runtime = validated
+gRPC runtime process kill = validated
+gRPC replacement runtime capacity visible through registry/capacity = validated
+Strict DAG resume over gRPC preserved ExecutionId = validated
+All gRPC process-host crash recovery scenarios = green
+```
+
 --- 
 
 ## Current Status
@@ -1376,6 +1467,9 @@ Replay / ledger / trace / forensics proof validated after convergence
 | Fulfilled scale-out run requeue | Implemented / validated |
 | MCP Redis local scale-out execution | Implemented / validated |
 | HTTP pooled runtime identity | Implemented / validated |
+| gRPC runtime provider registry/capacity metadata | Implemented / validated |
+| gRPC process-host capacity visibility | Implemented / validated |
+| gRPC process-host replacement capacity visibility | Implemented / validated |
 | Shutdown cleanup without late rediscovery | Implemented / validated |
 | Registry/capacity TTL hardening | Planned |
 | Registry self-healing ListAsync cleanup | Planned |
@@ -1392,7 +1486,6 @@ The current implementation does not yet provide:
 - Kubernetes autoscaling adapter
 - Kubernetes pod/deployment scale-out implementation
 - Redis command queue provider
-- gRPC runtime provider
 - production multi-control-plane leader election
 - fully hardened registry/capacity TTL self-healing
 - database-backed tenant runtime settings provider
@@ -1423,7 +1516,7 @@ These are intentionally separate from the current validated discovery, registry,
 | Local Runtime Scaler | Creates tenant-scoped runtime capacity based on `RuntimeInstanceIdPrefix`. |
 | Fulfilled Run Requeue Service | Requeues a shared run after scale-out fulfillment so dispatch stays owned by the pump. |
 | Shared Queue Pump | Waits for readiness and dispatches queued shared runs. |
-| Runtime Provider | Contacts the selected runtime instance through local, HTTP, or future transport. |
+| Runtime Provider | Contacts the selected runtime instance through local, HTTP, gRPC, or future transport. |
 | Local Runtime Queue | Owns `RunId` lifecycle and execution start. |
 | DAG Engine | Owns durable `ExecutionId` execution and deterministic step transitions. |
 
@@ -1436,6 +1529,8 @@ These are intentionally separate from the current validated discovery, registry,
 - [Multi-Tenant Control Plane Isolation](multi-tenant-control-plane-isolation.md)
 - [MCP Server as Runtime Control Plane](mcp-server-control-plane.md)
 - [Runtime Instance Provider Model](runtime-instance-provider-model.md)
+- [HTTP Runtime Provider](http-runtime-provider.md)
+- [gRPC Runtime Provider](grpc-runtime-provider.md)
 - [Shared Queue Pump and Worker Capacity](shared-queue-pump-and-worker-capacity.md)
 - [Shared Runtime Controller / Shared Queue Usage](shared-controller-usage.md)
 - [Testing Strategy](testing-strategy.md)
@@ -1446,4 +1541,6 @@ These are intentionally separate from the current validated discovery, registry,
 
 This document describes the runtime discovery, registry, capacity, tenant visibility, unsafe runtime visibility, and crash recovery capacity foundation.
 
-Do not present Kubernetes autoscaling, gRPC dispatch, Redis command queue dispatch, production dashboard features, database-backed tenant settings, or production multi-control-plane leader election as completed capabilities until they are implemented and validated.
+Do not present Kubernetes autoscaling, Redis command queue dispatch, production dashboard features, database-backed tenant settings, or production multi-control-plane leader election as completed capabilities until they are implemented and validated.
+
+The gRPC runtime provider and gRPC process-host crash recovery path are now implemented and validated. Provider-aware gRPC readiness hardening remains a future improvement.

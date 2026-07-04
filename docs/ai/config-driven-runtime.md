@@ -1,12 +1,18 @@
 # Config-Driven Runtime
 
-Status: Documentation split in progress.
+Status: Implemented / validated for declarative DAG pipeline definitions, step configuration, retry / retention / concurrency policy configuration, provider/model/operation metadata, structured policy definitions, plugin-oriented execution, replay/observability context, and runtime-provider configuration separation across local, HTTP, and gRPC process-host scenarios.
 
 This document describes how the Deterministic AI Runtime uses declarative configuration to define pipeline structure, step behavior, retry, retention, concurrency, providers, models, operations, and runtime policies.
 
+It also clarifies the boundary between **step provider metadata** such as `provider`, `providerKey`, `model`, and `operation`, and **runtime instance provider configuration** such as `provider.name = http` or `provider.name = grpc`. The former belongs to pipeline execution semantics. The latter belongs to control-plane dispatch, runtime hosting, scale-out, and process-host transport.
+
 The complete technical reference is currently preserved in:
 
-- [runtime-internals.md](../runtime-internals.md)
+- [runtime-instance-provider-model.md](runtime-instance-provider-model.md)
+- [http-runtime-provider.md](http-runtime-provider.md)
+- [grpc-runtime-provider.md](grpc-runtime-provider.md)
+- [shared-controller-usage.md](shared-controller-usage.md)
+- [mcp-production-runtime-scenario-framework.md](mcp-production-runtime-scenario-framework.md)
 
 ---
 
@@ -667,6 +673,177 @@ This metadata is used for:
 
 Provider/model/operation metadata should be explicit, stable, and normalized.
 
+
+---
+
+## Runtime Provider Configuration Is a Separate Boundary
+
+The runtime uses the word `provider` in two different layers.
+
+They must not be confused.
+
+### Step provider metadata
+
+Step provider metadata belongs to the pipeline and step execution layer.
+
+Examples:
+
+```text
+config.provider = openai
+config.providerKey = sqlserver
+config.model = gpt-4.1
+config.operation = llm.chat
+```
+
+This metadata helps the runtime and policies understand which domain provider, model, operation, or plugin-specific behavior a step needs.
+
+It can be used by:
+
+```text
+step executors
+RAG providers
+LLM/tool providers
+policy evaluation
+concurrency throttling
+retry diagnostics
+observability
+future cost governance
+```
+
+### Runtime instance provider metadata
+
+Runtime instance provider metadata belongs to the control-plane dispatch and runtime hosting layer.
+
+Examples:
+
+```text
+provider.name = local
+provider.name = http
+provider.name = grpc
+transport.name = http
+transport.name = grpc
+transport.endpoint = http://localhost:5800
+```
+
+This metadata tells the shared controller and runtime provider router how to contact a selected runtime instance.
+
+It can be used by:
+
+```text
+runtime instance provider router
+dispatch provider
+status provider
+control provider
+scale-out provider
+runtime host manager
+registry / capacity descriptors
+MCP runtime visibility
+```
+
+The runtime instance provider layer is configured through host/control-plane settings, not through step definitions.
+
+Examples:
+
+```text
+AiMcpHost:Mode = ControlPlaneWithHttpRuntimeInstances
+AiMcpHost:Mode = ControlPlaneWithGrpcRuntimeInstances
+
+AiRuntimeInstanceRegistration:ProviderName = http
+AiRuntimeInstanceRegistration:ProviderName = grpc
+
+AiHttpRuntimeScaleOut:Enabled = true
+AiGrpcRuntimeScaleOut:Enabled = true
+AiGrpcRuntimeScaleOut:HostCreationMode = Process
+```
+
+The rule is:
+
+```text
+Pipeline config.provider
+    = domain/provider semantics inside a workflow step
+
+Runtime provider.name
+    = transport/runtime-host semantics used by the control plane
+```
+
+Do not use pipeline `config.provider` as the durable runtime transport selector.
+
+Do not use runtime `provider.name` as a substitute for step-level provider/model/operation metadata.
+
+Both are valid, but they belong to different layers.
+
+---
+
+## Process-Host Runtime Configuration
+
+The production scenario framework now validates real process-host runtime execution through provider-specific host configuration.
+
+The HTTP and gRPC process-host paths reuse the same control-plane model:
+
+```text
+MCP submit
+    ↓
+Shared runtime controller
+    ↓
+Tenant-aware admission
+    ↓
+Redis scale-out request
+    ↓
+Scale-out watcher
+    ↓
+Runtime provider selected by providerHint
+    ↓
+Runtime Host Manager
+    ↓
+RuntimeInstanceOnly process
+    ↓
+runtime self-registration
+    ↓
+registry / capacity visibility
+    ↓
+provider dispatch
+    ↓
+DAG execution
+```
+
+The process-host settings are runtime infrastructure settings.
+
+They should remain outside pipeline definitions.
+
+Representative HTTP infrastructure settings:
+
+```text
+AiMcpHost:Mode = ControlPlaneWithHttpRuntimeInstances
+AiRuntimeInstanceRegistration:ProviderName = http
+AiHttpRuntimeScaleOut:Enabled = true
+AiHttpRuntimeScaleOut:HostCreationMode = Process
+AiHttpRuntimeScaleOut:EndpointTemplate = http://127.0.0.1:{port}
+```
+
+Representative gRPC infrastructure settings:
+
+```text
+AiMcpHost:Mode = ControlPlaneWithGrpcRuntimeInstances
+AiRuntimeInstanceRegistration:ProviderName = grpc
+AiGrpcRuntimeScaleOut:Enabled = true
+AiGrpcRuntimeScaleOut:HostCreationMode = Process
+AiGrpcRuntimeScaleOut:EndpointTemplate = http://127.0.0.1:{port}
+Kestrel:EndpointDefaults:Protocols = Http2
+```
+
+The gRPC process-host path requires HTTP/2 support because the runtime command service is exposed through gRPC.
+
+The validated gRPC process-host settings ensure that the child `RuntimeInstanceOnly` process registers with:
+
+```text
+provider.name = grpc
+transport.name = grpc
+transport.endpoint = http://localhost:{port}
+```
+
+This allows admission and provider routing to remain transport-neutral while the actual dispatch transport is gRPC.
+
+
 ---
 
 ## Plugin-Oriented Configuration
@@ -923,6 +1100,8 @@ Useful diagnostic context includes:
 - provider key
 - model
 - operation
+- runtime provider name when relevant
+- runtime transport name when relevant
 - policy key
 - policy kind
 - concurrency scope
@@ -1084,6 +1263,47 @@ Configuration should follow these safety rules:
 
 ---
 
+## Validated Production Configuration Paths
+
+The config-driven runtime model is now validated together with provider-hosted runtime infrastructure.
+
+The pipeline remains declarative and transport-neutral.
+
+The runtime infrastructure decides whether the execution is delivered through local, HTTP, or gRPC runtime instances.
+
+Validated separation:
+
+```text
+Pipeline definition
+    declares DAG, steps, dependencies, inputs, retry, retention, concurrency, provider/model/operation metadata
+
+Runtime host configuration
+    declares control-plane mode, runtime instance provider, transport, scale-out provider, host creation mode, and process-host settings
+```
+
+Validated runtime provider paths include:
+
+```text
+local runtime provider
+HTTP pooled runtime provider
+HTTP process-host runtime provider
+gRPC process-host runtime provider
+```
+
+Validated process-host recovery paths include:
+
+```text
+HTTP RuntimeInstanceOnly process crash recovery
+gRPC RuntimeInstanceOnly process crash recovery
+provider-agnostic process-host crash recovery test base
+```
+
+The same pipeline shape can be executed through different runtime providers without changing the DAG definition.
+
+That is the main architectural value of separating pipeline configuration from runtime provider configuration.
+
+---
+
 ## Validated Behavior
 
 The config-driven runtime model is validated through tests and runtime usage covering:
@@ -1105,6 +1325,11 @@ The config-driven runtime model is validated through tests and runtime usage cov
 - policy-specific configuration payloads
 - backward-compatible policy deserialization
 - plugin-style step execution
+- separation between pipeline provider metadata and runtime instance provider metadata
+- local / HTTP / gRPC runtime provider hosting without changing pipeline definitions
+- HTTP process-host execution with real `RuntimeInstanceOnly` processes
+- gRPC process-host execution with real `RuntimeInstanceOnly` processes
+- provider-agnostic process-host crash recovery proofs using the same pipeline/recovery shape
 
 Public schema documentation and a versioned pipeline registry remain planned work.
 
@@ -1130,6 +1355,10 @@ Public schema documentation and a versioned pipeline registry remain planned wor
 | Legacy `type` compatibility | Implemented / compatibility support |
 | Structured policy definitions | Implemented / validated |
 | Policy-specific config payloads | Implemented / validated |
+| Pipeline provider metadata vs runtime provider metadata separation | Implemented / validated |
+| Runtime provider host configuration separation | Implemented / validated |
+| HTTP process-host runtime configuration path | Implemented / validated |
+| gRPC process-host runtime configuration path | Implemented / validated |
 | Advanced configuration validation | In progress / planned |
 | Public schema documentation | Planned |
 | Versioned pipeline registry | Planned |
@@ -1144,7 +1373,8 @@ Public schema documentation and a versioned pipeline registry remain planned wor
 | Pipeline resolver | Validates and normalizes executable pipeline structure. |
 | Step registry | Maps `stepKey` values to registered executors. |
 | Step executor / plugin | Executes domain-specific behavior for a configured step. |
-| Provider resolver / dispatcher | Resolves provider/providerKey/operation-specific behavior where applicable. |
+| Provider resolver / dispatcher | Resolves provider/providerKey/operation-specific behavior where applicable inside workflow steps. |
+| Runtime instance provider router | Resolves local, HTTP, or gRPC runtime instance transport from registry/capacity metadata. |
 | Retry engine | Resolves and applies `config.retry`. |
 | Retention engine | Resolves and applies `config.retention`. |
 | Concurrency engine | Resolves and applies `config.concurrency`. |
@@ -1161,7 +1391,8 @@ The config-driven runtime model provides:
 - clear workflow definitions
 - dynamic data flow
 - extensible step types
-- provider flexibility
+- step provider flexibility
+- runtime provider transport separation
 - policy-driven runtime governance
 - safe DAG execution
 - replayable and observable behavior
@@ -1181,15 +1412,9 @@ This is what allows the runtime to support real AI workflows instead of simple o
 - [Distributed Concurrency and Throttling](distributed-concurrency-throttling.md)
 - [Replay and Audit](replay-and-audit.md)
 - [Testing Strategy](testing-strategy.md)
+- [Runtime Instance Provider Model](runtime-instance-provider-model.md)
+- [HTTP Runtime Provider](http-runtime-provider.md)
+- [gRPC Runtime Provider](grpc-runtime-provider.md)
+- [MCP Production Runtime Scenario Framework](mcp-production-runtime-scenario-framework.md)
 
----
 
-## Documentation Rule
-
-This document is a focused extraction from the complete technical reference.
-
-The original technical depth remains preserved in:
-
-- [runtime-internals.md](../runtime-internals.md)
-
-Do not remove content from `runtime-internals.md` until the extracted documentation has been reviewed and validated.

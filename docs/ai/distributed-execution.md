@@ -1,745 +1,533 @@
-# Architecture Overview
+# Distributed Execution
 
-Status: Implemented architecture foundation / validated with shared controller, MCP, Redis coordination, Redis-backed scale-out request persistence, local runtime pools, local runtime scale-out, fulfilled-run requeue, HTTP pooled runtime provider scenarios, and end-to-end MCP scale-out execution.
+Status: Implemented / validated foundation with Redis-backed DAG hot state, Redis Lua atomic ownership, distributed workers, multi-runtime-instance execution foundations, tenant-aware shared queue dispatch, durable `ExecutionContextSnapshot` propagation, provider-based local / HTTP / gRPC runtime dispatch, Runtime Host Manager process-host provisioning, real `RuntimeInstanceOnly` process boundaries, runtime health separation, in-flight DAG recovery, local-queued shared-run redispatch, replay / ledger / trace validation, recovery forensics, and multi-tenant safe-tenant non-impact proof.
 
-This document provides a high-level overview of the **Deterministic AI Runtime** architecture.
+This document describes how the **Deterministic AI Runtime** coordinates distributed workers, runtime instances, shared queues, providers, and tenant-scoped control-plane recovery safely.
 
-It also reflects the current control-plane evolution: shared queue pump, queue-first submit mode, direct-dispatch scale-out mode, dispatch-time admission, runtime instance providers, MCP control-plane integration, Redis discovery/registry/capacity coordination, Redis-backed scale-out request coordination, admission reservations, local runtime scale-out, fulfilled-run requeue, HTTP pooled runtime hosting, and worker-capacity visibility.
+This document is one of the core architecture documents. It is not only about worker-level distributed execution. It also describes the distributed identity model that allows the runtime to remain deterministic across:
+
+- multiple workers;
+- multiple runtime instances;
+- shared queue dispatch;
+- provider transports;
+- process-host runtime boundaries;
+- tenant-scoped recovery;
+- replay / ledger / trace proof after failures.
+
+Related documents:
+
+- [Architecture Overview](architecture-overview.md)
+- [Runtime Instance Provider Model](runtime-instance-provider-model.md)
+- [HTTP Runtime Provider](http-runtime-provider.md)
+- [gRPC Runtime Provider](grpc-runtime-provider.md)
+- [Runtime Discovery, Registry, and Capacity](runtime-discovery-registry-capacity.md)
+- [Shared Runtime Controller / Shared Queue Usage](shared-controller-usage.md)
+- [Runtime Process Crash Recovery](runtime-process-crash-recovery.md)
+- [Multi-Tenant Runtime Crash Isolation](multi-tenant-runtime-crash-isolation.md)
+- [Recovery Replay Ledger Trace Proof](recovery-replay-ledger-trace-proof.md)
+- [Testing Strategy](testing-strategy.md)
 
 ---
 
 ## Purpose
 
-The Deterministic AI Runtime is designed to execute production-grade AI workflows as controlled, observable, recoverable, and distributed execution systems.
+Distributed execution is the force of the runtime.
 
-It is not only a framework for calling AI providers.
+The goal is to allow many workers, many runtime instances, multiple process hosts, and multiple tenants to advance AI workflow execution safely without:
 
-It is an execution runtime responsible for:
+- duplicate step execution;
+- duplicate shared run dispatch;
+- broken DAG dependency ordering;
+- stale ownership corruption;
+- uncontrolled parallelism;
+- cross-tenant runtime leakage;
+- unsafe fallback to another tenant's runtime;
+- lost retry state;
+- corrupted terminal lifecycle;
+- non-deterministic final results;
+- recovery contamination of safe tenants;
+- transport providers becoming hidden recovery owners.
 
-- orchestrating DAG-based workflows
-- coordinating distributed workers
-- managing execution state
-- resolving execution and step context
-- enforcing retry and recovery rules
-- controlling memory growth
-- applying concurrency and throttling policies
-- supporting replay and audit foundations
-- exposing observability and tracing foundations
-- exposing runtime control-plane operations
-- coordinating shared queue dispatch
-- supporting queue-first shared run submission
-- managing runtime instance visibility
-- publishing and resolving control-plane discovery
-- publishing runtime capacity descriptors
-- reserving runtime capacity during dispatch
-- exposing runtime worker capacity
-- persisting and processing scale-out requests
-- creating local runtime capacity dynamically through provider-based scale-out
-- requeueing fulfilled scale-out runs for normal shared queue dispatch
-- supporting provider-based local, local scale-out, and HTTP pooled runtime dispatch
+The runtime treats AI workflow execution as a distributed systems problem.
 
-The core idea is simple:
+Workers do not own the workflow.
 
-> AI orchestration becomes a distributed systems problem once AI moves to production.
+Runtime processes do not own the workflow.
 
----
+Transport providers do not own the workflow.
 
-## High-Level Architecture
-
-At a high level, the runtime is composed of the following layers:
+The durable execution state and control-plane records own the workflow.
 
 ```text
-Client / API / MCP Layer
-        ↓
-Control Plane and Shared Queue Layer
-        ↓
-Scale-Out Request and Requeue Layer
-        ↓
-Discovery / Registry / Capacity Layer
-        ↓
-Runtime Provider Dispatch / Scale-Out Layer
-        ↓
-Runtime Orchestration Layer
-        ↓
-Pipeline Resolution Layer
-        ↓
-Context Resolution and Helper Layer
-        ↓
-DAG Execution Engine
-        ↓
-Runtime Instance and Worker Capacity Layer
-        ↓
-Distributed Coordination Layer
-        ↓
-Step Execution / Policy / Resolver Layer
-        ↓
-Persistence / Retention / Observability
+Execution state owns DAG progress.
+SharedRun state owns shared submission lifecycle.
+RuntimeRunExecutionIndex owns assignment visibility.
+Registry/capacity owns runtime routing visibility.
+Ledger/trace/forensics own audit evidence.
 ```
 
-Each layer has a specific responsibility and is intentionally separated from the others.
-
-This separation keeps the runtime modular, testable, extensible, and deterministic.
+This is what makes process failure survivable and tenant isolation provable.
 
 ---
 
-## The Context Resolution Layer Is Central
+## Core Principle
 
-The context resolution and helper layer is the connective tissue of the runtime.
-
-It transforms declarative pipeline configuration and runtime execution state into the concrete contexts required by:
-
-- step executors
-- RAG providers
-- input bindings
-- payload resolvers
-- retry policies
-- retention policies
-- concurrency policies
-- distributed throttling
-- replay validation
-- observability
-
-Without this layer, every engine, runner, plugin, policy, and provider would need to manually reconstruct context from raw execution state.
-
-The core model is:
+The core rule is:
 
 ```text
-Pipeline definition
-        +
-runtime execution state
-        +
-payload references
-        +
-step configuration
-        ↓
-Context Resolution and Helpers
-        ↓
-resolved inputs
-step execution context
-provider/model/operation context
-policy context
-concurrency context
-retention context
-RAG retrieval context
-replay-safe context
+Distributed execution is state-driven, not process-driven.
 ```
 
-This layer allows the runtime to stay clean:
+A worker, process, or provider may disappear.
+
+The workflow must still be explainable and recoverable from durable state.
+
+That requires strict separation between:
 
 ```text
-DAG engine coordinates execution.
-Context helpers prepare runtime context.
-Step plugins execute domain behavior.
-Policies decide runtime behavior.
-Redis/Mongo persist state safely.
+SharedRunId
+    durable shared/control-plane submission identity
+
+LocalRunId
+    runtime-local queue attempt identity
+
+ExecutionId
+    durable DAG execution identity
+
+RuntimeInstanceId
+    runtime capacity / process identity
+
+TenantId
+    durable tenant boundary from ExecutionContextSnapshot
 ```
 
----
+These identities must never be collapsed.
 
-## Main Runtime Layers
+A runtime process can die and be replaced.
 
-### 1. Client / API Layer
+A local run attempt can be abandoned.
 
-The client or API layer is the external entry point into the runtime.
+A provider transport can change from HTTP to gRPC.
 
-It is responsible for:
+But a recovered in-flight DAG execution must keep the same `ExecutionId`.
 
-- submitting pipeline execution requests
-- passing input state
-- receiving execution handles
-- querying execution status
-- retrieving final results
-
-This layer should not contain orchestration logic.
-
-It delegates execution to the runtime.
+A recovered local-queued shared run must keep the same `SharedRunId`.
 
 ---
 
-### 2. Control Plane and Shared Queue Layer
+## Distributed Execution Layers
 
-The control-plane layer exposes operational runtime capabilities without replacing the runtime engine.
-
-It is responsible for:
-
-- shared run submission
-- shared run visibility
-- queue-first submit mode
-- global shared queue coordination
-- shared queue pump and manual drain
-- dispatch-time admission
-- runtime instance registry visibility
-- runtime capacity descriptors
-- Redis control-plane discovery
-- control-plane id resolution
-- admission reservations
-- Redis-backed scale-out requests
-- provider-based scale-out
-- fulfilled scale-out shared run requeue
-- provider-based local and HTTP dispatch
-- runtime queue control
-- execution control
-- replay and observability adapters
-- MCP server tool exposure
-
-This layer operates above local runtime queues.
-
-It does not execute DAG steps directly.
-
-The shared queue provides global coordination before a run is assigned to a runtime instance.
+Distributed execution spans several layers.
 
 ```text
+Client / MCP / API
+    ↓
+RBAC / ExecutionContextSnapshot
+    ↓
 Shared Runtime Controller
-        ↓
-Shared Run Store
-        ↓
-Shared Queue
-        ↓
-Shared Queue Pump / Manual Drain
-        ↓
-Dispatch-Time Admission
-        ↓
-Capacity Reservation / Provider Selection
-        ↓
-Runtime Instance Dispatch
-        ↓
-Local Runtime Queue
+    ↓
+SharedRunStore / SharedQueue
+    ↓
+Dispatch-time admission
+    ↓
+Tenant-visible registry / capacity
+    ↓
+Provider router
+    ↓
+Local / HTTP / gRPC runtime provider
+    ↓
+Runtime local queue
+    ↓
+Runtime background controller
+    ↓
+DAG execution engine
+    ↓
+Redis Lua atomic step ownership
+    ↓
+Step executors
+    ↓
+Retention / replay / ledger / trace
 ```
 
-Queue-first mode uses this layer to persist a shared run and place it in the global queue before selecting a runtime instance.
+The important design point is that the distributed execution guarantee is not limited to Redis step claiming.
 
-Direct-dispatch mode can preserve an admission `RequestScaleOut` decision when no runtime capacity is available.
+Redis step claiming protects the DAG.
 
-The validated scale-out control-plane path is:
+Shared queue claiming protects shared dispatch.
 
-```text
-Shared Runtime Controller
-        ↓
-Run Admission = RequestScaleOut
-        ↓
-SharedRun.Status = ScaleOutRequested
-        ↓
-StoreBackedAiRuntimeScaleOutRequestPublisher
-        ↓
-RedisAiRuntimeScaleOutRequestStore
-        ↓
-AiRuntimeScaleOutRequestWatcherHostedService
-        ↓
-AiRuntimeScaleOutProviderSelector
-        ↓
-LocalAiRuntimeInstanceProvider
-        ↓
-AiLocalRuntimeInstanceScaler
-        ↓
-Runtime instance registered / capacity published
-        ↓
-AiScaleOutFulfilledRunRequeueService
-        ↓
-Shared Queue
-        ↓
-Shared Queue Pump
-        ↓
-Dispatch-Time Admission
-        ↓
-Provider Dispatch
-        ↓
-Local Runtime Queue
-```
+Tenant-aware admission protects runtime selection.
 
-The watcher does not dispatch directly.
+Provider metadata protects transport routing.
 
-It creates capacity and requeues the shared run.
+Runtime health reconciliation protects unsafe capacity suppression.
 
-The pump remains responsible for claim ownership, dispatch-time admission, provider dispatch, and queue/run state updates.
+Execution recovery reconciliation protects work already assigned to a failed runtime.
 
-The current validated control-plane model also includes Redis-backed coordination components:
-
-```text
-MCP Control Plane
-        ↓
-Redis Control-Plane Discovery Store
-        ↓
-ControlPlaneIdResolver
-        ↓
-RuntimeInstanceOnly Host
-        ↓
-Runtime Instance Registry
-        ↓
-Runtime Capacity Store
-        ↓
-Shared Queue Pump Readiness
-        ↓
-Provider Dispatch
-```
-
-The MCP control plane publishes the logical control-plane identity.
-
-Runtime-only hosts resolve that identity before registration and capacity publication.
-
-This ensures that MCP, shared queues, runtime registry entries, and capacity descriptors all use the same logical Redis/control-plane scope.
-
+Replay / ledger / trace / forensics prove the result after convergence.
 
 ---
 
-### 3. Runtime Orchestration Layer
+## Execution Model
 
-The orchestration layer turns an external request into a runtime execution.
+The runtime executes workflows as DAGs.
 
-It is responsible for:
+Each execution is represented by:
 
-- creating execution records
-- assigning execution identity
-- initializing execution state
-- resolving pipeline definitions
-- selecting the correct runtime mode
-- starting execution through the DAG engine or background controller
+- an `ExecutionId`;
+- an execution record;
+- a DAG state;
+- step states;
+- dependency information;
+- retry state;
+- claim ownership metadata;
+- result and payload references;
+- terminal snapshot and replay metadata when applicable.
 
-This layer separates external lifecycle concerns from internal execution logic.
+Workers advance the execution by reading shared state and attempting atomic transitions.
+
+The basic model is:
+
+```text
+Execution state exists
+    ↓
+Workers inspect state
+    ↓
+Ready steps are identified
+    ↓
+Workers attempt atomic claims
+    ↓
+Only one worker wins ownership of each step
+    ↓
+Step executes
+    ↓
+Result is persisted through controlled transition
+    ↓
+Runtime evaluates convergence
+```
+
+Execution is therefore state-driven, not process-driven.
 
 ---
 
-### 4. Pipeline Resolution Layer
+## Redis as Distributed Hot State
 
-Pipeline definitions describe the workflow declaratively.
+Redis is used as the active distributed coordination layer.
 
-Before execution, the runtime resolves the pipeline into an executable structure.
+It stores the hot execution state required to coordinate workers.
 
 This includes:
 
-- validating step names
-- validating dependencies
-- resolving step keys
-- preparing input bindings
-- building the DAG dependency graph
-- attaching configuration such as retry, retention, and concurrency
+- active execution records;
+- step states;
+- claim tokens;
+- claim ownership metadata;
+- retry scheduling metadata;
+- stale running recovery metadata;
+- dependency information;
+- distributed concurrency leases;
+- execution control state;
+- shared run store;
+- shared queue;
+- runtime run execution index;
+- runtime registry;
+- runtime capacity store;
+- control-plane discovery store;
+- scale-out request store;
+- admission reservation store.
 
-The pipeline describes intent.
+Redis is not used only as a cache.
 
-The runtime controls execution.
-
----
-
-### 5. Context Resolution and Helper Layer
-
-The context resolution layer transforms configuration and state into concrete runtime context.
-
-It is responsible for:
-
-- resolving input bindings
-- reading values from execution state
-- resolving previous step outputs
-- rehydrating compacted or externalized payloads
-- extracting provider/model/operation metadata
-- building step execution context
-- building retry policy context
-- building retention policy context
-- building concurrency context
-- building RAG retrieval, merge, and compose context
-- supporting replay-safe fingerprints and comparison helpers
-- keeping orchestration classes smaller and more testable
-
-This layer is central because almost every other runtime component depends on correctly resolved context.
-
-A step should not manually scan raw DAG state.
-
-A policy should not manually reconstruct provider metadata.
-
-A RAG provider should not manually resolve upstream payloads.
-
-The helper layer provides the resolved context.
+It acts as the shared coordination substrate for active execution and control-plane coordination.
 
 ---
 
-### 6. DAG Execution Engine
+## Hot State vs Durable Truth
 
-The DAG execution engine is the core execution coordinator.
+Redis is the hot state layer.
 
-It is responsible for:
-
-- evaluating dependency completion
-- identifying ready steps
-- coordinating step claims
-- enforcing deterministic convergence
-- handling retry-aware execution state
-- finalizing execution status
-
-The engine does not rely on a fixed execution order.
-
-It evaluates state and advances only the steps that are eligible.
-
-The DAG engine should remain orchestration-focused.
-
-Context-building logic belongs in context helpers.
-
----
-
-### 7. Runtime Instance and Worker Capacity Layer
-
-Runtime instances are the execution participants that own local queues and workers.
-
-A runtime instance may be local, HTTP-backed through a pooled runtime host, or later connected through Redis command queues, gRPC, or Kubernetes provider transports.
-
-Each runtime instance publishes visibility and capacity.
-
-In the current HTTP pooled model, the parent HTTP host is transport and hosting infrastructure.
-
-The dispatchable runtime identities are child runtime instances created by the local runtime instance pool:
+MongoDB / payload storage / replay artifacts are durable storage layers.
 
 ```text
-RuntimeInstanceOnly HTTP Host
-    ↓
-Local Runtime Instance Pool
-    ↓
-runtime-http-1
-runtime-http-2
-runtime-http-3
+Redis
+    hot coordination state
+    active DAG state
+    queue ownership
+    runtime visibility
+    admission reservations
+    scale-out lifecycle
+
+MongoDB / payload store / replay artifacts
+    large payloads
+    terminal snapshots
+    archived step data
+    replay foundations
+    long-term audit data
 ```
+
+For runtime crash recovery, there is another important rule:
 
 ```text
-HTTP host identity != dispatch target
-runtime-http-* child instance == dispatch target
+Runtime local queue is volatile.
+Shared/control-plane records are durable truth.
 ```
 
-The local runtime instance infrastructure also supports dynamic scale-out.
+If a runtime process dies, its local queue dies with it.
 
-A control-plane host can start with zero executable local runtime instances when the local pool startup is disabled.
+Recovery must not depend on reading the dead local queue.
 
-Admission can then request scale-out, and the local provider/scaler can create a runtime instance on demand.
-
-Validated local scale-out shape:
+Recovery reconstructs assigned work from:
 
 ```text
-MCP Control Plane
-    Runtime capacity at start = 0
-    ↓
-Submit shared run
-    ↓
-Admission = RequestScaleOut
-    ↓
-Redis scale-out request
-    ↓
-Local runtime scaler
-    ↓
-host-...:mcp-scaleout-runtime-1
-    ↓
-Shared run requeued
-    ↓
-Shared queue pump dispatches
-    ↓
-Runtime run completed
+SharedRunStore
+SharedQueue
+RuntimeRunExecutionIndex
+DAG execution store
+Runtime registry
+Runtime capacity store
+Ledger
+Trace
+Runtime recovery forensics
+Replay artifacts
 ```
 
-Important capacity fields include:
+---
+
+## Atomic Coordination with Redis Lua
+
+Critical state transitions are protected by Redis Lua scripts.
+
+Lua is used because distributed workers or dispatchers may attempt the same operation at the same time.
+
+Atomic Redis Lua transitions protect operations such as:
+
+- creating shared runs;
+- claiming shared queue items;
+- marking shared queue items dispatched;
+- requeueing shared queue items;
+- claiming a ready step;
+- completing an owned step;
+- failing an owned step;
+- moving a failed step to `WaitingForRetry`;
+- recovering stale running steps;
+- applying terminal finalization;
+- enforcing distributed concurrency lease acquisition;
+- creating / checking / releasing admission reservations.
+
+This ensures that multiple workers, runtime instances, pumps, or control-plane loops can compete safely without corrupting state.
+
+---
+
+## Atomic Step Claiming
+
+Step claiming is one of the most important distributed operations.
+
+A worker can execute a step only if it successfully claims it.
+
+A claim operation must verify:
+
+- the execution exists;
+- the step exists;
+- the step is eligible;
+- all dependencies are completed;
+- the step is not already owned;
+- retry timing allows execution;
+- execution control state does not block claims;
+- concurrency admission has succeeded;
+- distributed capacity is available when required.
+
+If the claim succeeds:
+
+- the step moves to `Running`;
+- the worker receives ownership;
+- a claim token is stored;
+- the claim timestamp is recorded.
+
+Only the owning worker can complete or fail that step.
+
+---
+
+## Claim Tokens and Ownership
+
+Each claimed step is protected by a claim token.
+
+The claim token must be provided when the worker attempts to:
+
+- complete the step;
+- fail the step;
+- schedule retry;
+- persist terminal step transition.
+
+If the token does not match, the update is rejected.
+
+Example:
 
 ```text
-WorkerCount
-ActiveWorkerCount
-AvailableWorkerCount
-MaxLocalWorkersPerExecution
-QueuedRunCount
-RunningRunCount
-ActiveRunCount
-QueueCapacity
-MaxConcurrentRuns
-AvailableRunSlots
-IsQueuePaused
-CanAcceptRun
+Worker A claims step
+    ↓
+Worker A becomes slow or crashes
+    ↓
+Recovery releases the stale running step
+    ↓
+Worker B claims and completes the step
+    ↓
+Worker A later wakes up and tries to complete
+    ↓
+Claim token mismatch
+    ↓
+Update rejected
 ```
 
-This layer allows the control plane, MCP tools, and future dashboards to see:
-
-- which runtime instances exist
-- which runtime instances are executable
-- which queues are paused
-- how many run slots are available
-- how many workers are active or free
-- whether a runtime instance can accept another run
-
-`MaxLocalWorkersPerExecution` limits how many local workers from one runtime instance can work on a single execution.
-
-This prevents one execution from consuming the whole local worker pool unless explicitly configured.
+This protects the execution from stale ownership corruption.
 
 ---
 
-### 7. Distributed Coordination Layer
+## Worker Crash Recovery
 
-The runtime uses Redis as the hot coordination layer.
+Distributed execution must assume workers can crash.
 
-Redis is used for:
+When a worker claims a step, the step is associated with claim timing metadata.
 
-- active execution state
-- step state
-- atomic step claims
-- claim ownership
-- retry scheduling
-- recovery coordination
-- distributed concurrency leases
-- execution control state
-- shared run records with durable execution context snapshots
-- shared queue items
-- tenant-aware runtime registry visibility
-- tenant-aware runtime capacity visibility
-- scale-out request records carrying tenant runtime settings
-- shared run store
-- shared queue
-- runtime instance registry
-- runtime capacity store
-- control-plane discovery store
-- admission reservation store
-- scale-out request store
+If the worker crashes while the step is `Running`, the step may remain in running state.
 
-Critical transitions are protected by Redis Lua scripts.
+Recovery logic detects stale running work.
 
-This allows multiple workers or runtime instances to coordinate safely without duplicate step ownership.
+A stale running step can be moved back to `Ready` when its ownership window expires.
 
----
-
-### 8. Step Execution Layer
-
-Steps are executed by registered step executors.
-
-Each step is identified by a `stepKey`.
-
-Examples include:
-
-- RAG retrieval steps
-- RAG merge steps
-- RAG compose steps
-- LLM or prompt steps
-- tool/action steps
-- decision steps
-
-The DAG engine does not hardcode step behavior.
-
-It coordinates execution, while step plugins provide the domain-specific logic.
-
-Step executors receive resolved context from the context resolution layer.
-
----
-
-### 9. Policy and Governance Layer
-
-Policies provide reusable runtime decision logic.
-
-Policy-driven behavior applies to:
-
-- retry decisions
-- retention decisions
-- concurrency admission
-- distributed throttling
-
-The policy layer depends on context helpers to build correct policy context.
-
-Examples:
+Important distinction:
 
 ```text
-Retry policy context
-= failure reason + retry count + step metadata + provider/model/operation
+Retry
+    step logic failed
 
-Retention policy context
-= payload size + completed step count + replay requirements
-
-Concurrency context
-= pipeline + step + provider + model + operation + runtime instance
+Recovery
+    worker ownership disappeared or became stale
 ```
 
-Policies decide.
+Recovery must not consume retry budget.
 
-The runtime applies state transitions safely.
-
----
-
-### 10. Persistence Layer
-
-The persistence layer stores durable execution data.
-
-It is used for:
-
-- large payload storage
-- terminal snapshots
-- replay foundations
-- audit foundations
-- historical inspection
-
-MongoDB is used as the durable storage layer for large execution payloads and snapshots.
-
-Redis remains the hot state layer.
-
-MongoDB acts as the cold durable layer.
-
----
-
-### 11. Retention and Compaction Layer
-
-AI workflows can generate large intermediate payloads.
-
-The retention and compaction layer keeps hot state bounded.
-
-It supports:
-
-- payload externalization
-- compaction
-- eviction
-- hybrid retention
-- resolver-backed rehydration
-
-This prevents Redis from becoming an unbounded memory store.
-
-The context resolver is what allows downstream steps to continue working even when payloads were compacted or evicted from hot state.
-
----
-
-### 12. Replay and Audit Foundations
-
-The runtime includes foundations for replay and auditability.
-
-Current replay foundations include:
-
-- terminal snapshots
-- snapshot restoration
-- deterministic replay validation
-- execution fingerprints
-- restored execution comparison
-
-Replay depends on context helpers to avoid relying on volatile runtime fields such as claim tokens, leases, or worker-local state.
-
-Replay-safe comparison should use stable execution state, payload references, and deterministic fingerprints.
-
-This creates the basis for future official replay APIs and durable decision ledger support.
-
----
-
-### 13. Observability Layer
-
-Observability is built into the runtime.
-
-The runtime tracks:
-
-- execution lifecycle
-- step execution
-- retry decisions
-- recovery events
-- retention actions
-- resolver behavior
-- context resolution failures
-- distributed concurrency admission
-- queue and control-plane activity
-- shared queue pump activity
-- runtime instance capacity
-- worker capacity
-- max local workers per execution
-- effective worker count per execution
-- scale-out request lifecycle
-- fulfilled scale-out run requeue
-- scale-out dispatch and completion
-
-This allows the runtime to be inspected, tested, and eventually monitored through dashboards.
-
----
-
-## Runtime Data Flow
-
-A simplified runtime data flow is:
+A typical worker crash flow is:
 
 ```text
-Client / API / MCP submits pipeline run
-        ↓
-Control-plane identity is resolved / published when required
-        ↓
-Runtime registry and capacity descriptors are visible
-        ↓
-Shared controller may create shared run
-        ↓
-Queue-first mode may enqueue in shared queue
-        ↓
-Direct-dispatch admission may request scale-out
-        ↓
-Scale-out watcher/provider/scaler may create runtime capacity
-        ↓
-Fulfilled scale-out run may be requeued
-        ↓
-Shared queue pump or manual drain may dispatch
-        ↓
-Admission selects a runtime instance
-        ↓
-Reservation/provider dispatch path is used
-        ↓
-Runtime instance local queue receives run
-        ↓
-Runtime creates execution
-        ↓
-Pipeline definition is resolved
-        ↓
-Context helpers prepare execution and step context
-        ↓
-DAG engine evaluates ready steps
-        ↓
-Control and concurrency gates are checked
-        ↓
-Redis Lua claims step ownership
-        ↓
-Step executor receives resolved context
-        ↓
-Step returns result or failure
-        ↓
-Runtime persists transition
-        ↓
-Retention may compact/externalize payloads
-        ↓
-Resolver can rehydrate payloads later
-        ↓
-Finalization creates terminal state / snapshot
+Step is Ready
+    ↓
+Worker A claims step
+    ↓
+Step becomes Running
+    ↓
+Worker A crashes before completion
+    ↓
+Step remains Running
+    ↓
+Recovery detects stale ownership
+    ↓
+Step returns to Ready
+    ↓
+Worker B claims step
+    ↓
+Worker B completes step
 ```
 
-This flow keeps configuration, context, execution, distributed coordination, and persistence separated.
+The runtime guarantee is:
+
+- the step does not remain stuck forever;
+- no invalid completion is accepted;
+- retry count is not consumed by crash recovery;
+- the execution can continue.
 
 ---
 
-## Control Plane
+## Runtime Process Crash Recovery Is Different
 
-The runtime includes a control-plane layer for long-running workflows.
+A worker crash and a runtime process crash are not the same failure.
 
-This includes three related but separate control scopes:
+Worker crash recovery handles stale ownership inside an existing execution.
+
+Runtime process crash recovery handles all work assigned to a runtime instance that became unsafe.
+
+A runtime process crash may include:
 
 ```text
-SharedRunId-level control
-RunId-level control
-ExecutionId-level control
+1 InFlightExecution
+    DAG execution already exists
+    ExecutionId exists
+    recovery must resume same ExecutionId
+
+2 LocalQueued
+    shared run was dispatched to the runtime local queue
+    DAG execution has not started
+    no ExecutionId exists yet
+    recovery must redispatch existing SharedRunId
 ```
 
-`SharedRunId` belongs to the shared runtime controller and shared/global queue.
+The runtime process crash recovery flow is:
 
-`RunId` belongs to one runtime instance local queue.
+```text
+RuntimeInstanceOnly process stops heartbeating / is killed
+    ↓
+RuntimeInstanceHealthReconciler marks capacity unsafe
+    ↓
+Admission stops selecting unsafe runtime capacity
+    ↓
+Execution recovery reconciler enumerates assigned work
+    ↓
+InFlightExecution work is requeued for resume
+    ↓
+LocalQueued shared runs are requeued for redispatch
+    ↓
+Replacement tenant-visible runtime capacity is selected or created
+    ↓
+Recovered work is dispatched to replacement runtime
+    ↓
+Replay / ledger / trace / forensics proof is validated
+```
 
-`ExecutionId` belongs to the durable DAG execution.
+This is validated with real process-host runtime processes, not only in-memory simulation.
 
-### SharedRunId-Level Control
+---
 
-SharedRunId-level control belongs to the shared runtime controller.
+## Shared Queue Distributed Dispatch
 
-It manages:
+Distributed execution starts before the DAG exists.
 
-- shared run records
-- queue-first submit mode
-- global shared queue state
-- shared queue item lifecycle
-- shared queue pump/manual drain
-- dispatch-time admission
-- runtime capacity reservation
-- provider-based dispatch
-- scale-out request persistence
-- fulfilled scale-out run requeue
-- assigned runtime instance id
-- LocalRunId visibility after dispatch
-- ExecutionId visibility after local execution starts
+A shared run can be submitted and queued before any local `RunId` or durable `ExecutionId` exists.
 
-A shared run can exist before a local `RunId` exists.
+Shared queue dispatch protects the distributed assignment boundary.
 
-A local `RunId` appears only after dispatch into a selected runtime instance local queue.
+```text
+SharedRunStore
+    owns durable shared submission
 
-### Pump Identity vs Assigned Runtime Identity
+SharedQueue
+    owns pending / claimed / dispatched shared queue item
 
-The shared queue pump uses explicit pump identity:
+SharedQueuePump
+    claims queue items
+
+Dispatch-time admission
+    selects tenant-visible runtime capacity
+
+Runtime provider
+    delivers the run to the selected runtime local queue
+
+Runtime local queue
+    creates LocalRunId and later ExecutionId
+```
+
+Important invariant:
+
+```text
+A shared queue item must not be marked Dispatched unless provider dispatch succeeded.
+```
+
+If provider dispatch fails, the shared queue item can be requeued according to policy.
+
+This protects the system from losing runs during distributed dispatch.
+
+---
+
+## Pump Identity vs Assigned Runtime Identity
+
+The shared queue pump has its own identity.
 
 ```text
 PumpRuntimeInstanceId
@@ -752,395 +540,941 @@ They do not necessarily identify who receives the run.
 
 ```text
 PumpRuntimeInstanceId
-    = runtime instance executing the pump cycle
+    the participant executing the pump cycle
 
 AssignedRuntimeInstanceId
-    = runtime instance selected by admission for dispatch
+    the runtime instance selected by admission as the dispatch target
 ```
 
-This separation is required for provider-based runtime hosting, MCP manual drain, HTTP runtime instances, and future Kubernetes control-plane/runtime-pod separation.
+This is required for:
 
-### RunId-Level Control
+- MCP manual drain;
+- control-plane-only hosts;
+- local runtime providers;
+- HTTP runtime providers;
+- gRPC runtime providers;
+- future Kubernetes control-plane/runtime-pod separation.
 
-RunId-level control belongs to the background controller.
-
-It manages:
-
-- queued runs
-- running controller jobs
-- queue pause/resume
-- queued run cancellation
-- hot enqueue
-- bridge cancellation to execution control
-
-### ExecutionId-Level Control
-
-ExecutionId-level control belongs to the durable runtime execution.
-
-It manages:
-
-- pause
-- resume
-- cancel
-- waiting for human input
-- submit human input
-- claim blocking
-- cancellation finalization override
-
-This separation prevents controller lifecycle state from being mixed with durable DAG execution state.
+The control-plane host must not become the dispatch target simply because it executed the pump.
 
 ---
 
-## Distributed Execution Model
+## Durable Tenant Context
 
-The runtime supports distributed execution through shared state and atomic ownership.
+Distributed execution is multi-tenant.
 
-The model is:
+The durable tenant boundary is:
 
 ```text
-Multiple workers
-        ↓
-Read shared execution state
-        ↓
-Resolve execution/step context
-        ↓
-Attempt atomic claim
-        ↓
-One worker owns one step
-        ↓
-Execute step
-        ↓
-Persist result through controlled transition
+ExecutionContextSnapshot.TenantId
 ```
 
-This model enables:
+Not:
 
-- safe multi-worker execution
-- no duplicate step ownership
-- recovery after worker crashes
-- deterministic convergence under concurrency
-- runtime-local worker capacity control
-- cross-instance execution assistance foundations
+```text
+ContextKey
+metadata["tenant"]
+runtime instance prefix alone
+```
 
----
+Every asynchronous hop must carry or restore the snapshot before tenant-sensitive operations.
 
-## Deterministic Convergence
+This includes:
 
-A central runtime guarantee is deterministic convergence.
+- shared run creation;
+- shared run Redis persistence;
+- shared queue dispatch;
+- scale-out request creation;
+- scale-out watcher handling;
+- runtime host creation request;
+- runtime registry filtering;
+- runtime capacity filtering;
+- provider dispatch;
+- runtime local queue enqueue;
+- background controller execution;
+- replay / ledger / trace / forensics queries.
 
-For the same pipeline definition and input state, the execution should converge to the same terminal state regardless of:
+The shared queue dispatcher must restore the persisted `ExecutionContextSnapshot` before dispatch-time admission.
 
-- worker count
-- execution timing
-- parallel scheduling
-- retry timing
-- recovery events
-
-This is achieved through:
-
-- explicit DAG dependencies
-- state-driven scheduling
-- deterministic context resolution
-- Redis Lua atomic transitions
-- claim ownership
-- retry state
-- finalization rules
+This prevents background pumps from using an ambient or missing tenant context.
 
 ---
 
-## Configuration and Policy Model
+## Multi-Tenant Runtime Visibility
 
-The runtime is both config-driven and policy-driven.
+Distributed execution must select runtime capacity through tenant-aware visibility.
 
-Configuration defines runtime behavior through declarative sections such as:
+The validated visibility rules are:
 
-- `config.retry`
-- `config.retention`
-- `config.concurrency`
-- provider configuration
-- model configuration
-- operation configuration
-- step-specific configuration
+```text
+Shared runtime:
+    visible to Shared tenants
+    visible to Hybrid/Dedicated tenants only when shared fallback is allowed
 
-Policies provide reusable decision logic for runtime governance.
+Dedicated runtime:
+    visible only when TenantId or TenantGroupId matches
 
-Policy-driven behavior currently applies to:
+Hybrid runtime:
+    visible only when TenantId or TenantGroupId matches
+    AllowSharedFallback does not make an unowned Hybrid runtime visible
+```
 
-- retry decisions
-- retention decisions
-- concurrency admission
-- distributed throttling
+A safe distributed system must not route tenant A work to tenant B capacity.
 
-Context helpers connect configuration to policy execution by building the correct runtime context for each policy engine.
+This applies to normal dispatch and recovery dispatch.
 
-This allows the runtime to evolve by adding policies instead of hardcoding behavior inside the engine.
+```text
+Normal dispatch
+    must select tenant-visible capacity
+
+Recovery dispatch
+    must select tenant-visible replacement capacity
+```
 
 ---
 
 ## Runtime Instance Provider Model
 
-Runtime instance dispatch is moving toward a provider-based model.
+Admission decides whether capacity exists and which runtime should receive the run.
 
-Admission decides which runtime instance should receive work.
-
-Providers decide how to contact that runtime instance.
-
-When admission requests scale-out, the scale-out provider selector decides which provider can create or request capacity.
+The provider decides how to contact that runtime.
 
 ```text
 Admission
-    decides WHO or WHETHER SCALE-OUT IS NEEDED
+    decides WHO receives work
+    or whether SCALE-OUT is required
 
-Provider Router
-    decides HOW
+Provider router
+    decides HOW to contact selected runtime
 
 Provider
-    performs transport-specific dispatch/control/status/scale-out operation
+    performs transport-specific dispatch/control/status/scale-out
+
+Runtime local queue
+    receives the run
+
+DAG engine
+    executes durable steps
 ```
 
-Current provider-oriented foundations include:
-
-- local runtime instance provider
-- HTTP runtime provider foundation
-- HTTP pooled runtime instance hosting
-- provider-based scale-out capability
-- local runtime instance scaler
-- Redis scale-out request store
-- fulfilled scale-out run requeue
-- runtime instance provider metadata
-- Redis runtime instance registry visibility
-- Redis capacity descriptor visibility
-- Redis control-plane discovery
-- ControlPlaneIdResolver
-- Redis admission reservation store
-- MCP control-plane scenarios
-
-Validated local scale-out provider shape:
+Current validated providers include:
 
 ```text
-MCP Control Plane
-    ↓
-Admission = RequestScaleOut
-    ↓
-Redis scale-out request
-    ↓
-Scale-out watcher
-    ↓
-AiRuntimeScaleOutProviderSelector
-    ↓
-LocalAiRuntimeInstanceProvider
-    ↓
-AiLocalRuntimeInstanceScaler
-    ↓
-host-...:mcp-scaleout-runtime-1
-    ↓
-Shared run requeued
-    ↓
-Shared queue pump
-    ↓
-Local runtime queue
-    ↓
-DAG execution completed
+local
+http
+grpc
 ```
 
-Validated HTTP pooled provider shape:
+Provider metadata should include stable keys such as:
 
 ```text
-MCP Control Plane
+provider.name = local | http | grpc
+transport.name = in-memory | http | grpc
+transport.endpoint = ...
+```
+
+Provider transport must not replace tenant isolation.
+
+Provider transport must not replace durable execution.
+
+Provider transport must deliver work into the selected runtime instance local queue.
+
+---
+
+## HTTP and gRPC Distributed Dispatch
+
+HTTP and gRPC are transport providers.
+
+They are not DAG engines.
+
+They are not recovery owners.
+
+They deliver control-plane commands to a runtime instance.
+
+Validated provider shapes:
+
+```text
+Control Plane
     ↓
 HTTP Runtime Provider
     ↓
-RuntimeInstanceOnly HTTP Host
+RuntimeInstanceOnly process / HTTP command endpoint
     ↓
-Local Runtime Instance Pool
+Runtime local queue
     ↓
-runtime-http-1
-runtime-http-2
-runtime-http-3
+DAG execution
 ```
 
-Shared queue dispatch should validate assignment to the pooled child runtime instance, not the parent HTTP host identity.
+```text
+Control Plane
+    ↓
+gRPC Runtime Provider
+    ↓
+RuntimeInstanceOnly process / gRPC command service over HTTP/2
+    ↓
+Runtime local queue
+    ↓
+DAG execution
+```
 
-Future providers may include:
+The same shared queue and tenant-aware dispatch model works for both.
 
-- Redis command queue provider
-- gRPC provider
-- Kubernetes metadata provider
-- Kubernetes scaling provider
-
-Providers must not replace local runtime queues.
-
-They must deliver work into the selected runtime instance local queue.
-
-The DAG engine and workers remain the only layer responsible for durable execution.
-
----
-
-## Extension Model
-
-The runtime is extensible through step plugins.
-
-A step plugin is typically connected through:
-
-- a `stepKey`
-- a registered executor
-- class-level step metadata
-- assembly-based discovery
-- provider abstractions
-- operation-specific configuration
-
-This allows new runtime behavior to be added without changing the DAG engine core.
-
-The engine remains responsible for orchestration.
-
-Context helpers remain responsible for resolved inputs and execution context.
-
-Plugins remain responsible for domain-specific execution.
+The process-host recovery scenarios now use a provider-agnostic base and validate the same recovery contract over HTTP and gRPC.
 
 ---
 
-## Current Architecture Status
+## Runtime Host Manager Boundary
 
-| Area | Status |
-|---|---|
-| DAG execution | Implemented |
-| Redis hot state | Implemented |
-| Redis Lua atomic coordination | Implemented |
-| Distributed workers | Implemented |
-| Distributed multi-runtime-instance execution | Implemented / validated foundations |
-| Context resolution and helper layer | Implemented / foundation available |
-| Input binding resolution | Implemented / foundation available |
-| Payload resolver and rehydration | Implemented / validated foundations |
-| Provider/model/operation context | Implemented / validated |
-| Retry and recovery | Implemented |
-| Retention and compaction | Implemented |
-| Distributed concurrency and throttling | Implemented |
-| Execution control state | Implemented |
-| Runtime queue control | Implemented |
-| Shared runtime controller | Implemented / validated foundations |
-| Shared queue pump | Implemented / validated |
-| Queue-first submit mode | Implemented / validated |
-| Manual shared queue drain | Implemented / validated |
-| Dispatch-time admission | Implemented / validated |
-| Runtime instance provider hosting | Implemented foundations / validated local, local scale-out, and HTTP pooled scenarios |
-| Local runtime instance provider | Implemented / validated |
-| HTTP runtime provider foundation | Implemented / validated with pooled runtime instances |
-| HTTP pooled runtime dispatch | Implemented / validated |
-| Redis control-plane discovery store | Implemented / validated |
-| Control-plane id resolver | Implemented / validated |
-| Redis runtime instance registry | Implemented / validated |
-| Redis runtime capacity store | Implemented / validated |
-| Redis admission reservation store | Implemented / validated |
-| Redis scale-out request store | Implemented / validated |
-| Store-backed scale-out request publisher | Implemented / validated |
-| Scale-out request watcher | Implemented / validated |
-| Scale-out provider selector | Implemented / validated |
-| Local runtime instance scaler | Implemented / validated |
-| Fulfilled scale-out run requeue | Implemented / validated |
-| MCP Redis local scale-out execution | Implemented / validated |
-| Shared queue pump readiness gate | Implemented / validated |
-| Runtime worker capacity visibility | Implemented / validated |
-| Max local workers per execution | Implemented / validated |
-| Human-in-the-loop foundations | Implemented |
-| Replay and snapshot foundations | Implemented / validated foundations |
-| Decision ledger foundation | Implemented foundations / validated through replay ledger scenarios |
-| Durable decision ledger hardening | Planned |
-| Observability dashboard | Planned |
-| Kubernetes deployment | Planned |
-| Public SDK polish | Planned |
-
----
-
-## Current Validated Evidence
-
-The current architecture has been validated through MCP, Redis, local runtime pool, local scale-out, and HTTP pooled runtime provider scenarios.
-
-Redis local scale-out execution evidence:
+Provider scale-out can create real runtime process capacity through the Runtime Host Manager.
 
 ```text
-Initial ActiveLocalInstances = 0
+Scale-out watcher
+    ↓
+Scale-out provider selector
+    ↓
+HTTP or gRPC runtime provider
+    ↓
+Provider-specific scale-out provisioner
+    ↓
+IAiRuntimeHostManager
+    ↓
+ProcessAiRuntimeHostCreationStrategy
+    ↓
+real RuntimeInstanceOnly child process
+    ↓
+runtime self-registers
+    ↓
+runtime publishes heartbeat / capacity
+```
+
+The provider participates in dispatch and scale-out.
+
+The Host Manager owns process creation or attachment mechanics.
+
+The runtime self-registers.
+
+The registry and capacity stores decide when capacity is visible.
+
+Execution recovery is owned by the recovery reconciler, not by the provider or Host Manager.
+
+---
+
+## Scale-Out and Distributed Dispatch
+
+When no tenant-visible runtime capacity exists, admission can request scale-out.
+
+```text
+Submit run
+    ↓
 Admission = RequestScaleOut
+    ↓
 SharedRun.Status = ScaleOutRequested
-ScaleOutRequest.Status = Fulfilled
-ScaleOutRuntimeInstanceId = host-...:mcp-scaleout-runtime-1
-ActiveLocalInstances = 1
-SharedRun.Status = Dispatched
-QueueStatus = Dispatched
-LocalRunId = available
-ExecutionId = available
-RuntimeRunStatus = completed
+    ↓
+Scale-out request persisted in Redis
+    ↓
+Scale-out watcher observes request
+    ↓
+Provider selector resolves providerHint
+    ↓
+Provider creates or requests capacity
+    ↓
+Runtime registers and publishes capacity
+    ↓
+Scale-out request marked Fulfilled
+    ↓
+Original SharedRun is requeued
+    ↓
+Shared queue pump dispatches through normal path
 ```
 
-Heavy HTTP dispatch evidence:
+Important rule:
 
 ```text
-Runs = 50
-StepsPerRun = 100
-RuntimeInstances = runtime-http-1, runtime-http-2, runtime-http-3
-RedisAiSharedRunStore = validated
-RedisAiSharedQueue = validated
-RedisAiRuntimeAdmissionReservationStore = validated
+The scale-out watcher does not dispatch the run directly.
 ```
 
-Replay/control-plane evidence:
+Fulfillment creates capacity.
+
+Dispatch remains owned by the shared queue pump and dispatch-time admission.
+
+This prevents scale-out from bypassing queue ownership, tenant context restore, provider dispatch safety, and admission reservations.
+
+---
+
+## Provider-Agnostic Process-Host Recovery
+
+The real process-host crash recovery scenarios are now provider-agnostic.
+
+The shared recovery test base validates:
 
 ```text
-Replay = Success
-Replay report = Success
-Ledger = Success
-Trace = Available
-ReplayValid = True
-FingerprintMatches = True
-IssueCount = 0
+real RuntimeInstanceOnly process starts
+    ↓
+run is dispatched to the process through selected provider
+    ↓
+DAG reaches crash threshold
+    ↓
+runtime process is killed
+    ↓
+unsafe capacity is suppressed
+    ↓
+assigned work is recovered
+    ↓
+replacement runtime capacity is selected or created
+    ↓
+same ExecutionId resumes for in-flight work
+    ↓
+local queued work is redispatched through SharedRunId
+    ↓
+ledger / trace / replay / forensics proof is validated
 ```
 
-Runtime lifecycle evidence:
+Validated wrappers include:
 
 ```text
-Redis runtime registry = validated
-Redis runtime capacity store = validated
-Redis control-plane discovery = validated
-ControlPlaneIdResolver = validated
-Runtime-only host identity resolution = validated
-Shutdown cleanup without late rediscovery dependency = validated
+Http_ProcessHost_Should_Requeue_Real_InFlight_Dag_After_Runtime_Process_Kill
+Http_ProcessHost_Should_Recover_Two_Tenants_After_Real_Runtime_Process_Kills_With_Strict_Dag_Resume_Replay_Ledger_And_Trace
+Http_ProcessHost_Should_Recover_Two_Tenants_After_Real_Runtime_Process_Kills_Without_Impacting_Safe_Tenant_With_Strict_Dag_Resume_Replay_Ledger_And_Trace
+
+Grpc_ProcessHost_Should_Requeue_Real_InFlight_Dag_After_Runtime_Process_Kill
+Grpc_ProcessHost_Should_Recover_Two_Tenants_After_Real_Runtime_Process_Kills_With_Strict_Dag_Resume_Replay_Ledger_And_Trace
+Grpc_ProcessHost_Should_Recover_Two_Tenants_After_Real_Runtime_Process_Kills_Without_Impacting_Safe_Tenant_With_Strict_Dag_Resume_Replay_Ledger_And_Trace
 ```
 
-These validations prove the current architecture can:
+The provider can change.
 
-- submit shared runs through MCP
-- queue work globally
-- drain work manually or through the background pump
-- wait for runtime readiness before background dispatch
-- resolve MCP/control-plane identity through Redis discovery
-- dispatch through local and HTTP providers
-- request scale-out through the provider model
-- dynamically create local runtime capacity from zero executable instances
-- requeue fulfilled scale-out shared runs
-- dispatch scale-out requeued runs through the shared queue pump
-- execute scale-out-triggered runs to completion
-- assign runs to pooled child runtime instances
-- expose runtime run status and execution ids
-- replay completed executions
-- inspect ledger and trace output.
+The recovery invariant must not change.
 
+---
+
+## Safe Tenant Non-Impact
+
+The strongest distributed execution proof is multi-tenant crash isolation.
+
+The validated scenario shape is:
+
+```text
+One shared control plane
+Three tenant-scoped real RuntimeInstanceOnly processes
+Tenant A runtime process killed
+Tenant B runtime process killed
+Tenant C runtime process not killed
+```
+
+At crash time, each impacted tenant has:
+
+```text
+1 InFlightExecution
+2 LocalQueued shared runs
+```
+
+The safe tenant remains alive.
+
+Expected proof:
+
+```text
+Tenant A recovered work = 3
+Tenant B recovered work = 3
+Tenant C recovered work = 0
+
+Tenant A recovery forensics > 0
+Tenant B recovery forensics > 0
+Tenant C recovery forensics = 0
+
+SafeTenantNonImpactValidated = true
+SafeTenantRecoveryLeakDetected = false
+CrossTenantLedgerLeakDetected = false
+```
+
+This proves recovery is not a global panic button.
+
+It is scoped to unsafe runtime instances and their assigned work.
+
+---
+
+## Multi-Worker Execution
+
+Multiple workers can safely process the same execution because they coordinate through shared state.
+
+Workers do not communicate directly with each other.
+
+They coordinate through Redis.
+
+```text
+Worker 1 ─┐
+Worker 2 ─┼── Redis hot state / Lua coordination ── Execution state
+Worker 3 ─┘
+```
+
+This reduces coupling and allows workers to remain stateless.
+
+---
+
+## RunId, SharedRunId, LocalRunId, and ExecutionId
+
+The runtime separates control-plane, local queue, and durable DAG identities.
+
+```text
+SharedRunId
+    shared/control-plane submission identity
+
+LocalRunId
+    runtime-local queue attempt identity
+
+RunId
+    local controller/job lifecycle identity where applicable
+
+ExecutionId
+    authoritative durable DAG execution identity
+```
+
+This separation is critical.
+
+A `SharedRunId` can exist before a local run exists.
+
+A `LocalRunId` can exist before an `ExecutionId` exists.
+
+An `ExecutionId` is the durable DAG execution identity.
+
+In-flight recovery preserves `ExecutionId`.
+
+Local-queued recovery preserves `SharedRunId` and creates a new local attempt.
+
+---
+
+## Distributed Execution Modes
+
+The runtime supports two important DAG execution models.
+
+```text
+Model 1:
+multiple isolated executions
+unique ExecutionId per run
+safe snapshot/replay per execution
+```
+
+```text
+Model 2:
+one ExecutionId
+multiple runtime workers or runtime instances
+shared distributed DAG execution
+workers competing safely for the same execution's steps
+```
+
+The distributed shared-execution model relies on:
+
+- Redis-backed DAG state;
+- atomic step claiming;
+- lease-based ownership;
+- deterministic convergence;
+- bounded batch execution;
+- idempotent terminal lifecycle handling;
+- archive-backed resolver reconstruction after retention.
+
+---
+
+## Multi-Runtime-Instance Execution
+
+In distributed multi-runtime-instance execution, multiple runtime workers can safely advance the same `ExecutionId` through Redis-backed DAG coordination.
+
+Current validated behavior includes:
+
+- strict `RunId` / `ExecutionId` separation;
+- strict `SharedRunId` / `LocalRunId` / `ExecutionId` separation;
+- isolated execution state per independent `ExecutionId`;
+- shared execution mode for one `ExecutionId`;
+- Redis-backed DAG coordination;
+- atomic ownership through Lua;
+- bounded batch execution;
+- retry-safe multi-worker execution;
+- idempotent terminal lifecycle processing;
+- terminal snapshot support;
+- retention and replay compatibility;
+- archive-backed resolver reconstruction after retention;
+- process-boundary replay / ledger / trace validation;
+- tenant-scoped process-host crash recovery.
+
+---
+
+## Retry-Aware Distributed Execution
+
+Retry behavior is coordinated through runtime state.
+
+When a step fails and retry is allowed:
+
+- retry count is updated;
+- next retry time is calculated;
+- step moves to `WaitingForRetry`;
+- the step cannot be claimed again until retry time opens.
+
+Workers must respect retry state.
+
+A retry-ready step becomes eligible only when:
+
+```text
+UtcNow >= NextRetryAtUtc
+```
+
+Retry is business/execution failure handling.
+
+Runtime crash recovery is infrastructure failure handling.
+
+They must not be confused.
+
+---
+
+## Concurrency Before Claim
+
+Concurrency admission is enforced before DAG step ownership is claimed.
+
+A safe distributed flow is:
+
+```text
+Resolve pipeline + step config.concurrency
+    ↓
+Create AiConcurrencyContext
+    ↓
+Apply matching concurrency.throttle rules
+    ↓
+Evaluate configured admission policies
+    ↓
+Acquire Redis concurrency lease
+    ↓
+Attempt DAG claim
+```
+
+Important rules:
+
+- if policy admission is denied, no Redis concurrency lease is acquired;
+- if Redis admission is denied, no DAG claim is attempted;
+- if Redis admission succeeds but the DAG claim fails, the concurrency lease is released immediately;
+- if the DAG claim succeeds, the lease remains owned until step execution finishes.
+
+This prevents leaked distributed capacity.
+
+---
+
+## Dispatch-Time Admission and Reservation
+
+Shared queue dispatch re-evaluates admission at drain time.
+
+```text
+Shared queue item claimed
+    ↓
+Shared run loaded
+    ↓
+ExecutionContextSnapshot restored
+    ↓
+Tenant-visible registry/capacity listed
+    ↓
+Admission selects runtime target
+    ↓
+Admission reservation may protect selected capacity
+    ↓
+Provider dispatch attempted
+    ↓
+Reservation released or allowed to expire if dispatch fails
+```
+
+This model supports:
+
+- local provider dispatch;
+- HTTP provider dispatch;
+- gRPC provider dispatch;
+- process-host runtime dispatch;
+- future Kubernetes runtime pod dispatch;
+- multi-control-plane hardening.
+
+Admission reservations protect selected runtime capacity during heavy distributed dispatch.
+
+---
+
+## Control-State-Aware Execution
+
+Distributed workers must respect execution control state.
+
+The control gate may block claims for statuses such as:
+
+- `Pausing`;
+- `Paused`;
+- `WaitingForInput`;
+- `Cancelling`;
+- `Cancelled`.
+
+This means pause, cancel, and human-in-the-loop control can stop new claims without corrupting DAG state.
+
+Already claimed work may drain safely depending on the control scenario.
+
+---
+
+## Terminal Finalization
+
+Distributed finalization must be idempotent.
+
+More than one worker may observe that an execution appears terminal.
+
+Finalization must ensure:
+
+- terminal state is persisted once;
+- snapshots are created consistently;
+- cancellation override is respected;
+- cleanup does not remove required replay or resolver data too early;
+- final status remains deterministic.
+
+This is especially important when cancellation races with natural DAG completion.
+
+---
+
+## Deterministic Convergence Under Concurrency
+
+The distributed execution model is designed to converge deterministically.
+
+The final execution result should not depend on:
+
+- which worker claimed a step;
+- which worker finished first;
+- how many workers were active;
+- which runtime process hosted the local queue;
+- whether dispatch used local, HTTP, or gRPC;
+- whether a stale worker was recovered;
+- whether an entire runtime process was recovered;
+- whether retry timing created a different scheduling order;
+- whether retention compacted or externalized completed payloads.
+
+The final result is derived from state and valid transitions.
+
+This is the core difference between simply running distributed work and building deterministic execution infrastructure.
+
+---
+
+## Distributed Execution Flow
+
+A simplified distributed execution flow is:
+
+```text
+Start execution
+    ↓
+Create DAG state
+    ↓
+Workers poll or receive execution work
+    ↓
+Recover stale running steps
+    ↓
+Find eligible ready steps
+    ↓
+Apply execution control gate
+    ↓
+Resolve concurrency configuration
+    ↓
+Create concurrency context
+    ↓
+Apply throttle rules
+    ↓
+Evaluate policy admission
+    ↓
+Acquire distributed concurrency lease
+    ↓
+Claim step atomically
+    ↓
+Execute step
+    ↓
+Complete / fail / schedule retry atomically
+    ↓
+Release concurrency lease
+    ↓
+Apply retention if required
+    ↓
+Evaluate convergence
+    ↓
+Finalize execution if terminal
+```
+
+A simplified distributed shared-run flow is:
+
+```text
+Submit shared run
+    ↓
+Persist ExecutionContextSnapshot
+    ↓
+Queue or request scale-out
+    ↓
+Shared queue item claimed
+    ↓
+Tenant context restored
+    ↓
+Admission selects tenant-visible runtime
+    ↓
+Provider dispatches to selected runtime
+    ↓
+Runtime local queue creates LocalRunId
+    ↓
+DAG execution creates ExecutionId
+    ↓
+Distributed workers advance steps safely
+```
+
+A simplified process crash recovery flow is:
+
+```text
+Runtime process dies
+    ↓
+Heartbeat/capacity becomes unsafe
+    ↓
+Admission stops selecting that runtime
+    ↓
+Assigned work is enumerated
+    ↓
+In-flight work resumes same ExecutionId
+    ↓
+Local-queued work redispatches same SharedRunId
+    ↓
+Replacement tenant-visible capacity handles recovered work
+    ↓
+Replay / ledger / trace / forensics prove recovery
+```
+
+---
+
+## Responsibilities by Component
+
+| Component | Responsibility |
+|---|---|
+| Shared runtime controller | Owns shared submission lifecycle and initial admission outcome. |
+| Shared run store | Persists durable shared run identity and `ExecutionContextSnapshot`. |
+| Shared queue | Owns distributed pending / claimed / dispatched shared queue state. |
+| Shared queue pump | Claims shared queue work and runs dispatch cycles. |
+| Shared queue dispatcher | Restores context, re-admits, reserves capacity, and dispatches through provider. |
+| Admission controller | Selects tenant-visible runtime capacity or requests scale-out. |
+| Admission reservation store | Protects selected capacity during distributed dispatch. |
+| Scale-out request store | Persists provider-capable capacity requests. |
+| Scale-out watcher | Observes requests and delegates capacity creation to providers. |
+| Runtime provider selector | Resolves local / HTTP / gRPC provider paths. |
+| Runtime provider | Delivers work to selected runtime instance and reports transport failure. |
+| Runtime Host Manager | Creates or attaches runtime hosts for process-host scale-out. |
+| Runtime instance registry | Tracks runtime identity, role, status, heartbeat, and tenant metadata. |
+| Runtime capacity store | Tracks live dispatch capacity and worker/run availability. |
+| Runtime health reconciler | Suppresses unsafe runtime capacity from new routing. |
+| Execution recovery reconciler | Recovers work already assigned to unsafe runtime instances. |
+| DAG execution engine | Evaluates dependencies and convergence. |
+| Redis DAG store | Stores active execution state and applies atomic transitions. |
+| Redis Lua scripts | Protect critical distributed state changes. |
+| Worker / runner | Executes claimed steps and reports results. |
+| Retry engine | Decides retry behavior from config and policies. |
+| Concurrency engine | Applies admission and distributed capacity limits. |
+| Redis concurrency gate | Enforces distributed concurrency through lease-based scopes. |
+| Execution control gate | Blocks or allows advancement based on control state. |
+| Retention coordinator | Keeps hot state bounded while preserving required data. |
+| Resolver | Reconstructs compacted or evicted data when needed. |
+| Finalization service | Persists terminal state and snapshots safely. |
+| Ledger / trace / replay / forensics | Proves execution and recovery after convergence. |
+
+---
+
+## Failure Scenarios Covered
+
+| Scenario | Runtime Behavior |
+|---|---|
+| Worker crashes while running a step | Recovery returns stale running step to eligible state. |
+| Multiple workers claim same step | Redis Lua allows only one winner. |
+| Stale worker completes late | Claim token mismatch rejects update. |
+| Step fails transiently | Retry state moves step to `WaitingForRetry`. |
+| Retry window not open | Step is not claimable yet. |
+| Execution is paused | New claims are blocked. |
+| Execution is waiting for input | New claims are blocked until input is submitted. |
+| Execution is cancelled | Finalization resolves to `Cancelled`. |
+| Concurrency capacity is denied | No DAG claim is attempted. |
+| Concurrency lease acquired but claim fails | Lease is released immediately. |
+| Shared queue item is claimed concurrently | Only one dispatcher wins the claim. |
+| Provider dispatch fails | Queue item is not marked dispatched and can be requeued. |
+| Runtime process dies before DAG starts | Existing `SharedRunId` is redispatched. |
+| Runtime process dies during DAG execution | Existing `ExecutionId` is resumed. |
+| Runtime process dies for tenant A | Tenant B/C capacity remains isolated. |
+| Safe tenant runs during impacted tenant recovery | Safe tenant completes normally with zero recovery records. |
+| Large payload is evicted | Resolver reconstructs from persistent storage. |
+| Multiple workers observe terminal state | Finalization remains idempotent. |
+
+---
+
+## Validated Evidence
+
+Validated evidence includes:
+
+```text
+Redis Lua atomic step claim
+Redis Lua atomic shared queue claim
+Redis shared run store
+Redis shared queue
+Redis admission reservation store
+Redis scale-out request store
+Runtime registry and capacity visibility
+Tenant-aware registry filtering
+Tenant-aware capacity filtering
+Dispatch-time ExecutionContextSnapshot restore
+Local runtime scale-out from zero executable capacity
+HTTP pooled runtime dispatch
+HTTP process-host dispatch
+gRPC process-host dispatch
+Runtime Host Manager process launch
+real RuntimeInstanceOnly process registration
+real process-host runtime crash recovery
+provider-agnostic HTTP/gRPC recovery scenarios
+safe tenant non-impact proof
+replay / ledger / trace proof after recovery
+runtime recovery forensics proof
+```
+
+Representative recovery evidence:
+
+```text
+InFlightExecution resumes the same ExecutionId.
+LocalQueued work is recovered through SharedRunId redispatch.
+Recovered work count matches impacted work.
+Safe tenant recovered work = 0.
+Safe tenant recovery forensics = 0.
+Cross-tenant ledger leak = false.
+Strict replay validation passes after recovery.
+```
+
+---
+
+## Current Status
+
+| Capability | Status |
+|---|---|
+| Redis-backed hot execution state | Implemented / validated |
+| Redis Lua atomic step claiming | Implemented / validated |
+| Claim token ownership | Implemented / validated |
+| Retry-aware distributed state | Implemented / validated |
+| Worker crash recovery | Implemented / validated |
+| Bounded batch execution | Implemented / validated |
+| Distributed workers | Implemented / validated |
+| RunId / ExecutionId separation | Implemented / validated |
+| SharedRunId / LocalRunId / ExecutionId separation | Implemented / validated |
+| Runtime queue control integration | Implemented / validated |
+| Execution control gate integration | Implemented / validated |
+| Distributed multi-runtime-instance execution | Implemented / validated foundations |
+| Redis shared run store | Implemented / validated |
+| Redis shared queue | Implemented / validated |
+| Dispatch-time admission | Implemented / validated |
+| Dispatch-time ExecutionContextSnapshot restore | Implemented / validated |
+| Tenant-aware runtime visibility | Implemented / validated |
+| Redis admission reservation | Implemented / validated |
+| Provider-based dispatch | Implemented / validated |
+| Local runtime provider | Implemented / validated |
+| HTTP runtime provider | Implemented / validated |
+| gRPC runtime provider | Implemented / validated |
+| HTTP process-host runtime dispatch | Implemented / validated |
+| gRPC process-host runtime dispatch | Implemented / validated |
+| Runtime Host Manager process launch | Implemented / validated |
+| Runtime health vs execution recovery boundary | Implemented / validated |
+| Runtime process crash recovery | Implemented / validated |
+| In-flight DAG resume with same ExecutionId | Implemented / validated |
+| Local-queued SharedRunId redispatch | Implemented / validated |
+| Multi-tenant safe-tenant non-impact | Implemented / validated |
+| Replay / ledger / trace after recovery | Implemented / validated |
+| Runtime recovery forensics | Implemented / validated |
+| Retention and replay compatibility | Implemented / validated foundations |
+| Archive-backed resolver reconstruction after retention | Foundation available |
+| Kubernetes deployment scenario | Planned |
+| Production multi-control-plane leadership | Planned |
+| Public dashboard / operational UI | Planned |
+
+---
+
+## Current Limitations
+
+The current validated model does not yet claim:
+
+```text
+Kubernetes pod crash recovery
+Kubernetes autoscaling implementation
+production multi-control-plane leader election
+Byzantine runtime protection
+durable-store corruption recovery
+full Redis command queue provider
+global throughput guarantees
+public dashboard UX
+```
+
+gRPC is no longer a future-only provider in this document.
+
+The validated gRPC process-host path exists, but provider-aware gRPC readiness should still be hardened beyond the temporary process-host scenario configuration.
+
+---
+
+## Design Rules
+
+### Do
+
+```text
+Use ExecutionContextSnapshot.TenantId as durable tenant boundary.
+Restore tenant context before admission, provider dispatch, recovery, and observability queries.
+Keep SharedRunId, LocalRunId, RunId, ExecutionId, and RuntimeInstanceId separate.
+Use Redis Lua for critical distributed transitions.
+Use admission and tenant-visible capacity before provider dispatch.
+Use provider metadata only for transport routing, not tenant isolation.
+Treat runtime local queues as volatile.
+Recover in-flight work by preserving ExecutionId.
+Recover local-queued work by preserving SharedRunId.
+Validate replay / ledger / trace after recovery.
+Validate safe tenants have normal execution evidence and zero recovery evidence.
+```
+
+### Do Not
+
+```text
+Do not let workers own workflow truth.
+Do not let runtime processes own durable workflow truth.
+Do not treat the local queue as durable recovery state.
+Do not collapse SharedRunId and ExecutionId.
+Do not create a new ExecutionId for recovered in-flight DAGs.
+Do not mark shared queue items dispatched before provider dispatch succeeds.
+Do not let transport providers own execution recovery.
+Do not route recovery globally across tenants.
+Do not use ContextKey as durable tenant partition.
+Do not describe gRPC provider as future-only.
+```
+
+---
 
 ## Related Documents
 
-- [Context Resolution and Helpers](context-resolution-and-helpers.md)
-- [Distributed Execution](distributed-execution.md)
+- [Architecture Overview](architecture-overview.md)
+- [Runtime Instance Provider Model](runtime-instance-provider-model.md)
+- [HTTP Runtime Provider](http-runtime-provider.md)
+- [gRPC Runtime Provider](grpc-runtime-provider.md)
+- [Runtime Discovery, Registry, and Capacity](runtime-discovery-registry-capacity.md)
+- [Shared Runtime Controller / Shared Queue Usage](shared-controller-usage.md)
+- [Distributed Concurrency and Throttling](distributed-concurrency-throttling.md)
+- [Retry and Recovery](retry-and-recovery.md)
+- [Runtime Process Crash Recovery](runtime-process-crash-recovery.md)
+- [Runtime Recovery Forensics](runtime-recovery-forensics.md)
+- [Multi-Tenant Runtime Crash Isolation](multi-tenant-runtime-crash-isolation.md)
+- [Recovery Replay Ledger Trace Proof](recovery-replay-ledger-trace-proof.md)
 - [Execution Control State](execution-control-state.md)
 - [Runtime Queue Control](runtime-queue-control.md)
-- [Shared Runtime Controller / Shared Queue Usage](shared-controller-usage.md)
-- [Shared Queue Pump and Worker Capacity](shared-queue-pump-and-worker-capacity.md)
-- [Runtime Instance Provider Model](runtime-instance-provider-model.md)
-- [MCP Server as Runtime Control Plane](mcp-server-control-plane.md)
-- [Retry and Recovery](retry-and-recovery.md)
 - [Retention and Compaction](retention-and-compaction.md)
-- [Distributed Concurrency and Throttling](distributed-concurrency-throttling.md)
 - [Replay and Audit](replay-and-audit.md)
-- [Observability](observability.md)
-- [Config-Driven Runtime](config-driven-runtime.md)
-- [Policy-Driven Execution](policy-driven-execution.md)
-- [Step Plugins](step-plugins.md)
-- [RAG Pipelines](rag-pipelines.md)
+- [Testing Strategy](testing-strategy.md)
 
+---
+
+## Documentation Rule
+
+Do not reduce distributed execution to only worker-level Redis step claiming.
+
+The validated distributed execution model includes:
+
+```text
+distributed workers
++ distributed shared queue dispatch
++ tenant-aware runtime visibility
++ provider-based transport
++ process-host runtime boundaries
++ runtime health suppression
++ assigned-work recovery
++ replay / ledger / trace / forensics proof
++ safe-tenant non-impact validation
+```
+
+This is the real strength of the multi-tenant runtime engine.

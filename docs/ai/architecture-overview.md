@@ -1,10 +1,10 @@
 # Architecture Overview
 
-Status: Implemented architecture foundation / validated with shared controller, MCP, Redis coordination, Redis-backed scale-out request persistence, local runtime pools, local runtime scale-out, fulfilled-run requeue, HTTP pooled runtime provider scenarios, HTTP process-host runtime provisioning, tenant-aware runtime isolation, shared/dedicated/hybrid runtime visibility, end-to-end MCP scale-out execution, real runtime process crash recovery, tenant-isolated recovery reconciliation, runtime recovery forensics, control-plane ledger causal chain evidence, and replay / ledger / trace validation after recovery.
+Status: Implemented architecture foundation / validated with shared controller, MCP, Redis coordination, Redis-backed scale-out request persistence, local runtime pools, local runtime scale-out, fulfilled-run requeue, HTTP pooled runtime provider scenarios, HTTP process-host runtime provisioning, gRPC runtime provider, gRPC process-host runtime provisioning, tenant-aware runtime isolation, shared/dedicated/hybrid runtime visibility, end-to-end MCP scale-out execution, real runtime process crash recovery, tenant-isolated recovery reconciliation, runtime recovery forensics, control-plane ledger causal chain evidence, and replay / ledger / trace validation after recovery across HTTP and gRPC providers.
 
 This document provides a high-level overview of the **Deterministic AI Runtime** architecture.
 
-It also reflects the current control-plane evolution: shared queue pump, queue-first submit mode, direct-dispatch scale-out mode, dispatch-time admission, tenant-aware admission, runtime instance providers, MCP control-plane integration, Redis discovery/registry/capacity coordination, tenant-filtered runtime visibility, Redis-backed scale-out request coordination, admission reservations, local runtime scale-out, fulfilled-run requeue, HTTP pooled runtime hosting, HTTP process-host runtime provisioning, runtime instance health reconciliation, execution recovery reconciliation, runtime recovery forensics, control-plane ledger tracing, replay / ledger / trace recovery proof, safe-tenant non-impact validation, and worker-capacity visibility.
+It also reflects the current control-plane evolution: shared queue pump, queue-first submit mode, direct-dispatch scale-out mode, dispatch-time admission, tenant-aware admission, runtime instance providers, MCP control-plane integration, Redis discovery/registry/capacity coordination, tenant-filtered runtime visibility, Redis-backed scale-out request coordination, admission reservations, local runtime scale-out, fulfilled-run requeue, HTTP pooled runtime hosting, HTTP process-host runtime provisioning, gRPC runtime provider dispatch, gRPC process-host runtime provisioning, runtime instance health reconciliation, execution recovery reconciliation, runtime recovery forensics, control-plane ledger tracing, replay / ledger / trace recovery proof, safe-tenant non-impact validation, and worker-capacity visibility.
 
 ---
 
@@ -36,7 +36,7 @@ It is an execution runtime responsible for:
 - persisting and processing scale-out requests
 - creating local runtime capacity dynamically through provider-based scale-out
 - requeueing fulfilled scale-out runs for normal shared queue dispatch
-- supporting provider-based local, local scale-out, and HTTP pooled runtime dispatch
+- supporting provider-based local, local scale-out, HTTP pooled runtime dispatch, and gRPC runtime dispatch
 - carrying durable tenant context across MCP, shared queue, scale-out, dispatch, and runtime execution
 - enforcing shared, dedicated, and hybrid runtime isolation during admission and dispatch
 - detecting unsafe runtime instances through heartbeat/health reconciliation
@@ -44,7 +44,7 @@ It is an execution runtime responsible for:
 - resuming in-flight DAG executions with the same durable `ExecutionId`
 - redispatching volatile local-queued work through durable `SharedRunId` state
 - proving safe-tenant non-impact during multi-tenant runtime crashes
-- emitting runtime recovery forensics, control-plane ledger evidence, trace evidence, and replay proof after recovery
+- emitting runtime recovery forensics, control-plane ledger evidence, trace evidence, and replay proof after recovery across HTTP and gRPC transport providers
 
 The core idea is simple:
 
@@ -231,7 +231,7 @@ It is responsible for:
 - Redis-backed scale-out requests
 - provider-based scale-out
 - fulfilled scale-out shared run requeue
-- provider-based local and HTTP dispatch
+- provider-based local, HTTP, and gRPC dispatch
 - runtime queue control
 - execution control
 - replay and observability adapters
@@ -309,6 +309,8 @@ The watcher does not dispatch directly.
 
 It creates capacity and requeues the shared run.
 
+The same scale-out and requeue control loop is now validated for real gRPC process-host runtime instances. In the gRPC path, the control plane selects the gRPC runtime provider, delegates runtime host creation through the Runtime Host Manager, starts a real `RuntimeInstanceOnly` process, waits for registry / capacity visibility, and then dispatches over gRPC into the selected runtime local queue.
+
 The pump remains responsible for claim ownership, dispatch-time admission, provider dispatch, and queue/run state updates.
 
 Tenant-aware dispatch adds an additional invariant:
@@ -336,7 +338,7 @@ HTTP provider
 
 This boundary is validated by real process-host crash recovery scenarios. When a runtime process stops heartbeating, the control plane marks the runtime unsafe, suppresses unsafe capacity from admission, reconciles assigned work, selects or creates replacement tenant-visible capacity, resumes in-flight executions, and redispatches local-queued work through durable shared-run state.
 
-The provider may report failures such as `http-circuit-open`, `http-dispatch-timeout`, or `http-provider-unavailable`, but the provider must not directly kill, restart, or recover runtime instances. Runtime replacement belongs to the lifecycle owner, and assigned-work recovery belongs to the execution recovery reconciler.
+The provider may report failures such as `http-circuit-open`, `http-dispatch-timeout`, `http-provider-unavailable`, or `grpc-circuit-open`, but the provider must not directly kill, restart, or recover runtime instances. Runtime replacement belongs to the lifecycle owner, and assigned-work recovery belongs to the execution recovery reconciler.
 
 The current validated control-plane model also includes Redis-backed coordination components:
 
@@ -537,7 +539,7 @@ Context-building logic belongs in context helpers.
 
 Runtime instances are the execution participants that own local queues and workers.
 
-A runtime instance may be local, HTTP-backed through a pooled runtime host, or later connected through Redis command queues, gRPC, or Kubernetes provider transports.
+A runtime instance may be local, HTTP-backed through a pooled runtime host, gRPC-backed through a process-host runtime, or later connected through Redis command queues or Kubernetes provider transports.
 
 Each runtime instance publishes visibility and capacity.
 
@@ -1168,7 +1170,10 @@ Current provider-oriented foundations include:
 - local runtime instance provider
 - HTTP runtime provider foundation
 - HTTP pooled runtime instance hosting
+- gRPC runtime provider foundation
+- gRPC process-host runtime instance hosting
 - provider-based scale-out capability
+- gRPC scale-out provider capability
 - tenant-aware scale-out request fields
 - local runtime instance scaler scoped by runtime instance prefix
 - Redis scale-out request store
@@ -1249,12 +1254,35 @@ runtime self-registration / heartbeat / capacity
 HTTP dispatch / recovery dispatch
 ```
 
+The gRPC provider now validates the same process-host architecture through a typed gRPC dispatch transport:
+
+```text
+MCP Control Plane
+    ↓
+Redis scale-out request / recovery request
+    ↓
+gRPC Runtime Provider
+    ↓
+AiGrpcRuntimeScaleOutProvisioner
+    ↓
+IAiRuntimeHostManager
+    ↓
+ProcessAiRuntimeHostCreationStrategy
+    ↓
+real RuntimeInstanceOnly process
+    ↓
+runtime self-registration / heartbeat / capacity
+    ↓
+gRPC dispatch / recovery dispatch
+```
+
+The gRPC process-host path uses `ControlPlaneWithGrpcRuntimeInstances` for the parent control plane and `RuntimeInstanceOnly` for the child process. The child runtime publishes `provider.name = grpc` and `transport.name = grpc`, exposes the gRPC runtime command service, and requires HTTP/2 for the plaintext test process-host endpoint.
+
 The provider remains responsible for transport and provider-scale-out delegation. It does not own runtime execution recovery.
 
 Future providers may include:
 
 - Redis command queue provider
-- gRPC provider
 - Kubernetes metadata provider
 - Kubernetes scaling provider
 
@@ -1344,14 +1372,16 @@ Plugins remain responsible for domain-specific execution.
 | Decision ledger foundation | Implemented foundations / validated through replay ledger scenarios |
 | Replay report / ledger / trace through MCP | Implemented / validated |
 | HTTP process-host runtime provisioning | Implemented / validated |
-| Real runtime process crash recovery | Implemented / validated |
+| gRPC runtime provider foundation | Implemented / validated |
+| gRPC process-host runtime provisioning | Implemented / validated |
+| Real runtime process crash recovery | Implemented / validated over HTTP and gRPC process-host providers |
 | Runtime instance health reconciliation boundary | Implemented / validated |
 | Execution recovery reconciliation boundary | Implemented / validated |
 | In-flight DAG resume with same `ExecutionId` | Implemented / validated |
 | Local queued redispatch through `SharedRunId` | Implemented / validated |
 | Runtime recovery forensics | Implemented / validated |
 | Control-plane ledger causal chain | Implemented / validated |
-| Multi-tenant crash isolation / safe tenant non-impact | Implemented / validated |
+| Multi-tenant crash isolation / safe tenant non-impact | Implemented / validated over HTTP and gRPC process-host providers |
 | Durable decision ledger hardening | Implemented / validated for current recovery/replay scenarios; ongoing for broader audit API |
 | Observability dashboard | Planned |
 | Kubernetes deployment | Planned |
@@ -1361,7 +1391,7 @@ Plugins remain responsible for domain-specific execution.
 
 ## Current Validated Evidence
 
-The current architecture has been validated through MCP, Redis, local runtime pool, local scale-out, HTTP pooled runtime provider scenarios, HTTP process-host runtime scenarios, real runtime process crash recovery, runtime recovery forensics, control-plane ledger causal chain validation, and tenant-isolated recovery proof.
+The current architecture has been validated through MCP, Redis, local runtime pool, local scale-out, HTTP pooled runtime provider scenarios, HTTP process-host runtime scenarios, gRPC runtime provider scenarios, gRPC process-host runtime scenarios, real runtime process crash recovery, runtime recovery forensics, control-plane ledger causal chain validation, and tenant-isolated recovery proof.
 
 Tenant-aware runtime isolation evidence:
 
@@ -1431,6 +1461,21 @@ RedisAiSharedQueue = validated
 RedisAiRuntimeAdmissionReservationStore = validated
 ```
 
+gRPC process-host evidence:
+
+```text
+ControlPlaneWithGrpcRuntimeInstances = validated
+gRPC provider scale-out = validated
+gRPC provider dispatch = validated
+Real RuntimeInstanceOnly child process = validated
+Child runtime provider.name = grpc
+Child runtime transport.name = grpc
+Kestrel HTTP/2 process-host endpoint = validated
+gRPC single-tenant process kill recovery = validated
+gRPC two-tenant crash recovery = validated
+gRPC safe-tenant non-impact scenario = validated
+```
+
 Replay/control-plane evidence:
 
 ```text
@@ -1476,7 +1521,7 @@ These validations prove the current architecture can:
 - enforce shared, dedicated, and hybrid runtime isolation through tests.
 
 
-Runtime process-host crash recovery evidence:
+Runtime process-host crash recovery evidence over HTTP and gRPC:
 
 ```text
 Real external RuntimeInstanceOnly processes = validated
@@ -1541,6 +1586,8 @@ These validations prove that recovery is not treated as a global panic button. T
 - [Shared Runtime Controller / Shared Queue Usage](shared-controller-usage.md)
 - [Shared Queue Pump and Worker Capacity](shared-queue-pump-and-worker-capacity.md)
 - [Runtime Instance Provider Model](runtime-instance-provider-model.md)
+- [HTTP Runtime Provider](http-runtime-provider.md)
+- [gRPC Runtime Provider](grpc-runtime-provider.md)
 - [MCP Server as Runtime Control Plane](mcp-server-control-plane.md)
 - [Retry and Recovery](retry-and-recovery.md)
 - [Runtime Process Crash Recovery](runtime-process-crash-recovery.md)

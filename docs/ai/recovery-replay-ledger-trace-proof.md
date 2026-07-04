@@ -1,12 +1,14 @@
 # Recovery Replay Ledger Trace Proof
 
-Status: Implemented and validated for HTTP process-host runtime crash recovery scenarios, including real external runtime host processes, in-flight DAG resume, local-queued redispatch, tenant-scoped ledger queries, replay reports, replay ledger, replay trace, runtime recovery forensics, and safe-tenant non-impact validation.
+Status: Implemented and validated for HTTP and gRPC process-host runtime crash recovery scenarios, including real external runtime host processes, in-flight DAG resume, local-queued redispatch, tenant-scoped ledger queries, replay reports, replay ledger, replay trace, runtime recovery forensics, and safe-tenant non-impact validation.
 
 This document describes the proof model used by the Deterministic AI Runtime to validate that recovered work is not only completed, but also replayable, traceable, ledger-backed, tenant-scoped, and auditable after recovery.
 
 It complements:
 
 - [Runtime Process Crash Recovery](runtime-process-crash-recovery.md)
+- [HTTP Runtime Provider](http-runtime-provider.md)
+- [gRPC Runtime Provider](grpc-runtime-provider.md)
 - [Runtime Recovery Forensics](runtime-recovery-forensics.md)
 - [Multi-Tenant Runtime Crash Isolation](multi-tenant-runtime-crash-isolation.md)
 - [Control-Plane Ledger Causal Chain](control-plane-ledger-causal-chain.md)
@@ -42,6 +44,44 @@ The core rule is:
 Recovery completion is not the end of the proof.
 Recovery completion is the start of the audit proof.
 ```
+
+---
+
+## Provider Coverage
+
+The proof model is provider-agnostic.
+
+It is now validated for both HTTP and gRPC process-host runtime providers.
+
+Validated provider paths:
+
+```text
+HTTP process-host recovery
+    ControlPlaneWithHttpRuntimeInstances
+    provider.name = http
+    transport.name = http
+    real RuntimeInstanceOnly process
+    HTTP dispatch
+    process kill
+    replacement runtime
+    strict DAG resume / redispatch
+    replay / ledger / trace / forensics proof
+
+gRPC process-host recovery
+    ControlPlaneWithGrpcRuntimeInstances
+    provider.name = grpc
+    transport.name = grpc
+    real RuntimeInstanceOnly process
+    gRPC dispatch
+    process kill
+    replacement runtime
+    strict DAG resume / redispatch
+    replay / ledger / trace / forensics proof
+```
+
+The provider transport is not the recovery owner.
+
+HTTP and gRPC providers deliver work to selected runtime capacity and report transport failures. Runtime health reconciliation, assigned-work recovery, replay validation, ledger proof, trace proof, and forensics proof remain control-plane responsibilities.
 
 ---
 
@@ -310,6 +350,7 @@ Validated domains include:
 scale-out request persisted
 scale-out watcher observed request
 provider selected
+HTTP or gRPC provider selected according to runtime metadata
 runtime host manager created host
 process runtime host started
 runtime capacity became visible
@@ -520,6 +561,7 @@ The strongest validated scenario uses:
 one shared control plane
 three tenants
 real external RuntimeInstanceOnly host processes
+HTTP and gRPC provider variants validated through the same recovery proof model over HTTP or gRPC
 one tenant-scoped process-host runtime per tenant in the scenario
 Tenant A process killed
 Tenant B process killed
@@ -584,6 +626,43 @@ Safe tenant crash impacted = false
 
 ---
 
+## Validated Provider-Specific Test Names
+
+HTTP recovery proof scenarios include:
+
+```text
+Http_ProcessHost_Should_Recover_Two_Tenants_After_Real_Runtime_Process_Kills_With_Strict_Dag_Resume_Replay_Ledger_And_Trace
+
+Http_ProcessHost_Should_Recover_Two_Tenants_After_Real_Runtime_Process_Kills_Without_Impacting_Safe_Tenant_With_Strict_Dag_Resume_Replay_Ledger_And_Trace
+```
+
+gRPC recovery proof scenarios include:
+
+```text
+Grpc_ProcessHost_Should_Recover_Two_Tenants_After_Real_Runtime_Process_Kills_With_Strict_Dag_Resume_Replay_Ledger_And_Trace
+
+Grpc_ProcessHost_Should_Recover_Two_Tenants_After_Real_Runtime_Process_Kills_Without_Impacting_Safe_Tenant_With_Strict_Dag_Resume_Replay_Ledger_And_Trace
+```
+
+The gRPC provider also validates the single-tenant strict resume proof:
+
+```text
+Grpc_ProcessHost_Should_Requeue_Real_InFlight_Dag_After_Runtime_Process_Kill
+```
+
+The important invariant is provider-independent:
+
+```text
+OriginalExecutionId == RecoveredExecutionId
+```
+
+The transport may change from HTTP to gRPC.
+
+The durable execution identity must not change.
+
+
+---
+
 ## What This Proof Does Not Claim
 
 This proof does not claim that every possible infrastructure failure is solved.
@@ -632,7 +711,7 @@ Do not use log lines as the only audit surface.
 Do not create recovery evidence for safe tenants.
 Do not collapse SharedRunId, LocalRunId, and ExecutionId.
 Do not infer tenant isolation only from runtime ids or prefixes.
-Do not let HTTP provider own recovery.
+Do not let HTTP or gRPC providers own recovery.
 Do not treat local queue state as durable truth.
 ```
 
@@ -655,6 +734,8 @@ Do not treat local queue state as durable truth.
 | Tenant-scoped ledger isolation proof | Implemented / validated |
 | Safe tenant non-impact proof | Implemented / validated |
 | MCP observability query surface | Implemented / validated |
+| HTTP process-host replay / ledger / trace recovery proof | Implemented / validated |
+| gRPC process-host replay / ledger / trace recovery proof | Implemented / validated |
 | Production dashboard view | Planned |
 | OpenTelemetry exporter mapping | Planned |
 | Kubernetes crash recovery proof | Planned |
@@ -673,6 +754,7 @@ Do not treat local queue state as durable truth.
 | Execution recovery reconciler | Recover work already assigned to unsafe runtime instances. |
 | Runtime provider | Deliver work to selected runtime capacity and report transport failures. |
 | HTTP provider | Report HTTP transport failures; it does not own recovery. |
+| gRPC provider | Report gRPC transport failures; it does not own recovery. |
 | Runtime Host Manager / lifecycle owner | Create or attach replacement runtime capacity when needed. |
 | Replay service / MCP replay API | Validate replay report, replay ledger, and replay trace. |
 | Decision ledger | Record execution and control-plane decisions as structured evidence. |
@@ -685,6 +767,8 @@ Do not treat local queue state as durable truth.
 ## Related Documents
 
 - [Runtime Process Crash Recovery](runtime-process-crash-recovery.md)
+- [HTTP Runtime Provider](http-runtime-provider.md)
+- [gRPC Runtime Provider](grpc-runtime-provider.md)
 - [Runtime Recovery Forensics](runtime-recovery-forensics.md)
 - [Multi-Tenant Runtime Crash Isolation](multi-tenant-runtime-crash-isolation.md)
 - [Control-Plane Ledger Causal Chain](control-plane-ledger-causal-chain.md)
@@ -693,6 +777,7 @@ Do not treat local queue state as durable truth.
 - [Observability, Metrics, and Tracing](observability-tracing.md)
 - [Runtime Control Plane](runtime-control-plane.md)
 - [HTTP Runtime Provider](http-runtime-provider.md)
+- [gRPC Runtime Provider](grpc-runtime-provider.md)
 - [MCP Production Runtime Scenario Framework](mcp-production-runtime-scenario-framework.md)
 - [Testing Strategy](testing-strategy.md)
 
@@ -705,3 +790,5 @@ Do not document recovery as complete only because a replacement runtime was crea
 A production recovery claim must include replay, ledger, trace, and forensics evidence after convergence.
 
 A multi-tenant recovery claim must additionally prove that unrelated tenants remained untouched.
+
+When documenting provider-specific proof, keep the transport detail explicit: HTTP proof belongs in the HTTP provider document, gRPC proof belongs in the gRPC provider document, and this document remains the provider-agnostic audit proof model shared by both.

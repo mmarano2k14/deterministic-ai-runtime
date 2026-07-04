@@ -9,6 +9,7 @@ The HTTP provider is part of the runtime instance provider model. It allows the 
 The general provider model is described in:
 
 - [Runtime Instance Provider Model](runtime-instance-provider-model.md)
+- [gRPC Runtime Provider](grpc-runtime-provider.md)
 - [Runtime Discovery, Registry, and Capacity](runtime-discovery-registry-capacity.md)
 - [Multi-Tenant Control Plane Isolation](multi-tenant-control-plane-isolation.md)
 - [MCP Server as Runtime Control Plane](mcp-server-control-plane.md)
@@ -225,6 +226,49 @@ transport.name=grpc
 ```
 
 This separation allows Kubernetes, Docker, ECS, Nomad, local process launchers, or a remote MCP host manager to create runtime capacity while dispatch still uses HTTP or gRPC.
+
+---
+
+## Related Provider: gRPC Runtime Provider
+
+The HTTP provider remains the HTTP-specific transport and scale-out implementation.
+
+The gRPC provider is documented separately in:
+
+```text
+grpc-runtime-provider.md
+```
+
+The two providers now share the same provider model and Runtime Host Manager boundary:
+
+```text
+Provider selector
+    ↓
+HTTP or gRPC runtime provider
+    ↓
+provider-specific scale-out provisioner
+    ↓
+Runtime Host Manager
+    ↓
+RuntimeInstanceOnly process
+    ↓
+runtime self-registration
+    ↓
+provider-specific dispatch transport
+```
+
+Important distinction:
+
+```text
+http-runtime-provider.md
+    explains HTTP dispatch, HTTP scale-out, HTTP failure reasons, and HTTP process-host recovery.
+
+grpc-runtime-provider.md
+    explains gRPC dispatch, gRPC scale-out, HTTP/2 process-host transport, gRPC failure reasons,
+    and gRPC process-host crash recovery.
+```
+
+This document should not duplicate the gRPC implementation details. It should only describe HTTP behavior and link to the gRPC provider where cross-provider comparison is useful.
 
 ---
 

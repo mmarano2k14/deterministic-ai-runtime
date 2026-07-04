@@ -1,10 +1,12 @@
 # MCP Production Runtime Scenario Framework
 
+Status: Implemented / validated for HTTP and gRPC process-host runtime scenarios, including real `RuntimeInstanceOnly` child processes, provider-based scale-out, provider-agnostic crash recovery, replay / ledger / trace proof, runtime recovery forensics, and safe-tenant non-impact validation.
+
 ## Purpose
 
 This document describes the MCP production runtime scenario framework introduced for validating the deterministic AI runtime in production-like conditions.
 
-The framework validates more than isolated unit behavior. It proves the full HTTP process-host execution path with real runtime host processes, tenant-aware scale-out, runtime registration, capacity publication, dispatch, DAG execution, durable observability, and replay. It now also validates real runtime process crash recovery: unsafe runtime detection, assigned-work reconciliation, in-flight DAG resume, local-queued redispatch, runtime recovery forensics, control-plane ledger causal chain evidence, and safe-tenant non-impact.
+The framework validates more than isolated unit behavior. It proves the full process-host execution path with real runtime host processes, tenant-aware scale-out, runtime registration, capacity publication, provider transport dispatch, DAG execution, durable observability, and replay. The framework was first validated through HTTP and now validates the same process-host crash recovery contract through gRPC. It validates real runtime process crash recovery: unsafe runtime detection, assigned-work reconciliation, in-flight DAG resume, local-queued redispatch, runtime recovery forensics, control-plane ledger causal chain evidence, and safe-tenant non-impact.
 
 The main production execution flow validated by this framework is:
 
@@ -14,11 +16,11 @@ Submit
 → shared queue
 → Redis scale-out request
 → scale-out watcher
-→ HTTP runtime provider
+→ selected runtime provider
 → Runtime Host Manager
 → RuntimeInstanceOnly host process
 → runtime registration / heartbeat / capacity
-→ HTTP dispatch
+→ provider transport dispatch
 → DAG execution
 → ledger / trace / replay validation
 ```
@@ -42,7 +44,7 @@ real RuntimeInstanceOnly process killed
 This workstream covers five related areas:
 
 1. MCP Runtime Host Manager and host creation modes.
-2. HTTP process-host scale-out with real `RuntimeInstanceOnly` processes.
+2. HTTP and gRPC process-host scale-out with real `RuntimeInstanceOnly` processes.
 3. MCP production scenario tests validating Dedicated / Shared / Hybrid tenant runtime modes.
 4. Real process-host runtime crash recovery with durable DAG resume and local-queued redispatch.
 5. Tenant-scoped recovery proof through forensics, ledger, trace, replay, and safe-tenant isolation.
@@ -60,10 +62,10 @@ The production scenario framework exists to prove that the control plane can:
 - start from zero runtime capacity;
 - submit tenant-aware runs through MCP;
 - request runtime scale-out through Redis;
-- materialize runtime capacity through the HTTP provider;
+- materialize runtime capacity through provider-specific scale-out, including HTTP and gRPC;
 - create a real runtime host process;
 - wait for runtime readiness;
-- dispatch queued runs to that runtime;
+- dispatch queued runs to that runtime through the selected provider transport;
 - execute DAG workloads;
 - observe execution through durable stores;
 - replay execution after crossing a process boundary;
@@ -188,7 +190,14 @@ The scale-out request is the bridge between queued work and provider-driven runt
 
 The scale-out watcher polls pending scale-out requests and delegates them to the appropriate runtime provider.
 
-For the current production HTTP process-host scenario, the watcher routes pending requests to the HTTP runtime provider.
+For process-host scenarios, the watcher routes pending requests to the selected runtime provider.
+
+Current validated provider hints include:
+
+```text
+http
+grpc
+```
 
 ---
 
@@ -210,6 +219,53 @@ AiHttpRuntimeScaleOutProvisioner
 The provider is responsible for materializing capacity metadata and for routing queued runs to runtime instances through HTTP commands. It is also part of the validated transport-health boundary: HTTP failures can become endpoint health signals, but unsafe capacity selection and assigned-work recovery are owned above the transport layer.
 
 ---
+
+### gRPC runtime provider
+
+The gRPC runtime provider owns gRPC transport-based runtime dispatch and gRPC runtime scale-out.
+
+It follows the same provider model as HTTP:
+
+```text
+AiRuntimeScaleOutRequestWatcherHostedService
+    ↓
+AiRuntimeScaleOutProviderSelector
+    ↓
+providerHint = grpc
+    ↓
+GrpcAiRuntimeInstanceProvider
+    ↓
+IAiGrpcRuntimeScaleOutProvisioner
+    ↓
+IAiRuntimeHostManager
+    ↓
+ProcessAiRuntimeHostCreationStrategy
+    ↓
+RuntimeInstanceOnly process
+```
+
+The runtime process registers as:
+
+```text
+provider.name = grpc
+transport.name = grpc
+```
+
+The child process maps the gRPC runtime command service and must expose a gRPC-compatible HTTP/2 endpoint.
+
+In the current process-host validation, gRPC readiness uses runtime registration / capacity publication as the reliable readiness signal. The previous HTTP command endpoint readiness probe is not valid for gRPC transport.
+
+The validated gRPC process-host recovery scenarios prove that the same provider-agnostic crash recovery base works over gRPC:
+
+```text
+Grpc_ProcessHost_Should_Requeue_Real_InFlight_Dag_After_Runtime_Process_Kill
+
+Grpc_ProcessHost_Should_Recover_Two_Tenants_After_Real_Runtime_Process_Kills_With_Strict_Dag_Resume_Replay_Ledger_And_Trace
+
+Grpc_ProcessHost_Should_Recover_Two_Tenants_After_Real_Runtime_Process_Kills_Without_Impacting_Safe_Tenant_With_Strict_Dag_Resume_Replay_Ledger_And_Trace
+```
+
+This proves that runtime process crash recovery is not tied to HTTP transport.
 
 ### Runtime Host Manager
 
@@ -269,7 +325,7 @@ This mode proves:
 - runtime startup outside the parent MCP process;
 - durable store boundaries;
 - runtime registration from the child process;
-- HTTP dispatch to the child runtime endpoint.
+- provider transport dispatch to the child runtime endpoint.
 
 ### Attach
 
@@ -310,7 +366,7 @@ This mode remains a production target beyond the local process-host validation.
 
 ---
 
-## HTTP process-host full flow
+## Process-host full flow
 
 ```text
 ┌──────────────────────────────────────────────────────────────────────────────┐
@@ -376,14 +432,14 @@ This mode remains a production target beyond the local process-host validation.
 │                                                                              │
 │  Finds pending request                                                       │
 │  Routes to selected provider                                                 │
-│  Invokes HTTP runtime scale-out provider                                     │
+│  Invokes selected runtime scale-out provider                                     │
 └───────────────────────────────────┬──────────────────────────────────────────┘
                                     │
                                     ▼
 ┌──────────────────────────────────────────────────────────────────────────────┐
-│                         HTTP Runtime Provider                                │
+│                         Runtime Provider                                │
 │                                                                              │
-│  AiHttpRuntimeScaleOutProvisioner                                            │
+│  HTTP/gRPC scale-out provisioner                                            │
 │  Resolves effective runtime settings                                         │
 │                                                                              │
 │  Precedence:                                                                 │
@@ -418,7 +474,7 @@ This mode remains a production target beyond the local process-host validation.
 │  Runs outside the parent MCP process                                         │
 │  Registers runtime instance                                                  │
 │  Publishes heartbeat and capacity                                            │
-│  Exposes HTTP runtime command endpoint                                       │
+│  Exposes provider runtime command endpoint                                       │
 └───────────────────────────────────┬──────────────────────────────────────────┘
                                     │
                                     ▼
@@ -444,7 +500,7 @@ This mode remains a production target beyond the local process-host validation.
 │                        Shared Queue Dispatcher                               │
 │                                                                              │
 │  Selects visible runtime capacity                                            │
-│  Dispatches queued run to HTTP runtime endpoint                              │
+│  Dispatches queued run to selected runtime endpoint                              │
 │  Stores AssignedRuntimeInstanceId and LocalRunId                             │
 └───────────────────────────────────┬──────────────────────────────────────────┘
                                     │
@@ -692,6 +748,21 @@ The HTTP process-host runner is:
 HttpProcessHostProductionScenarioRunner
 ```
 
+The gRPC process-host settings path reuses the same production scenario structure while replacing the provider and transport contract with gRPC-specific settings.
+
+The real process-host crash recovery scenarios now share a provider-agnostic base:
+
+```text
+ProcessHostRealRuntimeCrashRecoveryScenarioTestsBase
+```
+
+Provider-specific wrappers select the runtime profile:
+
+```text
+HttpProcessHostScenarioRuntimeProfile
+GrpcProcessHostScenarioRuntimeProfile
+```
+
 It creates:
 
 - parent MCP server test host;
@@ -718,12 +789,20 @@ Validated crash recovery scenarios include:
 - replay, ledger, trace, and control-plane causal chain proof after recovery;
 - no cross-tenant ledger leak, no duplicate recovery, and no safe-tenant recovery forensics.
 
-Representative tests:
+Representative HTTP tests:
 
 ```text
 Http_ProcessHost_Should_Recover_Two_Tenants_After_Real_Runtime_Process_Kills_With_Strict_Dag_Resume_Replay_Ledger_And_Trace
 
 Http_ProcessHost_Should_Recover_Two_Tenants_After_Real_Runtime_Process_Kills_Without_Impacting_Safe_Tenant_With_Strict_Dag_Resume_Replay_Ledger_And_Trace
+```
+
+Representative gRPC tests:
+
+```text
+Grpc_ProcessHost_Should_Recover_Two_Tenants_After_Real_Runtime_Process_Kills_With_Strict_Dag_Resume_Replay_Ledger_And_Trace
+
+Grpc_ProcessHost_Should_Recover_Two_Tenants_After_Real_Runtime_Process_Kills_Without_Impacting_Safe_Tenant_With_Strict_Dag_Resume_Replay_Ledger_And_Trace
 ```
 
 The safe-tenant scenario is the strongest isolation proof. Tenant A and tenant B each lose one real runtime process. Tenant C, represented by `tenant-real-crash-safe`, is never killed, receives no recovery forensics, has zero recovered work, completes its three normal runs, and still produces replay, ledger, and trace evidence.
@@ -816,7 +895,7 @@ The production scenario framework validates the following behavior:
 - tenant metadata is propagated into shared controller requests;
 - `TenantGroupId` is included in request metadata for scale-out requeue scope matching;
 - scale-out requests are tenant-scoped and pipeline-scoped;
-- HTTP scale-out can materialize real runtime process capacity;
+- HTTP and gRPC scale-out can materialize real runtime process capacity;
 - runtime instances register with tenant and isolation metadata;
 - runtime capacity descriptors expose effective worker / concurrency / queue settings;
 - runtime visibility respects Dedicated / Shared / Hybrid rules;
@@ -828,7 +907,10 @@ The production scenario framework validates the following behavior:
 - volatile local queued work is redispatched through durable `SharedRunId` state;
 - runtime recovery forensics are durable and queryable after convergence;
 - control-plane ledger causal chain evidence is available for scale-out, host creation, recovery, and redispatch;
-- safe tenant non-impact is validated with zero recovery work, zero recovery forensics, and zero recovery ledger contamination.
+- safe tenant non-impact is validated with zero recovery work, zero recovery forensics, and zero recovery ledger contamination;
+- gRPC dispatch can execute real process-host runs after scale-out fulfillment;
+- gRPC process-host crash recovery preserves the original durable `ExecutionId` during in-flight DAG resume;
+- HTTP and gRPC wrappers validate the same provider-agnostic recovery base.
 
 ---
 
@@ -839,6 +921,7 @@ Before merging this workstream, run:
 ```bash
 dotnet test --filter "FullyQualifiedName~HttpProcessHostProductionScenarioTests"
 dotnet test --filter "FullyQualifiedName~HttpProcessHostRealRuntimeCrashRecoveryScenarioTests"
+dotnet test --filter "FullyQualifiedName~GrpcProcessHostRealRuntimeCrashRecoveryScenarioTests"
 dotnet test --filter "FullyQualifiedName~AiRuntimeInstanceVisibilityEvaluatorTests"
 dotnet test --filter "FullyQualifiedName~ProductionTenantRuntimeModeMapperTests"
 dotnet test --filter "FullyQualifiedName~AiHttpRuntimeScaleOutProvisionerTests"
@@ -851,12 +934,22 @@ The most important end-to-end execution validation is:
 Http_ProcessHost_Should_Run_MixedTenant_Full_Production_Validation_Scenario
 ```
 
-The most important end-to-end recovery validations are:
+The most important HTTP end-to-end recovery validations are:
 
 ```text
 Http_ProcessHost_Should_Recover_Two_Tenants_After_Real_Runtime_Process_Kills_With_Strict_Dag_Resume_Replay_Ledger_And_Trace
 
 Http_ProcessHost_Should_Recover_Two_Tenants_After_Real_Runtime_Process_Kills_Without_Impacting_Safe_Tenant_With_Strict_Dag_Resume_Replay_Ledger_And_Trace
+```
+
+The most important gRPC end-to-end recovery validations are:
+
+```text
+Grpc_ProcessHost_Should_Requeue_Real_InFlight_Dag_After_Runtime_Process_Kill
+
+Grpc_ProcessHost_Should_Recover_Two_Tenants_After_Real_Runtime_Process_Kills_With_Strict_Dag_Resume_Replay_Ledger_And_Trace
+
+Grpc_ProcessHost_Should_Recover_Two_Tenants_After_Real_Runtime_Process_Kills_Without_Impacting_Safe_Tenant_With_Strict_Dag_Resume_Replay_Ledger_And_Trace
 ```
 
 These validate:
@@ -898,6 +991,22 @@ Future work should decide between:
 
 Hybrid process-host fallback to shared capacity should be validated only after the shared capacity pooling model is explicit.
 
+### gRPC readiness hardening
+
+The gRPC process-host scenarios currently rely on runtime registration and capacity publication as readiness evidence.
+
+This is correct for the current validation because the runtime process self-registers and publishes usable capacity before dispatch, but the provider should eventually get a dedicated gRPC-native readiness strategy.
+
+Future readiness options:
+
+```text
+registry / capacity readiness waiter
+gRPC health service
+provider-aware readiness abstraction
+```
+
+The old HTTP command readiness endpoint must not be reused for gRPC.
+
 ### Runtime health, endpoint signals, and recovery boundary
 
 Runtime health reconciliation and execution recovery are separate responsibilities.
@@ -928,6 +1037,7 @@ The important rule is that transport failure reporting, unsafe-capacity suppress
 This document complements:
 
 - `http-runtime-provider.md`;
+- `grpc-runtime-provider.md`;
 - `runtime-instance-provider-model.md`;
 - `runtime-discovery-registry-capacity.md`;
 - `multi-tenant-runtime-flow.md`;
@@ -941,4 +1051,4 @@ This document complements:
 
 Those documents describe the general provider, registry, capacity, multi-tenant, and testing architecture.
 
-This document focuses specifically on the MCP production runtime scenario framework and the HTTP process-host validation path.
+This document focuses specifically on the MCP production runtime scenario framework and the provider-based process-host validation path, including HTTP and gRPC.

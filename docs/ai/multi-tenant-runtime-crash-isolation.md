@@ -1,6 +1,6 @@
 # Multi-Tenant Runtime Crash Isolation
 
-Status: Implemented / validated through real HTTP process-host runtime crash recovery scenarios.
+Status: Implemented / validated through real HTTP and gRPC process-host runtime crash recovery scenarios.
 
 This document describes the multi-tenant runtime crash isolation model validated by the Deterministic AI Runtime.
 
@@ -8,6 +8,7 @@ It focuses on the strongest production recovery scenario currently validated:
 
 ```text
 One shared control plane
+Provider transport validated through HTTP and gRPC
 Three tenant-scoped real runtime host processes
 Tenant A runtime process killed
 Tenant B runtime process killed
@@ -24,6 +25,7 @@ This document complements:
 - [Runtime Control Plane](runtime-control-plane.md)
 - [Runtime Discovery, Registry, and Capacity](runtime-discovery-registry-capacity.md)
 - [HTTP Runtime Provider](http-runtime-provider.md)
+- [gRPC Runtime Provider](grpc-runtime-provider.md)
 - [MCP Production Runtime Scenario Framework](mcp-production-runtime-scenario-framework.md)
 - [Execution-Correlated Decision Ledger](execution-correlated-ledger.md)
 - [Recovery Replay Ledger Trace Proof](recovery-replay-ledger-trace-proof.md)
@@ -53,7 +55,7 @@ The purpose of this document is to define the isolation contract for runtime pro
 
 ## Validated Scenario
 
-The validated scenario uses a shared control plane with three active tenants.
+The validated scenario uses a shared control plane with three active tenants. The same isolation proof is now validated through both HTTP and gRPC process-host runtime providers.
 
 ```text
 Tenant A = impacted tenant
@@ -87,6 +89,22 @@ Do not kill Tenant C runtime process
 The system must recover only work that was assigned to the killed runtime instances.
 
 The safe tenant must continue normal execution and must not be pulled into the recovery surface.
+
+---
+
+## Provider-Neutral Isolation Proof
+
+The transport is not part of the isolation boundary.
+
+HTTP and gRPC are validated as transport/provider implementations of the same recovery contract:
+
+```text
+Provider transport differs.
+Tenant boundary does not differ.
+Assigned-work recovery does not differ.
+Replay / ledger / trace / forensics proof does not differ.
+Safe tenant non-impact does not differ.
+```
 
 ---
 
@@ -244,18 +262,24 @@ RuntimeExecutionRecoveryReconciler
     redispatches local queued shared runs
     writes recovery evidence and forensics
 
-HTTP provider
+Runtime provider
     reports transport failure signals
-    dispatches commands when a runtime endpoint is healthy
+    dispatches commands when runtime capacity is healthy
     participates in scale-out when selected
     does not own recovery
     does not kill or restart runtimes directly
+
+HTTP provider
+    reports HTTP transport failure signals such as http-circuit-open
+
+gRPC provider
+    reports gRPC transport failure signals such as grpc-circuit-open
 
 Runtime Host Manager / lifecycle owner
     creates or attaches replacement runtime capacity
 ```
 
-The HTTP provider is not the recovery owner.
+The HTTP and gRPC providers are not the recovery owners.
 
 The runtime health reconciler is not the assigned-work recovery owner.
 
@@ -639,12 +663,18 @@ The important behavior is that duplicate denial is structured, observable, and d
 
 ---
 
-## Validated Test Name
+## Validated Test Names
 
-The primary validated scenario is:
+The primary validated HTTP scenario is:
 
 ```text
 Http_ProcessHost_Should_Recover_Two_Tenants_After_Real_Runtime_Process_Kills_Without_Impacting_Safe_Tenant_With_Strict_Dag_Resume_Replay_Ledger_And_Trace
+```
+
+The equivalent validated gRPC scenario is:
+
+```text
+Grpc_ProcessHost_Should_Recover_Two_Tenants_After_Real_Runtime_Process_Kills_Without_Impacting_Safe_Tenant_With_Strict_Dag_Resume_Replay_Ledger_And_Trace
 ```
 
 This scenario validates:
@@ -674,6 +704,7 @@ ledger / trace / forensics proof after convergence
 
 | Invariant | Expected | Validated |
 |---|---:|---:|
+| Provider transport | HTTP + gRPC | yes |
 | Tenant A submitted runs | 3 | yes |
 | Tenant B submitted runs | 3 | yes |
 | Tenant C submitted runs | 3 | yes |
@@ -696,7 +727,7 @@ ledger / trace / forensics proof after convergence
 
 ## What This Proves
 
-This scenario proves that the runtime can:
+This scenario proves that the runtime can do the same tenant-scoped crash isolation over HTTP and gRPC:
 
 ```text
 lose real runtime processes for two tenants
@@ -753,7 +784,7 @@ Restore tenant context before registry/capacity/admission/recovery queries.
 Treat local queue as volatile.
 Recover assigned work from durable shared run, queue, execution index, and DAG state.
 Keep health reconciliation separate from execution recovery reconciliation.
-Keep HTTP provider as transport/signal provider, not recovery owner.
+Keep HTTP and gRPC providers as transport/signal providers, not recovery owners.
 Write recovery forensics only for impacted work.
 Validate safe tenant normal completion and zero recovery surface.
 Validate replay / ledger / trace after recovery.
@@ -769,7 +800,7 @@ Do not treat runtime replacement as recovery completion.
 Do not trust local queue state after process death.
 Do not let impacted tenant recovery queries see safe tenant recovery entries.
 Do not count safe tenant normal execution as recovery.
-Do not make the HTTP provider kill, restart, or recover runtimes directly.
+Do not make the HTTP or gRPC provider kill, restart, or recover runtimes directly.
 Do not mark validated health/recovery boundaries as future work.
 ```
 
@@ -784,6 +815,7 @@ Do not mark validated health/recovery boundaries as future work.
 - [Runtime Control Plane](runtime-control-plane.md)
 - [Runtime Discovery, Registry, and Capacity](runtime-discovery-registry-capacity.md)
 - [HTTP Runtime Provider](http-runtime-provider.md)
+- [gRPC Runtime Provider](grpc-runtime-provider.md)
 - [MCP Production Runtime Scenario Framework](mcp-production-runtime-scenario-framework.md)
 - [Multi-Tenant Control Plane Isolation](multi-tenant-control-plane-isolation.md)
 - [Execution-Correlated Decision Ledger](execution-correlated-ledger.md)
@@ -807,7 +839,7 @@ Safe tenants produce normal execution observability.
 Safe tenants produce zero recovery observability.
 ```
 
-Crash recovery is only valid when both sides are proven.
+Crash recovery is only valid when both sides are proven, regardless of whether the runtime transport is HTTP or gRPC.
 
 ```text
 Failed work recovered.

@@ -1,6 +1,6 @@
 # Testing Strategy
 
-Status: Actively validated by a large unit and integration test suite, including MCP, Redis, local runtime pools, Redis-backed scale-out request lifecycle, local runtime scale-out, fulfilled-run requeue, HTTP pooled runtime provider scenarios, HTTP runtime provider hardening, HTTP scale-out provider/provisioner behavior, Runtime Host Manager process-host provisioning, MCP production runtime scenario framework, durable replay / ledger / trace validation across process boundaries, and tenant-aware HTTP Shared/Dedicated/Hybrid runtime scenarios, real process-host runtime crash recovery, multi-tenant crash isolation, safe-tenant non-impact validation, runtime recovery forensics, and recovery replay / ledger / trace proof.
+Status: Actively validated by a large unit and integration test suite, including MCP, Redis, local runtime pools, Redis-backed scale-out request lifecycle, local runtime scale-out, fulfilled-run requeue, HTTP pooled runtime provider scenarios, HTTP runtime provider hardening, HTTP scale-out provider/provisioner behavior, gRPC runtime provider and gRPC scale-out provider behavior, Runtime Host Manager process-host provisioning, MCP production runtime scenario framework, durable replay / ledger / trace validation across process boundaries, and tenant-aware HTTP/gRPC Shared/Dedicated/Hybrid runtime scenarios, real HTTP and gRPC process-host runtime crash recovery, multi-tenant crash isolation, safe-tenant non-impact validation, runtime recovery forensics, and recovery replay / ledger / trace proof.
 
 This document describes the testing strategy used to validate the Deterministic AI Runtime.
 
@@ -38,16 +38,19 @@ The runtime must prove that it behaves correctly under:
 - HTTP dispatch timeout, retry, and circuit breaker behavior
 - HTTP structured dispatch failure persistence
 - HTTP runtime scale-out provider/provisioner behavior
+- gRPC runtime provider dispatch behavior
+- gRPC runtime scale-out provider/provisioner behavior
+- gRPC process-host `RuntimeInstanceOnly` scale-out behavior
 - Runtime Host Manager host creation behavior
 - process-host `RuntimeInstanceOnly` scale-out behavior
-- real process-host runtime crash recovery behavior
+- real HTTP and gRPC process-host runtime crash recovery behavior
 - in-flight DAG resume with preserved `ExecutionId`
 - local-queued work redispatch through durable `SharedRunId`
 - safe-tenant non-impact during impacted tenant recovery
 - runtime recovery forensics and incident timelines
 - recovery replay / ledger / trace proof after convergence
 - MCP production runtime scenario framework behavior
-- tenant-aware HTTP Shared/Dedicated/Hybrid scale-out behavior
+- tenant-aware HTTP/gRPC Shared/Dedicated/Hybrid scale-out behavior
 - durable replay / ledger / trace validation across process boundaries
 - Redis control-plane discovery and id resolution
 - Redis registry and capacity cleanup
@@ -111,12 +114,13 @@ The test suite is used as proof that the runtime can survive:
 - HTTP provider timeout/retry/circuit-breaker behavior
 - HTTP dispatch failure persistence
 - HTTP runtime scale-out provider/provisioner behavior
+- gRPC runtime provider and gRPC scale-out provider behavior
 - Runtime Host Manager process-host provisioning
 - real process-host runtime crash recovery
 - multi-tenant runtime crash isolation with safe tenant proof
 - in-flight execution resume and local queued redispatch
 - runtime recovery forensics, replay, ledger, and trace proof after recovery
-- tenant-aware HTTP scale-out and fallback policy behavior
+- tenant-aware HTTP/gRPC scale-out and fallback policy behavior
 - Dedicated / Shared / Hybrid process-host production scenarios
 - durable replay / ledger / trace validation across process boundaries
 - Redis discovery/registry/capacity lifecycle
@@ -208,13 +212,15 @@ Main categories include:
 - HTTP pooled runtime provider tests
 - HTTP runtime provider hardening tests
 - HTTP runtime scale-out provider tests
+- gRPC runtime provider tests
+- gRPC runtime scale-out provider tests
 - Runtime Host Manager process-host tests
 - MCP production runtime scenario framework tests
 - production runtime crash recovery scenario tests
 - multi-tenant runtime crash isolation tests
 - runtime recovery forensics tests
 - recovery replay / ledger / trace proof tests
-- tenant-aware HTTP scale-out scenario tests
+- tenant-aware HTTP/gRPC scale-out scenario tests
 - durable process-boundary observability tests
 - Redis discovery and control-plane id resolver tests
 - Redis runtime registry and capacity cleanup tests
@@ -299,6 +305,8 @@ They should cover:
 - scale-out provider selector resolution
 - HTTP scale-out provider selector resolution
 - HTTP scale-out provisioner behavior
+- gRPC scale-out provider selector resolution
+- gRPC scale-out provisioner behavior
 - Runtime Host Manager provisioning behavior
 - process-host runtime readiness behavior
 - runtime health reconciliation and unsafe capacity suppression behavior
@@ -512,11 +520,13 @@ They should cover:
 - idempotent request observation
 - scale-out provider selector resolution
 - local provider scale-out capability
+- gRPC provider scale-out capability
 - local runtime instance scaler behavior
 - fulfilled scale-out shared run requeue
 - shared queue pump dispatch after scale-out fulfillment
 - runtime execution completion after dynamic capacity creation
 - HTTP provider scale-out request fulfillment
+- gRPC provider scale-out request fulfillment
 - HTTP provider metadata/capacity publication
 - tenant-aware HTTP Dedicated no-shared-fallback behavior
 - tenant-aware HTTP Hybrid shared-fallback behavior
@@ -599,6 +609,30 @@ Dedicated tenant = no shared HTTP fallback when disabled
 Hybrid tenant = shared fallback only when allowed
 ```
 
+Validated gRPC scale-out evidence:
+
+```text
+ProviderHint = grpc
+ScaleOutRequest.Status = Pending -> Observed -> Fulfilled
+gRPC provider implements IAiRuntimeScaleOutProvider
+IAiGrpcRuntimeScaleOutProvisioner resolves effective tenant runtime settings
+Runtime Host Manager receives the scale-out request
+HostCreationMode = Process launches a real RuntimeInstanceOnly process
+RuntimeInstanceOnly process self-registers with provider.name = grpc and transport.name = grpc
+Redis runtime registry = gRPC provider/runtime metadata published
+Redis runtime capacity store = gRPC transport metadata published
+Kestrel child process endpoint is configured for HTTP/2
+gRPC dispatch reaches the RuntimeInstanceOnly command service
+```
+
+Primary gRPC integration scenarios:
+
+```text
+Grpc_ProcessHost_Should_Requeue_Real_InFlight_Dag_After_Runtime_Process_Kill
+Grpc_ProcessHost_Should_Recover_Two_Tenants_After_Real_Runtime_Process_Kills_With_Strict_Dag_Resume_Replay_Ledger_And_Trace
+Grpc_ProcessHost_Should_Recover_Two_Tenants_After_Real_Runtime_Process_Kills_Without_Impacting_Safe_Tenant_With_Strict_Dag_Resume_Replay_Ledger_And_Trace
+```
+
 Primary HTTP integration scenarios:
 
 ```text
@@ -649,9 +683,11 @@ They should cover:
 - local runtime instance provider flow
 - HTTP runtime provider flow
 - HTTP pooled runtime provider flow
+- gRPC runtime provider flow
 - `RuntimeInstanceOnly` host mode
 - `ControlPlaneWithLocalRuntimeInstances` host mode
 - `ControlPlaneWithHttpRuntimeInstances` host mode
+- `ControlPlaneWithGrpcRuntimeInstances` host mode
 - runtime instance registration with provider metadata
 - control-plane discovery resolution before runtime-only registration
 - provider metadata propagation
@@ -661,6 +697,7 @@ They should cover:
 - queue-first run completion through HTTP provider
 - pump disabled / manual drain behavior with provider-hosted runtime instances
 - local provider scale-out capability
+- gRPC provider scale-out capability
 - local runtime scaler creation path
 - provider-based scale-out selector behavior
 - scale-out request fulfilled/rejected behavior
@@ -794,6 +831,43 @@ The HTTP watcher path should mark the Redis scale-out request Fulfilled only aft
 The validated process-host HTTP provisioner path can delegate to the Runtime Host Manager and launch a real RuntimeInstanceOnly process when HostCreationMode = Process.
 ```
 
+## gRPC Runtime Provider and Scale-Out Provider Tests
+
+gRPC runtime provider tests validate that the provider model is not HTTP-specific.
+
+They should cover:
+
+- `GrpcAiRuntimeInstanceProvider` dispatch through typed gRPC commands;
+- `GrpcAiRuntimeInstanceProvider` implementing `IAiRuntimeScaleOutProvider`;
+- `ControlPlaneWithGrpcRuntimeInstances` host mode;
+- `RuntimeInstanceOnly` gRPC command service mapping;
+- gRPC provider selector resolution from `ProviderHint = grpc`;
+- gRPC scale-out provisioner behavior;
+- Runtime Host Manager process launch from gRPC scale-out;
+- child process registration with `provider.name = grpc`;
+- child process registration with `transport.name = grpc`;
+- Kestrel HTTP/2 configuration for gRPC process-host tests;
+- Redis scale-out request fulfillment through the gRPC provider;
+- gRPC dispatch into the replacement runtime local queue;
+- structured `grpc-*` dispatch failure reasons such as circuit-open or provider-unavailable;
+- gRPC process-host crash recovery using the same provider-agnostic recovery base as HTTP.
+
+Important assertions:
+
+```text
+ProviderHint = grpc should resolve the gRPC scale-out provider.
+
+The gRPC provider should use the Runtime Host Manager for process-host scale-out.
+
+The spawned RuntimeInstanceOnly process should self-register with provider.name = grpc and transport.name = grpc.
+
+The child runtime endpoint must support HTTP/2 for gRPC commands.
+
+gRPC dispatch should produce a LocalRunId and ExecutionId through the normal runtime local queue.
+
+gRPC process-host crash recovery should preserve the same ExecutionId for in-flight DAG resume.
+```
+
 ## Tenant-Aware HTTP Scale-Out Scenario Tests
 
 Tenant-aware HTTP scale-out scenario tests validate that HTTP capacity follows the same Shared, Dedicated, and Hybrid rules as local scale-out.
@@ -881,10 +955,11 @@ They should cover:
 - Redis-backed shared queue;
 - Redis-backed scale-out request store;
 - HTTP provider scale-out;
+- gRPC provider scale-out;
 - Runtime Host Manager process launch;
 - real `RuntimeInstanceOnly` child process;
 - runtime registration / heartbeat / capacity;
-- HTTP dispatch to the created runtime;
+- HTTP or gRPC dispatch to the created runtime;
 - DAG execution;
 - retention;
 - decision ledger;
@@ -908,13 +983,13 @@ The scale-out request should be persisted in Redis.
 
 The watcher should call the HTTP provider.
 
-The HTTP provider should use the Runtime Host Manager.
+The HTTP and gRPC providers should use the Runtime Host Manager.
 
 A real RuntimeInstanceOnly process should start.
 
 The runtime should register and publish capacity.
 
-The dispatcher should use normal HTTP dispatch after capacity becomes visible.
+The dispatcher should use normal provider-specific dispatch after capacity becomes visible.
 
 The run should complete through the DAG engine.
 
@@ -943,10 +1018,18 @@ replay enabled
 Mongo / Redis durable observability
 ```
 
-Primary scenario:
+Primary HTTP scenario:
 
 ```text
 Http_ProcessHost_Should_Run_MixedTenant_Full_Production_Validation_Scenario
+```
+
+Primary gRPC recovery scenarios:
+
+```text
+Grpc_ProcessHost_Should_Requeue_Real_InFlight_Dag_After_Runtime_Process_Kill
+Grpc_ProcessHost_Should_Recover_Two_Tenants_After_Real_Runtime_Process_Kills_With_Strict_Dag_Resume_Replay_Ledger_And_Trace
+Grpc_ProcessHost_Should_Recover_Two_Tenants_After_Real_Runtime_Process_Kills_Without_Impacting_Safe_Tenant_With_Strict_Dag_Resume_Replay_Ledger_And_Trace
 ```
 
 
@@ -988,7 +1071,7 @@ Recovery should not consume business retry budget.
 Recovery should produce durable forensics, ledger, trace, and replay evidence.
 ```
 
-Primary process-host recovery scenarios:
+Primary HTTP process-host recovery scenarios:
 
 ```text
 Http_ProcessHost_Should_Recover_Tenant_After_Real_Runtime_Process_Kill_With_Strict_Dag_Resume_Replay_Ledger_And_Trace
@@ -996,6 +1079,16 @@ Http_ProcessHost_Should_Recover_Tenant_After_Real_Runtime_Process_Kill_With_Stri
 Http_ProcessHost_Should_Recover_Two_Tenants_After_Real_Runtime_Process_Kills_With_Strict_Dag_Resume_Replay_Ledger_And_Trace
 
 Http_ProcessHost_Should_Recover_Two_Tenants_After_Real_Runtime_Process_Kills_Without_Impacting_Safe_Tenant_With_Strict_Dag_Resume_Replay_Ledger_And_Trace
+```
+
+Primary gRPC process-host recovery scenarios:
+
+```text
+Grpc_ProcessHost_Should_Requeue_Real_InFlight_Dag_After_Runtime_Process_Kill
+
+Grpc_ProcessHost_Should_Recover_Two_Tenants_After_Real_Runtime_Process_Kills_With_Strict_Dag_Resume_Replay_Ledger_And_Trace
+
+Grpc_ProcessHost_Should_Recover_Two_Tenants_After_Real_Runtime_Process_Kills_Without_Impacting_Safe_Tenant_With_Strict_Dag_Resume_Replay_Ledger_And_Trace
 ```
 
 Validated recovery evidence:
@@ -1621,6 +1714,7 @@ They should cover:
 - scale-out watcher behavior
 - provider-based scale-out selector behavior
 - HTTP provider scale-out selector behavior
+- gRPC provider scale-out selector behavior
 - fulfilled scale-out requeue behavior
 - Redis-backed shared run store behavior
 - Redis-backed shared queue behavior
@@ -2007,7 +2101,7 @@ Recovery validation should include replay report, replay ledger, replay trace, e
 | Runtime registry and capacity descriptor tests | Implemented / validated |
 | Runtime worker capacity visibility tests | Implemented / validated |
 | Runtime shutdown lifecycle tests | Implemented / validated |
-| Runtime provider model tests | Implemented foundations / validated for local and HTTP pooled providers |
+| Runtime provider model tests | Implemented foundations / validated for local, HTTP, and gRPC providers |
 | DAG execution tests | Implemented / ongoing |
 | Redis Lua claim tests | Implemented / ongoing |
 | Distributed worker tests | Implemented / ongoing |
@@ -2042,6 +2136,9 @@ Recovery validation should include replay report, replay ledger, replay trace, e
 | Local provider scale-out tests | Implemented / validated |
 | Fulfilled scale-out run requeue tests | Implemented / validated |
 | MCP Redis local scale-out execution tests | Implemented / validated |
+| gRPC runtime provider tests | Implemented / validated |
+| gRPC runtime scale-out provider tests | Implemented / validated |
+| gRPC process-host crash recovery scenario tests | Implemented / validated |
 | Kubernetes scenario tests | Planned |
 | Full enterprise demo scenario | Planned |
 | Durable decision ledger tests | Implemented / validated through replay and recovery ledger scenarios |
@@ -2074,7 +2171,7 @@ The testing strategy validates the runtime as execution infrastructure.
 
 It proves that:
 
-- more than 1000 test cases validate the runtime across unit, integration, distributed, Redis, replay, observability, control-plane, MCP, provider-hosting, shared queue, HTTP hardening, HTTP scale-out, and tenant-aware isolation scenarios
+- more than 1000 test cases validate the runtime across unit, integration, distributed, Redis, replay, observability, control-plane, MCP, provider-hosting, shared queue, HTTP hardening, HTTP/gRPC scale-out, and tenant-aware isolation scenarios
 - worker crashes can be recovered
 - retries are deterministic and observable
 - retention reduces hot state without losing required data
@@ -2088,14 +2185,15 @@ It proves that:
 - HTTP pooled runtime provider flows are validated
 - HTTP runtime provider timeout, retry, circuit breaker, and structured failure behavior are validated
 - HTTP runtime provider scale-out and provisioner behavior are validated
+- gRPC runtime provider scale-out and provisioner behavior are validated
 - Runtime Host Manager process-host provisioning is validated
-- real `RuntimeInstanceOnly` processes can be launched from HTTP scale-out
+- real `RuntimeInstanceOnly` processes can be launched from HTTP and gRPC scale-out
 - real `RuntimeInstanceOnly` processes can be killed and recovered through control-plane recovery
 - in-flight DAG recovery preserves durable `ExecutionId`
 - local queued work is recovered through durable `SharedRunId` redispatch
 - safe tenants remain unaffected during impacted tenant recovery
 - runtime recovery forensics, replay, ledger, and trace are validated after recovery
-- tenant-aware HTTP Shared/Dedicated/Hybrid scale-out and fallback policies are validated
+- tenant-aware HTTP/gRPC Shared/Dedicated/Hybrid scale-out and fallback policies are validated
 - mixed-tenant production validation proves Dedicated, Shared, and Hybrid execution with retention, ledger, trace, and replay enabled
 - Redis discovery, registry, capacity, and admission reservation flows are validated
 - heavy HTTP dispatch validates Redis-backed shared coordination under pressure
@@ -2125,6 +2223,7 @@ The goal is to prove runtime guarantees.
 - [MCP Server as Runtime Control Plane](mcp-server-control-plane.md)
 - [Runtime Instance Provider Model](runtime-instance-provider-model.md)
 - [HTTP Runtime Provider](http-runtime-provider.md)
+- [gRPC Runtime Provider](grpc-runtime-provider.md)
 - [MCP Production Runtime Scenario Framework](mcp-production-runtime-scenario-framework.md)
 - [Runtime Process Crash Recovery](runtime-process-crash-recovery.md)
 - [Runtime Recovery Forensics](runtime-recovery-forensics.md)

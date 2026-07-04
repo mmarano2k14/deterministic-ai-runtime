@@ -1,6 +1,6 @@
 # Runtime Process Crash Recovery
 
-Status: Implemented / validated for HTTP process-host runtime crash recovery with real `RuntimeInstanceOnly` processes, tenant-scoped runtime replacement, in-flight DAG resume, local-queued shared-run redispatch, runtime recovery forensics, replay / ledger / trace validation, and multi-tenant safe-tenant non-impact proof.
+Status: Implemented / validated for HTTP and gRPC process-host runtime crash recovery with real `RuntimeInstanceOnly` processes, tenant-scoped runtime replacement, in-flight DAG resume, local-queued shared-run redispatch, runtime recovery forensics, replay / ledger / trace validation, and multi-tenant safe-tenant non-impact proof.
 
 This document describes the runtime process crash recovery model used by the Deterministic AI Runtime control plane.
 
@@ -11,6 +11,7 @@ Related documents:
 - [Architecture Overview](architecture-overview.md)
 - [Runtime Control Plane](runtime-control-plane.md)
 - [HTTP Runtime Provider](http-runtime-provider.md)
+- [gRPC Runtime Provider](grpc-runtime-provider.md)
 - [Runtime Discovery, Registry, and Capacity](runtime-discovery-registry-capacity.md)
 - [Retry and Recovery](retry-and-recovery.md)
 - [Runtime Recovery Forensics](runtime-recovery-forensics.md)
@@ -86,23 +87,27 @@ ExecutionRecoveryReconciler
     redispatches local-queued shared runs
     writes recovery evidence
 
-HTTP Provider
-    reports transport and endpoint failure signals
-    dispatches through HTTP when capacity is safe
-    participates in provider scale-out
-    does not own recovery
-    does not kill, restart, or replace runtimes directly
+HTTP / gRPC Providers
+    report transport and endpoint failure signals
+    dispatch through their provider transport when capacity is safe
+    participate in provider scale-out
+    do not own recovery
+    do not kill, restart, or replace runtimes directly
 ```
 
 This boundary is critical.
 
-The HTTP provider may return failure reasons such as:
+Transport providers may return failure reasons such as:
 
 ```text
 http-provider-unavailable
 http-dispatch-timeout
 http-circuit-open
 http-command-failed
+grpc-provider-unavailable
+grpc-dispatch-timeout
+grpc-circuit-open
+grpc-command-failed
 ```
 
 Those are transport or endpoint health signals.
@@ -118,7 +123,7 @@ The lifecycle owner creates or attaches runtime capacity. The health reconciler 
 The validated boundary is:
 
 ```text
-HTTP circuit open or process heartbeat loss
+HTTP / gRPC circuit open or process heartbeat loss
     ↓
 failure reason / endpoint health signal emitted
     ↓
@@ -395,7 +400,7 @@ Scale-out request may be persisted when no capacity exists
     ↓
 Provider selector resolves the scale-out-capable provider
     ↓
-HTTP provider delegates host lifecycle to Runtime Host Manager
+HTTP or gRPC provider delegates host lifecycle to Runtime Host Manager
     ↓
 Process host creation starts RuntimeInstanceOnly process
     ↓
@@ -416,16 +421,16 @@ Hybrid tenant work may use shared capacity only when tenant policy allows shared
 
 ## Runtime Host Manager Boundary
 
-In HTTP process-host scenarios, replacement capacity can be created through:
+In HTTP and gRPC process-host scenarios, replacement capacity can be created through:
 
 ```text
 AiRuntimeScaleOutRequestWatcherHostedService
     ↓
 AiRuntimeScaleOutProviderSelector
     ↓
-HttpAiRuntimeInstanceProvider
+HttpAiRuntimeInstanceProvider or GrpcAiRuntimeInstanceProvider
     ↓
-AiHttpRuntimeScaleOutProvisioner
+HTTP or gRPC runtime scale-out provisioner
     ↓
 IAiRuntimeHostManager
     ↓
@@ -434,13 +439,31 @@ ProcessAiRuntimeHostCreationStrategy
 RuntimeInstanceOnly process
 ```
 
-The HTTP provider participates in scale-out and dispatch.
+The HTTP and gRPC providers participate in scale-out and dispatch through their respective transports.
 
 It does not directly own process lifecycle policy.
 
 The Runtime Host Manager owns host creation or attachment mechanics.
 
 The runtime process self-registers and publishes capacity before it is considered usable.
+
+The recovery model is provider-agnostic. HTTP and gRPC use the same durable recovery contract:
+
+```text
+provider-specific dispatch transport
+    ↓
+real RuntimeInstanceOnly process
+    ↓
+process kill / unsafe runtime detection
+    ↓
+assigned work inventory
+    ↓
+replacement process-host capacity
+    ↓
+same durable recovery path
+```
+
+The validated gRPC path proves that crash recovery does not depend on HTTP command transport. gRPC dispatch, gRPC scale-out provider routing, Runtime Host Manager process creation, replacement runtime selection, strict DAG resume, replay, ledger, trace, and safe-tenant non-impact all converge through the same recovery model.
 
 Scale-out fulfillment is not recovery completion.
 
@@ -712,7 +735,7 @@ Safe tenant recovery leak = false
 
 ## Validated Test Names
 
-Primary recovery scenarios include:
+Primary HTTP recovery scenarios include:
 
 ```text
 Http_ProcessHost_Should_Recover_Two_Tenants_After_Real_Runtime_Process_Kills_With_Strict_Dag_Resume_Replay_Ledger_And_Trace
@@ -722,6 +745,20 @@ and:
 
 ```text
 Http_ProcessHost_Should_Recover_Two_Tenants_After_Real_Runtime_Process_Kills_Without_Impacting_Safe_Tenant_With_Strict_Dag_Resume_Replay_Ledger_And_Trace
+```
+
+Primary gRPC recovery scenarios include:
+
+```text
+Grpc_ProcessHost_Should_Requeue_Real_InFlight_Dag_After_Runtime_Process_Kill
+```
+
+```text
+Grpc_ProcessHost_Should_Recover_Two_Tenants_After_Real_Runtime_Process_Kills_With_Strict_Dag_Resume_Replay_Ledger_And_Trace
+```
+
+```text
+Grpc_ProcessHost_Should_Recover_Two_Tenants_After_Real_Runtime_Process_Kills_Without_Impacting_Safe_Tenant_With_Strict_Dag_Resume_Replay_Ledger_And_Trace
 ```
 
 The second scenario is the strongest isolation proof because it validates impacted tenants and a non-impacted tenant in the same control plane.
@@ -873,7 +910,8 @@ A safe tenant running concurrently is the strongest isolation check.
 | Runtime heartbeat / unsafe capacity detection | Implemented / validated in process-host recovery scenarios |
 | Runtime health vs execution recovery boundary | Implemented / validated |
 | HTTP provider transport failure boundary | Implemented / validated |
-| Real `RuntimeInstanceOnly` process-host execution | Implemented / validated |
+| gRPC provider transport failure boundary | Implemented / validated |
+| Real `RuntimeInstanceOnly` process-host execution | Implemented / validated for HTTP and gRPC |
 | Real runtime process kill scenario | Implemented / validated |
 | Assigned work inventory for unsafe runtime | Implemented / validated |
 | In-flight execution recovery | Implemented / validated |
@@ -881,7 +919,7 @@ A safe tenant running concurrently is the strongest isolation check.
 | Local-queued shared-run recovery | Implemented / validated |
 | Preserve `SharedRunId` during local-queued redispatch | Implemented / validated |
 | Tenant-aware replacement runtime selection | Implemented / validated |
-| Runtime Host Manager process-host replacement capacity | Implemented / validated |
+| Runtime Host Manager process-host replacement capacity | Implemented / validated for HTTP and gRPC |
 | Runtime recovery forensics | Implemented / validated |
 | Runtime failure incident id | Implemented / validated |
 | Recovery forensics timelines | Implemented / validated |
@@ -923,6 +961,7 @@ No safe-tenant recovery contamination is detected.
 - [Architecture Overview](architecture-overview.md)
 - [Runtime Control Plane](runtime-control-plane.md)
 - [HTTP Runtime Provider](http-runtime-provider.md)
+- [gRPC Runtime Provider](grpc-runtime-provider.md)
 - [Runtime Discovery, Registry, and Capacity](runtime-discovery-registry-capacity.md)
 - [Retry and Recovery](retry-and-recovery.md)
 - [MCP Production Runtime Scenario Framework](mcp-production-runtime-scenario-framework.md)
@@ -939,12 +978,12 @@ No safe-tenant recovery contamination is detected.
 
 ## Documentation Rule
 
-Do not describe runtime process crash recovery as a future capability when referring to the HTTP process-host recovery scenarios.
+Do not describe runtime process crash recovery as a future capability when referring to the HTTP or gRPC process-host recovery scenarios.
 
 The validated capability is:
 
 ```text
-real process-host runtime crash recovery with in-flight DAG resume, local-queued shared-run redispatch, recovery forensics, replay / ledger / trace proof, and safe tenant non-impact validation
+real HTTP and gRPC process-host runtime crash recovery with in-flight DAG resume, local-queued shared-run redispatch, recovery forensics, replay / ledger / trace proof, and safe tenant non-impact validation
 ```
 
 Still-planned capabilities should remain explicit:

@@ -6,6 +6,685 @@ This project follows a deterministic runtime and observability model designed fo
 
 ---
 
+## [1.0.7.1] - 2026-07-02 - gRPC provider integration, shared crash recovery refactor, and full gRPC process-host validation
+
+### Summary
+
+This change introduces the gRPC runtime provider path and validates it through the same production-grade process-host crash recovery scenarios previously proven for HTTP.
+
+The work was done in two major parts:
+
+1. **Provider infrastructure**: add and wire the gRPC runtime provider, gRPC process-host scale-out path, gRPC runtime child process transport metadata, and gRPC host mode support.
+2. **Scenario framework refactor**: move the large HTTP crash recovery scenarios into a shared provider-agnostic base, then validate the same proofs through both HTTP and gRPC.
+
+Final result:
+
+```text
+HTTP process-host crash recovery scenarios: green
+gRPC process-host crash recovery scenarios: green
+```
+
+This proves that the runtime recovery pipeline is now transport-independent across HTTP and gRPC.
+
+---
+
+## Added
+
+### gRPC runtime instance provider
+
+Added the gRPC runtime provider path used by the remote shared dispatcher to send commands to runtime instances over gRPC instead of HTTP.
+
+This provider is responsible for dispatching shared runs to runtime instances whose capacity descriptors publish:
+
+```text
+provider.name = grpc
+transport.name = grpc
+transport.endpoint = http://localhost:<port>
+```
+
+The gRPC provider is now selected when the runtime instance descriptor advertises `ProviderName = grpc` or equivalent provider metadata.
+
+Validated behavior:
+
+```text
+GRPC PROVIDER CAN HANDLE CHECK RuntimeInstanceId=... ProviderName=grpc CanHandle=True
+```
+
+---
+
+### gRPC runtime scale-out provider / provisioner
+
+Added and wired the gRPC scale-out path so the control-plane can create real `RuntimeInstanceOnly` child processes for gRPC runtimes.
+
+The gRPC scale-out path supports:
+
+```text
+AiGrpcRuntimeScaleOut:Enabled = true
+AiGrpcRuntimeScaleOut:Mode = HostManager
+AiGrpcRuntimeScaleOut:HostCreationMode = Process
+AiGrpcRuntimeScaleOut:DefaultRuntimeInstanceIdPrefix = grpc-runtime
+```
+
+Validated behavior:
+
+```text
+GRPC SCALE-OUT HOST-MANAGER START
+PROCESS HOST STARTED
+RuntimeInstanceRegistration ProviderName=grpc
+```
+
+This is the key addition: gRPC is not only a dispatch transport anymore; it can now participate in real process-host scale-out and runtime crash recovery.
+
+---
+
+### gRPC control-plane host mode
+
+Added support for:
+
+```text
+AiMcpHostMode.ControlPlaneWithGrpcRuntimeInstances
+```
+
+This mode allows the MCP/control-plane host to run without local runtime instances and dispatch work to external/runtime-process instances through gRPC.
+
+The mode now participates in:
+
+```text
+ServiceRegistration.Configure(...)
+ConfigureControlPlaneWithRemoteRuntimeInstances(...)
+ApplyControlPlaneDiscoveryDefaults(...)
+```
+
+Fixed startup failure:
+
+```text
+Unsupported MCP host mode 'ControlPlaneWithGrpcRuntimeInstances'
+```
+
+---
+
+### gRPC process-host production settings builder
+
+Added / completed:
+
+```text
+Providers/Grpc/Runners/GrpcProcessHostProductionScenarioSettingsBuilder.cs
+```
+
+The builder reuses the HTTP production process-host settings and overrides only the transport/provider-specific values.
+
+It sets the control-plane mode:
+
+```text
+AiMcpHost:Mode = ControlPlaneWithGrpcRuntimeInstances
+```
+
+It disables HTTP scale-out:
+
+```text
+AiHttpRuntimeScaleOut:Enabled = false
+```
+
+It enables gRPC process-host scale-out:
+
+```text
+AiGrpcRuntimeScaleOut:Enabled = true
+AiGrpcRuntimeScaleOut:Mode = HostManager
+AiGrpcRuntimeScaleOut:HostCreationMode = Process
+AiGrpcRuntimeScaleOut:RequireReadiness = false
+```
+
+It forces child runtime process metadata to gRPC:
+
+```text
+AiRuntimeInstanceRegistration__ProviderName = grpc
+AiRuntimeInstanceRegistration__ProviderMetadata__provider.name = grpc
+AiRuntimeInstanceRegistration__ProviderMetadata__transport.name = grpc
+AiRuntimeInstanceRegistration__Metadata__provider.name = grpc
+AiRuntimeInstanceRegistration__Metadata__transport.name = grpc
+```
+
+It forces Kestrel HTTP/2 for the child runtime process:
+
+```text
+Kestrel__EndpointDefaults__Protocols = Http2
+```
+
+This fixed the gRPC dispatch failure caused by the child process mapping a gRPC service while still listening with HTTP/1.1-compatible defaults.
+
+---
+
+### gRPC RuntimeInstanceOnly command service mapping
+
+Validated that the spawned runtime child process maps the gRPC command service when provider metadata indicates gRPC.
+
+Observed runtime child log:
+
+```text
+[APP CONFIG] Mapping runtime gRPC command service.
+```
+
+This confirms that the child process is not exposing the HTTP runtime command endpoint for gRPC scenarios.
+
+---
+
+### gRPC runtime profile for shared scenarios
+
+Added:
+
+```text
+Providers/Grpc/Profiles/GrpcProcessHostScenarioRuntimeProfile.cs
+```
+
+The profile exposes:
+
+```text
+ProviderName = grpc
+ProviderLabel = grpc-process-host
+LogPrefix = GRPC PROCESS HOST
+RequestedBy = grpc-process-host-real-runtime-crash-recovery-test
+Source = integration-test
+```
+
+This lets the shared process-host crash recovery base run the same proof against the gRPC provider.
+
+---
+
+### gRPC crash recovery scenario wrapper
+
+Added / completed:
+
+```text
+Providers/Grpc/GrpcProcessHostRealRuntimeCrashRecoveryScenarioTests.cs
+```
+
+The class now exposes the full set of gRPC process-host crash recovery proofs:
+
+```text
+Grpc_ProcessHost_Should_Requeue_Real_InFlight_Dag_After_Runtime_Process_Kill
+Grpc_ProcessHost_Should_Recover_Two_Tenants_After_Real_Runtime_Process_Kills_With_Strict_Dag_Resume_Replay_Ledger_And_Trace
+Grpc_ProcessHost_Should_Recover_Two_Tenants_After_Real_Runtime_Process_Kills_Without_Impacting_Safe_Tenant_With_Strict_Dag_Resume_Replay_Ledger_And_Trace
+```
+
+All three are green.
+
+---
+
+### Shared provider-agnostic process-host crash recovery base
+
+Added / completed:
+
+```text
+Providers/Base/Scenarios/ProcessHostRealRuntimeCrashRecoveryScenarioTestsBase.cs
+```
+
+The base contains the real crash recovery proof logic shared by HTTP and gRPC.
+
+Covered base methods:
+
+```text
+ProcessHost_Should_Requeue_Real_InFlight_Dag_After_Runtime_Process_Kill
+ProcessHost_Should_Recover_Two_Tenants_After_Real_Runtime_Process_Kills_With_Strict_Dag_Resume_Replay_Ledger_And_Trace
+ProcessHost_Should_Recover_Two_Tenants_After_Real_Runtime_Process_Kills_Without_Impacting_Safe_Tenant_With_Strict_Dag_Resume_Replay_Ledger_And_Trace
+```
+
+This removes the hard HTTP dependency from the scenario body and makes the proof reusable for any runtime provider.
+
+---
+
+### Runtime profile abstraction
+
+Added:
+
+```text
+Providers/Base/Profiles/IProcessHostScenarioRuntimeProfile.cs
+```
+
+The profile abstraction provides:
+
+```text
+ProviderName
+ProviderLabel
+LogPrefix
+RequestedBy
+Source
+BuildSettings(...)
+```
+
+The base no longer knows whether it runs HTTP or gRPC. It only asks the profile to build provider-specific settings.
+
+---
+
+### HTTP runtime profile
+
+Added / validated:
+
+```text
+Providers/Base/Profiles/HttpProcessHostScenarioRuntimeProfile.cs
+```
+
+This preserves the existing HTTP behavior while moving the scenario logic to the shared base.
+
+---
+
+### Temporary HTTP refactor validation class
+
+Added temporarily:
+
+```text
+Providers/Http/HttpRefactorProcessHostRealRuntimeCrashRecoveryScenarioTests.cs
+```
+
+Purpose:
+
+```text
+Validate the shared base against HTTP without touching the original HTTP class first.
+```
+
+Result:
+
+```text
+HTTP refactor validation green.
+```
+
+After validation, the temporary class was removed/promoted.
+
+---
+
+## Changed
+
+### HTTP crash recovery class migrated to shared base
+
+The original HTTP-specific crash recovery class was replaced by a thin wrapper:
+
+```text
+Providers/Http/HttpProcessHostRealRuntimeCrashRecoveryScenarioTests.cs
+```
+
+It now delegates to the shared base while preserving the original HTTP test names:
+
+```text
+Http_ProcessHost_Should_Requeue_Real_InFlight_Dag_After_Runtime_Process_Kill
+Http_ProcessHost_Should_Recover_Two_Tenants_After_Real_Runtime_Process_Kills_With_Strict_Dag_Resume_Replay_Ledger_And_Trace
+Http_ProcessHost_Should_Recover_Two_Tenants_After_Real_Runtime_Process_Kills_Without_Impacting_Safe_Tenant_With_Strict_Dag_Resume_Replay_Ledger_And_Trace
+```
+
+Result:
+
+```text
+HTTP remains green after refactor.
+```
+
+---
+
+### Control-plane discovery defaults now include gRPC mode
+
+Updated `ApplyControlPlaneDiscoveryDefaults(...)` to treat gRPC remote control-plane mode like HTTP remote control-plane mode:
+
+```csharp
+case AiMcpHostMode.ControlPlaneWithLocalRuntimeInstances:
+case AiMcpHostMode.ControlPlaneWithHttpRuntimeInstances:
+case AiMcpHostMode.ControlPlaneWithGrpcRuntimeInstances:
+    aiEngineOptions.ControlPlane.EnableDiscovery = true;
+    aiEngineOptions.ControlPlane.PublishDiscovery = true;
+    aiEngineOptions.ControlPlane.RequireDiscovery = true;
+    break;
+```
+
+This fixed the first gRPC startup failure.
+
+---
+
+### Remote control-plane configuration supports HTTP and gRPC
+
+`ConfigureControlPlaneWithRemoteRuntimeInstances(...)` now supports both remote runtime modes:
+
+```text
+ControlPlaneWithHttpRuntimeInstances
+ControlPlaneWithGrpcRuntimeInstances
+```
+
+HTTP registers the HTTP runtime provider path.
+
+gRPC registers the gRPC runtime provider / scale-out path.
+
+---
+
+### gRPC readiness bypass for process-host scenarios
+
+Set:
+
+```text
+AiGrpcRuntimeScaleOut:RequireReadiness = false
+```
+
+Reason:
+
+The old readiness logic was inherited from HTTP and kept probing:
+
+```text
+GET /runtime-instance/commands
+```
+
+The gRPC runtime correctly mapped:
+
+```text
+Mapping runtime gRPC command service
+```
+
+The old HTTP readiness probe returned 404 and prevented scale-out fulfillment.
+
+For now, gRPC process-host readiness is effectively proven by registry/capacity publication:
+
+```text
+Status=Ready
+Provider=grpc
+CanAcceptRun=True
+AvailableRunSlots=1
+```
+
+Future improvement: replace this bypass with a gRPC-native readiness check or a registry/capacity readiness strategy.
+
+---
+
+### gRPC provider circuit-breaker relaxed for integration scenario stability
+
+Added:
+
+```text
+AiGrpcRuntimeInstanceProvider:DispatchTimeout = 00:00:30
+AiGrpcRuntimeInstanceProvider:EnableCircuitBreaker = false
+AiGrpcRuntimeInstanceProvider:CircuitBreakerFailureThreshold = 100
+```
+
+This avoids poisoning the test scenario from an early connection failure while a child process is booting.
+
+---
+
+### Child runtime process forced to HTTP/2
+
+Added child process environment setting:
+
+```text
+Kestrel:EndpointDefaults:Protocols = Http2
+```
+
+This fixed:
+
+```text
+FailureReason = grpc-circuit-open
+```
+
+The runtime child process was mapping the gRPC service, but gRPC over plaintext requires HTTP/2 support on the endpoint.
+
+---
+
+## Fixed
+
+### Fixed gRPC mode unsupported in service registration
+
+Failure:
+
+```text
+Unsupported MCP host mode 'ControlPlaneWithGrpcRuntimeInstances'
+```
+
+Fix:
+
+```text
+Added ControlPlaneWithGrpcRuntimeInstances to ApplyControlPlaneDiscoveryDefaults.
+```
+
+---
+
+### Fixed gRPC scale-out request never fulfilled
+
+Failure:
+
+```text
+No fulfilled scale-out request was observed
+ObservedRequests = 1
+```
+
+What was actually happening:
+
+```text
+The scale-out request was created.
+The gRPC scale-out host manager started.
+The runtime process was started.
+The runtime process registered as Provider=grpc.
+But readiness kept probing the HTTP endpoint /runtime-instance/commands and got 404.
+```
+
+Fix:
+
+```text
+Temporarily disabled AiGrpcRuntimeScaleOut:RequireReadiness.
+```
+
+Result:
+
+```text
+Scale-out request fulfillment progressed.
+```
+
+---
+
+### Fixed gRPC dispatch circuit-open
+
+Failure:
+
+```text
+Status = ScaleOutRequested
+AssignedRuntimeInstanceId = <runtime-1>
+FailureReason = grpc-circuit-open
+```
+
+Cause:
+
+```text
+Runtime child process mapped the gRPC command service but Kestrel was not forced to HTTP/2.
+```
+
+Fix:
+
+```text
+Added Kestrel:EndpointDefaults:Protocols=Http2 to child runtime process environment.
+```
+
+Result:
+
+```text
+Real run dispatched over gRPC.
+```
+
+---
+
+### Fixed provider lock-in in crash recovery scenarios
+
+Before:
+
+```text
+The production crash recovery proofs were embedded in HTTP-specific scenario classes.
+```
+
+After:
+
+```text
+The proofs are provider-agnostic and selected through runtime profiles.
+```
+
+Result:
+
+```text
+The exact same recovery proofs now run over HTTP and gRPC.
+```
+
+---
+
+## Validated
+
+### HTTP validation
+
+Validated the refactored HTTP wrapper against the shared base.
+
+Result:
+
+```text
+HTTP process-host crash recovery scenarios green.
+```
+
+---
+
+### gRPC validation
+
+Validated all gRPC process-host recovery scenarios:
+
+```text
+Grpc_ProcessHost_Should_Requeue_Real_InFlight_Dag_After_Runtime_Process_Kill
+Grpc_ProcessHost_Should_Recover_Two_Tenants_After_Real_Runtime_Process_Kills_With_Strict_Dag_Resume_Replay_Ledger_And_Trace
+Grpc_ProcessHost_Should_Recover_Two_Tenants_After_Real_Runtime_Process_Kills_Without_Impacting_Safe_Tenant_With_Strict_Dag_Resume_Replay_Ledger_And_Trace
+```
+
+Final result:
+
+```text
+All 3 gRPC scenarios green.
+```
+
+The simple gRPC crash recovery proof validated:
+
+```text
+Real run dispatched
+Durable DAG progress reached
+Runtime process killed
+Runtime instance automatically marked unsafe
+In-flight execution requeued for recovery
+Recovered shared run redispatched
+Recovered dispatch resolved durable execution
+Strict DAG resume validated
+Recovered redispatch DAG execution completed all durable steps
+```
+
+Critical invariant:
+
+```text
+OriginalExecutionId == RecoveredExecutionId
+CompletedSteps = 100
+```
+
+---
+
+## Architecture proof achieved
+
+The system now proves this full pipeline through both HTTP and gRPC:
+
+```text
+MCP / ControlPlane
+  -> admission
+  -> scale-out request
+  -> provider-specific scale-out provider
+  -> real RuntimeInstanceOnly process creation
+  -> runtime instance registration
+  -> runtime capacity publication
+  -> provider-specific dispatch transport
+  -> durable DAG execution
+  -> process kill
+  -> unsafe runtime detection
+  -> recovery reconciliation
+  -> shared run requeue
+  -> replacement runtime creation
+  -> redispatch
+  -> strict DAG resume using the same durable execution id
+  -> completion
+```
+
+Validated providers:
+
+```text
+HTTP
+gRPC
+```
+
+This confirms the crash recovery architecture is not tied to HTTP.
+
+---
+
+## Remaining cleanup
+
+### Remove temporary gRPC debug logs
+
+Remove from `GrpcProcessHostProductionScenarioSettingsBuilder`:
+
+```text
+WriteGrpcSettingsDebug(...)
+```
+
+and remove the call:
+
+```text
+WriteGrpcSettingsDebug(settings);
+```
+
+---
+
+### Replace temporary gRPC readiness bypass
+
+Current temporary setting:
+
+```text
+AiGrpcRuntimeScaleOut:RequireReadiness = false
+```
+
+Future target:
+
+```text
+gRPC-native readiness check
+or
+registry/capacity based readiness strategy for process-host providers
+```
+
+---
+
+### Rename provider-neutral scenario ids
+
+Some IDs still include:
+
+```text
+http-process-host-real-runtime-crash-recovery
+```
+
+Even when running gRPC.
+
+Future cleanup:
+
+```text
+process-host-real-runtime-crash-recovery
+```
+
+or provider-aware:
+
+```text
+http-process-host-real-runtime-crash-recovery
+grpc-process-host-real-runtime-crash-recovery
+```
+
+---
+
+### Rename HTTP-named shared helpers
+
+Some shared helper references still include HTTP in their name even though they are reused by gRPC.
+
+Future cleanup:
+
+```text
+HttpProcessHostConcurrentRuntimeRecoveryScenarioTests.AssertRecoveredExecutionsReplayableThroughMcpAsync
+```
+
+should move to a provider-neutral helper.
+
+---
+
 ## [1.0.7.0] - 2026-07-02 — Runtime Crash Recovery Proof + Replay/Ledger/Trace Documentation Hardening
 
 ### Added

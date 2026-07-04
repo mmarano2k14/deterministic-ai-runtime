@@ -25,9 +25,10 @@ Focused AI runtime documentation is organized under:
 | [`ai/runtime-control-plane.md`](ai/runtime-control-plane.md) | Runtime control-plane foundation covering replay, execution control, runtime queues, runtime registry/capacity, discovery, admission, shared controller orchestration, scale-out lifecycle, and tenant-aware dispatch. |
 | [`ai/runtime-discovery-registry-capacity.md`](ai/runtime-discovery-registry-capacity.md) | Runtime discovery, registry, and capacity foundation covering Redis control-plane discovery, `ControlPlaneIdResolver`, runtime registration, tenant-filtered capacity descriptors, pump readiness, cleanup, local scale-out, and HTTP pooled runtime identity. |
 | [`ai/mcp-server-control-plane.md`](ai/mcp-server-control-plane.md) | MCP server as a runtime control-plane adapter, including host modes, RBAC integration, MCP tool groups, runtime role separation, local runtime pools, Redis/local scale-out, shared queue dispatch, and Kubernetes direction. |
-| [`ai/runtime-instance-provider-model.md`](ai/runtime-instance-provider-model.md) | Provider-based runtime instance administration for local, Redis command queue, HTTP, gRPC, and Kubernetes providers, including tenant-aware dispatch/status/control/scale-out capabilities and provider routing. |
+| [`ai/runtime-instance-provider-model.md`](ai/runtime-instance-provider-model.md) | Provider-based runtime instance administration for local, HTTP, gRPC, Redis command queue, and Kubernetes providers, including tenant-aware dispatch/status/control/scale-out capabilities and provider routing. |
 | [`ai/http-runtime-provider.md`](ai/http-runtime-provider.md) | HTTP runtime provider reference covering hardened dispatch, timeout/retry/circuit breaker behavior, structured failure reasons, HTTP provider scale-out, Runtime Host Manager process-host provisioning, real `RuntimeInstanceOnly` process launch, tenant-aware Shared/Dedicated/Hybrid policy validation, and process-boundary observability. |
-| [`ai/mcp-production-runtime-scenario-framework.md`](ai/mcp-production-runtime-scenario-framework.md) | MCP production runtime scenario framework covering Runtime Host Manager modes, HTTP process-host scale-out, real `RuntimeInstanceOnly` child processes, Dedicated/Shared/Hybrid tenant scenarios, retention, ledger, trace, and replay validation across process boundaries. |
+| [`ai/mcp-production-runtime-scenario-framework.md`](ai/mcp-production-runtime-scenario-framework.md) | MCP production runtime scenario framework covering Runtime Host Manager modes, HTTP/gRPC process-host scale-out, real `RuntimeInstanceOnly` child processes, Dedicated/Shared/Hybrid tenant scenarios, retention, ledger, trace, and replay validation across process boundaries. |
+| [`ai/provider-agnostic-process-host-recovery.md`](ai/provider-agnostic-process-host-recovery.md) | Provider-agnostic process-host recovery reference explaining the shared HTTP/gRPC recovery scenario base, transport-neutral crash recovery contract, real process kill validation, strict DAG resume, local-queued redispatch, and tenant-safe non-impact proof. |
 | [`ai/runtime-process-crash-recovery.md`](ai/runtime-process-crash-recovery.md) | Runtime process crash recovery reference covering health detection, unsafe runtime capacity, execution recovery reconciliation, in-flight DAG resume, local-queued redispatch, replacement runtime selection, and durable recovery truth. |
 | [`ai/runtime-recovery-forensics.md`](ai/runtime-recovery-forensics.md) | Runtime recovery forensics reference covering `ForensicsId`, `RuntimeFailureIncidentId`, per-work-item recovery timelines, duplicate recovery detection, safe tenant non-impact proof, and MCP forensics queries. |
 | [`ai/multi-tenant-runtime-crash-isolation.md`](ai/multi-tenant-runtime-crash-isolation.md) | Multi-tenant runtime crash isolation reference proving tenant A/B crash recovery while a safe tenant remains untouched, with no cross-tenant ledger leak, no recovery contamination, and no safe-tenant forensics. |
@@ -35,7 +36,7 @@ Focused AI runtime documentation is organized under:
 | [`ai/recovery-replay-ledger-trace-proof.md`](ai/recovery-replay-ledger-trace-proof.md) | Recovery proof reference explaining why recovered work must validate replay, ledger, trace, completion evidence, step evidence, forensics, and tenant-scoped observability after convergence. |
 | [`ai/shared-controller-usage.md`](ai/shared-controller-usage.md) | Shared runtime controller usage, queue-first/direct-dispatch modes, Redis stores, scale-out request persistence, tenant snapshot propagation, manual drain, and background pump setup. |
 | [`ai/shared-queue-pump-and-worker-capacity.md`](ai/shared-queue-pump-and-worker-capacity.md) | Shared queue pump, fulfilled-run requeue, dispatch-time admission, context restoration, worker capacity visibility, and `MaxLocalWorkersPerExecution`. |
-| [`ai/testing-strategy.md`](ai/testing-strategy.md) | Testing strategy and validation approach for distributed runtime guarantees, RBAC context propagation, tenant isolation, Redis/local scale-out, HTTP process-host provisioning, runtime crash recovery, safe-tenant isolation, recovery forensics, replay/ledger/trace proof, requeue, dispatch, and execution evidence. |
+| [`ai/testing-strategy.md`](ai/testing-strategy.md) | Testing strategy and validation approach for distributed runtime guarantees, RBAC context propagation, tenant isolation, Redis/local scale-out, HTTP/gRPC process-host provisioning, runtime crash recovery, safe-tenant isolation, recovery forensics, replay/ledger/trace proof, requeue, dispatch, and execution evidence. |
 | [`ai/execution-correlated-ledger.md`](ai/execution-correlated-ledger.md) | Execution-correlated runtime decision ledger, audit foundations, retention auditability, and replay lifecycle event correlation. |
 | [`ai/observability.md`](ai/observability.md) | High-level observability index summarizing ledger, tracing, metrics, logs, correlation, replay diagnostics, and roadmap direction. |
 | [`ai/observability-tracing.md`](ai/observability-tracing.md) | Runtime tracing, trace timelines, correlation, trace storage modes, Mongo trace persistence, MemoryAndMongo mode, and tracing improvements. |
@@ -73,7 +74,9 @@ Start with:
 8. [`ai/mcp-server-control-plane.md`](ai/mcp-server-control-plane.md)
 9. [`ai/runtime-instance-provider-model.md`](ai/runtime-instance-provider-model.md)
 10. [`ai/http-runtime-provider.md`](ai/http-runtime-provider.md)
-11. [`ai/mcp-production-runtime-scenario-framework.md`](ai/mcp-production-runtime-scenario-framework.md)
+11. [`ai/grpc-runtime-provider.md`](ai/grpc-runtime-provider.md)
+12. [`ai/mcp-production-runtime-scenario-framework.md`](ai/mcp-production-runtime-scenario-framework.md)
+13. [`ai/provider-agnostic-process-host-recovery.md`](ai/provider-agnostic-process-host-recovery.md)
 12. [`ai/runtime-process-crash-recovery.md`](ai/runtime-process-crash-recovery.md)
 13. [`ai/runtime-recovery-forensics.md`](ai/runtime-recovery-forensics.md)
 14. [`ai/multi-tenant-runtime-crash-isolation.md`](ai/multi-tenant-runtime-crash-isolation.md)
@@ -108,7 +111,9 @@ Start with:
 10. [`ai/mcp-server-control-plane.md`](ai/mcp-server-control-plane.md)
 11. [`ai/runtime-instance-provider-model.md`](ai/runtime-instance-provider-model.md)
 12. [`ai/http-runtime-provider.md`](ai/http-runtime-provider.md)
-13. [`ai/mcp-production-runtime-scenario-framework.md`](ai/mcp-production-runtime-scenario-framework.md)
+13. [`ai/grpc-runtime-provider.md`](ai/grpc-runtime-provider.md)
+14. [`ai/mcp-production-runtime-scenario-framework.md`](ai/mcp-production-runtime-scenario-framework.md)
+15. [`ai/provider-agnostic-process-host-recovery.md`](ai/provider-agnostic-process-host-recovery.md)
 14. [`ai/runtime-process-crash-recovery.md`](ai/runtime-process-crash-recovery.md)
 15. [`ai/runtime-recovery-forensics.md`](ai/runtime-recovery-forensics.md)
 16. [`ai/multi-tenant-runtime-crash-isolation.md`](ai/multi-tenant-runtime-crash-isolation.md)
@@ -399,7 +404,7 @@ This document explains:
 - local provider behavior
 - local provider scale-out capability
 - Redis command queue provider direction
-- HTTP and gRPC provider direction
+- HTTP provider and implemented gRPC provider direction
 - Kubernetes provider responsibilities
 - admission and provider separation
 - Redis admission reservation foundation
@@ -427,15 +432,33 @@ This document explains:
 - real `RuntimeInstanceOnly` process launch and readiness
 - process-boundary ledger, trace, replay, and retention validation
 
+### [`ai/grpc-runtime-provider.md`](ai/grpc-runtime-provider.md)
+
+gRPC runtime provider reference.
+
+This document explains:
+
+- gRPC provider responsibilities as dispatch transport and scale-out-capable provider
+- `ControlPlaneWithGrpcRuntimeInstances` host mode
+- `GrpcAiRuntimeInstanceProvider` and gRPC dispatch path
+- `IAiGrpcRuntimeScaleOutProvisioner` and gRPC scale-out options
+- Redis-backed scale-out request fulfillment through watcher and provider selector using `ProviderHint = grpc`
+- Runtime Host Manager process-host provisioning for real `RuntimeInstanceOnly` gRPC processes
+- Kestrel HTTP/2 transport requirement for gRPC command endpoints
+- `provider.name = grpc` and `transport.name = grpc` metadata publication
+- tenant-aware runtime registration, capacity visibility, and dispatch
+- process-boundary crash recovery proof through the same recovery contract as HTTP
+- current gRPC readiness hardening direction
+
 ### [`ai/mcp-production-runtime-scenario-framework.md`](ai/mcp-production-runtime-scenario-framework.md)
 
-MCP production runtime scenario framework and HTTP process-host validation reference.
+MCP production runtime scenario framework and HTTP/gRPC process-host validation reference.
 
 This document explains:
 
 - MCP Runtime Host Manager purpose and lifecycle boundary
 - host creation modes: Fixture, Process, Attach, and Kubernetes
-- HTTP process-host scale-out flow
+- HTTP/gRPC process-host scale-out flow
 - `ProcessAiRuntimeHostCreationStrategy`
 - real `RuntimeInstanceOnly` process launch
 - runtime registration, heartbeat, capacity, and readiness
@@ -445,6 +468,21 @@ This document explains:
 - mixed-tenant full production validation scenario
 - retention, ledger, trace, replay report, replay ledger, and replay trace validation across process boundaries
 - intentional boundaries around shared pooling, Hybrid fallback, Kubernetes, and health/recovery ownership separation
+
+### [`ai/provider-agnostic-process-host-recovery.md`](ai/provider-agnostic-process-host-recovery.md)
+
+Provider-agnostic process-host recovery reference.
+
+This document explains:
+
+- why process-host crash recovery is now shared across HTTP and gRPC providers
+- the provider-neutral responsibilities of health reconciliation, execution recovery reconciliation, registry/capacity visibility, and durable recovery truth
+- the shared scenario base used by HTTP and gRPC process-host crash recovery tests
+- real `RuntimeInstanceOnly` process kill validation
+- in-flight DAG resume with preserved `ExecutionId`
+- local-queued shared-run redispatch through preserved `SharedRunId`
+- safe-tenant non-impact and cross-tenant leak prevention
+- replay, ledger, trace, and forensics proof after recovery convergence
 
 ### [`ai/runtime-process-crash-recovery.md`](ai/runtime-process-crash-recovery.md)
 
@@ -563,7 +601,7 @@ This document explains:
 - pump identity versus assigned runtime identity
 - local runtime queue preservation
 - shared queue no-double-dispatch behavior
-- local and HTTP provider dispatch foundations
+- local, HTTP, and gRPC provider dispatch foundations
 - HTTP pooled runtime dispatch validation
 - Redis admission reservation foundation
 - shared queue pump readiness gate
@@ -618,9 +656,10 @@ The project roadmap organized into phases:
 | [`ai/runtime-control-plane.md`](ai/runtime-control-plane.md) | Runtime control-plane foundation for replay, execution control, runtime queue control, runtime instance registry/control, discovery, capacity, admission, scale-out request lifecycle, and shared orchestration. |
 | [`ai/runtime-discovery-registry-capacity.md`](ai/runtime-discovery-registry-capacity.md) | Runtime discovery, Redis registry, Redis capacity descriptors, ControlPlaneIdResolver, pump readiness, tenant-filtered visibility, local scale-out capacity visibility, cleanup, and HTTP pooled runtime identity. |
 | [`ai/mcp-server-control-plane.md`](ai/mcp-server-control-plane.md) | MCP server adapter over runtime control-plane foundations, including RBAC integration, host modes, tool groups, role separation, local runtime pool behavior, Redis/local scale-out execution, and Kubernetes direction. |
-| [`ai/runtime-instance-provider-model.md`](ai/runtime-instance-provider-model.md) | Provider-based runtime instance administration, dispatch, and scale-out model for local, Redis command queue, HTTP, gRPC, and Kubernetes providers. |
+| [`ai/runtime-instance-provider-model.md`](ai/runtime-instance-provider-model.md) | Provider-based runtime instance administration, dispatch, and scale-out model for local, HTTP, gRPC, Redis command queue, and Kubernetes providers. |
 | [`ai/http-runtime-provider.md`](ai/http-runtime-provider.md) | HTTP runtime provider hardening and scale-out reference, including failure reasons, retry/timeout/circuit breaker policy, tenant-aware scale-out, Runtime Host Manager process-host provisioning, real runtime launch, and readiness. |
-| [`ai/mcp-production-runtime-scenario-framework.md`](ai/mcp-production-runtime-scenario-framework.md) | MCP production runtime scenario framework, HTTP process-host flow, Host Manager modes, real `RuntimeInstanceOnly` processes, mixed-tenant production validation, and durable observability/replay evidence. |
+| [`ai/mcp-production-runtime-scenario-framework.md`](ai/mcp-production-runtime-scenario-framework.md) | MCP production runtime scenario framework, HTTP/gRPC process-host flow, Host Manager modes, real `RuntimeInstanceOnly` processes, mixed-tenant production validation, and durable observability/replay evidence. |
+| [`ai/provider-agnostic-process-host-recovery.md`](ai/provider-agnostic-process-host-recovery.md) | Shared HTTP/gRPC process-host crash recovery model and test contract for real process kill, unsafe capacity suppression, assigned-work reconciliation, strict resume, redispatch, and safe-tenant isolation. |
 | [`ai/runtime-process-crash-recovery.md`](ai/runtime-process-crash-recovery.md) | Runtime process crash recovery architecture covering unsafe runtime detection, assigned-work reconciliation, in-flight resume, local-queued redispatch, and durable recovery truth. |
 | [`ai/runtime-recovery-forensics.md`](ai/runtime-recovery-forensics.md) | Per-work-item runtime recovery forensics, failure incident correlation, recovery timelines, duplicate recovery detection, and MCP forensics query boundaries. |
 | [`ai/multi-tenant-runtime-crash-isolation.md`](ai/multi-tenant-runtime-crash-isolation.md) | Multi-tenant crash isolation architecture proving impacted tenants recover while safe tenants remain untouched and uncontaminated. |
@@ -639,6 +678,7 @@ The project roadmap organized into phases:
 |---|---|
 | [`ai/retry-and-recovery.md`](ai/retry-and-recovery.md) | Retry engine, retry state, WaitingForRetry, Redis Lua transitions, and stale worker recovery. |
 | [`ai/runtime-process-crash-recovery.md`](ai/runtime-process-crash-recovery.md) | Runtime process crash recovery for unsafe runtime instances, assigned-work reconciliation, in-flight DAG resume, local-queued redispatch, and replacement runtime selection. |
+| [`ai/provider-agnostic-process-host-recovery.md`](ai/provider-agnostic-process-host-recovery.md) | Provider-neutral HTTP/gRPC process-host recovery proof model, shared scenario base, and transport-independent recovery invariants. |
 | [`ai/runtime-recovery-forensics.md`](ai/runtime-recovery-forensics.md) | Durable forensics records and per-work-item timelines proving how each recovered item moved through detection, redispatch/resume, replacement runtime selection, and completion. |
 | [`ai/multi-tenant-runtime-crash-isolation.md`](ai/multi-tenant-runtime-crash-isolation.md) | Multi-tenant recovery isolation proof showing impacted tenant recovery without safe-tenant recovery contamination or cross-tenant leakage. |
 | [`ai/recovery-replay-ledger-trace-proof.md`](ai/recovery-replay-ledger-trace-proof.md) | Recovery validation proof requiring replay, ledger, trace, completion, step-completion, and forensics evidence for recovered and safe executions. |
@@ -663,7 +703,7 @@ The project roadmap organized into phases:
 | [`ai/runtime-recovery-forensics.md`](ai/runtime-recovery-forensics.md) | Recovery forensics evidence linking incidents, recovered work items, timelines, runtime replacement, and tenant-scoped MCP queries. |
 | [`ai/recovery-replay-ledger-trace-proof.md`](ai/recovery-replay-ledger-trace-proof.md) | Cross-layer proof model connecting replay, ledger, trace, forensics, completion evidence, and safe-tenant non-impact. |
 | [`ai/testing-strategy.md`](ai/testing-strategy.md) | Integration testing strategy and validation approach for distributed runtime guarantees, RBAC context propagation, tenant isolation, HTTP hardening, Runtime Host Manager process-host provisioning, Redis/local scale-out request, requeue, dispatch, and execution evidence. |
-| [`ai/mcp-production-runtime-scenario-framework.md`](ai/mcp-production-runtime-scenario-framework.md) | Production scenario evidence for HTTP process-host execution, mixed tenant runtime modes, durable ledger/trace/replay, and real process-boundary validation. |
+| [`ai/mcp-production-runtime-scenario-framework.md`](ai/mcp-production-runtime-scenario-framework.md) | Production scenario evidence for HTTP/gRPC process-host execution, mixed tenant runtime modes, durable ledger/trace/replay, and real process-boundary validation. |
 | [`ai/multi-tenant-runtime-flow.md`](ai/multi-tenant-runtime-flow.md) | Operational context/audit map tying tenant context, correlation ids, shared run ids, local run ids, execution ids, runtime instances, workers, ledger, tracing, metrics, and replay together. |
 
 ---
@@ -676,10 +716,13 @@ The project roadmap organized into phases:
 | [`ai/multi-tenant-runtime-flow.md`](ai/multi-tenant-runtime-flow.md) | Full operational flow showing where the tenant snapshot is created, persisted, restored, dispatched, executed, finalized, and correlated for audit/debugging. |
 | [`ai/runtime-control-plane.md`](ai/runtime-control-plane.md) | Runtime control-plane foundation, replay/execution/queue/instance facades, discovery, capacity, admission, Redis-backed scale-out lifecycle, fulfilled-run requeue, and shared controller orchestration. |
 | [`ai/runtime-discovery-registry-capacity.md`](ai/runtime-discovery-registry-capacity.md) | Redis discovery, ControlPlaneIdResolver, runtime registry, tenant-filtered capacity descriptors, scale-out capacity visibility, readiness gate, cleanup lifecycle, and HTTP pooled identity model. |
-| [`ai/mcp-server-control-plane.md`](ai/mcp-server-control-plane.md) | MCP server as control-plane adapter, including RBAC integration, host modes, discovery publication, MCP tool groups, Redis/local scale-out execution, shared queue dispatch, local/HTTP pooled runtime behavior, and runtime role separation. |
+| [`ai/mcp-server-control-plane.md`](ai/mcp-server-control-plane.md) | MCP server as control-plane adapter, including RBAC integration, host modes, discovery publication, MCP tool groups, Redis/local scale-out execution, shared queue dispatch, local/HTTP/gRPC runtime behavior, and runtime role separation. |
 | [`ai/runtime-instance-provider-model.md`](ai/runtime-instance-provider-model.md) | Runtime instance provider model for provider-based dispatch, HTTP pooled runtime hosting, status, control, capacity, scale-out, descriptor metadata, and provider routing. |
 | [`ai/http-runtime-provider.md`](ai/http-runtime-provider.md) | HTTP provider-specific reference for hardened dispatch, HTTP runtime scale-out, Redis scale-out watcher fulfillment, tenant-aware HTTP capacity, Runtime Host Manager process-host provisioning, and readiness. |
-| [`ai/mcp-production-runtime-scenario-framework.md`](ai/mcp-production-runtime-scenario-framework.md) | End-to-end MCP production scenario reference covering Host Manager modes, HTTP process-host scale-out, real runtime processes, Dedicated/Shared/Hybrid tenants, retention, ledger, trace, and replay. |
+| [`ai/grpc-runtime-provider.md`](ai/grpc-runtime-provider.md) | gRPC provider-specific reference for gRPC dispatch, runtime scale-out, `ControlPlaneWithGrpcRuntimeInstances`, Runtime Host Manager process-host provisioning, HTTP/2 command transport, and crash recovery validation. |
+| [`ai/grpc-runtime-provider.md`](ai/grpc-runtime-provider.md) | gRPC provider-specific reference for gRPC dispatch, gRPC runtime scale-out, Redis scale-out watcher fulfillment, tenant-aware gRPC capacity, Runtime Host Manager process-host provisioning, HTTP/2 transport, and readiness hardening direction. |
+| [`ai/mcp-production-runtime-scenario-framework.md`](ai/mcp-production-runtime-scenario-framework.md) | End-to-end MCP production scenario reference covering Host Manager modes, HTTP/gRPC process-host scale-out, real runtime processes, Dedicated/Shared/Hybrid tenants, retention, ledger, trace, and replay. |
+| [`ai/provider-agnostic-process-host-recovery.md`](ai/provider-agnostic-process-host-recovery.md) | Provider-neutral process-host crash recovery reference shared by HTTP and gRPC scenarios. |
 | [`ai/runtime-process-crash-recovery.md`](ai/runtime-process-crash-recovery.md) | Runtime process crash recovery control-plane boundary, including health reconciliation, execution recovery reconciliation, HTTP provider failure signal boundaries, and replacement capacity. |
 | [`ai/control-plane-ledger-causal-chain.md`](ai/control-plane-ledger-causal-chain.md) | Control-plane causal chain evidence for scale-out and recovery operations, including watcher/provider/host-manager/reconciler/redispatch phases. |
 | [`ai/multi-tenant-runtime-crash-isolation.md`](ai/multi-tenant-runtime-crash-isolation.md) | Control-plane isolation proof for simultaneous impacted-tenant recovery and safe-tenant non-impact. |
@@ -737,6 +780,8 @@ Many focused documents started as documentation split placeholders, but several 
 - MCP server control-plane usage
 - runtime instance provider architecture direction
 - HTTP runtime provider hardening and tenant-aware scale-out
+- gRPC runtime provider dispatch, scale-out, process-host provisioning, and crash recovery validation
+- provider-agnostic HTTP/gRPC process-host recovery contract
 - Runtime Host Manager process-host provisioning
 - MCP production runtime scenario framework
 - mixed-tenant production validation
@@ -788,16 +833,17 @@ When adding new documentation:
 9. Keep runtime control-plane documentation linked with runtime queue control, execution control state, instance visibility, admission, shared controller, shared queue pump, and Kubernetes preparation.
 10. Keep MCP server control-plane and runtime instance provider documentation linked with runtime control-plane, shared controller, admission, local runtime queues, runtime capacity descriptors, RBAC authorization, tenant context propagation, and Kubernetes preparation.
 11. Keep HTTP runtime provider documentation linked with runtime instance provider model, runtime control-plane, shared controller, shared queue pump, runtime discovery/registry/capacity, multi-tenant isolation, testing strategy, and future Remote MCP Runtime Host Manager work.
-12. Keep shared controller usage linked with shared queue pump, runtime control-plane, MCP control-plane, runtime discovery/registry/capacity, runtime instance provider model, and testing strategy.
-13. Keep shared queue pump and worker capacity documentation linked with shared controller usage, runtime queue control, MCP control-plane, runtime instance provider model, runtime discovery/registry/capacity, multi-tenant isolation, and testing strategy.
-14. Keep runtime discovery, registry, and capacity documentation linked with runtime control-plane, MCP control-plane, runtime instance provider model, shared queue pump readiness, multi-tenant isolation, and testing strategy.
-15. Keep Redis/local scale-out documentation linked across runtime control-plane, MCP control-plane, runtime instance provider model, shared controller usage, shared queue pump, discovery/registry/capacity, config-driven runtime, and testing strategy.
-16. Keep multi-tenant control-plane isolation documentation linked across architecture overview, runtime control-plane, discovery/registry/capacity, MCP server, runtime instance provider model, shared controller usage, shared queue pump, distributed execution, execution control state, testing strategy, README, and product roadmap documents.
-17. Keep RBAC documentation connected to MCP tool authorization, `ExecutionContextSnapshot`, tenant-aware admission, runtime visibility, and all background/distributed hops.
-18. Keep the multi-tenant runtime flow document linked with multi-tenant isolation, runtime control-plane, shared controller usage, shared queue pump, distributed execution, execution control state, testing strategy, and README because it is the operational map of the whole tenant-aware execution path.
-19. Keep the MCP production runtime scenario framework linked with HTTP runtime provider, runtime instance provider model, MCP server control-plane, runtime discovery/registry/capacity, multi-tenant isolation, shared controller usage, shared queue pump, testing strategy, replay/audit, ledger, and observability docs because it proves the full HTTP process-host production path across these boundaries.
-20. Keep runtime process crash recovery linked with HTTP runtime provider, runtime control-plane, runtime discovery/registry/capacity, retry-and-recovery, MCP production scenarios, testing strategy, ledger, observability, replay/audit, and recovery forensics because process death crosses all these boundaries.
-21. Keep runtime recovery forensics linked with runtime process crash recovery, multi-tenant crash isolation, observability, execution-correlated ledger, control-plane ledger causal chain, testing strategy, and MCP production scenarios because forensics is the per-work-item audit surface of recovery.
-22. Keep multi-tenant runtime crash isolation linked with multi-tenant control-plane isolation, runtime process crash recovery, recovery forensics, control-plane ledger causal chain, recovery replay/ledger/trace proof, HTTP runtime provider, and testing strategy because safe-tenant non-impact is a core isolation proof.
-23. Keep control-plane ledger causal chain linked with execution-correlated ledger, runtime control-plane, HTTP runtime provider, MCP production scenarios, runtime discovery/registry/capacity, runtime recovery forensics, and observability because it records infrastructure decisions that execution ledger alone does not explain.
-24. Keep recovery replay/ledger/trace proof linked with replay/audit, observability, observability-tracing, execution-correlated ledger, runtime recovery forensics, runtime process crash recovery, and testing strategy because recovery is validated only after replay, ledger, trace, completion evidence, and forensics agree.
+12. Keep gRPC runtime provider documentation linked with runtime instance provider model, runtime control-plane, shared controller, shared queue pump, runtime discovery/registry/capacity, provider-agnostic process-host recovery, testing strategy, and Runtime Host Manager process-host work.
+13. Keep shared controller usage linked with shared queue pump, runtime control-plane, MCP control-plane, runtime discovery/registry/capacity, runtime instance provider model, and testing strategy.
+14. Keep shared queue pump and worker capacity documentation linked with shared controller usage, runtime queue control, MCP control-plane, runtime instance provider model, runtime discovery/registry/capacity, multi-tenant isolation, and testing strategy.
+15. Keep runtime discovery, registry, and capacity documentation linked with runtime control-plane, MCP control-plane, runtime instance provider model, shared queue pump readiness, multi-tenant isolation, and testing strategy.
+16. Keep Redis/local scale-out documentation linked across runtime control-plane, MCP control-plane, runtime instance provider model, shared controller usage, shared queue pump, discovery/registry/capacity, config-driven runtime, and testing strategy.
+17. Keep multi-tenant control-plane isolation documentation linked across architecture overview, runtime control-plane, discovery/registry/capacity, MCP server, runtime instance provider model, shared controller usage, shared queue pump, distributed execution, execution control state, testing strategy, README, and product roadmap documents.
+18. Keep RBAC documentation connected to MCP tool authorization, `ExecutionContextSnapshot`, tenant-aware admission, runtime visibility, and all background/distributed hops.
+19. Keep the multi-tenant runtime flow document linked with multi-tenant isolation, runtime control-plane, shared controller usage, shared queue pump, distributed execution, execution control state, testing strategy, and README because it is the operational map of the whole tenant-aware execution path.
+20. Keep the MCP production runtime scenario framework linked with HTTP runtime provider, runtime instance provider model, MCP server control-plane, runtime discovery/registry/capacity, multi-tenant isolation, shared controller usage, shared queue pump, testing strategy, replay/audit, ledger, and observability docs because it proves the full HTTP/gRPC process-host production path across these boundaries.
+21. Keep runtime process crash recovery linked with HTTP runtime provider, runtime control-plane, runtime discovery/registry/capacity, retry-and-recovery, MCP production scenarios, testing strategy, ledger, observability, replay/audit, and recovery forensics because process death crosses all these boundaries.
+22. Keep runtime recovery forensics linked with runtime process crash recovery, multi-tenant crash isolation, observability, execution-correlated ledger, control-plane ledger causal chain, testing strategy, and MCP production scenarios because forensics is the per-work-item audit surface of recovery.
+23. Keep multi-tenant runtime crash isolation linked with multi-tenant control-plane isolation, runtime process crash recovery, recovery forensics, control-plane ledger causal chain, recovery replay/ledger/trace proof, HTTP runtime provider, and testing strategy because safe-tenant non-impact is a core isolation proof.
+24. Keep control-plane ledger causal chain linked with execution-correlated ledger, runtime control-plane, HTTP runtime provider, MCP production scenarios, runtime discovery/registry/capacity, runtime recovery forensics, and observability because it records infrastructure decisions that execution ledger alone does not explain.
+25. Keep recovery replay/ledger/trace proof linked with replay/audit, observability, observability-tracing, execution-correlated ledger, runtime recovery forensics, runtime process crash recovery, and testing strategy because recovery is validated only after replay, ledger, trace, completion evidence, and forensics agree.

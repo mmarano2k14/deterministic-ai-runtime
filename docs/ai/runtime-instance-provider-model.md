@@ -1,6 +1,6 @@
 # Runtime Instance Provider Model
 
-Status: Implemented foundation / validated for local dispatch, HTTP pooled runtime scenarios, HTTP dispatch hardening, provider-based scale-out, Redis-backed scale-out request persistence, local runtime scale-out, HTTP runtime scale-out, Runtime Host Manager process-host provisioning, fulfilled-run requeue, end-to-end MCP scale-out execution, durable replay / ledger / trace validation, and tenant-aware runtime isolation across shared, dedicated, and hybrid runtime modes.
+Status: Implemented foundation / validated for local dispatch, HTTP pooled runtime scenarios, HTTP dispatch hardening, gRPC dispatch, provider-based scale-out, Redis-backed scale-out request persistence, local runtime scale-out, HTTP runtime scale-out, gRPC runtime scale-out, Runtime Host Manager process-host provisioning, fulfilled-run requeue, end-to-end MCP scale-out execution, durable replay / ledger / trace validation, provider-agnostic process-host crash recovery, and tenant-aware runtime isolation across shared, dedicated, and hybrid runtime modes.
 
 This document describes the **runtime instance provider model** for the Deterministic AI Runtime control plane.
 
@@ -16,6 +16,8 @@ The complete technical reference is currently preserved in:
 - [MCP Server as Runtime Control Plane](mcp-server-control-plane.md)
 - [Multi-Tenant Control Plane Isolation](multi-tenant-control-plane-isolation.md)
 - [HTTP Runtime Provider](http-runtime-provider.md)
+- [gRPC Runtime Provider](grpc-runtime-provider.md)
+- [Provider-Agnostic Process-Host Recovery](provider-agnostic-process-host-recovery.md)
 - [MCP Production Runtime Scenario Framework](mcp-production-runtime-scenario-framework.md)
 
 ---
@@ -59,11 +61,17 @@ The runtime now has:
 - HTTP structured dispatch failure reasons
 - HTTP runtime scale-out provider capability
 - HTTP runtime scale-out provisioner foundation
+- gRPC runtime scale-out provider capability
+- gRPC runtime scale-out provisioner foundation
 - Runtime Host Manager abstraction
 - host creation modes for Fixture, Process, Attach, and Kubernetes-oriented provisioning
 - process-host HTTP runtime scale-out with real `RuntimeInstanceOnly` host processes
+- process-host gRPC runtime scale-out with real `RuntimeInstanceOnly` host processes
+- provider-agnostic process-host crash recovery scenario base shared by HTTP and gRPC
 - tenant-aware HTTP scale-out request fulfillment
+- tenant-aware gRPC scale-out request fulfillment
 - HTTP shared/dedicated/hybrid fallback policy validation
+- gRPC single-tenant and multi-tenant crash recovery validation
 - end-to-end MCP Redis local scale-out execution validation
 - MCP production runtime scenario framework
 - durable replay / ledger / trace validation across process boundaries
@@ -1118,6 +1126,58 @@ HTTP dispatch
 DAG execution
 ```
 
+Current gRPC scale-out provider resolution flow:
+
+```text
+Shared Runtime Controller
+    ↓
+Admission returns RequestScaleOut
+    ↓
+Tenant runtime settings attached to admission decision
+    ↓
+StoreBackedAiRuntimeScaleOutRequestPublisher
+    ↓
+RedisAiRuntimeScaleOutRequestStore
+    ↓
+AiRuntimeScaleOutRequestWatcherHostedService
+    ↓
+AiRuntimeScaleOutProviderSelector
+    ↓
+resolve provider.name:
+        request.ProviderHint = grpc
+        AiRuntimeInstanceRegistrationOptions.ProviderName = grpc
+    ↓
+IAiRuntimeInstanceProviderRouter.TryGetProvider<IAiRuntimeScaleOutProvider>(...)
+    ↓
+AiGrpcRuntimeInstanceProvider
+    ↓
+AiGrpcRuntimeScaleOutProvisioner
+    ↓
+IAiRuntimeHostManager
+    ↓
+HostCreationMode = Process
+    ↓
+ProcessAiRuntimeHostCreationStrategy
+    ↓
+RuntimeInstanceOnly process starts
+    ↓
+runtime maps gRPC command service
+    ↓
+runtime self-registers
+    ↓
+runtime publishes heartbeat and capacity with provider.name=grpc and transport.name=grpc
+    ↓
+scale-out request fulfilled
+    ↓
+requeue shared run for normal pump dispatch when applicable
+    ↓
+gRPC dispatch
+    ↓
+DAG execution
+```
+
+The gRPC process-host path validates that the provider model is not tied to HTTP. The same shared process-host recovery base proves strict durable DAG resume through both HTTP and gRPC transports.
+
 Future Redis command queue flow:
 
 ```text
@@ -1537,18 +1597,130 @@ This proves the provider model can cross a real process boundary without replaci
 
 ## gRPC Provider
 
-The gRPC provider can perform the same operations as HTTP with a typed contract.
+The gRPC provider is now implemented and validated as a runtime instance provider and as a provider-based scale-out path for real process-host runtime instances.
+
+The gRPC provider has the same architectural responsibilities as the HTTP provider:
+
+```text
+1. Dispatch transport
+   Sends runtime commands to a selected runtime instance through a typed gRPC contract.
+
+2. Scale-out provider capability
+   Participates in the provider-based scale-out loop by delegating capacity creation
+   to the gRPC runtime scale-out provisioner and Runtime Host Manager.
+```
 
 Example metadata:
 
 ```text
 provider.name = grpc
-provider.endpoint = grpc://runtime-1.ai-runtime.svc.cluster.local:5001
+transport.name = grpc
+transport.endpoint = http://localhost:5800
 ```
 
-gRPC may be useful for lower-latency internal cluster communication.
+For local process-host tests, plaintext gRPC uses an HTTP endpoint with HTTP/2 enabled by Kestrel.
 
-The gRPC provider must preserve `ExecutionContextSnapshot` in dispatch messages.
+The gRPC provider must preserve `ExecutionContextSnapshot` in dispatch messages exactly like the HTTP provider.
+
+Validated gRPC process-host flow:
+
+```text
+Admission requires more capacity
+    ↓
+Redis scale-out request
+    ↓
+Scale-out watcher
+    ↓
+providerHint = grpc
+    ↓
+AiGrpcRuntimeInstanceProvider as IAiRuntimeScaleOutProvider
+    ↓
+AiGrpcRuntimeScaleOutProvisioner
+    ↓
+IAiRuntimeHostManager
+    ↓
+HostCreationMode = Process
+    ↓
+ProcessAiRuntimeHostCreationStrategy
+    ↓
+real RuntimeInstanceOnly process starts
+    ↓
+runtime maps gRPC command service
+    ↓
+runtime self-registers with ProviderName=grpc
+    ↓
+runtime publishes transport.name=grpc and capacity
+    ↓
+scale-out request fulfilled
+    ↓
+normal gRPC dispatch
+    ↓
+DAG execution
+```
+
+The validated gRPC process-host crash recovery proof covers:
+
+```text
+ControlPlane
+    ↓
+gRPC scale-out
+    ↓
+real RuntimeInstanceOnly process
+    ↓
+gRPC dispatch
+    ↓
+durable DAG progress
+    ↓
+process kill
+    ↓
+runtime marked unsafe
+    ↓
+execution requeued for recovery
+    ↓
+replacement gRPC runtime process
+    ↓
+redispatch
+    ↓
+strict DAG resume with the same durable ExecutionId
+    ↓
+completion
+```
+
+Validated gRPC crash recovery scenarios:
+
+```text
+single tenant real process crash recovery
+two tenants crash recovery with strict DAG resume, replay, ledger, and trace
+two impacted tenants with one safe tenant proving no cross-tenant recovery impact
+```
+
+Current gRPC process-host requirements:
+
+```text
+AiMcpHost:Mode = ControlPlaneWithGrpcRuntimeInstances
+AiRuntimeInstanceRegistration:ProviderName = grpc
+AiGrpcRuntimeScaleOut:Enabled = true
+AiGrpcRuntimeScaleOut:Mode = HostManager
+AiGrpcRuntimeScaleOut:HostCreationMode = Process
+RuntimeInstanceOnly child transport.name = grpc
+Kestrel:EndpointDefaults:Protocols = Http2
+```
+
+Current gRPC process-host limitation:
+
+```text
+AiGrpcRuntimeScaleOut:RequireReadiness = false
+```
+
+This is a temporary process-host setting because the legacy readiness probe still targets the HTTP command endpoint. The runtime registry and capacity descriptor are currently used as the effective readiness proof for gRPC process-host scenarios.
+
+Future cleanup should add either:
+
+```text
+gRPC-native readiness
+or
+provider-neutral registry/capacity readiness for non-HTTP transports
+```
 
 ---
 
@@ -1956,6 +2128,20 @@ Current completed or validated pieces:
 60. Adversarial multi-tenant Dedicated isolation scenario
 61. Mixed-tenant full production validation scenario
 62. Durable ledger, trace, replay, replay report, replay ledger, and replay trace validation across process boundaries
+63. gRPC runtime instance provider foundation
+64. gRPC runtime scale-out provider capability
+65. gRPC runtime scale-out provisioner foundation
+66. ControlPlaneWithGrpcRuntimeInstances host mode support
+67. RuntimeInstanceOnly gRPC command service mapping
+68. gRPC process-host scale-out through Runtime Host Manager
+69. Real RuntimeInstanceOnly process launch from gRPC scale-out
+70. gRPC runtime registration and capacity publication across process boundaries
+71. gRPC dispatch into real RuntimeInstanceOnly process-host capacity
+72. Provider-agnostic process-host crash recovery scenario base shared by HTTP and gRPC
+73. HTTP wrapper validation over the shared process-host recovery base
+74. gRPC single-tenant process crash recovery with strict durable DAG resume
+75. gRPC two-tenant process crash recovery with replay / ledger / trace proof
+76. gRPC two-tenant impacted plus safe-tenant no-impact crash recovery proof
 ```
 
 The implementation must continue to preserve existing behavior.
@@ -1983,7 +2169,7 @@ After the local, HTTP pooled, HTTP process-host, HTTP scale-out, and tenant-awar
 8. Complete control provider capability.
 9. Add Redis command queue provider.
 10. Add command consumer in runtime-only host.
-11. Add gRPC runtime provider and gRPC dispatch hardening.
+11. Continue gRPC runtime provider hardening with native gRPC readiness and richer transport diagnostics.
 12. Add Kubernetes metadata provider.
 13. Add Kubernetes scaling provider using the existing IAiRuntimeScaleOutProvider capability model.
 14. Add Kubernetes scale-out request handling that creates/expands runtime pods and waits for registration/capacity.
@@ -2006,7 +2192,8 @@ Current limitations include:
 - RuntimeInstanceHealthReconciler is not implemented yet
 - circuit-open does not yet automatically mark a runtime unhealthy or request replacement
 - Redis command queue provider is not implemented yet
-- gRPC provider is not implemented yet
+- gRPC process-host readiness currently bypasses the inherited HTTP readiness probe and should be replaced with gRPC-native or registry/capacity readiness
+- Provider-neutral process-host scenario identifiers still need cleanup where some names retain `http-process-host-*`
 - Kubernetes provider is not implemented yet
 - Kubernetes pod/deployment scale-out is not implemented yet
 - capability negotiation is not complete yet
@@ -2086,6 +2273,15 @@ Validated behavior includes:
 - Adversarial multi-tenant Dedicated isolation process-host scenario.
 - Mixed-tenant full production validation scenario with 3 tenants, 12 runs, and 420 DAG steps.
 - Durable ledger, trace, replay report, replay ledger, and replay trace validation across process boundaries.
+- gRPC runtime provider dispatch into real `RuntimeInstanceOnly` process-host capacity.
+- gRPC runtime scale-out request fulfillment through `providerHint = grpc`.
+- gRPC process-host scale-out through Runtime Host Manager.
+- Real RuntimeInstanceOnly process launch from gRPC scale-out.
+- Runtime registration and capacity readiness across process boundaries for gRPC runtime instances.
+- gRPC single-tenant process crash recovery with strict durable DAG resume.
+- gRPC two-tenant process crash recovery with strict DAG resume, replay, ledger, and trace proof.
+- gRPC two impacted tenants plus safe tenant no-impact process crash recovery proof.
+- Provider-agnostic process-host crash recovery base validated by both HTTP and gRPC wrappers.
 - 1036+ tests green after the tenant-aware runtime isolation update lineage.
 
 ---
@@ -2104,6 +2300,8 @@ Validated behavior includes:
 - [Testing Strategy](testing-strategy.md)
 - [Shared Queue Pump and Worker Capacity](shared-queue-pump-and-worker-capacity.md)
 - [HTTP Runtime Provider](http-runtime-provider.md)
+- [gRPC Runtime Provider](grpc-runtime-provider.md)
+- [Provider-Agnostic Process-Host Recovery](provider-agnostic-process-host-recovery.md)
 - [MCP Production Runtime Scenario Framework](mcp-production-runtime-scenario-framework.md)
 
 ---
@@ -2112,7 +2310,7 @@ Validated behavior includes:
 
 This document describes the runtime instance provider model.
 
-Do not present Redis command queue dispatch, gRPC dispatch, Kubernetes pod scaling, global shared runtime pooling, RuntimeInstanceHealthReconciler behavior, or production dashboard features as completed capabilities until they are implemented and validated.
+Do not present Redis command queue dispatch, Kubernetes pod scaling, global shared runtime pooling, RuntimeInstanceHealthReconciler behavior, native gRPC readiness, or production dashboard features as completed capabilities until they are implemented and validated.
 
 Provider dispatch and provider scale-out must continue to preserve the runtime boundaries:
 

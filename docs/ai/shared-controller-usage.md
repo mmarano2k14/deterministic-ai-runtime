@@ -1,6 +1,6 @@
 # Shared Runtime Controller / Shared Queue Usage
 
-Status: Implemented / validated with Redis shared run store, Redis shared queue, Redis scale-out request persistence, tenant-aware admission, RBAC execution context propagation, local runtime scale-out, fulfilled-run requeue, Shared/Dedicated/Hybrid runtime isolation, HTTP pooled runtime scenarios, and end-to-end MCP scale-out execution.
+Status: Implemented / validated with Redis shared run store, Redis shared queue, Redis scale-out request persistence, tenant-aware admission, RBAC execution context propagation, local runtime scale-out, fulfilled-run requeue, Shared/Dedicated/Hybrid runtime isolation, HTTP pooled runtime scenarios, gRPC runtime provider scenarios, HTTP/gRPC process-host scale-out, provider-agnostic crash recovery, and end-to-end MCP scale-out execution.
 
 This document shows how to configure and use the AI control-plane shared runtime features.
 
@@ -25,6 +25,7 @@ It covers:
 - Pump identity vs assigned runtime identity
 - Runtime worker capacity visibility
 - Full distributed host setup
+- HTTP and gRPC provider-backed process-host dispatch
 - Current architecture summary
 - Current limitations
 - Future Kubernetes direction
@@ -36,6 +37,8 @@ This document complements:
 - [Multi-Tenant Control Plane Isolation](multi-tenant-control-plane-isolation.md)
 - [Runtime Discovery, Registry, and Capacity](runtime-discovery-registry-capacity.md)
 - [Runtime Instance Provider Model](runtime-instance-provider-model.md)
+- [HTTP Runtime Provider](http-runtime-provider.md)
+- [gRPC Runtime Provider](grpc-runtime-provider.md)
 - [Shared Queue Pump and Worker Capacity](shared-queue-pump-and-worker-capacity.md)
 - [MCP Server as Runtime Control Plane](mcp-server-control-plane.md)
 - [Testing Strategy](testing-strategy.md)
@@ -659,7 +662,108 @@ tenant-b Hybrid
 
 ---
 
-## 10. List shared runs
+## 10. Provider-backed HTTP and gRPC process-host dispatch
+
+Shared controller and shared queue semantics are transport-neutral.
+
+The shared controller does not know whether the final runtime is contacted through local in-memory dispatch, HTTP, gRPC, or a future Kubernetes-backed transport.
+
+The provider boundary is:
+
+```text
+Shared queue dispatcher
+  -> restores ExecutionContextSnapshot
+  -> dispatch-time tenant-aware admission
+  -> capacity descriptor selected
+  -> provider.name resolved
+  -> provider dispatch
+  -> runtime instance local queue
+```
+
+Validated provider-backed process-host modes now include:
+
+```text
+ControlPlaneWithHttpRuntimeInstances
+ControlPlaneWithGrpcRuntimeInstances
+```
+
+For HTTP:
+
+```text
+provider.name = http
+transport.name = http
+AiHttpRuntimeScaleOut:Enabled = true
+```
+
+For gRPC:
+
+```text
+provider.name = grpc
+transport.name = grpc
+AiGrpcRuntimeScaleOut:Enabled = true
+```
+
+Both providers use the same shared queue and shared run lifecycle:
+
+```text
+Submit
+  -> admission
+  -> SharedRun.Status = ScaleOutRequested when no capacity exists
+  -> Redis scale-out request
+  -> scale-out watcher
+  -> provider-specific scale-out provider
+  -> Runtime Host Manager
+  -> real RuntimeInstanceOnly process
+  -> runtime self-registers and publishes capacity
+  -> shared run requeued
+  -> pump restores ExecutionContextSnapshot
+  -> dispatch-time admission selects tenant-visible runtime
+  -> provider dispatch
+  -> local runtime queue
+  -> DAG execution
+```
+
+The current gRPC process-host path validates the same shared controller contract through typed gRPC transport.
+
+Important gRPC process-host configuration details:
+
+```text
+AiMcpHost:Mode = ControlPlaneWithGrpcRuntimeInstances
+AiRuntimeInstanceRegistration:ProviderName = grpc
+AiGrpcRuntimeScaleOut:Enabled = true
+AiGrpcRuntimeScaleOut:HostCreationMode = Process
+RuntimeInstanceOnly transport.name = grpc
+Kestrel:EndpointDefaults:Protocols = Http2
+```
+
+The gRPC provider uses the Runtime Host Manager and process-host creation path just like HTTP, but dispatches through the gRPC runtime command contract.
+
+Current gRPC readiness note:
+
+```text
+AiGrpcRuntimeScaleOut:RequireReadiness = false
+```
+
+This is a temporary process-host setting because the old readiness probe was HTTP-specific and probed `/runtime-instance/commands`.
+
+The proper long-term readiness model should be provider-aware, either through:
+
+```text
+gRPC-native health/readiness
+```
+
+or:
+
+```text
+registry/capacity readiness using Status=Ready, CanAcceptRun=true, provider.name=grpc, transport.name=grpc
+```
+
+This does not change the shared queue contract. The shared queue still dispatches only after tenant-visible registry and capacity make the runtime eligible.
+
+
+---
+
+## 11. List shared runs
 
 ```csharp
 var list = await controller.ListRunsAsync(
@@ -681,7 +785,7 @@ Tenant-aware listing should use the current restored execution context when filt
 
 ---
 
-## 11. Get one shared run
+## 12. Get one shared run
 
 ```csharp
 var get = await controller.GetRunAsync(
@@ -703,7 +807,7 @@ if (get.Run is not null)
 
 ---
 
-## 12. Cancel a shared run
+## 13. Cancel a shared run
 
 ```csharp
 var cancel = await controller.CancelRunAsync(
@@ -726,7 +830,7 @@ Running execution cancellation should be bridged to `ExecutionId`-level executio
 
 ---
 
-## 13. Manually pump the shared queue
+## 14. Manually pump the shared queue
 
 A runtime instance or control-plane adapter can manually ask to claim and dispatch pending shared queue items.
 
@@ -798,7 +902,7 @@ The pump identity and assigned runtime identity are intentionally separate.
 
 ---
 
-## 14. Dispatch-time execution context restore
+## 15. Dispatch-time execution context restore
 
 The shared queue dispatcher must restore the shared run execution context before admission and dispatch.
 
@@ -839,7 +943,7 @@ This is required for:
 
 ---
 
-## 15. Manual drain while background pump is disabled
+## 16. Manual drain while background pump is disabled
 
 Manual drain can be enabled without enabling the hosted background pump.
 
@@ -874,7 +978,7 @@ This is useful for tests, MCP demos, controlled operator dispatch, and proving t
 
 ---
 
-## 16. Enable the background shared queue service
+## 17. Enable the background shared queue service
 
 The background service runs the pump continuously.
 
@@ -935,7 +1039,7 @@ AiSharedQueueDispatcher
 
 ---
 
-## 17. Dispatch-time admission
+## 18. Dispatch-time admission
 
 Shared queue dispatch performs admission at drain time.
 
@@ -982,7 +1086,7 @@ admission selects runtime instance
 
 ---
 
-## 18. Scale-out fulfilled requeue and dispatch
+## 19. Scale-out fulfilled requeue and dispatch
 
 When a submit-time admission decision requests scale-out, the shared controller does not dispatch the run directly.
 
@@ -1036,7 +1140,7 @@ Current tenant-aware local scale-out results:
 
 ---
 
-## 19. Local scaler tenant scope
+## 20. Local scaler tenant scope
 
 The local runtime scaler must create capacity inside the tenant runtime scope.
 
@@ -1066,7 +1170,7 @@ This prevents a shared runtime such as `runtime-instance-1` from satisfying a de
 
 ---
 
-## 20. Runtime worker capacity visibility
+## 21. Runtime worker capacity visibility
 
 Runtime instances expose worker capacity through queue state and instance snapshots.
 
@@ -1112,7 +1216,7 @@ This is important for dashboards, MCP tools, Kubernetes demos, admission visibil
 
 ---
 
-## 21. Local worker capacity per execution
+## 22. Local worker capacity per execution
 
 `MaxLocalWorkersPerExecution` controls how many workers from one runtime instance may work on one execution.
 
@@ -1157,7 +1261,7 @@ It is not the same as cross-instance execution assistance.
 
 ---
 
-## 22. Execution assistance vs local worker capacity
+## 23. Execution assistance vs local worker capacity
 
 `MaxLocalWorkersPerExecution` is a local runtime instance policy.
 
@@ -1183,7 +1287,7 @@ This prevents assistance visibility from over-reporting workers when `MaxLocalWo
 
 ---
 
-## 23. Runtime local queue receives snapshot
+## 24. Runtime local queue receives snapshot
 
 The final dispatch target is still the selected runtime instance local queue.
 
@@ -1204,7 +1308,7 @@ This protects the runtime from executing work without tenant context.
 
 ---
 
-## 24. Full distributed host example
+## 25. Full distributed host example
 
 ```csharp
 using Microsoft.Extensions.DependencyInjection;
@@ -1283,7 +1387,7 @@ await app.RunAsync();
 
 ---
 
-## 25. Current architecture summary
+## 26. Current architecture summary
 
 ```text
 Submit path:
@@ -1344,11 +1448,32 @@ IAiSharedRuntimeController
   -> IAiLocalRuntimeInstanceScaler
   -> IAiScaleOutFulfilledRunRequeueService
   -> IAiSharedQueue
+
+
+HTTP/gRPC process-host scale-out path:
+
+IAiSharedRuntimeController
+  -> IAiRunAdmissionController
+  -> IAiRuntimeScaleOutRequestPublisher
+  -> Redis scale-out request
+  -> AiRuntimeScaleOutRequestWatcherHostedService
+  -> IAiRuntimeScaleOutProviderSelector
+  -> HttpAiRuntimeInstanceProvider or GrpcAiRuntimeInstanceProvider
+  -> HTTP/gRPC scale-out provisioner
+  -> IAiRuntimeHostManager
+  -> ProcessAiRuntimeHostCreationStrategy
+  -> RuntimeInstanceOnly process
+  -> runtime self-registration / heartbeat / capacity
+  -> IAiScaleOutFulfilledRunRequeueService
+  -> IAiSharedQueue
+  -> IAiSharedQueuePump
+  -> provider dispatch
+
 ```
 
 ---
 
-## 26. Current limitations
+## 27. Current limitations
 
 Implemented:
 
@@ -1384,18 +1509,20 @@ Implemented:
 - fulfilled scale-out run requeue
 - MCP Redis local scale-out fulfillment
 - MCP Redis local scale-out requeue, dispatch, execution, and completion
+- HTTP process-host scale-out and dispatch
+- gRPC process-host scale-out and dispatch
+- ControlPlaneWithGrpcRuntimeInstances host mode
+- provider-agnostic shared queue crash recovery validation over HTTP and gRPC
 ```
 
 Not implemented yet:
 
 ```text
 - Kubernetes pod creation
-- distributed runtime instance API dispatch
 - Kubernetes pod creation / deployment scaler adapter
 - automatic Kubernetes scaling
 - production multi-control-plane leader election
 - Redis command queue runtime dispatch
-- gRPC runtime dispatch
 - dashboard UI
 - database-backed tenant runtime settings
 - production-grade tenant authorization hardening beyond current RBAC foundation
@@ -1403,7 +1530,7 @@ Not implemented yet:
 
 ---
 
-## 27. Future Kubernetes direction
+## 28. Future Kubernetes direction
 
 The next layer should not change the core shared controller design.
 
@@ -1413,6 +1540,7 @@ Future adapters can be added behind abstractions:
 IAiSharedRunDispatcher
   -> LocalAiSharedRunDispatcher
   -> HttpRuntimeInstanceDispatcher
+  -> GrpcRuntimeInstanceDispatcher
   -> KubernetesRuntimeInstanceDispatcher
 
 IAiRuntimeScaleOutRequestPublisher
@@ -1422,6 +1550,8 @@ IAiRuntimeScaleOutRequestPublisher
 
 IAiRuntimeScaleOutProvider
   -> LocalAiRuntimeInstanceProvider
+  -> HttpAiRuntimeInstanceProvider
+  -> GrpcAiRuntimeInstanceProvider
   -> future Kubernetes scale-out provider
 ```
 
@@ -1473,12 +1603,12 @@ IAiSharedRunDispatcher
 
 ---
 
-## 28. Validated test evidence
+## 29. Validated test evidence
 
 Current validation includes:
 
 ```text
-1036 tests passing
+HTTP and gRPC shared-controller process-host recovery scenarios passing
 ```
 
 Tenant-aware shared controller coverage includes:
@@ -1515,5 +1645,27 @@ Legacy shared controller behavior remains validated:
 - fulfilled shared run requeue
 - local queue execution completion
 - HTTP pooled runtime dispatch
+- gRPC process-host dispatch
+- HTTP/gRPC provider-backed crash recovery
 - heavy HTTP dispatch
 ```
+
+
+gRPC shared-controller / process-host evidence includes:
+
+```text
+ControlPlaneWithGrpcRuntimeInstances = validated
+providerHint = grpc = validated
+GrpcAiRuntimeInstanceProvider scale-out capability = validated
+Runtime Host Manager process mode = validated
+RuntimeInstanceOnly gRPC child process = validated
+Kestrel HTTP/2 transport = validated
+gRPC dispatch = validated
+single tenant real process crash recovery = validated
+two tenant crash recovery = validated
+two impacted tenants + safe tenant non-impact = validated
+strict durable ExecutionId resume = validated
+local queued SharedRun redispatch = validated
+replay / ledger / trace proof = validated
+```
+
