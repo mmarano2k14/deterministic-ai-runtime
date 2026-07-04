@@ -23,6 +23,11 @@
         /// <summary>
         /// Runs the MCP control-plane and dispatches to HTTP-addressable runtime instances.
         /// </summary>
-        ControlPlaneWithHttpRuntimeInstances = 3
+        ControlPlaneWithHttpRuntimeInstances = 3,
+
+        /// <summary>
+        /// Runs the MCP control-plane and dispatches to gRPC-addressable runtime instances.
+        /// </summary>
+        ControlPlaneWithGrpcRuntimeInstances = 4
     }
 }

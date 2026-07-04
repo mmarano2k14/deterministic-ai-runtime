@@ -150,7 +150,17 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
                     Console.WriteLine(
                         "[SERVICE REGISTRATION] Mode selected: ControlPlaneWithHttpRuntimeInstances.");
 
-                    ConfigureControlPlaneWithHttpRuntimeInstances(
+                    ConfigureControlPlaneWithRemoteRuntimeInstances(
+                        services,
+                        configuration,
+                        hostOptions);
+                    break;
+
+                case AiMcpHostMode.ControlPlaneWithGrpcRuntimeInstances:
+                    Console.WriteLine(
+                        "[SERVICE REGISTRATION] Mode selected: ControlPlaneWithGrpcRuntimeInstances.");
+
+                    ConfigureControlPlaneWithRemoteRuntimeInstances(
                         services,
                         configuration,
                         hostOptions);
@@ -350,49 +360,81 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
         }
 
         /// <summary>
-        /// Configures the host as a control-plane that dispatches to HTTP runtime instances.
+        /// Configures the host as a control-plane that dispatches to remote runtime instances.
         /// </summary>
         /// <remarks>
-        /// This mode is used to test or run MCP/control-plane separately from runtime
-        /// instances that are addressable through HTTP.
+        /// This mode is used to test or run the MCP/control-plane separately from runtime
+        /// instances that are addressable through a remote transport such as HTTP or gRPC.
         ///
-        /// Dispatch uses HttpAiRuntimeInstanceProvider when runtime capacity
-        /// descriptors publish:
+        /// The selected runtime provider depends on <see cref="AiMcpHostOptions.Mode"/>:
+        ///
+        /// <code>
+        /// ControlPlaneWithHttpRuntimeInstances  => HttpAiRuntimeInstanceProvider
+        /// ControlPlaneWithGrpcRuntimeInstances  => AiGrpcRuntimeInstanceProvider
+        /// </code>
+        ///
+        /// Dispatch still uses <see cref="IAiSharedRunDispatcher"/>. The dispatcher resolves
+        /// the correct provider through the centralized runtime instance provider router,
+        /// using metadata published by runtime capacity descriptors.
+        ///
+        /// HTTP runtime capacity descriptors must publish:
         ///
         /// <code>
         /// provider.name = http
+        /// transport.name = http
         /// transport.endpoint = http://runtime-instance-1:8081
         /// </code>
         ///
-        /// The control-plane still uses <see cref="IAiSharedRunDispatcher"/>.
-        /// The dispatcher resolves the provider through the centralized provider
-        /// capability resolver.
+        /// gRPC runtime capacity descriptors must publish:
         ///
-        /// This mode does not host local runtime instances. The target runtime
-        /// instance process must expose the HTTP command endpoint:
+        /// <code>
+        /// provider.name = grpc
+        /// transport.name = grpc
+        /// transport.endpoint = http://runtime-instance-1:50051
+        /// </code>
+        ///
+        /// This mode does not host local runtime instances. The target runtime instance
+        /// process must expose the command transport matching the published descriptor.
+        /// For HTTP this is:
         ///
         /// <code>
         /// POST /runtime-instance/commands
         /// </code>
+        ///
+        /// For gRPC this is the runtime instance command service mapped by the runtime
+        /// instance host.
         /// </remarks>
         /// <param name="services">The service collection.</param>
         /// <param name="configuration">The application configuration.</param>
         /// <param name="hostOptions">The MCP host options.</param>
-        private static void ConfigureControlPlaneWithHttpRuntimeInstances(
+        private static void ConfigureControlPlaneWithRemoteRuntimeInstances(
             IServiceCollection services,
             IConfiguration configuration,
             AiMcpHostOptions hostOptions)
         {
+            ArgumentNullException.ThrowIfNull(services);
+            ArgumentNullException.ThrowIfNull(configuration);
+            ArgumentNullException.ThrowIfNull(hostOptions);
+
+            var transportName =
+                hostOptions.Mode switch
+                {
+                    AiMcpHostMode.ControlPlaneWithHttpRuntimeInstances => "HTTP",
+                    AiMcpHostMode.ControlPlaneWithGrpcRuntimeInstances => "GRPC",
+                    _ => throw new InvalidOperationException(
+                        $"Unsupported remote runtime control-plane mode '{hostOptions.Mode}'.")
+                };
+
             Console.WriteLine(
-                "[CONTROL PLANE HTTP] ConfigureControlPlaneWithHttpRuntimeInstances executed.");
+                $"[CONTROL PLANE {transportName}] ConfigureControlPlaneWithRemoteRuntimeInstances executed.");
 
             LogPoolConfiguration(
                 configuration,
-                "[CONTROL PLANE HTTP][BEFORE REGISTRATION]");
+                $"[CONTROL PLANE {transportName}][BEFORE REGISTRATION]");
 
             LogHostedServiceRegistrations(
                 services,
-                "[CONTROL PLANE HTTP][ENTRY]");
+                $"[CONTROL PLANE {transportName}][ENTRY]");
 
             services.AddAiControlPlane(
                 configureRuntimeExecutionRecoveryReconciliation: options =>
@@ -410,7 +452,7 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
 
             LogHostedServiceRegistrations(
                 services,
-                "[CONTROL PLANE HTTP][AFTER AddAiControlPlane]");
+                $"[CONTROL PLANE {transportName}][AFTER AddAiControlPlane]");
 
             AddRedisControlPlaneStoresIfAvailable(
                 services,
@@ -421,22 +463,39 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
 
             LogHostedServiceRegistrations(
                 services,
-                "[CONTROL PLANE HTTP][AFTER AddRedisControlPlaneStoresIfAvailable]");
+                $"[CONTROL PLANE {transportName}][AFTER AddRedisControlPlaneStoresIfAvailable]");
 
             services.RemoveAll<IAiSharedRunDispatcher>();
             services.AddSingleton<IAiSharedRunDispatcher, RemoteAiSharedRunDispatcher>();
 
-            services.AddAiHttpRuntimeInstanceProvider();
+            switch (hostOptions.Mode)
+            {
+                case AiMcpHostMode.ControlPlaneWithHttpRuntimeInstances:
+                    services.AddAiHttpRuntimeInstanceProvider();
 
-            LogHostedServiceRegistrations(
-                services,
-                "[CONTROL PLANE HTTP][AFTER AddAiHttpRuntimeInstanceProvider]");
+                    LogHostedServiceRegistrations(
+                        services,
+                        $"[CONTROL PLANE {transportName}][AFTER AddAiHttpRuntimeInstanceProvider]");
+                    break;
+
+                case AiMcpHostMode.ControlPlaneWithGrpcRuntimeInstances:
+                    services.AddAiGrpcRuntimeInstanceProvider();
+
+                    LogHostedServiceRegistrations(
+                        services,
+                        $"[CONTROL PLANE {transportName}][AFTER AddAiGrpcRuntimeInstanceProvider]");
+                    break;
+
+                default:
+                    throw new InvalidOperationException(
+                        $"Unsupported remote runtime control-plane mode '{hostOptions.Mode}'.");
+            }
 
             services.AddAiMcpServer();
 
             LogHostedServiceRegistrations(
                 services,
-                "[CONTROL PLANE HTTP][AFTER AddAiMcpServer]");
+                $"[CONTROL PLANE {transportName}][AFTER AddAiMcpServer]");
 
             ConfigureSharedQueueBackgroundService(
                 services,
@@ -445,7 +504,7 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
 
             LogHostedServiceRegistrations(
                 services,
-                "[CONTROL PLANE HTTP][AFTER ConfigureSharedQueueBackgroundService]");
+                $"[CONTROL PLANE {transportName}][AFTER ConfigureSharedQueueBackgroundService]");
 
             services.AddAiMcpControlPlaneHost(options =>
             {
@@ -457,7 +516,7 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
 
             LogHostedServiceRegistrations(
                 services,
-                "[CONTROL PLANE HTTP][AFTER AddAiMcpControlPlaneHost]");
+                $"[CONTROL PLANE {transportName}][AFTER AddAiMcpControlPlaneHost]");
 
             services.AddAiRuntimeInstanceRegistrationHostedService(options =>
             {
@@ -468,7 +527,7 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
 
             LogHostedServiceRegistrations(
                 services,
-                "[CONTROL PLANE HTTP][AFTER AddAiRuntimeInstanceRegistrationHostedService]");
+                $"[CONTROL PLANE {transportName}][AFTER AddAiRuntimeInstanceRegistrationHostedService]");
 
             ConfigureScaleOutRequestWatcher(
                 services,
@@ -477,12 +536,14 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
 
             LogHostedServiceRegistrations(
                 services,
-                "[CONTROL PLANE HTTP][AFTER ConfigureScaleOutRequestWatcher]");
+                $"[CONTROL PLANE {transportName}][AFTER ConfigureScaleOutRequestWatcher]");
 
             LogPoolConfiguration(
                 configuration,
-                "[CONTROL PLANE HTTP][AFTER REGISTRATION]");
+                $"[CONTROL PLANE {transportName}][AFTER REGISTRATION]");
         }
+
+
 
         /// <summary>
         /// Configures the host as a runtime-instance only process.
@@ -535,6 +596,7 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
             services.AddAiControlPlaneDiscoveryCore();
 
             services.AddAiRuntimeInstanceHttpCommandHandling();
+            services.AddGrpcRuntimeInstanceTransport();
 
             Console.WriteLine(
                 "[RUNTIME INSTANCE ONLY] Registered runtime HTTP command handling services.");

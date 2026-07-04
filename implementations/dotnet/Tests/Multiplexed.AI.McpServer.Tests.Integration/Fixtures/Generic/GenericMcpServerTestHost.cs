@@ -38,9 +38,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic
         private const string HttpScaleOutModeSettingKey = "AiHttpRuntimeScaleOut:Mode";
         private const string UseRegisteringTestRuntimeHostManagerSettingKey = "Tests:UseRegisteringTestRuntimeHostManager";
         private const string HttpControlPlaneMode = "ControlPlaneWithHttpRuntimeInstances";
+        private const string GrpcControlPlaneMode = "ControlPlaneWithGrpcRuntimeInstances";
         private const string LocalControlPlaneMode = "ControlPlaneWithLocalRuntimeInstances";
         private const string HttpScaleOutHostManagerMode = "HostManager";
-
         private const string UseCapturingLedgerRecorderSettingKey = "Tests:UseCapturingLedgerRecorder";
 
         /// <summary>
@@ -262,7 +262,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic
         /// Determines whether the test host must preserve the real network HTTP client instead of installing fixture routing clients.
         /// </summary>
         /// <param name="settings">The test host settings.</param>
-        /// <returns><c>true</c> when real process hosts are used; otherwise, <c>false</c>.</returns>
+        /// <returns><c>true</c> when real HTTP process hosts are used; otherwise, <c>false</c>.</returns>
         private static bool ShouldUseRealNetworkHttpClient(
             IReadOnlyDictionary<string, string?> settings)
         {
@@ -325,8 +325,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic
             if (!IsSupportedControlPlaneMode(mode))
             {
                 throw new ArgumentException(
-                    $"Generic MCP server test host requires '{HostModeSettingKey}' to be either " +
-                    $"'{HttpControlPlaneMode}' or '{LocalControlPlaneMode}', but found '{mode}'.",
+                    $"Generic MCP server test host requires '{HostModeSettingKey}' to be one of " +
+                    $"'{HttpControlPlaneMode}', '{GrpcControlPlaneMode}' or '{LocalControlPlaneMode}', but found '{mode}'.",
                     nameof(settings));
             }
 
@@ -362,6 +362,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic
             string mode)
         {
             return string.Equals(mode, HttpControlPlaneMode, StringComparison.Ordinal)
+                || string.Equals(mode, GrpcControlPlaneMode, StringComparison.Ordinal)
                 || string.Equals(mode, LocalControlPlaneMode, StringComparison.Ordinal);
         }
 
@@ -514,7 +515,6 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic
 
                 if (!string.IsNullOrWhiteSpace(request.TenantId))
                 {
-                    metadata[AiRuntimeInstanceIsolationMetadataKeys.TenantId] = request.TenantId;
                     metadata[AiRuntimeInstanceIsolationMetadataKeys.TenantId] = request.TenantId;
                 }
 
