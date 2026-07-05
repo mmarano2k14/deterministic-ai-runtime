@@ -50,7 +50,28 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
                             .Value,
                         serviceProvider.GetRequiredService<AiKubernetesRuntimePodMetadataBuilder>()));
 
-            services.TryAddSingleton<IAiKubernetesRuntimeHostClient, FakeAiKubernetesRuntimeHostClient>();
+            services.TryAddSingleton<IAiKubernetesRuntimeHostClient>(
+                serviceProvider =>
+                {
+                    var options =
+                        serviceProvider
+                            .GetRequiredService<IOptions<AiKubernetesRuntimeHostOptions>>()
+                            .Value;
+
+                    return options.ClientMode switch
+                    {
+                        AiKubernetesRuntimeHostClientMode.Fake =>
+                            new FakeAiKubernetesRuntimeHostClient(),
+
+                        AiKubernetesRuntimeHostClientMode.KubernetesSdk =>
+                            throw new InvalidOperationException(
+                                "The Kubernetes .NET SDK runtime host client is not registered yet."),
+
+                        _ =>
+                            throw new InvalidOperationException(
+                                $"Unsupported Kubernetes runtime host client mode '{options.ClientMode}'.")
+                    };
+                });
 
             services.TryAddEnumerable(
                 ServiceDescriptor.Singleton<IAiRuntimeHostCreationStrategy, KubernetesAiRuntimeHostCreationStrategy>());

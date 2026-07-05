@@ -1,4 +1,5 @@
-﻿using System;
+﻿using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strategy.Kubernetes.Client;
+using System;
 using System.Collections.Generic;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strategy.Kubernetes
@@ -16,6 +17,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
         /// Gets or sets a value indicating whether Kubernetes runtime host creation is enabled.
         /// </summary>
         public bool Enabled { get; set; }
+
+        /// <summary>
+        /// Gets or sets the Kubernetes runtime host client mode.
+        /// </summary>
+        public AiKubernetesRuntimeHostClientMode ClientMode { get; set; } = AiKubernetesRuntimeHostClientMode.Fake;
 
         /// <summary>
         /// Gets or sets the Kubernetes namespace where runtime pods are created.

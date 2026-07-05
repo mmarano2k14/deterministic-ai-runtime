@@ -122,5 +122,32 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager
             Assert.Contains(strategies, strategy => strategy.GetType() == typeof(ExistingRuntimeHostCreationStrategy));
             Assert.Contains(strategies, strategy => strategy.GetType() == typeof(KubernetesAiRuntimeHostCreationStrategy));
         }
+
+        /// <summary>
+        /// Verifies that Kubernetes SDK client mode fails explicitly until the real Kubernetes client is registered.
+        /// </summary>
+        [Fact]
+        public void AddAiKubernetesRuntimeHostProvider_Should_Fail_Explicitly_When_KubernetesSdk_Client_Is_Not_Registered()
+        {
+            var services = new ServiceCollection();
+
+            services.AddSingleton<IAiRuntimeInstanceReadinessWaiter, FakeRuntimeInstanceReadinessWaiter>();
+
+            services.AddAiKubernetesRuntimeHostProvider(
+                options =>
+                {
+                    options.Enabled = true;
+                    options.RuntimeImage = "multiplexed-ai-runtime:test";
+                    options.ClientMode = AiKubernetesRuntimeHostClientMode.KubernetesSdk;
+                });
+
+            using var provider = services.BuildServiceProvider();
+
+            var exception =
+                Assert.Throws<InvalidOperationException>(
+                    () => provider.GetRequiredService<IAiKubernetesRuntimeHostClient>());
+
+            Assert.Contains("Kubernetes .NET SDK runtime host client is not registered yet", exception.Message);
+        }
     }
 }
