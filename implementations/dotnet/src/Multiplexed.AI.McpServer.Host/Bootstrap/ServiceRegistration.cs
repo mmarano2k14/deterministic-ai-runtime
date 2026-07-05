@@ -377,32 +377,8 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
         /// the correct provider through the centralized runtime instance provider router,
         /// using metadata published by runtime capacity descriptors.
         ///
-        /// HTTP runtime capacity descriptors must publish:
-        ///
-        /// <code>
-        /// provider.name = http
-        /// transport.name = http
-        /// transport.endpoint = http://runtime-instance-1:8081
-        /// </code>
-        ///
-        /// gRPC runtime capacity descriptors must publish:
-        ///
-        /// <code>
-        /// provider.name = grpc
-        /// transport.name = grpc
-        /// transport.endpoint = http://runtime-instance-1:50051
-        /// </code>
-        ///
-        /// This mode does not host local runtime instances. The target runtime instance
-        /// process must expose the command transport matching the published descriptor.
-        /// For HTTP this is:
-        ///
-        /// <code>
-        /// POST /runtime-instance/commands
-        /// </code>
-        ///
-        /// For gRPC this is the runtime instance command service mapped by the runtime
-        /// instance host.
+        /// Kubernetes is registered here as a runtime host lifecycle provider.
+        /// It can create runtime capacity while HTTP or gRPC remains the runtime command transport.
         /// </remarks>
         /// <param name="services">The service collection.</param>
         /// <param name="configuration">The application configuration.</param>
@@ -473,17 +449,31 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
                 case AiMcpHostMode.ControlPlaneWithHttpRuntimeInstances:
                     services.AddAiHttpRuntimeInstanceProvider();
 
+                    services.AddAiKubernetesRuntimeHostProvider(
+                        configuration);
+
                     LogHostedServiceRegistrations(
                         services,
                         $"[CONTROL PLANE {transportName}][AFTER AddAiHttpRuntimeInstanceProvider]");
+
+                    LogHostedServiceRegistrations(
+                        services,
+                        $"[CONTROL PLANE {transportName}][AFTER AddAiKubernetesRuntimeHostProvider]");
                     break;
 
                 case AiMcpHostMode.ControlPlaneWithGrpcRuntimeInstances:
                     services.AddAiGrpcRuntimeInstanceScaleOutProvider();
 
+                    services.AddAiKubernetesRuntimeHostProvider(
+                        configuration);
+
                     LogHostedServiceRegistrations(
                         services,
                         $"[CONTROL PLANE {transportName}][AFTER AddAiGrpcRuntimeInstanceProvider]");
+
+                    LogHostedServiceRegistrations(
+                        services,
+                        $"[CONTROL PLANE {transportName}][AFTER AddAiKubernetesRuntimeHostProvider]");
                     break;
 
                 default:
@@ -542,8 +532,6 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
                 configuration,
                 $"[CONTROL PLANE {transportName}][AFTER REGISTRATION]");
         }
-
-
 
         /// <summary>
         /// Configures the host as a runtime-instance only process.

@@ -112,5 +112,14 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
         /// </remarks>
         public AiKubernetesImagePullPolicy ImagePullPolicy { get; set; } =
             AiKubernetesImagePullPolicy.IfNotPresent;
+
+        /// <summary>
+        /// Gets or sets a value indicating whether the Kubernetes host strategy should wait for runtime registry readiness.
+        /// </summary>
+        /// <remarks>
+        /// This should be enabled for real Kubernetes pods and disabled for fake Kubernetes lifecycle tests
+        /// where no real runtime process registers capacity.
+        /// </remarks>
+        public bool RequireRuntimeReadiness { get; set; } = true;
     }
 }

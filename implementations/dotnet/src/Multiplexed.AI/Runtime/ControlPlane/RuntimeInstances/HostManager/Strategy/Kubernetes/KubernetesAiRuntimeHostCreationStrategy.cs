@@ -15,7 +15,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
     /// <remarks>
     /// This strategy represents Kubernetes as a runtime host lifecycle provider.
     /// It creates Kubernetes-level runtime host resources through <see cref="IAiKubernetesRuntimeHostClient" />,
-    /// then waits for runtime-level readiness through <see cref="IAiRuntimeInstanceReadinessWaiter" />.
+    /// then optionally waits for runtime-level readiness through <see cref="IAiRuntimeInstanceReadinessWaiter" />.
     /// Runtime command dispatch remains owned by the configured transport provider, such as HTTP or gRPC.
     /// </remarks>
     public sealed class KubernetesAiRuntimeHostCreationStrategy : IAiRuntimeHostCreationStrategy
@@ -151,6 +151,17 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
                     request,
                     hostReadinessResult.FailureReason ?? "kubernetes-runtime-host-readiness-failed",
                     hostReadinessResult.Retryable,
+                    metadata);
+            }
+
+            if (!this.options.RequireRuntimeReadiness)
+            {
+                return AiRuntimeHostStartResult.Started(
+                    request.ExecutionContextSnapshot,
+                    request.RuntimeInstanceId,
+                    request.ProviderName,
+                    request.TransportName,
+                    request.TransportEndpoint,
                     metadata);
             }
 

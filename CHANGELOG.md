@@ -6,6 +6,604 @@ This project follows a deterministic runtime and observability model designed fo
 
 ---
 
+## [1.0.7.1] - 2026-07-05 — Kubernetes Runtime Host Provider Integration
+
+This changelog summarizes the work completed after the previous changelog, focused on integrating Kubernetes as a runtime host lifecycle provider for the deterministic AI runtime.
+
+The main architectural rule validated in this milestone is:
+
+```text
+Kubernetes = runtime host lifecycle provider
+HTTP/gRPC   = runtime command provider and transport
+```
+
+Kubernetes must not replace the runtime transport provider. It creates or manages the runtime host capacity. The runtime provider remains `grpc` or `http` depending on the selected control-plane mode.
+
+---
+
+## 1. Kubernetes host provider branch and direction
+
+Work continued on the Kubernetes runtime host provider path with the goal of proving that a control plane can request runtime scale-out through the existing watcher/provider infrastructure and delegate host creation to Kubernetes.
+
+The validated target model is:
+
+```text
+Scale-out request
+→ scale-out watcher
+→ gRPC scale-out provider
+→ Runtime Host Manager
+→ Kubernetes host creation strategy
+→ Kubernetes runtime host client
+→ scale-out request fulfilled
+```
+
+Important design decision:
+
+```text
+ProviderHint       = grpc
+provider.name      = grpc
+transport.name     = grpc
+host.provider      = kubernetes
+HostCreationMode   = Kubernetes
+```
+
+This prevents a conceptual bug where Kubernetes would be treated as a scale-out provider or command transport. Kubernetes remains only the host lifecycle provider.
+
+---
+
+## 2. Added Kubernetes host-manager integration profile
+
+A new integration runtime profile was added under the shared/base provider profile area instead of placing it under a gRPC-only profile namespace.
+
+Chosen location:
+
+```text
+Scenarios/Production/Providers/Base/Profiles/GrpcKubernetesHostScenarioRuntimeProfile.cs
+```
+
+Reason:
+
+The profile represents a reusable scenario shape: gRPC runtime transport with Kubernetes host lifecycle. The profile is not itself a Kubernetes command provider and should remain reusable at the scenario/profile layer.
+
+Profile behavior:
+
+```text
+ProviderName  = grpc
+ProviderLabel = grpc-kubernetes-host
+LogPrefix     = GRPC KUBERNETES HOST
+RequestedBy   = grpc-kubernetes-host-manager-scaleout-test
+Source        = integration-test
+```
+
+It delegates settings construction to the Kubernetes-specific gRPC settings builder.
+
+---
+
+## 3. Added gRPC Kubernetes host production settings builder
+
+A new settings builder was introduced for the integration test scenario.
+
+Chosen location:
+
+```text
+Scenarios/Production/Providers/Grpc/Runners/GrpcKubernetesHostProductionScenarioSettingsBuilder.cs
+```
+
+Purpose:
+
+Reuse the existing gRPC process-host production settings baseline, then override only what is necessary for Kubernetes host-manager lifecycle mode.
+
+Key settings applied:
+
+```text
+AiRuntimeScaleOutRequestWatcher:Enabled = true
+AiHttpRuntimeScaleOut:Enabled = false
+AiGrpcRuntimeScaleOut:Enabled = true
+AiGrpcRuntimeScaleOut:Mode = HostManager
+AiGrpcRuntimeScaleOut:HostCreationMode = Kubernetes
+AiGrpcRuntimeScaleOut:RequireReadiness = false
+AiKubernetesRuntimeHost:Enabled = true
+AiKubernetesRuntimeHost:ClientMode = Fake
+AiKubernetesRuntimeHost:TransportName = grpc
+AiKubernetesRuntimeHost:RequireRuntimeReadiness = false
+```
+
+Important correction:
+
+`AiGrpcRuntimeScaleOut:RequireReadiness=false` is required for this fake Kubernetes lifecycle test because no real runtime process or pod is started.
+
+`AiKubernetesRuntimeHost:RequireRuntimeReadiness=false` was also required because the Kubernetes strategy itself originally waited for runtime registry readiness.
+
+---
+
+## 4. Added dedicated HostManager scale-out integration base
+
+A new integration base was created instead of reusing the process-host crash recovery base.
+
+Reason:
+
+The existing process-host base is tightly coupled to real process lifecycle and crash recovery behavior:
+
+```text
+IAiRuntimeHostProcessControl
+KillAsync(...)
+unsafe runtime detection
+requeue
+redispatch
+DAG resume
+forensics
+replay
+ledger recovery proof
+```
+
+That base is correct for process-host crash recovery, but wrong for Kubernetes fake host lifecycle tests.
+
+New base:
+
+```text
+Scenarios/Production/Providers/Base/Scenarios/HostManagerScaleOutScenarioTestsBase.cs
+```
+
+Initial approach:
+
+The first version tried to submit and dispatch a real run via `SubmitAndDispatchOneRunAsync`. This failed because fake Kubernetes does not create a real runtime instance that can register capacity and execute DAG work.
+
+Final approach:
+
+The base now creates a direct `AiRuntimeScaleOutRequestRecord`, stores it, and waits for the watcher/provider/host-manager path to mark it as fulfilled.
+
+This validates the host lifecycle path without requiring a real runtime process.
+
+---
+
+## 5. Added gRPC Kubernetes HostManager scale-out integration test
+
+New test class:
+
+```text
+Scenarios/Production/Providers/Grpc/GrpcKubernetesHostManagerScaleOutScenarioTests.cs
+```
+
+Test:
+
+```text
+Grpc_KubernetesHostManager_Should_Fulfill_ScaleOut_Without_Changing_Grpc_Runtime_Transport
+```
+
+Final validated output:
+
+```text
+[GRPC KUBERNETES HOST SCALE-OUT PROOF] Fulfilled.
+RequestId='scaleout-...'
+SharedRunId='shared-run-...'
+RuntimeInstanceId='grpc-kubernetes-host-scaleout-...:tenant-dedicated-single-runtime-1'
+FulfilledBy='mcp-scaleout-watcher'
+RuntimeProvider='grpc'
+Transport='grpc'
+HostProvider='kubernetes'
+TenantId='tenant-dedicated-single'
+```
+
+This proves:
+
+```text
+watcher selected the gRPC scale-out provider
+HostManager selected Kubernetes host creation mode
+Kubernetes fake lifecycle completed
+scale-out request was fulfilled
+runtime provider remained grpc
+runtime transport remained grpc
+host provider was kubernetes
+```
+
+---
+
+## 6. Wired Kubernetes host provider into real ServiceRegistration
+
+The integration test initially timed out with:
+
+```text
+No fulfilled scale-out request was observed
+ObservedRequests='1'
+```
+
+Root cause:
+
+`AddAiKubernetesRuntimeHostProvider(configuration)` existed but was not called by the real MCP host service registration path.
+
+Fix:
+
+In `ServiceRegistration.ConfigureControlPlaneWithRemoteRuntimeInstances(...)`, Kubernetes host provider registration was added to remote runtime control-plane modes, especially gRPC:
+
+```csharp
+services.AddAiGrpcRuntimeInstanceScaleOutProvider();
+services.AddAiKubernetesRuntimeHostProvider(configuration);
+```
+
+Optionally the same registration was also applied to HTTP remote mode so that Kubernetes host lifecycle can later be used with HTTP transport as well.
+
+This ensures the runtime host manager can resolve:
+
+```text
+IAiRuntimeHostCreationStrategy -> KubernetesAiRuntimeHostCreationStrategy
+IAiKubernetesRuntimeHostClient -> FakeAiKubernetesRuntimeHostClient or SDK client depending on options
+```
+
+---
+
+## 7. Fixed wrong provider hint in scale-out request
+
+After wiring Kubernetes DI, the test failed with:
+
+```text
+Reason='scale-out-provider-not-found'
+```
+
+Root cause:
+
+The manually created scale-out request used:
+
+```text
+ProviderHint = kubernetes
+```
+
+That was wrong. The watcher uses `ProviderHint` to select a scale-out provider. In this scenario, the scale-out provider is gRPC.
+
+Fix:
+
+```text
+ProviderHint = grpc
+```
+
+Kubernetes remains represented through metadata and host creation mode:
+
+```text
+provider.name = grpc
+transport.name = grpc
+host.provider = kubernetes
+host.creation.mode = Kubernetes
+```
+
+---
+
+## 8. Added `RequireRuntimeReadiness` option to Kubernetes host options
+
+After fixing the provider hint, the test failed with:
+
+```text
+Reason='runtime-readiness-registry-missing'
+```
+
+Root cause:
+
+`KubernetesAiRuntimeHostCreationStrategy` always waited for runtime registry readiness via `IAiRuntimeInstanceReadinessWaiter` after Kubernetes host readiness.
+
+That is correct for real pods, but wrong for fake lifecycle tests because the fake Kubernetes client does not boot a real runtime process and therefore no runtime registers into the registry.
+
+Fix added to `AiKubernetesRuntimeHostOptions`:
+
+```csharp
+/// <summary>
+/// Gets or sets a value indicating whether Kubernetes host creation should wait for runtime registry readiness.
+/// </summary>
+/// <remarks>
+/// Keep this enabled for real Kubernetes pods. Disable it for fake Kubernetes lifecycle tests
+/// where no real runtime process registers capacity.
+/// </remarks>
+public bool RequireRuntimeReadiness { get; set; } = true;
+```
+
+Default remains `true` for production safety.
+
+Integration fake Kubernetes builder sets:
+
+```text
+AiKubernetesRuntimeHost:RequireRuntimeReadiness = false
+```
+
+---
+
+## 9. Updated Kubernetes host creation strategy
+
+`KubernetesAiRuntimeHostCreationStrategy` was updated so that runtime registry readiness is optional.
+
+New behavior:
+
+```text
+Create Kubernetes host resources
+→ wait Kubernetes host readiness
+→ if RequireRuntimeReadiness=false: return Started
+→ else wait runtime registry readiness
+```
+
+This keeps real Kubernetes production behavior strict while allowing fake lifecycle integration tests to validate the host manager flow.
+
+Important correction during implementation:
+
+`AiRuntimeInstanceReadinessResult` does not expose `Metadata`, so this invalid merge was removed:
+
+```csharp
+metadata = MergeMetadata(metadata, runtimeReadinessResult.Metadata);
+```
+
+Metadata now comes from:
+
+```text
+base Kubernetes lifecycle metadata
+pod annotations
+Kubernetes create result metadata
+Kubernetes host readiness result metadata
+```
+
+---
+
+## 10. Added unit coverage for skipping runtime readiness
+
+A unit test was added to `KubernetesAiRuntimeHostCreationStrategyTests` to lock the new behavior.
+
+Test intent:
+
+```text
+RequireRuntimeReadiness=false
+→ Kubernetes host readiness is enough
+→ IAiRuntimeInstanceReadinessWaiter is not called
+→ result succeeds
+→ host.provider metadata is kubernetes
+```
+
+The helper `CreateStrategy(...)` already accepted:
+
+```csharp
+AiKubernetesRuntimeHostOptions? options = null,
+IAiKubernetesRuntimeHostClient? client = null,
+IAiRuntimeInstanceReadinessWaiter? readinessWaiter = null
+```
+
+So the test was written by constructing an `AiKubernetesRuntimeHostOptions` instance directly instead of passing a lambda.
+
+A `RecordingRuntimeInstanceReadinessWaiter` was added for the assertion:
+
+```text
+Assert.False(readinessWaiter.WasCalled)
+```
+
+The unit test is green.
+
+---
+
+## 11. Debugging timeline and resolved failures
+
+### Failure 1 — stub test still throwing
+
+Error:
+
+```text
+System.NotImplementedException
+```
+
+Cause:
+
+The initial skeleton test still contained `throw new NotImplementedException()`.
+
+Fix:
+
+`GrpcKubernetesHostManagerScaleOutScenarioTests` now inherits from `HostManagerScaleOutScenarioTestsBase` and calls:
+
+```csharp
+return HostManager_Should_Fulfill_ScaleOut_Without_Changing_Runtime_Transport();
+```
+
+---
+
+### Failure 2 — no fulfilled request after submit/dispatch
+
+Error:
+
+```text
+No fulfilled scale-out request was observed
+ObservedRequests='1'
+```
+
+Cause:
+
+The test tried to submit and dispatch a real run, but fake Kubernetes does not create runtime capacity that can execute work.
+
+Fix:
+
+The integration base now directly creates a scale-out request and waits for it to become fulfilled.
+
+---
+
+### Failure 3 — provider not found
+
+Error:
+
+```text
+Reason='scale-out-provider-not-found'
+```
+
+Cause:
+
+`ProviderHint` was incorrectly set to `kubernetes`.
+
+Fix:
+
+```text
+ProviderHint = grpc
+```
+
+---
+
+### Failure 4 — runtime readiness registry missing
+
+Error:
+
+```text
+Reason='runtime-readiness-registry-missing'
+```
+
+Cause:
+
+Kubernetes strategy always waited for runtime registry readiness even in fake lifecycle mode.
+
+Fix:
+
+Added:
+
+```text
+AiKubernetesRuntimeHost:RequireRuntimeReadiness=false
+```
+
+and updated strategy logic to skip `IAiRuntimeInstanceReadinessWaiter` when configured.
+
+---
+
+### Failure 5 — invalid readiness metadata access
+
+Error:
+
+```text
+runtimeReadinessResult.Metadata does not exist
+```
+
+Cause:
+
+`AiRuntimeInstanceReadinessResult` has no `Metadata` property.
+
+Fix:
+
+Removed the metadata merge from runtime readiness result.
+
+---
+
+### Failure 6 — read-only request metadata in unit helper
+
+Error:
+
+```text
+Property or indexer IReadOnlyDictionary<string,string>.this[string] cannot be assigned to -- it is read only
+```
+
+Cause:
+
+The test attempted to mutate `AiRuntimeHostStartRequest.Metadata` using collection initializer syntax.
+
+Fix:
+
+Removed the metadata mutation from `CreateStartRequest()`. The strategy itself is responsible for producing Kubernetes host metadata.
+
+---
+
+### Failure 7 — wrong helper call style
+
+Issue:
+
+The test tried to call `CreateStrategy(options => { ... })`, but the existing helper accepts an `AiKubernetesRuntimeHostOptions?` object, not a lambda.
+
+Fix:
+
+Created the options object directly:
+
+```csharp
+CreateStrategy(
+    options: new AiKubernetesRuntimeHostOptions
+    {
+        Enabled = true,
+        Namespace = "ai-runtime",
+        RuntimeImage = "multiplexed-ai-runtime:test",
+        ContainerName = "runtime-instance",
+        ContainerPort = 8080,
+        PodNamePrefix = "runtime",
+        TransportName = "grpc",
+        DeleteResourcesOnFailure = true,
+        ClientMode = AiKubernetesRuntimeHostClientMode.Fake,
+        RequireRuntimeReadiness = false
+    },
+    readinessWaiter: readinessWaiter);
+```
+
+---
+
+## 12. Final green proof
+
+Final integration proof output:
+
+```text
+[GRPC KUBERNETES HOST SCALE-OUT PROOF] Fulfilled.
+RuntimeProvider='grpc'
+Transport='grpc'
+HostProvider='kubernetes'
+FulfilledBy='mcp-scaleout-watcher'
+```
+
+This is the first real integration proof that the runtime can use Kubernetes as a host lifecycle provider while preserving gRPC as the runtime command transport.
+
+---
+
+## 13. Current status
+
+Green:
+
+```text
+GrpcKubernetesHostManagerScaleOutScenarioTests
+KubernetesAiRuntimeHostCreationStrategyTests RequireRuntimeReadiness=false coverage
+```
+
+Validated:
+
+```text
+gRPC scale-out provider selection
+Runtime Host Manager selection
+Kubernetes host creation strategy selection
+Fake Kubernetes lifecycle client
+Scale-out request fulfillment
+Transport/provider metadata separation
+Optional runtime readiness for fake lifecycle tests
+```
+
+Not yet implemented:
+
+```text
+Real Kubernetes pod integration test
+Real pod runtime registration proof
+Real gRPC command dispatch to Kubernetes-hosted runtime
+DAG execution proof inside Kubernetes pod
+Crash/recovery proof for Kubernetes-hosted runtime
+```
+
+---
+
+## 14. Recommended next steps
+
+1. Add a small unit test proving `RequireRuntimeReadiness=true` still calls the readiness waiter and fails when runtime registry readiness fails.
+2. Add metadata assertions on `AiRuntimeHostStartResult` for:
+   ```text
+   host.provider = kubernetes
+   host.creation.mode = Kubernetes
+   host.creation.strategy = KubernetesAiRuntimeHostCreationStrategy
+   provider.name = grpc
+   transport.name = grpc
+   ```
+3. Add a real Kubernetes SDK integration test later using `ClientMode=KubernetesSdk`.
+4. Only after real pod registration works, add a dispatch/DAG test against a Kubernetes-hosted runtime.
+
+---
+
+## Final summary
+
+This milestone turned Kubernetes from a unit-tested host creation strategy into an integration-validated host lifecycle provider behind the existing gRPC scale-out flow.
+
+The key architectural proof is now green:
+
+```text
+Kubernetes owns host lifecycle.
+gRPC owns runtime command transport.
+The watcher/provider/host-manager path fulfils scale-out without confusing those responsibilities.
+```
+
+
+---
+
 ## [1.0.7.1] - 2026-07-05 — Kubernetes Runtime Host Provider 
 
 ## Added

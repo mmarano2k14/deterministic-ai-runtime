@@ -1,6 +1,7 @@
 ﻿using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Readiness;
+using Multiplexed.Abstractions.Core.ExecutionContext;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strategy.Kubernetes;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strategy.Kubernetes.Client;
 using Multiplexed.AI.Tests.Fixtures;
@@ -272,6 +273,48 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager
         }
 
         /// <summary>
+        /// Verifies that Kubernetes host creation can skip runtime registry readiness when configured for fake lifecycle tests.
+        /// </summary>
+        /// <returns>A task that completes when the proof has finished.</returns>
+        [Fact]
+        public async Task StartAsync_Should_Succeed_Without_Runtime_Readiness_When_RequireRuntimeReadiness_Is_False()
+        {
+            var readinessWaiter =
+                new RecordingRuntimeInstanceReadinessWaiter();
+
+            var strategy =
+               CreateStrategy(
+                   options: new AiKubernetesRuntimeHostOptions
+                   {
+                       Enabled = true,
+                       Namespace = "ai-runtime",
+                       RuntimeImage = "multiplexed-ai-runtime:test",
+                       ContainerName = "runtime-instance",
+                       ContainerPort = 8080,
+                       PodNamePrefix = "runtime",
+                       TransportName = "grpc",
+                       DeleteResourcesOnFailure = true,
+                       ClientMode = AiKubernetesRuntimeHostClientMode.Fake,
+                       RequireRuntimeReadiness = false
+                   },
+                   readinessWaiter: readinessWaiter);
+
+            var request =
+                CreateStartRequest();
+
+            var result =
+                await strategy
+                    .StartAsync(request)
+                    .ConfigureAwait(false);
+
+            Assert.True(result.Success, result.FailureReason);
+            Assert.False(readinessWaiter.WasCalled);
+            Assert.Equal(request.ProviderName, result.ProviderName);
+            Assert.Equal(request.TransportName, result.TransportName);
+            Assert.Equal(AiRuntimeHostProviderNames.Kubernetes, result.Metadata[AiRuntimeHostMetadataKeys.HostProvider]);
+        }
+
+        /// <summary>
         /// Creates a Kubernetes host creation strategy for tests.
         /// </summary>
         /// <param name="options">The optional Kubernetes host options.</param>
@@ -306,6 +349,38 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager
                 readinessWaiter ?? new FakeRuntimeInstanceReadinessWaiter());
         }
 
+        private static AiRuntimeHostStartRequest CreateStartRequest()
+        {
+            return new AiRuntimeHostStartRequest
+            {
+                ControlPlaneId = "test-control-plane",
+                RuntimeInstanceId = "test-runtime-instance-1",
+                ProviderName = "grpc",
+                TransportName = "grpc",
+                TransportEndpoint = "http://127.0.0.1:50051",
+                ExecutionContextSnapshot = new ExecutionContextSnapshot
+                {
+                    ContextKey = "test-context",
+                    Project = "unit-tests",
+                    UserId = "unit-test",
+                    TenantId = "tenant-a",
+                    TenantGroupId = "tenant-a-group",
+                    CurrentNamespace = "tenant-a",
+                    Namespaces = AiExecutionContextSnapshotTestFactory.Create().Namespaces,
+                    InFlightCount = 0,
+                    TtlSeconds = 300,
+                    CreatedAtUtc = DateTime.UtcNow
+                },
+                Metadata = new Dictionary<string, string>
+                {
+                    ["provider.name"] = "grpc",
+                    ["transport.name"] = "grpc",
+                    ["host.provider"] = AiRuntimeHostProviderNames.Kubernetes,
+                    ["host.creation.mode"] = AiRuntimeHostCreationMode.Kubernetes.ToString()
+                }
+            };
+        }
+
         /// <summary>
         /// Creates a runtime host start request for Kubernetes strategy tests.
         /// </summary>
@@ -326,6 +401,32 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager
                 HostCreationMode = AiRuntimeHostCreationMode.Kubernetes
             };
         }
+
+        private sealed class RecordingRuntimeInstanceReadinessWaiter : IAiRuntimeInstanceReadinessWaiter
+        {
+            public bool WasCalled { get; private set; }
+
+            public Task<AiRuntimeInstanceReadinessResult> WaitUntilReadyAsync(
+                AiRuntimeInstanceReadinessRequest request,
+                CancellationToken cancellationToken = default)
+            {
+                this.WasCalled = true;
+
+                return Task.FromResult(
+                    new AiRuntimeInstanceReadinessResult
+                    {
+                        Success = true,
+                        ExecutionContextSnapshot = request.ExecutionContextSnapshot,
+                        RuntimeInstanceId = request.RuntimeInstanceId,
+                        ProviderName = request.ProviderName,
+                        TransportName = request.TransportName,
+                        TransportEndpoint = request.TransportEndpoint,
+                        FailureReason = null,
+                        TimedOut = false
+                    });
+            }
+        }
+
 
         /// <summary>
         /// Provides a fake runtime instance readiness waiter for Kubernetes strategy tests.

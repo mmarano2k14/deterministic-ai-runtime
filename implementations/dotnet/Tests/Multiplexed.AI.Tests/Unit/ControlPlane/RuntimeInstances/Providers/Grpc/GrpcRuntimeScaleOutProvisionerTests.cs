@@ -269,6 +269,81 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Providers.Grpc
         }
 
         /// <summary>
+        /// Verifies that gRPC scale-out can delegate lifecycle creation to Kubernetes while preserving gRPC as the runtime transport.
+        /// </summary>
+        [Fact]
+        public async Task ProvisionAsync_Should_Start_Kubernetes_Host_Manager_With_Grpc_Runtime_Transport()
+        {
+            var registry = new FakeRuntimeInstanceRegistry();
+            var capacityStore = new FakeRuntimeInstanceCapacityStore();
+            var hostManager =
+                new FakeRuntimeHostManager
+                {
+                    Result = new AiRuntimeHostStartResult
+                    {
+                        Success = true,
+                        RuntimeInstanceId = RuntimeInstanceId,
+                        TransportEndpoint = RuntimeEndpoint,
+                        ProviderName = AiGrpcRuntimeProviderConstants.ProviderName,
+                        TransportName = AiGrpcRuntimeProviderConstants.TransportName,
+                        Metadata =
+                            new Dictionary<string, string>
+                            {
+                                [AiRuntimeHostMetadataKeys.HostProvider] = AiRuntimeHostProviderNames.Kubernetes,
+                                [AiRuntimeHostMetadataKeys.HostCreationMode] = AiRuntimeHostCreationMode.Kubernetes.ToString(),
+                                [AiRuntimeHostMetadataKeys.HostCreationStrategy] = "KubernetesAiRuntimeHostCreationStrategy"
+                            },
+                        ExecutionContextSnapshot = AiExecutionContextSnapshotTestFactory.Create()
+                    }
+                };
+
+            var options =
+                CreateOptions(
+                    AiGrpcRuntimeScaleOutModes.HostManager,
+                    requireReadiness: false);
+
+            options.HostCreationMode = AiRuntimeHostCreationMode.Kubernetes;
+
+            var provisioner =
+                CreateProvisioner(
+                    registry,
+                    capacityStore,
+                    hostManager: hostManager,
+                    options: options);
+
+            var result =
+                await provisioner.ProvisionAsync(
+                    CreateRequest("grpc-kubernetes-host-manager-scaleout-request-1"));
+
+            Assert.True(result.Success);
+            Assert.False(result.Rejected);
+            Assert.Equal(RuntimeInstanceId, result.RuntimeInstanceId);
+            Assert.Single(hostManager.StartRequests);
+            Assert.Empty(registry.RuntimeInstances);
+            Assert.Empty(capacityStore.PublishedDescriptors);
+
+            var startRequest =
+                hostManager.StartRequests.Single();
+
+            Assert.Equal(AiRuntimeHostCreationMode.Kubernetes, startRequest.HostCreationMode);
+            Assert.Equal(AiGrpcRuntimeProviderConstants.ProviderName, startRequest.ProviderName);
+            Assert.Equal(AiGrpcRuntimeProviderConstants.TransportName, startRequest.TransportName);
+            Assert.Equal(RuntimeEndpoint, startRequest.TransportEndpoint);
+            Assert.Equal(TenantId, startRequest.TenantId);
+            Assert.Equal(TenantGroupId, startRequest.TenantGroupId);
+            Assert.Equal(2, startRequest.WorkerCountPerInstance);
+            Assert.Equal(3, startRequest.MaxConcurrentRunsPerInstance);
+            Assert.Equal(40, startRequest.LocalQueueCapacity);
+
+            Assert.Equal(AiGrpcRuntimeProviderConstants.ProviderName, result.Metadata[AiRuntimeInstanceProviderMetadataKeys.ProviderName]);
+            Assert.Equal(AiGrpcRuntimeProviderConstants.TransportName, result.Metadata[AiRuntimeInstanceCommandTransportMetadataKeys.TransportName]);
+            Assert.Equal(AiRuntimeHostProviderNames.Kubernetes, result.Metadata[AiRuntimeHostMetadataKeys.HostProvider]);
+            Assert.Equal(AiRuntimeHostCreationMode.Kubernetes.ToString(), result.Metadata[AiRuntimeHostMetadataKeys.HostCreationMode]);
+            Assert.NotEqual("kubernetes", startRequest.ProviderName);
+            Assert.NotEqual("kubernetes", result.Metadata[AiRuntimeInstanceProviderMetadataKeys.ProviderName]);
+        }
+
+        /// <summary>
         /// Creates a gRPC runtime scale-out provisioner for tests.
         /// </summary>
         private static AiGrpcRuntimeScaleOutProvisioner CreateProvisioner(
