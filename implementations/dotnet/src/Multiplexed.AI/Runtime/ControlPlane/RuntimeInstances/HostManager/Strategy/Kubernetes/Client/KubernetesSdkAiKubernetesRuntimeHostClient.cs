@@ -1,11 +1,10 @@
-﻿using k8s;
+﻿using k8s.Autorest;
 using k8s.Models;
 using Microsoft.Extensions.Options;
-using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager.Kubernetes;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strategy.Kubernetes.Client.Factory;
 using System;
-using System.Collections.Generic;
 using System.Linq;
+using System.Net;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -23,18 +22,22 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
         private const string ReadyConditionType = "Ready";
 
         private readonly IKubernetesClientFactory clientFactory;
+        private readonly AiKubernetesSdkResourceFactory resourceFactory;
         private readonly AiKubernetesRuntimeHostOptions options;
 
         /// <summary>
         /// Initializes a new instance of the <see cref="KubernetesSdkAiKubernetesRuntimeHostClient"/> class.
         /// </summary>
         /// <param name="clientFactory">The Kubernetes SDK client factory.</param>
+        /// <param name="resourceFactory">The Kubernetes SDK resource factory.</param>
         /// <param name="options">The Kubernetes runtime host options.</param>
         public KubernetesSdkAiKubernetesRuntimeHostClient(
             IKubernetesClientFactory clientFactory,
+            AiKubernetesSdkResourceFactory resourceFactory,
             IOptions<AiKubernetesRuntimeHostOptions> options)
         {
             this.clientFactory = clientFactory ?? throw new ArgumentNullException(nameof(clientFactory));
+            this.resourceFactory = resourceFactory ?? throw new ArgumentNullException(nameof(resourceFactory));
             this.options = options?.Value ?? throw new ArgumentNullException(nameof(options));
         }
 
@@ -47,25 +50,25 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
 
             try
             {
-                using var client = this.clientFactory.CreateClient();
+                var client = this.clientFactory.CreateClient();
 
-                var pod = CreatePod(podSpec);
+                var pod = this.resourceFactory.CreatePod(podSpec);
 
-                await client.CoreV1.CreateNamespacedPodAsync(
+                await client.CreatePodAsync(
                     pod,
                     podSpec.Namespace,
-                    cancellationToken: cancellationToken);
+                    cancellationToken);
 
                 string? serviceName = null;
 
                 if (this.options.UseServicePerRuntime)
                 {
-                    var service = CreateService(podSpec);
+                    var service = this.resourceFactory.CreateService(podSpec);
 
-                    await client.CoreV1.CreateNamespacedServiceAsync(
+                    await client.CreateServiceAsync(
                         service,
                         podSpec.Namespace,
-                        cancellationToken: cancellationToken);
+                        cancellationToken);
 
                     serviceName = service.Metadata.Name;
                 }
@@ -74,7 +77,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
                     podSpec.Namespace,
                     podSpec.PodName,
                     serviceName,
-                    CreateMetadata(podSpec, serviceName));
+                    this.resourceFactory.CreateMetadata(podSpec, serviceName));
             }
             catch (Exception exception)
             {
@@ -83,7 +86,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
                     podSpec.PodName,
                     exception.Message,
                     retryable: true,
-                    metadata: CreateMetadata(podSpec, serviceName: null));
+                    metadata: this.resourceFactory.CreateMetadata(podSpec, serviceName: null));
             }
         }
 
@@ -94,7 +97,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
         {
             ArgumentNullException.ThrowIfNull(podSpec);
 
-            using var client = this.clientFactory.CreateClient();
+            var client = this.clientFactory.CreateClient();
 
             var deadline = DateTimeOffset.UtcNow.Add(this.options.StartupTimeout);
 
@@ -105,20 +108,23 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
                 try
                 {
                     var pod =
-                        await client.CoreV1.ReadNamespacedPodStatusAsync(
+                        await client.ReadPodStatusAsync(
                             podSpec.PodName,
                             podSpec.Namespace,
-                            cancellationToken: cancellationToken);
+                            cancellationToken);
 
                     if (IsPodReady(pod))
                     {
-                        var serviceName = this.options.UseServicePerRuntime ? CreateServiceName(podSpec) : null;
+                        var serviceName =
+                            this.options.UseServicePerRuntime
+                                ? this.resourceFactory.CreateServiceName(podSpec)
+                                : null;
 
                         return AiKubernetesRuntimeHostReadinessResult.Ready(
                             podSpec.Namespace,
                             podSpec.PodName,
                             serviceName,
-                            CreateMetadata(podSpec, serviceName));
+                            this.resourceFactory.CreateMetadata(podSpec, serviceName));
                     }
                 }
                 catch (Exception exception)
@@ -129,11 +135,16 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
                         exception.Message,
                         timedOut: false,
                         retryable: true,
-                        metadata: CreateMetadata(podSpec, serviceName: null));
+                        metadata: this.resourceFactory.CreateMetadata(podSpec, serviceName: null));
                 }
 
                 await Task.Delay(TimeSpan.FromMilliseconds(500), cancellationToken);
             }
+
+            var timedOutServiceName =
+                this.options.UseServicePerRuntime
+                    ? this.resourceFactory.CreateServiceName(podSpec)
+                    : null;
 
             return AiKubernetesRuntimeHostReadinessResult.Failed(
                 podSpec.Namespace,
@@ -141,8 +152,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
                 "kubernetes-runtime-host-readiness-timeout",
                 timedOut: true,
                 retryable: true,
-                serviceName: this.options.UseServicePerRuntime ? CreateServiceName(podSpec) : null,
-                metadata: CreateMetadata(podSpec, this.options.UseServicePerRuntime ? CreateServiceName(podSpec) : null));
+                serviceName: timedOutServiceName,
+                metadata: this.resourceFactory.CreateMetadata(podSpec, timedOutServiceName));
         }
 
         /// <inheritdoc />
@@ -154,30 +165,42 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
 
             try
             {
-                using var client = this.clientFactory.CreateClient();
+                var client = this.clientFactory.CreateClient();
 
                 string? serviceName = null;
 
                 if (this.options.UseServicePerRuntime)
                 {
-                    serviceName = CreateServiceName(podSpec);
+                    serviceName = this.resourceFactory.CreateServiceName(podSpec);
 
-                    await client.CoreV1.DeleteNamespacedServiceAsync(
-                        serviceName,
-                        podSpec.Namespace,
-                        cancellationToken: cancellationToken);
+                    try
+                    {
+                        await client.DeleteServiceAsync(
+                            serviceName,
+                            podSpec.Namespace,
+                            cancellationToken);
+                    }
+                    catch (Exception exception) when (IsNotFound(exception))
+                    {
+                    }
                 }
 
-                await client.CoreV1.DeleteNamespacedPodAsync(
-                    podSpec.PodName,
-                    podSpec.Namespace,
-                    cancellationToken: cancellationToken);
+                try
+                {
+                    await client.DeletePodAsync(
+                        podSpec.PodName,
+                        podSpec.Namespace,
+                        cancellationToken);
+                }
+                catch (Exception exception) when (IsNotFound(exception))
+                {
+                }
 
                 return AiKubernetesRuntimeHostDeleteResult.Deleted(
                     podSpec.Namespace,
                     podSpec.PodName,
                     serviceName,
-                    CreateMetadata(podSpec, serviceName));
+                    this.resourceFactory.CreateMetadata(podSpec, serviceName));
             }
             catch (Exception exception)
             {
@@ -186,87 +209,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
                     podSpec.PodName,
                     exception.Message,
                     retryable: true,
-                    metadata: CreateMetadata(podSpec, serviceName: null));
+                    metadata: this.resourceFactory.CreateMetadata(podSpec, serviceName: null));
             }
-        }
-
-        private static V1Pod CreatePod(AiKubernetesRuntimePodSpec podSpec)
-        {
-            return new V1Pod
-            {
-                Metadata = new V1ObjectMeta
-                {
-                    Name = podSpec.PodName,
-                    NamespaceProperty = podSpec.Namespace,
-                    Labels = new Dictionary<string, string>(podSpec.Labels),
-                    Annotations = new Dictionary<string, string>(podSpec.Annotations)
-                },
-                Spec = new V1PodSpec
-                {
-                    ServiceAccountName = podSpec.ServiceAccountName,
-                    Containers =
-                        new List<V1Container>
-                        {
-                            new()
-                            {
-                                Name = podSpec.ContainerName,
-                                Image = podSpec.RuntimeImage,
-                                Ports =
-                                    new List<V1ContainerPort>
-                                    {
-                                        new()
-                                        {
-                                            ContainerPort = podSpec.ContainerPort
-                                        }
-                                    },
-                                Env =
-                                    podSpec.EnvironmentVariables
-                                        .Select(pair =>
-                                            new V1EnvVar
-                                            {
-                                                Name = pair.Key,
-                                                Value = pair.Value
-                                            })
-                                        .ToList()
-                            }
-                        },
-                    RestartPolicy = "Never"
-                }
-            };
-        }
-
-        private static V1Service CreateService(AiKubernetesRuntimePodSpec podSpec)
-        {
-            var serviceName = CreateServiceName(podSpec);
-
-            return new V1Service
-            {
-                Metadata = new V1ObjectMeta
-                {
-                    Name = serviceName,
-                    NamespaceProperty = podSpec.Namespace,
-                    Labels = new Dictionary<string, string>(podSpec.Labels),
-                    Annotations = new Dictionary<string, string>(podSpec.Annotations)
-                },
-                Spec = new V1ServiceSpec
-                {
-                    Type = "ClusterIP",
-                    Selector = new Dictionary<string, string>
-                    {
-                        ["multiplexed.ai/runtime-instance-id"] = podSpec.Labels["multiplexed.ai/runtime-instance-id"]
-                    },
-                    Ports =
-                        new List<V1ServicePort>
-                        {
-                            new()
-                            {
-                                Name = podSpec.ContainerName,
-                                Port = podSpec.ContainerPort,
-                                TargetPort = podSpec.ContainerPort
-                            }
-                        }
-                }
-            };
         }
 
         private static bool IsPodReady(V1Pod pod)
@@ -277,28 +221,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
                     string.Equals(condition.Status, "True", StringComparison.OrdinalIgnoreCase)) == true;
         }
 
-        private static string CreateServiceName(AiKubernetesRuntimePodSpec podSpec)
+        private static bool IsNotFound(Exception exception)
         {
-            return $"{podSpec.PodName}-svc";
-        }
-
-        private static IReadOnlyDictionary<string, string> CreateMetadata(
-            AiKubernetesRuntimePodSpec podSpec,
-            string? serviceName)
-        {
-            var metadata = new Dictionary<string, string>
-            {
-                [AiKubernetesRuntimeHostMetadataKeys.Namespace] = podSpec.Namespace,
-                [AiKubernetesRuntimeHostMetadataKeys.PodName] = podSpec.PodName,
-                [AiKubernetesRuntimeHostMetadataKeys.ContainerName] = podSpec.ContainerName
-            };
-
-            if (!string.IsNullOrWhiteSpace(serviceName))
-            {
-                metadata[AiKubernetesRuntimeHostMetadataKeys.ServiceName] = serviceName;
-            }
-
-            return metadata;
+            return exception is HttpOperationException httpOperationException &&
+                httpOperationException.Response.StatusCode == HttpStatusCode.NotFound;
         }
     }
 }

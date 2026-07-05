@@ -51,6 +51,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
                             .Value,
                         serviceProvider.GetRequiredService<AiKubernetesRuntimePodMetadataBuilder>()));
 
+            services.TryAddSingleton<AiKubernetesSdkResourceFactory>();
             services.TryAddSingleton<IKubernetesClientFactory, DefaultKubernetesClientFactory>();
             services.TryAddSingleton<KubernetesSdkAiKubernetesRuntimeHostClient>();
 

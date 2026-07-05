@@ -6,7 +6,276 @@ This project follows a deterministic runtime and observability model designed fo
 
 ---
 
-## [1.0.7.1] - 2026-07-05 -— Kubernetes Runtime Host Provider / SDK Foundation
+## [1.0.7.1] - 2026-07-05 — Kubernetes Runtime Host Provider 
+
+## Added
+
+### Kubernetes SDK resource factory
+
+Added `AiKubernetesSdkResourceFactory` to isolate Kubernetes SDK resource construction from the lifecycle client.
+
+It now owns creation of:
+
+- Kubernetes `V1Pod` resources
+- Kubernetes `V1Service` resources
+- Deterministic per-runtime service names
+- Kubernetes lifecycle metadata returned by host operations
+
+This makes Kubernetes resource generation independently testable without a real cluster.
+
+### Narrow Kubernetes SDK operation boundary
+
+Added `IAiKubernetesSdkClient` as a small testable boundary over the Kubernetes SDK.
+
+The interface exposes only the operations required by the runtime host lifecycle client:
+
+- Create pod
+- Create service
+- Read pod status
+- Delete service
+- Delete pod
+
+This avoids coupling unit tests directly to the full Kubernetes SDK surface.
+
+### Kubernetes SDK client wrapper
+
+Added `AiKubernetesSdkClient`, a thin wrapper around the Kubernetes .NET SDK client.
+
+It adapts Kubernetes SDK calls into the narrow `IAiKubernetesSdkClient` interface used by the runtime host lifecycle client.
+
+### Fake Kubernetes SDK client fixtures
+
+Added reusable test fixtures:
+
+- `FakeAiKubernetesSdkClient`
+- `FakeKubernetesClientFactory`
+
+These allow lifecycle tests to simulate Kubernetes behavior without requiring a Kubernetes cluster.
+
+## Changed
+
+### Kubernetes client factory now returns testable SDK boundary
+
+Changed `IKubernetesClientFactory` to return `IAiKubernetesSdkClient` instead of the raw Kubernetes SDK client.
+
+`DefaultKubernetesClientFactory` now:
+
+- Loads in-cluster configuration when running inside Kubernetes
+- Falls back to kubeconfig when running locally
+- Wraps the raw Kubernetes SDK client inside `AiKubernetesSdkClient`
+
+### Kubernetes lifecycle client now uses the narrow SDK boundary
+
+Updated `KubernetesSdkAiKubernetesRuntimeHostClient` to use `IAiKubernetesSdkClient` instead of directly calling `client.CoreV1`.
+
+This keeps the lifecycle implementation focused on orchestration logic rather than raw SDK calls.
+
+### Kubernetes resource creation extracted from lifecycle client
+
+Moved pod, service, service-name, and metadata construction out of `KubernetesSdkAiKubernetesRuntimeHostClient` and into `AiKubernetesSdkResourceFactory`.
+
+The lifecycle client now delegates Kubernetes object construction to the resource factory.
+
+### DI registration extended
+
+Updated Kubernetes runtime host DI registration to include:
+
+- `AiKubernetesSdkResourceFactory`
+- `IKubernetesClientFactory`
+- `DefaultKubernetesClientFactory`
+- `KubernetesSdkAiKubernetesRuntimeHostClient`
+
+The DI tests now validate that the resource factory is registered and that `KubernetesSdk` client mode resolves the SDK-backed lifecycle client.
+
+## Hardened
+
+### Idempotent Kubernetes cleanup
+
+Updated runtime host deletion so that missing Kubernetes resources do not fail cleanup.
+
+If the pod or service is already deleted and Kubernetes returns `NotFound`, the delete operation is treated as successful.
+
+This is important for:
+
+- Retry-safe cleanup
+- Partial failure handling
+- Future reconciliation flows
+- Crash/recovery scenarios
+- Avoiding false negatives during cleanup after failed host creation
+
+## Tested
+
+### Resource factory tests
+
+Added unit tests for `AiKubernetesSdkResourceFactory` covering:
+
+- Pod creation from runtime pod spec
+- Service creation from runtime pod spec
+- Deterministic service-name generation
+- Lifecycle metadata creation
+
+### Kubernetes SDK lifecycle client tests
+
+Added unit tests for `KubernetesSdkAiKubernetesRuntimeHostClient` without requiring a Kubernetes cluster.
+
+Covered scenarios:
+
+- Create pod and service when service-per-runtime is enabled
+- Create only pod when service-per-runtime is disabled
+- Return rejected result when pod creation fails
+- Return ready result when pod status is ready
+- Return failed readiness result when status read fails
+- Return timeout when pod never becomes ready
+- Delete service and pod
+- Delete only pod when service-per-runtime is disabled
+- Return failed result when pod delete fails
+
+### DI tests
+
+Updated DI tests to validate:
+
+- Kubernetes SDK resource factory registration
+- Kubernetes SDK client factory registration
+- SDK-backed lifecycle client registration
+- Fake mode remains the safe default
+- KubernetesSdk mode resolves the real SDK-backed lifecycle client
+- Existing host creation strategies are not replaced
+
+## Architecture Notes
+
+Kubernetes remains a host lifecycle provider only.
+
+It is responsible for creating, checking, and deleting runtime host capacity, but it does not become a runtime command transport.
+
+Runtime command transport remains explicit through:
+
+- HTTP
+- gRPC
+
+Runtime readiness remains separate from Kubernetes pod readiness.
+
+Kubernetes pod readiness proves that the host process is alive from Kubernetes' point of view. Runtime readiness still needs to prove that the runtime instance registered correctly, exposed capacity, and became visible to the control plane under the correct execution and tenant context.
+
+## Validation Status
+
+Validated locally with targeted unit tests for:
+
+- Kubernetes SDK resource factory
+- Kubernetes SDK lifecycle client
+- Kubernetes host DI registration
+
+---
+
+## [1.0.7.1] - 2026-07-05 — Kubernetes Runtime Host Provider
+
+## Changes
+
+### Kubernetes client mode
+
+Added an explicit Kubernetes runtime host client mode:
+
+- `AiKubernetesRuntimeHostClientMode.Fake`
+- `AiKubernetesRuntimeHostClientMode.KubernetesSdk`
+
+Added `ClientMode` to `AiKubernetesRuntimeHostOptions`, defaulting to `Fake`.
+
+This keeps tests and local validation safe by default while allowing the real Kubernetes SDK adapter to be selected explicitly.
+
+### Dependency injection registration
+
+Updated `AiKubernetesRuntimeHostServiceCollectionExtensions` to register Kubernetes host lifecycle services explicitly:
+
+- `AiKubernetesRuntimePodMetadataBuilder`
+- `AiKubernetesRuntimePodSpecBuilder`
+- `IKubernetesClientFactory`
+- `DefaultKubernetesClientFactory`
+- `KubernetesSdkAiKubernetesRuntimeHostClient`
+- `IAiKubernetesRuntimeHostClient`
+- `KubernetesAiRuntimeHostCreationStrategy`
+
+The `IAiKubernetesRuntimeHostClient` registration now selects the implementation from `AiKubernetesRuntimeHostOptions.ClientMode`:
+
+- `Fake` resolves `FakeAiKubernetesRuntimeHostClient`
+- `KubernetesSdk` resolves `KubernetesSdkAiKubernetesRuntimeHostClient`
+
+The registration remains additive and does not replace existing host creation strategies.
+
+### Kubernetes .NET SDK dependency
+
+Added the Kubernetes .NET SDK package dependency to the main `Multiplexed.AI` project.
+
+This prepares the runtime host lifecycle provider for real Kubernetes pod/service creation.
+
+### Kubernetes SDK client factory
+
+Added a Kubernetes SDK client factory boundary:
+
+- `IKubernetesClientFactory`
+- `DefaultKubernetesClientFactory`
+
+The default factory loads configuration from:
+
+1. in-cluster Kubernetes configuration when running inside a cluster;
+2. local kubeconfig when running outside a cluster.
+
+This keeps Kubernetes configuration loading outside the host creation strategy.
+
+### Kubernetes SDK-backed lifecycle client
+
+Added `KubernetesSdkAiKubernetesRuntimeHostClient`.
+
+The client supports:
+
+- creating a Kubernetes pod for a runtime instance;
+- creating an optional per-runtime ClusterIP service;
+- polling Kubernetes pod readiness;
+- deleting service and pod resources during cleanup;
+- returning structured lifecycle results using the existing Kubernetes host client result models.
+
+The SDK client only proves Kubernetes host readiness. Runtime transport readiness remains handled separately through `IAiRuntimeInstanceReadinessWaiter`.
+
+### DI tests
+
+Updated Kubernetes DI tests to validate:
+
+- Kubernetes host lifecycle services are registered explicitly;
+- options bind from configuration, including `ClientMode`;
+- Kubernetes registration adds a strategy without replacing existing strategies;
+- `ClientMode = Fake` resolves `FakeAiKubernetesRuntimeHostClient`;
+- `ClientMode = KubernetesSdk` resolves `KubernetesSdkAiKubernetesRuntimeHostClient`;
+- the default Kubernetes SDK client factory is registered.
+
+### Test fixtures
+
+Moved reusable fake/additive strategy helpers into `Multiplexed.AI.Tests.Fixtures` to avoid private nested helper duplication in test classes.
+
+## Verified
+
+Validated with targeted Kubernetes DI tests:
+
+```powershell
+dotnet test implementations/dotnet --filter "FullyQualifiedName~AiKubernetesRuntimeHostServiceCollectionExtensionsTests"
+```
+
+Validated build after adding the Kubernetes SDK-backed client and model syntax fixes.
+
+## Important architecture guardrails preserved
+
+- Kubernetes is lifecycle/host capacity only.
+- HTTP and gRPC remain runtime command transports.
+- Runtime readiness remains separate from Kubernetes pod readiness.
+- Shared queue, shared run store, registry, capacity store, execution index, ledger, replay, and forensics remain the source of truth.
+- No YAML-first design was introduced.
+- No HTTP/gRPC provider replacement was introduced.
+- No recovery ownership was moved into Kubernetes.
+
+## Next step
+
+Add focused unit tests for `KubernetesSdkAiKubernetesRuntimeHostClient` using a fake `IKubernetes` boundary or a thin wrapper around Kubernetes SDK operations, so pod/service creation and cleanup can be validated without a real cluster.
+
+---
+
+## [1.0.7.1] - 2026-07-05 — Kubernetes Runtime Host Provider / SDK Foundation
 
 Prepare Kubernetes as a runtime host / lifecycle provider, without replacing HTTP or gRPC as runtime transport providers.
 
@@ -61,14 +330,6 @@ Readiness is a runtime instance concern:
 
 It must remain provider-neutral and usable by process, gRPC, HTTP, and future Kubernetes runtime hosts.
 
-### Commit
-
-```text
-refactor: move runtime readiness abstractions out of host manager namespace
-```
-
----
-
 ## 2. gRPC readiness debt fixed
 
 ### Problem
@@ -117,14 +378,6 @@ RequireReadiness=true
 No fake HTTP command endpoint probe
 No readiness bypass
 ```
-
-### Commit
-
-```text
-fix: enable grpc scale-out readiness
-```
-
----
 
 ## 3. Architecture decision: Kubernetes is not a runtime command provider
 

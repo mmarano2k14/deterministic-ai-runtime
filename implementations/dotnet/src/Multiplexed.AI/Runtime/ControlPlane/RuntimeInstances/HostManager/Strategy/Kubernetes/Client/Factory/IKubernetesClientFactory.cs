@@ -1,9 +1,7 @@
-﻿using k8s;
-
-namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strategy.Kubernetes.Client.Factory
+﻿namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strategy.Kubernetes.Client.Factory
 {
     /// <summary>
-    /// Creates Kubernetes SDK clients used by the Kubernetes runtime host lifecycle adapter.
+    /// Creates Kubernetes SDK operation clients used by the Kubernetes runtime host lifecycle adapter.
     /// </summary>
     /// <remarks>
     /// This factory keeps Kubernetes configuration loading outside of the runtime host strategy.
@@ -12,9 +10,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
     public interface IKubernetesClientFactory
     {
         /// <summary>
-        /// Creates a Kubernetes SDK client.
+        /// Creates a Kubernetes SDK operation client.
         /// </summary>
-        /// <returns>The Kubernetes SDK client.</returns>
-        IKubernetes CreateClient();
+        /// <returns>The Kubernetes SDK operation client.</returns>
+        IAiKubernetesSdkClient CreateClient();
     }
 }

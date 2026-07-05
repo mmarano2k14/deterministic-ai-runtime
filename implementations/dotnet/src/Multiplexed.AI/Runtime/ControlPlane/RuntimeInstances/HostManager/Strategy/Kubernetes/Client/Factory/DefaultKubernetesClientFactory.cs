@@ -1,4 +1,5 @@
 ﻿using k8s;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strategy.Kubernetes.Client;
 using KubernetesSdkClient = k8s.Kubernetes;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strategy.Kubernetes.Client.Factory
@@ -9,7 +10,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
     public sealed class DefaultKubernetesClientFactory : IKubernetesClientFactory
     {
         /// <inheritdoc />
-        public IKubernetes CreateClient()
+        public IAiKubernetesSdkClient CreateClient()
         {
             KubernetesClientConfiguration configuration;
 
@@ -22,7 +23,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
                 configuration = KubernetesClientConfiguration.BuildConfigFromConfigFile();
             }
 
-            return new KubernetesSdkClient(configuration);
+            return new AiKubernetesSdkClient(
+                new KubernetesSdkClient(configuration));
         }
     }
 }

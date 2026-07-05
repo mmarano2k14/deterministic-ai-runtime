@@ -45,6 +45,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager
             var options = provider.GetRequiredService<IOptions<AiKubernetesRuntimeHostOptions>>().Value;
             var metadataBuilder = provider.GetRequiredService<AiKubernetesRuntimePodMetadataBuilder>();
             var podSpecBuilder = provider.GetRequiredService<AiKubernetesRuntimePodSpecBuilder>();
+            var resourceFactory = provider.GetRequiredService<AiKubernetesSdkResourceFactory>();
             var clientFactory = provider.GetRequiredService<IKubernetesClientFactory>();
             var sdkClient = provider.GetRequiredService<KubernetesSdkAiKubernetesRuntimeHostClient>();
             var client = provider.GetRequiredService<IAiKubernetesRuntimeHostClient>();
@@ -59,6 +60,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager
             Assert.Equal(AiKubernetesRuntimeHostClientMode.Fake, options.ClientMode);
             Assert.NotNull(metadataBuilder);
             Assert.NotNull(podSpecBuilder);
+            Assert.NotNull(resourceFactory);
             Assert.IsType<DefaultKubernetesClientFactory>(clientFactory);
             Assert.NotNull(sdkClient);
             Assert.IsType<FakeAiKubernetesRuntimeHostClient>(client);
@@ -153,9 +155,11 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager
             using var provider = services.BuildServiceProvider();
 
             var client = provider.GetRequiredService<IAiKubernetesRuntimeHostClient>();
+            var resourceFactory = provider.GetRequiredService<AiKubernetesSdkResourceFactory>();
             var clientFactory = provider.GetRequiredService<IKubernetesClientFactory>();
 
             Assert.IsType<KubernetesSdkAiKubernetesRuntimeHostClient>(client);
+            Assert.NotNull(resourceFactory);
             Assert.IsType<DefaultKubernetesClientFactory>(clientFactory);
         }
     }
