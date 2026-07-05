@@ -14,9 +14,6 @@ namespace Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager
         /// </summary>
         public bool Success { get; init; }
 
-        /// <summary>
-        /// Gets the execution context snapshot carried by the runtime host operation.
-        /// </summary>
         /// <remarks>
         /// The execution context snapshot is the durable authority for tenant/runtime isolation.
         /// Consumers must not derive tenant ownership from diagnostics-only metadata when this snapshot is available.
