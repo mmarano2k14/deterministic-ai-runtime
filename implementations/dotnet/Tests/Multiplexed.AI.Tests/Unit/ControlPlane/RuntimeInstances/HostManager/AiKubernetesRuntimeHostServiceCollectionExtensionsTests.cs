@@ -7,6 +7,7 @@ using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strategy;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strategy.Kubernetes;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strategy.Kubernetes.Client;
 using Multiplexed.AI.Tests.Fixtures;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using Xunit;
@@ -36,6 +37,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager
                     options.ContainerName = "runtime-instance";
                     options.ContainerPort = 8081;
                     options.TransportName = "grpc";
+                    options.ClientMode = AiKubernetesRuntimeHostClientMode.Fake;
                 });
 
             using var provider = services.BuildServiceProvider();
@@ -52,6 +54,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager
             Assert.Equal("runtime-instance", options.ContainerName);
             Assert.Equal(8081, options.ContainerPort);
             Assert.Equal("grpc", options.TransportName);
+            Assert.Equal(AiKubernetesRuntimeHostClientMode.Fake, options.ClientMode);
             Assert.NotNull(metadataBuilder);
             Assert.NotNull(podSpecBuilder);
             Assert.IsType<FakeAiKubernetesRuntimeHostClient>(client);
@@ -76,6 +79,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager
                             ["AiKubernetesRuntimeHost:ContainerPort"] = "9090",
                             ["AiKubernetesRuntimeHost:TransportName"] = "grpc",
                             ["AiKubernetesRuntimeHost:PodNamePrefix"] = "runtime",
+                            ["AiKubernetesRuntimeHost:ClientMode"] = "Fake",
                             ["AiKubernetesRuntimeHost:DeleteResourcesOnFailure"] = "true"
                         })
                     .Build();
@@ -95,6 +99,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager
             Assert.Equal(9090, options.ContainerPort);
             Assert.Equal("grpc", options.TransportName);
             Assert.Equal("runtime", options.PodNamePrefix);
+            Assert.Equal(AiKubernetesRuntimeHostClientMode.Fake, options.ClientMode);
             Assert.True(options.DeleteResourcesOnFailure);
         }
 
@@ -113,6 +118,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager
                 {
                     options.Enabled = true;
                     options.RuntimeImage = "multiplexed-ai-runtime:test";
+                    options.ClientMode = AiKubernetesRuntimeHostClientMode.Fake;
                 });
 
             using var provider = services.BuildServiceProvider();
@@ -132,7 +138,6 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager
             var services = new ServiceCollection();
 
             services.AddSingleton<IAiRuntimeInstanceReadinessWaiter, FakeRuntimeInstanceReadinessWaiter>();
-
             services.AddAiKubernetesRuntimeHostProvider(
                 options =>
                 {
