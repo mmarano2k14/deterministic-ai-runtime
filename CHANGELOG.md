@@ -6,6 +6,578 @@ This project follows a deterministic runtime and observability model designed fo
 
 ---
 
+## [1.0.7.1] - 2026-07-05 -— Kubernetes Runtime Host Provider / SDK Foundation
+
+Prepare Kubernetes as a runtime host / lifecycle provider, without replacing HTTP or gRPC as runtime transport providers.
+
+This phase intentionally avoids:
+
+- direct YAML-first implementation
+- Kubernetes client dependency too early
+- replacing `ProviderName` with `kubernetes`
+- bypassing shared queue / local runtime queue
+- moving recovery responsibility into Kubernetes
+
+Core principle:
+
+```text
+Kubernetes creates capacity.
+HTTP/gRPC dispatches work.
+Readiness proves runtime dispatchability.
+Recovery remains owned by the recovery reconciler.
+```
+
+---
+
+## 1. Runtime readiness namespace cleanup
+
+### Problem
+
+Readiness abstractions were physically already under runtime instance concepts, but their namespace still implied HostManager ownership:
+
+```text
+Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager.Readiness
+```
+
+That was misleading because runtime readiness is not only a HostManager concern.
+
+### Change
+
+Namespace moved to:
+
+```text
+Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Readiness
+```
+
+### Why
+
+Readiness is a runtime instance concern:
+
+- registry visibility
+- capacity visibility
+- tenant context
+- optional transport reachability
+- dispatchability
+
+It must remain provider-neutral and usable by process, gRPC, HTTP, and future Kubernetes runtime hosts.
+
+### Commit
+
+```text
+refactor: move runtime readiness abstractions out of host manager namespace
+```
+
+---
+
+## 2. gRPC readiness debt fixed
+
+### Problem
+
+gRPC scale-out scenarios previously used:
+
+```text
+AiGrpcRuntimeScaleOut:RequireReadiness=false
+```
+
+The reason was not that gRPC was not ready. The readiness waiter treated a gRPC endpoint like:
+
+```text
+http://127.0.0.1:port
+```
+
+as an HTTP endpoint because of the `http://` scheme, then attempted to probe:
+
+```text
+/runtime-instance/commands
+```
+
+That endpoint exists for HTTP command transport, but not for gRPC, causing `404` readiness failures.
+
+### Change
+
+`AiRuntimeInstanceReadinessWaiter` now prioritizes explicit gRPC transport detection before HTTP scheme detection.
+
+Correct order:
+
+```text
+TransportName == grpc
+    -> TCP transport probe
+
+TransportName == http or endpoint is HTTP-like
+    -> HTTP command endpoint probe
+```
+
+### Result
+
+gRPC readiness is now active again.
+
+```text
+gRPC readiness active
+RequireReadiness=true
+No fake HTTP command endpoint probe
+No readiness bypass
+```
+
+### Commit
+
+```text
+fix: enable grpc scale-out readiness
+```
+
+---
+
+## 3. Architecture decision: Kubernetes is not a runtime command provider
+
+### Decision
+
+Kubernetes must not replace HTTP or gRPC as the runtime command provider.
+
+Wrong model:
+
+```text
+ProviderName = kubernetes
+```
+
+Correct model:
+
+```text
+ProviderName = grpc
+TransportName = grpc
+host.provider = kubernetes
+```
+
+### Separation of responsibilities
+
+```text
+HTTP/gRPC
+    = runtime transport / dispatch providers
+
+Kubernetes
+    = host lifecycle provider
+
+Scale-out provider
+    = capacity orchestration
+
+Readiness waiter
+    = registry + capacity + tenant visibility + optional transport reachability
+
+Recovery reconciler
+    = assigned work recovery
+```
+
+### Why
+
+Kubernetes creates or hosts runtime capacity. It does not dispatch DAG runs and must not become durable runtime truth.
+
+Runtime truth remains:
+
+- Redis runtime registry
+- Redis runtime capacity store
+- SharedRunStore
+- SharedQueue
+- RuntimeRunExecutionIndex
+- DAG execution store
+- Ledger / Trace / Forensics / Replay
+
+---
+
+## 4. Kubernetes host creation mode added
+
+### Change
+
+Added a new value to:
+
+```text
+AiRuntimeHostCreationMode
+```
+
+New value:
+
+```text
+Kubernetes
+```
+
+### Purpose
+
+This allows `AiRuntimeHostCreationManager` to select a Kubernetes host creation strategy using the same mechanism already used for:
+
+```text
+Fixture
+Process
+Kubernetes
+```
+
+Kubernetes enters the existing host lifecycle pipeline instead of creating a new runtime dispatch pipeline.
+
+---
+
+## 5. Host lifecycle metadata added
+
+### Added host metadata keys
+
+```text
+host.provider
+host.creation.mode
+host.creation.strategy
+host.id
+host.name
+```
+
+### Added host provider names
+
+```text
+fixture
+process
+kubernetes
+attach
+```
+
+### Added Kubernetes metadata keys
+
+```text
+kubernetes.namespace
+kubernetes.pod.name
+kubernetes.node.name
+kubernetes.service.name
+kubernetes.container.name
+```
+
+### Purpose
+
+Separate lifecycle/hosting metadata from transport metadata.
+
+Transport metadata stays:
+
+```text
+provider.name = grpc | http
+transport.name = grpc | http
+transport.endpoint = ...
+```
+
+Host metadata becomes:
+
+```text
+host.provider = kubernetes
+host.creation.mode = Kubernetes
+```
+
+This avoids polluting `ProviderName` with Kubernetes and keeps the provider router unchanged.
+
+---
+
+## 6. Kubernetes host creation strategy skeleton added
+
+### Added
+
+```text
+KubernetesAiRuntimeHostCreationStrategy
+```
+
+### Current behavior
+
+The strategy exposes:
+
+```text
+Mode = Kubernetes
+```
+
+and currently rejects host creation with:
+
+```text
+kubernetes-runtime-host-creation-not-implemented
+```
+
+### Important invariant
+
+Even rejection is tenant-aware and traceable because the result carries:
+
+- `ExecutionContextSnapshot`
+- `RuntimeInstanceId`
+- `ProviderName`
+- `TransportName`
+- `TransportEndpoint`
+- host lifecycle metadata
+
+### Metadata emitted
+
+```text
+host.provider = kubernetes
+host.creation.mode = Kubernetes
+host.creation.strategy = KubernetesAiRuntimeHostCreationStrategy
+```
+
+### Test coverage
+
+Tests validate that:
+
+- strategy mode is Kubernetes
+- rejection reason is structured
+- provider remains `grpc` or `http`
+- provider is not changed to `kubernetes`
+- host metadata is emitted correctly
+
+---
+
+## 7. Kubernetes runtime host options added
+
+### Added
+
+```text
+AiKubernetesRuntimeHostOptions
+```
+
+### Options
+
+```text
+Enabled
+Namespace
+RuntimeImage
+ContainerName
+ServiceAccountName
+PodNamePrefix
+TransportName
+ContainerPort
+UseServicePerRuntime
+StartupTimeout
+ReadinessTimeout
+DeleteResourcesOnFailure
+Labels
+Annotations
+```
+
+### Important default
+
+```text
+TransportName = grpc
+```
+
+But there is intentionally no:
+
+```text
+ProviderName = kubernetes
+```
+
+Kubernetes is host lifecycle. gRPC or HTTP remains transport.
+
+---
+
+## 8. Kubernetes pod metadata builder added
+
+### Added
+
+```text
+AiKubernetesRuntimePodMetadata
+AiKubernetesRuntimePodMetadataBuilder
+```
+
+### Purpose
+
+Generate Kubernetes labels and annotations from `AiRuntimeHostStartRequest` without:
+
+- YAML
+- Kubernetes client SDK
+- real pod creation
+- dispatch behavior
+
+### Generated concepts
+
+Labels include runtime-safe Kubernetes values:
+
+```text
+app.kubernetes.io/name = multiplexed-ai-runtime
+app.kubernetes.io/component = runtime-instance
+multiplexed.ai/control-plane-id = ...
+multiplexed.ai/runtime-instance-id = ...
+multiplexed.ai/provider = grpc
+multiplexed.ai/transport = grpc
+multiplexed.ai/host-provider = kubernetes
+multiplexed.ai/tenant-id = ...
+multiplexed.ai/tenant-group-id = ...
+```
+
+Annotations preserve richer diagnostic values:
+
+```text
+host.provider = kubernetes
+host.creation.mode = Kubernetes
+host.creation.strategy = KubernetesAiRuntimeHostCreationStrategy
+kubernetes.namespace = ...
+kubernetes.pod.name = ...
+kubernetes.container.name = ...
+provider.name = grpc
+transport.name = grpc
+transport.endpoint = ...
+tenant.id = ...
+tenant.groupId = ...
+```
+
+### Test coverage
+
+```text
+AiKubernetesRuntimePodMetadataBuilderTests
+```
+
+Validated:
+
+- Kubernetes stays host provider
+- gRPC stays runtime transport provider
+- provider name is not changed to Kubernetes
+- tenant context is preserved
+- label values are sanitized
+- annotations preserve diagnostic values
+- custom annotations are applied
+
+---
+
+## 9. Kubernetes pod spec builder added
+
+### Added
+
+```text
+AiKubernetesRuntimePodSpec
+AiKubernetesRuntimePodSpecBuilder
+```
+
+### Purpose
+
+Build a runtime-owned .NET pod specification model before introducing any Kubernetes SDK dependency.
+
+This model describes what the runtime host layer wants to create, without using `V1Pod`, YAML, or a Kubernetes client.
+
+### Spec fields
+
+```text
+Namespace
+PodName
+RuntimeImage
+ContainerName
+ContainerPort
+ServiceAccountName
+Labels
+Annotations
+EnvironmentVariables
+```
+
+### Runtime environment variables injected
+
+```text
+AiMcpHost__Mode = RuntimeInstanceOnly
+AiRuntimeInstanceRegistration__RuntimeInstanceId = ...
+AiRuntimeInstanceRegistration__ProviderName = grpc
+AiRuntimeInstanceRegistration__TransportName = grpc
+AiRuntimeInstanceRegistration__ControlPlaneId = ...
+AiRuntimeInstanceRegistration__TenantId = ...
+AiRuntimeInstanceRegistration__TenantGroupId = ...
+AiRuntimeInstanceRegistration__Metadata__host.provider = kubernetes
+AiRuntimeInstanceRegistration__Metadata__host.creation.mode = Kubernetes
+AiRuntimeInstanceRegistration__Metadata__provider.name = grpc
+AiRuntimeInstanceRegistration__Metadata__transport.name = grpc
+AiRuntimeInstanceRegistration__Metadata__transport.endpoint = ...
+AiRuntimeInstanceRegistration__Metadata__tenant.id = ...
+AiRuntimeInstanceRegistration__Metadata__tenant.groupId = ...
+```
+
+### Important invariant
+
+The pod spec prepares a `RuntimeInstanceOnly` pod, but it does not make Kubernetes the command transport provider.
+
+Correct invariant:
+
+```text
+host.provider = kubernetes
+ProviderName = grpc
+TransportName = grpc
+```
+
+### Test coverage
+
+```text
+AiKubernetesRuntimePodSpecBuilderTests
+```
+
+Validated:
+
+- pod spec is created from host start request
+- namespace, pod name, image, container, port, and service account are mapped
+- gRPC remains transport provider
+- Kubernetes host metadata is injected
+- tenant context is propagated
+- runtime identity and control-plane identity are injected
+- generated Kubernetes annotations are carried
+
+---
+
+## Current state
+
+The branch now has a clean Kubernetes SDK/runtime foundation:
+
+```text
+Kubernetes host creation mode
+Kubernetes host metadata keys
+Kubernetes host provider names
+Kubernetes host strategy skeleton
+Kubernetes host options
+Kubernetes pod metadata builder
+Kubernetes pod spec builder
+Unit tests green
+gRPC readiness active
+No YAML
+No Kubernetes client dependency yet
+No HTTP/gRPC dispatch regression
+```
+
+---
+
+## Recommended commit
+
+If not already committed as separate commits:
+
+```powershell
+git status
+git add .
+git commit -m "feat: add Kubernetes runtime host SDK foundation" -m "Add Kubernetes host creation mode, host lifecycle metadata keys, Kubernetes host options, skeleton host creation strategy, pod metadata builder, pod spec builder, and unit tests while preserving HTTP/gRPC as runtime transport providers."
+```
+
+---
+
+## Next step
+
+The next logical step is the Kubernetes client boundary, still without a real cluster dependency.
+
+Add an abstraction first:
+
+```text
+IAiKubernetesRuntimeHostClient
+```
+
+Future operations:
+
+```text
+CreatePodAsync
+CreateServiceAsync
+WaitForPodReadyAsync
+DeletePodAsync
+```
+
+Then add an in-memory/fake implementation for tests:
+
+```text
+InMemoryAiKubernetesRuntimeHostClient
+```
+
+Only after that should `KubernetesAiRuntimeHostCreationStrategy` be wired to:
+
+```text
+AiKubernetesRuntimePodSpecBuilder
+IAiKubernetesRuntimeHostClient
+IAiRuntimeInstanceReadinessWaiter
+```
+
+This keeps the architecture testable and avoids YAML-first Kubernetes integration.
+
+
+---
+
 ## [1.0.7.1] - 2026-07-02 - gRPC provider integration, shared crash recovery refactor, and full gRPC process-host validation
 
 ### Summary
