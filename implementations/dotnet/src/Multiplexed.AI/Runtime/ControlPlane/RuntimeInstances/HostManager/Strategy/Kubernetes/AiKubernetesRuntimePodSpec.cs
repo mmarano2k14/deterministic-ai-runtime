@@ -58,5 +58,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
         /// </summary>
         public IReadOnlyDictionary<string, string> EnvironmentVariables { get; init; } =
             new Dictionary<string, string>();
+
+        /// <summary>
+        /// Gets or sets the Kubernetes container image pull policy.
+        /// </summary>
+        public AiKubernetesImagePullPolicy ImagePullPolicy { get; init; } =
+            AiKubernetesImagePullPolicy.IfNotPresent;
     }
 }

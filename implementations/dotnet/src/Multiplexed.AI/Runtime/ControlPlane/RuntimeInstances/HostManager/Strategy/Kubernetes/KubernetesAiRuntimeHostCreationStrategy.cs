@@ -65,6 +65,15 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
                     metadata: CreateBaseMetadata());
             }
 
+            if (string.IsNullOrWhiteSpace(this.options.Namespace))
+            {
+                return CreateRejectedResult(
+                    request,
+                    "kubernetes-runtime-namespace-missing",
+                    retryable: false,
+                    metadata: CreateBaseMetadata());
+            }
+
             if (string.IsNullOrWhiteSpace(this.options.RuntimeImage))
             {
                 return CreateRejectedResult(
@@ -74,8 +83,29 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
                     metadata: CreateBaseMetadata());
             }
 
-            var podSpec =
-                this.podSpecBuilder.Build(request);
+            if (string.IsNullOrWhiteSpace(this.options.ContainerName))
+            {
+                return CreateRejectedResult(
+                    request,
+                    "kubernetes-runtime-container-name-missing",
+                    retryable: false,
+                    metadata: CreateBaseMetadata());
+            }
+
+            AiKubernetesRuntimePodSpec podSpec;
+
+            try
+            {
+                podSpec = this.podSpecBuilder.Build(request);
+            }
+            catch (Exception exception)
+            {
+                return CreateRejectedResult(
+                    request,
+                    exception.Message,
+                    retryable: false,
+                    metadata: CreateBaseMetadata());
+            }
 
             var createResult =
                 await this.client

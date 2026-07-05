@@ -101,5 +101,16 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
         /// </remarks>
         public TimeSpan ReadinessPollInterval { get; set; } =
             TimeSpan.FromMilliseconds(500);
+
+        /// <summary>
+        /// Gets or sets the Kubernetes container image pull policy.
+        /// </summary>
+        /// <remarks>
+        /// Use <see cref="AiKubernetesImagePullPolicy.IfNotPresent"/> for most local and cached-image scenarios.
+        /// Use <see cref="AiKubernetesImagePullPolicy.Always"/> for registry-driven deployments.
+        /// Use <see cref="AiKubernetesImagePullPolicy.Never"/> when the image must already exist on the node.
+        /// </remarks>
+        public AiKubernetesImagePullPolicy ImagePullPolicy { get; set; } =
+            AiKubernetesImagePullPolicy.IfNotPresent;
     }
 }

@@ -35,6 +35,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager
                     options.Enabled = true;
                     options.Namespace = "ai-runtime";
                     options.RuntimeImage = "multiplexed-ai-runtime:test";
+                    options.ImagePullPolicy = AiKubernetesImagePullPolicy.IfNotPresent;
                     options.ContainerName = "runtime-instance";
                     options.ContainerPort = 8081;
                     options.TransportName = "grpc";
@@ -55,6 +56,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager
             Assert.True(options.Enabled);
             Assert.Equal("ai-runtime", options.Namespace);
             Assert.Equal("multiplexed-ai-runtime:test", options.RuntimeImage);
+            Assert.Equal(AiKubernetesImagePullPolicy.IfNotPresent, options.ImagePullPolicy);
             Assert.Equal("runtime-instance", options.ContainerName);
             Assert.Equal(8081, options.ContainerPort);
             Assert.Equal("grpc", options.TransportName);
@@ -82,6 +84,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager
                             ["AiKubernetesRuntimeHost:Enabled"] = "true",
                             ["AiKubernetesRuntimeHost:Namespace"] = "ai-runtime",
                             ["AiKubernetesRuntimeHost:RuntimeImage"] = "multiplexed-ai-runtime:configured",
+                            ["AiKubernetesRuntimeHost:ImagePullPolicy"] = "Always",
                             ["AiKubernetesRuntimeHost:ContainerName"] = "runtime-instance",
                             ["AiKubernetesRuntimeHost:ContainerPort"] = "9090",
                             ["AiKubernetesRuntimeHost:TransportName"] = "grpc",
@@ -103,6 +106,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager
             Assert.True(options.Enabled);
             Assert.Equal("ai-runtime", options.Namespace);
             Assert.Equal("multiplexed-ai-runtime:configured", options.RuntimeImage);
+            Assert.Equal(AiKubernetesImagePullPolicy.Always, options.ImagePullPolicy);
             Assert.Equal("runtime-instance", options.ContainerName);
             Assert.Equal(9090, options.ContainerPort);
             Assert.Equal("grpc", options.TransportName);

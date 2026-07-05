@@ -85,13 +85,29 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager
             Assert.Equal("runtime-tenant-a-001-svc", metadata[AiKubernetesRuntimeHostMetadataKeys.ServiceName]);
         }
 
-        private static AiKubernetesRuntimePodSpec CreatePodSpec()
+        /// <summary>
+        /// Verifies that the Kubernetes image pull policy is mapped to the pod container.
+        /// </summary>
+        [Fact]
+        public void CreatePod_Should_Map_Image_Pull_Policy_To_Container()
+        {
+            var factory = new AiKubernetesSdkResourceFactory();
+            var podSpec = CreatePodSpec(AiKubernetesImagePullPolicy.Never);
+
+            var pod = factory.CreatePod(podSpec);
+
+            Assert.Equal("Never", pod.Spec.Containers[0].ImagePullPolicy);
+        }
+
+        private static AiKubernetesRuntimePodSpec CreatePodSpec(
+            AiKubernetesImagePullPolicy imagePullPolicy = AiKubernetesImagePullPolicy.IfNotPresent)
         {
             return new AiKubernetesRuntimePodSpec
             {
                 Namespace = "ai-runtime",
                 PodName = "runtime-tenant-a-001",
                 RuntimeImage = "multiplexed-ai-runtime:test",
+                ImagePullPolicy = imagePullPolicy,
                 ContainerName = "runtime-instance",
                 ContainerPort = 8080,
                 ServiceAccountName = "runtime-service-account",

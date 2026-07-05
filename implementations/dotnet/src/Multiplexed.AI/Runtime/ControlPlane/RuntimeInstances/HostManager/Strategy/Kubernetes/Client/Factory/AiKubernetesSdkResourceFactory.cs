@@ -43,6 +43,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
                             {
                                 Name = podSpec.ContainerName,
                                 Image = podSpec.RuntimeImage,
+                                ImagePullPolicy = podSpec.ImagePullPolicy.ToString(),
                                 Ports =
                                     new List<V1ContainerPort>
                                     {

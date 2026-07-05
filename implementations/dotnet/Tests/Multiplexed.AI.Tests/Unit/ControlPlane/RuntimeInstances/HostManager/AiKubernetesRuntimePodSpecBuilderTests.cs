@@ -1,6 +1,7 @@
 ﻿using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strategy.Kubernetes;
 using Multiplexed.AI.Tests.Fixtures;
+using System;
 using Xunit;
 
 namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager
@@ -21,6 +22,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager
                 {
                     Namespace = "ai-runtime",
                     RuntimeImage = "multiplexed-ai-runtime:test",
+                    ImagePullPolicy = AiKubernetesImagePullPolicy.IfNotPresent,
                     ContainerName = "runtime-instance",
                     ContainerPort = 8081,
                     ServiceAccountName = "runtime-service-account",
@@ -43,6 +45,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager
             Assert.Equal("ai-runtime", spec.Namespace);
             Assert.StartsWith("runtime-tenant-a-runtime-001", spec.PodName);
             Assert.Equal("multiplexed-ai-runtime:test", spec.RuntimeImage);
+            Assert.Equal(AiKubernetesImagePullPolicy.IfNotPresent, spec.ImagePullPolicy);
             Assert.Equal("runtime-instance", spec.ContainerName);
             Assert.Equal(8081, spec.ContainerPort);
             Assert.Equal("runtime-service-account", spec.ServiceAccountName);
@@ -187,6 +190,156 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager
             Assert.Equal("runtime-instance", spec.Annotations["kubernetes.container.name"]);
             Assert.Equal("grpc", spec.Annotations["provider.name"]);
             Assert.Equal("grpc", spec.Annotations["transport.name"]);
+        }
+
+        /// <summary>
+        /// Verifies that the pod spec carries the configured Kubernetes image pull policy.
+        /// </summary>
+        [Fact]
+        public void Build_Should_Carry_Configured_Image_Pull_Policy()
+        {
+            var options =
+                new AiKubernetesRuntimeHostOptions
+                {
+                    Namespace = "ai-runtime",
+                    RuntimeImage = "multiplexed-ai-runtime:test",
+                    ImagePullPolicy = AiKubernetesImagePullPolicy.Never
+                };
+
+            var builder =
+                new AiKubernetesRuntimePodSpecBuilder(
+                    options,
+                    new AiKubernetesRuntimePodMetadataBuilder(options));
+
+            var request =
+                CreateRequest(
+                    runtimeInstanceId: "tenant-a-runtime-001",
+                    providerName: "grpc",
+                    transportName: "grpc");
+
+            var spec = builder.Build(request);
+
+            Assert.Equal(AiKubernetesImagePullPolicy.Never, spec.ImagePullPolicy);
+        }
+
+        /// <summary>
+        /// Verifies that build rejects an empty Kubernetes namespace.
+        /// </summary>
+        [Fact]
+        public void Build_Should_Reject_Empty_Namespace()
+        {
+            var options =
+                new AiKubernetesRuntimeHostOptions
+                {
+                    Namespace = "",
+                    RuntimeImage = "multiplexed-ai-runtime:test",
+                    ContainerName = "runtime-instance",
+                    ContainerPort = 8080
+                };
+
+            var builder =
+                new AiKubernetesRuntimePodSpecBuilder(
+                    options,
+                    new AiKubernetesRuntimePodMetadataBuilder(options));
+
+            var request =
+                CreateRequest(
+                    runtimeInstanceId: "tenant-a-runtime-001",
+                    providerName: "grpc",
+                    transportName: "grpc");
+
+            Assert.Throws<ArgumentException>(() => builder.Build(request));
+        }
+
+        /// <summary>
+        /// Verifies that build rejects an empty runtime image.
+        /// </summary>
+        [Fact]
+        public void Build_Should_Reject_Empty_Runtime_Image()
+        {
+            var options =
+                new AiKubernetesRuntimeHostOptions
+                {
+                    Namespace = "ai-runtime",
+                    RuntimeImage = "",
+                    ContainerName = "runtime-instance",
+                    ContainerPort = 8080
+                };
+
+            var builder =
+                new AiKubernetesRuntimePodSpecBuilder(
+                    options,
+                    new AiKubernetesRuntimePodMetadataBuilder(options));
+
+            var request =
+                CreateRequest(
+                    runtimeInstanceId: "tenant-a-runtime-001",
+                    providerName: "grpc",
+                    transportName: "grpc");
+
+            Assert.Throws<ArgumentException>(() => builder.Build(request));
+        }
+
+        /// <summary>
+        /// Verifies that build rejects an empty container name.
+        /// </summary>
+        [Fact]
+        public void Build_Should_Reject_Empty_Container_Name()
+        {
+            var options =
+                new AiKubernetesRuntimeHostOptions
+                {
+                    Namespace = "ai-runtime",
+                    RuntimeImage = "multiplexed-ai-runtime:test",
+                    ContainerName = "",
+                    ContainerPort = 8080
+                };
+
+            var builder =
+                new AiKubernetesRuntimePodSpecBuilder(
+                    options,
+                    new AiKubernetesRuntimePodMetadataBuilder(options));
+
+            var request =
+                CreateRequest(
+                    runtimeInstanceId: "tenant-a-runtime-001",
+                    providerName: "grpc",
+                    transportName: "grpc");
+
+            Assert.Throws<ArgumentException>(() => builder.Build(request));
+        }
+
+        /// <summary>
+        /// Verifies that build rejects an invalid container port.
+        /// </summary>
+        [Fact]
+        public void Build_Should_Reject_Invalid_Container_Port()
+        {
+            var options =
+                new AiKubernetesRuntimeHostOptions
+                {
+                    Namespace = "ai-runtime",
+                    RuntimeImage = "multiplexed-ai-runtime:test",
+                    ContainerName = "runtime-instance",
+                    ContainerPort = 0
+                };
+
+            var builder =
+                new AiKubernetesRuntimePodSpecBuilder(
+                    options,
+                    new AiKubernetesRuntimePodMetadataBuilder(options));
+
+            var request =
+                CreateRequest(
+                    runtimeInstanceId: "tenant-a-runtime-001",
+                    providerName: "grpc",
+                    transportName: "grpc");
+
+            var exception =
+                Assert.Throws<InvalidOperationException>(
+                    () => builder.Build(request));
+
+            Assert.Contains("container port must be greater than zero", exception.Message);
         }
 
         /// <summary>

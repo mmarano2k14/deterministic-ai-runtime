@@ -57,6 +57,41 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager
         }
 
         /// <summary>
+        /// Verifies that the Kubernetes host creation strategy rejects when no Kubernetes namespace is configured.
+        /// </summary>
+        [Fact]
+        public async Task StartAsync_Should_Reject_When_Kubernetes_Namespace_Is_Missing()
+        {
+            var client = new FakeAiKubernetesRuntimeHostClient();
+
+            var strategy =
+                CreateStrategy(
+                    options: new AiKubernetesRuntimeHostOptions
+                    {
+                        Enabled = true,
+                        Namespace = string.Empty,
+                        RuntimeImage = "multiplexed-ai-runtime:test",
+                        ContainerName = "runtime-instance",
+                        ContainerPort = 8080,
+                        PodNamePrefix = "runtime",
+                        TransportName = "grpc",
+                        DeleteResourcesOnFailure = true
+                    },
+                    client: client);
+
+            var request = CreateRequest();
+
+            var result = await strategy.StartAsync(request);
+
+            Assert.False(result.Success);
+            Assert.False(result.Retryable);
+            Assert.Equal("kubernetes-runtime-namespace-missing", result.FailureReason);
+            Assert.Equal(0, client.CreateCallCount);
+            Assert.Equal(0, client.ReadinessCallCount);
+            Assert.Equal(0, client.DeleteCallCount);
+        }
+
+        /// <summary>
         /// Verifies that the Kubernetes host creation strategy rejects when no runtime image is configured.
         /// </summary>
         [Fact]
@@ -199,6 +234,41 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager
             Assert.Equal(1, readinessWaiter.CallCount);
             Assert.Equal("grpc", result.ProviderName);
             Assert.NotEqual("kubernetes", result.ProviderName);
+        }
+
+        /// <summary>
+        /// Verifies that the Kubernetes host creation strategy rejects when no container name is configured.
+        /// </summary>
+        [Fact]
+        public async Task StartAsync_Should_Reject_When_Container_Name_Is_Missing()
+        {
+            var client = new FakeAiKubernetesRuntimeHostClient();
+
+            var strategy =
+                CreateStrategy(
+                    options: new AiKubernetesRuntimeHostOptions
+                    {
+                        Enabled = true,
+                        Namespace = "ai-runtime",
+                        RuntimeImage = "multiplexed-ai-runtime:test",
+                        ContainerName = string.Empty,
+                        ContainerPort = 8080,
+                        PodNamePrefix = "runtime",
+                        TransportName = "grpc",
+                        DeleteResourcesOnFailure = true
+                    },
+                    client: client);
+
+            var request = CreateRequest();
+
+            var result = await strategy.StartAsync(request);
+
+            Assert.False(result.Success);
+            Assert.False(result.Retryable);
+            Assert.Equal("kubernetes-runtime-container-name-missing", result.FailureReason);
+            Assert.Equal(0, client.CreateCallCount);
+            Assert.Equal(0, client.ReadinessCallCount);
+            Assert.Equal(0, client.DeleteCallCount);
         }
 
         /// <summary>

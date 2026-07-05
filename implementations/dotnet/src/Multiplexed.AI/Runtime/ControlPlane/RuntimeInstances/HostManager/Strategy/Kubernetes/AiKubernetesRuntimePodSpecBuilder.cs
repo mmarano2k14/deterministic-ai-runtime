@@ -40,6 +40,15 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
             AiRuntimeHostStartRequest request)
         {
             ArgumentNullException.ThrowIfNull(request);
+            ArgumentException.ThrowIfNullOrWhiteSpace(this.options.Namespace);
+            ArgumentException.ThrowIfNullOrWhiteSpace(this.options.RuntimeImage);
+            ArgumentException.ThrowIfNullOrWhiteSpace(this.options.ContainerName);
+
+            if (this.options.ContainerPort <= 0)
+            {
+                throw new InvalidOperationException(
+                    $"Kubernetes runtime host container port must be greater than zero. Actual value: {this.options.ContainerPort}.");
+            }
 
             var metadata =
                 this.metadataBuilder.Build(request);
@@ -89,7 +98,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
                 ServiceAccountName = this.options.ServiceAccountName,
                 Labels = metadata.Labels,
                 Annotations = metadata.Annotations,
-                EnvironmentVariables = environmentVariables
+                EnvironmentVariables = environmentVariables,
+                ImagePullPolicy = this.options.ImagePullPolicy
             };
         }
     }
