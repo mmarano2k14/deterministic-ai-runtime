@@ -239,14 +239,14 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Readiness
                 return CreateFailure(request, "runtime-readiness-transport-endpoint-invalid", timedOut: false);
             }
 
-            if (IsHttpTransport(request.TransportName, endpointUri))
-            {
-                return await CheckHttpTransportReadinessAsync(request, endpointUri, transportEndpoint, cancellationToken).ConfigureAwait(false);
-            }
-
             if (IsGrpcTransport(request.TransportName))
             {
                 return await CheckTcpTransportReadinessAsync(request, endpointUri, transportEndpoint, cancellationToken).ConfigureAwait(false);
+            }
+
+            if (IsHttpTransport(request.TransportName, endpointUri))
+            {
+                return await CheckHttpTransportReadinessAsync(request, endpointUri, transportEndpoint, cancellationToken).ConfigureAwait(false);
             }
 
             return await CheckGenericTransportReadinessAsync(request, endpointUri, transportEndpoint, cancellationToken).ConfigureAwait(false);
@@ -371,6 +371,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Readiness
             string transportEndpoint,
             CancellationToken cancellationToken)
         {
+            if (IsGrpcTransport(request.TransportName))
+            {
+                return await CheckTcpTransportReadinessAsync(request, endpointUri, transportEndpoint, cancellationToken).ConfigureAwait(false);
+            }
+
             if (IsHttpTransport(request.TransportName, endpointUri))
             {
                 return await CheckHttpTransportReadinessAsync(request, endpointUri, transportEndpoint, cancellationToken).ConfigureAwait(false);
