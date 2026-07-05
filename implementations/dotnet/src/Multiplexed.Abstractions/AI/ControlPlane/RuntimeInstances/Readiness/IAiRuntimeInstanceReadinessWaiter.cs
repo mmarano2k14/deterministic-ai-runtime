@@ -1,7 +1,7 @@
 ﻿using System.Threading;
 using System.Threading.Tasks;
 
-namespace Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager.Readiness
+namespace Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Readiness
 {
     /// <summary>
     /// Defines a provider-agnostic readiness waiter for runtime instances created through scale-out.

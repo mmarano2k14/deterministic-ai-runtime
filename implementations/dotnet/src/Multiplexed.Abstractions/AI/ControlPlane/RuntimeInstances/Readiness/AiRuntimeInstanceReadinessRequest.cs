@@ -2,7 +2,7 @@
 using Multiplexed.Abstractions.Core.ExecutionContext;
 using System;
 
-namespace Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager.Readiness
+namespace Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Readiness
 {
     /// <summary>
     /// Represents a provider-agnostic request to wait for a runtime instance to become ready.

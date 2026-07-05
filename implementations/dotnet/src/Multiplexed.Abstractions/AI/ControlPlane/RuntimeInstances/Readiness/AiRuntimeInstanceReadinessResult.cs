@@ -1,7 +1,7 @@
 ﻿using Multiplexed.Abstractions.AI.Execution;
 using Multiplexed.Abstractions.Core.ExecutionContext;
 
-namespace Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager.Readiness
+namespace Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Readiness
 {
     /// <summary>
     /// Represents the result of waiting for a runtime instance to become ready.
