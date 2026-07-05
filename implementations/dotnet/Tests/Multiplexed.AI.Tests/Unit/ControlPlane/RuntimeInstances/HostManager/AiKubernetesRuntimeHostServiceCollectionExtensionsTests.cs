@@ -6,8 +6,8 @@ using Multiplexed.AI.Runtime.ControlPlane.DI;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strategy;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strategy.Kubernetes;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strategy.Kubernetes.Client;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strategy.Kubernetes.Client.Factory;
 using Multiplexed.AI.Tests.Fixtures;
-using System;
 using System.Collections.Generic;
 using System.Linq;
 using Xunit;
@@ -45,6 +45,8 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager
             var options = provider.GetRequiredService<IOptions<AiKubernetesRuntimeHostOptions>>().Value;
             var metadataBuilder = provider.GetRequiredService<AiKubernetesRuntimePodMetadataBuilder>();
             var podSpecBuilder = provider.GetRequiredService<AiKubernetesRuntimePodSpecBuilder>();
+            var clientFactory = provider.GetRequiredService<IKubernetesClientFactory>();
+            var sdkClient = provider.GetRequiredService<KubernetesSdkAiKubernetesRuntimeHostClient>();
             var client = provider.GetRequiredService<IAiKubernetesRuntimeHostClient>();
             var strategies = provider.GetServices<IAiRuntimeHostCreationStrategy>().ToArray();
 
@@ -57,6 +59,8 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager
             Assert.Equal(AiKubernetesRuntimeHostClientMode.Fake, options.ClientMode);
             Assert.NotNull(metadataBuilder);
             Assert.NotNull(podSpecBuilder);
+            Assert.IsType<DefaultKubernetesClientFactory>(clientFactory);
+            Assert.NotNull(sdkClient);
             Assert.IsType<FakeAiKubernetesRuntimeHostClient>(client);
             Assert.Contains(strategies, strategy => strategy.GetType() == typeof(KubernetesAiRuntimeHostCreationStrategy));
         }
@@ -130,10 +134,10 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager
         }
 
         /// <summary>
-        /// Verifies that Kubernetes SDK client mode fails explicitly until the real Kubernetes client is registered.
+        /// Verifies that Kubernetes SDK client mode resolves the SDK-backed runtime host client.
         /// </summary>
         [Fact]
-        public void AddAiKubernetesRuntimeHostProvider_Should_Fail_Explicitly_When_KubernetesSdk_Client_Is_Not_Registered()
+        public void AddAiKubernetesRuntimeHostProvider_Should_Resolve_KubernetesSdk_Client_When_ClientMode_Is_KubernetesSdk()
         {
             var services = new ServiceCollection();
 
@@ -148,11 +152,11 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager
 
             using var provider = services.BuildServiceProvider();
 
-            var exception =
-                Assert.Throws<InvalidOperationException>(
-                    () => provider.GetRequiredService<IAiKubernetesRuntimeHostClient>());
+            var client = provider.GetRequiredService<IAiKubernetesRuntimeHostClient>();
+            var clientFactory = provider.GetRequiredService<IKubernetesClientFactory>();
 
-            Assert.Contains("Kubernetes .NET SDK runtime host client is not registered yet", exception.Message);
+            Assert.IsType<KubernetesSdkAiKubernetesRuntimeHostClient>(client);
+            Assert.IsType<DefaultKubernetesClientFactory>(clientFactory);
         }
     }
 }

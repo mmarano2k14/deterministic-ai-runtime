@@ -5,6 +5,7 @@ using Microsoft.Extensions.Options;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strategy;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strategy.Kubernetes;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strategy.Kubernetes.Client;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strategy.Kubernetes.Client.Factory;
 using System;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.DI
@@ -50,6 +51,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
                             .Value,
                         serviceProvider.GetRequiredService<AiKubernetesRuntimePodMetadataBuilder>()));
 
+            services.TryAddSingleton<IKubernetesClientFactory, DefaultKubernetesClientFactory>();
+            services.TryAddSingleton<KubernetesSdkAiKubernetesRuntimeHostClient>();
+
             services.TryAddSingleton<IAiKubernetesRuntimeHostClient>(
                 serviceProvider =>
                 {
@@ -64,8 +68,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
                             new FakeAiKubernetesRuntimeHostClient(),
 
                         AiKubernetesRuntimeHostClientMode.KubernetesSdk =>
-                            throw new InvalidOperationException(
-                                "The Kubernetes .NET SDK runtime host client is not registered yet."),
+                            serviceProvider.GetRequiredService<KubernetesSdkAiKubernetesRuntimeHostClient>(),
 
                         _ =>
                             throw new InvalidOperationException(
