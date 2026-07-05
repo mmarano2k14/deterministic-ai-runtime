@@ -143,7 +143,8 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager
                 sdkClient,
                 options =>
                 {
-                    options.StartupTimeout = TimeSpan.FromMilliseconds(1);
+                    options.StartupTimeout = TimeSpan.FromMilliseconds(5);
+                    options.ReadinessPollInterval = TimeSpan.FromMilliseconds(1);
                 });
             var podSpec = CreatePodSpec();
 
@@ -229,7 +230,8 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager
                 Enabled = true,
                 RuntimeImage = "multiplexed-ai-runtime:test",
                 UseServicePerRuntime = true,
-                StartupTimeout = TimeSpan.FromMilliseconds(50)
+                StartupTimeout = TimeSpan.FromMilliseconds(50),
+                ReadinessPollInterval = TimeSpan.FromMilliseconds(1)
             };
 
             configure?.Invoke(options);

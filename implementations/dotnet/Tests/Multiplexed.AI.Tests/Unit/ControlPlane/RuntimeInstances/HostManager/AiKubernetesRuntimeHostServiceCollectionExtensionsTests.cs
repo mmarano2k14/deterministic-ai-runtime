@@ -8,6 +8,7 @@ using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strategy.
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strategy.Kubernetes.Client;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strategy.Kubernetes.Client.Factory;
 using Multiplexed.AI.Tests.Fixtures;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using Xunit;
@@ -86,6 +87,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager
                             ["AiKubernetesRuntimeHost:TransportName"] = "grpc",
                             ["AiKubernetesRuntimeHost:PodNamePrefix"] = "runtime",
                             ["AiKubernetesRuntimeHost:ClientMode"] = "Fake",
+                            ["AiKubernetesRuntimeHost:ReadinessPollInterval"] = "00:00:00.250",
                             ["AiKubernetesRuntimeHost:DeleteResourcesOnFailure"] = "true"
                         })
                     .Build();
@@ -106,6 +108,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager
             Assert.Equal("grpc", options.TransportName);
             Assert.Equal("runtime", options.PodNamePrefix);
             Assert.Equal(AiKubernetesRuntimeHostClientMode.Fake, options.ClientMode);
+            Assert.Equal(TimeSpan.FromMilliseconds(250), options.ReadinessPollInterval);
             Assert.True(options.DeleteResourcesOnFailure);
         }
 

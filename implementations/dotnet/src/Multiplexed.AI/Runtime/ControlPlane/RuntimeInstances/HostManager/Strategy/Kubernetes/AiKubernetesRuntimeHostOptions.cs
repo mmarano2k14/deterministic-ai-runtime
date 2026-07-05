@@ -91,5 +91,15 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
         /// Gets or sets additional Kubernetes annotations applied to runtime pods and services.
         /// </summary>
         public Dictionary<string, string> Annotations { get; set; } = new();
+
+        /// <summary>
+        /// Gets or sets the Kubernetes pod readiness polling interval.
+        /// </summary>
+        /// <remarks>
+        /// This controls only Kubernetes host readiness polling.
+        /// Runtime transport readiness remains validated separately by the runtime readiness waiter.
+        /// </remarks>
+        public TimeSpan ReadinessPollInterval { get; set; } =
+            TimeSpan.FromMilliseconds(500);
     }
 }

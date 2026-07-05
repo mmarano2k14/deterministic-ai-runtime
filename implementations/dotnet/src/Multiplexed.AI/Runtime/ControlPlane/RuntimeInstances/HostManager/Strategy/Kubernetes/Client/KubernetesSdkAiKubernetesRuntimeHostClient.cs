@@ -138,7 +138,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
                         metadata: this.resourceFactory.CreateMetadata(podSpec, serviceName: null));
                 }
 
-                await Task.Delay(TimeSpan.FromMilliseconds(500), cancellationToken);
+                await Task.Delay(this.options.ReadinessPollInterval, cancellationToken);
             }
 
             var timedOutServiceName =
