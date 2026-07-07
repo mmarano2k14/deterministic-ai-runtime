@@ -52,10 +52,10 @@ namespace Multiplexed.AI.DI.Persistence.Mongo
                     "Mongo snapshot CollectionName cannot be null or empty.");
             }
 
-            services.TryAddSingleton<IAiExecutionSnapshotFactory<TContextSnapshot>, DefaultAiExecutionSnapshotFactory<TContextSnapshot>>();
-            services.AddScoped<IAiExecutionSnapshotService<TContextSnapshot>, DefaultAiExecutionSnapshotService<TContextSnapshot>>();
+            services.TryAddSingleton(options);
 
-            services.TryAddSingleton<IMongoClient>(_ => new MongoClient(options.ConnectionString));
+            services.TryAddSingleton<IMongoClient>(
+                _ => new MongoClient(options.ConnectionString));
 
             services.TryAddSingleton<IMongoDatabase>(sp =>
             {
@@ -63,18 +63,66 @@ namespace Multiplexed.AI.DI.Persistence.Mongo
                 return client.GetDatabase(options.DatabaseName);
             });
 
-            services.TryAddSingleton<IAiExecutionSnapshotStore<TContextSnapshot>>(sp =>
+            services.TryAddSingleton<IAiExecutionSnapshotFactory<TContextSnapshot>, DefaultAiExecutionSnapshotFactory<TContextSnapshot>>();
+            services.AddScoped<IAiExecutionSnapshotService<TContextSnapshot>, DefaultAiExecutionSnapshotService<TContextSnapshot>>();
+
+            services.AddSingleton<IAiExecutionSnapshotMongoDatabaseProvider>(
+                new AiExecutionSnapshotMongoDatabaseProvider(
+                    options.ConnectionString,
+                    options.DatabaseName));
+
+            services.AddSingleton<IAiExecutionSnapshotStore<TContextSnapshot>>(sp =>
             {
-                var database = sp.GetRequiredService<IMongoDatabase>();
+                var databaseProvider = sp.GetRequiredService<IAiExecutionSnapshotMongoDatabaseProvider>();
                 var logger = sp.GetRequiredService<ILogger<MongoAiExecutionSnapshotStore<TContextSnapshot>>>();
 
                 return new MongoAiExecutionSnapshotStore<TContextSnapshot>(
-                    database,
+                    databaseProvider.Database,
                     options,
                     logger);
             });
 
             return services;
+        }
+
+        /// <summary>
+        /// Provides the dedicated MongoDB database used by execution snapshots.
+        /// </summary>
+        private interface IAiExecutionSnapshotMongoDatabaseProvider
+        {
+            /// <summary>
+            /// Gets the MongoDB database used by execution snapshots.
+            /// </summary>
+            IMongoDatabase Database { get; }
+        }
+
+        /// <summary>
+        /// Default dedicated MongoDB database provider for execution snapshots.
+        /// </summary>
+        private sealed class AiExecutionSnapshotMongoDatabaseProvider : IAiExecutionSnapshotMongoDatabaseProvider
+        {
+            private readonly MongoClient client;
+            private readonly string databaseName;
+
+            /// <summary>
+            /// Initializes a new instance of the <see cref="AiExecutionSnapshotMongoDatabaseProvider"/> class.
+            /// </summary>
+            /// <param name="connectionString">The MongoDB connection string.</param>
+            /// <param name="databaseName">The MongoDB database name.</param>
+            public AiExecutionSnapshotMongoDatabaseProvider(
+                string connectionString,
+                string databaseName)
+            {
+                ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
+                ArgumentException.ThrowIfNullOrWhiteSpace(databaseName);
+
+                this.client = new MongoClient(connectionString);
+                this.databaseName = databaseName;
+            }
+
+            /// <inheritdoc />
+            public IMongoDatabase Database =>
+                this.client.GetDatabase(this.databaseName);
         }
     }
 }

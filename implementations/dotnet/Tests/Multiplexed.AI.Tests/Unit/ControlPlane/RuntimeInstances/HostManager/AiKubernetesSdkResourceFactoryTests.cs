@@ -1,4 +1,5 @@
-﻿using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager;
+﻿using Microsoft.Extensions.Options;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager.Kubernetes;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strategy.Kubernetes;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strategy.Kubernetes.Client;
@@ -18,7 +19,11 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager
         [Fact]
         public void CreatePod_Should_Create_Kubernetes_Pod_From_Runtime_Pod_Spec()
         {
-            var factory = new AiKubernetesSdkResourceFactory();
+            var factory =
+                new AiKubernetesSdkResourceFactory(
+                    Options.Create(
+                        new AiKubernetesRuntimeHostOptions()));
+
             var podSpec = CreatePodSpec();
 
             var pod = factory.CreatePod(podSpec);
@@ -40,7 +45,11 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager
         [Fact]
         public void CreateService_Should_Create_ClusterIp_Service_For_Runtime_Pod()
         {
-            var factory = new AiKubernetesSdkResourceFactory();
+            var factory =
+                new AiKubernetesSdkResourceFactory(
+                    Options.Create(
+                        new AiKubernetesRuntimeHostOptions()));
+
             var podSpec = CreatePodSpec();
 
             var service = factory.CreateService(podSpec);
@@ -60,7 +69,11 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager
         [Fact]
         public void CreateServiceName_Should_Create_Deterministic_Service_Name()
         {
-            var factory = new AiKubernetesSdkResourceFactory();
+            var factory =
+                new AiKubernetesSdkResourceFactory(
+                    Options.Create(
+                        new AiKubernetesRuntimeHostOptions()));
+
             var podSpec = CreatePodSpec();
 
             var serviceName = factory.CreateServiceName(podSpec);
@@ -74,7 +87,11 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager
         [Fact]
         public void CreateMetadata_Should_Create_Runtime_Host_Metadata()
         {
-            var factory = new AiKubernetesSdkResourceFactory();
+            var factory =
+                new AiKubernetesSdkResourceFactory(
+                    Options.Create(
+                        new AiKubernetesRuntimeHostOptions()));
+
             var podSpec = CreatePodSpec();
 
             var metadata = factory.CreateMetadata(podSpec, "runtime-tenant-a-001-svc");
@@ -91,7 +108,11 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager
         [Fact]
         public void CreatePod_Should_Map_Image_Pull_Policy_To_Container()
         {
-            var factory = new AiKubernetesSdkResourceFactory();
+            var factory =
+                new AiKubernetesSdkResourceFactory(
+                    Options.Create(
+                        new AiKubernetesRuntimeHostOptions()));
+
             var podSpec = CreatePodSpec(AiKubernetesImagePullPolicy.Never);
 
             var pod = factory.CreatePod(podSpec);

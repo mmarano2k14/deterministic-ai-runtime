@@ -244,7 +244,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager
 
             return new KubernetesSdkAiKubernetesRuntimeHostClient(
                 new FakeKubernetesClientFactory(sdkClient),
-                new AiKubernetesSdkResourceFactory(),
+                new AiKubernetesSdkResourceFactory(Options.Create(options)),
                 Options.Create(options));
         }
 

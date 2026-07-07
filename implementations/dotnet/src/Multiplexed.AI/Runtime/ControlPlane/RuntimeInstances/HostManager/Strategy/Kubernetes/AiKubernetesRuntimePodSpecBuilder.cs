@@ -1,6 +1,7 @@
 ﻿using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager;
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strategy.Kubernetes
 {
@@ -63,6 +64,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
             var tenantGroupId =
                 request.ExecutionContextSnapshot?.TenantGroupId;
 
+            var containerPort =
+                this.options.ContainerPort.ToString(CultureInfo.InvariantCulture);
+
             var environmentVariables =
                 new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
                 {
@@ -71,30 +75,60 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
                     ["AiRuntimeInstanceRegistration__ProviderName"] = request.ProviderName,
                     ["AiRuntimeInstanceRegistration__TransportName"] = transportName,
                     ["AiRuntimeInstanceRegistration__Role"] = "Runtime",
+
                     ["AiRuntimeInstanceRegistration__Metadata__host.provider"] = AiRuntimeHostProviderNames.Kubernetes,
                     ["AiRuntimeInstanceRegistration__Metadata__host.creation.mode"] = AiRuntimeHostCreationMode.Kubernetes.ToString(),
                     ["AiRuntimeInstanceRegistration__Metadata__provider.name"] = request.ProviderName,
                     ["AiRuntimeInstanceRegistration__Metadata__provider"] = request.ProviderName,
                     ["AiRuntimeInstanceRegistration__Metadata__transport.name"] = transportName,
+
                     ["AiRuntimeInstanceRegistration__ProviderMetadata__host.provider"] = AiRuntimeHostProviderNames.Kubernetes,
                     ["AiRuntimeInstanceRegistration__ProviderMetadata__host.creation.mode"] = AiRuntimeHostCreationMode.Kubernetes.ToString(),
                     ["AiRuntimeInstanceRegistration__ProviderMetadata__provider.name"] = request.ProviderName,
                     ["AiRuntimeInstanceRegistration__ProviderMetadata__provider"] = request.ProviderName,
                     ["AiRuntimeInstanceRegistration__ProviderMetadata__transport.name"] = transportName,
+
                     ["AiLocalRuntimeInstancePool__Metadata__host.provider"] = AiRuntimeHostProviderNames.Kubernetes,
                     ["AiLocalRuntimeInstancePool__Metadata__host.creation.mode"] = AiRuntimeHostCreationMode.Kubernetes.ToString(),
                     ["AiLocalRuntimeInstancePool__Metadata__provider.name"] = request.ProviderName,
                     ["AiLocalRuntimeInstancePool__Metadata__provider"] = request.ProviderName,
-                    ["AiLocalRuntimeInstancePool__Metadata__transport.name"] = transportName
+                    ["AiLocalRuntimeInstancePool__Metadata__transport.name"] = transportName,
+
+                    ["ASPNETCORE_URLS"] = $"http://0.0.0.0:{containerPort}",
+                    ["DOTNET_URLS"] = $"http://0.0.0.0:{containerPort}",
+                    ["AiMcpHost__Port"] = containerPort,
+
+                    ["AiMcpHost__EnableSharedQueuePump"] = "false",
+                    ["AiMcpHost__EnableReplayTools"] = "false",
+                    ["AiMcpHost__EnableObservabilityTools"] = "false",
+
+                    ["AiLocalRuntimeInstancePool__Enabled"] = "true",
+                    ["AiLocalRuntimeInstancePool__InstanceCount"] = "1",
+                    ["AiLocalRuntimeInstancePool__WorkerCountPerInstance"] = request.WorkerCountPerInstance.ToString(CultureInfo.InvariantCulture),
+                    ["AiLocalRuntimeInstancePool__MaxConcurrentRunsPerInstance"] = request.MaxConcurrentRunsPerInstance.ToString(CultureInfo.InvariantCulture),
+                    ["AiLocalRuntimeInstancePool__LocalQueueCapacity"] = request.LocalQueueCapacity.ToString(CultureInfo.InvariantCulture),
+                    ["AiLocalRuntimeInstancePool__RuntimeInstanceIdPrefix"] = ResolveRuntimeInstanceIdPrefix(request),
+
+                    ["AiEngine__PipelineBackgroundController__MaxConcurrentRuns"] = request.MaxConcurrentRunsPerInstance.ToString(CultureInfo.InvariantCulture),
+                    ["AiEngine__PipelineBackgroundController__QueueCapacity"] = request.LocalQueueCapacity.ToString(CultureInfo.InvariantCulture),
+                    ["AiEngine__PipelineBackgroundController__Distributed__Enabled"] = "true",
+                    ["AiEngine__PipelineBackgroundController__Distributed__WorkerCount"] = request.WorkerCountPerInstance.ToString(CultureInfo.InvariantCulture),
+
+                    ["AiRuntimeInstanceRegistration__Enabled"] = "true",
+                    ["AiRuntimeInstanceRegistration__WorkerCount"] = request.WorkerCountPerInstance.ToString(CultureInfo.InvariantCulture),
+                    ["AiRuntimeInstanceRegistration__MaxConcurrentRuns"] = request.MaxConcurrentRunsPerInstance.ToString(CultureInfo.InvariantCulture),
+                    ["AiRuntimeInstanceRegistration__QueueCapacity"] = request.LocalQueueCapacity.ToString(CultureInfo.InvariantCulture),
+                    ["AiRuntimeInstanceRegistration__RuntimeVersion"] = "kubernetes-host"
                 };
+
+            AddKestrelEnvironmentVariables(
+                environmentVariables,
+                transportName,
+                this.options.ContainerPort);
 
             AddControlPlaneEnvironmentVariables(
                 environmentVariables,
                 request.ControlPlaneId);
-
-            AddTransportEnvironmentVariables(
-                environmentVariables,
-                request.TransportEndpoint);
 
             AddTenantEnvironmentVariables(
                 environmentVariables,
@@ -125,6 +159,52 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
         }
 
         /// <summary>
+        /// Adds Kestrel endpoint environment variables for the selected runtime transport.
+        /// </summary>
+        /// <param name="environmentVariables">The environment variables.</param>
+        /// <param name="transportName">The runtime command transport name.</param>
+        /// <param name="containerPort">The container port.</param>
+        private static void AddKestrelEnvironmentVariables(
+            IDictionary<string, string> environmentVariables,
+            string? transportName,
+            int containerPort)
+        {
+            if (!string.Equals(transportName, "grpc", StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            var endpoint =
+                $"http://0.0.0.0:{containerPort.ToString(CultureInfo.InvariantCulture)}";
+
+            environmentVariables["Kestrel__EndpointDefaults__Protocols"] = "Http2";
+            environmentVariables["Kestrel__Endpoints__Grpc__Url"] = endpoint;
+            environmentVariables["Kestrel__Endpoints__Grpc__Protocols"] = "Http2";
+        }
+
+        /// <summary>
+        /// Resolves the runtime instance id prefix used by the Kubernetes runtime local pool.
+        /// </summary>
+        /// <param name="request">The runtime host start request.</param>
+        /// <returns>The runtime instance id prefix.</returns>
+        private static string ResolveRuntimeInstanceIdPrefix(
+            AiRuntimeHostStartRequest request)
+        {
+            if (!string.IsNullOrWhiteSpace(request.RuntimeInstanceIdPrefix))
+            {
+                return request.RuntimeInstanceIdPrefix;
+            }
+
+            if (!string.IsNullOrWhiteSpace(request.RuntimeInstanceId) &&
+                request.RuntimeInstanceId.EndsWith("-1", StringComparison.OrdinalIgnoreCase))
+            {
+                return request.RuntimeInstanceId[..^2];
+            }
+
+            return request.RuntimeInstanceId;
+        }
+
+        /// <summary>
         /// Adds control-plane environment variables used by the runtime registration and local runtime pool.
         /// </summary>
         /// <param name="environmentVariables">The environment variables.</param>
@@ -139,38 +219,42 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
             }
 
             environmentVariables["AiMcpHost__ControlPlaneId"] = controlPlaneId;
+            environmentVariables["AiMcpHost__ControlPlaneHostId"] = controlPlaneId;
+            environmentVariables["AiControlPlaneHostIdentity__ControlPlaneHostId"] = controlPlaneId;
+            environmentVariables["AiControlPlaneHostIdentity__ControlPlaneId"] = controlPlaneId;
+
             environmentVariables["AiRuntimeInstanceRegistration__ControlPlaneId"] = controlPlaneId;
+            environmentVariables["AiRuntimeInstanceRegistration__ControlPlaneHostId"] = controlPlaneId;
+
             environmentVariables["AiRuntimeInstanceRegistration__Metadata__controlPlaneId"] = controlPlaneId;
             environmentVariables["AiRuntimeInstanceRegistration__Metadata__control-plane.id"] = controlPlaneId;
             environmentVariables["AiRuntimeInstanceRegistration__Metadata__controlplane.id"] = controlPlaneId;
             environmentVariables["AiRuntimeInstanceRegistration__Metadata__runtime.controlPlaneId"] = controlPlaneId;
+            environmentVariables["AiRuntimeInstanceRegistration__Metadata__controlPlaneHostId"] = controlPlaneId;
+            environmentVariables["AiRuntimeInstanceRegistration__Metadata__control-plane.host.id"] = controlPlaneId;
+            environmentVariables["AiRuntimeInstanceRegistration__Metadata__runtime.controlPlaneHostId"] = controlPlaneId;
+
             environmentVariables["AiRuntimeInstanceRegistration__ProviderMetadata__controlPlaneId"] = controlPlaneId;
             environmentVariables["AiRuntimeInstanceRegistration__ProviderMetadata__control-plane.id"] = controlPlaneId;
             environmentVariables["AiRuntimeInstanceRegistration__ProviderMetadata__controlplane.id"] = controlPlaneId;
             environmentVariables["AiRuntimeInstanceRegistration__ProviderMetadata__runtime.controlPlaneId"] = controlPlaneId;
+            environmentVariables["AiRuntimeInstanceRegistration__ProviderMetadata__controlPlaneHostId"] = controlPlaneId;
+            environmentVariables["AiRuntimeInstanceRegistration__ProviderMetadata__control-plane.host.id"] = controlPlaneId;
+            environmentVariables["AiRuntimeInstanceRegistration__ProviderMetadata__runtime.controlPlaneHostId"] = controlPlaneId;
+
+            environmentVariables["AiLocalRuntimeInstancePool__ControlPlaneId"] = controlPlaneId;
+            environmentVariables["AiLocalRuntimeInstancePool__ControlPlaneHostId"] = controlPlaneId;
+
             environmentVariables["AiLocalRuntimeInstancePool__Metadata__controlPlaneId"] = controlPlaneId;
             environmentVariables["AiLocalRuntimeInstancePool__Metadata__control-plane.id"] = controlPlaneId;
             environmentVariables["AiLocalRuntimeInstancePool__Metadata__controlplane.id"] = controlPlaneId;
             environmentVariables["AiLocalRuntimeInstancePool__Metadata__runtime.controlPlaneId"] = controlPlaneId;
-        }
+            environmentVariables["AiLocalRuntimeInstancePool__Metadata__controlPlaneHostId"] = controlPlaneId;
+            environmentVariables["AiLocalRuntimeInstancePool__Metadata__control-plane.host.id"] = controlPlaneId;
+            environmentVariables["AiLocalRuntimeInstancePool__Metadata__runtime.ControlPlaneHostId"] = controlPlaneId;
 
-        /// <summary>
-        /// Adds transport endpoint environment variables used by registration metadata.
-        /// </summary>
-        /// <param name="environmentVariables">The environment variables.</param>
-        /// <param name="transportEndpoint">The transport endpoint.</param>
-        private static void AddTransportEnvironmentVariables(
-            IDictionary<string, string> environmentVariables,
-            string? transportEndpoint)
-        {
-            if (string.IsNullOrWhiteSpace(transportEndpoint))
-            {
-                return;
-            }
-
-            environmentVariables["AiRuntimeInstanceRegistration__Metadata__transport.endpoint"] = transportEndpoint;
-            environmentVariables["AiRuntimeInstanceRegistration__ProviderMetadata__transport.endpoint"] = transportEndpoint;
-            environmentVariables["AiLocalRuntimeInstancePool__Metadata__transport.endpoint"] = transportEndpoint;
+            environmentVariables["AiRuntimeHostIdentity__HostId"] = controlPlaneId;
+            environmentVariables["AiRuntimeHostIdentity__RuntimeHostId"] = controlPlaneId;
         }
 
         /// <summary>

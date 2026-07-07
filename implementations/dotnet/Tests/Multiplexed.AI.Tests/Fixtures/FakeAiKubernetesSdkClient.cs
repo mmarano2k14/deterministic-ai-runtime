@@ -157,5 +157,38 @@ namespace Multiplexed.AI.Tests.Fixtures
 
             return Task.CompletedTask;
         }
+
+        /// <inheritdoc />
+        public Task<V1Service> ReadServiceAsync(
+            string serviceName,
+            string namespaceName,
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            return Task.FromResult(
+                new V1Service
+                {
+                    Metadata = new V1ObjectMeta
+                    {
+                        Name = serviceName,
+                        NamespaceProperty = namespaceName
+                    },
+                    Spec = new V1ServiceSpec
+                    {
+                        Type = "NodePort",
+                        Ports =
+                            new List<V1ServicePort>
+                            {
+                        new()
+                        {
+                            Port = 8080,
+                            TargetPort = 8080,
+                            NodePort = 30080
+                        }
+                            }
+                    }
+                });
+        }
     }
 }

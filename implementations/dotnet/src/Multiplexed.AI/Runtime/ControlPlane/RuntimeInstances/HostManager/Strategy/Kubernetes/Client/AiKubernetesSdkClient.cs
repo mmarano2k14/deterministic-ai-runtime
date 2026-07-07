@@ -81,5 +81,17 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
                 namespaceName,
                 cancellationToken: cancellationToken);
         }
+
+        /// <inheritdoc />
+        public Task<V1Service> ReadServiceAsync(
+            string serviceName,
+            string namespaceName,
+            CancellationToken cancellationToken = default)
+        {
+            return this.client.CoreV1.ReadNamespacedServiceAsync(
+                name: serviceName,
+                namespaceParameter: namespaceName,
+                cancellationToken: cancellationToken);
+        }
     }
 }

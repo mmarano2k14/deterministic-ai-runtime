@@ -93,6 +93,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             settings["AiKubernetesRuntimeHost:StartupTimeout"] = "00:00:30";
             settings["AiKubernetesRuntimeHost:ReadinessTimeout"] = "00:00:30";
             settings["AiKubernetesRuntimeHost:ReadinessPollInterval"] = "00:00:00.100";
+
+            settings["AiKubernetesRuntimeHost:PublishNodePortTransportEndpoint"] = "true";
+            settings["AiKubernetesRuntimeHost:NodePortHost"] = "192.168.49.2";
         }
 
         /// <summary>

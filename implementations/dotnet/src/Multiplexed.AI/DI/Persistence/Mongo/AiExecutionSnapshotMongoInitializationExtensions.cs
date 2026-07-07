@@ -7,7 +7,7 @@ using System;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace Multiplexed.AI.Runtime.DependencyInjection
+namespace Multiplexed.AI.DI.Persistence.Mongo
 {
     /// <summary>
     /// Provides initialization helpers for MongoDB-backed AI execution snapshot persistence.
@@ -31,13 +31,26 @@ namespace Multiplexed.AI.Runtime.DependencyInjection
             ArgumentNullException.ThrowIfNull(serviceProvider);
             ArgumentNullException.ThrowIfNull(options);
 
+            if (string.IsNullOrWhiteSpace(options.ConnectionString))
+            {
+                throw new InvalidOperationException(
+                    "AI execution snapshot Mongo connection string cannot be null or empty.");
+            }
+
+            if (string.IsNullOrWhiteSpace(options.DatabaseName))
+            {
+                throw new InvalidOperationException(
+                    "AI execution snapshot Mongo database name cannot be null or empty.");
+            }
+
             if (string.IsNullOrWhiteSpace(options.CollectionName))
             {
                 throw new InvalidOperationException(
                     "AI execution snapshot Mongo collection name cannot be null or empty.");
             }
 
-            var database = serviceProvider.GetRequiredService<IMongoDatabase>();
+            var client = new MongoClient(options.ConnectionString);
+            var database = client.GetDatabase(options.DatabaseName);
 
             var collection = database.GetCollection<AiExecutionSnapshotDocument<TContextSnapshot>>(
                 options.CollectionName);

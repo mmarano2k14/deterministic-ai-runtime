@@ -171,12 +171,33 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Grpc
 
             if (!endpointResolution.Success)
             {
+                logger.LogWarning(
+                    "GRPC DISPATCH ENDPOINT RESOLUTION FAILED RuntimeInstanceId={RuntimeInstanceId} SharedRunId={SharedRunId} FailureReason={FailureReason} Message={Message} DescriptorMetadata={DescriptorMetadata}",
+                    runtimeInstanceId,
+                    request.SharedRun.SharedRunId,
+                    endpointResolution.FailureReason,
+                    endpointResolution.Message,
+                    FormatMetadata(descriptor.Metadata));
+
+                Console.WriteLine(
+                    $"[GRPC PROVIDER ENDPOINT RESOLUTION FAILED] RuntimeInstanceId='{runtimeInstanceId}', SharedRunId='{request.SharedRun.SharedRunId}', FailureReason='{endpointResolution.FailureReason}', Message='{endpointResolution.Message}', DescriptorMetadata='{FormatMetadata(descriptor.Metadata)}'.");
+
                 return CreateFailedDispatchResult(
                     request,
                     runtimeInstanceId,
                     endpointResolution.FailureReason ?? AiGrpcRuntimeDispatchFailureReasons.EndpointMissing,
                     endpointResolution.Message ?? "gRPC runtime instance endpoint is missing.");
             }
+
+            logger.LogInformation(
+                "GRPC DISPATCH ENDPOINT RESOLVED RuntimeInstanceId={RuntimeInstanceId} SharedRunId={SharedRunId} Endpoint={Endpoint} DescriptorMetadata={DescriptorMetadata}",
+                runtimeInstanceId,
+                request.SharedRun.SharedRunId,
+                endpointResolution.Endpoint,
+                FormatMetadata(descriptor.Metadata));
+
+            Console.WriteLine(
+                $"[GRPC PROVIDER ENDPOINT RESOLVED] RuntimeInstanceId='{runtimeInstanceId}', SharedRunId='{request.SharedRun.SharedRunId}', Endpoint='{endpointResolution.Endpoint}', DescriptorMetadata='{FormatMetadata(descriptor.Metadata)}'.");
 
             var commandResult =
                 await SendCommandAsync(
@@ -345,6 +366,17 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Grpc
 
             if (!endpointResolution.Success)
             {
+                logger.LogWarning(
+                    "GRPC QUEUE COMMAND ENDPOINT RESOLUTION FAILED RuntimeInstanceId={RuntimeInstanceId} Operation={Operation} FailureReason={FailureReason} Message={Message} DescriptorMetadata={DescriptorMetadata}",
+                    runtimeInstanceId,
+                    queueOperation,
+                    endpointResolution.FailureReason,
+                    endpointResolution.Message,
+                    FormatMetadata(descriptor.Metadata));
+
+                Console.WriteLine(
+                    $"[GRPC QUEUE COMMAND ENDPOINT RESOLUTION FAILED] RuntimeInstanceId='{runtimeInstanceId}', Operation='{queueOperation}', FailureReason='{endpointResolution.FailureReason}', Message='{endpointResolution.Message}', DescriptorMetadata='{FormatMetadata(descriptor.Metadata)}'.");
+
                 return CreateFailedQueueResult(
                     request,
                     queueOperation,
@@ -352,6 +384,16 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Grpc
                     endpointResolution.FailureReason ?? AiGrpcRuntimeDispatchFailureReasons.EndpointMissing,
                     endpointResolution.Message ?? "gRPC runtime instance endpoint is missing.");
             }
+
+            logger.LogInformation(
+                "GRPC QUEUE COMMAND ENDPOINT RESOLVED RuntimeInstanceId={RuntimeInstanceId} Operation={Operation} Endpoint={Endpoint} DescriptorMetadata={DescriptorMetadata}",
+                runtimeInstanceId,
+                queueOperation,
+                endpointResolution.Endpoint,
+                FormatMetadata(descriptor.Metadata));
+
+            Console.WriteLine(
+                $"[GRPC QUEUE COMMAND ENDPOINT RESOLVED] RuntimeInstanceId='{runtimeInstanceId}', Operation='{queueOperation}', Endpoint='{endpointResolution.Endpoint}', DescriptorMetadata='{FormatMetadata(descriptor.Metadata)}'.");
 
             var commandResult =
                 await SendCommandAsync(
@@ -517,6 +559,16 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Grpc
 
             try
             {
+                logger.LogInformation(
+                    "GRPC COMMAND SEND BEGIN RuntimeInstanceId={RuntimeInstanceId} Operation={Operation} Endpoint={Endpoint} TimeoutMs={TimeoutMs}",
+                    request.RuntimeInstanceId,
+                    request.Operation,
+                    endpoint,
+                    options.DispatchTimeout.TotalMilliseconds);
+
+                Console.WriteLine(
+                    $"[GRPC COMMAND SEND BEGIN] RuntimeInstanceId='{request.RuntimeInstanceId}', Operation='{request.Operation}', Endpoint='{endpoint}', TimeoutMs='{options.DispatchTimeout.TotalMilliseconds:0}'.");
+
                 using var channel =
                     GrpcChannel.ForAddress(
                         endpoint);
@@ -568,6 +620,18 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Grpc
             }
             catch (RpcException exception) when (exception.StatusCode == StatusCode.DeadlineExceeded)
             {
+                logger.LogWarning(
+                    exception,
+                    "GRPC COMMAND DEADLINE EXCEEDED RuntimeInstanceId={RuntimeInstanceId} Operation={Operation} Endpoint={Endpoint} StatusCode={StatusCode} Detail={Detail}",
+                    request.RuntimeInstanceId,
+                    request.Operation,
+                    endpoint,
+                    exception.StatusCode,
+                    exception.Status.Detail);
+
+                Console.WriteLine(
+                    $"[GRPC COMMAND DEADLINE EXCEEDED] RuntimeInstanceId='{request.RuntimeInstanceId}', Operation='{request.Operation}', Endpoint='{endpoint}', StatusCode='{exception.StatusCode}', Detail='{exception.Status.Detail}', Message='{exception.Message}'.");
+
                 return CreateFailedCommandResult(
                     request,
                     startedAtUtc,
@@ -577,6 +641,16 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Grpc
             }
             catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
             {
+                logger.LogWarning(
+                    "GRPC COMMAND TIMEOUT RuntimeInstanceId={RuntimeInstanceId} Operation={Operation} Endpoint={Endpoint} TimeoutMs={TimeoutMs}",
+                    request.RuntimeInstanceId,
+                    request.Operation,
+                    endpoint,
+                    options.DispatchTimeout.TotalMilliseconds);
+
+                Console.WriteLine(
+                    $"[GRPC COMMAND TIMEOUT] RuntimeInstanceId='{request.RuntimeInstanceId}', Operation='{request.Operation}', Endpoint='{endpoint}', TimeoutMs='{options.DispatchTimeout.TotalMilliseconds:0}'.");
+
                 return CreateFailedCommandResult(
                     request,
                     startedAtUtc,
@@ -589,6 +663,18 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Grpc
             }
             catch (RpcException exception)
             {
+                logger.LogWarning(
+                    exception,
+                    "GRPC COMMAND RPC FAILED RuntimeInstanceId={RuntimeInstanceId} Operation={Operation} Endpoint={Endpoint} StatusCode={StatusCode} Detail={Detail}",
+                    request.RuntimeInstanceId,
+                    request.Operation,
+                    endpoint,
+                    exception.StatusCode,
+                    exception.Status.Detail);
+
+                Console.WriteLine(
+                    $"[GRPC COMMAND RPC FAILED] RuntimeInstanceId='{request.RuntimeInstanceId}', Operation='{request.Operation}', Endpoint='{endpoint}', StatusCode='{exception.StatusCode}', Detail='{exception.Status.Detail}', Message='{exception.Message}'.");
+
                 return CreateFailedCommandResult(
                     request,
                     startedAtUtc,
@@ -598,6 +684,17 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Grpc
             }
             catch (JsonException exception)
             {
+                logger.LogWarning(
+                    exception,
+                    "GRPC COMMAND INVALID JSON RESPONSE RuntimeInstanceId={RuntimeInstanceId} Operation={Operation} Endpoint={Endpoint} Message={Message}",
+                    request.RuntimeInstanceId,
+                    request.Operation,
+                    endpoint,
+                    exception.Message);
+
+                Console.WriteLine(
+                    $"[GRPC COMMAND INVALID JSON RESPONSE] RuntimeInstanceId='{request.RuntimeInstanceId}', Operation='{request.Operation}', Endpoint='{endpoint}', ExceptionType='{exception.GetType().FullName}', Message='{exception.Message}'.");
+
                 return CreateFailedCommandResult(
                     request,
                     startedAtUtc,
@@ -607,6 +704,18 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Grpc
             }
             catch (Exception exception)
             {
+                logger.LogWarning(
+                    exception,
+                    "GRPC COMMAND FAILED RuntimeInstanceId={RuntimeInstanceId} Operation={Operation} Endpoint={Endpoint} ExceptionType={ExceptionType} Message={Message}",
+                    request.RuntimeInstanceId,
+                    request.Operation,
+                    endpoint,
+                    exception.GetType().FullName,
+                    exception.Message);
+
+                Console.WriteLine(
+                    $"[GRPC COMMAND FAILED] RuntimeInstanceId='{request.RuntimeInstanceId}', Operation='{request.Operation}', Endpoint='{endpoint}', ExceptionType='{exception.GetType().FullName}', Message='{exception.Message}'.");
+
                 return CreateFailedCommandResult(
                     request,
                     startedAtUtc,
@@ -853,6 +962,24 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Grpc
         }
 
         /// <summary>
+        /// Formats metadata for diagnostics.
+        /// </summary>
+        private static string FormatMetadata(
+            IReadOnlyDictionary<string, string>? metadata)
+        {
+            if (metadata is null || metadata.Count == 0)
+            {
+                return string.Empty;
+            }
+
+            return string.Join(
+                ";",
+                metadata
+                    .OrderBy(item => item.Key, StringComparer.OrdinalIgnoreCase)
+                    .Select(item => $"{item.Key}={item.Value}"));
+        }
+
+        /// <summary>
         /// Resolves the runtime instance identifier.
         /// </summary>
         private static string ResolveRuntimeInstanceId(
@@ -946,6 +1073,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Grpc
                 metadata["exception.type"] =
                     exception.GetType().FullName ??
                     exception.GetType().Name;
+
+                metadata["exception.message"] =
+                    exception.Message;
             }
 
             return new AiRuntimeInstanceCommandResult

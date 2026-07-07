@@ -322,6 +322,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue
                     request.RunRequest!,
                     request.Metadata);
 
+            Console.WriteLine($"[RUNTIME QUEUE ENQUEUE] BEFORE CONTROLLER ENQUEUE Pipeline='{request.RunRequest?.PipelineName}', RuntimeInstanceId='{request.RuntimeInstanceId}'.");
+
+
             var handle = string.IsNullOrWhiteSpace(resumeExecutionId)
                 ? await _controller
                     .EnqueueAsync(
@@ -335,13 +338,25 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue
                         cancellationToken)
                     .ConfigureAwait(false);
 
+            Console.WriteLine($"[RUNTIME QUEUE ENQUEUE] AFTER CONTROLLER ENQUEUE RunId='{handle.RunId}', ExecutionId='{handle.ExecutionId}'.");
+
+            Console.WriteLine($"[RUNTIME QUEUE ENQUEUE] BEFORE GET RUN STATE RunId='{handle.RunId}'.");
+
             var runState = await _controller
                 .GetRunStateAsync(handle.RunId, cancellationToken)
                 .ConfigureAwait(false);
 
+            Console.WriteLine($"[RUNTIME QUEUE ENQUEUE] AFTER GET RUN STATE RunId='{handle.RunId}', StateFound='{runState is not null}', StateExecutionId='{runState?.ExecutionId}', Status='{runState?.Status}'.");
+
+            Console.WriteLine("[RUNTIME QUEUE ENQUEUE] BEFORE GET QUEUE STATE.");
+
             var queueState = await _controller
                 .GetQueueStateAsync(cancellationToken)
                 .ConfigureAwait(false);
+
+            Console.WriteLine($"[RUNTIME QUEUE ENQUEUE] AFTER GET QUEUE STATE RuntimeInstanceId='{queueState?.RuntimeInstanceId}', Queued='{queueState?.QueuedRunCount}', Running='{queueState?.RunningRunCount}'.");
+
+            Console.WriteLine($"[RUNTIME QUEUE ENQUEUE] BEFORE REGISTER INDEX RunId='{handle.RunId}'.");
 
             var executionContextSnapshot =
                 enrichedRunRequest.ExecutionContextSnapshot;
@@ -374,6 +389,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue
                     },
                     cancellationToken)
                 .ConfigureAwait(false);
+
+            Console.WriteLine($"[RUNTIME QUEUE ENQUEUE] AFTER REGISTER INDEX RunId='{handle.RunId}'.");
 
             return new RuntimeQueueOperationResult
             {

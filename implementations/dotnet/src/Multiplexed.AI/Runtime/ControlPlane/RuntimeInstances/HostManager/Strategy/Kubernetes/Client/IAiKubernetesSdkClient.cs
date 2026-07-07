@@ -38,6 +38,18 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
             CancellationToken cancellationToken = default);
 
         /// <summary>
+        /// Reads a Kubernetes service.
+        /// </summary>
+        /// <param name="serviceName">The service name.</param>
+        /// <param name="namespaceName">The Kubernetes namespace.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <returns>The Kubernetes service.</returns>
+        Task<V1Service> ReadServiceAsync(
+            string serviceName,
+            string namespaceName,
+            CancellationToken cancellationToken = default);
+
+        /// <summary>
         /// Reads the status of a Kubernetes pod.
         /// </summary>
         /// <param name="podName">The pod name.</param>

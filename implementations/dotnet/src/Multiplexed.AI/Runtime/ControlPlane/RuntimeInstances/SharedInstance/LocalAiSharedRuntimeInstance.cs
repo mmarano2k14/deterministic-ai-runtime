@@ -99,6 +99,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.SharedInstance
                     request.RunRequest,
                     request.SharedRun.ExecutionContextSnapshot);
 
+                Console.WriteLine(
+                    $"[LOCAL SHARED DISPATCH] BEFORE ENQUEUE RuntimeInstanceId='{RuntimeInstanceId}', SharedRunId='{request.SharedRun.SharedRunId}', ClaimToken='{request.ClaimToken}'.");
+
                 var result = await _runtimeQueue
                     .EnqueueRunAsync(
                         new AiRuntimeQueueControlPlaneRequest
@@ -119,6 +122,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.SharedInstance
                         },
                         cancellationToken)
                     .ConfigureAwait(false);
+
+                Console.WriteLine(
+                     $"[LOCAL SHARED DISPATCH] AFTER ENQUEUE RuntimeInstanceId='{RuntimeInstanceId}', SharedRunId='{request.SharedRun.SharedRunId}', Success='{result.Success}', RunId='{result.RunId}', HandleRunId='{result.RunHandle?.RunId}', StateRunId='{result.RunState?.RunId}', ExecutionId='{result.ExecutionId}', StateExecutionId='{result.RunState?.ExecutionId}', Failure='{result.FailureReason}', Message='{result.Message}'.");
 
                 var completedAtUtc = DateTimeOffset.UtcNow;
                 var durationMs = (long)(completedAtUtc - startedAtUtc).TotalMilliseconds;

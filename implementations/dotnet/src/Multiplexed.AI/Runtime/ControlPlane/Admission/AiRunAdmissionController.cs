@@ -169,6 +169,14 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission
                     .ListAsync(includeStopped: false, cancellationToken)
                     .ConfigureAwait(false);
 
+                _logger.LogInformation(                "Admission registry list resolved. RunId={RunId}, RegistryType={RegistryType}, RegistryHash={RegistryHash}, Count={Count}, RuntimeInstanceIds={RuntimeInstanceIds}",
+                    request.RunId,
+                    _registry.GetType().FullName,
+                    _registry.GetHashCode(),
+                    instances.Count,
+                    string.Join(",", instances.Select(item => item.RuntimeInstanceId)));
+    
+
                 _logger.LogInformation(
                     "Admission started. RunId={RunId}, TenantId={TenantId}, TenantGroupId={TenantGroupId}, PipelineKey={PipelineKey}, PreferredRuntimeInstanceId={PreferredRuntimeInstanceId}, VisibleInstanceCount={VisibleInstanceCount}, EnableScaleOutRequest={EnableScaleOutRequest}, MaxInstanceCount={MaxInstanceCount}, TenantIsolationMode={TenantIsolationMode}, TenantMaxRuntimeInstances={TenantMaxRuntimeInstances}, EffectiveMaxInstanceCount={EffectiveMaxInstanceCount}, EnableGlobalQueueFallback={EnableGlobalQueueFallback}, RejectWhenNoCapacity={RejectWhenNoCapacity}",
                     request.RunId,

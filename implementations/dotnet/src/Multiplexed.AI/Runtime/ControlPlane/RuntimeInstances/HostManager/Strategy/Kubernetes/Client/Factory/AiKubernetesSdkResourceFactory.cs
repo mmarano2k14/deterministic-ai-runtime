@@ -1,5 +1,7 @@
 ﻿using k8s.Models;
+using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager.Kubernetes;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers.Transport;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -18,6 +20,17 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
     public sealed class AiKubernetesSdkResourceFactory
     {
         private const int KubernetesDnsLabelMaxLength = 63;
+        private readonly AiKubernetesRuntimeHostOptions options;
+
+        /// <summary>
+        /// Initializes a new instance of the <see cref="AiKubernetesSdkResourceFactory"/> class.
+        /// </summary>
+        /// <param name="options">The Kubernetes runtime host options.</param>
+        public AiKubernetesSdkResourceFactory(
+            IOptions<AiKubernetesRuntimeHostOptions> options)
+        {
+            this.options = options?.Value ?? throw new ArgumentNullException(nameof(options));
+        }
 
         /// <summary>
         /// Creates a Kubernetes pod for a runtime instance.
@@ -98,7 +111,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
                 },
                 Spec = new V1ServiceSpec
                 {
-                    Type = "ClusterIP",
+                    Type = "NodePort",
                     Selector = new Dictionary<string, string>
                     {
                         ["multiplexed.ai/runtime-instance-id"] = podSpec.Labels["multiplexed.ai/runtime-instance-id"]
@@ -143,19 +156,102 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
         {
             ArgumentNullException.ThrowIfNull(podSpec);
 
-            var metadata = new Dictionary<string, string>
-            {
-                [AiKubernetesRuntimeHostMetadataKeys.Namespace] = podSpec.Namespace,
-                [AiKubernetesRuntimeHostMetadataKeys.PodName] = podSpec.PodName,
-                [AiKubernetesRuntimeHostMetadataKeys.ContainerName] = podSpec.ContainerName
-            };
+            var metadata =
+                new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    [AiKubernetesRuntimeHostMetadataKeys.Namespace] = podSpec.Namespace,
+                    [AiKubernetesRuntimeHostMetadataKeys.PodName] = podSpec.PodName,
+                    [AiKubernetesRuntimeHostMetadataKeys.ContainerName] = podSpec.ContainerName,
+                    ["kubernetes.namespace"] = podSpec.Namespace,
+                    ["kubernetes.pod.name"] = podSpec.PodName,
+                    ["kubernetes.container.name"] = podSpec.ContainerName,
+                    ["kubernetes.container.port"] = podSpec.ContainerPort.ToString()
+                };
 
             if (!string.IsNullOrWhiteSpace(serviceName))
             {
+                var serviceDnsName =
+                    $"{serviceName}.{podSpec.Namespace}.svc.cluster.local";
+
+                var serviceEndpoint =
+                    $"http://{serviceDnsName}:{podSpec.ContainerPort}";
+
                 metadata[AiKubernetesRuntimeHostMetadataKeys.ServiceName] = serviceName;
+                metadata["kubernetes.service.name"] = serviceName;
+                metadata["kubernetes.service.dns"] = serviceDnsName;
+                metadata["kubernetes.service.endpoint"] = serviceEndpoint;
+                metadata["kubernetes.service.url"] = serviceEndpoint;
+                metadata["transport.endpoint"] = serviceEndpoint;
+                metadata["transportEndpoint"] = serviceEndpoint;
+                metadata[AiRuntimeInstanceCommandTransportMetadataKeys.TransportEndpoint] = serviceEndpoint;
             }
 
             return metadata;
+        }
+
+        /// <summary>
+        /// Creates Kubernetes runtime host metadata returned by lifecycle operations with service details.
+        /// </summary>
+        /// <param name="podSpec">The runtime pod specification.</param>
+        /// <param name="serviceName">The optional Kubernetes service name.</param>
+        /// <param name="service">The optional Kubernetes service model.</param>
+        /// <returns>The lifecycle metadata.</returns>
+        public IReadOnlyDictionary<string, string> CreateMetadata(
+            AiKubernetesRuntimePodSpec podSpec,
+            string? serviceName,
+            V1Service? service)
+        {
+            ArgumentNullException.ThrowIfNull(podSpec);
+
+            var metadata =
+                new Dictionary<string, string>(
+                    this.CreateMetadata(
+                        podSpec,
+                        serviceName),
+                    StringComparer.OrdinalIgnoreCase);
+
+            var nodePort =
+                service?
+                    .Spec?
+                    .Ports?
+                    .FirstOrDefault()?
+                    .NodePort;
+
+            if (this.options.PublishNodePortTransportEndpoint &&
+                !string.IsNullOrWhiteSpace(serviceName) &&
+                nodePort.HasValue &&
+                nodePort.Value > 0)
+            {
+                var nodePortHost =
+                    this.ResolveNodePortHost();
+
+                var nodePortEndpoint =
+                    $"http://{nodePortHost}:{nodePort.Value}";
+
+                metadata["kubernetes.service.type"] = service?.Spec?.Type ?? "NodePort";
+                metadata["kubernetes.nodePort"] = nodePort.Value.ToString();
+                metadata["kubernetes.nodePort.host"] = nodePortHost;
+                metadata["kubernetes.nodePort.endpoint"] = nodePortEndpoint;
+                metadata["transport.endpoint"] = nodePortEndpoint;
+                metadata["transportEndpoint"] = nodePortEndpoint;
+                metadata[AiRuntimeInstanceCommandTransportMetadataKeys.TransportEndpoint] = nodePortEndpoint;
+            }
+
+            return metadata;
+        }
+
+        /// <summary>
+        /// Resolves the Kubernetes NodePort host reachable by the control-plane process.
+        /// </summary>
+        /// <returns>The configured Kubernetes NodePort host.</returns>
+        private string ResolveNodePortHost()
+        {
+            if (!string.IsNullOrWhiteSpace(this.options.NodePortHost))
+            {
+                return this.options.NodePortHost;
+            }
+
+            return "127.0.0.1";
         }
 
         /// <summary>

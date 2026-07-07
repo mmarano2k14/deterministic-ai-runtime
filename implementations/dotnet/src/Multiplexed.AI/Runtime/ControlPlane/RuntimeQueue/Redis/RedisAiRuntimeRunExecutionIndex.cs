@@ -124,71 +124,74 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue.Redis
             ArgumentNullException.ThrowIfNull(entry);
             ArgumentException.ThrowIfNullOrWhiteSpace(entry.RunId);
 
-            cancellationToken.ThrowIfCancellationRequested();
+            Console.WriteLine($"[REDIS RUN INDEX] REGISTER BEGIN RunId='{entry.RunId}', RuntimeInstanceId='{entry.RuntimeInstanceId}', TenantId='{entry.ExecutionContextSnapshot?.TenantId}', TokenCancelled='{cancellationToken.IsCancellationRequested}'.");
 
-            var controlPlaneId =
-                await ResolveControlPlaneIdAsync(cancellationToken)
+            try
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                Console.WriteLine($"[REDIS RUN INDEX] BEFORE RESOLVE CONTROL PLANE RunId='{entry.RunId}'.");
+
+                var controlPlaneId =
+                    await ResolveControlPlaneIdAsync(cancellationToken)
+                        .ConfigureAwait(false);
+
+                Console.WriteLine($"[REDIS RUN INDEX] AFTER RESOLVE CONTROL PLANE RunId='{entry.RunId}', ControlPlaneId='{controlPlaneId}'.");
+
+                var now = DateTimeOffset.UtcNow;
+                var createdAtUtc = entry.CreatedAtUtc == default ? now : entry.CreatedAtUtc;
+                var executionContextSnapshot = entry.ExecutionContextSnapshot ?? TryResolveSnapshot();
+
+                var effectiveEntry = new AiRuntimeRunExecutionIndexEntry
+                {
+                    RunId = entry.RunId,
+                    ExecutionId = entry.ExecutionId,
+                    RuntimeInstanceId = entry.RuntimeInstanceId,
+                    Status = string.IsNullOrWhiteSpace(entry.Status) ? StatusQueued : entry.Status,
+                    FailureReason = entry.FailureReason,
+                    ExecutionContextSnapshot = executionContextSnapshot,
+                    CreatedAtUtc = createdAtUtc,
+                    StartedAtUtc = entry.StartedAtUtc,
+                    CompletedAtUtc = entry.CompletedAtUtc,
+                    Metadata = entry.Metadata
+                };
+
+                var score = BuildIndexScore(createdAtUtc);
+                var expireSeconds = GetExpireSeconds();
+                var keys = BuildRegisterKeys(controlPlaneId, effectiveEntry.RunId, effectiveEntry.ExecutionContextSnapshot?.TenantId);
+                var values = BuildRegisterValues(effectiveEntry, score, expireSeconds);
+
+                Console.WriteLine($"[REDIS RUN INDEX] BEFORE REGISTER SCRIPT RunId='{effectiveEntry.RunId}', ControlPlaneId='{controlPlaneId}', KeyCount='{keys.Length}', ValueCount='{values.Length}', ExpireSeconds='{expireSeconds}'.");
+
+                var result = await _scripts
+                    .ExecuteRegisterQueuedAsync(
+                        _database,
+                        keys,
+                        values)
                     .ConfigureAwait(false);
 
-            var now = DateTimeOffset.UtcNow;
-            var createdAtUtc = entry.CreatedAtUtc == default
-                ? now
-                : entry.CreatedAtUtc;
+                Console.WriteLine($"[REDIS RUN INDEX] AFTER REGISTER SCRIPT RunId='{effectiveEntry.RunId}', Result='{result}'.");
 
-            var executionContextSnapshot =
-                entry.ExecutionContextSnapshot ??
-                TryResolveSnapshot();
+                var status = result.ToString();
 
-            var effectiveEntry = new AiRuntimeRunExecutionIndexEntry
-            {
-                RunId = entry.RunId,
-                ExecutionId = entry.ExecutionId,
-                RuntimeInstanceId = entry.RuntimeInstanceId,
-                Status = string.IsNullOrWhiteSpace(entry.Status) ? StatusQueued : entry.Status,
-                FailureReason = entry.FailureReason,
-                ExecutionContextSnapshot = executionContextSnapshot,
-                CreatedAtUtc = createdAtUtc,
-                StartedAtUtc = entry.StartedAtUtc,
-                CompletedAtUtc = entry.CompletedAtUtc,
-                Metadata = entry.Metadata
-            };
+                if (string.Equals(status, "registered", StringComparison.Ordinal))
+                {
+                    Console.WriteLine($"[REDIS RUN INDEX] REGISTER SUCCESS RunId='{effectiveEntry.RunId}'.");
+                    return;
+                }
 
-            var score =
-                BuildIndexScore(createdAtUtc);
+                if (string.Equals(status, "invalid-field-pairs", StringComparison.Ordinal))
+                {
+                    throw new InvalidOperationException($"Invalid Redis register arguments for runtime run index entry '{effectiveEntry.RunId}': field/value pairs are not balanced.");
+                }
 
-            var expireSeconds =
-                GetExpireSeconds();
-
-            var keys = BuildRegisterKeys(
-                controlPlaneId,
-                effectiveEntry.RunId,
-                effectiveEntry.ExecutionContextSnapshot?.TenantId);
-
-            var result = await _scripts
-                .ExecuteRegisterQueuedAsync(
-                    _database,
-                    keys,
-                    BuildRegisterValues(
-                        effectiveEntry,
-                        score,
-                        expireSeconds))
-                .ConfigureAwait(false);
-
-            var status = result.ToString();
-
-            if (string.Equals(status, "registered", StringComparison.Ordinal))
-            {
-                return;
+                throw new InvalidOperationException($"Unexpected Redis register result for runtime run index entry '{effectiveEntry.RunId}': '{status}'.");
             }
-
-            if (string.Equals(status, "invalid-field-pairs", StringComparison.Ordinal))
+            catch (Exception exception)
             {
-                throw new InvalidOperationException(
-                    $"Invalid Redis register arguments for runtime run index entry '{effectiveEntry.RunId}': field/value pairs are not balanced.");
+                Console.WriteLine($"[REDIS RUN INDEX] REGISTER FAILED RunId='{entry.RunId}', ExceptionType='{exception.GetType().FullName}', Message='{exception.Message}', TokenCancelled='{cancellationToken.IsCancellationRequested}'.");
+                throw;
             }
-
-            throw new InvalidOperationException(
-                $"Unexpected Redis register result for runtime run index entry '{effectiveEntry.RunId}': '{status}'.");
         }
 
         /// <inheritdoc />

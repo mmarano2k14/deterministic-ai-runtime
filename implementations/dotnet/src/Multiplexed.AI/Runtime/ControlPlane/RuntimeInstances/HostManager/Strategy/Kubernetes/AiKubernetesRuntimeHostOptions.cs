@@ -127,5 +127,35 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
         /// </summary>
         public IDictionary<string, string> EnvironmentVariables { get; init; } =
             new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>
+        /// Gets or sets the external host used to reach Kubernetes NodePort services from the control-plane process.
+        /// </summary>
+        public string? NodePortHost { get; set; }
+
+        /// <summary>
+        /// Gets or sets a value indicating whether Kubernetes NodePort endpoints should be published as runtime transport endpoints.
+        /// </summary>
+        public bool PublishNodePortTransportEndpoint { get; set; } = true;
+
+        /// <summary>
+        /// Gets or sets a value indicating whether the Kubernetes SDK host manager should publish a local kubectl port-forward endpoint instead of the Kubernetes NodePort endpoint.
+        /// </summary>
+        public bool UsePortForwardTransportEndpoint { get; set; } = false;
+
+        /// <summary>
+        /// Gets or sets the local port used for kubectl port-forward. Use 0 to allocate a free local port.
+        /// </summary>
+        public int PortForwardLocalPort { get; set; }
+
+        /// <summary>
+        /// Gets or sets the kubectl executable path.
+        /// </summary>
+        public string KubectlPath { get; set; } = "kubectl";
+
+        /// <summary>
+        /// Gets or sets the timeout used while waiting for kubectl port-forward to become reachable.
+        /// </summary>
+        public TimeSpan PortForwardStartupTimeout { get; set; } = TimeSpan.FromSeconds(10);
     }
 }

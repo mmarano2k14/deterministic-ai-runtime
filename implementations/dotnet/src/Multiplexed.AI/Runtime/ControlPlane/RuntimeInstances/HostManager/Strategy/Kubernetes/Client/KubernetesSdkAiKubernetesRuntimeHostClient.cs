@@ -50,34 +50,53 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
 
             try
             {
-                var client = this.clientFactory.CreateClient();
+                var client =
+                    this.clientFactory.CreateClient();
 
-                var pod = this.resourceFactory.CreatePod(podSpec);
+                var pod =
+                    this.resourceFactory.CreatePod(podSpec);
 
-                await client.CreatePodAsync(
-                    pod,
-                    podSpec.Namespace,
-                    cancellationToken);
+                await client
+                    .CreatePodAsync(
+                        pod,
+                        podSpec.Namespace,
+                        cancellationToken)
+                    .ConfigureAwait(false);
 
                 string? serviceName = null;
+                V1Service? createdService = null;
 
                 if (this.options.UseServicePerRuntime)
                 {
-                    var service = this.resourceFactory.CreateService(podSpec);
+                    var service =
+                        this.resourceFactory.CreateService(podSpec);
 
-                    await client.CreateServiceAsync(
-                        service,
-                        podSpec.Namespace,
-                        cancellationToken);
+                    await client
+                        .CreateServiceAsync(
+                            service,
+                            podSpec.Namespace,
+                            cancellationToken)
+                        .ConfigureAwait(false);
 
                     serviceName = service.Metadata.Name;
+
+                    createdService =
+                        await client
+                            .ReadServiceAsync(
+                                serviceName,
+                                podSpec.Namespace,
+                                cancellationToken)
+                            .ConfigureAwait(false);
                 }
 
                 return AiKubernetesRuntimeHostCreateResult.Created(
                     podSpec.Namespace,
                     podSpec.PodName,
                     serviceName,
-                    this.resourceFactory.CreateMetadata(podSpec, serviceName));
+                    this.resourceFactory.CreateMetadata(
+                        podSpec,
+                        serviceName,
+                        createdService));
             }
             catch (Exception exception)
             {
@@ -86,7 +105,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
                     podSpec.PodName,
                     exception.Message,
                     retryable: true,
-                    metadata: this.resourceFactory.CreateMetadata(podSpec, serviceName: null));
+                    metadata: this.resourceFactory.CreateMetadata(
+                        podSpec,
+                        serviceName: null));
             }
         }
 
@@ -97,9 +118,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
         {
             ArgumentNullException.ThrowIfNull(podSpec);
 
-            var client = this.clientFactory.CreateClient();
+            var client =
+                this.clientFactory.CreateClient();
 
-            var deadline = DateTimeOffset.UtcNow.Add(this.options.StartupTimeout);
+            var deadline =
+                DateTimeOffset.UtcNow.Add(this.options.StartupTimeout);
 
             while (DateTimeOffset.UtcNow < deadline)
             {
@@ -108,10 +131,12 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
                 try
                 {
                     var pod =
-                        await client.ReadPodStatusAsync(
-                            podSpec.PodName,
-                            podSpec.Namespace,
-                            cancellationToken);
+                        await client
+                            .ReadPodStatusAsync(
+                                podSpec.PodName,
+                                podSpec.Namespace,
+                                cancellationToken)
+                            .ConfigureAwait(false);
 
                     if (IsPodReady(pod))
                     {
@@ -120,11 +145,27 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
                                 ? this.resourceFactory.CreateServiceName(podSpec)
                                 : null;
 
+                        V1Service? service = null;
+
+                        if (!string.IsNullOrWhiteSpace(serviceName))
+                        {
+                            service =
+                                await client
+                                    .ReadServiceAsync(
+                                        serviceName,
+                                        podSpec.Namespace,
+                                        cancellationToken)
+                                    .ConfigureAwait(false);
+                        }
+
                         return AiKubernetesRuntimeHostReadinessResult.Ready(
                             podSpec.Namespace,
                             podSpec.PodName,
                             serviceName,
-                            this.resourceFactory.CreateMetadata(podSpec, serviceName));
+                            this.resourceFactory.CreateMetadata(
+                                podSpec,
+                                serviceName,
+                                service));
                     }
                 }
                 catch (Exception exception)
@@ -135,10 +176,16 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
                         exception.Message,
                         timedOut: false,
                         retryable: true,
-                        metadata: this.resourceFactory.CreateMetadata(podSpec, serviceName: null));
+                        metadata: this.resourceFactory.CreateMetadata(
+                            podSpec,
+                            serviceName: null));
                 }
 
-                await Task.Delay(this.options.ReadinessPollInterval, cancellationToken);
+                await Task
+                    .Delay(
+                        this.options.ReadinessPollInterval,
+                        cancellationToken)
+                    .ConfigureAwait(false);
             }
 
             var timedOutServiceName =
@@ -153,7 +200,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
                 timedOut: true,
                 retryable: true,
                 serviceName: timedOutServiceName,
-                metadata: this.resourceFactory.CreateMetadata(podSpec, timedOutServiceName));
+                metadata: this.resourceFactory.CreateMetadata(
+                    podSpec,
+                    timedOutServiceName));
         }
 
         /// <inheritdoc />
@@ -165,20 +214,24 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
 
             try
             {
-                var client = this.clientFactory.CreateClient();
+                var client =
+                    this.clientFactory.CreateClient();
 
                 string? serviceName = null;
 
                 if (this.options.UseServicePerRuntime)
                 {
-                    serviceName = this.resourceFactory.CreateServiceName(podSpec);
+                    serviceName =
+                        this.resourceFactory.CreateServiceName(podSpec);
 
                     try
                     {
-                        await client.DeleteServiceAsync(
-                            serviceName,
-                            podSpec.Namespace,
-                            cancellationToken);
+                        await client
+                            .DeleteServiceAsync(
+                                serviceName,
+                                podSpec.Namespace,
+                                cancellationToken)
+                            .ConfigureAwait(false);
                     }
                     catch (Exception exception) when (IsNotFound(exception))
                     {
@@ -187,10 +240,12 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
 
                 try
                 {
-                    await client.DeletePodAsync(
-                        podSpec.PodName,
-                        podSpec.Namespace,
-                        cancellationToken);
+                    await client
+                        .DeletePodAsync(
+                            podSpec.PodName,
+                            podSpec.Namespace,
+                            cancellationToken)
+                        .ConfigureAwait(false);
                 }
                 catch (Exception exception) when (IsNotFound(exception))
                 {
@@ -200,7 +255,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
                     podSpec.Namespace,
                     podSpec.PodName,
                     serviceName,
-                    this.resourceFactory.CreateMetadata(podSpec, serviceName));
+                    this.resourceFactory.CreateMetadata(
+                        podSpec,
+                        serviceName));
             }
             catch (Exception exception)
             {
@@ -209,19 +266,29 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
                     podSpec.PodName,
                     exception.Message,
                     retryable: true,
-                    metadata: this.resourceFactory.CreateMetadata(podSpec, serviceName: null));
+                    metadata: this.resourceFactory.CreateMetadata(
+                        podSpec,
+                        serviceName: null));
             }
         }
 
-        private static bool IsPodReady(V1Pod pod)
+        private static bool IsPodReady(
+            V1Pod pod)
         {
             return pod.Status?.Conditions?.Any(
                 condition =>
-                    string.Equals(condition.Type, ReadyConditionType, StringComparison.OrdinalIgnoreCase) &&
-                    string.Equals(condition.Status, "True", StringComparison.OrdinalIgnoreCase)) == true;
+                    string.Equals(
+                        condition.Type,
+                        ReadyConditionType,
+                        StringComparison.OrdinalIgnoreCase) &&
+                    string.Equals(
+                        condition.Status,
+                        "True",
+                        StringComparison.OrdinalIgnoreCase)) == true;
         }
 
-        private static bool IsNotFound(Exception exception)
+        private static bool IsNotFound(
+            Exception exception)
         {
             return exception is HttpOperationException httpOperationException &&
                 httpOperationException.Response.StatusCode == HttpStatusCode.NotFound;

@@ -1,4 +1,5 @@
-﻿using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Identity;
+﻿using System;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Identity;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Identity
 {
@@ -7,12 +8,32 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Identity
     /// </summary>
     public sealed class AiRuntimeHostIdentity : IAiRuntimeHostIdentity
     {
+        /// <summary>
+        /// Initializes a new instance of the <see cref="AiRuntimeHostIdentity"/> class.
+        /// </summary>
         public AiRuntimeHostIdentity()
         {
             HostId =
-                $"host-{Guid.NewGuid():N}";
+                ResolveConfiguredHostId()
+                ?? $"host-{Guid.NewGuid():N}";
         }
 
+        /// <inheritdoc />
         public string HostId { get; }
+
+        private static string? ResolveConfiguredHostId()
+        {
+            var configuredHostId =
+                System.Environment.GetEnvironmentVariable("AiRuntimeHostIdentity__HostId")
+                ?? System.Environment.GetEnvironmentVariable("AiRuntimeHostIdentity__RuntimeHostId")
+                ?? System.Environment.GetEnvironmentVariable("AiControlPlaneHostIdentity__ControlPlaneHostId")
+                ?? System.Environment.GetEnvironmentVariable("AiMcpHost__ControlPlaneHostId")
+                ?? System.Environment.GetEnvironmentVariable("AiLocalRuntimeInstancePool__ControlPlaneHostId")
+                ?? System.Environment.GetEnvironmentVariable("AiRuntimeInstanceRegistration__ControlPlaneHostId");
+
+            return string.IsNullOrWhiteSpace(configuredHostId)
+                ? null
+                : configuredHostId.Trim();
+        }
     }
 }

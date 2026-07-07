@@ -357,7 +357,8 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedController
                 var providerCapabilityResolver =
                     new AiRuntimeInstanceProviderCapabilityResolver(
                         capacityStore,
-                        providerRouter);
+                        providerRouter,
+                        NullLogger<AiRuntimeInstanceProviderCapabilityResolver>.Instance);
 
                 var runtimeInstanceRegistry =
                     await CreateReadyRuntimeRegistryAsync(
@@ -628,7 +629,8 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedController
                 var providerCapabilityResolver =
                     new AiRuntimeInstanceProviderCapabilityResolver(
                         capacityStore,
-                        providerRouter);
+                        providerRouter,
+                        NullLogger<AiRuntimeInstanceProviderCapabilityResolver>.Instance);
 
                 var runtimeInstanceRegistry =
                     await CreateReadyRuntimeRegistryAsync(
@@ -916,7 +918,8 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedController
                 var providerCapabilityResolver =
                     new AiRuntimeInstanceProviderCapabilityResolver(
                         capacityStore,
-                        providerRouter);
+                        providerRouter,
+                        NullLogger<AiRuntimeInstanceProviderCapabilityResolver>.Instance);
 
                 var runtimeInstanceRegistry =
                     await CreateReadyRuntimeRegistryAsync(

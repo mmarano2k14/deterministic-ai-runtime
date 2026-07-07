@@ -41,5 +41,25 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
         {
             return this.HostManager_Should_Fulfill_ScaleOut_Without_Changing_Runtime_Transport();
         }
+
+        /// <summary>
+        /// Verifies that Kubernetes host-manager scale-out exposes a routable runtime instance without changing gRPC runtime transport.
+        /// </summary>
+        /// <returns>A task that completes when the proof has finished.</returns>
+        [Fact]
+        public Task Grpc_KubernetesSdkHostManager_Should_Expose_Routable_Runtime_After_ScaleOut_Without_Changing_Grpc_Runtime_Transport()
+        {
+            return this.HostManager_Should_Fulfill_ScaleOut_And_Expose_Routable_Runtime_Instance();
+        }
+
+        /// <summary>
+        /// Verifies that Kubernetes host-manager scale-out exposes a routable runtime and dispatches real DAG work without changing gRPC runtime transport.
+        /// </summary>
+        /// <returns>A task that completes when the proof has finished.</returns>
+        [Fact]
+        public Task Grpc_KubernetesSdkHostManager_Should_Dispatch_Real_Work_After_ScaleOut_Without_Changing_Grpc_Runtime_Transport()
+        {
+            return this.HostManager_Should_Fulfill_ScaleOut_Expose_Routable_Runtime_And_Dispatch_Real_Work();
+        }
     }
 }

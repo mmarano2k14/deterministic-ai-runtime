@@ -86,6 +86,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             settings["AiKubernetesRuntimeHost:EnvironmentVariables:MongoDb__ConnectionString"] = "mongodb://host.minikube.internal:27017/?directConnection=true";
             settings["AiKubernetesRuntimeHost:EnvironmentVariables:ConnectionStrings__Mongo"] = "mongodb://host.minikube.internal:27017/?directConnection=true";
             settings["AiKubernetesRuntimeHost:EnvironmentVariables:ConnectionStrings__MongoDb"] = "mongodb://host.minikube.internal:27017/?directConnection=true";
+
+            settings["AiKubernetesRuntimeHost:PublishNodePortTransportEndpoint"] = "true";
+            settings["AiKubernetesRuntimeHost:NodePortHost"] = "192.168.49.2";
         }
     }
 }

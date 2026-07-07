@@ -68,16 +68,16 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             settings["AiGrpcRuntimeScaleOut:HostCreationMode"] = "Kubernetes";
             settings["AiGrpcRuntimeScaleOut:RequireReadiness"] = "true";
 
-            settings["AiGrpcRuntimeScaleOut:ReadinessTimeoutSeconds"] = "60";
-            settings["AiGrpcRuntimeScaleOut:ReadinessPollIntervalMilliseconds"] = "1000";
-            settings["AiKubernetesRuntimeHost:ReadinessTimeout"] = "00:00:59";
-            settings["AiKubernetesRuntimeHost:ReadinessPollInterval"] = "00:00:01";
+            settings["AiGrpcRuntimeScaleOut:ReadinessTimeoutSeconds"] = "30";
+            settings["AiGrpcRuntimeScaleOut:ReadinessPollIntervalMilliseconds"] = "5000";
+            settings["AiKubernetesRuntimeHost:ReadinessTimeout"] = "00:00:30";
+            settings["AiKubernetesRuntimeHost:ReadinessPollInterval"] = "00:00:05";
 
             settings["AiKubernetesRuntimeHost:Enabled"] = "true";
             settings["AiKubernetesRuntimeHost:ClientMode"] = "KubernetesSdk";
             settings["AiKubernetesRuntimeHost:RequireRuntimeReadiness"] = "true";
             settings["AiKubernetesRuntimeHost:Namespace"] = "ai-runtime";
-            settings["AiKubernetesRuntimeHost:RuntimeImage"] = "multiplexed-ai-runtime:k8s-debug-008";
+            settings["AiKubernetesRuntimeHost:RuntimeImage"] = "multiplexed-ai-runtime:k8s-debug-025";
             settings["AiKubernetesRuntimeHost:ImagePullPolicy"] = "Never";
             settings["AiKubernetesRuntimeHost:ContainerName"] = "runtime-instance";
             settings["AiKubernetesRuntimeHost:ContainerPort"] = "8080";
@@ -87,8 +87,12 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             settings["AiKubernetesRuntimeHost:DeleteResourcesOnFailure"] = "true";
             settings["AiKubernetesRuntimeHost:StartupTimeout"] = "00:00:30";
 
+            settings["AiKubernetesRuntimeHost:UsePortForwardTransportEndpoint"] = "true";
+            settings["AiKubernetesRuntimeHost:PortForwardLocalPort"] = "0";
+            settings["AiKubernetesRuntimeHost:KubectlPath"] = "kubectl";
 
-            
+
+
 
             settings["AiLocalRuntimeInstancePool:Enabled"] = "false";
 
@@ -115,6 +119,13 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             settings["AiKubernetesRuntimeHost:EnvironmentVariables:AiRuntimeInstanceRegistration__ProviderMetadata__control-plane.id"] = controlPlaneId;
             settings["AiKubernetesRuntimeHost:EnvironmentVariables:AiRuntimeInstanceRegistration__ProviderMetadata__controlplane.id"] = controlPlaneId;
             settings["AiKubernetesRuntimeHost:EnvironmentVariables:AiRuntimeInstanceRegistration__ProviderMetadata__runtime.controlPlaneId"] = controlPlaneId;
+            settings["AiKubernetesRuntimeHost:EnvironmentVariables:AiRuntimeInstanceRegistration__ControlPlaneId"] = controlPlaneId;
+            settings["AiKubernetesRuntimeHost:EnvironmentVariables:AiRuntimeInstanceRegistration__Metadata__controlPlaneId"] = controlPlaneId;
+            settings["AiKubernetesRuntimeHost:EnvironmentVariables:AiRuntimeInstanceRegistration__ProviderMetadata__controlPlaneId"] = controlPlaneId;
+            settings["AiKubernetesRuntimeHost:EnvironmentVariables:AI_CONTROL_PLANE_ID"] = controlPlaneId;
+            settings["AiKubernetesRuntimeHost:EnvironmentVariables:CONTROL_PLANE_ID"] = controlPlaneId;
+            settings["AiKubernetesRuntimeHost:EnvironmentVariables:AiRuntimeInstanceRegistration__ControlPlaneId"] = controlPlaneId;
+
             settings["AiKubernetesRuntimeHost:EnvironmentVariables:AiRuntimeInstanceRegistration__ProviderMetadata__provider.name"] = "grpc";
             settings["AiKubernetesRuntimeHost:EnvironmentVariables:AiRuntimeInstanceRegistration__ProviderMetadata__transport.name"] = "grpc";
 
@@ -126,6 +137,34 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             settings["AiKubernetesRuntimeHost:EnvironmentVariables:MongoDb__ConnectionString"] = "mongodb://host.minikube.internal:27017/?directConnection=true";
             settings["AiKubernetesRuntimeHost:EnvironmentVariables:ConnectionStrings__Mongo"] = "mongodb://host.minikube.internal:27017/?directConnection=true";
             settings["AiKubernetesRuntimeHost:EnvironmentVariables:ConnectionStrings__MongoDb"] = "mongodb://host.minikube.internal:27017/?directConnection=true";
+            settings["AiKubernetesRuntimeHost:EnvironmentVariables:AiMongo__ConnectionString"] = "mongodb://host.minikube.internal:27017/?directConnection=true";
+            settings["AiKubernetesRuntimeHost:EnvironmentVariables:AiMongoDb__ConnectionString"] = "mongodb://host.minikube.internal:27017/?directConnection=true";
+            settings["AiKubernetesRuntimeHost:EnvironmentVariables:AiExecutionSnapshotStore__ConnectionString"] = "mongodb://host.minikube.internal:27017/?directConnection=true";
+            settings["AiKubernetesRuntimeHost:EnvironmentVariables:AiExecutionSnapshotStore__MongoConnectionString"] = "mongodb://host.minikube.internal:27017/?directConnection=true";
+            settings["AiKubernetesRuntimeHost:EnvironmentVariables:AiExecutionSnapshots__Mongo__ConnectionString"] = "mongodb://host.minikube.internal:27017/?directConnection=true";
+            settings["AiKubernetesRuntimeHost:EnvironmentVariables:AiRuntimeExecution__Mongo__ConnectionString"] = "mongodb://host.minikube.internal:27017/?directConnection=true";
+            settings["AiKubernetesRuntimeHost:EnvironmentVariables:AiRuntimePersistence__Mongo__ConnectionString"] = "mongodb://host.minikube.internal:27017/?directConnection=true";
+
+            settings["AiKubernetesRuntimeHost:EnvironmentVariables:AiExecutionSnapshotMongo__Enabled"] = "true";
+            settings["AiKubernetesRuntimeHost:EnvironmentVariables:AiExecutionSnapshotMongo__ConnectionString"] = "mongodb://host.minikube.internal:27017/?directConnection=true";
+            settings["AiKubernetesRuntimeHost:EnvironmentVariables:AiExecutionSnapshotMongo__DatabaseName"] = "multiplexed_ai_tests";
+            settings["AiKubernetesRuntimeHost:EnvironmentVariables:AiExecutionSnapshotMongo__CollectionName"] = "ai_execution_snapshots";
+
+            settings["AiKubernetesRuntimeHost:EnvironmentVariables:Snapshots__Enabled"] = "true";
+            settings["AiKubernetesRuntimeHost:EnvironmentVariables:Snapshots__Mongo__Enabled"] = "true";
+            settings["AiKubernetesRuntimeHost:EnvironmentVariables:Snapshots__Mongo__ConnectionString"] = "mongodb://host.minikube.internal:27017/?directConnection=true";
+            settings["AiKubernetesRuntimeHost:EnvironmentVariables:Snapshots__Mongo__DatabaseName"] = "multiplexed_ai_tests";
+            settings["AiKubernetesRuntimeHost:EnvironmentVariables:Snapshots__Mongo__CollectionName"] = "ai_execution_snapshots";
+
+            settings["AiKubernetesRuntimeHost:EnvironmentVariables:AiEngine__Snapshots__Enabled"] = "true";
+            settings["AiKubernetesRuntimeHost:EnvironmentVariables:AiEngine__Snapshots__Mongo__Enabled"] = "true";
+            settings["AiKubernetesRuntimeHost:EnvironmentVariables:AiEngine__Snapshots__Mongo__ConnectionString"] = "mongodb://host.minikube.internal:27017/?directConnection=true";
+            settings["AiKubernetesRuntimeHost:EnvironmentVariables:AiEngine__Snapshots__Mongo__DatabaseName"] = "multiplexed_ai_tests";
+            settings["AiKubernetesRuntimeHost:EnvironmentVariables:AiEngine__Snapshots__Mongo__CollectionName"] = "ai_execution_snapshots";
+
+
+            settings["AiKubernetesRuntimeHost:PublishNodePortTransportEndpoint"] = "true";
+            settings["AiKubernetesRuntimeHost:NodePortHost"] = "192.168.49.2";
         }
     }
 }

@@ -17,7 +17,6 @@ using Multiplexed.AI.Runtime.AI.Providers.Llm.OpenAI.DI;
 using Multiplexed.AI.Runtime.AI.Rag.DI;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Isolation;
-using Multiplexed.AI.Runtime.DependencyInjection;
 using Multiplexed.AI.Runtime.Execution.Persistence.Replay.Metadata;
 using Multiplexed.AI.Runtime.Execution.Retention.Policies;
 using Multiplexed.AI.Runtime.Observability.Ledger.DI;
