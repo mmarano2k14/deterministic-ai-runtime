@@ -77,7 +77,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             settings["AiKubernetesRuntimeHost:ClientMode"] = "KubernetesSdk";
             settings["AiKubernetesRuntimeHost:RequireRuntimeReadiness"] = "true";
             settings["AiKubernetesRuntimeHost:Namespace"] = "ai-runtime";
-            settings["AiKubernetesRuntimeHost:RuntimeImage"] = "multiplexed-ai-runtime:k8s-debug-025";
+            settings["AiKubernetesRuntimeHost:RuntimeImage"] = "multiplexed-ai-runtime:k8s-debug-026";
             settings["AiKubernetesRuntimeHost:ImagePullPolicy"] = "Never";
             settings["AiKubernetesRuntimeHost:ContainerName"] = "runtime-instance";
             settings["AiKubernetesRuntimeHost:ContainerPort"] = "8080";

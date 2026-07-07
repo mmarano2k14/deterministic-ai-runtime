@@ -438,16 +438,19 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
         /// <param name="request">The scale-out request.</param>
         /// <param name="cancellationToken">The cancellation token.</param>
         /// <returns>The resolved logical control-plane identifier.</returns>
-        /// <exception cref="InvalidOperationException">
-        /// Thrown when no logical control-plane identifier can be resolved.
-        /// </exception>
         private async Task<string> ResolveControlPlaneIdAsync(
             AiRuntimeScaleOutRequest request,
             CancellationToken cancellationToken)
         {
-            if (!string.IsNullOrWhiteSpace(request.SharedRun.ControlPlaneId))
+            if (!string.IsNullOrWhiteSpace(request.SharedRun.ControlPlaneId) &&
+                !IsControlPlaneHostId(request.SharedRun.ControlPlaneId))
             {
                 return request.SharedRun.ControlPlaneId;
+            }
+
+            if (TryGetLogicalControlPlaneIdFromMetadata(request.Metadata, out var metadataControlPlaneId))
+            {
+                return metadataControlPlaneId;
             }
 
             var resolved =
@@ -456,13 +459,51 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
                         cancellationToken)
                     .ConfigureAwait(false);
 
-            if (!string.IsNullOrWhiteSpace(resolved))
+            if (!string.IsNullOrWhiteSpace(resolved) &&
+                !IsControlPlaneHostId(resolved))
             {
                 return resolved;
             }
 
             throw new InvalidOperationException(
-                "Scale-out request control-plane id could not be resolved.");
+                $"Scale-out request control-plane id could not be resolved to a logical control-plane id. Resolved='{resolved}', SharedRunControlPlaneId='{request.SharedRun.ControlPlaneId}'.");
+        }
+
+        /// <summary>
+        /// Tries to resolve a logical control-plane id from request metadata.
+        /// </summary>
+        /// <param name="metadata">The metadata dictionary.</param>
+        /// <param name="controlPlaneId">The resolved control-plane id.</param>
+        /// <returns><see langword="true" /> when a logical id was resolved; otherwise, <see langword="false" />.</returns>
+        private static bool TryGetLogicalControlPlaneIdFromMetadata(
+            IReadOnlyDictionary<string, string> metadata,
+            out string controlPlaneId)
+        {
+            foreach (var key in new[] { "runtime.controlPlaneId", "control-plane.id", "controlplane.id", "logicalControlPlaneId" })
+            {
+                if (metadata.TryGetValue(key, out var value) &&
+                    !string.IsNullOrWhiteSpace(value) &&
+                    !IsControlPlaneHostId(value))
+                {
+                    controlPlaneId = value.Trim();
+                    return true;
+                }
+            }
+
+            controlPlaneId = string.Empty;
+            return false;
+        }
+
+        /// <summary>
+        /// Determines whether the supplied id looks like a control-plane host id instead of a logical control-plane id.
+        /// </summary>
+        /// <param name="value">The id value.</param>
+        /// <returns><see langword="true" /> when the id is a host id; otherwise, <see langword="false" />.</returns>
+        private static bool IsControlPlaneHostId(
+            string? value)
+        {
+            return !string.IsNullOrWhiteSpace(value) &&
+                   value.StartsWith("control-plane-", StringComparison.OrdinalIgnoreCase);
         }
 
         /// <summary>

@@ -247,7 +247,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
             var providerName =
                 ResolveProviderName(environment);
 
-
             SafeLogInformation(
                 "[REGISTRATION PATCH CHECK] Explicit control-plane resolution path enabled.");
 
@@ -284,6 +283,16 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
                         ["controlPlaneHostId"] = controlPlaneHostId ?? string.Empty
                     });
 
+            var tenantId =
+                GetMetadataValue(
+                    runtimeMetadata,
+                    AiRuntimeInstanceIsolationMetadataKeys.TenantId);
+
+            var tenantGroupId =
+                GetMetadataValue(
+                    runtimeMetadata,
+                    AiRuntimeInstanceIsolationMetadataKeys.TenantGroupId);
+
             SafeLogInformation(
                 "Runtime instance id resolved. RuntimeInstanceId={RuntimeInstanceId}, ControlPlaneId={ControlPlaneId}, OptionsRuntimeInstanceId={OptionsRuntimeInstanceId}, EnvironmentRuntimeInstanceId={EnvironmentRuntimeInstanceId}, HostName={HostName}, ProcessId={ProcessId}, HostId={HostId}, RuntimeId={RuntimeId}, ControlPlaneHostId={ControlPlaneHostId}, ProviderName={ProviderName}, RegistryType={RegistryType}, RegistryHash={RegistryHash}",
                 runtimeInstanceId,
@@ -306,8 +315,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
                 controlPlaneHostId,
                 options.Role,
                 providerName,
-                GetMetadataValue(runtimeMetadata, AiRuntimeInstanceIsolationMetadataKeys.TenantId),
-                GetMetadataValue(runtimeMetadata, AiRuntimeInstanceIsolationMetadataKeys.TenantGroupId),
+                tenantId,
+                tenantGroupId,
                 GetMetadataValue(runtimeMetadata, AiRuntimeInstanceIsolationMetadataKeys.IsolationMode),
                 GetMetadataValue(runtimeMetadata, AiRuntimeInstanceIsolationMetadataKeys.AllowSharedFallback),
                 GetMetadataValue(runtimeMetadata, AiRuntimeInstanceIsolationMetadataKeys.PreferDedicatedCapacity),
@@ -345,6 +354,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
                 new AiRuntimeInstanceRegistration
                 {
                     RuntimeInstanceId = runtimeInstanceId,
+                    TenantId = tenantId,
+                    TenantGroupId = tenantGroupId,
                     ControlPlaneId = controlPlaneId,
                     HostName = environment.HostName,
                     ProcessId = environment.ProcessId,
@@ -360,7 +371,72 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
                 };
 
             SafeLogInformation(
-                "Runtime instance capacity publication before registry registration started. RuntimeInstanceId={RuntimeInstanceId}, ControlPlaneId={ControlPlaneId}, ControlPlaneHostId={ControlPlaneHostId}",
+                "Runtime instance registration started. RuntimeInstanceId={RuntimeInstanceId}, ControlPlaneId={ControlPlaneId}, ControlPlaneHostId={ControlPlaneHostId}, TenantId={TenantId}, TenantGroupId={TenantGroupId}, RegistryType={RegistryType}, RegistryHash={RegistryHash}",
+                runtimeInstanceId,
+                controlPlaneId,
+                controlPlaneHostId,
+                tenantId,
+                tenantGroupId,
+                registry.GetType().FullName,
+                registry.GetHashCode());
+
+            var snapshot =
+                await registry
+                    .RegisterAsync(registration, cancellationToken)
+                    .ConfigureAwait(false);
+
+            Console.WriteLine(
+                $"[REGISTRATION AFTER REGISTER EXACT] " +
+                $"RuntimeInstanceId='{runtimeInstanceId}', " +
+                $"ResolvedControlPlaneId='{controlPlaneId}', " +
+                $"ControlPlaneHostId='{controlPlaneHostId}', " +
+                $"TenantId='{snapshot.TenantId}', " +
+                $"TenantGroupId='{snapshot.TenantGroupId}', " +
+                $"SnapshotControlPlaneId='{snapshot.ControlPlaneId}', " +
+                $"Role='{snapshot.Role}', " +
+                $"Status='{snapshot.Status}', " +
+                $"CanAcceptRun='{snapshot.CanAcceptRun}', " +
+                $"AvailableRunSlots='{snapshot.AvailableRunSlots}', " +
+                $"Provider='{providerName}', " +
+                $"RegistryHash='{registry.GetHashCode()}'.");
+
+            var readBackSnapshot =
+                await registry
+                    .GetAsync(
+                        runtimeInstanceId,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+            Console.WriteLine(
+                $"[REGISTRATION READBACK EXACT] " +
+                $"RuntimeInstanceId='{runtimeInstanceId}', " +
+                $"Found='{readBackSnapshot is not null}', " +
+                $"ReadBackControlPlaneId='{readBackSnapshot?.ControlPlaneId}', " +
+                $"ReadBackTenantId='{readBackSnapshot?.TenantId}', " +
+                $"ReadBackTenantGroupId='{readBackSnapshot?.TenantGroupId}', " +
+                $"ReadBackRole='{readBackSnapshot?.Role}', " +
+                $"ReadBackStatus='{readBackSnapshot?.Status}'.");
+
+            SafeLogInformation(
+                "Runtime instance registered. RuntimeInstanceId={RuntimeInstanceId}, ControlPlaneId={ControlPlaneId}, Status={Status}, Provider={Provider}, HostId={HostId}, RuntimeId={RuntimeId}, ControlPlaneHostId={ControlPlaneHostId}, TenantId={TenantId}, TenantGroupId={TenantGroupId}, IsolationMode={IsolationMode}, AllowSharedFallback={AllowSharedFallback}, PreferDedicatedCapacity={PreferDedicatedCapacity}, Metadata={Metadata}, RegistryType={RegistryType}, RegistryHash={RegistryHash}",
+                snapshot.RuntimeInstanceId,
+                snapshot.ControlPlaneId,
+                snapshot.Status,
+                providerName,
+                snapshot.HostId,
+                snapshot.RuntimeId,
+                snapshot.ControlPlaneHostId,
+                snapshot.TenantId,
+                snapshot.TenantGroupId,
+                GetMetadataValue(snapshot.Metadata, AiRuntimeInstanceIsolationMetadataKeys.IsolationMode),
+                GetMetadataValue(snapshot.Metadata, AiRuntimeInstanceIsolationMetadataKeys.AllowSharedFallback),
+                GetMetadataValue(snapshot.Metadata, AiRuntimeInstanceIsolationMetadataKeys.PreferDedicatedCapacity),
+                FormatMetadata(snapshot.Metadata),
+                registry.GetType().FullName,
+                registry.GetHashCode());
+
+            SafeLogInformation(
+                "Runtime instance capacity publication after registry registration started. RuntimeInstanceId={RuntimeInstanceId}, ControlPlaneId={ControlPlaneId}, ControlPlaneHostId={ControlPlaneHostId}",
                 runtimeInstanceId,
                 controlPlaneId,
                 controlPlaneHostId);
@@ -372,37 +448,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
                     runtimeMetadata,
                     cancellationToken)
                 .ConfigureAwait(false);
-
-            SafeLogInformation(
-                "Runtime instance registration started. RuntimeInstanceId={RuntimeInstanceId}, ControlPlaneId={ControlPlaneId}, ControlPlaneHostId={ControlPlaneHostId}, RegistryType={RegistryType}, RegistryHash={RegistryHash}",
-                runtimeInstanceId,
-                controlPlaneId,
-                controlPlaneHostId,
-                registry.GetType().FullName,
-                registry.GetHashCode());
-
-            var snapshot =
-                await registry
-                    .RegisterAsync(registration, cancellationToken)
-                    .ConfigureAwait(false);
-
-            SafeLogInformation(
-                "Runtime instance registered. RuntimeInstanceId={RuntimeInstanceId}, ControlPlaneId={ControlPlaneId}, Status={Status}, Provider={Provider}, HostId={HostId}, RuntimeId={RuntimeId}, ControlPlaneHostId={ControlPlaneHostId}, TenantId={TenantId}, TenantGroupId={TenantGroupId}, IsolationMode={IsolationMode}, AllowSharedFallback={AllowSharedFallback}, PreferDedicatedCapacity={PreferDedicatedCapacity}, Metadata={Metadata}, RegistryType={RegistryType}, RegistryHash={RegistryHash}",
-                snapshot.RuntimeInstanceId,
-                snapshot.ControlPlaneId,
-                snapshot.Status,
-                providerName,
-                snapshot.HostId,
-                snapshot.RuntimeId,
-                snapshot.ControlPlaneHostId,
-                GetMetadataValue(snapshot.Metadata, AiRuntimeInstanceIsolationMetadataKeys.TenantId),
-                GetMetadataValue(snapshot.Metadata, AiRuntimeInstanceIsolationMetadataKeys.TenantGroupId),
-                GetMetadataValue(snapshot.Metadata, AiRuntimeInstanceIsolationMetadataKeys.IsolationMode),
-                GetMetadataValue(snapshot.Metadata, AiRuntimeInstanceIsolationMetadataKeys.AllowSharedFallback),
-                GetMetadataValue(snapshot.Metadata, AiRuntimeInstanceIsolationMetadataKeys.PreferDedicatedCapacity),
-                FormatMetadata(snapshot.Metadata),
-                registry.GetType().FullName,
-                registry.GetHashCode());
         }
 
         /// <summary>
@@ -561,8 +606,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
                     snapshot.ControlPlaneHostId,
                     snapshot.CanAcceptRun,
                     snapshot.AvailableRunSlots,
-                    GetMetadataValue(snapshot.Metadata, AiRuntimeInstanceIsolationMetadataKeys.TenantId),
-                    GetMetadataValue(snapshot.Metadata, AiRuntimeInstanceIsolationMetadataKeys.TenantGroupId),
+                    snapshot.TenantId,
+                    snapshot.TenantGroupId,
                     GetMetadataValue(snapshot.Metadata, AiRuntimeInstanceIsolationMetadataKeys.IsolationMode),
                     GetMetadataValue(snapshot.Metadata, AiRuntimeInstanceIsolationMetadataKeys.AllowSharedFallback),
                     GetMetadataValue(snapshot.Metadata, AiRuntimeInstanceIsolationMetadataKeys.PreferDedicatedCapacity),

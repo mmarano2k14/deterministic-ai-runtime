@@ -1,0 +1,41 @@
+﻿commit 3425485ec0aa95658d403f2ce270efa6426e3eb4
+Author: Marco Marano <marco@profilegroup.com>
+Date:   Sun Jul 5 07:36:50 2026 +0700
+
+    fix: enable registry-backed readiness for grpc scale-out
+
+diff --git a/implementations/dotnet/src/Multiplexed.AI/Runtime/ControlPlane/RuntimeInstances/Readiness/AiRuntimeInstanceReadinessWaiter.cs b/implementations/dotnet/src/Multiplexed.AI/Runtime/ControlPlane/RuntimeInstances/Readiness/AiRuntimeInstanceReadinessWaiter.cs
+index b0eba11..d4ece6d 100644
+--- a/implementations/dotnet/src/Multiplexed.AI/Runtime/ControlPlane/RuntimeInstances/Readiness/AiRuntimeInstanceReadinessWaiter.cs
++++ b/implementations/dotnet/src/Multiplexed.AI/Runtime/ControlPlane/RuntimeInstances/Readiness/AiRuntimeInstanceReadinessWaiter.cs
+@@ -239,14 +239,14 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Readiness
+                 return CreateFailure(request, "runtime-readiness-transport-endpoint-invalid", timedOut: false);
+             }
+ 
+-            if (IsHttpTransport(request.TransportName, endpointUri))
++            if (IsGrpcTransport(request.TransportName))
+             {
+-                return await CheckHttpTransportReadinessAsync(request, endpointUri, transportEndpoint, cancellationToken).ConfigureAwait(false);
++                return await CheckTcpTransportReadinessAsync(request, endpointUri, transportEndpoint, cancellationToken).ConfigureAwait(false);
+             }
+ 
+-            if (IsGrpcTransport(request.TransportName))
++            if (IsHttpTransport(request.TransportName, endpointUri))
+             {
+-                return await CheckTcpTransportReadinessAsync(request, endpointUri, transportEndpoint, cancellationToken).ConfigureAwait(false);
++                return await CheckHttpTransportReadinessAsync(request, endpointUri, transportEndpoint, cancellationToken).ConfigureAwait(false);
+             }
+ 
+             return await CheckGenericTransportReadinessAsync(request, endpointUri, transportEndpoint, cancellationToken).ConfigureAwait(false);
+@@ -371,6 +371,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Readiness
+             string transportEndpoint,
+             CancellationToken cancellationToken)
+         {
++            if (IsGrpcTransport(request.TransportName))
++            {
++                return await CheckTcpTransportReadinessAsync(request, endpointUri, transportEndpoint, cancellationToken).ConfigureAwait(false);
++            }
++
+             if (IsHttpTransport(request.TransportName, endpointUri))
+             {
+                 return await CheckHttpTransportReadinessAsync(request, endpointUri, transportEndpoint, cancellationToken).ConfigureAwait(false);

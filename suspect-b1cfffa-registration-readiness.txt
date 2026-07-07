@@ -1,0 +1,821 @@
+﻿commit b1cfffa87fb47b871b48f7ca7f7d63e73791d413
+Author: Marco Marano <marco@profilegroup.com>
+Date:   Tue Jul 7 07:17:55 2026 +0700
+
+    Add Kubernetes-backed runtime instance publication
+
+diff --git a/implementations/dotnet/src/Multiplexed.AI/Runtime/ControlPlane/RuntimeInstances/Readiness/AiRuntimeInstanceReadinessWaiter.cs b/implementations/dotnet/src/Multiplexed.AI/Runtime/ControlPlane/RuntimeInstances/Readiness/AiRuntimeInstanceReadinessWaiter.cs
+index d4ece6d..ca19c15 100644
+--- a/implementations/dotnet/src/Multiplexed.AI/Runtime/ControlPlane/RuntimeInstances/Readiness/AiRuntimeInstanceReadinessWaiter.cs
++++ b/implementations/dotnet/src/Multiplexed.AI/Runtime/ControlPlane/RuntimeInstances/Readiness/AiRuntimeInstanceReadinessWaiter.cs
+@@ -2,6 +2,7 @@
+ using Multiplexed.Abstractions.AI.ControlPlane.Discovery;
+ using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Capacity;
+ using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
++using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers;
+ using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers.Transport;
+ using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Readiness;
+ using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
+@@ -11,6 +12,7 @@ using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry;
+ using StackExchange.Redis;
+ using System;
+ using System.Collections.Generic;
++using System.Linq;
+ using System.Net;
+ using System.Net.Http;
+ using System.Net.Sockets;
+@@ -23,7 +25,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Readiness
+     /// Provides a provider-agnostic readiness waiter for runtime instances created through scale-out.
+     /// </summary>
+     /// <remarks>
+-    /// This waiter validates runtime instance visibility, capacity, and optional transport reachability
++    /// This waiter validates runtime instance visibility, tenant ownership, capacity, and optional transport reachability
+     /// before a scale-out request can be fulfilled.
+     ///
+     /// It does not dispatch runs, mutate execution state, or bypass runtime queues.
+@@ -31,18 +33,15 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Readiness
+     /// IMPORTANT:
+     /// - Readiness is evaluated using the execution context carried by the scale-out request.
+     /// - This is required for dedicated tenant runtime instances because registry and capacity stores are tenant-visible.
++    /// - No global fallback is allowed when an execution context exists, because that could hide tenant publication bugs.
+     /// - Transport readiness is optional and transport-aware. HTTP is only one supported transport path.
+     /// </remarks>
+     public sealed class AiRuntimeInstanceReadinessWaiter : IAiRuntimeInstanceReadinessWaiter
+     {
+         private const string HttpTransportName = "http";
+-
+         private const string GrpcTransportName = "grpc";
+-
+         private const string DefaultCommandEndpointPath = "/runtime-instance/commands";
+-
+         private static readonly HttpClient TransportProbeHttpClient = new();
+-
+         private readonly IAiRuntimeInstanceRegistry runtimeInstanceRegistry;
+         private readonly IAiRuntimeInstanceCapacityStore runtimeInstanceCapacityStore;
+         private readonly IConnectionMultiplexer? redis;
+@@ -105,7 +104,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Readiness
+                 {
+                     cancellationToken.ThrowIfCancellationRequested();
+ 
+-                    var checkResult = await this.CheckReadinessOnceAsync(request, cancellationToken).ConfigureAwait(false);
++                    var checkResult =
++                        await this.CheckReadinessOnceAsync(
++                                request,
++                                cancellationToken)
++                            .ConfigureAwait(false);
+ 
+                     if (checkResult.Success)
+                     {
+@@ -129,15 +132,24 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Readiness
+                     }
+                 }
+ 
+-                return CreateFailure(request, lastFailureReason ?? "runtime-readiness-timeout", timedOut: true);
++                return CreateFailure(
++                    request,
++                    lastFailureReason ?? "runtime-readiness-timeout",
++                    timedOut: true);
+             }
+             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+             {
+-                return CreateFailure(request, "runtime-readiness-cancelled", timedOut: false);
++                return CreateFailure(
++                    request,
++                    "runtime-readiness-cancelled",
++                    timedOut: false);
+             }
+             catch
+             {
+-                return CreateFailure(request, "runtime-readiness-exception", timedOut: false);
++                return CreateFailure(
++                    request,
++                    "runtime-readiness-exception",
++                    timedOut: false);
+             }
+         }
+ 
+@@ -153,37 +165,116 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Readiness
+         {
+             var stores = this.CreateRequestScopedStores(request);
+ 
+-            var snapshot = await stores.Registry.GetAsync(request.RuntimeInstanceId, cancellationToken).ConfigureAwait(false);
++            var snapshot =
++                await stores.Registry
++                    .GetAsync(
++                        request.RuntimeInstanceId,
++                        cancellationToken)
++                    .ConfigureAwait(false);
++
++            var capacity =
++                snapshot is null
++                    ? null
++                    : await stores.CapacityStore
++                        .GetAsync(
++                            request.RuntimeInstanceId,
++                            cancellationToken)
++                        .ConfigureAwait(false);
+ 
+-            if (snapshot is null)
++            if (snapshot is not null &&
++                capacity is not null)
+             {
+-                return CreateFailure(request, "runtime-readiness-registry-missing", timedOut: false);
++                return await CheckResolvedRuntimeReadinessAsync(
++                        request,
++                        request.RuntimeInstanceId,
++                        snapshot.ControlPlaneId,
++                        snapshot.TenantId,
++                        snapshot.TenantGroupId,
++                        snapshot.Status.ToString(),
++                        snapshot.CanAcceptRun,
++                        snapshot.AvailableRunSlots,
++                        snapshot.Metadata,
++                        capacity.Metadata,
++                        cancellationToken)
++                    .ConfigureAwait(false);
++            }
++
++            var compatibleRuntime =
++                await TryResolveCompatibleRuntimeAsync(
++                        stores.Registry,
++                        stores.CapacityStore,
++                        request,
++                        cancellationToken)
++                    .ConfigureAwait(false);
++
++            if (compatibleRuntime is null)
++            {
++                return CreateFailure(
++                    request,
++                    snapshot is null
++                        ? "runtime-readiness-compatible-registry-missing"
++                        : "runtime-readiness-compatible-capacity-missing",
++                    timedOut: false);
+             }
+ 
++            return await CheckResolvedRuntimeReadinessAsync(
++                    request,
++                    compatibleRuntime.RuntimeInstanceId,
++                    compatibleRuntime.ControlPlaneId,
++                    compatibleRuntime.TenantId,
++                    compatibleRuntime.TenantGroupId,
++                    compatibleRuntime.Status,
++                    compatibleRuntime.CanAcceptRun,
++                    compatibleRuntime.AvailableRunSlots,
++                    compatibleRuntime.SnapshotMetadata,
++                    compatibleRuntime.CapacityMetadata,
++                    cancellationToken)
++                .ConfigureAwait(false);
++        }
++
++        /// <summary>
++        /// Checks readiness for a resolved runtime instance.
++        /// </summary>
++        private static async Task<AiRuntimeInstanceReadinessResult> CheckResolvedRuntimeReadinessAsync(
++            AiRuntimeInstanceReadinessRequest request,
++            string runtimeInstanceId,
++            string? controlPlaneId,
++            string? tenantId,
++            string? tenantGroupId,
++            string? status,
++            bool canAcceptRun,
++            int? availableRunSlots,
++            IReadOnlyDictionary<string, string>? snapshotMetadata,
++            IReadOnlyDictionary<string, string>? capacityMetadata,
++            CancellationToken cancellationToken)
++        {
+             if (!string.IsNullOrWhiteSpace(request.ControlPlaneId) &&
+-                !string.Equals(snapshot.ControlPlaneId, request.ControlPlaneId, StringComparison.OrdinalIgnoreCase))
++                !string.Equals(controlPlaneId, request.ControlPlaneId, StringComparison.OrdinalIgnoreCase))
+             {
+                 return CreateFailure(request, "runtime-readiness-control-plane-mismatch", timedOut: false);
+             }
+ 
+-            var capacity = await stores.CapacityStore.GetAsync(request.RuntimeInstanceId, cancellationToken).ConfigureAwait(false);
++            if (!IsTenantMatch(tenantId, request.ExecutionContextSnapshot?.TenantId))
++            {
++                return CreateFailure(request, "runtime-readiness-tenant-mismatch", timedOut: false);
++            }
+ 
+-            if (capacity is null)
++            if (!IsTenantMatch(tenantGroupId, request.ExecutionContextSnapshot?.TenantGroupId))
+             {
+-                return CreateFailure(request, "runtime-readiness-capacity-missing", timedOut: false);
++                return CreateFailure(request, "runtime-readiness-tenant-group-mismatch", timedOut: false);
+             }
+ 
+-            if (snapshot.Status != AiRuntimeInstanceStatus.Ready)
++            if (!string.Equals(status, AiRuntimeInstanceStatus.Ready.ToString(), StringComparison.OrdinalIgnoreCase))
+             {
+                 return CreateFailure(request, "runtime-readiness-not-ready", timedOut: false);
+             }
+ 
+-            if (!snapshot.CanAcceptRun)
++            if (!canAcceptRun)
+             {
+                 return CreateFailure(request, "runtime-readiness-cannot-accept-run", timedOut: false);
+             }
+ 
+-            if (snapshot.AvailableRunSlots is <= 0)
++            if (availableRunSlots is <= 0)
+             {
+                 return CreateFailure(request, "runtime-readiness-capacity-unavailable", timedOut: false);
+             }
+@@ -191,8 +282,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Readiness
+             var transportReadinessResult =
+                 await CheckTransportReadinessAsync(
+                         request,
+-                        snapshot.Metadata,
+-                        capacity.Metadata,
++                        snapshotMetadata,
++                        capacityMetadata,
+                         cancellationToken)
+                     .ConfigureAwait(false);
+ 
+@@ -201,17 +292,233 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Readiness
+                 return transportReadinessResult;
+             }
+ 
+-            return transportReadinessResult;
++            return CreateSuccess(
++                request,
++                runtimeInstanceId,
++                transportReadinessResult.TransportEndpoint);
++        }
++
++        /// <summary>
++        /// Tries to resolve a compatible ready runtime instance when the exact requested id is a host-level id.
++        /// </summary>
++        private static async Task<CompatibleRuntimeInstance?> TryResolveCompatibleRuntimeAsync(
++            IAiRuntimeInstanceRegistry registry,
++            IAiRuntimeInstanceCapacityStore capacityStore,
++            AiRuntimeInstanceReadinessRequest request,
++            CancellationToken cancellationToken)
++        {
++            if (request.RequireTransportEndpoint)
++            {
++                return null;
++            }
++
++            var snapshots =
++                await registry
++                    .ListAsync(
++                        includeStopped: false,
++                        cancellationToken)
++                    .ConfigureAwait(false);
++
++            Console.WriteLine(
++                $"[RUNTIME READINESS DEBUG] RequestedRuntimeInstanceId='{request.RuntimeInstanceId}', ControlPlaneId='{request.ControlPlaneId}', TenantId='{request.ExecutionContextSnapshot?.TenantId}', TenantGroupId='{request.ExecutionContextSnapshot?.TenantGroupId}', SnapshotCount='{snapshots.Count}', RequireTransportEndpoint='{request.RequireTransportEndpoint}'.");
++
++            foreach (var snapshot in snapshots)
++            {
++                Console.WriteLine(
++                    $"[RUNTIME READINESS SNAPSHOT] RuntimeInstanceId='{snapshot.RuntimeInstanceId}', ControlPlaneId='{snapshot.ControlPlaneId}', TenantId='{snapshot.TenantId}', TenantGroupId='{snapshot.TenantGroupId}', Role='{snapshot.Role}', Status='{snapshot.Status}', CanAcceptRun='{snapshot.CanAcceptRun}', AvailableRunSlots='{snapshot.AvailableRunSlots}', Provider='{GetMetadataValue(snapshot.Metadata, "provider.name") ?? GetMetadataValue(snapshot.Metadata, "provider")}', Transport='{GetMetadataValue(snapshot.Metadata, "transport.name")}'.");
++            }
++
++            var requestedTenantId =
++                request.ExecutionContextSnapshot?.TenantId;
++
++            var requestedTenantGroupId =
++                request.ExecutionContextSnapshot?.TenantGroupId;
++
++            foreach (var snapshot in snapshots
++                .Where(snapshot => IsCompatibleSnapshot(snapshot, request, requestedTenantId, requestedTenantGroupId))
++                .OrderByDescending(snapshot => snapshot.AvailableRunSlots ?? 0)
++                .ThenBy(snapshot => snapshot.RunningRunCount)
++                .ThenBy(snapshot => snapshot.QueuedRunCount)
++                .ThenBy(snapshot => snapshot.RuntimeInstanceId, StringComparer.OrdinalIgnoreCase))
++            {
++                var capacity =
++                    await capacityStore
++                        .GetAsync(
++                            snapshot.RuntimeInstanceId,
++                            cancellationToken)
++                        .ConfigureAwait(false);
++
++                if (capacity is null)
++                {
++                    Console.WriteLine(
++                        $"[RUNTIME READINESS COMPATIBLE CAPACITY MISSING] RuntimeInstanceId='{snapshot.RuntimeInstanceId}'.");
++
++                    continue;
++                }
++
++                if (!IsCompatibleProvider(request, capacity.Metadata) &&
++                    !IsCompatibleProvider(request, snapshot.Metadata))
++                {
++                    Console.WriteLine(
++                        $"[RUNTIME READINESS COMPATIBLE PROVIDER MISMATCH] RuntimeInstanceId='{snapshot.RuntimeInstanceId}', RequestedProvider='{request.ProviderName}', RequestedTransport='{request.TransportName}'.");
++
++                    continue;
++                }
++
++                Console.WriteLine(
++                    $"[RUNTIME READINESS COMPATIBLE SNAPSHOT FOUND] RuntimeInstanceId='{snapshot.RuntimeInstanceId}', ControlPlaneId='{snapshot.ControlPlaneId}', TenantId='{snapshot.TenantId}', TenantGroupId='{snapshot.TenantGroupId}', AvailableRunSlots='{snapshot.AvailableRunSlots}'.");
++
++                return new CompatibleRuntimeInstance(
++                    snapshot.RuntimeInstanceId,
++                    snapshot.ControlPlaneId,
++                    snapshot.TenantId,
++                    snapshot.TenantGroupId,
++                    snapshot.Status.ToString(),
++                    snapshot.CanAcceptRun,
++                    snapshot.AvailableRunSlots,
++                    snapshot.Metadata,
++                    capacity.Metadata);
++            }
++
++            return null;
++        }
++
++        /// <summary>
++        /// Determines whether a runtime instance snapshot is compatible with the readiness request.
++        /// </summary>
++        private static bool IsCompatibleSnapshot(
++            AiRuntimeInstanceSnapshot snapshot,
++            AiRuntimeInstanceReadinessRequest request,
++            string? requestedTenantId,
++            string? requestedTenantGroupId)
++        {
++            if (!string.IsNullOrWhiteSpace(request.ControlPlaneId) &&
++                !string.Equals(snapshot.ControlPlaneId, request.ControlPlaneId, StringComparison.OrdinalIgnoreCase))
++            {
++                return false;
++            }
++
++            if (!IsTenantMatch(snapshot.TenantId, requestedTenantId))
++            {
++                return false;
++            }
++
++            if (!IsTenantMatch(snapshot.TenantGroupId, requestedTenantGroupId))
++            {
++                return false;
++            }
++
++            if (snapshot.Role != AiRuntimeInstanceRole.Runtime)
++            {
++                return false;
++            }
++
++            if (snapshot.Status != AiRuntimeInstanceStatus.Ready)
++            {
++                return false;
++            }
++
++            if (!snapshot.CanAcceptRun)
++            {
++                return false;
++            }
++
++            if (snapshot.AvailableRunSlots is <= 0)
++            {
++                return false;
++            }
++
++            if (!IsCompatibleProvider(request, snapshot.Metadata))
++            {
++                return false;
++            }
++
++            return true;
++        }
++
++        /// <summary>
++        /// Determines whether an actual tenant value strictly matches a requested tenant value.
++        /// </summary>
++        private static bool IsTenantMatch(
++            string? actual,
++            string? requested)
++        {
++            if (string.IsNullOrWhiteSpace(requested))
++            {
++                return true;
++            }
++
++            if (string.IsNullOrWhiteSpace(actual))
++            {
++                return false;
++            }
++
++            return string.Equals(
++                actual,
++                requested,
++                StringComparison.OrdinalIgnoreCase);
++        }
++
++        /// <summary>
++        /// Determines whether metadata is compatible with the readiness request provider and transport.
++        /// </summary>
++        private static bool IsCompatibleProvider(
++            AiRuntimeInstanceReadinessRequest request,
++            IReadOnlyDictionary<string, string>? metadata)
++        {
++            if (metadata is null)
++            {
++                return true;
++            }
++
++            var providerName =
++                GetMetadataValue(metadata, AiRuntimeInstanceProviderMetadataKeys.ProviderName) ??
++                GetMetadataValue(metadata, "provider.name") ??
++                GetMetadataValue(metadata, "provider");
++
++            if (!string.IsNullOrWhiteSpace(request.ProviderName) &&
++                !string.IsNullOrWhiteSpace(providerName) &&
++                !string.Equals(providerName, request.ProviderName, StringComparison.OrdinalIgnoreCase))
++            {
++                return false;
++            }
++
++            var transportName =
++                GetMetadataValue(metadata, AiRuntimeInstanceCommandTransportMetadataKeys.TransportName) ??
++                GetMetadataValue(metadata, "transport.name");
++
++            if (!string.IsNullOrWhiteSpace(request.TransportName) &&
++                !string.IsNullOrWhiteSpace(transportName) &&
++                !string.Equals(transportName, request.TransportName, StringComparison.OrdinalIgnoreCase))
++            {
++                return false;
++            }
++
++            return true;
++        }
++
++        /// <summary>
++        /// Creates a readiness success result for a resolved runtime instance.
++        /// </summary>
++        private static AiRuntimeInstanceReadinessResult CreateSuccess(
++            AiRuntimeInstanceReadinessRequest request,
++            string runtimeInstanceId,
++            string? transportEndpoint)
++        {
++            return new AiRuntimeInstanceReadinessResult
++            {
++                Success = true,
++                ExecutionContextSnapshot = request.ExecutionContextSnapshot,
++                RuntimeInstanceId = runtimeInstanceId,
++                ProviderName = request.ProviderName,
++                TransportName = request.TransportName,
++                TransportEndpoint = transportEndpoint
++            };
+         }
+ 
+         /// <summary>
+         /// Checks transport readiness when the request requires transport endpoint readiness.
+         /// </summary>
+-        /// <param name="request">The readiness request.</param>
+-        /// <param name="snapshotMetadata">The runtime instance snapshot metadata.</param>
+-        /// <param name="capacityMetadata">The runtime instance capacity metadata.</param>
+-        /// <param name="cancellationToken">The cancellation token.</param>
+-        /// <returns>The readiness result.</returns>
+         private static async Task<AiRuntimeInstanceReadinessResult> CheckTransportReadinessAsync(
+             AiRuntimeInstanceReadinessRequest request,
+             IReadOnlyDictionary<string, string>? snapshotMetadata,
+@@ -255,11 +562,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Readiness
+         /// <summary>
+         /// Checks whether an HTTP transport endpoint exposes the runtime command endpoint.
+         /// </summary>
+-        /// <param name="request">The readiness request.</param>
+-        /// <param name="endpointUri">The base endpoint URI.</param>
+-        /// <param name="transportEndpoint">The original transport endpoint.</param>
+-        /// <param name="cancellationToken">The cancellation token.</param>
+-        /// <returns>The readiness result.</returns>
+         private static async Task<AiRuntimeInstanceReadinessResult> CheckHttpTransportReadinessAsync(
+             AiRuntimeInstanceReadinessRequest request,
+             Uri endpointUri,
+@@ -311,11 +613,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Readiness
+         /// <summary>
+         /// Checks whether a TCP-based transport endpoint accepts a socket connection.
+         /// </summary>
+-        /// <param name="request">The readiness request.</param>
+-        /// <param name="endpointUri">The endpoint URI.</param>
+-        /// <param name="transportEndpoint">The original transport endpoint.</param>
+-        /// <param name="cancellationToken">The cancellation token.</param>
+-        /// <returns>The readiness result.</returns>
+         private static async Task<AiRuntimeInstanceReadinessResult> CheckTcpTransportReadinessAsync(
+             AiRuntimeInstanceReadinessRequest request,
+             Uri endpointUri,
+@@ -360,11 +657,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Readiness
+         /// <summary>
+         /// Checks whether a generic transport endpoint is reachable using the safest available probe.
+         /// </summary>
+-        /// <param name="request">The readiness request.</param>
+-        /// <param name="endpointUri">The endpoint URI.</param>
+-        /// <param name="transportEndpoint">The original transport endpoint.</param>
+-        /// <param name="cancellationToken">The cancellation token.</param>
+-        /// <returns>The readiness result.</returns>
+         private static async Task<AiRuntimeInstanceReadinessResult> CheckGenericTransportReadinessAsync(
+             AiRuntimeInstanceReadinessRequest request,
+             Uri endpointUri,
+@@ -392,8 +684,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Readiness
+         /// <summary>
+         /// Creates request-scoped registry and capacity stores when Redis dependencies are available.
+         /// </summary>
+-        /// <param name="request">The readiness request.</param>
+-        /// <returns>The registry and capacity store to use for readiness checks.</returns>
+         private (IAiRuntimeInstanceRegistry Registry, IAiRuntimeInstanceCapacityStore CapacityStore) CreateRequestScopedStores(
+             AiRuntimeInstanceReadinessRequest request)
+         {
+@@ -406,19 +696,26 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Readiness
+                 return (this.runtimeInstanceRegistry, this.runtimeInstanceCapacityStore);
+             }
+ 
+-            var executionContextProvider = new FixedExecutionContextSnapshotProvider(request.ExecutionContextSnapshot);
++            var executionContextProvider =
++                new FixedExecutionContextSnapshotProvider(
++                    request.ExecutionContextSnapshot);
++
++            var effectiveControlPlaneIdResolver =
++                string.IsNullOrWhiteSpace(request.ControlPlaneId)
++                    ? this.controlPlaneIdResolver
++                    : new FixedAiControlPlaneIdResolver(request.ControlPlaneId);
+ 
+             return (
+                 new RedisAiRuntimeInstanceRegistry(
+                     this.redis,
+                     this.registrationOptions,
+-                    this.controlPlaneIdResolver,
++                    effectiveControlPlaneIdResolver,
+                     this.visibilityEvaluator,
+                     executionContextProvider),
+                 new RedisAiRuntimeInstanceCapacityStore(
+                     this.redis,
+                     this.registrationOptions,
+-                    this.controlPlaneIdResolver,
++                    effectiveControlPlaneIdResolver,
+                     this.visibilityEvaluator,
+                     executionContextProvider));
+         }
+@@ -426,10 +723,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Readiness
+         /// <summary>
+         /// Resolves the transport endpoint from the request or runtime metadata.
+         /// </summary>
+-        /// <param name="request">The readiness request.</param>
+-        /// <param name="snapshotMetadata">The runtime instance snapshot metadata.</param>
+-        /// <param name="capacityMetadata">The runtime instance capacity metadata.</param>
+-        /// <returns>The resolved transport endpoint, or <see langword="null" /> when missing.</returns>
+         private static string? ResolveTransportEndpoint(
+             AiRuntimeInstanceReadinessRequest request,
+             IReadOnlyDictionary<string, string>? snapshotMetadata,
+@@ -449,9 +742,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Readiness
+         /// <summary>
+         /// Gets a metadata value using case-insensitive key matching.
+         /// </summary>
+-        /// <param name="metadata">The metadata dictionary.</param>
+-        /// <param name="key">The metadata key.</param>
+-        /// <returns>The metadata value, or <see langword="null" /> when missing.</returns>
+         private static string? GetMetadataValue(
+             IReadOnlyDictionary<string, string>? metadata,
+             string key)
+@@ -480,9 +770,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Readiness
+         /// <summary>
+         /// Determines whether the readiness request targets an HTTP-like transport.
+         /// </summary>
+-        /// <param name="transportName">The transport name.</param>
+-        /// <param name="endpointUri">The endpoint URI.</param>
+-        /// <returns><see langword="true" /> when the transport is HTTP-like; otherwise, <see langword="false" />.</returns>
+         private static bool IsHttpTransport(
+             string? transportName,
+             Uri endpointUri)
+@@ -499,8 +786,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Readiness
+         /// <summary>
+         /// Determines whether the readiness request targets a gRPC-like transport.
+         /// </summary>
+-        /// <param name="transportName">The transport name.</param>
+-        /// <returns><see langword="true" /> when the transport is gRPC-like; otherwise, <see langword="false" />.</returns>
+         private static bool IsGrpcTransport(
+             string? transportName)
+         {
+@@ -510,8 +795,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Readiness
+         /// <summary>
+         /// Resolves the TCP port for an endpoint URI.
+         /// </summary>
+-        /// <param name="endpointUri">The endpoint URI.</param>
+-        /// <returns>The resolved port, or zero when no usable port exists.</returns>
+         private static int ResolvePort(
+             Uri endpointUri)
+         {
+@@ -536,8 +819,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Readiness
+         /// <summary>
+         /// Resolves the HTTP command readiness endpoint from a base runtime endpoint.
+         /// </summary>
+-        /// <param name="baseEndpoint">The base runtime endpoint.</param>
+-        /// <returns>The HTTP command endpoint.</returns>
+         private static Uri ResolveHttpCommandReadinessEndpoint(
+             Uri baseEndpoint)
+         {
+@@ -548,8 +829,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Readiness
+         /// <summary>
+         /// Resolves the timeout used by a single transport probe attempt.
+         /// </summary>
+-        /// <param name="request">The readiness request.</param>
+-        /// <returns>The timeout used by one probe attempt.</returns>
+         private static TimeSpan GetSingleProbeTimeout(
+             AiRuntimeInstanceReadinessRequest request)
+         {
+@@ -567,9 +846,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Readiness
+         /// <summary>
+         /// Creates a readiness success result.
+         /// </summary>
+-        /// <param name="request">The readiness request.</param>
+-        /// <param name="transportEndpoint">The resolved transport endpoint.</param>
+-        /// <returns>The readiness success result.</returns>
+         private static AiRuntimeInstanceReadinessResult CreateSuccess(
+             AiRuntimeInstanceReadinessRequest request,
+             string? transportEndpoint)
+@@ -588,10 +864,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Readiness
+         /// <summary>
+         /// Creates a readiness failure result.
+         /// </summary>
+-        /// <param name="request">The readiness request.</param>
+-        /// <param name="failureReason">The failure reason.</param>
+-        /// <param name="timedOut">A value indicating whether the readiness wait timed out.</param>
+-        /// <returns>The readiness failure result.</returns>
+         private static AiRuntimeInstanceReadinessResult CreateFailure(
+             AiRuntimeInstanceReadinessRequest request,
+             string failureReason,
+@@ -610,10 +882,41 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Readiness
+             };
+         }
+ 
++        /// <summary>
++        /// Resolves a fixed control-plane id for request-scoped readiness store access.
++        /// </summary>
++        private sealed class FixedAiControlPlaneIdResolver :
++            IAiControlPlaneIdResolver
++        {
++            private readonly string controlPlaneId;
++
++            /// <summary>
++            /// Initializes a new instance of the <see cref="FixedAiControlPlaneIdResolver"/> class.
++            /// </summary>
++            /// <param name="controlPlaneId">The fixed control-plane id.</param>
++            public FixedAiControlPlaneIdResolver(
++                string controlPlaneId)
++            {
++                ArgumentException.ThrowIfNullOrWhiteSpace(controlPlaneId);
++
++                this.controlPlaneId = controlPlaneId;
++            }
++
++            /// <inheritdoc />
++            public Task<string> ResolveAsync(
++                CancellationToken cancellationToken = default)
++            {
++                cancellationToken.ThrowIfCancellationRequested();
++
++                return Task.FromResult(this.controlPlaneId);
++            }
++        }
++
+         /// <summary>
+         /// Provides a fixed execution context snapshot for request-scoped readiness store reads.
+         /// </summary>
+-        private sealed class FixedExecutionContextSnapshotProvider : IExecutionContextSnapshotProvider
++        private sealed class FixedExecutionContextSnapshotProvider :
++            IExecutionContextSnapshotProvider
+         {
+             private readonly ExecutionContextSnapshot snapshot;
+ 
+@@ -633,5 +936,19 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Readiness
+                 return this.snapshot;
+             }
+         }
++
++        /// <summary>
++        /// Represents a compatible runtime instance resolved from the registry.
++        /// </summary>
++        private sealed record CompatibleRuntimeInstance(
++            string RuntimeInstanceId,
++            string? ControlPlaneId,
++            string? TenantId,
++            string? TenantGroupId,
++            string? Status,
++            bool CanAcceptRun,
++            int? AvailableRunSlots,
++            IReadOnlyDictionary<string, string>? SnapshotMetadata,
++            IReadOnlyDictionary<string, string>? CapacityMetadata);
+     }
+ }
+\ No newline at end of file
+diff --git a/implementations/dotnet/src/Multiplexed.AI/Runtime/ControlPlane/RuntimeInstances/Registry/AiRuntimeInstanceRegistrationHostedService.cs b/implementations/dotnet/src/Multiplexed.AI/Runtime/ControlPlane/RuntimeInstances/Registry/AiRuntimeInstanceRegistrationHostedService.cs
+index 509121d..febc687 100644
+--- a/implementations/dotnet/src/Multiplexed.AI/Runtime/ControlPlane/RuntimeInstances/Registry/AiRuntimeInstanceRegistrationHostedService.cs
++++ b/implementations/dotnet/src/Multiplexed.AI/Runtime/ControlPlane/RuntimeInstances/Registry/AiRuntimeInstanceRegistrationHostedService.cs
+@@ -233,17 +233,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
+         private async Task RegisterRuntimeInstanceAsync(
+             CancellationToken cancellationToken)
+         {
+-            controlPlaneId =
+-                await controlPlaneIdResolver
+-                    .ResolveAsync(cancellationToken)
+-                    .ConfigureAwait(false);
+-
+-            if (string.IsNullOrWhiteSpace(controlPlaneId))
+-            {
+-                throw new InvalidOperationException(
+-                    "The resolved control-plane identifier cannot be null or empty.");
+-            }
+-
+             var environment =
+                 await environmentProvider
+                     .GetSnapshotAsync(cancellationToken)
+@@ -258,6 +247,27 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
+             var providerName =
+                 ResolveProviderName(environment);
+ 
++
++            SafeLogInformation(
++                "[REGISTRATION PATCH CHECK] Explicit control-plane resolution path enabled.");
++
++            controlPlaneId =
++                ResolveExplicitControlPlaneId(environment);
++
++            if (string.IsNullOrWhiteSpace(controlPlaneId))
++            {
++                controlPlaneId =
++                    await controlPlaneIdResolver
++                        .ResolveAsync(cancellationToken)
++                        .ConfigureAwait(false);
++            }
++
++            if (string.IsNullOrWhiteSpace(controlPlaneId))
++            {
++                throw new InvalidOperationException(
++                    "The resolved control-plane identifier cannot be null or empty.");
++            }
++
+             runtimeMetadata =
+                 MergeMetadata(
+                     options.Metadata,
+@@ -268,6 +278,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
+                         [AiRuntimeInstanceProviderMetadataKeys.ProviderName] = providerName,
+                         ["provider"] = providerName,
+                         ["controlPlaneId"] = controlPlaneId,
++                        ["control-plane.id"] = controlPlaneId,
++                        ["controlplane.id"] = controlPlaneId,
++                        ["runtime.controlPlaneId"] = controlPlaneId,
+                         ["controlPlaneHostId"] = controlPlaneHostId ?? string.Empty
+                     });
+ 
+@@ -392,6 +405,59 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
+                 registry.GetHashCode());
+         }
+ 
++        /// <summary>
++        /// Resolves an explicit control-plane identifier from registration metadata or runtime environment metadata.
++        /// </summary>
++        /// <param name="environment">The runtime environment snapshot.</param>
++        /// <returns>The explicit control-plane identifier, or null when none is available.</returns>
++        private string? ResolveExplicitControlPlaneId(
++            AiRuntimeEnvironmentSnapshot environment)
++        {
++            return ResolveControlPlaneIdFromMetadata(options.Metadata)
++                ?? ResolveControlPlaneIdFromMetadata(options.ProviderMetadata)
++                ?? ResolveControlPlaneIdFromMetadata(environment.ProviderMetadata);
++        }
++
++        /// <summary>
++        /// Resolves a control-plane identifier from metadata.
++        /// </summary>
++        /// <param name="metadata">The metadata dictionary.</param>
++        /// <returns>The resolved control-plane identifier, or null when none is available.</returns>
++        private static string? ResolveControlPlaneIdFromMetadata(
++            IReadOnlyDictionary<string, string>? metadata)
++        {
++            if (metadata is null || metadata.Count == 0)
++            {
++                return null;
++            }
++
++            if (metadata.TryGetValue("controlPlaneId", out var controlPlaneId) &&
++                !string.IsNullOrWhiteSpace(controlPlaneId))
++            {
++                return controlPlaneId.Trim();
++            }
++
++            if (metadata.TryGetValue("control-plane.id", out controlPlaneId) &&
++                !string.IsNullOrWhiteSpace(controlPlaneId))
++            {
++                return controlPlaneId.Trim();
++            }
++
++            if (metadata.TryGetValue("controlplane.id", out controlPlaneId) &&
++                !string.IsNullOrWhiteSpace(controlPlaneId))
++            {
++                return controlPlaneId.Trim();
++            }
++
++            if (metadata.TryGetValue("runtime.controlPlaneId", out controlPlaneId) &&
++                !string.IsNullOrWhiteSpace(controlPlaneId))
++            {
++                return controlPlaneId.Trim();
++            }
++
++            return null;
++        }
++
+         /// <summary>
+         /// Publishes a heartbeat for the current runtime instance.
+         /// </summary>
