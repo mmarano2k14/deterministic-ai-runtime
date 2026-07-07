@@ -514,6 +514,17 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
                 }
             }
 
+            var controlPlaneId =
+                this.ResolveControlPlaneId(request);
+
+            if (!string.IsNullOrWhiteSpace(controlPlaneId))
+            {
+                metadata["controlPlaneId"] = controlPlaneId;
+                metadata["control-plane.id"] = controlPlaneId;
+                metadata["controlplane.id"] = controlPlaneId;
+                metadata["runtime.controlPlaneId"] = controlPlaneId;
+            }
+
             metadata[AiRuntimeInstanceProviderMetadataKeys.ProviderName] =
                 metadata.TryGetValue(AiRuntimeInstanceProviderMetadataKeys.ProviderName, out var existingProviderName) &&
                 !string.IsNullOrWhiteSpace(existingProviderName)
@@ -569,6 +580,42 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
             }
 
             return metadata;
+        }
+
+        /// <summary>
+        /// Resolves the effective control-plane identifier inherited by local runtime instances.
+        /// </summary>
+        /// <param name="request">The provider scale-out request.</param>
+        /// <returns>The resolved control-plane identifier, or an empty value when no explicit value is available.</returns>
+        private string? ResolveControlPlaneId(
+            AiRuntimeScaleOutProviderRequest request)
+        {
+            var configuredControlPlaneId =
+                this.configuration["AiRuntimeInstanceRegistration:ControlPlaneId"];
+
+            if (string.IsNullOrWhiteSpace(configuredControlPlaneId))
+            {
+                configuredControlPlaneId =
+                    this.configuration["AiMcpHost:ControlPlaneId"];
+            }
+
+            if (!string.IsNullOrWhiteSpace(request.ControlPlaneId) &&
+                !string.Equals(request.ControlPlaneId, this.runtimeHostIdentity.HostId, StringComparison.OrdinalIgnoreCase))
+            {
+                return request.ControlPlaneId;
+            }
+
+            if (!string.IsNullOrWhiteSpace(configuredControlPlaneId))
+            {
+                return configuredControlPlaneId;
+            }
+
+            if (!string.IsNullOrWhiteSpace(request.ControlPlaneId))
+            {
+                return request.ControlPlaneId;
+            }
+
+            return null;
         }
 
         /// <summary>
@@ -725,7 +772,6 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
 
             if (!string.IsNullOrWhiteSpace(request.TenantId))
             {
-                metadata[AiRuntimeInstanceIsolationMetadataKeys.TenantId] = request.TenantId;
                 metadata[AiRuntimeInstanceIsolationMetadataKeys.TenantId] = request.TenantId;
             }
 

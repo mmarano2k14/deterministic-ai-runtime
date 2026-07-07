@@ -3,6 +3,8 @@ using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager.Kube
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Security.Cryptography;
+using System.Text;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strategy.Kubernetes.Client
 {
@@ -15,12 +17,15 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
     /// </remarks>
     public sealed class AiKubernetesSdkResourceFactory
     {
+        private const int KubernetesDnsLabelMaxLength = 63;
+
         /// <summary>
         /// Creates a Kubernetes pod for a runtime instance.
         /// </summary>
         /// <param name="podSpec">The runtime pod specification.</param>
         /// <returns>The Kubernetes pod model.</returns>
-        public V1Pod CreatePod(AiKubernetesRuntimePodSpec podSpec)
+        public V1Pod CreatePod(
+            AiKubernetesRuntimePodSpec podSpec)
         {
             ArgumentNullException.ThrowIfNull(podSpec);
 
@@ -73,11 +78,14 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
         /// </summary>
         /// <param name="podSpec">The runtime pod specification.</param>
         /// <returns>The Kubernetes service model.</returns>
-        public V1Service CreateService(AiKubernetesRuntimePodSpec podSpec)
+        public V1Service CreateService(
+            AiKubernetesRuntimePodSpec podSpec)
         {
             ArgumentNullException.ThrowIfNull(podSpec);
 
-            var serviceName = this.CreateServiceName(podSpec);
+            var serviceName =
+                this.CreateServiceName(
+                    podSpec);
 
             return new V1Service
             {
@@ -114,11 +122,13 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
         /// </summary>
         /// <param name="podSpec">The runtime pod specification.</param>
         /// <returns>The Kubernetes service name.</returns>
-        public string CreateServiceName(AiKubernetesRuntimePodSpec podSpec)
+        public string CreateServiceName(
+            AiKubernetesRuntimePodSpec podSpec)
         {
             ArgumentNullException.ThrowIfNull(podSpec);
 
-            return $"{podSpec.PodName}-svc";
+            return CreateKubernetesDnsLabel(
+                $"{podSpec.PodName}-svc");
         }
 
         /// <summary>
@@ -146,6 +156,67 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
             }
 
             return metadata;
+        }
+
+        /// <summary>
+        /// Creates a Kubernetes DNS label compatible resource name.
+        /// </summary>
+        /// <param name="rawName">The raw resource name.</param>
+        /// <returns>The normalized Kubernetes DNS label.</returns>
+        private static string CreateKubernetesDnsLabel(
+            string rawName)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(rawName);
+
+            var normalized =
+                new string(
+                    rawName
+                        .ToLowerInvariant()
+                        .Select(character =>
+                            char.IsLetterOrDigit(character) || character == '-'
+                                ? character
+                                : '-')
+                        .ToArray());
+
+            normalized =
+                string.Join(
+                    "-",
+                    normalized.Split(
+                        '-',
+                        StringSplitOptions.RemoveEmptyEntries));
+
+            normalized =
+                normalized.Trim('-');
+
+            if (string.IsNullOrWhiteSpace(normalized))
+            {
+                normalized = "runtime";
+            }
+
+            if (normalized.Length <= KubernetesDnsLabelMaxLength)
+            {
+                return normalized;
+            }
+
+            var hash =
+                Convert
+                    .ToHexString(
+                        SHA256.HashData(
+                            Encoding.UTF8.GetBytes(normalized)))
+                    .ToLowerInvariant()[..10];
+
+            var prefixLength =
+                KubernetesDnsLabelMaxLength - hash.Length - 1;
+
+            var prefix =
+                normalized[..prefixLength].TrimEnd('-');
+
+            if (string.IsNullOrWhiteSpace(prefix))
+            {
+                return hash;
+            }
+
+            return $"{prefix}-{hash}";
         }
     }
 }

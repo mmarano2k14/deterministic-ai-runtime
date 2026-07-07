@@ -233,17 +233,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
         private async Task RegisterRuntimeInstanceAsync(
             CancellationToken cancellationToken)
         {
-            controlPlaneId =
-                await controlPlaneIdResolver
-                    .ResolveAsync(cancellationToken)
-                    .ConfigureAwait(false);
-
-            if (string.IsNullOrWhiteSpace(controlPlaneId))
-            {
-                throw new InvalidOperationException(
-                    "The resolved control-plane identifier cannot be null or empty.");
-            }
-
             var environment =
                 await environmentProvider
                     .GetSnapshotAsync(cancellationToken)
@@ -258,6 +247,27 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
             var providerName =
                 ResolveProviderName(environment);
 
+
+            SafeLogInformation(
+                "[REGISTRATION PATCH CHECK] Explicit control-plane resolution path enabled.");
+
+            controlPlaneId =
+                ResolveExplicitControlPlaneId(environment);
+
+            if (string.IsNullOrWhiteSpace(controlPlaneId))
+            {
+                controlPlaneId =
+                    await controlPlaneIdResolver
+                        .ResolveAsync(cancellationToken)
+                        .ConfigureAwait(false);
+            }
+
+            if (string.IsNullOrWhiteSpace(controlPlaneId))
+            {
+                throw new InvalidOperationException(
+                    "The resolved control-plane identifier cannot be null or empty.");
+            }
+
             runtimeMetadata =
                 MergeMetadata(
                     options.Metadata,
@@ -268,6 +278,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
                         [AiRuntimeInstanceProviderMetadataKeys.ProviderName] = providerName,
                         ["provider"] = providerName,
                         ["controlPlaneId"] = controlPlaneId,
+                        ["control-plane.id"] = controlPlaneId,
+                        ["controlplane.id"] = controlPlaneId,
+                        ["runtime.controlPlaneId"] = controlPlaneId,
                         ["controlPlaneHostId"] = controlPlaneHostId ?? string.Empty
                     });
 
@@ -390,6 +403,59 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
                 FormatMetadata(snapshot.Metadata),
                 registry.GetType().FullName,
                 registry.GetHashCode());
+        }
+
+        /// <summary>
+        /// Resolves an explicit control-plane identifier from registration metadata or runtime environment metadata.
+        /// </summary>
+        /// <param name="environment">The runtime environment snapshot.</param>
+        /// <returns>The explicit control-plane identifier, or null when none is available.</returns>
+        private string? ResolveExplicitControlPlaneId(
+            AiRuntimeEnvironmentSnapshot environment)
+        {
+            return ResolveControlPlaneIdFromMetadata(options.Metadata)
+                ?? ResolveControlPlaneIdFromMetadata(options.ProviderMetadata)
+                ?? ResolveControlPlaneIdFromMetadata(environment.ProviderMetadata);
+        }
+
+        /// <summary>
+        /// Resolves a control-plane identifier from metadata.
+        /// </summary>
+        /// <param name="metadata">The metadata dictionary.</param>
+        /// <returns>The resolved control-plane identifier, or null when none is available.</returns>
+        private static string? ResolveControlPlaneIdFromMetadata(
+            IReadOnlyDictionary<string, string>? metadata)
+        {
+            if (metadata is null || metadata.Count == 0)
+            {
+                return null;
+            }
+
+            if (metadata.TryGetValue("controlPlaneId", out var controlPlaneId) &&
+                !string.IsNullOrWhiteSpace(controlPlaneId))
+            {
+                return controlPlaneId.Trim();
+            }
+
+            if (metadata.TryGetValue("control-plane.id", out controlPlaneId) &&
+                !string.IsNullOrWhiteSpace(controlPlaneId))
+            {
+                return controlPlaneId.Trim();
+            }
+
+            if (metadata.TryGetValue("controlplane.id", out controlPlaneId) &&
+                !string.IsNullOrWhiteSpace(controlPlaneId))
+            {
+                return controlPlaneId.Trim();
+            }
+
+            if (metadata.TryGetValue("runtime.controlPlaneId", out controlPlaneId) &&
+                !string.IsNullOrWhiteSpace(controlPlaneId))
+            {
+                return controlPlaneId.Trim();
+            }
+
+            return null;
         }
 
         /// <summary>

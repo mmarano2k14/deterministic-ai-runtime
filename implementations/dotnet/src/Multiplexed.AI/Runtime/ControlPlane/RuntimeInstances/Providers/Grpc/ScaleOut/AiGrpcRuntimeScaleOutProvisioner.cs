@@ -218,6 +218,17 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Grpc.Sc
                     },
                     cancellationToken).ConfigureAwait(false);
 
+            logger.LogInformation(
+                "GRPC SCALE-OUT HOST-MANAGER START RESULT RequestId={RequestId} SharedRunId={SharedRunId} Success={Success} RuntimeInstanceId={RuntimeInstanceId} ProviderName={ProviderName} TransportName={TransportName} TransportEndpoint={TransportEndpoint} FailureReason={FailureReason}",
+                request.RequestId,
+                request.SharedRunId,
+                startResult.Success,
+                startResult.RuntimeInstanceId,
+                startResult.ProviderName,
+                startResult.TransportName,
+                startResult.TransportEndpoint,
+                startResult.FailureReason ?? "(none)");
+
             if (!startResult.Success)
             {
                 logger.LogWarning(
@@ -231,8 +242,15 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Grpc.Sc
                 return CreateRejectedResult(request, startResult.FailureReason ?? "runtime-host-start-failed", "gRPC runtime scale-out host manager start failed.");
             }
 
-            var fulfilledRuntimeInstanceId = !string.IsNullOrWhiteSpace(startResult.RuntimeInstanceId) ? startResult.RuntimeInstanceId : context.RuntimeInstanceId;
-            var fulfilledTransportEndpoint = !string.IsNullOrWhiteSpace(startResult.TransportEndpoint) ? startResult.TransportEndpoint : context.Endpoint;
+            var fulfilledRuntimeInstanceId =
+                !string.IsNullOrWhiteSpace(startResult.RuntimeInstanceId)
+                    ? startResult.RuntimeInstanceId
+                    : context.RuntimeInstanceId;
+
+            var fulfilledTransportEndpoint =
+                !string.IsNullOrWhiteSpace(startResult.TransportEndpoint)
+                    ? startResult.TransportEndpoint
+                    : context.Endpoint;
 
             if (string.IsNullOrWhiteSpace(fulfilledRuntimeInstanceId))
             {
@@ -241,6 +259,20 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Grpc.Sc
 
             if (options.RequireReadiness)
             {
+                var requireTransportEndpoint =
+                    ShouldRequireTransportEndpointForReadiness();
+
+                logger.LogInformation(
+                    "GRPC SCALE-OUT HOST-MANAGER READINESS WAIT RequestId={RequestId} SharedRunId={SharedRunId} RuntimeInstanceId={RuntimeInstanceId} HostCreationMode={HostCreationMode} RequireTransportEndpoint={RequireTransportEndpoint} TransportEndpoint={TransportEndpoint} TimeoutSeconds={TimeoutSeconds} PollIntervalMilliseconds={PollIntervalMilliseconds}",
+                    request.RequestId,
+                    request.SharedRunId,
+                    fulfilledRuntimeInstanceId,
+                    options.HostCreationMode,
+                    requireTransportEndpoint,
+                    fulfilledTransportEndpoint,
+                    Math.Max(1, options.ReadinessTimeoutSeconds),
+                    Math.Max(1, options.ReadinessPollIntervalMilliseconds));
+
                 var readinessResult =
                     await readinessWaiter.WaitUntilReadyAsync(
                         new AiRuntimeInstanceReadinessRequest
@@ -251,11 +283,22 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Grpc.Sc
                             ProviderName = ProviderName,
                             TransportName = AiGrpcRuntimeProviderConstants.TransportName,
                             TransportEndpoint = fulfilledTransportEndpoint,
-                            RequireTransportEndpoint = options.HostCreationMode != AiRuntimeHostCreationMode.Fixture,
+                            RequireTransportEndpoint = requireTransportEndpoint,
                             Timeout = TimeSpan.FromSeconds(Math.Max(1, options.ReadinessTimeoutSeconds)),
                             PollInterval = TimeSpan.FromMilliseconds(Math.Max(1, options.ReadinessPollIntervalMilliseconds))
                         },
                         cancellationToken).ConfigureAwait(false);
+
+                logger.LogInformation(
+                    "GRPC SCALE-OUT HOST-MANAGER READINESS RESULT RequestId={RequestId} SharedRunId={SharedRunId} RuntimeInstanceId={RuntimeInstanceId} HostCreationMode={HostCreationMode} Success={Success} TimedOut={TimedOut} FailureReason={FailureReason} TransportEndpoint={TransportEndpoint}",
+                    request.RequestId,
+                    request.SharedRunId,
+                    readinessResult.RuntimeInstanceId,
+                    options.HostCreationMode,
+                    readinessResult.Success,
+                    readinessResult.TimedOut,
+                    readinessResult.FailureReason ?? "(none)",
+                    readinessResult.TransportEndpoint ?? "(null)");
 
                 if (!readinessResult.Success)
                 {
@@ -270,9 +313,25 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Grpc.Sc
 
                     return CreateRejectedResult(request, readinessResult.FailureReason ?? "runtime-readiness-failed", "gRPC runtime scale-out readiness check failed.");
                 }
+
+                if (!string.IsNullOrWhiteSpace(readinessResult.RuntimeInstanceId))
+                {
+                    fulfilledRuntimeInstanceId = readinessResult.RuntimeInstanceId;
+                }
+
+                if (!string.IsNullOrWhiteSpace(readinessResult.TransportEndpoint))
+                {
+                    fulfilledTransportEndpoint = readinessResult.TransportEndpoint;
+                }
             }
 
-            var metadata = CreateFulfilledHostManagerMetadata(request, context, startResult, fulfilledRuntimeInstanceId, fulfilledTransportEndpoint);
+            var metadata =
+                CreateFulfilledHostManagerMetadata(
+                    request,
+                    context,
+                    startResult,
+                    fulfilledRuntimeInstanceId,
+                    fulfilledTransportEndpoint);
 
             logger.LogInformation(
                 "GRPC SCALE-OUT HOST-MANAGER FULFILLED RequestId={RequestId} SharedRunId={SharedRunId} RuntimeInstanceId={RuntimeInstanceId} Endpoint={Endpoint} HostCreationMode={HostCreationMode} DurationMs={DurationMs}",
@@ -284,6 +343,25 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Grpc.Sc
                 (DateTimeOffset.UtcNow - startedAtUtc).TotalMilliseconds);
 
             return CreateFulfilledResult(request, fulfilledRuntimeInstanceId, $"grpc-host-manager-scaleout-{request.RequestId}", "gRPC runtime scale-out request was fulfilled by the runtime host manager.", metadata);
+        }
+
+        /// <summary>
+        /// Determines whether runtime readiness should verify direct transport endpoint reachability.
+        /// </summary>
+        /// <returns><see langword="true"/> when direct transport endpoint readiness is required; otherwise, <see langword="false"/>.</returns>
+        private bool ShouldRequireTransportEndpointForReadiness()
+        {
+            if (options.HostCreationMode == AiRuntimeHostCreationMode.Fixture)
+            {
+                return false;
+            }
+
+            if (options.HostCreationMode == AiRuntimeHostCreationMode.Kubernetes)
+            {
+                return false;
+            }
+
+            return true;
         }
 
         /// <summary>
@@ -308,7 +386,22 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Grpc.Sc
             var queueCapacity = ResolvePositiveOrDefault(tenantSettings.LocalQueueCapacity, request.LocalQueueCapacity, DefaultQueueCapacity);
             var maxRuntimeInstances = ResolvePositiveOrNullableDefault(tenantSettings.MaxRuntimeInstances, request.MaxRuntimeInstances);
 
-            var metadata = CreateMetadata(request, tenantSettings, tenantId, tenantGroupId, isolationMode, preferDedicatedCapacity, allowSharedFallback, runtimeInstanceId, runtimeInstanceIdPrefix, endpoint, workerCount, maxConcurrentRuns, queueCapacity, maxRuntimeInstances);
+            var metadata =
+                CreateMetadata(
+                    request,
+                    tenantSettings,
+                    tenantId,
+                    tenantGroupId,
+                    isolationMode,
+                    preferDedicatedCapacity,
+                    allowSharedFallback,
+                    runtimeInstanceId,
+                    runtimeInstanceIdPrefix,
+                    endpoint,
+                    workerCount,
+                    maxConcurrentRuns,
+                    queueCapacity,
+                    maxRuntimeInstances);
 
             return new AiRuntimeScaleOutProvisioningContext
             {
@@ -366,7 +459,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Grpc.Sc
             AiRuntimeScaleOutProviderRequest request,
             string runtimeInstanceIdPrefix)
         {
-            var target = request.RequestedTargetInstanceCount > 0 ? request.RequestedTargetInstanceCount : Math.Max(1, request.CurrentInstanceCount + 1);
+            var target =
+                request.RequestedTargetInstanceCount > 0
+                    ? request.RequestedTargetInstanceCount
+                    : Math.Max(1, request.CurrentInstanceCount + 1);
+
             return $"{request.ControlPlaneId}:{runtimeInstanceIdPrefix}-{target}";
         }
 
@@ -382,7 +479,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Grpc.Sc
             string runtimeInstanceId,
             string runtimeInstanceIdPrefix)
         {
-            var endpointTemplate = string.IsNullOrWhiteSpace(options.EndpointTemplate) ? DefaultEndpointTemplate : options.EndpointTemplate.Trim();
+            var endpointTemplate =
+                string.IsNullOrWhiteSpace(options.EndpointTemplate)
+                    ? DefaultEndpointTemplate
+                    : options.EndpointTemplate.Trim();
 
             return endpointTemplate
                 .Replace("{runtimeInstanceId}", runtimeInstanceId, StringComparison.OrdinalIgnoreCase)
@@ -522,7 +622,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Grpc.Sc
             int queueCapacity,
             int? maxRuntimeInstances)
         {
-            var metadata = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            var metadata =
+                new Dictionary<string, string>(
+                    StringComparer.OrdinalIgnoreCase);
 
             CopyMetadata(metadata, request.Metadata);
             CopyMetadata(metadata, tenantSettings.Metadata);
@@ -567,7 +669,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Grpc.Sc
             string fulfilledRuntimeInstanceId,
             string fulfilledTransportEndpoint)
         {
-            var metadata = new Dictionary<string, string>(startResult.Metadata ?? new Dictionary<string, string>(), StringComparer.OrdinalIgnoreCase);
+            var metadata =
+                new Dictionary<string, string>(
+                    startResult.Metadata ?? new Dictionary<string, string>(),
+                    StringComparer.OrdinalIgnoreCase);
 
             CopyMetadata(metadata, context.Metadata);
 
@@ -580,7 +685,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Grpc.Sc
             metadata["scaleOutRequestId"] = request.RequestId;
             metadata["sharedRunId"] = request.SharedRunId;
             metadata["controlPlaneId"] = request.ControlPlaneId;
-            metadata["hostCreation.mode"] = metadata.TryGetValue("hostCreation.mode", out var hostCreationMode) ? hostCreationMode : "HostManager";
+            metadata["hostCreation.mode"] =
+                metadata.TryGetValue("hostCreation.mode", out var hostCreationMode)
+                    ? hostCreationMode
+                    : "HostManager";
 
             return metadata;
         }

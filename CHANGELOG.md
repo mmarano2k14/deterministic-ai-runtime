@@ -6,6 +6,825 @@ This project follows a deterministic runtime and observability model designed fo
 
 ---
 
+## [1.0.7.1] - 2026-07-07 —  Kubernetes Runtime Host Provider
+
+## Added
+
+### Kubernetes-backed runtime instance publication
+
+Added the missing bridge between Kubernetes host lifecycle and runtime routing visibility.
+
+Before:
+
+```text
+Kubernetes pod created
+Kubernetes pod ready
+Runtime registry/capacity empty
+Readiness waiter stuck with SnapshotCount=0
+```
+
+Now:
+
+```text
+Kubernetes pod created
+Kubernetes pod ready
+Kubernetes-backed RuntimeInstance published
+Runtime capacity published
+Readiness waiter succeeds
+Scale-out fulfilled
+```
+
+This closes the architecture gap where a Kubernetes pod existed physically but was not visible as a routable runtime instance by the control plane.
+
+### New Kubernetes runtime instance publisher
+
+Added a dedicated publisher responsible for converting a successfully started Kubernetes runtime host into a visible runtime instance.
+
+Namespace:
+
+```csharp
+Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strategy.Kubernetes.Publisher
+```
+
+Added:
+
+```csharp
+IAiKubernetesRuntimeInstancePublisher
+KubernetesAiRuntimeInstancePublisher
+```
+
+Responsibilities:
+
+```text
+AiRuntimeHostStartRequest + AiRuntimeHostStartResult
+ -> AiRuntimeInstanceRegistration
+ -> AiRuntimeInstanceCapacityDescriptor
+ -> Redis registry/capacity publication
+```
+
+The publisher writes:
+
+```text
+RuntimeInstanceId
+ControlPlaneId
+ControlPlaneHostId
+TenantId
+TenantGroupId
+Role=Runtime
+Status=Ready
+WorkerCount
+MaxConcurrentRuns
+AvailableRunSlots
+CanAcceptRun=True
+provider.name
+transport.name
+host.provider=kubernetes
+kubernetes pod/service metadata
+```
+
+## Changed
+
+### Kubernetes host creation strategy now publishes runtime visibility
+
+`KubernetesAiRuntimeHostCreationStrategy` now remains the owner of Kubernetes lifecycle and also performs the Kubernetes-specific publication step after pod readiness.
+
+Flow now:
+
+```text
+Create pod/service
+Wait Kubernetes pod readiness
+Publish Kubernetes-backed RuntimeInstance + Capacity
+Return AiRuntimeHostStartResult.Started
+```
+
+This keeps the architecture clean because gRPC and HTTP providers do not need to know anything about Kubernetes.
+
+### Provider neutrality preserved
+
+`AiGrpcRuntimeScaleOutProvisioner` was not coupled to Kubernetes.
+
+It still only does:
+
+```text
+Create provisioning context
+Call runtimeHostManager.StartRuntimeAsync(...)
+Wait runtime readiness
+Fulfill scale-out
+```
+
+No Kubernetes-specific publisher, pod metadata, or Kubernetes registration logic was added inside the gRPC provider.
+
+This preserves the boundary:
+
+```text
+gRPC provider = runtime provider / transport ownership
+Kubernetes strategy = host lifecycle + Kubernetes-backed runtime publication
+Registry/capacity = routable source of truth
+Readiness waiter = post-publication validation
+```
+
+### Metadata merge hardened
+
+The Kubernetes runtime publisher now preserves both request metadata and host result metadata while keeping routing-critical fields authoritative.
+
+Metadata flow:
+
+```text
+request.Metadata
++ result.Metadata
++ authoritative runtime/provider/tenant/control-plane keys
+```
+
+Critical keys are written after merge so they cannot be accidentally overwritten:
+
+```text
+provider.name
+provider
+transport.name
+runtimeInstanceId
+controlPlaneId
+control-plane.id
+controlplane.id
+runtime.controlPlaneId
+tenant.id
+tenantId
+tenant.group.id
+tenant.groupId
+tenantGroupId
+host.provider
+host.id
+host.runtimeInstanceId
+transport.endpoint
+```
+
+## Fixed
+
+### Fixed Kubernetes pod not being visible as runtime capacity
+
+The previous failure mode was:
+
+```text
+KUBERNETES HOST READY RESULT Success=True
+GRPC SCALE-OUT HOST-MANAGER READINESS WAIT
+SnapshotCount=0
+runtime-readiness-failed
+```
+
+Root cause:
+
+```text
+The Kubernetes pod was created and ready, but no runtime instance/capacity was published into the control-plane registry.
+```
+
+Fix:
+
+```text
+Publish runtime registration and capacity immediately after Kubernetes pod readiness.
+```
+
+Verified successful sequence:
+
+```text
+KUBERNETES HOST READY RESULT Success=True
+KUBERNETES HOST STARTED AFTER POD READINESS
+KUBERNETES RUNTIME INSTANCE PUBLICATION BEGIN
+[KUBERNETES RUNTIME INSTANCE PUBLISHED]
+KUBERNETES RUNTIME INSTANCE PUBLICATION COMPLETED
+GRPC SCALE-OUT HOST-MANAGER READINESS WAIT
+GRPC SCALE-OUT HOST-MANAGER READINESS RESULT Success=True
+GRPC SCALE-OUT HOST-MANAGER FULFILLED
+```
+
+### Fixed architectural gap between host lifecycle and runtime lifecycle
+
+The design now explicitly separates:
+
+```text
+RuntimeHost
+  = Kubernetes pod/service/process/container lifecycle
+
+RuntimeInstance
+  = routable logical runtime capacity visible to the control plane
+```
+
+And connects them with a dedicated publication step.
+
+## Dependency Injection
+
+Registered the Kubernetes runtime instance publisher inside Kubernetes host provider DI:
+
+```csharp
+services.TryAddSingleton<IAiKubernetesRuntimeInstancePublisher, KubernetesAiRuntimeInstancePublisher>();
+```
+
+This keeps the dependency scoped to Kubernetes host lifecycle registration and avoids leaking Kubernetes concepts into gRPC or HTTP provider registration.
+
+## Tests
+
+### Passed
+
+Validated:
+
+```text
+GrpcKubernetesSdkRuntimeReadyScenarioTests
+```
+
+Test:
+
+```text
+Grpc_KubernetesSdkHostManager_Should_Fulfill_ScaleOut_After_Runtime_Readiness_Without_Changing_Grpc_Runtime_Transport
+```
+
+Result:
+
+```text
+1 Passed, 0 Failed, 0 Skipped
+```
+
+Duration:
+
+```text
+17.8 sec
+```
+
+Validated proof output:
+
+```text
+Provider='grpc'
+HostProvider='kubernetes'
+RuntimeProvider='grpc'
+Transport='grpc'
+TenantId='tenant-dedicated-single'
+RuntimeInstanceId='gk8s-ready-scaleout-...:tenant-dedicated-single-runtime-1'
+FulfilledBy='mcp-scaleout-watcher'
+```
+
+## Architecture impact
+
+This milestone confirms the intended production model:
+
+```text
+1 scale-out request
+= 1 Kubernetes pod
+= 1 Kubernetes-backed runtime instance
+= 1 tenant-scoped routable capacity entry
+```
+
+The control plane can now safely scale out through Kubernetes without global fallback, without fake readiness, and without making runtime transport providers aware of Kubernetes internals.
+
+---
+
+## [1.0.7.1] - 2026-07-06 — Kubernetes Runtime Host Provider
+
+This changelog covers the incremental work completed after the previous Kubernetes runtime host provider changelog. It focuses on validating the real Kubernetes SDK lifecycle path with minikube, fixing production-grade runtime host boot issues, and preserving identical runtime behavior between Process-hosted and Kubernetes-hosted runtimes.
+
+## Key Outcome
+
+The Kubernetes SDK host-manager scenario now validates the intended architecture:
+
+```text
+Runtime provider: grpc
+Runtime command transport: grpc
+Host lifecycle provider: kubernetes
+Kubernetes client mode: KubernetesSdk
+Runtime host mode inside pod: RuntimeInstanceOnly
+Local runtime pool inside pod: preserved
+Redis/Mongo connectivity from pod: validated
+Runtime pod crash after delayed startup: fixed
+```
+
+The important architectural conclusion is that Kubernetes must not change runtime behavior. It only materializes the runtime host lifecycle as a pod/service, equivalent to Process mode materializing the same host as a process.
+
+---
+
+## 1. Real Kubernetes SDK lifecycle validation
+
+### Added / validated
+
+A real minikube-backed scenario was executed using:
+
+```text
+GrpcKubernetesSdkHostManagerScaleOutScenarioTests
+```
+
+The test validated:
+
+```text
+scale-out request
+→ mcp-scaleout-watcher
+→ gRPC scale-out provider
+→ HostManager
+→ Kubernetes host creation strategy
+→ Kubernetes SDK client
+→ real pod/service in minikube
+→ scale-out request fulfilled
+```
+
+### Confirmed proof output
+
+The successful test output confirmed:
+
+```text
+RuntimeProvider='grpc'
+Transport='grpc'
+HostProvider='kubernetes'
+FulfilledBy='mcp-scaleout-watcher'
+```
+
+This proves Kubernetes is acting only as the lifecycle host provider and does not replace the gRPC runtime provider or gRPC command transport.
+
+---
+
+## 2. Kubernetes DNS resource-name hardening
+
+### Problem
+
+The first real SDK run failed because generated Kubernetes Service names exceeded the Kubernetes DNS label limit of 63 characters.
+
+Examples of rejected service names:
+
+```text
+grpc-kubernetes-sdk-runtime-grpc-kubernetes-sdk-host-scaleout-d-svc
+rt-gk8s-scaleout-4ca830c980ce42b99035e0907ea22d3b-tenant-dedica-svc
+```
+
+Kubernetes returned:
+
+```text
+metadata.name: Invalid value ... must be no more than 63 characters
+```
+
+### Fix
+
+`AiKubernetesSdkResourceFactory` was hardened to normalize and shorten Kubernetes resource names.
+
+The service name generation now creates DNS-safe resource names with:
+
+```text
+lowercase normalization
+invalid character replacement
+repeated dash cleanup
+63-character max length
+stable hash suffix when truncation is required
+```
+
+### Result
+
+Kubernetes Service creation now succeeds even when runtime instance IDs are long and tenant-scoped.
+
+---
+
+## 3. Real pod boot dependency validation
+
+### Problem: OPENAI_API_KEY missing
+
+The first pod started but crashed immediately with:
+
+```text
+Unhandled exception. System.InvalidOperationException: OPENAI_API_KEY is required.
+```
+
+### Fix
+
+The Kubernetes runtime pod environment was extended through:
+
+```text
+AiKubernetesRuntimeHost:EnvironmentVariables:OPENAI_API_KEY
+```
+
+For the SDK lifecycle test, a dummy value is sufficient because this scenario validates host lifecycle, not real LLM execution:
+
+```text
+demo-local-kubernetes-not-used
+```
+
+### Result
+
+The pod passed OpenAI provider registration and continued startup.
+
+---
+
+## 4. Redis connectivity from Kubernetes pod
+
+### Problem
+
+After the OpenAI key issue was fixed, the pod failed on Redis:
+
+```text
+StackExchange.Redis.RedisConnectionException
+It was not possible to connect to the redis server(s).
+```
+
+### Cause
+
+Inside Kubernetes:
+
+```text
+localhost = the pod itself
+```
+
+So the runtime pod could not use the same `localhost:6379` assumptions as the Windows-hosted test process.
+
+### Validation
+
+Connectivity from minikube to host Redis was validated with:
+
+```powershell
+kubectl run redis-test -n ai-runtime --rm -it --image=redis:7-alpine --restart=Never -- redis-cli -h host.minikube.internal -p 6379 ping
+```
+
+Expected result:
+
+```text
+PONG
+```
+
+### Fix
+
+The SDK scenario injects Redis connection strings into the runtime pod:
+
+```text
+Redis__ConnectionString=host.minikube.internal:6379,abortConnect=false
+ConnectionStrings__Redis=host.minikube.internal:6379,abortConnect=false
+MultiplexedRbac__Redis__ConnectionString=host.minikube.internal:6379,abortConnect=false
+```
+
+### Result
+
+Redis connectivity from the Kubernetes pod was validated.
+
+---
+
+## 5. MongoDB connectivity from Kubernetes pod
+
+### Problem
+
+After Redis was fixed, MongoDB also needed explicit host connectivity from the pod.
+
+### Validation
+
+MongoDB connectivity from minikube to host MongoDB was validated with:
+
+```powershell
+kubectl run mongo-test -n ai-runtime --rm -it --image=mongo:7 --restart=Never -- mongosh "mongodb://host.minikube.internal:27017" --eval "db.runCommand({ ping: 1 })"
+```
+
+Expected result:
+
+```text
+ok: 1
+```
+
+### Fix
+
+The SDK scenario injects MongoDB connection strings into the runtime pod:
+
+```text
+Mongo__ConnectionString=mongodb://host.minikube.internal:27017/?directConnection=true
+MongoDb__ConnectionString=mongodb://host.minikube.internal:27017/?directConnection=true
+ConnectionStrings__Mongo=mongodb://host.minikube.internal:27017/?directConnection=true
+ConnectionStrings__MongoDb=mongodb://host.minikube.internal:27017/?directConnection=true
+```
+
+### Result
+
+MongoDB connectivity from the Kubernetes pod was validated.
+
+---
+
+## 6. Runtime service registration configuration hardening
+
+### Problem
+
+`AiRuntimeServiceRegistration` still had several implicit defaults and inconsistent resolution paths:
+
+```text
+Redis fallback: localhost:6379
+Mongo fallback: mongodb://localhost:27017
+OpenAI API key only from environment variable
+```
+
+These defaults work in local process mode but are fragile in real containers.
+
+### Fix
+
+`AiRuntimeServiceRegistration` was patched without changing functional behavior:
+
+```text
+Redis resolution supports ConnectionStrings:Redis, Redis:ConnectionString, MultiplexedRbac:Redis:ConnectionString
+Mongo resolution supports ConnectionStrings:Mongo, ConnectionStrings:MongoDb, Mongo:ConnectionString, MongoDb:ConnectionString
+OpenAI key supports environment variable and configuration keys
+Redis connection string is normalized with abortConnect=false when missing
+Mongo database name resolution is centralized
+```
+
+### Result
+
+The host can now be configured cleanly through Kubernetes environment variables while preserving the same defaults for local/process scenarios.
+
+---
+
+## 7. Preserved local runtime pool behavior inside Kubernetes pods
+
+### Important correction
+
+A temporary idea was considered to disable the local runtime pool inside the Kubernetes pod:
+
+```text
+AiLocalRuntimeInstancePool__Enabled=false
+```
+
+This was rejected as architecturally wrong.
+
+### Correct behavior
+
+The local runtime pool must remain enabled inside the pod:
+
+```text
+Kubernetes pod = runtime host
+Local runtime pool = runtime instances inside that host
+```
+
+This matches Process mode:
+
+```text
+Process host = runtime host process
+Local runtime pool = runtime instances inside that host
+```
+
+### Result
+
+The Kubernetes pod preserves the same runtime behavior as Process mode. Kubernetes only changes host lifecycle materialization.
+
+---
+
+## 8. Control-plane id propagation through local runtime pool
+
+### Problem
+
+The pod booted successfully and stayed running initially, but later crashed after the local runtime pool tried to start its internal runtime instances.
+
+The failing path was:
+
+```text
+AiLocalRuntimeInstancePoolHostedService
+→ AiLocalRuntimeInstanceScaler
+→ AiLocalRuntimeInstanceHost
+→ AiRuntimeInstanceRegistrationHostedService
+→ DefaultAiControlPlaneIdResolver
+→ Redis discovery key multiplexed-ai:default-control-plane
+→ timeout after 1 minute
+```
+
+Error:
+
+```text
+Unable to resolve the control-plane identifier from Redis discovery key 'multiplexed-ai:default-control-plane' within '00:01:00'.
+```
+
+### Root cause
+
+The parent Kubernetes runtime host had the correct control-plane id, but child runtimes created by the local runtime pool did not inherit it strongly enough for registration.
+
+Metadata was propagated to the child runtime host, but `AiRuntimeInstanceRegistrationHostedService` was resolving the control-plane id before reading environment/provider metadata.
+
+### Fixes
+
+#### AiLocalRuntimeInstanceScaler
+
+The scaler was patched to include the parent control-plane id in metadata passed to child runtime hosts:
+
+```text
+controlPlaneId
+control-plane.id
+controlplane.id
+runtime.controlPlaneId
+```
+
+The value is resolved from:
+
+```text
+request.ControlPlaneId
+AiRuntimeInstanceRegistration:ControlPlaneId
+AiMcpHost:ControlPlaneId
+```
+
+#### AiRuntimeInstanceRegistrationHostedService
+
+The registration service was patched so explicit metadata/environment values are respected before fallback discovery.
+
+New resolution order:
+
+```text
+options.Metadata
+options.ProviderMetadata
+environment.ProviderMetadata
+IAiControlPlaneIdResolver fallback
+```
+
+This preserves existing behavior because Redis discovery remains the fallback when no explicit control-plane id is available.
+
+### Result
+
+The local runtime pool can now start child runtimes inside the Kubernetes pod without falling back to the default discovery key.
+
+---
+
+## 9. Docker/minikube image update issue diagnosed
+
+### Problem
+
+After code patches, pods still showed the old behavior:
+
+```text
+DefaultAiControlPlaneIdResolver.ResolveAsync(...)
+AiRuntimeInstanceRegistrationHostedService.RegisterRuntimeInstanceAsync(...) line 236
+```
+
+This indicated that Kubernetes was still running an older `Multiplexed.AI.dll` inside the Host image.
+
+### Diagnosis
+
+The runtime host image tag was reused repeatedly:
+
+```text
+multiplexed-ai-runtime:test
+```
+
+Kubernetes/minikube was likely using a stale local image or stale published DLL layer.
+
+### Fix
+
+A unique debug image tag was used:
+
+```text
+multiplexed-ai-runtime:k8s-debug-002
+```
+
+The Kubernetes scenario was updated to force:
+
+```text
+AiKubernetesRuntimeHost:RuntimeImage=multiplexed-ai-runtime:k8s-debug-002
+AiKubernetesRuntimeHost:ImagePullPolicy=Never
+```
+
+### Result
+
+After ensuring the updated DLL was actually inside the image, the pod no longer crashed.
+
+---
+
+## 10. Kubernetes SDK scenario settings reviewed
+
+### Current scenario settings
+
+The scenario intentionally keeps readiness disabled for the lifecycle proof:
+
+```text
+AiGrpcRuntimeScaleOut:RequireReadiness=false
+AiKubernetesRuntimeHost:RequireRuntimeReadiness=false
+```
+
+This validates real Kubernetes pod/service lifecycle without requiring full runtime dispatch readiness yet.
+
+### Recommended explicit pod environment
+
+The SDK scenario now explicitly configures:
+
+```text
+OPENAI_API_KEY
+Redis connection strings
+Mongo connection strings
+AiRuntimeInstanceRegistration__ProviderName=grpc
+AiRuntimeInstanceRegistration__TransportName=grpc
+AiRuntimeInstanceRegistration__Role=Runtime
+AiRuntimeInstanceRegistration__HeartbeatInterval=00:00:05
+```
+
+### Important distinction
+
+This line applies only to the test/control-plane host:
+
+```text
+AiLocalRuntimeInstancePool:Enabled=false
+```
+
+It does not disable the local runtime pool inside the Kubernetes pod because it is not injected under:
+
+```text
+AiKubernetesRuntimeHost:EnvironmentVariables:...
+```
+
+---
+
+## 11. Current validated state
+
+### Confirmed working
+
+```text
+Kubernetes SDK client creates real pod/service in minikube
+Kubernetes service names are DNS-safe
+Runtime image starts in RuntimeInstanceOnly mode
+OpenAI config is present
+Redis is reachable from the pod
+MongoDB is reachable from the pod
+Local runtime pool remains enabled inside the pod
+Child runtime registration no longer crashes after 1 minute
+gRPC remains runtime provider and transport
+Kubernetes remains lifecycle provider only
+```
+
+### Current test proof level
+
+This is currently a Kubernetes SDK lifecycle proof:
+
+```text
+RequireRuntimeReadiness=false
+```
+
+It proves host creation and stable runtime boot, not yet full end-to-end DAG dispatch through the Kubernetes runtime.
+
+---
+
+## Next Steps
+
+### 1. Re-run SDK lifecycle test with updated settings only
+
+No image rebuild is required if only the test settings changed.
+
+```powershell
+kubectl delete pods -n ai-runtime --all
+kubectl delete svc -n ai-runtime --all
+kubectl get pods -n ai-runtime -w
+```
+
+Then run:
+
+```powershell
+dotnet test implementations/dotnet/Tests/Multiplexed.AI.McpServer.Tests.Integration --filter "FullyQualifiedName~GrpcKubernetesSdkHostManagerScaleOutScenarioTests"
+```
+
+### 2. Verify logs
+
+Expected logs:
+
+```text
+Runtime instance id resolved
+ControlPlaneId=gk8s-scaleout-...
+Runtime instance registered
+Runtime instance heartbeat succeeded
+```
+
+Must not appear:
+
+```text
+multiplexed-ai:default-control-plane
+Unable to resolve the control-plane identifier
+```
+
+### 3. Move to runtime readiness
+
+Once lifecycle stays stable, enable:
+
+```text
+AiGrpcRuntimeScaleOut:RequireReadiness=true
+AiKubernetesRuntimeHost:RequireRuntimeReadiness=true
+```
+
+This will validate that the control plane waits for the runtime pod registration/capacity before considering the runtime usable.
+
+### 4. Move to full DAG dispatch through Kubernetes runtime
+
+Final production proof:
+
+```text
+submit DAG
+→ no capacity
+→ scale-out request
+→ Kubernetes pod created
+→ pod registers runtime capacity
+→ gRPC command dispatch to runtime
+→ DAG completes
+```
+
+---
+
+## Summary
+
+This incremental phase moved the Kubernetes provider from fake lifecycle proof to real minikube lifecycle execution and uncovered several production-hardening issues that Process mode masked:
+
+```text
+Kubernetes resource naming limits
+container environment dependency gaps
+localhost assumptions for Redis/Mongo
+control-plane id propagation through local runtime pool
+stale runtime DLL/image usage
+```
+
+The important result is that Kubernetes did not require a different runtime behavior model. The correct fix was to make the shared runtime host path more explicit and production-safe while preserving parity between Process and Kubernetes host modes.
+
+---
+
 ## [1.0.7.1] - 2026-07-05 — Kubernetes Runtime Host Provider Integration
 
 This changelog summarizes the work completed after the previous changelog, focused on integrating Kubernetes as a runtime host lifecycle provider for the deterministic AI runtime.
@@ -1375,18 +2194,6 @@ gRPC readiness active
 No YAML
 No Kubernetes client dependency yet
 No HTTP/gRPC dispatch regression
-```
-
----
-
-## Recommended commit
-
-If not already committed as separate commits:
-
-```powershell
-git status
-git add .
-git commit -m "feat: add Kubernetes runtime host SDK foundation" -m "Add Kubernetes host creation mode, host lifecycle metadata keys, Kubernetes host options, skeleton host creation strategy, pod metadata builder, pod spec builder, and unit tests while preserving HTTP/gRPC as runtime transport providers."
 ```
 
 ---

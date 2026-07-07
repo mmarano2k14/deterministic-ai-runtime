@@ -121,5 +121,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
         /// where no real runtime process registers capacity.
         /// </remarks>
         public bool RequireRuntimeReadiness { get; set; } = true;
+
+        /// <summary>
+        /// Gets the environment variables injected into Kubernetes runtime pods.
+        /// </summary>
+        public IDictionary<string, string> EnvironmentVariables { get; init; } =
+            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
     }
 }

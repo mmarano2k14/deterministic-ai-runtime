@@ -1,4 +1,5 @@
-﻿using Microsoft.Extensions.Options;
+﻿using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Readiness;
 using Multiplexed.Abstractions.Core.ExecutionContext;
@@ -346,7 +347,9 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager
                     effectiveOptions,
                     new AiKubernetesRuntimePodMetadataBuilder(effectiveOptions)),
                 client ?? new FakeAiKubernetesRuntimeHostClient(),
-                readinessWaiter ?? new FakeRuntimeInstanceReadinessWaiter());
+                new FakeKubernetesRuntimeInstancePublisher(),
+                readinessWaiter ?? new FakeRuntimeInstanceReadinessWaiter(),
+                NullLogger<KubernetesAiRuntimeHostCreationStrategy>.Instance);
         }
 
         private static AiRuntimeHostStartRequest CreateStartRequest()

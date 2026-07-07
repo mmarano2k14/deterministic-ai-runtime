@@ -1,7 +1,9 @@
-﻿using Microsoft.Extensions.Options;
+﻿using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Readiness;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strategy.Kubernetes.Client;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strategy.Kubernetes.Publisher;
 using System;
 using System.Collections.Generic;
 using System.Threading;
@@ -15,15 +17,18 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
     /// <remarks>
     /// This strategy represents Kubernetes as a runtime host lifecycle provider.
     /// It creates Kubernetes-level runtime host resources through <see cref="IAiKubernetesRuntimeHostClient" />,
-    /// then optionally waits for runtime-level readiness through <see cref="IAiRuntimeInstanceReadinessWaiter" />.
-    /// Runtime command dispatch remains owned by the configured transport provider, such as HTTP or gRPC.
+    /// waits for Kubernetes host readiness, publishes the Kubernetes-backed runtime instance into
+    /// the runtime registry and capacity store, and then returns control to the provider-level provisioner.
+    /// Runtime command dispatch and runtime-level readiness remain owned by the configured runtime provider,
+    /// such as HTTP or gRPC.
     /// </remarks>
     public sealed class KubernetesAiRuntimeHostCreationStrategy : IAiRuntimeHostCreationStrategy
     {
         private readonly AiKubernetesRuntimeHostOptions options;
         private readonly AiKubernetesRuntimePodSpecBuilder podSpecBuilder;
         private readonly IAiKubernetesRuntimeHostClient client;
-        private readonly IAiRuntimeInstanceReadinessWaiter readinessWaiter;
+        private readonly IAiKubernetesRuntimeInstancePublisher runtimeInstancePublisher;
+        private readonly ILogger<KubernetesAiRuntimeHostCreationStrategy> logger;
 
         /// <summary>
         /// Initializes a new instance of the <see cref="KubernetesAiRuntimeHostCreationStrategy"/> class.
@@ -31,19 +36,24 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
         /// <param name="options">The Kubernetes runtime host options.</param>
         /// <param name="podSpecBuilder">The Kubernetes runtime pod specification builder.</param>
         /// <param name="client">The Kubernetes runtime host client.</param>
-        /// <param name="readinessWaiter">The runtime instance readiness waiter.</param>
+        /// <param name="runtimeInstancePublisher">The Kubernetes runtime instance publisher.</param>
+        /// <param name="readinessWaiter">The runtime instance readiness waiter kept for constructor compatibility.</param>
+        /// <param name="logger">The logger.</param>
         public KubernetesAiRuntimeHostCreationStrategy(
             IOptions<AiKubernetesRuntimeHostOptions> options,
             AiKubernetesRuntimePodSpecBuilder podSpecBuilder,
             IAiKubernetesRuntimeHostClient client,
-            IAiRuntimeInstanceReadinessWaiter readinessWaiter)
+            IAiKubernetesRuntimeInstancePublisher runtimeInstancePublisher,
+            IAiRuntimeInstanceReadinessWaiter readinessWaiter,
+            ILogger<KubernetesAiRuntimeHostCreationStrategy> logger)
         {
             ArgumentNullException.ThrowIfNull(options);
-
+            ArgumentNullException.ThrowIfNull(readinessWaiter);
             this.options = options.Value ?? throw new ArgumentException("Kubernetes runtime host options are required.", nameof(options));
             this.podSpecBuilder = podSpecBuilder ?? throw new ArgumentNullException(nameof(podSpecBuilder));
             this.client = client ?? throw new ArgumentNullException(nameof(client));
-            this.readinessWaiter = readinessWaiter ?? throw new ArgumentNullException(nameof(readinessWaiter));
+            this.runtimeInstancePublisher = runtimeInstancePublisher ?? throw new ArgumentNullException(nameof(runtimeInstancePublisher));
+            this.logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
 
         /// <inheritdoc />
@@ -56,9 +66,21 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
         {
             ArgumentNullException.ThrowIfNull(request);
 
+            this.logger.LogInformation(
+                "KUBERNETES HOST START BEGIN RuntimeInstanceId={RuntimeInstanceId} ControlPlaneId={ControlPlaneId} ProviderName={ProviderName} TransportName={TransportName} TransportEndpoint={TransportEndpoint} ClientMode={ClientMode} RequireRuntimeReadiness={RequireRuntimeReadiness} RuntimeImage={RuntimeImage} Namespace={Namespace}",
+                request.RuntimeInstanceId,
+                request.ControlPlaneId,
+                request.ProviderName,
+                request.TransportName,
+                request.TransportEndpoint,
+                this.options.ClientMode,
+                this.options.RequireRuntimeReadiness,
+                this.options.RuntimeImage,
+                this.options.Namespace);
+
             if (!this.options.Enabled)
             {
-                return CreateRejectedResult(
+                return this.CreateRejectedWithLog(
                     request,
                     "kubernetes-runtime-host-creation-disabled",
                     retryable: false,
@@ -67,7 +89,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
 
             if (string.IsNullOrWhiteSpace(this.options.Namespace))
             {
-                return CreateRejectedResult(
+                return this.CreateRejectedWithLog(
                     request,
                     "kubernetes-runtime-namespace-missing",
                     retryable: false,
@@ -76,7 +98,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
 
             if (string.IsNullOrWhiteSpace(this.options.RuntimeImage))
             {
-                return CreateRejectedResult(
+                return this.CreateRejectedWithLog(
                     request,
                     "kubernetes-runtime-image-missing",
                     retryable: false,
@@ -85,7 +107,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
 
             if (string.IsNullOrWhiteSpace(this.options.ContainerName))
             {
-                return CreateRejectedResult(
+                return this.CreateRejectedWithLog(
                     request,
                     "kubernetes-runtime-container-name-missing",
                     retryable: false,
@@ -100,6 +122,12 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
             }
             catch (Exception exception)
             {
+                this.logger.LogWarning(
+                    exception,
+                    "KUBERNETES HOST POD SPEC BUILD FAILED RuntimeInstanceId={RuntimeInstanceId} Reason={Reason}",
+                    request.RuntimeInstanceId,
+                    exception.Message);
+
                 return CreateRejectedResult(
                     request,
                     exception.Message,
@@ -107,12 +135,30 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
                     metadata: CreateBaseMetadata());
             }
 
+            this.logger.LogInformation(
+                "KUBERNETES HOST POD SPEC BUILT RuntimeInstanceId={RuntimeInstanceId} PodName={PodName} Namespace={Namespace} ContainerName={ContainerName} ContainerPort={ContainerPort} RuntimeImage={RuntimeImage}",
+                request.RuntimeInstanceId,
+                podSpec.PodName,
+                podSpec.Namespace,
+                podSpec.ContainerName,
+                podSpec.ContainerPort,
+                podSpec.RuntimeImage);
+
             var createResult =
                 await this.client
                     .CreateRuntimeHostAsync(
                         podSpec,
                         cancellationToken)
                     .ConfigureAwait(false);
+
+            this.logger.LogInformation(
+                "KUBERNETES HOST CREATED RuntimeInstanceId={RuntimeInstanceId} Success={Success} PodName={PodName} ServiceName={ServiceName} FailureReason={FailureReason} Retryable={Retryable}",
+                request.RuntimeInstanceId,
+                createResult.Success,
+                createResult.PodName,
+                createResult.ServiceName,
+                createResult.FailureReason ?? "(none)",
+                createResult.Retryable);
 
             var metadata =
                 MergeMetadata(
@@ -128,12 +174,29 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
                     metadata);
             }
 
+            this.logger.LogInformation(
+                "KUBERNETES HOST READY WAIT BEGIN RuntimeInstanceId={RuntimeInstanceId} PodName={PodName} Namespace={Namespace} Timeout={Timeout} PollInterval={PollInterval}",
+                request.RuntimeInstanceId,
+                podSpec.PodName,
+                podSpec.Namespace,
+                this.options.ReadinessTimeout,
+                this.options.ReadinessPollInterval);
+
             var hostReadinessResult =
                 await this.client
                     .WaitUntilHostReadyAsync(
                         podSpec,
                         cancellationToken)
                     .ConfigureAwait(false);
+
+            this.logger.LogInformation(
+                "KUBERNETES HOST READY RESULT RuntimeInstanceId={RuntimeInstanceId} Success={Success} PodName={PodName} TimedOut={TimedOut} FailureReason={FailureReason} Retryable={Retryable}",
+                request.RuntimeInstanceId,
+                hostReadinessResult.Success,
+                hostReadinessResult.PodName,
+                hostReadinessResult.TimedOut,
+                hostReadinessResult.FailureReason ?? "(none)",
+                hostReadinessResult.Retryable);
 
             metadata =
                 MergeMetadata(
@@ -154,54 +217,70 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
                     metadata);
             }
 
-            if (!this.options.RequireRuntimeReadiness)
-            {
-                return AiRuntimeHostStartResult.Started(
+            this.logger.LogInformation(
+                "KUBERNETES HOST STARTED AFTER POD READINESS RuntimeInstanceId={RuntimeInstanceId} ProviderName={ProviderName} TransportName={TransportName} TransportEndpoint={TransportEndpoint} RequireRuntimeReadiness={RequireRuntimeReadiness}",
+                request.RuntimeInstanceId,
+                request.ProviderName,
+                request.TransportName,
+                request.TransportEndpoint,
+                this.options.RequireRuntimeReadiness);
+
+            var startedResult =
+                AiRuntimeHostStartResult.Started(
                     request.ExecutionContextSnapshot,
                     request.RuntimeInstanceId,
                     request.ProviderName,
                     request.TransportName,
                     request.TransportEndpoint,
                     metadata);
-            }
 
-            var runtimeReadinessResult =
-                await this.readinessWaiter
-                    .WaitUntilReadyAsync(
-                        new AiRuntimeInstanceReadinessRequest
-                        {
-                            ControlPlaneId = request.ControlPlaneId,
-                            ExecutionContextSnapshot = request.ExecutionContextSnapshot,
-                            RuntimeInstanceId = request.RuntimeInstanceId,
-                            ProviderName = request.ProviderName,
-                            TransportName = request.TransportName,
-                            TransportEndpoint = request.TransportEndpoint,
-                            RequireTransportEndpoint = true,
-                            Timeout = this.options.ReadinessTimeout
-                        },
-                        cancellationToken)
-                    .ConfigureAwait(false);
-
-            if (!runtimeReadinessResult.Success)
-            {
-                await this.DeleteOnFailureAsync(
-                        podSpec,
-                        cancellationToken)
-                    .ConfigureAwait(false);
-
-                return CreateRejectedResult(
-                    request,
-                    runtimeReadinessResult.FailureReason ?? "kubernetes-runtime-readiness-failed",
-                    retryable: runtimeReadinessResult.TimedOut,
-                    metadata: metadata);
-            }
-
-            return AiRuntimeHostStartResult.Started(
-                request.ExecutionContextSnapshot,
+            this.logger.LogInformation(
+                "KUBERNETES RUNTIME INSTANCE PUBLICATION BEGIN RuntimeInstanceId={RuntimeInstanceId} ControlPlaneId={ControlPlaneId} ProviderName={ProviderName} TransportName={TransportName}",
                 request.RuntimeInstanceId,
+                request.ControlPlaneId,
                 request.ProviderName,
-                request.TransportName,
-                runtimeReadinessResult.TransportEndpoint ?? request.TransportEndpoint,
+                request.TransportName);
+
+            await this.runtimeInstancePublisher
+                .PublishAsync(
+                    request,
+                    startedResult,
+                    cancellationToken)
+                .ConfigureAwait(false);
+
+            this.logger.LogInformation(
+                "KUBERNETES RUNTIME INSTANCE PUBLICATION COMPLETED RuntimeInstanceId={RuntimeInstanceId} ControlPlaneId={ControlPlaneId} ProviderName={ProviderName} TransportName={TransportName}",
+                request.RuntimeInstanceId,
+                request.ControlPlaneId,
+                request.ProviderName,
+                request.TransportName);
+
+            return startedResult;
+        }
+
+        /// <summary>
+        /// Creates a rejected runtime host start result while logging the structured reason.
+        /// </summary>
+        /// <param name="request">The runtime host start request.</param>
+        /// <param name="failureReason">The failure reason.</param>
+        /// <param name="retryable">A value indicating whether the failure is retryable.</param>
+        /// <param name="metadata">The result metadata.</param>
+        /// <returns>The rejected runtime host start result.</returns>
+        private AiRuntimeHostStartResult CreateRejectedWithLog(
+            AiRuntimeHostStartRequest request,
+            string failureReason,
+            bool retryable,
+            IReadOnlyDictionary<string, string> metadata)
+        {
+            this.logger.LogWarning(
+                "KUBERNETES HOST START REJECTED RuntimeInstanceId={RuntimeInstanceId} Reason={Reason}",
+                request.RuntimeInstanceId,
+                failureReason);
+
+            return CreateRejectedResult(
+                request,
+                failureReason,
+                retryable,
                 metadata);
         }
 
@@ -220,11 +299,24 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
                 return;
             }
 
-            await this.client
-                .DeleteRuntimeHostAsync(
-                    podSpec,
-                    cancellationToken)
-                .ConfigureAwait(false);
+            this.logger.LogInformation(
+                "KUBERNETES HOST DELETE ON FAILURE BEGIN PodName={PodName} Namespace={Namespace}",
+                podSpec.PodName,
+                podSpec.Namespace);
+
+            var deleteResult =
+                await this.client
+                    .DeleteRuntimeHostAsync(
+                        podSpec,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+            this.logger.LogInformation(
+                "KUBERNETES HOST DELETE ON FAILURE RESULT PodName={PodName} Namespace={Namespace} Success={Success} FailureReason={FailureReason}",
+                podSpec.PodName,
+                podSpec.Namespace,
+                deleteResult.Success,
+                deleteResult.FailureReason ?? "(none)");
         }
 
         /// <summary>

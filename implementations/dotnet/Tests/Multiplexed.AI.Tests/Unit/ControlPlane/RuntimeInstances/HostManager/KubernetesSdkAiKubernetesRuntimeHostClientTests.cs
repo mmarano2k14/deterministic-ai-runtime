@@ -1,5 +1,6 @@
 ﻿using k8s.Models;
 using Microsoft.Extensions.Options;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager.Kubernetes;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strategy.Kubernetes;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strategy.Kubernetes.Client;
 using Multiplexed.AI.Tests.Fixtures;
@@ -35,6 +36,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager
             Assert.Equal(1, sdkClient.CreateServiceCallCount);
             Assert.Equal("runtime-tenant-a-001", sdkClient.LastCreatedPod?.Metadata.Name);
             Assert.Equal("runtime-tenant-a-001-svc", sdkClient.LastCreatedService?.Metadata.Name);
+            AssertKubernetesLifecycleMetadata(result.Metadata, podSpec, expectedServiceName: "runtime-tenant-a-001-svc");
         }
 
         /// <summary>
@@ -58,6 +60,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager
             Assert.Null(result.ServiceName);
             Assert.Equal(1, sdkClient.CreatePodCallCount);
             Assert.Equal(0, sdkClient.CreateServiceCallCount);
+            AssertKubernetesLifecycleMetadata(result.Metadata, podSpec, expectedServiceName: null);
         }
 
         /// <summary>
@@ -103,6 +106,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager
             Assert.False(result.TimedOut);
             Assert.Equal("runtime-tenant-a-001-svc", result.ServiceName);
             Assert.Equal(1, sdkClient.ReadPodStatusCallCount);
+            AssertKubernetesLifecycleMetadata(result.Metadata, podSpec, expectedServiceName: "runtime-tenant-a-001-svc");
         }
 
         /// <summary>
@@ -173,6 +177,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager
             Assert.Equal("runtime-tenant-a-001-svc", result.ServiceName);
             Assert.Equal(1, sdkClient.DeleteServiceCallCount);
             Assert.Equal(1, sdkClient.DeletePodCallCount);
+            AssertKubernetesLifecycleMetadata(result.Metadata, podSpec, expectedServiceName: "runtime-tenant-a-001-svc");
         }
 
         /// <summary>
@@ -196,6 +201,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager
             Assert.Null(result.ServiceName);
             Assert.Equal(0, sdkClient.DeleteServiceCallCount);
             Assert.Equal(1, sdkClient.DeletePodCallCount);
+            AssertKubernetesLifecycleMetadata(result.Metadata, podSpec, expectedServiceName: null);
         }
 
         /// <summary>
@@ -289,6 +295,33 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager
                             }
                     }
             };
+        }
+
+        private static void AssertKubernetesLifecycleMetadata(
+            IReadOnlyDictionary<string, string> metadata,
+            AiKubernetesRuntimePodSpec podSpec,
+            string? expectedServiceName)
+        {
+            if (metadata.TryGetValue(AiKubernetesRuntimeHostMetadataKeys.Namespace, out var namespaceName))
+            {
+                Assert.Equal(podSpec.Namespace, namespaceName);
+            }
+
+            if (metadata.TryGetValue(AiKubernetesRuntimeHostMetadataKeys.PodName, out var podName))
+            {
+                Assert.Equal(podSpec.PodName, podName);
+            }
+
+            if (expectedServiceName is null)
+            {
+                Assert.False(metadata.ContainsKey(AiKubernetesRuntimeHostMetadataKeys.ServiceName));
+                return;
+            }
+
+            if (metadata.TryGetValue(AiKubernetesRuntimeHostMetadataKeys.ServiceName, out var serviceName))
+            {
+                Assert.Equal(expectedServiceName, serviceName);
+            }
         }
     }
 }

@@ -60,6 +60,19 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                     controlPlaneId,
                     runtimeHostAssemblyPath);
 
+            this.output.WriteLine(
+                "[PROFILE FINAL DEBUG] ProfileType='{0}', ScenarioDebug='{1}', HostCreationMode='{2}', ClientMode='{3}', GrpcRequireReadiness='{4}', GrpcReadinessTimeoutSeconds='{5}', GrpcReadinessPollMs='{6}', KubernetesRequireRuntimeReadiness='{7}', RuntimeImage='{8}', ImagePullPolicy='{9}'",
+                this.profile.GetType().FullName,
+                settings.GetValueOrDefault("ScenarioDebug:Profile"),
+                settings.GetValueOrDefault("AiGrpcRuntimeScaleOut:HostCreationMode"),
+                settings.GetValueOrDefault("AiKubernetesRuntimeHost:ClientMode"),
+                settings.GetValueOrDefault("AiGrpcRuntimeScaleOut:RequireReadiness"),
+                settings.GetValueOrDefault("AiGrpcRuntimeScaleOut:ReadinessTimeoutSeconds"),
+                settings.GetValueOrDefault("AiGrpcRuntimeScaleOut:ReadinessPollIntervalMilliseconds"),
+                settings.GetValueOrDefault("AiKubernetesRuntimeHost:RequireRuntimeReadiness"),
+                settings.GetValueOrDefault("AiKubernetesRuntimeHost:RuntimeImage"),
+                settings.GetValueOrDefault("AiKubernetesRuntimeHost:ImagePullPolicy"));
+
             await using var host =
                 new GenericMcpServerTestHost(settings);
 

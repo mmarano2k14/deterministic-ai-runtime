@@ -86,7 +86,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             settings["AiKubernetesRuntimeHost:ImagePullPolicy"] = "IfNotPresent";
             settings["AiKubernetesRuntimeHost:ContainerName"] = "runtime-instance";
             settings["AiKubernetesRuntimeHost:ContainerPort"] = "8080";
-            settings["AiKubernetesRuntimeHost:PodNamePrefix"] = "grpc-kubernetes-runtime";
+            settings["AiKubernetesRuntimeHost:PodNamePrefix"] = "rt";
             settings["AiKubernetesRuntimeHost:TransportName"] = "grpc";
             settings["AiKubernetesRuntimeHost:UseServicePerRuntime"] = "true";
             settings["AiKubernetesRuntimeHost:DeleteResourcesOnFailure"] = "true";

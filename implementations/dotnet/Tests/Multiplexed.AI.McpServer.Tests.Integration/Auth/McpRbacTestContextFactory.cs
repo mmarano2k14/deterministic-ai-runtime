@@ -1,29 +1,61 @@
 ﻿using Multiplexed.Abstractions.Core.ExecutionContext;
 using Multiplexed.Rbac.Core.ExecutionContext;
+using System;
+using System.Collections.Generic;
+using System.Linq;
 using ExecutionContext = Multiplexed.Rbac.Core.ExecutionContext.ExecutionContext;
+using SnapshotNamespaceEntry = Multiplexed.Abstractions.Core.ExecutionContext.NamespaceEntry;
 
 namespace Multiplexed.AI.McpServer.Tests.Integration.Auth
 {
+    /// <summary>
+    /// Creates RBAC execution contexts used by MCP integration tests.
+    /// </summary>
     public static class McpRbacTestContextFactory
     {
+        /// <summary>
+        /// Default integration-test project.
+        /// </summary>
         public const string Project =
             "distributed-deterministic-ai-runtime";
 
+        /// <summary>
+        /// Default integration-test namespace.
+        /// </summary>
         public const string Namespace =
             "mcp-ai-runtime";
 
+        /// <summary>
+        /// Demo user id header name.
+        /// </summary>
         public const string DemoUserIdHeaderName =
             "X-Demo-UserId";
 
+        /// <summary>
+        /// Default integration-test user id.
+        /// </summary>
         public const string DefaultUserId =
             "mcp-integration-test";
 
+        /// <summary>
+        /// Default integration-test tenant id.
+        /// </summary>
         public const string DefaultTenantId =
             "tenant-id-xxxx";
 
+        /// <summary>
+        /// Default integration-test tenant group id.
+        /// </summary>
         public const string DefaultTenantGroupId =
             "tenant-group-id-xxx";
 
+        /// <summary>
+        /// Creates a default RBAC execution context.
+        /// </summary>
+        /// <param name="userId">The optional user id.</param>
+        /// <param name="tenantId">The optional tenant id.</param>
+        /// <param name="tenantGroupId">The optional tenant group id.</param>
+        /// <returns>The RBAC execution context.</returns>
         public static ExecutionContext CreateDefaultContext(
             string? userId = null,
             string? tenantId = null,
@@ -98,6 +130,69 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Auth
                     }
                 },
                 TtlSeconds = 300
+            };
+        }
+
+        /// <summary>
+        /// Creates a default AI execution context snapshot for integration tests.
+        /// </summary>
+        /// <param name="userId">The optional user id.</param>
+        /// <param name="tenantId">The optional tenant id.</param>
+        /// <param name="tenantGroupId">The optional tenant group id.</param>
+        /// <returns>The AI execution context snapshot.</returns>
+        public static ExecutionContextSnapshot CreateDefaultSnapshot(
+            string? userId = null,
+            string? tenantId = null,
+            string? tenantGroupId = null)
+        {
+            return MapToSnapshot(
+                CreateDefaultContext(
+                    userId,
+                    tenantId,
+                    tenantGroupId));
+        }
+
+        /// <summary>
+        /// Maps an RBAC execution context to an AI execution context snapshot.
+        /// </summary>
+        /// <param name="context">The RBAC execution context.</param>
+        /// <returns>The AI execution context snapshot.</returns>
+        public static ExecutionContextSnapshot MapToSnapshot(
+            ExecutionContext context)
+        {
+            ArgumentNullException.ThrowIfNull(context);
+
+            return new ExecutionContextSnapshot
+            {
+                ContextKey = context.ContextKey,
+                Project = context.Project,
+                UserId = context.UserId,
+                TenantId = context.TenantId,
+                TenantGroupId = context.TenantGroupId,
+                CurrentNamespace = context.CurrentNamespace,
+                Namespaces = context.Namespaces
+                    .Select(MapNamespace)
+                    .ToList(),
+                InFlightCount = 0,
+                TtlSeconds = context.TtlSeconds,
+                CreatedAtUtc = DateTime.UtcNow
+            };
+        }
+
+        /// <summary>
+        /// Maps an RBAC namespace entry to an AI execution context namespace entry.
+        /// </summary>
+        /// <param name="namespaceEntry">The RBAC namespace entry.</param>
+        /// <returns>The AI execution context namespace entry.</returns>
+        private static SnapshotNamespaceEntry MapNamespace(
+            NamespaceEntry namespaceEntry)
+        {
+            ArgumentNullException.ThrowIfNull(namespaceEntry);
+
+            return new SnapshotNamespaceEntry
+            {
+                Name = namespaceEntry.Name,
+                Trns = new HashSet<string>(namespaceEntry.Trns)
             };
         }
     }

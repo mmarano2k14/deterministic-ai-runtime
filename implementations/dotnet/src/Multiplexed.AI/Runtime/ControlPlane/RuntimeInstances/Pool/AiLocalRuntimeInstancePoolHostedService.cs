@@ -92,11 +92,15 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
             var enableSharedQueuePump =
                 GetEnableSharedQueuePump();
 
+            var controlPlaneId =
+                ResolveControlPlaneId();
+
             this.logger.LogInformation(
-                "Evaluating local runtime instance pool startup. HostMode={HostMode}, EnableSharedQueuePump={EnableSharedQueuePump}, HostId={HostId}, Enabled={Enabled}, InstanceCount={InstanceCount}, WorkerCountPerInstance={WorkerCountPerInstance}, MaxConcurrentRunsPerInstance={MaxConcurrentRunsPerInstance}, LocalQueueCapacity={LocalQueueCapacity}, RuntimeInstanceIdPrefix={RuntimeInstanceIdPrefix}",
+                "Evaluating local runtime instance pool startup. HostMode={HostMode}, EnableSharedQueuePump={EnableSharedQueuePump}, HostId={HostId}, ControlPlaneId={ControlPlaneId}, Enabled={Enabled}, InstanceCount={InstanceCount}, WorkerCountPerInstance={WorkerCountPerInstance}, MaxConcurrentRunsPerInstance={MaxConcurrentRunsPerInstance}, LocalQueueCapacity={LocalQueueCapacity}, RuntimeInstanceIdPrefix={RuntimeInstanceIdPrefix}",
                 hostMode,
                 enableSharedQueuePump,
                 this.runtimeHostIdentity.HostId,
+                controlPlaneId,
                 this.options.Enabled,
                 this.options.InstanceCount,
                 this.options.WorkerCountPerInstance,
@@ -107,10 +111,11 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
             if (!this.options.Enabled)
             {
                 this.logger.LogInformation(
-                    "Local runtime instance pool skipped because it is disabled by options. HostMode={HostMode}, EnableSharedQueuePump={EnableSharedQueuePump}, HostId={HostId}, Enabled={Enabled}, RuntimeInstanceIdPrefix={RuntimeInstanceIdPrefix}",
+                    "Local runtime instance pool skipped because it is disabled by options. HostMode={HostMode}, EnableSharedQueuePump={EnableSharedQueuePump}, HostId={HostId}, ControlPlaneId={ControlPlaneId}, Enabled={Enabled}, RuntimeInstanceIdPrefix={RuntimeInstanceIdPrefix}",
                     hostMode,
                     enableSharedQueuePump,
                     this.runtimeHostIdentity.HostId,
+                    controlPlaneId,
                     this.options.Enabled,
                     this.options.RuntimeInstanceIdPrefix);
 
@@ -122,10 +127,11 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
                 enableSharedQueuePump);
 
             this.logger.LogInformation(
-                "Starting local runtime instance pool through scaler. HostMode={HostMode}, EnableSharedQueuePump={EnableSharedQueuePump}, HostId={HostId}, Enabled={Enabled}, TargetInstanceCount={TargetInstanceCount}, WorkerCountPerInstance={WorkerCountPerInstance}, MaxConcurrentRunsPerInstance={MaxConcurrentRunsPerInstance}, LocalQueueCapacity={LocalQueueCapacity}, RuntimeInstanceIdPrefix={RuntimeInstanceIdPrefix}",
+                "Starting local runtime instance pool through scaler. HostMode={HostMode}, EnableSharedQueuePump={EnableSharedQueuePump}, HostId={HostId}, ControlPlaneId={ControlPlaneId}, Enabled={Enabled}, TargetInstanceCount={TargetInstanceCount}, WorkerCountPerInstance={WorkerCountPerInstance}, MaxConcurrentRunsPerInstance={MaxConcurrentRunsPerInstance}, LocalQueueCapacity={LocalQueueCapacity}, RuntimeInstanceIdPrefix={RuntimeInstanceIdPrefix}",
                 hostMode,
                 enableSharedQueuePump,
                 this.runtimeHostIdentity.HostId,
+                controlPlaneId,
                 this.options.Enabled,
                 this.options.InstanceCount,
                 this.options.WorkerCountPerInstance,
@@ -139,9 +145,9 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
                         new AiRuntimeScaleOutProviderRequest
                         {
                             RequestId = $"local-pool-startup-{Guid.NewGuid():N}",
-                            ControlPlaneId = this.runtimeHostIdentity.HostId,
+                            ControlPlaneId = controlPlaneId,
                             ExecutionContextSnapshot = CreateLocalPoolStartupExecutionContextSnapshot(
-                                this.runtimeHostIdentity.HostId),
+                                controlPlaneId),
                             SharedRunId = "local-pool-startup",
                             CurrentInstanceCount = 0,
                             RequestedTargetInstanceCount = this.options.InstanceCount,
@@ -156,7 +162,11 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
                                 ["hostMode"] = hostMode,
                                 ["enableSharedQueuePump"] = enableSharedQueuePump,
                                 ["runtimeHostId"] = this.runtimeHostIdentity.HostId,
-                                ["runtimeInstanceIdPrefix"] = this.options.RuntimeInstanceIdPrefix
+                                ["runtimeInstanceIdPrefix"] = this.options.RuntimeInstanceIdPrefix,
+                                ["controlPlaneId"] = controlPlaneId,
+                                ["control-plane.id"] = controlPlaneId,
+                                ["controlplane.id"] = controlPlaneId,
+                                ["runtime.controlPlaneId"] = controlPlaneId
                             }
                         },
                         cancellationToken)
@@ -171,10 +181,11 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
             }
 
             this.logger.LogInformation(
-                "Local runtime instance pool started through scaler. HostMode={HostMode}, EnableSharedQueuePump={EnableSharedQueuePump}, HostId={HostId}, ActiveInstanceCount={ActiveInstanceCount}, RuntimeInstanceIdPrefix={RuntimeInstanceIdPrefix}",
+                "Local runtime instance pool started through scaler. HostMode={HostMode}, EnableSharedQueuePump={EnableSharedQueuePump}, HostId={HostId}, ControlPlaneId={ControlPlaneId}, ActiveInstanceCount={ActiveInstanceCount}, RuntimeInstanceIdPrefix={RuntimeInstanceIdPrefix}",
                 hostMode,
                 enableSharedQueuePump,
                 this.runtimeHostIdentity.HostId,
+                controlPlaneId,
                 this.scaler.ActiveInstanceCount,
                 this.options.RuntimeInstanceIdPrefix);
         }
@@ -189,13 +200,17 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
             var enableSharedQueuePump =
                 GetEnableSharedQueuePump();
 
+            var controlPlaneId =
+                ResolveControlPlaneId();
+
             if (Interlocked.Exchange(ref this.stopRequested, 1) == 1)
             {
                 this.logger.LogInformation(
-                    "Local runtime instance pool stop skipped because stop is already requested. HostMode={HostMode}, EnableSharedQueuePump={EnableSharedQueuePump}, HostId={HostId}, ActiveInstanceCount={ActiveInstanceCount}, RuntimeInstanceIdPrefix={RuntimeInstanceIdPrefix}",
+                    "Local runtime instance pool stop skipped because stop is already requested. HostMode={HostMode}, EnableSharedQueuePump={EnableSharedQueuePump}, HostId={HostId}, ControlPlaneId={ControlPlaneId}, ActiveInstanceCount={ActiveInstanceCount}, RuntimeInstanceIdPrefix={RuntimeInstanceIdPrefix}",
                     hostMode,
                     enableSharedQueuePump,
                     this.runtimeHostIdentity.HostId,
+                    controlPlaneId,
                     this.scaler.ActiveInstanceCount,
                     this.options.RuntimeInstanceIdPrefix);
 
@@ -203,10 +218,11 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
             }
 
             this.logger.LogInformation(
-                "Stopping local runtime instance pool through scaler. HostMode={HostMode}, EnableSharedQueuePump={EnableSharedQueuePump}, HostId={HostId}, ActiveInstanceCount={ActiveInstanceCount}, RuntimeInstanceIdPrefix={RuntimeInstanceIdPrefix}",
+                "Stopping local runtime instance pool through scaler. HostMode={HostMode}, EnableSharedQueuePump={EnableSharedQueuePump}, HostId={HostId}, ControlPlaneId={ControlPlaneId}, ActiveInstanceCount={ActiveInstanceCount}, RuntimeInstanceIdPrefix={RuntimeInstanceIdPrefix}",
                 hostMode,
                 enableSharedQueuePump,
                 this.runtimeHostIdentity.HostId,
+                controlPlaneId,
                 this.scaler.ActiveInstanceCount,
                 this.options.RuntimeInstanceIdPrefix);
 
@@ -216,10 +232,11 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
                 .ConfigureAwait(false);
 
             this.logger.LogInformation(
-                "Local runtime instance pool stopped through scaler. HostMode={HostMode}, EnableSharedQueuePump={EnableSharedQueuePump}, HostId={HostId}, ActiveInstanceCount={ActiveInstanceCount}, RuntimeInstanceIdPrefix={RuntimeInstanceIdPrefix}",
+                "Local runtime instance pool stopped through scaler. HostMode={HostMode}, EnableSharedQueuePump={EnableSharedQueuePump}, HostId={HostId}, ControlPlaneId={ControlPlaneId}, ActiveInstanceCount={ActiveInstanceCount}, RuntimeInstanceIdPrefix={RuntimeInstanceIdPrefix}",
                 hostMode,
                 enableSharedQueuePump,
                 this.runtimeHostIdentity.HostId,
+                controlPlaneId,
                 this.scaler.ActiveInstanceCount,
                 this.options.RuntimeInstanceIdPrefix);
         }
@@ -233,41 +250,71 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
             var enableSharedQueuePump =
                 GetEnableSharedQueuePump();
 
+            var controlPlaneId =
+                ResolveControlPlaneId();
+
             this.logger.LogInformation(
-                "Disposing local runtime instance pool hosted service. HostMode={HostMode}, EnableSharedQueuePump={EnableSharedQueuePump}, HostId={HostId}, ActiveInstanceCount={ActiveInstanceCount}, StopRequested={StopRequested}, RuntimeInstanceIdPrefix={RuntimeInstanceIdPrefix}",
+                "Disposing local runtime instance pool hosted service. HostMode={HostMode}, EnableSharedQueuePump={EnableSharedQueuePump}, HostId={HostId}, ControlPlaneId={ControlPlaneId}, ActiveInstanceCount={ActiveInstanceCount}, StopRequested={StopRequested}, RuntimeInstanceIdPrefix={RuntimeInstanceIdPrefix}",
                 hostMode,
                 enableSharedQueuePump,
                 this.runtimeHostIdentity.HostId,
+                controlPlaneId,
                 this.scaler.ActiveInstanceCount,
                 this.stopRequested,
                 this.options.RuntimeInstanceIdPrefix);
 
             this.logger.LogInformation(
-                "Local runtime instance pool hosted service disposed. HostMode={HostMode}, EnableSharedQueuePump={EnableSharedQueuePump}, HostId={HostId}, RuntimeInstanceIdPrefix={RuntimeInstanceIdPrefix}",
+                "Local runtime instance pool hosted service disposed. HostMode={HostMode}, EnableSharedQueuePump={EnableSharedQueuePump}, HostId={HostId}, ControlPlaneId={ControlPlaneId}, RuntimeInstanceIdPrefix={RuntimeInstanceIdPrefix}",
                 hostMode,
                 enableSharedQueuePump,
                 this.runtimeHostIdentity.HostId,
+                controlPlaneId,
                 this.options.RuntimeInstanceIdPrefix);
 
             return ValueTask.CompletedTask;
         }
 
         /// <summary>
+        /// Resolves the control-plane identifier inherited by local pool startup runtime instances.
+        /// </summary>
+        /// <returns>The resolved control-plane identifier.</returns>
+        private string ResolveControlPlaneId()
+        {
+            var configuredControlPlaneId =
+                this.configuration["AiRuntimeInstanceRegistration:ControlPlaneId"];
+
+            if (!string.IsNullOrWhiteSpace(configuredControlPlaneId))
+            {
+                return configuredControlPlaneId.Trim();
+            }
+
+            configuredControlPlaneId =
+                this.configuration["AiMcpHost:ControlPlaneId"];
+
+            if (!string.IsNullOrWhiteSpace(configuredControlPlaneId))
+            {
+                return configuredControlPlaneId.Trim();
+            }
+
+            return this.runtimeHostIdentity.HostId;
+        }
+
+        /// <summary>
         /// Creates the execution context snapshot used for local runtime instance pool startup.
         /// </summary>
-        /// <param name="hostId">The runtime host identifier.</param>
+        /// <param name="controlPlaneId">The resolved control-plane identifier.</param>
         /// <returns>The local runtime instance pool startup execution context snapshot.</returns>
         private static ExecutionContextSnapshot CreateLocalPoolStartupExecutionContextSnapshot(
-            string hostId)
+            string controlPlaneId)
         {
-            var safeHostId =
-                string.IsNullOrWhiteSpace(hostId)
-                    ? "unknown-host"
-                    : hostId;
+            var safeControlPlaneId =
+                string.IsNullOrWhiteSpace(controlPlaneId)
+                    ? "unknown-control-plane"
+                    : controlPlaneId;
 
             return new ExecutionContextSnapshot
             {
-                ContextKey = $"system:local-runtime-instance-pool:{safeHostId}",
+                ContextKey = $"system:local-runtime-instance-pool:{safeControlPlaneId}",
                 Project = "system",
                 UserId = "system",
                 TenantId = "system",

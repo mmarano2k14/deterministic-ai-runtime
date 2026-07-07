@@ -119,7 +119,15 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager
             Assert.Equal("tenant-a", spec.EnvironmentVariables["AiRuntimeInstanceRegistration__TenantId"]);
             Assert.Equal("tenant-group-a", spec.EnvironmentVariables["AiRuntimeInstanceRegistration__TenantGroupId"]);
             Assert.Equal("tenant-a", spec.EnvironmentVariables["AiRuntimeInstanceRegistration__Metadata__tenant.id"]);
+            Assert.Equal("tenant-a", spec.EnvironmentVariables["AiRuntimeInstanceRegistration__Metadata__tenantId"]);
+            Assert.Equal("tenant-group-a", spec.EnvironmentVariables["AiRuntimeInstanceRegistration__Metadata__tenant.group.id"]);
             Assert.Equal("tenant-group-a", spec.EnvironmentVariables["AiRuntimeInstanceRegistration__Metadata__tenant.groupId"]);
+            Assert.Equal("tenant-group-a", spec.EnvironmentVariables["AiRuntimeInstanceRegistration__Metadata__tenantGroupId"]);
+            Assert.Equal("tenant-a", spec.EnvironmentVariables["AiRuntimeInstanceRegistration__ProviderMetadata__tenant.id"]);
+            Assert.Equal("tenant-a", spec.EnvironmentVariables["AiRuntimeInstanceRegistration__ProviderMetadata__tenantId"]);
+            Assert.Equal("tenant-group-a", spec.EnvironmentVariables["AiRuntimeInstanceRegistration__ProviderMetadata__tenant.group.id"]);
+            Assert.Equal("tenant-group-a", spec.EnvironmentVariables["AiRuntimeInstanceRegistration__ProviderMetadata__tenant.groupId"]);
+            Assert.Equal("tenant-group-a", spec.EnvironmentVariables["AiRuntimeInstanceRegistration__ProviderMetadata__tenantGroupId"]);
             Assert.Equal("tenant-a", spec.Labels["multiplexed.ai/tenant-id"]);
             Assert.Equal("tenant-group-a", spec.Labels["multiplexed.ai/tenant-group-id"]);
         }

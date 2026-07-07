@@ -6,6 +6,7 @@ using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strategy;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strategy.Kubernetes;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strategy.Kubernetes.Client;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strategy.Kubernetes.Client.Factory;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strategy.Kubernetes.Publisher;
 using System;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.DI
@@ -54,6 +55,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
             services.TryAddSingleton<AiKubernetesSdkResourceFactory>();
             services.TryAddSingleton<IKubernetesClientFactory, DefaultKubernetesClientFactory>();
             services.TryAddSingleton<KubernetesSdkAiKubernetesRuntimeHostClient>();
+            services.TryAddSingleton<IAiKubernetesRuntimeInstancePublisher, KubernetesAiRuntimeInstancePublisher>();
 
             services.TryAddSingleton<IAiKubernetesRuntimeHostClient>(
                 serviceProvider =>
