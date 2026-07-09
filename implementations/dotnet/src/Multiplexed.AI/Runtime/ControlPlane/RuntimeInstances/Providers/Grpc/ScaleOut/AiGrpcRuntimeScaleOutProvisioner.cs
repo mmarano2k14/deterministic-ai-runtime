@@ -16,12 +16,16 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Grpc.Sc
     /// </summary>
     public sealed class AiGrpcRuntimeScaleOutProvisioner : IAiGrpcRuntimeScaleOutProvisioner
     {
+
         private const string ProviderName = AiGrpcRuntimeProviderConstants.ProviderName;
         private const string DefaultRuntimeInstanceIdPrefix = "grpc-runtime";
         private const string DefaultEndpointTemplate = "http://localhost";
         private const int DefaultWorkerCountPerInstance = 1;
         private const int DefaultMaxConcurrentRunsPerInstance = 1;
         private const int DefaultQueueCapacity = 100;
+        private const string ScaleOutExcludedRuntimeInstanceIdMetadataKey = "scaleout.excludedRuntimeInstanceId";
+        private const string ScaleOutReplacementForRuntimeInstanceIdMetadataKey = "scaleout.replacementForRuntimeInstanceId";
+        private const string RecoveryFailedRuntimeInstanceIdMetadataKey = "recovery.failedRuntimeInstanceId";
 
         private readonly IAiRuntimeInstanceRegistry registry;
         private readonly IAiRuntimeInstanceCapacityStore capacityStore;
@@ -242,8 +246,16 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Grpc.Sc
                 return CreateRejectedResult(request, startResult.FailureReason ?? "runtime-host-start-failed", "gRPC runtime scale-out host manager start failed.");
             }
 
+            var excludedRuntimeInstanceId =
+                ResolveExcludedRuntimeInstanceId(
+                    context.Metadata);
+
             var fulfilledRuntimeInstanceId =
-                !string.IsNullOrWhiteSpace(startResult.RuntimeInstanceId)
+                !string.IsNullOrWhiteSpace(startResult.RuntimeInstanceId) &&
+                !string.Equals(
+                    startResult.RuntimeInstanceId,
+                    excludedRuntimeInstanceId,
+                    StringComparison.Ordinal)
                     ? startResult.RuntimeInstanceId
                     : context.RuntimeInstanceId;
 
@@ -255,6 +267,17 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Grpc.Sc
             if (string.IsNullOrWhiteSpace(fulfilledRuntimeInstanceId))
             {
                 return CreateRejectedResult(request, "runtime-host-started-without-runtime-instance-id", "gRPC runtime scale-out host manager returned success without a runtime instance id.");
+            }
+
+            if (string.Equals(
+                    fulfilledRuntimeInstanceId,
+                    excludedRuntimeInstanceId,
+                    StringComparison.Ordinal))
+            {
+                return CreateRejectedResult(
+                    request,
+                    "runtime-host-started-with-excluded-runtime-instance-id",
+                    "gRPC runtime scale-out host manager returned the excluded failed runtime instance id for a recovery replacement.");
             }
 
             if (options.RequireReadiness)
@@ -459,12 +482,116 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Grpc.Sc
             AiRuntimeScaleOutProviderRequest request,
             string runtimeInstanceIdPrefix)
         {
-            var target =
-                request.RequestedTargetInstanceCount > 0
-                    ? request.RequestedTargetInstanceCount
-                    : Math.Max(1, request.CurrentInstanceCount + 1);
+            var excludedRuntimeInstanceId =
+                ResolveExcludedRuntimeInstanceId(
+                    request.Metadata);
 
-            return $"{request.ControlPlaneId}:{runtimeInstanceIdPrefix}-{target}";
+            var requestedTargetInstanceCount =
+                Convert.ToInt32(request.RequestedTargetInstanceCount);
+
+            var currentInstanceCount =
+                Convert.ToInt32(request.CurrentInstanceCount);
+
+            var maxInstanceCount =
+                Convert.ToInt32(request.MaxInstanceCount);
+
+            var maxRuntimeInstances =
+                Convert.ToInt32(
+                    request.MaxRuntimeInstances.HasValue
+                        ? request.MaxRuntimeInstances.Value
+                        : 0);
+
+            var effectiveMaxRuntimeInstances =
+                maxInstanceCount > 0
+                    ? maxInstanceCount
+                    : maxRuntimeInstances;
+
+            var firstTarget =
+                requestedTargetInstanceCount > 0
+                    ? requestedTargetInstanceCount
+                    : Math.Max(
+                        1,
+                        currentInstanceCount + 1);
+
+            var upperBound =
+                effectiveMaxRuntimeInstances > 0
+                    ? Math.Max(
+                        firstTarget,
+                        effectiveMaxRuntimeInstances)
+                    : firstTarget + 10;
+
+            for (var target = firstTarget; target <= upperBound; target++)
+            {
+                var candidate =
+                    $"{request.ControlPlaneId}:{runtimeInstanceIdPrefix}-{target}";
+
+                if (!string.Equals(
+                        candidate,
+                        excludedRuntimeInstanceId,
+                        StringComparison.Ordinal))
+                {
+                    return candidate;
+                }
+            }
+
+            return $"{request.ControlPlaneId}:{runtimeInstanceIdPrefix}-recovery-{Guid.NewGuid():N}";
+        }
+
+        /// <summary>
+        /// Resolves the runtime instance id that must not be reused by replacement scale-out.
+        /// </summary>
+        /// <param name="metadata">The scale-out metadata.</param>
+        /// <returns>The excluded runtime instance id, or null.</returns>
+        private static string? ResolveExcludedRuntimeInstanceId(
+            IReadOnlyDictionary<string, string>? metadata)
+        {
+            return ResolveMetadataValue(
+                       metadata,
+                       ScaleOutExcludedRuntimeInstanceIdMetadataKey) ??
+                   ResolveMetadataValue(
+                       metadata,
+                       ScaleOutReplacementForRuntimeInstanceIdMetadataKey) ??
+                   ResolveMetadataValue(
+                       metadata,
+                       RecoveryFailedRuntimeInstanceIdMetadataKey);
+        }
+
+        /// <summary>
+        /// Resolves a metadata value using case-insensitive key matching.
+        /// </summary>
+        /// <param name="metadata">The metadata dictionary.</param>
+        /// <param name="key">The metadata key.</param>
+        /// <returns>The metadata value, or null.</returns>
+        private static string? ResolveMetadataValue(
+            IReadOnlyDictionary<string, string>? metadata,
+            string key)
+        {
+            if (metadata is null)
+            {
+                return null;
+            }
+
+            if (metadata.TryGetValue(
+                    key,
+                    out var value) &&
+                !string.IsNullOrWhiteSpace(value))
+            {
+                return value;
+            }
+
+            foreach (var item in metadata)
+            {
+                if (string.Equals(
+                        item.Key,
+                        key,
+                        StringComparison.OrdinalIgnoreCase) &&
+                    !string.IsNullOrWhiteSpace(item.Value))
+                {
+                    return item.Value;
+                }
+            }
+
+            return null;
         }
 
         /// <summary>
@@ -682,6 +809,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Grpc.Sc
             metadata[AiRuntimeInstanceCommandTransportMetadataKeys.TransportName] = AiGrpcRuntimeProviderConstants.TransportName;
             metadata[AiRuntimeInstanceCommandTransportMetadataKeys.RuntimeInstanceId] = fulfilledRuntimeInstanceId;
             metadata[AiRuntimeInstanceCommandTransportMetadataKeys.TransportEndpoint] = fulfilledTransportEndpoint;
+            metadata["runtimeInstanceId"] = fulfilledRuntimeInstanceId;
+            metadata["runtime.instance.id"] = fulfilledRuntimeInstanceId;
+            metadata["scaleOutRuntimeInstanceId"] = fulfilledRuntimeInstanceId;
+            metadata["scaleout.runtimeInstanceId"] = fulfilledRuntimeInstanceId;
+            metadata["transport.endpoint"] = fulfilledTransportEndpoint;
             metadata["scaleOutRequestId"] = request.RequestId;
             metadata["sharedRunId"] = request.SharedRunId;
             metadata["controlPlaneId"] = request.ControlPlaneId;

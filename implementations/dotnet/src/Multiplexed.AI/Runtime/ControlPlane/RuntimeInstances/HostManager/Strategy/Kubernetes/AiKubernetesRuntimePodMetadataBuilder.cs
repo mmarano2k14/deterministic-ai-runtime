@@ -4,6 +4,9 @@ using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers;
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Linq;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.RegularExpressions;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strategy.Kubernetes
@@ -18,6 +21,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
     public sealed class AiKubernetesRuntimePodMetadataBuilder
     {
         private const int MaxLabelValueLength = 63;
+        private const int HashLength = 12;
 
         private static readonly Regex InvalidDnsLabelCharacters =
             new("[^a-z0-9.-]", RegexOptions.Compiled | RegexOptions.CultureInvariant);
@@ -128,15 +132,75 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
                 SanitizeDnsLabel(
                     string.IsNullOrWhiteSpace(prefix) ? "ai-runtime" : prefix);
 
-            var normalizedRuntimeInstanceId =
-                SanitizeDnsLabel(runtimeInstanceId);
+            var runtimeSuffix =
+                ResolveRuntimeInstanceShortSuffix(runtimeInstanceId);
+
+            var hash =
+                ComputeStableHash(runtimeInstanceId);
 
             var value =
-                $"{normalizedPrefix}-{normalizedRuntimeInstanceId}";
+                SanitizeDnsLabel(
+                    $"{normalizedPrefix}-{runtimeSuffix}-{hash}");
 
-            return value.Length <= MaxLabelValueLength
-                ? value
-                : value[..MaxLabelValueLength].TrimEnd('-', '.');
+            if (value.Length <= MaxLabelValueLength)
+            {
+                return value;
+            }
+
+            var hashSuffix =
+                $"-{hash}";
+
+            return value[..(MaxLabelValueLength - hashSuffix.Length)]
+                .TrimEnd('-', '.') + hashSuffix;
+        }
+
+        /// <summary>
+        /// Resolves a short human-readable suffix from a runtime instance id.
+        /// </summary>
+        /// <param name="runtimeInstanceId">The runtime instance id.</param>
+        /// <returns>The short suffix.</returns>
+        private static string ResolveRuntimeInstanceShortSuffix(
+            string runtimeInstanceId)
+        {
+            var sanitized =
+                SanitizeDnsLabel(runtimeInstanceId);
+
+            var lastColonSegment =
+                sanitized
+                    .Split(':', StringSplitOptions.RemoveEmptyEntries)
+                    .LastOrDefault() ?? sanitized;
+
+            var parts =
+                lastColonSegment.Split(
+                    '-',
+                    StringSplitOptions.RemoveEmptyEntries);
+
+            if (parts.Length >= 2)
+            {
+                return SanitizeDnsLabel(
+                    string.Join(
+                        "-",
+                        parts.TakeLast(2)));
+            }
+
+            return SanitizeDnsLabel(lastColonSegment);
+        }
+
+        /// <summary>
+        /// Computes a stable lowercase hexadecimal hash from a value.
+        /// </summary>
+        /// <param name="value">The source value.</param>
+        /// <returns>The stable hash.</returns>
+        private static string ComputeStableHash(
+            string value)
+        {
+            var bytes =
+                SHA256.HashData(
+                    Encoding.UTF8.GetBytes(value ?? string.Empty));
+
+            return Convert
+                .ToHexString(bytes)
+                .ToLower(CultureInfo.InvariantCulture)[..HashLength];
         }
 
         /// <summary>

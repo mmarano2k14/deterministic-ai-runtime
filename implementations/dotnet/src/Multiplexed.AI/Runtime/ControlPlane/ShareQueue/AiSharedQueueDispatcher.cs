@@ -1120,17 +1120,15 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
         {
             var metadata =
                 new Dictionary<string, string>(
-                    sharedRun.Metadata,
                     StringComparer.OrdinalIgnoreCase);
 
-            foreach (var item in operationMetadata)
-            {
-                if (!string.IsNullOrWhiteSpace(item.Key))
-                {
-                    metadata[item.Key] =
-                        item.Value ?? string.Empty;
-                }
-            }
+            CopyScaleOutRedispatchMetadata(
+                metadata,
+                sharedRun.Metadata);
+
+            CopyScaleOutRedispatchMetadata(
+                metadata,
+                operationMetadata);
 
             metadata[ScaleOutIntentMetadataKey] =
                 ScaleOutIntentSharedQueueRedispatchReplacement;
@@ -1138,7 +1136,60 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
             metadata[ScaleOutRequestIdMetadataKey] =
                 $"scale-out-redispatch-{sharedRun.SharedRunId}-{Guid.NewGuid():N}";
 
+            if (TryGetMetadataValue(
+                    operationMetadata,
+                    RecoveryFailedRuntimeInstanceIdMetadataKey,
+                    out var failedRuntimeInstanceId))
+            {
+                metadata["scaleout.excludedRuntimeInstanceId"] =
+                    failedRuntimeInstanceId;
+
+                metadata["scaleout.replacementForRuntimeInstanceId"] =
+                    failedRuntimeInstanceId;
+
+                metadata["recovery.replacement"] =
+                    "true";
+            }
+
             return metadata;
+        }
+
+        /// <summary>
+        /// Copies metadata into the replacement scale-out metadata while removing stale runtime assignment keys.
+        /// </summary>
+        /// <param name="target">The target metadata dictionary.</param>
+        /// <param name="source">The source metadata dictionary.</param>
+        private static void CopyScaleOutRedispatchMetadata(
+            IDictionary<string, string> target,
+            IReadOnlyDictionary<string, string> source)
+        {
+            foreach (var item in source)
+            {
+                if (string.IsNullOrWhiteSpace(item.Key) ||
+                    IsStaleRuntimeAssignmentMetadataKey(item.Key))
+                {
+                    continue;
+                }
+
+                target[item.Key] =
+                    item.Value ?? string.Empty;
+            }
+        }
+
+        /// <summary>
+        /// Determines whether a metadata key carries a stale runtime assignment that must not be propagated to replacement scale-out.
+        /// </summary>
+        /// <param name="key">The metadata key.</param>
+        /// <returns><c>true</c> when the key must be removed from replacement scale-out metadata; otherwise, <c>false</c>.</returns>
+        private static bool IsStaleRuntimeAssignmentMetadataKey(
+            string key)
+        {
+            return string.Equals(key, "scaleOutRuntimeInstanceId", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(key, "scaleout.runtimeInstanceId", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(key, "runtimeInstanceId", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(key, "runtime.instance.id", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(key, "host.runtimeInstanceId", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(key, "transport.runtimeInstanceId", StringComparison.OrdinalIgnoreCase);
         }
 
         /// <summary>

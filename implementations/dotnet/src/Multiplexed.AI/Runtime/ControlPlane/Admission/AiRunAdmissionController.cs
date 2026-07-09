@@ -27,6 +27,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission
     public sealed class AiRunAdmissionController : IAiRunAdmissionController
     {
         private const string RuntimeAdmissionDecisionOperation = "runtime-admission-decision";
+        private const string RecoveryFailedRuntimeInstanceIdMetadataKey = "recovery.failedRuntimeInstanceId";
 
         private readonly IAiRuntimeInstanceRegistry _registry;
         private readonly IAiRuntimeAdmissionReservationStore _reservationStore;
@@ -221,6 +222,19 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission
                     .Where(instance => instance.Role == AiRuntimeInstanceRole.Runtime)
                     .Where(instance =>
                     {
+                        if (IsExcludedRecoveryRuntimeInstance(
+                                request,
+                                instance.RuntimeInstanceId))
+                        {
+                            _logger.LogWarning(
+                                "Admission runtime instance rejected because it is the failed runtime instance for this recovery redispatch. RunId={RunId}, RuntimeInstanceId={RuntimeInstanceId}, Reason={Reason}",
+                                request.RunId,
+                                instance.RuntimeInstanceId,
+                                "recovery-failed-runtime-instance-excluded");
+
+                            return false;
+                        }
+
                         var eligible = IsEligibleForAdmission(instance);
 
                         if (!eligible)
@@ -455,6 +469,69 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission
 
                 throw;
             }
+        }
+
+        /// <summary>
+        /// Determines whether a runtime instance must be excluded because it is the failed runtime for a recovery redispatch.
+        /// </summary>
+        /// <param name="request">The admission request.</param>
+        /// <param name="runtimeInstanceId">The runtime instance id.</param>
+        /// <returns><see langword="true"/> when the runtime instance must be excluded; otherwise, <see langword="false"/>.</returns>
+        private static bool IsExcludedRecoveryRuntimeInstance(
+            AiRunAdmissionRequest request,
+            string runtimeInstanceId)
+        {
+            return !string.IsNullOrWhiteSpace(runtimeInstanceId) &&
+                   TryGetMetadataValue(
+                       request.Metadata,
+                       RecoveryFailedRuntimeInstanceIdMetadataKey,
+                       out var failedRuntimeInstanceId) &&
+                   string.Equals(
+                       runtimeInstanceId,
+                       failedRuntimeInstanceId,
+                       StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Attempts to read a metadata value by key using ordinal ignore-case matching.
+        /// </summary>
+        /// <param name="metadata">The metadata dictionary.</param>
+        /// <param name="key">The metadata key.</param>
+        /// <param name="value">The resolved value.</param>
+        /// <returns><see langword="true"/> when a non-empty value is found; otherwise, <see langword="false"/>.</returns>
+        private static bool TryGetMetadataValue(
+            IReadOnlyDictionary<string, string>? metadata,
+            string key,
+            out string value)
+        {
+            if (metadata is not null &&
+                metadata.TryGetValue(
+                    key,
+                    out var directValue) &&
+                !string.IsNullOrWhiteSpace(directValue))
+            {
+                value = directValue;
+                return true;
+            }
+
+            if (metadata is not null)
+            {
+                foreach (var pair in metadata)
+                {
+                    if (string.Equals(
+                            pair.Key,
+                            key,
+                            StringComparison.OrdinalIgnoreCase) &&
+                        !string.IsNullOrWhiteSpace(pair.Value))
+                    {
+                        value = pair.Value;
+                        return true;
+                    }
+                }
+            }
+
+            value = string.Empty;
+            return false;
         }
 
         /// <summary>

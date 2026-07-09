@@ -338,6 +338,22 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
                 result.Success,
                 result.FailureReason ?? "(none)");
 
+            if (result.Success)
+            {
+                await this.runtimeInstancePublisher
+                    .UnpublishAsync(
+                        runtimeInstanceId,
+                        "kubernetes-runtime-host-killed",
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+                this.logger.LogWarning(
+                    "Kubernetes runtime instance unpublished after runtime host kill. RuntimeInstanceId={RuntimeInstanceId}, PodName={PodName}, Namespace={Namespace}.",
+                    runtimeInstanceId,
+                    podSpec.PodName,
+                    podSpec.Namespace);
+            }
+
             return result.Success;
         }
 

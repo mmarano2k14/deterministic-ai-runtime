@@ -257,8 +257,15 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery.Transiti
                     cancellationToken)
                 .ConfigureAwait(false);
 
+            Console.WriteLine(
+                 $"[EXECUTION RECOVERY INDEX MARK REQUEUED RESULT] LocalRunId='{ownership.LocalRunId}', ExecutionId='{ownership.ExecutionId}', SharedRunId='{ownership.SharedRunId}', RuntimeInstanceId='{ownership.RuntimeInstanceId}', MarkedRequeued='{markedRequeued}', Reason='{reason}'.");
+
             if (!markedRequeued)
             {
+
+                Console.WriteLine(
+                    $"[EXECUTION RECOVERY INDEX MARK REQUEUED REJECTED] LocalRunId='{ownership.LocalRunId}', ExecutionId='{ownership.ExecutionId}', SharedRunId='{ownership.SharedRunId}', RuntimeInstanceId='{ownership.RuntimeInstanceId}', Reason='{reason}'.");
+
                 return new AiRuntimeExecutionRecoveryTransitionResult
                 {
                     Accepted = false,

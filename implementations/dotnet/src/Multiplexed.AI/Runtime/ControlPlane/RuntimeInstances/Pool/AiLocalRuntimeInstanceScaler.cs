@@ -194,7 +194,7 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
                     DateTimeOffset.UtcNow;
 
                 this.logger.LogInformation(
-                    "Local runtime instance scale-out fulfilled. HostId={HostId}, RequestId={RequestId}, SharedRunId={SharedRunId}, TenantId={TenantId}, TenantGroupId={TenantGroupId}, IsolationMode={IsolationMode}, ControlPlaneId={ControlPlaneId}, ActiveInstanceCount={ActiveInstanceCount}, ScopedActiveInstanceCount={ScopedActiveInstanceCount}, TargetInstanceCount={TargetInstanceCount}, CreatedInstanceCount={CreatedInstanceCount}, RuntimeInstanceIdPrefix={RuntimeInstanceIdPrefix}, WorkerCountPerInstance={WorkerCountPerInstance}, MaxConcurrentRunsPerInstance={MaxConcurrentRunsPerInstance}, LocalQueueCapacity={LocalQueueCapacity}, DurationMs={DurationMs}",
+                    "Local runtime instance scale-out fulfilled. HostId={HostId}, RequestId={RequestId}, SharedRunId={SharedRunId}, TenantId={TenantId}, TenantGroupId={TenantGroupId}, IsolationMode={IsolationMode}, ControlPlaneId={ControlPlaneId}, ActiveInstanceCount={ActiveInstanceCount}, ScopedActiveInstanceCount={ScopedActiveInstanceCount}, TargetInstanceCount={TargetInstanceCount}, CreatedInstanceCount={CreatedInstanceCount}, RuntimeInstanceIdPrefix={RuntimeInstanceIdPrefix}, ExplicitRuntimeInstanceId={ExplicitRuntimeInstanceId}, WorkerCountPerInstance={WorkerCountPerInstance}, MaxConcurrentRunsPerInstance={MaxConcurrentRunsPerInstance}, LocalQueueCapacity={LocalQueueCapacity}, DurationMs={DurationMs}",
                     this.runtimeHostIdentity.HostId,
                     request.RequestId,
                     request.SharedRunId,
@@ -207,6 +207,7 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
                     targetInstanceCount,
                     createdInstanceCount,
                     settings.RuntimeInstanceIdPrefix,
+                    settings.RuntimeInstanceId ?? string.Empty,
                     settings.WorkerCountPerInstance,
                     settings.MaxConcurrentRunsPerInstance,
                     settings.LocalQueueCapacity?.ToString(CultureInfo.InvariantCulture) ?? "unlimited",
@@ -411,21 +412,24 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
             var enableSharedQueuePump =
                 GetEnableSharedQueuePump();
 
-            var runtimeId =
-                $"{settings.RuntimeInstanceIdPrefix}-{index}";
-
             var runtimeInstanceId =
-                CreateRuntimeInstanceId(
+                ResolveRuntimeInstanceId(
+                    settings,
                     this.runtimeHostIdentity.HostId,
-                    runtimeId);
+                    index);
+
+            var runtimeId =
+                ResolveRuntimeId(
+                    runtimeInstanceId);
 
             this.logger.LogInformation(
-                "Creating local runtime instance host. HostMode={HostMode}, EnableSharedQueuePump={EnableSharedQueuePump}, HostId={HostId}, RuntimeId={RuntimeId}, RuntimeInstanceId={RuntimeInstanceId}, ControlPlaneId={ControlPlaneId}, Index={Index}, TargetInstanceCount={TargetInstanceCount}, WorkerCountPerInstance={WorkerCountPerInstance}, MaxConcurrentRunsPerInstance={MaxConcurrentRunsPerInstance}, LocalQueueCapacity={LocalQueueCapacity}, MetadataCount={MetadataCount}",
+                "Creating local runtime instance host. HostMode={HostMode}, EnableSharedQueuePump={EnableSharedQueuePump}, HostId={HostId}, RuntimeId={RuntimeId}, RuntimeInstanceId={RuntimeInstanceId}, ExplicitRuntimeInstanceId={ExplicitRuntimeInstanceId}, ControlPlaneId={ControlPlaneId}, Index={Index}, TargetInstanceCount={TargetInstanceCount}, WorkerCountPerInstance={WorkerCountPerInstance}, MaxConcurrentRunsPerInstance={MaxConcurrentRunsPerInstance}, LocalQueueCapacity={LocalQueueCapacity}, MetadataCount={MetadataCount}",
                 hostMode,
                 enableSharedQueuePump,
                 this.runtimeHostIdentity.HostId,
                 runtimeId,
                 runtimeInstanceId,
+                settings.RuntimeInstanceId ?? string.Empty,
                 settings.ControlPlaneId,
                 index,
                 targetInstanceCount,
@@ -483,6 +487,9 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
                     ? this.options.RuntimeInstanceIdPrefix
                     : request.RuntimeInstanceIdPrefix.Trim();
 
+            var explicitRuntimeInstanceId =
+                this.configuration["AiLocalRuntimeInstancePool:RuntimeInstanceId"];
+
             var workerCountPerInstance =
                 request.WorkerCountPerInstance.GetValueOrDefault(
                     this.options.WorkerCountPerInstance);
@@ -498,6 +505,7 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
                 await this.CreateHostMetadataAsync(
                         request,
                         runtimeInstanceIdPrefix,
+                        explicitRuntimeInstanceId,
                         workerCountPerInstance,
                         maxConcurrentRunsPerInstance,
                         localQueueCapacity,
@@ -519,6 +527,7 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
 
             return new LocalRuntimeInstanceScaleOutSettings(
                 runtimeInstanceIdPrefix,
+                explicitRuntimeInstanceId,
                 workerCountPerInstance,
                 maxConcurrentRunsPerInstance,
                 localQueueCapacity,
@@ -531,6 +540,7 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
         /// </summary>
         /// <param name="request">The provider scale-out request.</param>
         /// <param name="runtimeInstanceIdPrefix">The resolved runtime instance id prefix.</param>
+        /// <param name="explicitRuntimeInstanceId">The explicit runtime instance id, when the host must create exactly one assigned runtime instance.</param>
         /// <param name="workerCountPerInstance">The resolved worker count per instance.</param>
         /// <param name="maxConcurrentRunsPerInstance">The resolved maximum concurrent run count per instance.</param>
         /// <param name="localQueueCapacity">The resolved local queue capacity.</param>
@@ -539,6 +549,7 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
         private async Task<IReadOnlyDictionary<string, string>> CreateHostMetadataAsync(
             AiRuntimeScaleOutProviderRequest request,
             string runtimeInstanceIdPrefix,
+            string? explicitRuntimeInstanceId,
             int workerCountPerInstance,
             int maxConcurrentRunsPerInstance,
             int? localQueueCapacity,
@@ -594,6 +605,15 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
                 workerCountPerInstance.ToString(CultureInfo.InvariantCulture);
             metadata["runtime.maxConcurrentRunsPerInstance"] =
                 maxConcurrentRunsPerInstance.ToString(CultureInfo.InvariantCulture);
+
+            if (!string.IsNullOrWhiteSpace(explicitRuntimeInstanceId))
+            {
+                metadata["runtime.instance.id"] =
+                    explicitRuntimeInstanceId;
+
+                metadata["runtimeInstanceId"] =
+                    explicitRuntimeInstanceId;
+            }
 
             if (localQueueCapacity.HasValue)
             {
@@ -714,6 +734,14 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
                 return false;
             }
 
+            if (!string.IsNullOrWhiteSpace(settings.RuntimeInstanceId))
+            {
+                return string.Equals(
+                    host.RuntimeInstanceId,
+                    settings.RuntimeInstanceId,
+                    StringComparison.Ordinal);
+            }
+
             if (string.IsNullOrWhiteSpace(settings.RuntimeInstanceIdPrefix))
             {
                 return false;
@@ -811,6 +839,15 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
             metadata["targetInstanceCount"] = targetInstanceCount.ToString(CultureInfo.InvariantCulture);
             metadata["createdInstanceCount"] = createdInstanceCount.ToString(CultureInfo.InvariantCulture);
 
+            if (!string.IsNullOrWhiteSpace(settings.RuntimeInstanceId))
+            {
+                metadata["runtime.instance.id"] =
+                    settings.RuntimeInstanceId;
+
+                metadata["runtimeInstanceId"] =
+                    settings.RuntimeInstanceId;
+            }
+
             if (!string.IsNullOrWhiteSpace(request.TenantId))
             {
                 metadata[AiRuntimeInstanceIsolationMetadataKeys.TenantId] = request.TenantId;
@@ -865,6 +902,56 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
             }
 
             return metadata;
+        }
+
+        /// <summary>
+        /// Resolves the runtime instance id to create for a local runtime host.
+        /// </summary>
+        /// <param name="settings">The resolved scale-out settings.</param>
+        /// <param name="hostId">The runtime host id.</param>
+        /// <param name="index">The runtime instance index.</param>
+        /// <returns>The runtime instance id.</returns>
+        private static string ResolveRuntimeInstanceId(
+            LocalRuntimeInstanceScaleOutSettings settings,
+            string hostId,
+            int index)
+        {
+            ArgumentNullException.ThrowIfNull(settings);
+
+            if (index == 1 &&
+                !string.IsNullOrWhiteSpace(settings.RuntimeInstanceId))
+            {
+                return settings.RuntimeInstanceId.Trim();
+            }
+
+            var runtimeId =
+                $"{settings.RuntimeInstanceIdPrefix}-{index.ToString(CultureInfo.InvariantCulture)}";
+
+            return CreateRuntimeInstanceId(
+                hostId,
+                runtimeId);
+        }
+
+        /// <summary>
+        /// Resolves the local runtime id from a globally scoped runtime instance id.
+        /// </summary>
+        /// <param name="runtimeInstanceId">The runtime instance id.</param>
+        /// <returns>The local runtime id.</returns>
+        private static string ResolveRuntimeId(
+            string runtimeInstanceId)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(runtimeInstanceId);
+
+            var separatorIndex =
+                runtimeInstanceId.LastIndexOf(':');
+
+            if (separatorIndex >= 0 &&
+                separatorIndex < runtimeInstanceId.Length - 1)
+            {
+                return runtimeInstanceId[(separatorIndex + 1)..];
+            }
+
+            return runtimeInstanceId;
         }
 
         /// <summary>
@@ -992,6 +1079,7 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
         /// Represents resolved local runtime instance scale-out settings.
         /// </summary>
         /// <param name="RuntimeInstanceIdPrefix">The runtime instance id prefix.</param>
+        /// <param name="RuntimeInstanceId">The explicit runtime instance id to create, when provided.</param>
         /// <param name="WorkerCountPerInstance">The worker count per instance.</param>
         /// <param name="MaxConcurrentRunsPerInstance">The maximum concurrent run count per instance.</param>
         /// <param name="LocalQueueCapacity">The local queue capacity.</param>
@@ -999,6 +1087,7 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
         /// <param name="Metadata">The metadata copied to the created runtime instance host.</param>
         private sealed record LocalRuntimeInstanceScaleOutSettings(
             string RuntimeInstanceIdPrefix,
+            string? RuntimeInstanceId,
             int WorkerCountPerInstance,
             int MaxConcurrentRunsPerInstance,
             int? LocalQueueCapacity,

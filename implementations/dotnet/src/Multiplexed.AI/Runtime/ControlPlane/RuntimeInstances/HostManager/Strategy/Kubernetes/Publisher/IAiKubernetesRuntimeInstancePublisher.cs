@@ -21,5 +21,17 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
             AiRuntimeHostStartRequest request,
             AiRuntimeHostStartResult result,
             CancellationToken cancellationToken = default);
+
+        /// <summary>
+        /// Removes a Kubernetes-backed runtime instance publication from the control-plane registry and capacity store.
+        /// </summary>
+        /// <param name="runtimeInstanceId">The runtime instance id.</param>
+        /// <param name="reason">The unpublish reason.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <returns>The asynchronous operation.</returns>
+        Task UnpublishAsync(
+            string runtimeInstanceId,
+            string reason,
+            CancellationToken cancellationToken = default);
     }
 }

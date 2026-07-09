@@ -354,6 +354,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue.Redis
         }
 
         /// <inheritdoc />
+        /// <inheritdoc />
         public async Task<bool> MarkRequeuedForRecoveryAsync(
             string runId,
             string executionId,
@@ -369,11 +370,12 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue.Redis
                 await ResolveControlPlaneIdAsync(cancellationToken)
                     .ConfigureAwait(false);
 
-            var existing = await GetRawAsync(
-                    controlPlaneId,
-                    runId,
-                    cancellationToken)
-                .ConfigureAwait(false);
+            var existing =
+                await GetRawAsync(
+                        controlPlaneId,
+                        runId,
+                        cancellationToken)
+                    .ConfigureAwait(false);
 
             if (existing is null)
             {
@@ -387,7 +389,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue.Redis
                 return false;
             }
 
-            if (IsTerminal(existing))
+            if (IsTerminal(existing) &&
+                !CanMarkFailedForRecovery(
+                    existing,
+                    executionId))
             {
                 return false;
             }
@@ -404,17 +409,18 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue.Redis
                     ? existing.ExecutionId ?? string.Empty
                     : executionId;
 
-            var now = DateTimeOffset.UtcNow;
+            var now =
+                DateTimeOffset.UtcNow;
 
             await _database
                 .HashSetAsync(
                     BuildItemKey(controlPlaneId, runId),
                     new HashEntry[]
                     {
-                        new("executionId", effectiveExecutionId),
-                        new("status", StatusRequeuedForRecovery),
-                        new("failureReason", reason),
-                        new("completedAtUtc", FormatDate(now))
+                new("executionId", effectiveExecutionId),
+                new("status", StatusRequeuedForRecovery),
+                new("failureReason", reason),
+                new("completedAtUtc", FormatDate(now))
                     })
                 .ConfigureAwait(false);
 
@@ -422,27 +428,85 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue.Redis
         }
 
         /// <summary>
-        /// Determines whether the runtime run index entry can be marked as requeued for recovery.
+        /// Determines whether a failed runtime execution can still be marked as requeued for recovery.
         /// </summary>
-        /// <param name="existing">The existing runtime run index entry.</param>
-        /// <param name="requestedExecutionId">The optional execution identifier requested by the recovery transition.</param>
-        /// <returns><c>true</c> when the recovery marker is safe to apply; otherwise, <c>false</c>.</returns>
-        private static bool CanMarkRequeuedForRecovery(
+        /// <param name="existing">The existing runtime execution index entry.</param>
+        /// <param name="executionId">The expected execution id.</param>
+        /// <returns><c>true</c> when the failed execution can be recovered; otherwise, <c>false</c>.</returns>
+        private static bool CanMarkFailedForRecovery(
             AiRuntimeRunExecutionIndexEntry existing,
-            string? requestedExecutionId)
+            string? executionId)
         {
             ArgumentNullException.ThrowIfNull(existing);
 
-            if (!string.IsNullOrWhiteSpace(requestedExecutionId))
+            if (!string.Equals(
+                    existing.Status,
+                    StatusFailed,
+                    StringComparison.OrdinalIgnoreCase))
             {
-                return string.IsNullOrWhiteSpace(existing.ExecutionId) ||
-                    string.Equals(
-                        existing.ExecutionId,
-                        requestedExecutionId,
-                        StringComparison.Ordinal);
+                return false;
             }
 
-            return string.IsNullOrWhiteSpace(existing.ExecutionId);
+            return ExecutionIdMatches(
+                existing,
+                executionId);
+        }
+
+        /// <summary>
+        /// Determines whether a runtime execution index entry can be marked as requeued for recovery.
+        /// </summary>
+        /// <param name="existing">The existing runtime execution index entry.</param>
+        /// <param name="executionId">The expected execution id.</param>
+        /// <returns><c>true</c> when the entry can be marked as requeued for recovery; otherwise, <c>false</c>.</returns>
+        private static bool CanMarkRequeuedForRecovery(
+            AiRuntimeRunExecutionIndexEntry existing,
+            string? executionId)
+        {
+            ArgumentNullException.ThrowIfNull(existing);
+
+            if (string.Equals(
+                    existing.Status,
+                    StatusRequeuedForRecovery,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return ExecutionIdMatches(
+                    existing,
+                    executionId);
+            }
+
+            if (!ExecutionIdMatches(
+                    existing,
+                    executionId))
+            {
+                return false;
+            }
+
+            return string.Equals(existing.Status, StatusQueued, StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(existing.Status, StatusRunning, StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(existing.Status, StatusFailed, StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>
+        /// Determines whether the expected execution id matches the runtime execution index entry.
+        /// </summary>
+        /// <param name="existing">The existing runtime execution index entry.</param>
+        /// <param name="executionId">The expected execution id.</param>
+        /// <returns><c>true</c> when the execution id is empty or matches the existing execution id; otherwise, <c>false</c>.</returns>
+        private static bool ExecutionIdMatches(
+            AiRuntimeRunExecutionIndexEntry existing,
+            string? executionId)
+        {
+            ArgumentNullException.ThrowIfNull(existing);
+
+            if (string.IsNullOrWhiteSpace(executionId))
+            {
+                return true;
+            }
+
+            return string.Equals(
+                existing.ExecutionId,
+                executionId,
+                StringComparison.OrdinalIgnoreCase);
         }
 
         /// <inheritdoc />
@@ -638,6 +702,180 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue.Redis
                 .OrderBy(entry => entry.CreatedAtUtc)
                 .ThenBy(entry => entry.RunId, StringComparer.Ordinal)
                 .ToArray();
+        }
+
+        /// <inheritdoc />
+        public async Task<IReadOnlyList<AiRuntimeRunExecutionIndexEntry>> ListRecoverableByRuntimeInstanceAsync(
+            string runtimeInstanceId,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(runtimeInstanceId);
+
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var controlPlaneId =
+                await ResolveControlPlaneIdAsync(cancellationToken)
+                    .ConfigureAwait(false);
+
+            var runIds =
+                await _database
+                    .SortedSetRangeByRankAsync(
+                        BuildAllIndexKey(controlPlaneId),
+                        order: Order.Ascending)
+                    .ConfigureAwait(false);
+
+            cancellationToken.ThrowIfCancellationRequested();
+
+            if (runIds.Length == 0)
+            {
+                return Array.Empty<AiRuntimeRunExecutionIndexEntry>();
+            }
+
+            var tenantId =
+                TryResolveTenantId();
+
+            var entries =
+                new List<AiRuntimeRunExecutionIndexEntry>(runIds.Length);
+
+            foreach (var runIdValue in runIds)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                var runId =
+                    runIdValue.ToString();
+
+                if (string.IsNullOrWhiteSpace(runId))
+                {
+                    continue;
+                }
+
+                var entry =
+                    await GetRawAsync(
+                            controlPlaneId,
+                            runId,
+                            cancellationToken)
+                        .ConfigureAwait(false);
+
+                if (entry is null)
+                {
+                    continue;
+                }
+
+                if (!string.Equals(
+                        entry.RuntimeInstanceId,
+                        runtimeInstanceId,
+                        StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                if (!IsRecoverable(entry))
+                {
+                    continue;
+                }
+
+                if (!BelongsToTenant(
+                        entry,
+                        tenantId))
+                {
+                    continue;
+                }
+
+                entries.Add(entry);
+            }
+
+            return entries
+                .OrderBy(entry => entry.CreatedAtUtc)
+                .ThenBy(entry => entry.RunId, StringComparer.Ordinal)
+                .ToArray();
+        }
+
+        /// <inheritdoc />
+        public async Task<IReadOnlyList<AiRuntimeRunExecutionIndexEntry>> ListRecoverableAsync(
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var controlPlaneId =
+                await ResolveControlPlaneIdAsync(cancellationToken)
+                    .ConfigureAwait(false);
+
+            var runIds =
+                await _database
+                    .SortedSetRangeByRankAsync(
+                        BuildAllIndexKey(controlPlaneId),
+                        order: Order.Ascending)
+                    .ConfigureAwait(false);
+
+            cancellationToken.ThrowIfCancellationRequested();
+
+            if (runIds.Length == 0)
+            {
+                return Array.Empty<AiRuntimeRunExecutionIndexEntry>();
+            }
+
+            var tenantId =
+                TryResolveTenantId();
+
+            var entries =
+                new List<AiRuntimeRunExecutionIndexEntry>(runIds.Length);
+
+            foreach (var runIdValue in runIds)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                var runId =
+                    runIdValue.ToString();
+
+                if (string.IsNullOrWhiteSpace(runId))
+                {
+                    continue;
+                }
+
+                var entry =
+                    await GetRawAsync(
+                            controlPlaneId,
+                            runId,
+                            cancellationToken)
+                        .ConfigureAwait(false);
+
+                if (entry is null)
+                {
+                    continue;
+                }
+
+                if (!IsRecoverable(entry))
+                {
+                    continue;
+                }
+
+                if (!BelongsToTenant(
+                        entry,
+                        tenantId))
+                {
+                    continue;
+                }
+
+                entries.Add(entry);
+            }
+
+            return entries
+                .OrderBy(entry => entry.CreatedAtUtc)
+                .ThenBy(entry => entry.RunId, StringComparer.Ordinal)
+                .ToArray();
+        }
+
+        /// <summary>
+        /// Determines whether an index entry is recoverable by runtime crash recovery.
+        /// </summary>
+        /// <param name="entry">The runtime run index entry.</param>
+        /// <returns>True when the entry can be considered by crash recovery; otherwise false.</returns>
+        private static bool IsRecoverable(
+            AiRuntimeRunExecutionIndexEntry entry)
+        {
+            return !string.Equals(entry.Status, StatusCompleted, StringComparison.OrdinalIgnoreCase) &&
+                   !string.Equals(entry.Status, StatusCancelled, StringComparison.OrdinalIgnoreCase) &&
+                   !string.Equals(entry.Status, StatusRequeuedForRecovery, StringComparison.OrdinalIgnoreCase);
         }
 
         /// <summary>

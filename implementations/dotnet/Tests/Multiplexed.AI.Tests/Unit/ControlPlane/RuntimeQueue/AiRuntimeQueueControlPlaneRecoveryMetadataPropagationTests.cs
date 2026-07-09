@@ -6,6 +6,7 @@ using Multiplexed.Abstractions.AI.Execution.Instance.Worker;
 using Multiplexed.Abstractions.AI.Runtime.Execution.Instance.Worker;
 using Multiplexed.Abstractions.Core.ExecutionContext;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue;
+using Multiplexed.AI.Tests.Fixtures;
 using Xunit;
 
 namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeQueue
@@ -219,75 +220,6 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeQueue
                         CanAcceptRun = true,
                         SnapshotAtUtc = DateTimeOffset.UtcNow
                     });
-            }
-        }
-
-        /// <summary>
-        /// Fake runtime run execution index.
-        /// </summary>
-        private sealed class FakeRuntimeRunExecutionIndex : IAiRuntimeRunExecutionIndex
-        {
-            /// <summary>
-            /// Gets registered entries.
-            /// </summary>
-            public List<AiRuntimeRunExecutionIndexEntry> RegisteredEntries { get; } = [];
-
-            /// <inheritdoc />
-            public Task RegisterQueuedAsync(AiRuntimeRunExecutionIndexEntry entry, CancellationToken cancellationToken = default)
-            {
-                RegisteredEntries.Add(entry);
-                return Task.CompletedTask;
-            }
-
-            /// <inheritdoc />
-            public Task MarkStartedAsync(string runId, string? executionId = null, CancellationToken cancellationToken = default) => Task.CompletedTask;
-
-            /// <inheritdoc />
-            public Task MarkCompletedAsync(string runId, string? executionId = null, CancellationToken cancellationToken = default) => Task.CompletedTask;
-
-            /// <inheritdoc />
-            public Task MarkFailedAsync(string runId, string? executionId = null, string? failureReason = null, CancellationToken cancellationToken = default) => Task.CompletedTask;
-
-            /// <inheritdoc />
-            public Task MarkCancelledAsync(string runId, string? executionId = null, string? reason = null, CancellationToken cancellationToken = default) => Task.CompletedTask;
-
-            /// <inheritdoc />
-            public Task<bool> MarkRequeuedForRecoveryAsync(string runId, string? executionId = null, string? reason = null, CancellationToken cancellationToken = default) => Task.FromResult(true);
-
-            /// <inheritdoc />
-            public Task<AiRuntimeRunExecutionIndexEntry?> GetAsync(string runId, CancellationToken cancellationToken = default)
-            {
-                return Task.FromResult<AiRuntimeRunExecutionIndexEntry?>(
-                    RegisteredEntries.FirstOrDefault(entry => string.Equals(entry.RunId, runId, StringComparison.Ordinal)));
-            }
-
-            /// <inheritdoc />
-            public Task<IReadOnlyList<AiRuntimeRunExecutionIndexEntry>> ListUnfinishedByRuntimeInstanceAsync(
-                string runtimeInstanceId,
-                CancellationToken cancellationToken = default)
-            {
-                ArgumentException.ThrowIfNullOrWhiteSpace(runtimeInstanceId);
-
-                cancellationToken.ThrowIfCancellationRequested();
-
-                return Task.FromResult<IReadOnlyList<AiRuntimeRunExecutionIndexEntry>>(
-                    RegisteredEntries
-                        .Where(entry => string.Equals(entry.RuntimeInstanceId, runtimeInstanceId, StringComparison.Ordinal))
-                        .OrderBy(entry => entry.CreatedAtUtc)
-                        .ThenBy(entry => entry.RunId, StringComparer.Ordinal)
-                        .ToList());
-            }
-
-            public Task<IReadOnlyList<AiRuntimeRunExecutionIndexEntry>> ListUnfinishedAsync(
-                CancellationToken cancellationToken = default)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-
-                return Task.FromResult<IReadOnlyList<AiRuntimeRunExecutionIndexEntry>>(
-                    RegisteredEntries
-                        .OrderBy(entry => entry.CreatedAtUtc)
-                        .ThenBy(entry => entry.RunId, StringComparer.Ordinal)
-                        .ToList());
             }
         }
 

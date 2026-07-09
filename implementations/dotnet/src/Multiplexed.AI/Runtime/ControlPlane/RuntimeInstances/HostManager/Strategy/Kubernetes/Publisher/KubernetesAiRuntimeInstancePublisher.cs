@@ -137,6 +137,129 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
                 $"[KUBERNETES RUNTIME INSTANCE PUBLISHED] RuntimeInstanceId='{request.RuntimeInstanceId}', ControlPlaneId='{request.ControlPlaneId}', TenantId='{tenantId}', TenantGroupId='{tenantGroupId}', HostId='{hostId}', WorkerCount='{workerCount}', MaxConcurrentRuns='{maxConcurrentRuns}', AvailableRunSlots='{maxConcurrentRuns}', CanAcceptRun='True'.");
         }
 
+        /// <inheritdoc />
+public async Task UnpublishAsync(
+    string runtimeInstanceId,
+    string reason,
+    CancellationToken cancellationToken = default)
+{
+    ArgumentException.ThrowIfNullOrWhiteSpace(runtimeInstanceId);
+    ArgumentException.ThrowIfNullOrWhiteSpace(reason);
+    cancellationToken.ThrowIfCancellationRequested();
+
+    Console.WriteLine(
+        $"[KUBERNETES RUNTIME INSTANCE UNPUBLISH BEGIN] RuntimeInstanceId='{runtimeInstanceId}', Reason='{reason}', RegistryType='{this.runtimeInstanceRegistry.GetType().FullName}', RegistryHash='{this.runtimeInstanceRegistry.GetHashCode()}', CapacityStoreType='{this.runtimeInstanceCapacityStore.GetType().FullName}', CapacityStoreHash='{this.runtimeInstanceCapacityStore.GetHashCode()}'.");
+
+    await this.runtimeInstanceCapacityStore
+        .RemoveAsync(
+            runtimeInstanceId,
+            cancellationToken)
+        .ConfigureAwait(false);
+
+    await this.runtimeInstanceRegistry
+        .UnregisterAsync(
+            runtimeInstanceId,
+            cancellationToken)
+        .ConfigureAwait(false);
+
+    await LogRegistryAfterUnpublishAsync(
+            this.runtimeInstanceRegistry,
+            runtimeInstanceId,
+            cancellationToken)
+        .ConfigureAwait(false);
+
+    await LogCapacityAfterUnpublishAsync(
+            this.runtimeInstanceCapacityStore,
+            runtimeInstanceId,
+            cancellationToken)
+        .ConfigureAwait(false);
+
+    Console.WriteLine(
+        $"[KUBERNETES RUNTIME INSTANCE UNPUBLISHED] RuntimeInstanceId='{runtimeInstanceId}', Reason='{reason}'.");
+}
+
+/// <summary>
+/// Logs the registry content immediately after unpublishing a Kubernetes runtime instance.
+/// </summary>
+/// <param name="runtimeInstanceRegistry">The runtime instance registry.</param>
+/// <param name="runtimeInstanceId">The runtime instance identifier.</param>
+/// <param name="cancellationToken">The cancellation token.</param>
+/// <returns>The asynchronous operation.</returns>
+private static async Task LogRegistryAfterUnpublishAsync(
+    IAiRuntimeInstanceRegistry runtimeInstanceRegistry,
+    string runtimeInstanceId,
+    CancellationToken cancellationToken)
+{
+    try
+    {
+        var snapshots =
+            await runtimeInstanceRegistry
+                .ListAsync(
+                    includeStopped: true,
+                    cancellationToken)
+                .ConfigureAwait(false);
+
+        var snapshotList =
+            snapshots
+                .OrderBy(item => item.RuntimeInstanceId, StringComparer.Ordinal)
+                .ToArray();
+
+        Console.WriteLine(
+            $"[KUBERNETES REGISTRY AFTER UNPUBLISH] RuntimeInstanceId='{runtimeInstanceId}', RegistryType='{runtimeInstanceRegistry.GetType().FullName}', RegistryHash='{runtimeInstanceRegistry.GetHashCode()}', Count='{snapshotList.Length}', Ids='{string.Join(",", snapshotList.Select(item => item.RuntimeInstanceId))}'.");
+
+        foreach (var snapshot in snapshotList)
+        {
+            Console.WriteLine(
+                $"[KUBERNETES REGISTRY SNAPSHOT AFTER UNPUBLISH] RequestedRuntimeInstanceId='{runtimeInstanceId}', RuntimeInstanceId='{snapshot.RuntimeInstanceId}', ControlPlaneId='{snapshot.ControlPlaneId}', ControlPlaneHostId='{snapshot.ControlPlaneHostId}', Role='{snapshot.Role}', Status='{snapshot.Status}', TenantId='{snapshot.TenantId}', TenantGroupId='{snapshot.TenantGroupId}', CanAcceptRun='{snapshot.CanAcceptRun}', AvailableRunSlots='{snapshot.AvailableRunSlots}', WorkerCount='{snapshot.WorkerCount}', ActiveWorkerCount='{snapshot.ActiveWorkerCount}', AvailableWorkerCount='{snapshot.AvailableWorkerCount}', QueuedRunCount='{snapshot.QueuedRunCount}', RunningRunCount='{snapshot.RunningRunCount}', ActiveRunCount='{snapshot.ActiveRunCount}'.");
+        }
+    }
+    catch (Exception exception) when (exception is not OperationCanceledException)
+    {
+        Console.WriteLine(
+            $"[KUBERNETES REGISTRY AFTER UNPUBLISH FAILED] RuntimeInstanceId='{runtimeInstanceId}', RegistryType='{runtimeInstanceRegistry.GetType().FullName}', RegistryHash='{runtimeInstanceRegistry.GetHashCode()}', ExceptionType='{exception.GetType().FullName}', Reason='{exception.Message}'.");
+    }
+}
+
+/// <summary>
+/// Logs the capacity store content immediately after unpublishing a Kubernetes runtime capacity descriptor.
+/// </summary>
+/// <param name="runtimeInstanceCapacityStore">The runtime instance capacity store.</param>
+/// <param name="runtimeInstanceId">The runtime instance identifier.</param>
+/// <param name="cancellationToken">The cancellation token.</param>
+/// <returns>The asynchronous operation.</returns>
+private static async Task LogCapacityAfterUnpublishAsync(
+    IAiRuntimeInstanceCapacityStore runtimeInstanceCapacityStore,
+    string runtimeInstanceId,
+    CancellationToken cancellationToken)
+{
+    try
+    {
+        var descriptors =
+            await runtimeInstanceCapacityStore
+                .ListAsync(cancellationToken)
+                .ConfigureAwait(false);
+
+        var descriptorList =
+            descriptors
+                .OrderBy(item => item.RuntimeInstanceId, StringComparer.Ordinal)
+                .ToArray();
+
+        Console.WriteLine(
+            $"[KUBERNETES CAPACITY AFTER UNPUBLISH] RuntimeInstanceId='{runtimeInstanceId}', CapacityStoreType='{runtimeInstanceCapacityStore.GetType().FullName}', CapacityStoreHash='{runtimeInstanceCapacityStore.GetHashCode()}', Count='{descriptorList.Length}', Ids='{string.Join(",", descriptorList.Select(item => item.RuntimeInstanceId))}'.");
+
+        foreach (var descriptor in descriptorList)
+        {
+            Console.WriteLine(
+                $"[KUBERNETES CAPACITY DESCRIPTOR AFTER UNPUBLISH] RequestedRuntimeInstanceId='{runtimeInstanceId}', RuntimeInstanceId='{descriptor.RuntimeInstanceId}', ControlPlaneId='{descriptor.ControlPlaneId}', ControlPlaneHostId='{descriptor.ControlPlaneHostId}', Role='{descriptor.Role}', Status='{descriptor.Status}', TenantId='{descriptor.TenantId}', TenantGroupId='{descriptor.TenantGroupId}', CanAcceptRun='{descriptor.CanAcceptRun}', AvailableRunSlots='{descriptor.AvailableRunSlots}', EffectiveAvailableRunSlots='{descriptor.EffectiveAvailableRunSlots}', ReservedRunSlots='{descriptor.ReservedRunSlots}', WorkerCount='{descriptor.WorkerCount}', ActiveWorkerCount='{descriptor.ActiveWorkerCount}', AvailableWorkerCount='{descriptor.AvailableWorkerCount}', QueuedRunCount='{descriptor.QueuedRunCount}', RunningRunCount='{descriptor.RunningRunCount}', ActiveRunCount='{descriptor.ActiveRunCount}'.");
+        }
+    }
+    catch (Exception exception) when (exception is not OperationCanceledException)
+    {
+        Console.WriteLine(
+            $"[KUBERNETES CAPACITY AFTER UNPUBLISH FAILED] RuntimeInstanceId='{runtimeInstanceId}', CapacityStoreType='{runtimeInstanceCapacityStore.GetType().FullName}', CapacityStoreHash='{runtimeInstanceCapacityStore.GetHashCode()}', ExceptionType='{exception.GetType().FullName}', Reason='{exception.Message}'.");
+    }
+}
+
         /// <summary>
         /// Logs the registry content immediately after registering a Kubernetes runtime instance.
         /// </summary>

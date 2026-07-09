@@ -138,6 +138,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
                     ["AiLocalRuntimeInstancePool__Metadata__provider.name"] = request.ProviderName,
                     ["AiLocalRuntimeInstancePool__Metadata__provider"] = request.ProviderName,
                     ["AiLocalRuntimeInstancePool__Metadata__transport.name"] = transportName,
+                    ["AiLocalRuntimeInstancePool__RuntimeInstanceId"] = request.RuntimeInstanceId,
 
                     ["RuntimeInstanceId"] = request.RuntimeInstanceId,
                     ["AI_RUNTIME_INSTANCE_ID"] = request.RuntimeInstanceId,

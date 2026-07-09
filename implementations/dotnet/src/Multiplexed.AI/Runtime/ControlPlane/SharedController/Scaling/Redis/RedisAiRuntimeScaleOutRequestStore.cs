@@ -19,6 +19,15 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
     /// </remarks>
     public sealed class RedisAiRuntimeScaleOutRequestStore : IAiRuntimeScaleOutRequestStore
     {
+        private const string ScaleOutIntentMetadataKey = "scaleout.intent";
+        private const string ScaleOutReplacementForRuntimeInstanceIdMetadataKey = "scaleout.replacementForRuntimeInstanceId";
+        private const string ScaleOutExcludedRuntimeInstanceIdMetadataKey = "scaleout.excludedRuntimeInstanceId";
+        private const string RecoveryReplacementMetadataKey = "recovery.replacement";
+        private const string RecoveryFailedRuntimeInstanceIdMetadataKey = "recovery.failedRuntimeInstanceId";
+        private const string RecoveryForensicsIdMetadataKey = "recovery.forensicsId";
+        private const string ScaleOutDedupScopeMetadataKey = "scaleout.dedup.scope";
+
+
         /// <summary>
         /// JSON serializer options used for metadata persistence.
         /// </summary>
@@ -691,6 +700,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
         /// </summary>
         /// <param name="request">The scale-out request record.</param>
         /// <returns>The Redis deduplication key.</returns>
+        /// <summary>
+        /// Gets the Redis key used to deduplicate equivalent pending scale-out requests.
+        /// </summary>
+        /// <param name="request">The scale-out request record.</param>
+        /// <returns>The Redis deduplication key.</returns>
         private RedisKey GetDedupKey(
             AiRuntimeScaleOutRequestRecord request)
         {
@@ -705,6 +719,48 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
 
             var provider =
                 NormalizeKeyPart(request.ProviderHint);
+
+            if (IsRecoveryReplacementRequest(request))
+            {
+                var intent =
+                    NormalizeKeyPart(
+                        GetMetadataValue(
+                            request.Metadata,
+                            ScaleOutIntentMetadataKey));
+
+                var failedRuntimeInstanceId =
+                    NormalizeKeyPart(
+                        FirstNonEmpty(
+                            GetMetadataValue(
+                                request.Metadata,
+                                ScaleOutReplacementForRuntimeInstanceIdMetadataKey),
+                            GetMetadataValue(
+                                request.Metadata,
+                                ScaleOutExcludedRuntimeInstanceIdMetadataKey),
+                            GetMetadataValue(
+                                request.Metadata,
+                                RecoveryFailedRuntimeInstanceIdMetadataKey)));
+
+                var forensicsId =
+                    NormalizeKeyPart(
+                        GetMetadataValue(
+                            request.Metadata,
+                            RecoveryForensicsIdMetadataKey));
+
+                var sharedRunId =
+                    NormalizeKeyPart(
+                        request.SharedRunId);
+
+                var dedupScope =
+                    NormalizeKeyPart(
+                        FirstNonEmpty(
+                            GetMetadataValue(
+                                request.Metadata,
+                                ScaleOutDedupScopeMetadataKey),
+                            "recovery-replacement"));
+
+                return $"{this.options.KeyPrefix}:{{{request.ControlPlaneId}}}:scaleout:dedup:{tenant}:{pipeline}:{reason}:{provider}:{dedupScope}:{intent}:{sharedRunId}:{failedRuntimeInstanceId}:{forensicsId}";
+            }
 
             return $"{this.options.KeyPrefix}:{{{request.ControlPlaneId}}}:scaleout:dedup:{tenant}:{pipeline}:{reason}:{provider}";
         }
@@ -1389,6 +1445,111 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
             {
                 return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             }
+        }
+
+        /// <summary>
+        /// Determines whether a scale-out request is a recovery replacement request.
+        /// </summary>
+        /// <param name="request">The scale-out request record.</param>
+        /// <returns><see langword="true"/> when the request is recovery replacement driven; otherwise, <see langword="false"/>.</returns>
+        private static bool IsRecoveryReplacementRequest(
+            AiRuntimeScaleOutRequestRecord request)
+        {
+            return IsTrue(
+                       GetMetadataValue(
+                           request.Metadata,
+                           RecoveryReplacementMetadataKey)) ||
+                   !string.IsNullOrWhiteSpace(
+                       GetMetadataValue(
+                           request.Metadata,
+                           ScaleOutReplacementForRuntimeInstanceIdMetadataKey)) ||
+                   !string.IsNullOrWhiteSpace(
+                       GetMetadataValue(
+                           request.Metadata,
+                           ScaleOutExcludedRuntimeInstanceIdMetadataKey)) ||
+                   !string.IsNullOrWhiteSpace(
+                       GetMetadataValue(
+                           request.Metadata,
+                           RecoveryFailedRuntimeInstanceIdMetadataKey));
+        }
+
+        /// <summary>
+        /// Resolves a metadata value using case-insensitive matching.
+        /// </summary>
+        /// <param name="metadata">The metadata dictionary.</param>
+        /// <param name="key">The metadata key.</param>
+        /// <returns>The metadata value when found; otherwise, <see langword="null"/>.</returns>
+        private static string? GetMetadataValue(
+            IDictionary<string, string>? metadata,
+            string key)
+        {
+            if (metadata is null)
+            {
+                return null;
+            }
+
+            if (metadata.TryGetValue(
+                    key,
+                    out var value) &&
+                !string.IsNullOrWhiteSpace(value))
+            {
+                return value;
+            }
+
+            foreach (var pair in metadata)
+            {
+                if (string.Equals(
+                        pair.Key,
+                        key,
+                        StringComparison.OrdinalIgnoreCase) &&
+                    !string.IsNullOrWhiteSpace(pair.Value))
+                {
+                    return pair.Value;
+                }
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// Returns the first non-empty value.
+        /// </summary>
+        /// <param name="values">The candidate values.</param>
+        /// <returns>The first non-empty value, or <see langword="null"/>.</returns>
+        private static string? FirstNonEmpty(
+            params string?[] values)
+        {
+            foreach (var value in values)
+            {
+                if (!string.IsNullOrWhiteSpace(value))
+                {
+                    return value;
+                }
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// Parses a boolean-like metadata value.
+        /// </summary>
+        /// <param name="value">The metadata value.</param>
+        /// <returns><see langword="true"/> when the value is true-like; otherwise, <see langword="false"/>.</returns>
+        private static bool IsTrue(
+            string? value)
+        {
+            return string.Equals(
+                       value,
+                       "true",
+                       StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(
+                       value,
+                       "1",
+                       StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(
+                       value,
+                       "yes",
+                       StringComparison.OrdinalIgnoreCase);
         }
     }
 }

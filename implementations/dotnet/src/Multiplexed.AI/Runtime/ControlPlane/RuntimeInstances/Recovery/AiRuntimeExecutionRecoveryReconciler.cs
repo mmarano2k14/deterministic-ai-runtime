@@ -25,13 +25,13 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery
     /// <remarks>
     /// This reconciler owns execution recovery coordination only.
     ///
-    /// It scans unavailable runtime instances, reports unfinished runtime runs,
+    /// It scans unavailable runtime instances, reports recoverable runtime runs,
     /// resolves shared run ownership when available, and routes validated recovery
     /// candidates through the runtime execution recovery transition service.
     ///
-    /// It also detects orphaned unfinished runtime runs that are still marked as
-    /// running in the runtime run execution index but whose runtime instance is no
-    /// longer present in the runtime instance registry.
+    /// It also detects orphaned recoverable runtime runs that may be unfinished or failed
+    /// after runtime loss and whose runtime instance is no longer present in the
+    /// runtime instance registry.
     ///
     /// It does not directly mutate shared queue state, runtime execution index state,
     /// fail, cancel, dead-letter, restart, or kill anything.
@@ -44,7 +44,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery
     {
         private const string RecoveryReconciliationOperation = "runtime-execution-recovery-reconcile";
         private const string RuntimeStatusNotIncludedReason = "runtime-status-not-included";
-        private const string NoUnfinishedRuntimeRunsReason = "no-unfinished-runtime-runs";
+        private const string NoRecoverableRuntimeRunsReason = "no-recoverable-runtime-runs";
         private const string OrphanedRuntimeInstanceReason = "orphaned-runtime-instance";
 
         private readonly IAiRuntimeInstanceRegistry runtimeInstanceRegistry;
@@ -244,16 +244,16 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery
 
                     scannedRuntimeInstanceCount++;
 
-                    var unfinishedRuns = await this.runtimeRunExecutionIndex
-                        .ListUnfinishedByRuntimeInstanceAsync(
+                    var recoverableRuns = await this.runtimeRunExecutionIndex
+                        .ListRecoverableByRuntimeInstanceAsync(
                             runtimeInstance.RuntimeInstanceId,
                             cancellationToken)
                         .ConfigureAwait(false);
 
                     Console.WriteLine(
-                        $"[EXECUTION RECOVERY UNFINISHED BY RUNTIME] RuntimeInstanceId='{runtimeInstance.RuntimeInstanceId}', RuntimeStatus='{runtimeInstance.Status}', Count='{unfinishedRuns.Count}', Runs='{FormatIndexEntries(unfinishedRuns)}'.");
+                        $"[EXECUTION RECOVERY RECOVERABLE BY RUNTIME] RuntimeInstanceId='{runtimeInstance.RuntimeInstanceId}', RuntimeStatus='{runtimeInstance.Status}', Count='{recoverableRuns.Count}', Runs='{FormatIndexEntries(recoverableRuns)}'.");
 
-                    if (unfinishedRuns.Count == 0)
+                    if (recoverableRuns.Count == 0)
                     {
                         decisions.Add(new AiRuntimeExecutionRecoveryDecision
                         {
@@ -261,14 +261,14 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery
                             TenantId = runtimeInstance.TenantId,
                             TenantGroupId = runtimeInstance.TenantGroupId,
                             Action = "none",
-                            Reason = NoUnfinishedRuntimeRunsReason,
+                            Reason = NoRecoverableRuntimeRunsReason,
                             Changed = false
                         });
 
                         continue;
                     }
 
-                    foreach (var unfinishedRun in unfinishedRuns)
+                    foreach (var recoverableRun in recoverableRuns)
                     {
                         cancellationToken.ThrowIfCancellationRequested();
 
@@ -277,7 +277,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery
                         var changed =
                             await this.ProcessRecoveryCandidateAsync(
                                     runtimeInstance.RuntimeInstanceId,
-                                    unfinishedRun,
+                                    recoverableRun,
                                     runtimeInstance.TenantId,
                                     runtimeInstance.TenantGroupId,
                                     decisions,
@@ -291,14 +291,14 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery
                     }
                 }
 
-                var orphanedUnfinishedRuns = await this.runtimeRunExecutionIndex
-                    .ListUnfinishedAsync(cancellationToken)
+                var orphanedRecoverableRuns = await this.runtimeRunExecutionIndex
+                    .ListRecoverableAsync(cancellationToken)
                     .ConfigureAwait(false);
 
                 Console.WriteLine(
-                    $"[EXECUTION RECOVERY ORPHANED SCAN] UnfinishedCount='{orphanedUnfinishedRuns.Count}', KnownRuntimeInstanceIds='{string.Join(",", knownRuntimeInstanceIds)}', Runs='{FormatIndexEntries(orphanedUnfinishedRuns)}'.");
+                    $"[EXECUTION RECOVERY ORPHANED SCAN] RecoverableCount='{orphanedRecoverableRuns.Count}', KnownRuntimeInstanceIds='{string.Join(",", knownRuntimeInstanceIds)}', Runs='{FormatIndexEntries(orphanedRecoverableRuns)}'.");
 
-                foreach (var orphanedRun in orphanedUnfinishedRuns)
+                foreach (var orphanedRun in orphanedRecoverableRuns)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
 

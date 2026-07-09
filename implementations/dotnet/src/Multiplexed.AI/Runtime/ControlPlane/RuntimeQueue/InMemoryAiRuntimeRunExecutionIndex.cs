@@ -283,7 +283,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue
                 }
 
                 if (!BelongsToCurrentTenant(existing) ||
-                    IsTerminal(existing))
+                    !CanTransitionToRequeuedForRecovery(existing, executionId))
                 {
                     return Task.FromResult(false);
                 }
@@ -355,6 +355,49 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue
         }
 
         /// <inheritdoc />
+        public Task<IReadOnlyList<AiRuntimeRunExecutionIndexEntry>> ListRecoverableByRuntimeInstanceAsync(
+            string runtimeInstanceId,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(runtimeInstanceId);
+
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var entries = _entries
+                .Values
+                .Where(entry =>
+                    string.Equals(
+                        entry.RuntimeInstanceId,
+                        runtimeInstanceId,
+                        StringComparison.Ordinal) &&
+                    IsRecoverable(entry) &&
+                    BelongsToCurrentTenant(entry))
+                .OrderBy(entry => entry.CreatedAtUtc)
+                .ThenBy(entry => entry.RunId, StringComparer.Ordinal)
+                .ToArray();
+
+            return Task.FromResult<IReadOnlyList<AiRuntimeRunExecutionIndexEntry>>(entries);
+        }
+
+        /// <inheritdoc />
+        public Task<IReadOnlyList<AiRuntimeRunExecutionIndexEntry>> ListRecoverableAsync(
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var entries = _entries
+                .Values
+                .Where(entry =>
+                    IsRecoverable(entry) &&
+                    BelongsToCurrentTenant(entry))
+                .OrderBy(entry => entry.CreatedAtUtc)
+                .ThenBy(entry => entry.RunId, StringComparer.Ordinal)
+                .ToArray();
+
+            return Task.FromResult<IReadOnlyList<AiRuntimeRunExecutionIndexEntry>>(entries);
+        }
+
+        /// <inheritdoc />
         public Task<AiRuntimeRunExecutionIndexEntry?> GetAsync(
             string runId,
             CancellationToken cancellationToken = default)
@@ -377,6 +420,34 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue
         }
 
         /// <summary>
+        /// Determines whether an entry can transition to requeued-for-recovery.
+        /// </summary>
+        /// <param name="existing">The existing runtime run execution index entry.</param>
+        /// <param name="executionId">The execution identifier requested by recovery.</param>
+        /// <returns>True when the transition is allowed; otherwise false.</returns>
+        private static bool CanTransitionToRequeuedForRecovery(
+            AiRuntimeRunExecutionIndexEntry existing,
+            string executionId)
+        {
+            if (string.Equals(existing.Status, StatusCompleted, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(existing.Status, StatusCancelled, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(existing.Status, StatusRequeuedForRecovery, StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            if (string.IsNullOrWhiteSpace(existing.ExecutionId))
+            {
+                return true;
+            }
+
+            return string.Equals(
+                existing.ExecutionId,
+                executionId,
+                StringComparison.Ordinal);
+        }
+
+        /// <summary>
         /// Determines whether an index entry has not reached a terminal runtime-run state.
         /// </summary>
         /// <param name="entry">The runtime run index entry.</param>
@@ -385,6 +456,19 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue
             AiRuntimeRunExecutionIndexEntry entry)
         {
             return !IsTerminal(entry);
+        }
+
+        /// <summary>
+        /// Determines whether an index entry is recoverable by runtime crash recovery.
+        /// </summary>
+        /// <param name="entry">The runtime run index entry.</param>
+        /// <returns>True when the entry can be considered by crash recovery; otherwise false.</returns>
+        private static bool IsRecoverable(
+            AiRuntimeRunExecutionIndexEntry entry)
+        {
+            return !string.Equals(entry.Status, StatusCompleted, StringComparison.OrdinalIgnoreCase) &&
+                   !string.Equals(entry.Status, StatusCancelled, StringComparison.OrdinalIgnoreCase) &&
+                   !string.Equals(entry.Status, StatusRequeuedForRecovery, StringComparison.OrdinalIgnoreCase);
         }
 
         /// <summary>
