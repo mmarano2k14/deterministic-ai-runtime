@@ -1,6 +1,7 @@
 ﻿using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager.ProcessControl;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers.Transport;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Readiness;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strategy.Kubernetes.Client;
@@ -9,12 +10,12 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
-using DiagnosticsProcess = System.Diagnostics.Process;
 using System.Linq;
 using System.Net;
 using System.Net.Sockets;
 using System.Threading;
 using System.Threading.Tasks;
+using DiagnosticsProcess = System.Diagnostics.Process;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strategy.Kubernetes
 {
@@ -29,7 +30,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
     /// Runtime command dispatch and runtime-level readiness remain owned by the configured runtime provider,
     /// such as HTTP or gRPC.
     /// </remarks>
-    public sealed class KubernetesAiRuntimeHostCreationStrategy : IAiRuntimeHostCreationStrategy, IDisposable
+    public sealed class KubernetesAiRuntimeHostCreationStrategy : IAiRuntimeHostCreationStrategy, IAiRuntimeHostProcessControl , IDisposable
     {
         private readonly AiKubernetesRuntimeHostOptions options;
         private readonly AiKubernetesRuntimePodSpecBuilder podSpecBuilder;
@@ -37,6 +38,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
         private readonly IAiKubernetesRuntimeInstancePublisher runtimeInstancePublisher;
         private readonly ILogger<KubernetesAiRuntimeHostCreationStrategy> logger;
         private readonly ConcurrentDictionary<string, DiagnosticsProcess> portForwardProcesses;
+
+        private readonly ConcurrentDictionary<string, AiKubernetesRuntimePodSpec> podSpecsByRuntimeInstanceId;
 
         /// <summary>
         /// Initializes a new instance of the <see cref="KubernetesAiRuntimeHostCreationStrategy"/> class.
@@ -63,6 +66,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
             this.runtimeInstancePublisher = runtimeInstancePublisher ?? throw new ArgumentNullException(nameof(runtimeInstancePublisher));
             this.logger = logger ?? throw new ArgumentNullException(nameof(logger));
             this.portForwardProcesses = new ConcurrentDictionary<string, DiagnosticsProcess>(StringComparer.OrdinalIgnoreCase);
+            this.podSpecsByRuntimeInstanceId = new ConcurrentDictionary<string, AiKubernetesRuntimePodSpec>(StringComparer.OrdinalIgnoreCase);
         }
 
         /// <inheritdoc />
@@ -112,6 +116,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
             try
             {
                 podSpec = this.podSpecBuilder.Build(request);
+                this.podSpecsByRuntimeInstanceId[request.RuntimeInstanceId] = podSpec;
             }
             catch (Exception exception)
             {
@@ -294,12 +299,57 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
         }
 
         /// <inheritdoc />
+        public async Task<bool> KillAsync(
+            string runtimeInstanceId,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(runtimeInstanceId);
+            cancellationToken.ThrowIfCancellationRequested();
+
+            this.StopPortForward(runtimeInstanceId);
+
+            if (!this.podSpecsByRuntimeInstanceId.TryRemove(runtimeInstanceId, out var podSpec))
+            {
+                this.logger.LogWarning(
+                    "Kubernetes runtime host kill requested but no pod spec was registered. RuntimeInstanceId={RuntimeInstanceId}.",
+                    runtimeInstanceId);
+
+                return false;
+            }
+
+            this.logger.LogWarning(
+                "Deleting Kubernetes runtime host on demand. RuntimeInstanceId={RuntimeInstanceId}, PodName={PodName}, Namespace={Namespace}.",
+                runtimeInstanceId,
+                podSpec.PodName,
+                podSpec.Namespace);
+
+            var result =
+                await this.client
+                    .DeleteRuntimeHostAsync(
+                        podSpec,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+            this.logger.LogWarning(
+                "Kubernetes runtime host delete completed. RuntimeInstanceId={RuntimeInstanceId}, PodName={PodName}, Namespace={Namespace}, Success={Success}, FailureReason={FailureReason}.",
+                runtimeInstanceId,
+                podSpec.PodName,
+                podSpec.Namespace,
+                result.Success,
+                result.FailureReason ?? "(none)");
+
+            return result.Success;
+        }
+
+        /// <inheritdoc />
         public void Dispose()
         {
             foreach (var item in this.portForwardProcesses.ToArray())
             {
                 this.StopPortForward(item.Key);
             }
+
+            this.podSpecsByRuntimeInstanceId.Clear();
         }
 
         /// <summary>

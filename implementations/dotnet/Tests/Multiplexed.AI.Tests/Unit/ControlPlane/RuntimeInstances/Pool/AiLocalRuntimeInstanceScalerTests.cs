@@ -11,6 +11,7 @@ using Multiplexed.Abstractions.AI.Execution.Instance.Worker;
 using Multiplexed.Abstractions.Core.ExecutionContext;
 using Multiplexed.AI.ControlPlane.RuntimeInstances.Pool;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.SharedInstance;
+using Multiplexed.AI.Tests.Fixtures;
 
 namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Pool
 {
@@ -221,6 +222,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Pool
                     hostFactory,
                     sharedRuntimeInstanceRegistry,
                     runtimeHostIdentity,
+                    new StaticAiControlPlaneIdResolver("test-host"),
                     options,
                     configuration,
                     logger);
@@ -299,6 +301,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Pool
                 factory,
                 registry,
                 new TestRuntimeHostIdentity("host-test"),
+                new StaticAiControlPlaneIdResolver("host-test"),
                 Options.Create(new AiLocalRuntimeInstancePoolOptions
                 {
                     Enabled = true,

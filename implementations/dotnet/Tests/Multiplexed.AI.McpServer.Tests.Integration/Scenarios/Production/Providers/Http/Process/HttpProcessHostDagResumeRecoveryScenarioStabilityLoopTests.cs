@@ -3,7 +3,7 @@ using System.Threading.Tasks;
 using Xunit;
 using Xunit.Abstractions;
 
-namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Providers.Http
+namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Providers.Http.Process
 {
     /// <summary>
     /// Runs repeated stability iterations for the HTTP process-host DAG resume recovery scenario tests.

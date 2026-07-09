@@ -336,6 +336,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.Observability
                         WorkerId = "worker-from-options",
                         Source = "unit-test"
                     }),
+                new StaticAiControlPlaneIdResolver("control-plane-1"),
                 NullLogger<AiSharedQueuePump>.Instance,
                 observer);
         }

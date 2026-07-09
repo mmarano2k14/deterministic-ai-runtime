@@ -3,6 +3,7 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Multiplexed.Abstractions.AI.ControlPlane.Discovery;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Environment;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Pool;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
@@ -31,6 +32,7 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
         private readonly IAiSharedRuntimeInstanceRegistry sharedRuntimeInstanceRegistry;
         private readonly IAiExecutionReplayMetadataStore replayMetadataStore;
         private readonly IAiRuntimeObservability observability;
+        private readonly IAiControlPlaneIdResolver controlPlaneIdResolver;
 
         /// <summary>
         /// Initializes a new instance of the
@@ -41,7 +43,8 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
             IAiRuntimeInstanceRegistry runtimeInstanceRegistry,
             IAiSharedRuntimeInstanceRegistry sharedRuntimeInstanceRegistry,
             IAiExecutionReplayMetadataStore replayMetadataStore,
-            IAiRuntimeObservability observability)
+            IAiRuntimeObservability observability,
+            IAiControlPlaneIdResolver controlPlaneIdResolver)
         {
             this.servicesProvider = servicesProvider
                 ?? throw new ArgumentNullException(nameof(servicesProvider));
@@ -57,6 +60,9 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
 
             this.observability = observability
                 ?? throw new ArgumentNullException(nameof(observability));
+
+            this.controlPlaneIdResolver = controlPlaneIdResolver
+                ?? throw new ArgumentNullException(nameof(controlPlaneIdResolver));
         }
 
         /// <inheritdoc />
@@ -83,6 +89,23 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
                     : new Dictionary<string, string>(
                         metadata,
                         StringComparer.OrdinalIgnoreCase);
+
+            var controlPlaneMetadata =
+                await this.controlPlaneIdResolver
+                    .ResolveMetadataAsync(
+                        new AiControlPlaneIdResolutionRequest
+                        {
+                            Metadata = effectiveMetadata,
+                            Source = "local-runtime-instance-host-factory",
+                            AllowGeneratedFallback = false
+                        },
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+            foreach (var pair in controlPlaneMetadata)
+            {
+                effectiveMetadata[pair.Key] = pair.Value;
+            }
 
             var services =
                 new ServiceCollection();
@@ -149,49 +172,29 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
                     options.QueueCapacity = localQueueCapacity.Value;
                 }
 
-                if (effectiveMetadata.Count > 0)
+                var registrationMetadata =
+                    new Dictionary<string, string>(
+                        options.Metadata,
+                        StringComparer.OrdinalIgnoreCase);
+
+                var providerMetadata =
+                    new Dictionary<string, string>(
+                        options.ProviderMetadata,
+                        StringComparer.OrdinalIgnoreCase);
+
+                foreach (var pair in effectiveMetadata)
                 {
-                    var registrationMetadata =
-                        new Dictionary<string, string>(
-                            options.Metadata,
-                            StringComparer.OrdinalIgnoreCase);
-
-                    var providerMetadata =
-                        new Dictionary<string, string>(
-                            options.ProviderMetadata,
-                            StringComparer.OrdinalIgnoreCase);
-
-                    foreach (var pair in effectiveMetadata)
+                    if (string.IsNullOrWhiteSpace(pair.Key))
                     {
-                        if (string.IsNullOrWhiteSpace(pair.Key))
-                        {
-                            continue;
-                        }
-
-                        registrationMetadata[pair.Key] = pair.Value;
-                        providerMetadata[pair.Key] = pair.Value;
+                        continue;
                     }
 
-                    var controlPlaneId =
-                        ResolveControlPlaneId(
-                            effectiveMetadata);
-
-                    if (!string.IsNullOrWhiteSpace(controlPlaneId))
-                    {
-                        registrationMetadata["controlPlaneId"] = controlPlaneId;
-                        registrationMetadata["control-plane.id"] = controlPlaneId;
-                        registrationMetadata["controlplane.id"] = controlPlaneId;
-                        registrationMetadata["runtime.controlPlaneId"] = controlPlaneId;
-
-                        providerMetadata["controlPlaneId"] = controlPlaneId;
-                        providerMetadata["control-plane.id"] = controlPlaneId;
-                        providerMetadata["controlplane.id"] = controlPlaneId;
-                        providerMetadata["runtime.controlPlaneId"] = controlPlaneId;
-                    }
-
-                    options.Metadata = registrationMetadata;
-                    options.ProviderMetadata = providerMetadata;
+                    registrationMetadata[pair.Key] = pair.Value;
+                    providerMetadata[pair.Key] = pair.Value;
                 }
+
+                options.Metadata = registrationMetadata;
+                options.ProviderMetadata = providerMetadata;
             });
 
             services.RemoveAll<IAiRuntimeInstanceIdentityDescriptor>();
@@ -216,13 +219,13 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
                     .ConfigureAwait(false);
 
             logger.LogInformation(
-                "Pool runtime instance created. RuntimeInstanceId={RuntimeInstanceId}, HostId={HostId}, RuntimeId={RuntimeId}, QueueStateRuntimeInstanceId={QueueStateRuntimeInstanceId}, MetadataCount={MetadataCount}, ExplicitControlPlaneId={ExplicitControlPlaneId}",
+                "Pool runtime instance created. RuntimeInstanceId={RuntimeInstanceId}, HostId={HostId}, RuntimeId={RuntimeId}, QueueStateRuntimeInstanceId={QueueStateRuntimeInstanceId}, MetadataCount={MetadataCount}, ControlPlaneId={ControlPlaneId}",
                 runtimeInstanceId,
                 identity.HostId,
                 identity.RuntimeId,
                 queueState.RuntimeInstanceId,
                 effectiveMetadata.Count,
-                ResolveControlPlaneId(effectiveMetadata) ?? "(none)");
+                controlPlaneMetadata["controlPlaneId"]);
 
             logger.LogInformation(
                 "Pool runtime instance capacity resolved. RuntimeInstanceId={RuntimeInstanceId}, HostId={HostId}, RuntimeId={RuntimeId}, WorkerCountArg={WorkerCountArg}, MaxConcurrentRunsArg={MaxConcurrentRunsArg}, LocalQueueCapacityArg={LocalQueueCapacityArg}, QueueStateRuntimeInstanceId={QueueStateRuntimeInstanceId}, QueueStateMaxConcurrentRuns={QueueStateMaxConcurrentRuns}, QueueStateAvailableRunSlots={QueueStateAvailableRunSlots}, QueueStateRunningRunCount={QueueStateRunningRunCount}, QueueStateQueuedRunCount={QueueStateQueuedRunCount}, QueueStateQueueCapacity={QueueStateQueueCapacity}, MetadataCount={MetadataCount}",
@@ -256,41 +259,6 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
                     logger);
 
             return host;
-        }
-
-        /// <summary>
-        /// Resolves the explicit control-plane identifier inherited by a pooled runtime instance.
-        /// </summary>
-        /// <param name="metadata">The inherited metadata.</param>
-        /// <returns>The resolved control-plane identifier, or null when no explicit value is available.</returns>
-        private static string? ResolveControlPlaneId(
-            IReadOnlyDictionary<string, string> metadata)
-        {
-            if (metadata.TryGetValue("controlPlaneId", out var controlPlaneId) &&
-                !string.IsNullOrWhiteSpace(controlPlaneId))
-            {
-                return controlPlaneId.Trim();
-            }
-
-            if (metadata.TryGetValue("control-plane.id", out controlPlaneId) &&
-                !string.IsNullOrWhiteSpace(controlPlaneId))
-            {
-                return controlPlaneId.Trim();
-            }
-
-            if (metadata.TryGetValue("controlplane.id", out controlPlaneId) &&
-                !string.IsNullOrWhiteSpace(controlPlaneId))
-            {
-                return controlPlaneId.Trim();
-            }
-
-            if (metadata.TryGetValue("runtime.controlPlaneId", out controlPlaneId) &&
-                !string.IsNullOrWhiteSpace(controlPlaneId))
-            {
-                return controlPlaneId.Trim();
-            }
-
-            return null;
         }
 
         private sealed class RuntimeInstanceIdentityParts

@@ -1,19 +1,19 @@
 ﻿using Multiplexed.Abstractions.AI.ControlPlane.Discovery;
+using System;
+using System.Collections.Generic;
+using System.Text;
 
-namespace Multiplexed.AI.Tests.Fixtures
+namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Fake
 {
-    /// <summary>
-    /// Static control-plane id resolver used by tests that require a deterministic logical control-plane id.
-    /// </summary>
-    public sealed class StaticAiControlPlaneIdResolver : IAiControlPlaneIdResolver
+    public sealed class StaticControlPlaneIdResolver : IAiControlPlaneIdResolver
     {
         private readonly string controlPlaneId;
 
         /// <summary>
-        /// Initializes a new instance of the <see cref="StaticAiControlPlaneIdResolver" /> class.
+        /// Initializes a new instance of the <see cref="StaticControlPlaneIdResolver" /> class.
         /// </summary>
         /// <param name="controlPlaneId">The control-plane id to return.</param>
-        public StaticAiControlPlaneIdResolver(
+        public StaticControlPlaneIdResolver(
             string controlPlaneId)
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(controlPlaneId);
@@ -39,12 +39,10 @@ namespace Multiplexed.AI.Tests.Fixtures
 
             cancellationToken.ThrowIfCancellationRequested();
 
-            if (!string.IsNullOrWhiteSpace(request.RequestedControlPlaneId))
-            {
-                return Task.FromResult(request.RequestedControlPlaneId);
-            }
-
-            return Task.FromResult(this.controlPlaneId);
+            return Task.FromResult(
+                string.IsNullOrWhiteSpace(request.RequestedControlPlaneId)
+                    ? this.controlPlaneId
+                    : request.RequestedControlPlaneId);
         }
 
         /// <inheritdoc />

@@ -110,6 +110,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
                             .SubmitOneRunAsync(
                                 mcp,
                                 tenant,
+                                controlPlaneId,
                                 pipelineName,
                                 requestedBy,
                                 source)

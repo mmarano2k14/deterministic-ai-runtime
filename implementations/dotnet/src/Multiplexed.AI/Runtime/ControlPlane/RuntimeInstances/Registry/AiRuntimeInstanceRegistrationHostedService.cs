@@ -48,6 +48,16 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
             new Dictionary<string, string>();
         private int stopRequested;
 
+        /// <summary>
+        /// Initializes a new instance of the <see cref="AiRuntimeInstanceRegistrationHostedService"/> class.
+        /// </summary>
+        /// <param name="registry">The runtime instance registry.</param>
+        /// <param name="environmentProvider">The runtime environment provider.</param>
+        /// <param name="controller">The runtime pipeline background controller.</param>
+        /// <param name="controlPlaneIdResolver">The logical control-plane identifier resolver.</param>
+        /// <param name="capacityStores">The runtime instance capacity stores.</param>
+        /// <param name="options">The runtime instance registration options.</param>
+        /// <param name="logger">The logger.</param>
         public AiRuntimeInstanceRegistrationHostedService(
             IAiRuntimeInstanceRegistry registry,
             IAiRuntimeEnvironmentProvider environmentProvider,
@@ -77,7 +87,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
         public override async Task StartAsync(
             CancellationToken cancellationToken)
         {
-            if (!options.Enabled)
+            if (!this.options.Enabled)
             {
                 SafeLogInformation(
                     "Runtime instance registration is disabled.");
@@ -87,8 +97,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
 
             SafeLogInformation(
                 "Runtime instance registration service starting. RegistryType={RegistryType}, RegistryHash={RegistryHash}",
-                registry.GetType().FullName,
-                registry.GetHashCode());
+                this.registry.GetType().FullName,
+                this.registry.GetHashCode());
 
             await RegisterRuntimeInstanceAsync(
                     cancellationToken)
@@ -103,7 +113,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
         protected override async Task ExecuteAsync(
             CancellationToken stoppingToken)
         {
-            if (!options.Enabled)
+            if (!this.options.Enabled)
             {
                 return;
             }
@@ -125,15 +135,15 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
                     SafeLogError(
                         exception,
                         "Failed to publish runtime instance heartbeat. RuntimeInstanceId={RuntimeInstanceId}, ControlPlaneId={ControlPlaneId}, ControlPlaneHostId={ControlPlaneHostId}",
-                        runtimeInstanceId,
-                        controlPlaneId,
-                        controlPlaneHostId);
+                        this.runtimeInstanceId,
+                        this.controlPlaneId,
+                        this.controlPlaneHostId);
                 }
 
                 try
                 {
                     await Task.Delay(
-                            options.HeartbeatInterval,
+                            this.options.HeartbeatInterval,
                             stoppingToken)
                         .ConfigureAwait(false);
                 }
@@ -148,13 +158,13 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
         public override async Task StopAsync(
             CancellationToken cancellationToken)
         {
-            if (Interlocked.Exchange(ref stopRequested, 1) == 1)
+            if (Interlocked.Exchange(ref this.stopRequested, 1) == 1)
             {
                 SafeLogInformation(
                     "Runtime instance registration stop skipped. RuntimeInstanceId={RuntimeInstanceId}, ControlPlaneId={ControlPlaneId}, ControlPlaneHostId={ControlPlaneHostId}, Reason={Reason}",
-                    runtimeInstanceId,
-                    controlPlaneId,
-                    controlPlaneHostId,
+                    this.runtimeInstanceId,
+                    this.controlPlaneId,
+                    this.controlPlaneHostId,
                     "AlreadyStoppedOrStopping");
 
                 return;
@@ -172,18 +182,18 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
                 {
                     SafeLogWarning(
                         "Runtime instance registration stop cancelled. RuntimeInstanceId={RuntimeInstanceId}, ControlPlaneId={ControlPlaneId}, ControlPlaneHostId={ControlPlaneHostId}, Reason={Reason}",
-                        runtimeInstanceId,
-                        controlPlaneId,
-                        controlPlaneHostId,
+                        this.runtimeInstanceId,
+                        this.controlPlaneId,
+                        this.controlPlaneHostId,
                         "ShutdownCancellationRequested");
                 }
                 catch (ObjectDisposedException exception)
                 {
                     SafeLogWarning(
                         "Runtime instance registration stop ignored. RuntimeInstanceId={RuntimeInstanceId}, ControlPlaneId={ControlPlaneId}, ControlPlaneHostId={ControlPlaneHostId}, Reason={Reason}, ExceptionMessage={ExceptionMessage}",
-                        runtimeInstanceId,
-                        controlPlaneId,
-                        controlPlaneHostId,
+                        this.runtimeInstanceId,
+                        this.controlPlaneId,
+                        this.controlPlaneHostId,
                         "DisposedDuringShutdown",
                         exception.Message);
                 }
@@ -192,9 +202,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
                     SafeLogError(
                         exception,
                         "Failed to unregister runtime instance during shutdown. RuntimeInstanceId={RuntimeInstanceId}, ControlPlaneId={ControlPlaneId}, ControlPlaneHostId={ControlPlaneHostId}",
-                        runtimeInstanceId,
-                        controlPlaneId,
-                        controlPlaneHostId);
+                        this.runtimeInstanceId,
+                        this.controlPlaneId,
+                        this.controlPlaneHostId);
                 }
             }
             finally
@@ -209,18 +219,18 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
                 {
                     SafeLogWarning(
                         "Runtime instance registration base stop cancelled. RuntimeInstanceId={RuntimeInstanceId}, ControlPlaneId={ControlPlaneId}, ControlPlaneHostId={ControlPlaneHostId}, Reason={Reason}",
-                        runtimeInstanceId,
-                        controlPlaneId,
-                        controlPlaneHostId,
+                        this.runtimeInstanceId,
+                        this.controlPlaneId,
+                        this.controlPlaneHostId,
                         "ShutdownCancellationRequested");
                 }
                 catch (ObjectDisposedException exception)
                 {
                     SafeLogWarning(
                         "Runtime instance registration base stop ignored. RuntimeInstanceId={RuntimeInstanceId}, ControlPlaneId={ControlPlaneId}, ControlPlaneHostId={ControlPlaneHostId}, Reason={Reason}, ExceptionMessage={ExceptionMessage}",
-                        runtimeInstanceId,
-                        controlPlaneId,
-                        controlPlaneHostId,
+                        this.runtimeInstanceId,
+                        this.controlPlaneId,
+                        this.controlPlaneHostId,
                         "DisposedDuringShutdown",
                         exception.Message);
                 }
@@ -230,100 +240,107 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
         /// <summary>
         /// Registers the current runtime instance in the runtime instance registry.
         /// </summary>
+        /// <param name="cancellationToken">The cancellation token.</param>
         private async Task RegisterRuntimeInstanceAsync(
             CancellationToken cancellationToken)
         {
             var environment =
-                await environmentProvider
+                await this.environmentProvider
                     .GetSnapshotAsync(cancellationToken)
                     .ConfigureAwait(false);
 
-            controlPlaneHostId =
+            this.controlPlaneHostId =
                 environment.ControlPlaneHostId;
 
-            runtimeInstanceId =
+            this.runtimeInstanceId =
                 ResolveRuntimeInstanceId(environment);
 
             var providerName =
                 ResolveProviderName(environment);
 
-            SafeLogInformation(
-                "[REGISTRATION PATCH CHECK] Explicit control-plane resolution path enabled.");
-
-            controlPlaneId =
-                ResolveExplicitControlPlaneId(environment);
-
-            if (string.IsNullOrWhiteSpace(controlPlaneId))
-            {
-                controlPlaneId =
-                    await controlPlaneIdResolver
-                        .ResolveAsync(cancellationToken)
-                        .ConfigureAwait(false);
-            }
-
-            if (string.IsNullOrWhiteSpace(controlPlaneId))
-            {
-                throw new InvalidOperationException(
-                    "The resolved control-plane identifier cannot be null or empty.");
-            }
-
-            runtimeMetadata =
+            var baseMetadata =
                 MergeMetadata(
-                    options.Metadata,
-                    options.ProviderMetadata,
+                    this.options.Metadata,
+                    this.options.ProviderMetadata,
                     environment.ProviderMetadata,
                     new Dictionary<string, string>
                     {
                         [AiRuntimeInstanceProviderMetadataKeys.ProviderName] = providerName,
                         ["provider"] = providerName,
-                        ["controlPlaneId"] = controlPlaneId,
-                        ["control-plane.id"] = controlPlaneId,
-                        ["controlplane.id"] = controlPlaneId,
-                        ["runtime.controlPlaneId"] = controlPlaneId,
-                        ["controlPlaneHostId"] = controlPlaneHostId ?? string.Empty
+                        ["controlPlaneHostId"] = this.controlPlaneHostId ?? string.Empty
                     });
+
+            this.controlPlaneId =
+                await this.controlPlaneIdResolver
+                    .ResolveAsync(
+                        new AiControlPlaneIdResolutionRequest
+                        {
+                            Metadata = baseMetadata,
+                            Source = "runtime-instance-registration-hosted-service",
+                            AllowGeneratedFallback = false
+                        },
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+            var controlPlaneMetadata =
+                await this.controlPlaneIdResolver
+                    .ResolveMetadataAsync(
+                        new AiControlPlaneIdResolutionRequest
+                        {
+                            RequestedControlPlaneId = this.controlPlaneId,
+                            Metadata = baseMetadata,
+                            Source = "runtime-instance-registration-hosted-service-metadata",
+                            AllowGeneratedFallback = false
+                        },
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+            this.runtimeMetadata =
+                MergeMetadata(
+                    baseMetadata,
+                    controlPlaneMetadata);
 
             var tenantId =
                 GetMetadataValue(
-                    runtimeMetadata,
+                    this.runtimeMetadata,
                     AiRuntimeInstanceIsolationMetadataKeys.TenantId);
 
             var tenantGroupId =
                 GetMetadataValue(
-                    runtimeMetadata,
+                    this.runtimeMetadata,
                     AiRuntimeInstanceIsolationMetadataKeys.TenantGroupId);
 
             SafeLogInformation(
                 "Runtime instance id resolved. RuntimeInstanceId={RuntimeInstanceId}, ControlPlaneId={ControlPlaneId}, OptionsRuntimeInstanceId={OptionsRuntimeInstanceId}, EnvironmentRuntimeInstanceId={EnvironmentRuntimeInstanceId}, HostName={HostName}, ProcessId={ProcessId}, HostId={HostId}, RuntimeId={RuntimeId}, ControlPlaneHostId={ControlPlaneHostId}, ProviderName={ProviderName}, RegistryType={RegistryType}, RegistryHash={RegistryHash}",
-                runtimeInstanceId,
-                controlPlaneId,
-                options.RuntimeInstanceId,
+                this.runtimeInstanceId,
+                this.controlPlaneId,
+                this.options.RuntimeInstanceId,
                 environment.RuntimeInstanceId,
                 environment.HostName,
                 environment.ProcessId,
                 environment.HostId,
                 environment.RuntimeId,
-                controlPlaneHostId,
+                this.controlPlaneHostId,
                 providerName,
-                registry.GetType().FullName,
-                registry.GetHashCode());
+                this.registry.GetType().FullName,
+                this.registry.GetHashCode());
 
             SafeLogInformation(
                 "Runtime instance registration metadata resolved. RuntimeInstanceId={RuntimeInstanceId}, ControlPlaneId={ControlPlaneId}, ControlPlaneHostId={ControlPlaneHostId}, Role={Role}, ProviderName={ProviderName}, TenantId={TenantId}, TenantGroupId={TenantGroupId}, IsolationMode={IsolationMode}, AllowSharedFallback={AllowSharedFallback}, PreferDedicatedCapacity={PreferDedicatedCapacity}, Metadata={Metadata}",
-                runtimeInstanceId,
-                controlPlaneId,
-                controlPlaneHostId,
-                options.Role,
+                this.runtimeInstanceId,
+                this.controlPlaneId,
+                this.controlPlaneHostId,
+                this.options.Role,
                 providerName,
                 tenantId,
                 tenantGroupId,
-                GetMetadataValue(runtimeMetadata, AiRuntimeInstanceIsolationMetadataKeys.IsolationMode),
-                GetMetadataValue(runtimeMetadata, AiRuntimeInstanceIsolationMetadataKeys.AllowSharedFallback),
-                GetMetadataValue(runtimeMetadata, AiRuntimeInstanceIsolationMetadataKeys.PreferDedicatedCapacity),
-                FormatMetadata(runtimeMetadata));
+                GetMetadataValue(this.runtimeMetadata, AiRuntimeInstanceIsolationMetadataKeys.IsolationMode),
+                GetMetadataValue(this.runtimeMetadata, AiRuntimeInstanceIsolationMetadataKeys.AllowSharedFallback),
+                GetMetadataValue(this.runtimeMetadata, AiRuntimeInstanceIsolationMetadataKeys.PreferDedicatedCapacity),
+                FormatMetadata(this.runtimeMetadata));
 
             var queueState =
-                await controller
+                await this.controller
                     .GetQueueStateAsync(cancellationToken)
                     .ConfigureAwait(false);
 
@@ -334,10 +351,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
 
             SafeLogInformation(
                 "Runtime instance queue state resolved. RuntimeInstanceId={RuntimeInstanceId}, ControlPlaneId={ControlPlaneId}, ControlPlaneHostId={ControlPlaneHostId}, Role={Role}, QueuedRunCount={QueuedRunCount}, RunningRunCount={RunningRunCount}, ActiveRunCount={ActiveRunCount}, QueueStateAvailableRunSlots={QueueStateAvailableRunSlots}, EffectiveAvailableRunSlots={EffectiveAvailableRunSlots}, QueueCapacity={QueueCapacity}, MaxConcurrentRuns={MaxConcurrentRuns}, IsPaused={IsPaused}, QueueStateCanAcceptRun={QueueStateCanAcceptRun}, EffectiveCanAcceptRun={EffectiveCanAcceptRun}, QueueHasCapacity={QueueHasCapacity}",
-                runtimeInstanceId,
-                controlPlaneId,
-                controlPlaneHostId,
-                options.Role,
+                this.runtimeInstanceId,
+                this.controlPlaneId,
+                this.controlPlaneHostId,
+                this.options.Role,
                 queueState.QueuedRunCount,
                 queueState.RunningRunCount,
                 queueState.ActiveRunCount,
@@ -353,69 +370,54 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
             var registration =
                 new AiRuntimeInstanceRegistration
                 {
-                    RuntimeInstanceId = runtimeInstanceId,
+                    RuntimeInstanceId = this.runtimeInstanceId,
                     TenantId = tenantId,
                     TenantGroupId = tenantGroupId,
-                    ControlPlaneId = controlPlaneId,
+                    ControlPlaneId = this.controlPlaneId,
                     HostName = environment.HostName,
                     ProcessId = environment.ProcessId,
                     HostId = environment.HostId,
                     RuntimeId = environment.RuntimeId,
-                    ControlPlaneHostId = controlPlaneHostId,
-                    WorkerCount = options.WorkerCount,
-                    QueueCapacity = options.QueueCapacity ?? queueState.QueueCapacity,
-                    MaxConcurrentRuns = options.MaxConcurrentRuns ?? queueState.MaxConcurrentRuns,
-                    RuntimeVersion = options.RuntimeVersion,
-                    Role = options.Role,
-                    Metadata = runtimeMetadata
+                    ControlPlaneHostId = this.controlPlaneHostId,
+                    WorkerCount = this.options.WorkerCount,
+                    QueueCapacity = this.options.QueueCapacity ?? queueState.QueueCapacity,
+                    MaxConcurrentRuns = this.options.MaxConcurrentRuns ?? queueState.MaxConcurrentRuns,
+                    RuntimeVersion = this.options.RuntimeVersion,
+                    Role = this.options.Role,
+                    Metadata = this.runtimeMetadata
                 };
 
             SafeLogInformation(
                 "Runtime instance registration started. RuntimeInstanceId={RuntimeInstanceId}, ControlPlaneId={ControlPlaneId}, ControlPlaneHostId={ControlPlaneHostId}, TenantId={TenantId}, TenantGroupId={TenantGroupId}, RegistryType={RegistryType}, RegistryHash={RegistryHash}",
-                runtimeInstanceId,
-                controlPlaneId,
-                controlPlaneHostId,
+                this.runtimeInstanceId,
+                this.controlPlaneId,
+                this.controlPlaneHostId,
                 tenantId,
                 tenantGroupId,
-                registry.GetType().FullName,
-                registry.GetHashCode());
+                this.registry.GetType().FullName,
+                this.registry.GetHashCode());
 
             var snapshot =
-                await registry
+                await this.registry
                     .RegisterAsync(registration, cancellationToken)
                     .ConfigureAwait(false);
 
-            Console.WriteLine(
-                $"[REGISTRATION AFTER REGISTER EXACT] " +
-                $"RuntimeInstanceId='{runtimeInstanceId}', " +
-                $"ResolvedControlPlaneId='{controlPlaneId}', " +
-                $"ControlPlaneHostId='{controlPlaneHostId}', " +
-                $"TenantId='{snapshot.TenantId}', " +
-                $"TenantGroupId='{snapshot.TenantGroupId}', " +
-                $"SnapshotControlPlaneId='{snapshot.ControlPlaneId}', " +
-                $"Role='{snapshot.Role}', " +
-                $"Status='{snapshot.Status}', " +
-                $"CanAcceptRun='{snapshot.CanAcceptRun}', " +
-                $"AvailableRunSlots='{snapshot.AvailableRunSlots}', " +
-                $"Provider='{providerName}', " +
-                $"RegistryHash='{registry.GetHashCode()}'.");
-
             var readBackSnapshot =
-                await registry
+                await this.registry
                     .GetAsync(
-                        runtimeInstanceId,
+                        this.runtimeInstanceId,
                         cancellationToken)
                     .ConfigureAwait(false);
 
-            Console.WriteLine(
-                $"[REGISTRATION READBACK EXACT] " +
-                $"RuntimeInstanceId='{runtimeInstanceId}', " +
-                $"Found='{readBackSnapshot is not null}', " +
-                $"ReadBackControlPlaneId='{readBackSnapshot?.ControlPlaneId}', " +
-                $"ReadBackTenantId='{readBackSnapshot?.TenantId}', " +
-                $"ReadBackTenantGroupId='{readBackSnapshot?.TenantGroupId}', " +
-                $"ReadBackRole='{readBackSnapshot?.Role}', " +
-                $"ReadBackStatus='{readBackSnapshot?.Status}'.");
+            SafeLogInformation(
+                "Runtime instance registration readback completed. RuntimeInstanceId={RuntimeInstanceId}, Found={Found}, ReadBackControlPlaneId={ReadBackControlPlaneId}, ReadBackTenantId={ReadBackTenantId}, ReadBackTenantGroupId={ReadBackTenantGroupId}, ReadBackRole={ReadBackRole}, ReadBackStatus={ReadBackStatus}",
+                this.runtimeInstanceId,
+                readBackSnapshot is not null,
+                readBackSnapshot?.ControlPlaneId,
+                readBackSnapshot?.TenantId,
+                readBackSnapshot?.TenantGroupId,
+                readBackSnapshot?.Role,
+                readBackSnapshot?.Status);
 
             SafeLogInformation(
                 "Runtime instance registered. RuntimeInstanceId={RuntimeInstanceId}, ControlPlaneId={ControlPlaneId}, Status={Status}, Provider={Provider}, HostId={HostId}, RuntimeId={RuntimeId}, ControlPlaneHostId={ControlPlaneHostId}, TenantId={TenantId}, TenantGroupId={TenantGroupId}, IsolationMode={IsolationMode}, AllowSharedFallback={AllowSharedFallback}, PreferDedicatedCapacity={PreferDedicatedCapacity}, Metadata={Metadata}, RegistryType={RegistryType}, RegistryHash={RegistryHash}",
@@ -432,84 +434,32 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
                 GetMetadataValue(snapshot.Metadata, AiRuntimeInstanceIsolationMetadataKeys.AllowSharedFallback),
                 GetMetadataValue(snapshot.Metadata, AiRuntimeInstanceIsolationMetadataKeys.PreferDedicatedCapacity),
                 FormatMetadata(snapshot.Metadata),
-                registry.GetType().FullName,
-                registry.GetHashCode());
+                this.registry.GetType().FullName,
+                this.registry.GetHashCode());
 
             SafeLogInformation(
                 "Runtime instance capacity publication after registry registration started. RuntimeInstanceId={RuntimeInstanceId}, ControlPlaneId={ControlPlaneId}, ControlPlaneHostId={ControlPlaneHostId}",
-                runtimeInstanceId,
-                controlPlaneId,
-                controlPlaneHostId);
+                this.runtimeInstanceId,
+                this.controlPlaneId,
+                this.controlPlaneHostId);
 
             await PublishCapacityDescriptorAsync(
-                    runtimeInstanceId,
+                    this.runtimeInstanceId,
                     AiRuntimeInstanceStatus.Ready,
                     queueState,
-                    runtimeMetadata,
+                    this.runtimeMetadata,
                     cancellationToken)
                 .ConfigureAwait(false);
         }
 
         /// <summary>
-        /// Resolves an explicit control-plane identifier from registration metadata or runtime environment metadata.
-        /// </summary>
-        /// <param name="environment">The runtime environment snapshot.</param>
-        /// <returns>The explicit control-plane identifier, or null when none is available.</returns>
-        private string? ResolveExplicitControlPlaneId(
-            AiRuntimeEnvironmentSnapshot environment)
-        {
-            return ResolveControlPlaneIdFromMetadata(options.Metadata)
-                ?? ResolveControlPlaneIdFromMetadata(options.ProviderMetadata)
-                ?? ResolveControlPlaneIdFromMetadata(environment.ProviderMetadata);
-        }
-
-        /// <summary>
-        /// Resolves a control-plane identifier from metadata.
-        /// </summary>
-        /// <param name="metadata">The metadata dictionary.</param>
-        /// <returns>The resolved control-plane identifier, or null when none is available.</returns>
-        private static string? ResolveControlPlaneIdFromMetadata(
-            IReadOnlyDictionary<string, string>? metadata)
-        {
-            if (metadata is null || metadata.Count == 0)
-            {
-                return null;
-            }
-
-            if (metadata.TryGetValue("controlPlaneId", out var controlPlaneId) &&
-                !string.IsNullOrWhiteSpace(controlPlaneId))
-            {
-                return controlPlaneId.Trim();
-            }
-
-            if (metadata.TryGetValue("control-plane.id", out controlPlaneId) &&
-                !string.IsNullOrWhiteSpace(controlPlaneId))
-            {
-                return controlPlaneId.Trim();
-            }
-
-            if (metadata.TryGetValue("controlplane.id", out controlPlaneId) &&
-                !string.IsNullOrWhiteSpace(controlPlaneId))
-            {
-                return controlPlaneId.Trim();
-            }
-
-            if (metadata.TryGetValue("runtime.controlPlaneId", out controlPlaneId) &&
-                !string.IsNullOrWhiteSpace(controlPlaneId))
-            {
-                return controlPlaneId.Trim();
-            }
-
-            return null;
-        }
-
-        /// <summary>
         /// Publishes a heartbeat for the current runtime instance.
         /// </summary>
+        /// <param name="cancellationToken">The cancellation token.</param>
         private async Task PublishHeartbeatAsync(
             CancellationToken cancellationToken)
         {
-            if (string.IsNullOrWhiteSpace(runtimeInstanceId))
+            if (string.IsNullOrWhiteSpace(this.runtimeInstanceId))
             {
                 SafeLogWarning(
                     "Runtime instance heartbeat skipped because RuntimeInstanceId is empty.");
@@ -517,17 +467,17 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
                 return;
             }
 
-            if (string.IsNullOrWhiteSpace(controlPlaneId))
+            if (string.IsNullOrWhiteSpace(this.controlPlaneId))
             {
                 SafeLogWarning(
                     "Runtime instance heartbeat skipped because ControlPlaneId is empty. RuntimeInstanceId={RuntimeInstanceId}",
-                    runtimeInstanceId);
+                    this.runtimeInstanceId);
 
                 return;
             }
 
             var queueState =
-                await controller
+                await this.controller
                     .GetQueueStateAsync(cancellationToken)
                     .ConfigureAwait(false);
 
@@ -538,10 +488,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
 
             SafeLogInformation(
                 "Runtime instance heartbeat started. RuntimeInstanceId={RuntimeInstanceId}, ControlPlaneId={ControlPlaneId}, ControlPlaneHostId={ControlPlaneHostId}, Role={Role}, QueuedRunCount={QueuedRunCount}, RunningRunCount={RunningRunCount}, ActiveRunCount={ActiveRunCount}, QueueStateAvailableRunSlots={QueueStateAvailableRunSlots}, EffectiveAvailableRunSlots={EffectiveAvailableRunSlots}, IsPaused={IsPaused}, QueueStateCanAcceptRun={QueueStateCanAcceptRun}, EffectiveCanAcceptRun={EffectiveCanAcceptRun}, QueueHasCapacity={QueueHasCapacity}, TenantId={TenantId}, TenantGroupId={TenantGroupId}, IsolationMode={IsolationMode}, AllowSharedFallback={AllowSharedFallback}, PreferDedicatedCapacity={PreferDedicatedCapacity}, RegistryType={RegistryType}, RegistryHash={RegistryHash}",
-                runtimeInstanceId,
-                controlPlaneId,
-                controlPlaneHostId,
-                options.Role,
+                this.runtimeInstanceId,
+                this.controlPlaneId,
+                this.controlPlaneHostId,
+                this.options.Role,
                 queueState.QueuedRunCount,
                 queueState.RunningRunCount,
                 queueState.ActiveRunCount,
@@ -551,26 +501,26 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
                 queueState.CanAcceptRun,
                 effectiveCapacity.CanAcceptRun,
                 effectiveCapacity.QueueHasCapacity,
-                GetMetadataValue(runtimeMetadata, AiRuntimeInstanceIsolationMetadataKeys.TenantId),
-                GetMetadataValue(runtimeMetadata, AiRuntimeInstanceIsolationMetadataKeys.TenantGroupId),
-                GetMetadataValue(runtimeMetadata, AiRuntimeInstanceIsolationMetadataKeys.IsolationMode),
-                GetMetadataValue(runtimeMetadata, AiRuntimeInstanceIsolationMetadataKeys.AllowSharedFallback),
-                GetMetadataValue(runtimeMetadata, AiRuntimeInstanceIsolationMetadataKeys.PreferDedicatedCapacity),
-                registry.GetType().FullName,
-                registry.GetHashCode());
+                GetMetadataValue(this.runtimeMetadata, AiRuntimeInstanceIsolationMetadataKeys.TenantId),
+                GetMetadataValue(this.runtimeMetadata, AiRuntimeInstanceIsolationMetadataKeys.TenantGroupId),
+                GetMetadataValue(this.runtimeMetadata, AiRuntimeInstanceIsolationMetadataKeys.IsolationMode),
+                GetMetadataValue(this.runtimeMetadata, AiRuntimeInstanceIsolationMetadataKeys.AllowSharedFallback),
+                GetMetadataValue(this.runtimeMetadata, AiRuntimeInstanceIsolationMetadataKeys.PreferDedicatedCapacity),
+                this.registry.GetType().FullName,
+                this.registry.GetHashCode());
 
             await PublishCapacityDescriptorAsync(
-                    runtimeInstanceId,
+                    this.runtimeInstanceId,
                     AiRuntimeInstanceStatus.Ready,
                     queueState,
-                    runtimeMetadata,
+                    this.runtimeMetadata,
                     cancellationToken)
                 .ConfigureAwait(false);
 
             var snapshot =
-                await registry
+                await this.registry
                     .HeartbeatAsync(
-                        runtimeInstanceId,
+                        this.runtimeInstanceId,
                         queueState.QueuedRunCount,
                         queueState.RunningRunCount,
                         queueState.ActiveRunCount,
@@ -588,11 +538,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
             {
                 SafeLogWarning(
                     "Runtime instance heartbeat ignored because instance is not registered. RuntimeInstanceId={RuntimeInstanceId}, ControlPlaneId={ControlPlaneId}, ControlPlaneHostId={ControlPlaneHostId}, RegistryType={RegistryType}, RegistryHash={RegistryHash}",
-                    runtimeInstanceId,
-                    controlPlaneId,
-                    controlPlaneHostId,
-                    registry.GetType().FullName,
-                    registry.GetHashCode());
+                    this.runtimeInstanceId,
+                    this.controlPlaneId,
+                    this.controlPlaneHostId,
+                    this.registry.GetType().FullName,
+                    this.registry.GetHashCode());
             }
             else
             {
@@ -611,18 +561,19 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
                     GetMetadataValue(snapshot.Metadata, AiRuntimeInstanceIsolationMetadataKeys.IsolationMode),
                     GetMetadataValue(snapshot.Metadata, AiRuntimeInstanceIsolationMetadataKeys.AllowSharedFallback),
                     GetMetadataValue(snapshot.Metadata, AiRuntimeInstanceIsolationMetadataKeys.PreferDedicatedCapacity),
-                    registry.GetType().FullName,
-                    registry.GetHashCode());
+                    this.registry.GetType().FullName,
+                    this.registry.GetHashCode());
             }
         }
 
         /// <summary>
         /// Unregisters the current runtime instance from the runtime instance registry.
         /// </summary>
+        /// <param name="cancellationToken">The cancellation token.</param>
         private async Task UnregisterRuntimeInstanceAsync(
             CancellationToken cancellationToken)
         {
-            if (string.IsNullOrWhiteSpace(runtimeInstanceId))
+            if (string.IsNullOrWhiteSpace(this.runtimeInstanceId))
             {
                 SafeLogWarning(
                     "Runtime instance unregister skipped because RuntimeInstanceId is empty.");
@@ -632,37 +583,42 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
 
             SafeLogInformation(
                 "Runtime instance unregister started. RuntimeInstanceId={RuntimeInstanceId}, ControlPlaneId={ControlPlaneId}, ControlPlaneHostId={ControlPlaneHostId}, RegistryType={RegistryType}, RegistryHash={RegistryHash}",
-                runtimeInstanceId,
-                controlPlaneId,
-                controlPlaneHostId,
-                registry.GetType().FullName,
-                registry.GetHashCode());
+                this.runtimeInstanceId,
+                this.controlPlaneId,
+                this.controlPlaneHostId,
+                this.registry.GetType().FullName,
+                this.registry.GetHashCode());
 
             var snapshot =
-                await registry
-                    .UnregisterAsync(runtimeInstanceId, cancellationToken)
+                await this.registry
+                    .UnregisterAsync(this.runtimeInstanceId, cancellationToken)
                     .ConfigureAwait(false);
 
             await RemoveCapacityDescriptorAsync(
-                    runtimeInstanceId,
+                    this.runtimeInstanceId,
                     cancellationToken)
                 .ConfigureAwait(false);
 
             SafeLogInformation(
                 "Runtime instance unregistered. RuntimeInstanceId={RuntimeInstanceId}, ControlPlaneId={ControlPlaneId}, Status={Status}, HostId={HostId}, RuntimeId={RuntimeId}, ControlPlaneHostId={ControlPlaneHostId}, RegistryType={RegistryType}, RegistryHash={RegistryHash}",
-                runtimeInstanceId,
+                this.runtimeInstanceId,
                 snapshot?.ControlPlaneId,
                 snapshot?.Status,
                 snapshot?.HostId,
                 snapshot?.RuntimeId,
                 snapshot?.ControlPlaneHostId,
-                registry.GetType().FullName,
-                registry.GetHashCode());
+                this.registry.GetType().FullName,
+                this.registry.GetHashCode());
         }
 
         /// <summary>
         /// Publishes the current runtime capacity descriptor to all configured capacity stores.
         /// </summary>
+        /// <param name="runtimeInstanceId">The runtime instance identifier.</param>
+        /// <param name="status">The runtime instance status.</param>
+        /// <param name="queueState">The runtime queue state.</param>
+        /// <param name="metadata">The runtime metadata.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
         private async Task PublishCapacityDescriptorAsync(
             string runtimeInstanceId,
             AiRuntimeInstanceStatus status,
@@ -670,7 +626,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
             IReadOnlyDictionary<string, string> metadata,
             CancellationToken cancellationToken)
         {
-            if (capacityStores.Count == 0)
+            if (this.capacityStores.Count == 0)
             {
                 return;
             }
@@ -688,9 +644,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
                 new AiRuntimeInstanceCapacityDescriptor
                 {
                     RuntimeInstanceId = runtimeInstanceId,
-                    ControlPlaneId = controlPlaneId,
-                    ControlPlaneHostId = controlPlaneHostId,
-                    Role = options.Role,
+                    ControlPlaneId = this.controlPlaneId,
+                    ControlPlaneHostId = this.controlPlaneHostId,
+                    Role = this.options.Role,
                     Status = status,
                     WorkerCount = effectiveCapacity.WorkerCount,
                     ActiveWorkerCount = effectiveCapacity.ActiveWorkerCount,
@@ -750,9 +706,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
                 descriptor.AvailableWorkerCount,
                 descriptor.CanAcceptRun,
                 descriptor.IsQueuePaused,
-                capacityStores.Count);
+                this.capacityStores.Count);
 
-            foreach (var capacityStore in capacityStores)
+            foreach (var capacityStore in this.capacityStores)
             {
                 try
                 {
@@ -770,8 +726,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
                         exception,
                         "Failed to publish runtime instance capacity descriptor. RuntimeInstanceId={RuntimeInstanceId}, ControlPlaneId={ControlPlaneId}, ControlPlaneHostId={ControlPlaneHostId}, StoreType={StoreType}",
                         runtimeInstanceId,
-                        controlPlaneId,
-                        controlPlaneHostId,
+                        this.controlPlaneId,
+                        this.controlPlaneHostId,
                         capacityStore.GetType().FullName);
                 }
             }
@@ -780,16 +736,18 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
         /// <summary>
         /// Removes the runtime capacity descriptor from all configured capacity stores.
         /// </summary>
+        /// <param name="runtimeInstanceId">The runtime instance identifier.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
         private async Task RemoveCapacityDescriptorAsync(
             string runtimeInstanceId,
             CancellationToken cancellationToken)
         {
-            if (capacityStores.Count == 0)
+            if (this.capacityStores.Count == 0)
             {
                 return;
             }
 
-            foreach (var capacityStore in capacityStores)
+            foreach (var capacityStore in this.capacityStores)
             {
                 try
                 {
@@ -807,25 +765,16 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
                         exception,
                         "Failed to remove runtime instance capacity descriptor. RuntimeInstanceId={RuntimeInstanceId}, ControlPlaneId={ControlPlaneId}, ControlPlaneHostId={ControlPlaneHostId}, StoreType={StoreType}",
                         runtimeInstanceId,
-                        controlPlaneId,
-                        controlPlaneHostId,
+                        this.controlPlaneId,
+                        this.controlPlaneHostId,
                         capacityStore.GetType().FullName);
                 }
             }
         }
 
         /// <summary>
-        /// Creates the effective capacity values that must be published to the registry
-        /// and capacity stores.
+        /// Creates the effective capacity values that must be published to the registry and capacity stores.
         /// </summary>
-        /// <remarks>
-        /// Queue-first semantics:
-        /// - <c>AvailableRunSlots</c> represents immediate execution capacity.
-        /// - <c>CanAcceptRun</c> represents whether the local queue can accept another run.
-        /// - A runtime can accept a run even when all workers are currently busy, as long
-        ///   as the local queue has capacity.
-        /// - Non-runtime roles must never be dispatchable.
-        /// </remarks>
         /// <param name="status">The runtime instance status.</param>
         /// <param name="queueState">The local runtime queue state.</param>
         /// <returns>The effective runtime capacity.</returns>
@@ -834,10 +783,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
             AiRuntimePipelineQueueState queueState)
         {
             var role =
-                options.Role;
+                this.options.Role;
 
             var workerCount =
-                queueState.WorkerCount ?? options.WorkerCount;
+                queueState.WorkerCount ?? this.options.WorkerCount;
 
             var activeWorkerCount =
                 queueState.ActiveWorkerCount ?? 0;
@@ -866,9 +815,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
                     CanAcceptRun: false);
             }
 
-            var availableRunSlots =
-                queueState.AvailableRunSlots;
-
             var canAcceptRun =
                 status == AiRuntimeInstanceStatus.Ready &&
                 !queueState.IsPaused &&
@@ -878,7 +824,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
                 WorkerCount: workerCount,
                 ActiveWorkerCount: activeWorkerCount,
                 AvailableWorkerCount: availableWorkerCount,
-                AvailableRunSlots: availableRunSlots,
+                AvailableRunSlots: queueState.AvailableRunSlots,
                 MaxLocalWorkersPerExecution: queueState.MaxLocalWorkersPerExecution,
                 QueueHasCapacity: queueHasCapacity,
                 CanAcceptRun: canAcceptRun);
@@ -887,12 +833,14 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
         /// <summary>
         /// Resolves the runtime instance identifier from options or environment.
         /// </summary>
+        /// <param name="environment">The runtime environment snapshot.</param>
+        /// <returns>The resolved runtime instance identifier.</returns>
         private string ResolveRuntimeInstanceId(
             AiRuntimeEnvironmentSnapshot environment)
         {
-            if (!string.IsNullOrWhiteSpace(options.RuntimeInstanceId))
+            if (!string.IsNullOrWhiteSpace(this.options.RuntimeInstanceId))
             {
-                return options.RuntimeInstanceId;
+                return this.options.RuntimeInstanceId;
             }
 
             if (!string.IsNullOrWhiteSpace(environment.RuntimeInstanceId))
@@ -918,7 +866,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
             AiRuntimeEnvironmentSnapshot environment)
         {
             var providerName =
-                options.ProviderName ?? environment.ProviderName;
+                this.options.ProviderName ?? environment.ProviderName;
 
             if (string.IsNullOrWhiteSpace(providerName))
             {
@@ -978,7 +926,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
             }
 
             var configuredProviderName =
-                options.ProviderName;
+                this.options.ProviderName;
 
             if (!string.IsNullOrWhiteSpace(configuredProviderName))
             {
@@ -991,6 +939,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
         /// <summary>
         /// Merges metadata dictionaries.
         /// </summary>
+        /// <param name="sources">The metadata sources.</param>
+        /// <returns>The merged metadata dictionary.</returns>
         private static IReadOnlyDictionary<string, string> MergeMetadata(
             params IReadOnlyDictionary<string, string>[] sources)
         {
@@ -1048,7 +998,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
         {
             try
             {
-                logger.LogInformation(
+                this.logger.LogInformation(
                     message,
                     args);
             }
@@ -1064,7 +1014,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
         {
             try
             {
-                logger.LogWarning(
+                this.logger.LogWarning(
                     message,
                     args);
             }
@@ -1095,7 +1045,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
         {
             try
             {
-                logger.LogError(
+                this.logger.LogError(
                     exception,
                     message,
                     args);

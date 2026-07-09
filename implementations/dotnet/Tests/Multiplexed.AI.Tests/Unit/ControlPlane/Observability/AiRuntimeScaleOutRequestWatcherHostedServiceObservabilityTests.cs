@@ -1,656 +1,693 @@
-﻿using Microsoft.Extensions.Options;
+﻿using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.ControlPlane.Discovery;
 using Multiplexed.Abstractions.AI.ControlPlane.Observability;
 using Multiplexed.Abstractions.AI.ControlPlane.Observability.Area;
 using Multiplexed.Abstractions.AI.ControlPlane.Observability.Events;
-using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Scaling;
-using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Store;
-using Multiplexed.Abstractions.AI.Execution.Instance.Worker;
-using Multiplexed.Abstractions.AI.Observability;
 using Multiplexed.Abstractions.AI.Observability.Context;
-using Multiplexed.Abstractions.AI.Observability.Ledger;
-using Multiplexed.Abstractions.AI.Observability.Metrics;
-using Multiplexed.Abstractions.AI.Observability.Tracing;
-using Multiplexed.Abstractions.AI.Runtime.Execution.Instance.Worker;
 using Multiplexed.AI.Runtime.ControlPlane.Observability;
-using Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling;
-using Multiplexed.AI.Tests.Fixtures;
-using System;
-using System.Collections.Generic;
-using System.Threading;
-using System.Threading.Tasks;
-using Xunit;
 
-namespace Multiplexed.AI.Tests.Unit.ControlPlane.Observability
+namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
 {
     /// <summary>
-    /// Tests runtime scale-out request watcher control-plane observability events.
+    /// Observes pending runtime scale-out requests and forwards them to a scale-out provider selector.
     /// </summary>
-    public sealed class AiRuntimeScaleOutRequestWatcherHostedServiceObservabilityTests
+    /// <remarks>
+    /// This hosted service does not decide admission and does not create scale-out
+    /// requests. It only processes requests already persisted in
+    /// <see cref="IAiRuntimeScaleOutRequestStore" />.
+    ///
+    /// The actual scale-out implementation is delegated to
+    /// <see cref="IAiRuntimeScaleOutProviderSelector" />, which reuses the existing
+    /// runtime instance provider system to resolve a provider supporting
+    /// <see cref="IAiRuntimeScaleOutProvider" />.
+    ///
+    /// When a scale-out request is fulfilled by a provider, the linked shared run is
+    /// requeued before the scale-out request is marked fulfilled. This prevents a
+    /// false fulfilled state where the runtime exists but the linked shared run
+    /// remains stuck in ScaleOutRequested.
+    /// </remarks>
+    public sealed class AiRuntimeScaleOutRequestWatcherHostedService : BackgroundService
     {
-        private const string ExpectedTenantId = "tenant-id-xxxx";
-        private const string ExpectedTenantGroupId = "tenant-group-id-xxxx";
+        private const string RuntimeScaleOutRequestWatchOperation = "runtime-scale-out-request-watch";
+
+        private readonly IAiRuntimeScaleOutRequestStore store;
+        private readonly IAiRuntimeScaleOutProviderSelector providerSelector;
+        private readonly IAiScaleOutFulfilledRunRequeueService fulfilledRunRequeueService;
+        private readonly IAiControlPlaneIdResolver controlPlaneIdResolver;
+        private readonly AiRuntimeScaleOutRequestWatcherOptions options;
+        private readonly IAiControlPlaneObserver observer;
 
         /// <summary>
-        /// Verifies that a fulfilled scale-out request records started and succeeded events.
-        /// </summary>
-        /// <returns>A task representing the asynchronous test operation.</returns>
-        [Fact]
-        public async Task ProcessCycleAsync_Should_Record_Started_And_Succeeded_Events_When_Request_Is_Fulfilled_And_Requeued()
-        {
-            var observer = new CapturingControlPlaneObserver();
-            var store = new CapturingScaleOutRequestStore(new[] { CreateRecord() });
-            var requeueService = new CapturingScaleOutFulfilledRunRequeueService();
-            var service = CreateService(
-                store,
-                new SuccessfulScaleOutProviderSelector("runtime-1"),
-                requeueService,
-                observer);
-
-            await service
-                .ProcessCycleAsync(CancellationToken.None)
-                .ConfigureAwait(false);
-
-            Assert.Equal(new[] { "scale-out-shared-run-1" }, store.ObservedRequestIds);
-            Assert.Equal(new[] { "scale-out-shared-run-1" }, store.FulfilledRequestIds);
-            Assert.Equal(new[] { "runtime-1" }, store.FulfilledRuntimeInstanceIds);
-            Assert.Equal(new[] { "scale-out-shared-run-1" }, requeueService.RequeuedRequestIds);
-            Assert.Equal(new[] { "runtime-1" }, requeueService.RequeuedRuntimeInstanceIds);
-            Assert.Equal(2, observer.Events.Count);
-            AssertStartedEvent(observer.Events[0]);
-            Assert.Equal(AiControlPlaneEventType.OperationCompleted, observer.Events[1].EventType);
-            Assert.Equal(AiControlPlaneArea.Scaling, observer.Events[1].Area);
-            Assert.Equal("runtime-scale-out-request-watch", observer.Events[1].Operation);
-            Assert.Equal(AiControlPlaneOperationOutcome.Succeeded, observer.Events[1].Outcome);
-            Assert.Null(observer.Events[1].FailureReason);
-            Assert.Equal("shared-run-1", observer.Events[1].Correlation.RunId);
-            Assert.Equal("pipeline-1", observer.Events[1].Correlation.PipelineKey);
-            Assert.Equal("runtime-1", observer.Events[1].Correlation.RuntimeInstanceId);
-            Assert.Equal("scale-out-shared-run-1", observer.Events[1].Properties["requestId"]?.ToString());
-            Assert.Equal("control-plane-1", observer.Events[1].Properties["controlPlaneId"]?.ToString());
-            Assert.Equal("http", observer.Events[1].Properties["providerHint"]?.ToString());
-            Assert.Equal(ExpectedTenantId, observer.Events[1].Properties["tenantId"]?.ToString());
-            Assert.Equal(ExpectedTenantGroupId, observer.Events[1].Properties["tenantGroupId"]?.ToString());
-            Assert.Equal("runtime-1", observer.Events[1].Properties["runtimeInstanceId"]?.ToString());
-        }
-
-        /// <summary>
-        /// Verifies that a provider rejection records started and denied events.
-        /// </summary>
-        /// <returns>A task representing the asynchronous test operation.</returns>
-        [Fact]
-        public async Task ProcessCycleAsync_Should_Record_Denied_Event_When_Provider_Rejects_Request()
-        {
-            var observer = new CapturingControlPlaneObserver();
-            var store = new CapturingScaleOutRequestStore(new[] { CreateRecord() });
-            var service = CreateService(
-                store,
-                new RejectedScaleOutProviderSelector(),
-                new CapturingScaleOutFulfilledRunRequeueService(),
-                observer);
-
-            await service
-                .ProcessCycleAsync(CancellationToken.None)
-                .ConfigureAwait(false);
-
-            Assert.Equal(new[] { "scale-out-shared-run-1" }, store.ObservedRequestIds);
-            Assert.Equal(new[] { "scale-out-shared-run-1" }, store.RejectedRequestIds);
-            Assert.Empty(store.FulfilledRequestIds);
-            Assert.Equal(2, observer.Events.Count);
-            AssertStartedEvent(observer.Events[0]);
-            Assert.Equal(AiControlPlaneEventType.OperationFailed, observer.Events[1].EventType);
-            Assert.Equal(AiControlPlaneOperationOutcome.Denied, observer.Events[1].Outcome);
-            Assert.Equal("provider rejected", observer.Events[1].FailureReason);
-            Assert.Equal("scale-out-shared-run-1", observer.Events[1].Properties["requestId"]?.ToString());
-            Assert.Equal("provider rejected", observer.Events[1].Properties["providerFailureReason"]?.ToString());
-        }
-
-        /// <summary>
-        /// Verifies that a provider success without runtime instance id records completed-with-issues.
-        /// </summary>
-        /// <returns>A task representing the asynchronous test operation.</returns>
-        [Fact]
-        public async Task ProcessCycleAsync_Should_Record_CompletedWithIssues_Event_When_Provider_Succeeds_Without_RuntimeInstanceId()
-        {
-            var observer = new CapturingControlPlaneObserver();
-            var store = new CapturingScaleOutRequestStore(new[] { CreateRecord() });
-            var service = CreateService(
-                store,
-                new SuccessfulScaleOutProviderSelector(null),
-                new CapturingScaleOutFulfilledRunRequeueService(),
-                observer);
-
-            await service
-                .ProcessCycleAsync(CancellationToken.None)
-                .ConfigureAwait(false);
-
-            Assert.Equal(new[] { "scale-out-shared-run-1" }, store.ObservedRequestIds);
-            Assert.Equal(new[] { "scale-out-shared-run-1" }, store.RejectedRequestIds);
-            Assert.Empty(store.FulfilledRequestIds);
-            Assert.Equal(2, observer.Events.Count);
-            AssertStartedEvent(observer.Events[0]);
-            Assert.Equal(AiControlPlaneEventType.OperationFailed, observer.Events[1].EventType);
-            Assert.Equal(AiControlPlaneOperationOutcome.CompletedWithIssues, observer.Events[1].Outcome);
-            Assert.Equal(
-                "Scale-out provider returned success without runtime instance id.",
-                observer.Events[1].FailureReason);
-            Assert.Equal("scale-out-shared-run-1", observer.Events[1].Properties["requestId"]?.ToString());
-        }
-
-        /// <summary>
-        /// Verifies that provider exceptions record failed events when provider failure rejection is enabled.
-        /// </summary>
-        /// <returns>A task representing the asynchronous test operation.</returns>
-        [Fact]
-        public async Task ProcessCycleAsync_Should_Record_Failed_Event_When_Provider_Throws()
-        {
-            var observer = new CapturingControlPlaneObserver();
-            var store = new CapturingScaleOutRequestStore(new[] { CreateRecord() });
-            var service = CreateService(
-                store,
-                new ThrowingScaleOutProviderSelector(),
-                new CapturingScaleOutFulfilledRunRequeueService(),
-                observer);
-
-            await service
-                .ProcessCycleAsync(CancellationToken.None)
-                .ConfigureAwait(false);
-
-            Assert.Equal(new[] { "scale-out-shared-run-1" }, store.ObservedRequestIds);
-            Assert.Equal(new[] { "scale-out-shared-run-1" }, store.RejectedRequestIds);
-            Assert.Equal(2, observer.Events.Count);
-            AssertStartedEvent(observer.Events[0]);
-            Assert.Equal(AiControlPlaneEventType.OperationFailed, observer.Events[1].EventType);
-            Assert.Equal(AiControlPlaneOperationOutcome.Failed, observer.Events[1].Outcome);
-            Assert.Equal(nameof(InvalidOperationException), observer.Events[1].FailureReason);
-            Assert.Equal("provider exploded", observer.Events[1].Properties["exception.message"]?.ToString());
-        }
-
-        /// <summary>
-        /// Verifies that fulfilled scale-out watcher events are recorded to the decision ledger.
-        /// </summary>
-        /// <returns>A task representing the asynchronous test operation.</returns>
-        [Fact]
-        public async Task ProcessCycleAsync_Should_Record_Succeeded_ScaleOutWatch_ControlPlane_Events_To_Ledger()
-        {
-            var ledger = new CapturingDecisionLedgerRecorder();
-            var observability = new FakeRuntimeObservability(ledger);
-            var observer = new CompositeAiControlPlaneObserver(
-                new IAiControlPlaneEventSink[]
-                {
-                    new RuntimeObservabilityAiControlPlaneEventSink(observability)
-                });
-            var service = CreateService(
-                new CapturingScaleOutRequestStore(new[] { CreateRecord() }),
-                new SuccessfulScaleOutProviderSelector("runtime-1"),
-                new CapturingScaleOutFulfilledRunRequeueService(),
-                observer);
-
-            await service
-                .ProcessCycleAsync(CancellationToken.None)
-                .ConfigureAwait(false);
-
-            Assert.Equal(2, ledger.Entries.Count);
-            Assert.Equal(AiDecisionLedgerCategory.Scaling, ledger.Entries[0].Category);
-            Assert.Equal(AiDecisionLedgerOutcome.Started, ledger.Entries[0].Outcome);
-            Assert.Equal("control.scaling.runtime-scale-out-request-watch.operationstarted", ledger.Entries[0].EventType);
-            Assert.Equal(AiDecisionLedgerCategory.Scaling, ledger.Entries[1].Category);
-            Assert.Equal(AiDecisionLedgerOutcome.Succeeded, ledger.Entries[1].Outcome);
-            Assert.Equal("control.scaling.runtime-scale-out-request-watch.succeeded", ledger.Entries[1].EventType);
-            Assert.Equal("shared-run-1", ledger.Entries[1].Context.RunId);
-            Assert.Equal("runtime-1", ledger.Entries[1].Context.RuntimeInstanceId);
-            Assert.Equal(ExpectedTenantId, ledger.Entries[1].Metadata!["tenant.id"]);
-            Assert.Equal(ExpectedTenantGroupId, ledger.Entries[1].Metadata!["tenantGroupId"]);
-            Assert.Equal("scale-out-shared-run-1", ledger.Entries[1].Metadata!["requestId"]);
-            Assert.Equal("runtime-1", ledger.Entries[1].Metadata!["runtimeInstanceId"]);
-        }
-
-        /// <summary>
-        /// Asserts the common scale-out watcher started event shape.
-        /// </summary>
-        /// <param name="controlPlaneEvent">The captured control-plane event.</param>
-        private static void AssertStartedEvent(
-            AiControlPlaneEvent controlPlaneEvent)
-        {
-            Assert.Equal(AiControlPlaneEventType.OperationStarted, controlPlaneEvent.EventType);
-            Assert.Equal(AiControlPlaneArea.Scaling, controlPlaneEvent.Area);
-            Assert.Equal("runtime-scale-out-request-watch", controlPlaneEvent.Operation);
-            Assert.Null(controlPlaneEvent.Outcome);
-            Assert.Equal("shared-run-1", controlPlaneEvent.Correlation.RunId);
-            Assert.Equal("pipeline-1", controlPlaneEvent.Correlation.PipelineKey);
-            Assert.Equal("scale-out-shared-run-1", controlPlaneEvent.Properties["requestId"]?.ToString());
-        }
-
-        /// <summary>
-        /// Creates the watcher service.
+        /// Initializes a new instance of the <see cref="AiRuntimeScaleOutRequestWatcherHostedService" /> class.
         /// </summary>
         /// <param name="store">The scale-out request store.</param>
-        /// <param name="providerSelector">The provider selector.</param>
-        /// <param name="requeueService">The fulfilled run requeue service.</param>
-        /// <param name="observer">The control-plane observer.</param>
-        /// <returns>The watcher service.</returns>
-        private static AiRuntimeScaleOutRequestWatcherHostedService CreateService(
+        /// <param name="providerSelector">The scale-out provider selector.</param>
+        /// <param name="fulfilledRunRequeueService">The service used to requeue shared runs after scale-out fulfillment.</param>
+        /// <param name="controlPlaneIdResolver">The control-plane id resolver.</param>
+        /// <param name="options">The watcher options.</param>
+        public AiRuntimeScaleOutRequestWatcherHostedService(
             IAiRuntimeScaleOutRequestStore store,
             IAiRuntimeScaleOutProviderSelector providerSelector,
-            IAiScaleOutFulfilledRunRequeueService requeueService,
-            IAiControlPlaneObserver observer)
-        {
-            return new AiRuntimeScaleOutRequestWatcherHostedService(
+            IAiScaleOutFulfilledRunRequeueService fulfilledRunRequeueService,
+            IAiControlPlaneIdResolver controlPlaneIdResolver,
+            IOptions<AiRuntimeScaleOutRequestWatcherOptions> options)
+            : this(
                 store,
                 providerSelector,
-                requeueService,
-                new FixedControlPlaneIdResolver("control-plane-1"),
-                Options.Create(
-                    new AiRuntimeScaleOutRequestWatcherOptions
-                    {
-                        Enabled = true,
-                        ControlPlaneId = "control-plane-1",
-                        WatcherId = "watcher-1",
-                        Interval = TimeSpan.FromMilliseconds(10),
-                        MaxRequestsPerCycle = 10,
-                        RejectOnProviderFailure = true,
-                        IgnoreWhenControlPlaneIdMissing = false
-                    }),
-                observer);
+                fulfilledRunRequeueService,
+                controlPlaneIdResolver,
+                options,
+                new NoopAiControlPlaneObserver())
+        {
         }
 
         /// <summary>
-        /// Creates a scale-out request record.
+        /// Initializes a new instance of the <see cref="AiRuntimeScaleOutRequestWatcherHostedService" /> class.
         /// </summary>
-        /// <returns>The scale-out request record.</returns>
-        private static AiRuntimeScaleOutRequestRecord CreateRecord()
+        /// <param name="store">The scale-out request store.</param>
+        /// <param name="providerSelector">The scale-out provider selector.</param>
+        /// <param name="fulfilledRunRequeueService">The service used to requeue shared runs after scale-out fulfillment.</param>
+        /// <param name="controlPlaneIdResolver">The control-plane id resolver.</param>
+        /// <param name="options">The watcher options.</param>
+        /// <param name="observer">The control-plane observer.</param>
+        public AiRuntimeScaleOutRequestWatcherHostedService(
+            IAiRuntimeScaleOutRequestStore store,
+            IAiRuntimeScaleOutProviderSelector providerSelector,
+            IAiScaleOutFulfilledRunRequeueService fulfilledRunRequeueService,
+            IAiControlPlaneIdResolver controlPlaneIdResolver,
+            IOptions<AiRuntimeScaleOutRequestWatcherOptions> options,
+            IAiControlPlaneObserver observer)
         {
-            var executionContextSnapshot = AiExecutionContextSnapshotTestFactory.Create();
+            this.store = store ?? throw new ArgumentNullException(nameof(store));
+            this.providerSelector = providerSelector ?? throw new ArgumentNullException(nameof(providerSelector));
+            this.fulfilledRunRequeueService = fulfilledRunRequeueService ?? throw new ArgumentNullException(nameof(fulfilledRunRequeueService));
+            this.controlPlaneIdResolver = controlPlaneIdResolver ?? throw new ArgumentNullException(nameof(controlPlaneIdResolver));
+            this.options = options?.Value ?? throw new ArgumentNullException(nameof(options));
+            this.observer = observer ?? throw new ArgumentNullException(nameof(observer));
+        }
 
-            return new AiRuntimeScaleOutRequestRecord
+        /// <inheritdoc />
+        protected override async Task ExecuteAsync(
+            CancellationToken stoppingToken)
+        {
+            if (!this.options.Enabled)
             {
-                RequestId = "scale-out-shared-run-1",
-                ControlPlaneId = "control-plane-1",
-                SharedRunId = "shared-run-1",
-                ExecutionContextSnapshot = executionContextSnapshot,
-                TenantId = ExpectedTenantId,
-                TenantGroupId = ExpectedTenantGroupId,
-                PipelineKey = "pipeline-1",
-                IsolationMode = AiRuntimeInstanceIsolationMode.Dedicated,
-                PreferDedicatedCapacity = true,
-                AllowSharedFallback = false,
-                MaxRuntimeInstances = 3,
-                RuntimeInstanceIdPrefix = "runtime",
-                WorkerCountPerInstance = 2,
-                MaxConcurrentRunsPerInstance = 2,
-                LocalQueueCapacity = 100,
-                Status = AiRuntimeScaleOutRequestStatus.Pending,
-                Reason = "No runtime instance can currently accept the run and scale-out is allowed.",
-                VisibleInstanceCount = 0,
-                AvailableInstanceCount = 0,
-                CurrentInstanceCount = 0,
-                MaxInstanceCount = 3,
-                RequestedTargetInstanceCount = 1,
-                ProviderHint = "http",
-                RequestedBy = "unit-test",
-                Source = "unit-test",
-                CorrelationId = "correlation-1",
-                CreatedAtUtc = DateTimeOffset.UtcNow,
-                Metadata = new Dictionary<string, string>
+                return;
+            }
+
+            while (!stoppingToken.IsCancellationRequested)
+            {
+                await this.ProcessCycleAsync(
+                        stoppingToken)
+                    .ConfigureAwait(false);
+
+                await Task
+                    .Delay(
+                        this.options.Interval,
+                        stoppingToken)
+                    .ConfigureAwait(false);
+            }
+        }
+
+        /// <summary>
+        /// Processes one watcher cycle.
+        /// </summary>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <returns>A task representing the asynchronous operation.</returns>
+        public async Task ProcessCycleAsync(
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var controlPlaneId =
+                await this.ResolveControlPlaneIdAsync(
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+            if (string.IsNullOrWhiteSpace(controlPlaneId))
+            {
+                if (this.options.IgnoreWhenControlPlaneIdMissing)
                 {
-                    ["controlPlaneId"] = "control-plane-1",
-                    ["tenantId"] = ExpectedTenantId,
-                    ["tenantGroupId"] = ExpectedTenantGroupId,
-                    ["pipelineKey"] = "pipeline-1",
-                    ["providerHint"] = "http"
+                    return;
                 }
-            };
-        }
 
-        /// <summary>
-        /// Captures control-plane events.
-        /// </summary>
-        private sealed class CapturingControlPlaneObserver : IAiControlPlaneObserver
-        {
-            /// <summary>
-            /// Gets the captured control-plane events.
-            /// </summary>
-            public List<AiControlPlaneEvent> Events { get; } = new();
+                throw new InvalidOperationException(
+                    "Scale-out request watcher control-plane id cannot be resolved.");
+            }
 
-            /// <inheritdoc />
-            public Task RecordAsync(
-                AiControlPlaneEvent controlPlaneEvent,
-                CancellationToken cancellationToken = default)
+            var pendingRequests =
+                await this.store
+                    .ListPendingAsync(
+                        new AiRuntimeScaleOutRequestQuery
+                        {
+                            ControlPlaneId = controlPlaneId,
+                            MaxResults = this.options.MaxRequestsPerCycle
+                        },
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+            foreach (var request in pendingRequests)
             {
-                this.Events.Add(controlPlaneEvent);
-                return Task.CompletedTask;
+                cancellationToken.ThrowIfCancellationRequested();
+
+                await this.ProcessRequestAsync(
+                        request,
+                        cancellationToken)
+                    .ConfigureAwait(false);
             }
         }
 
         /// <summary>
-        /// Control-plane id resolver that returns a fixed id.
+        /// Processes one pending scale-out request.
         /// </summary>
-        private sealed class FixedControlPlaneIdResolver : IAiControlPlaneIdResolver
+        /// <param name="request">The pending scale-out request.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <returns>A task representing the asynchronous operation.</returns>
+        private async Task ProcessRequestAsync(
+            AiRuntimeScaleOutRequestRecord request,
+            CancellationToken cancellationToken)
         {
-            private readonly string? controlPlaneId;
+            ArgumentNullException.ThrowIfNull(request);
 
-            /// <summary>
-            /// Initializes a new instance of the <see cref="FixedControlPlaneIdResolver"/> class.
-            /// </summary>
-            /// <param name="controlPlaneId">The control-plane identifier.</param>
-            public FixedControlPlaneIdResolver(string? controlPlaneId)
-            {
-                this.controlPlaneId = controlPlaneId;
-            }
+            var startedAtUtc = DateTimeOffset.UtcNow;
 
-            /// <inheritdoc />
-            public Task<string?> ResolveAsync(
-                CancellationToken cancellationToken = default)
-            {
-                return Task.FromResult(this.controlPlaneId);
-            }
-        }
-
-        /// <summary>
-        /// Scale-out request store that captures lifecycle transitions.
-        /// </summary>
-        private sealed class CapturingScaleOutRequestStore : IAiRuntimeScaleOutRequestStore
-        {
-            private readonly IReadOnlyCollection<AiRuntimeScaleOutRequestRecord> pendingRequests;
-
-            /// <summary>
-            /// Initializes a new instance of the <see cref="CapturingScaleOutRequestStore"/> class.
-            /// </summary>
-            /// <param name="pendingRequests">The pending requests.</param>
-            public CapturingScaleOutRequestStore(
-                IReadOnlyCollection<AiRuntimeScaleOutRequestRecord> pendingRequests)
-            {
-                this.pendingRequests = pendingRequests;
-            }
-
-            /// <summary>
-            /// Gets the observed request identifiers.
-            /// </summary>
-            public List<string> ObservedRequestIds { get; } = new();
-
-            /// <summary>
-            /// Gets the fulfilled request identifiers.
-            /// </summary>
-            public List<string> FulfilledRequestIds { get; } = new();
-
-            /// <summary>
-            /// Gets the fulfilled runtime instance identifiers.
-            /// </summary>
-            public List<string?> FulfilledRuntimeInstanceIds { get; } = new();
-
-            /// <summary>
-            /// Gets the rejected request identifiers.
-            /// </summary>
-            public List<string> RejectedRequestIds { get; } = new();
-
-            /// <summary>
-            /// Gets the rejection reasons.
-            /// </summary>
-            public List<string> RejectionReasons { get; } = new();
-
-            /// <inheritdoc />
-            public Task<AiRuntimeScaleOutRequestRecord> CreateAsync(
-                AiRuntimeScaleOutRequestRecord request,
-                CancellationToken cancellationToken = default)
-            {
-                return Task.FromResult(request);
-            }
-
-            /// <inheritdoc />
-            public Task<AiRuntimeScaleOutRequestRecord?> GetAsync(
-                string requestId,
-                CancellationToken cancellationToken = default)
-            {
-                foreach (var request in this.pendingRequests)
-                {
-                    if (string.Equals(request.RequestId, requestId, StringComparison.Ordinal))
+            await this.RecordScaleOutWatcherEventAsync(
+                    AiControlPlaneEventType.OperationStarted,
+                    request,
+                    null,
+                    null,
+                    null,
+                    null,
+                    new Dictionary<string, object?>
                     {
-                        return Task.FromResult<AiRuntimeScaleOutRequestRecord?>(request);
+                        ["watcherId"] = this.options.WatcherId,
+                        ["rejectOnProviderFailure"] = this.options.RejectOnProviderFailure,
+                        ["maxRequestsPerCycle"] = this.options.MaxRequestsPerCycle
+                    },
+                    cancellationToken)
+                .ConfigureAwait(false);
+
+            try
+            {
+                var observed =
+                    await this.store
+                        .MarkObservedAsync(
+                            request.RequestId,
+                            this.options.WatcherId,
+                            cancellationToken)
+                        .ConfigureAwait(false);
+
+                if (!observed)
+                {
+                    await this.RecordScaleOutWatcherEventAsync(
+                            AiControlPlaneEventType.OperationFailed,
+                            request,
+                            AiControlPlaneOperationOutcome.Denied,
+                            "scale-out-request-not-observed",
+                            null,
+                            CalculateDurationMs(startedAtUtc, DateTimeOffset.UtcNow),
+                            new Dictionary<string, object?>
+                            {
+                                ["watcherId"] = this.options.WatcherId,
+                                ["observed"] = false
+                            },
+                            cancellationToken)
+                        .ConfigureAwait(false);
+
+                    return;
+                }
+
+                var providerRequest =
+                    await this.CreateProviderRequestAsync(
+                            request,
+                            cancellationToken)
+                        .ConfigureAwait(false);
+
+                var providerResult =
+                    await this.providerSelector
+                        .RequestScaleOutAsync(
+                            providerRequest,
+                            cancellationToken)
+                        .ConfigureAwait(false);
+
+                if (providerResult.Success)
+                {
+                    var fulfilledRuntimeInstanceId =
+                        providerResult.RuntimeInstanceId;
+
+                    if (string.IsNullOrWhiteSpace(fulfilledRuntimeInstanceId))
+                    {
+                        var rejectionReason =
+                            providerResult.FailureReason ??
+                            providerResult.Message ??
+                            "Scale-out provider returned success without a fulfilled runtime instance id.";
+
+                        await this.store
+                            .MarkRejectedAsync(
+                                request.RequestId,
+                                this.options.WatcherId,
+                                rejectionReason,
+                                cancellationToken)
+                            .ConfigureAwait(false);
+
+                        await this.RecordScaleOutWatcherEventAsync(
+                                AiControlPlaneEventType.OperationFailed,
+                                request,
+                                AiControlPlaneOperationOutcome.CompletedWithIssues,
+                                rejectionReason,
+                                null,
+                                CalculateDurationMs(startedAtUtc, DateTimeOffset.UtcNow),
+                                new Dictionary<string, object?>
+                                {
+                                    ["watcherId"] = this.options.WatcherId,
+                                    ["observed"] = true,
+                                    ["providerSuccess"] = true,
+                                    ["providerRejected"] = providerResult.Rejected,
+                                    ["providerMessage"] = providerResult.Message,
+                                    ["providerFailureReason"] = providerResult.FailureReason,
+                                    ["storeMarkedRejected"] = true,
+                                    ["storeMarkedFulfilled"] = false,
+                                    ["requeueSucceeded"] = false
+                                },
+                                cancellationToken)
+                            .ConfigureAwait(false);
+
+                        return;
                     }
+
+                    var requeueResult =
+                        await this.fulfilledRunRequeueService
+                            .RequeueAsync(
+                                request,
+                                fulfilledRuntimeInstanceId,
+                                cancellationToken)
+                            .ConfigureAwait(false);
+
+                    if (requeueResult.LinkedSharedRunFound &&
+                        !requeueResult.RequeueSucceeded)
+                    {
+                        var failureReason =
+                            requeueResult.Reason ??
+                            $"Scale-out request was fulfilled by runtime '{fulfilledRuntimeInstanceId}', but linked shared run '{request.SharedRunId}' was not requeued.";
+
+                        await this.store
+                            .MarkRejectedAsync(
+                                request.RequestId,
+                                this.options.WatcherId,
+                                failureReason,
+                                cancellationToken)
+                            .ConfigureAwait(false);
+
+                        await this.RecordScaleOutWatcherEventAsync(
+                                AiControlPlaneEventType.OperationFailed,
+                                request,
+                                AiControlPlaneOperationOutcome.CompletedWithIssues,
+                                failureReason,
+                                fulfilledRuntimeInstanceId,
+                                CalculateDurationMs(startedAtUtc, DateTimeOffset.UtcNow),
+                                new Dictionary<string, object?>
+                                {
+                                    ["watcherId"] = this.options.WatcherId,
+                                    ["observed"] = true,
+                                    ["providerSuccess"] = true,
+                                    ["providerRejected"] = providerResult.Rejected,
+                                    ["providerMessage"] = providerResult.Message,
+                                    ["providerFailureReason"] = providerResult.FailureReason,
+                                    ["storeMarkedFulfilled"] = false,
+                                    ["storeMarkedRejected"] = true,
+                                    ["linkedSharedRunFound"] = requeueResult.LinkedSharedRunFound,
+                                    ["requeueSucceeded"] = requeueResult.RequeueSucceeded,
+                                    ["requeueCandidateCount"] = requeueResult.CandidateCount,
+                                    ["requeueReason"] = requeueResult.Reason
+                                },
+                                cancellationToken)
+                            .ConfigureAwait(false);
+
+                        return;
+                    }
+
+                    await this.store
+                        .MarkFulfilledAsync(
+                            request.RequestId,
+                            this.options.WatcherId,
+                            fulfilledRuntimeInstanceId,
+                            cancellationToken)
+                        .ConfigureAwait(false);
+
+                    await this.RecordScaleOutWatcherEventAsync(
+                            AiControlPlaneEventType.OperationCompleted,
+                            request,
+                            AiControlPlaneOperationOutcome.Succeeded,
+                            null,
+                            fulfilledRuntimeInstanceId,
+                            CalculateDurationMs(startedAtUtc, DateTimeOffset.UtcNow),
+                            new Dictionary<string, object?>
+                            {
+                                ["watcherId"] = this.options.WatcherId,
+                                ["observed"] = true,
+                                ["providerSuccess"] = true,
+                                ["providerRejected"] = providerResult.Rejected,
+                                ["providerMessage"] = providerResult.Message,
+                                ["providerFailureReason"] = providerResult.FailureReason,
+                                ["storeMarkedFulfilled"] = true,
+                                ["requeueSucceeded"] = true
+                            },
+                            cancellationToken)
+                        .ConfigureAwait(false);
+
+                    return;
                 }
 
-                return Task.FromResult<AiRuntimeScaleOutRequestRecord?>(null);
-            }
+                if (this.options.RejectOnProviderFailure || providerResult.Rejected)
+                {
+                    var rejectionReason =
+                        providerResult.FailureReason ??
+                        providerResult.Message ??
+                        "Scale-out provider did not fulfill the request.";
 
-            /// <inheritdoc />
-            public Task<IReadOnlyCollection<AiRuntimeScaleOutRequestRecord>> ListAsync(
-                AiRuntimeScaleOutRequestQuery query,
-                CancellationToken cancellationToken = default)
-            {
-                return Task.FromResult(this.pendingRequests);
-            }
+                    await this.store
+                        .MarkRejectedAsync(
+                            request.RequestId,
+                            this.options.WatcherId,
+                            rejectionReason,
+                            cancellationToken)
+                        .ConfigureAwait(false);
 
-            /// <inheritdoc />
-            public Task<IReadOnlyCollection<AiRuntimeScaleOutRequestRecord>> ListPendingAsync(
-                AiRuntimeScaleOutRequestQuery query,
-                CancellationToken cancellationToken = default)
-            {
-                return Task.FromResult(this.pendingRequests);
+                    await this.RecordScaleOutWatcherEventAsync(
+                            AiControlPlaneEventType.OperationFailed,
+                            request,
+                            AiControlPlaneOperationOutcome.Denied,
+                            rejectionReason,
+                            null,
+                            CalculateDurationMs(startedAtUtc, DateTimeOffset.UtcNow),
+                            new Dictionary<string, object?>
+                            {
+                                ["watcherId"] = this.options.WatcherId,
+                                ["observed"] = true,
+                                ["providerSuccess"] = false,
+                                ["providerRejected"] = providerResult.Rejected,
+                                ["providerMessage"] = providerResult.Message,
+                                ["providerFailureReason"] = providerResult.FailureReason,
+                                ["storeMarkedRejected"] = true,
+                                ["storeMarkedFulfilled"] = false,
+                                ["requeueSucceeded"] = false
+                            },
+                            cancellationToken)
+                        .ConfigureAwait(false);
+                }
+                else
+                {
+                    await this.RecordScaleOutWatcherEventAsync(
+                            AiControlPlaneEventType.OperationCompleted,
+                            request,
+                            AiControlPlaneOperationOutcome.CompletedWithIssues,
+                            providerResult.FailureReason ?? providerResult.Message ?? "Scale-out provider did not fulfill the request.",
+                            null,
+                            CalculateDurationMs(startedAtUtc, DateTimeOffset.UtcNow),
+                            new Dictionary<string, object?>
+                            {
+                                ["watcherId"] = this.options.WatcherId,
+                                ["observed"] = true,
+                                ["providerSuccess"] = false,
+                                ["providerRejected"] = providerResult.Rejected,
+                                ["providerMessage"] = providerResult.Message,
+                                ["providerFailureReason"] = providerResult.FailureReason,
+                                ["storeMarkedRejected"] = false,
+                                ["storeMarkedFulfilled"] = false,
+                                ["requeueSucceeded"] = false
+                            },
+                            cancellationToken)
+                        .ConfigureAwait(false);
+                }
             }
-
-            /// <inheritdoc />
-            public Task<bool> MarkObservedAsync(
-                string requestId,
-                string observedBy,
-                CancellationToken cancellationToken = default)
+            catch (Exception exception) when (exception is not OperationCanceledException)
             {
-                this.ObservedRequestIds.Add(requestId);
-                return Task.FromResult(true);
-            }
+                if (this.options.RejectOnProviderFailure)
+                {
+                    await this.store
+                        .MarkRejectedAsync(
+                            request.RequestId,
+                            this.options.WatcherId,
+                            exception.Message,
+                            cancellationToken)
+                        .ConfigureAwait(false);
+                }
 
-            /// <inheritdoc />
-            public Task<bool> MarkFulfilledAsync(
-                string requestId,
-                string fulfilledBy,
-                string? runtimeInstanceId = null,
-                CancellationToken cancellationToken = default)
-            {
-                this.FulfilledRequestIds.Add(requestId);
-                this.FulfilledRuntimeInstanceIds.Add(runtimeInstanceId);
-                return Task.FromResult(true);
-            }
+                await this.RecordScaleOutWatcherEventAsync(
+                        AiControlPlaneEventType.OperationFailed,
+                        request,
+                        AiControlPlaneOperationOutcome.Failed,
+                        exception.GetType().Name,
+                        null,
+                        CalculateDurationMs(startedAtUtc, DateTimeOffset.UtcNow),
+                        new Dictionary<string, object?>
+                        {
+                            ["watcherId"] = this.options.WatcherId,
+                            ["rejectOnProviderFailure"] = this.options.RejectOnProviderFailure,
+                            ["storeMarkedRejected"] = this.options.RejectOnProviderFailure,
+                            ["storeMarkedFulfilled"] = false,
+                            ["exception.type"] = exception.GetType().FullName,
+                            ["exception.message"] = exception.Message,
+                            ["requeueSucceeded"] = false
+                        },
+                        cancellationToken)
+                    .ConfigureAwait(false);
 
-            /// <inheritdoc />
-            public Task<bool> MarkRejectedAsync(
-                string requestId,
-                string rejectedBy,
-                string reason,
-                CancellationToken cancellationToken = default)
-            {
-                this.RejectedRequestIds.Add(requestId);
-                this.RejectionReasons.Add(reason);
-                return Task.FromResult(true);
-            }
-
-            /// <inheritdoc />
-            public Task<bool> MarkExpiredAsync(
-                string requestId,
-                CancellationToken cancellationToken = default)
-            {
-                return Task.FromResult(false);
-            }
-
-            /// <inheritdoc />
-            public Task<bool> MarkCancelledAsync(
-                string requestId,
-                string cancelledBy,
-                CancellationToken cancellationToken = default)
-            {
-                return Task.FromResult(false);
+                if (!this.options.RejectOnProviderFailure)
+                {
+                    throw;
+                }
             }
         }
 
         /// <summary>
-        /// Scale-out provider selector that returns success.
+        /// Records a scale-out watcher control-plane event.
         /// </summary>
-        private sealed class SuccessfulScaleOutProviderSelector : IAiRuntimeScaleOutProviderSelector
+        /// <param name="eventType">The control-plane event type.</param>
+        /// <param name="request">The persisted scale-out request.</param>
+        /// <param name="outcome">The optional operation outcome.</param>
+        /// <param name="failureReason">The optional failure reason.</param>
+        /// <param name="runtimeInstanceId">The optional fulfilled runtime instance identifier.</param>
+        /// <param name="durationMs">The optional duration in milliseconds.</param>
+        /// <param name="properties">The event properties.</param>
+        /// <param name="cancellationToken">A token used to cancel the operation.</param>
+        /// <returns>A task that completes when the event has been recorded.</returns>
+        private async Task RecordScaleOutWatcherEventAsync(
+            AiControlPlaneEventType eventType,
+            AiRuntimeScaleOutRequestRecord request,
+            AiControlPlaneOperationOutcome? outcome,
+            string? failureReason,
+            string? runtimeInstanceId,
+            long? durationMs,
+            IReadOnlyDictionary<string, object?>? properties,
+            CancellationToken cancellationToken)
         {
-            private readonly string? runtimeInstanceId;
-
-            /// <summary>
-            /// Initializes a new instance of the <see cref="SuccessfulScaleOutProviderSelector"/> class.
-            /// </summary>
-            /// <param name="runtimeInstanceId">The runtime instance identifier.</param>
-            public SuccessfulScaleOutProviderSelector(string? runtimeInstanceId)
+            try
             {
-                this.runtimeInstanceId = runtimeInstanceId;
+                await this.observer.RecordAsync(
+                        new AiControlPlaneEvent
+                        {
+                            EventType = eventType,
+                            Area = AiControlPlaneArea.Scaling,
+                            Operation = RuntimeScaleOutRequestWatchOperation,
+                            Outcome = outcome,
+                            FailureReason = failureReason,
+                            DurationMs = durationMs,
+                            Correlation = new AiRuntimeExecutionCorrelationContext
+                            {
+                                CorrelationId = string.IsNullOrWhiteSpace(request.CorrelationId)
+                                    ? request.RequestId
+                                    : request.CorrelationId,
+                                RunId = request.SharedRunId,
+                                RuntimeInstanceId = runtimeInstanceId,
+                                PipelineKey = request.PipelineKey
+                            },
+                            Properties = MergeEventProperties(
+                                properties,
+                                BuildScaleOutWatcherProperties(
+                                    request,
+                                    runtimeInstanceId,
+                                    durationMs))
+                        },
+                        cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            catch
+            {
+                // Control-plane observability must not break scale-out request watching.
+            }
+        }
+
+        /// <summary>
+        /// Builds scale-out watcher control-plane event properties.
+        /// </summary>
+        /// <param name="request">The persisted scale-out request.</param>
+        /// <param name="runtimeInstanceId">The optional fulfilled runtime instance identifier.</param>
+        /// <param name="durationMs">The optional duration in milliseconds.</param>
+        /// <returns>The event properties.</returns>
+        private static IReadOnlyDictionary<string, object?> BuildScaleOutWatcherProperties(
+            AiRuntimeScaleOutRequestRecord request,
+            string? runtimeInstanceId,
+            long? durationMs)
+        {
+            var properties = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["requestId"] = request.RequestId,
+                ["scaleOutRequestId"] = request.RequestId,
+                ["sharedRunId"] = request.SharedRunId,
+                ["controlPlaneId"] = request.ControlPlaneId,
+                ["tenantId"] = request.TenantId,
+                ["tenantGroupId"] = request.TenantGroupId,
+                ["pipelineKey"] = request.PipelineKey,
+                ["providerHint"] = request.ProviderHint,
+                ["runtimeInstanceId"] = runtimeInstanceId,
+                ["requestedTargetInstanceCount"] = request.RequestedTargetInstanceCount,
+                ["visibleInstanceCount"] = request.VisibleInstanceCount,
+                ["availableInstanceCount"] = request.AvailableInstanceCount,
+                ["currentInstanceCount"] = request.CurrentInstanceCount,
+                ["maxInstanceCount"] = request.MaxInstanceCount,
+                ["requestedBy"] = request.RequestedBy,
+                ["source"] = request.Source,
+                ["reason"] = request.Reason,
+                ["durationMs"] = durationMs
+            };
+
+            foreach (var item in request.Metadata)
+            {
+                properties[item.Key] = item.Value;
+                properties[$"scaleOut.{item.Key}"] = item.Value;
             }
 
-            /// <inheritdoc />
-            public Task<AiRuntimeScaleOutProviderResult> RequestScaleOutAsync(
-                AiRuntimeScaleOutProviderRequest request,
-                CancellationToken cancellationToken = default)
+            return properties;
+        }
+
+        /// <summary>
+        /// Merges control-plane event properties.
+        /// </summary>
+        /// <param name="properties">The base event properties.</param>
+        /// <param name="additionalProperties">The additional event properties.</param>
+        /// <returns>The merged event properties.</returns>
+        private static IReadOnlyDictionary<string, object?> MergeEventProperties(
+            IReadOnlyDictionary<string, object?>? properties,
+            IReadOnlyDictionary<string, object?> additionalProperties)
+        {
+            var merged = new Dictionary<string, object?>();
+
+            foreach (var item in additionalProperties)
             {
-                return Task.FromResult(
-                    new AiRuntimeScaleOutProviderResult
+                merged[item.Key] = item.Value;
+            }
+
+            if (properties is not null)
+            {
+                foreach (var item in properties)
+                {
+                    merged[item.Key] = item.Value;
+                }
+            }
+
+            return merged;
+        }
+
+        /// <summary>
+        /// Calculates duration in milliseconds.
+        /// </summary>
+        /// <param name="startedAtUtc">The start timestamp.</param>
+        /// <param name="completedAtUtc">The completion timestamp.</param>
+        /// <returns>The duration in milliseconds.</returns>
+        private static long CalculateDurationMs(
+            DateTimeOffset startedAtUtc,
+            DateTimeOffset completedAtUtc)
+        {
+            return (long)(completedAtUtc - startedAtUtc).TotalMilliseconds;
+        }
+
+        /// <summary>
+        /// Resolves the logical control-plane id watched by this service.
+        /// </summary>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <returns>The resolved logical control-plane id.</returns>
+        private async Task<string?> ResolveControlPlaneIdAsync(
+            CancellationToken cancellationToken)
+        {
+            return await this.controlPlaneIdResolver
+                .ResolveAsync(
+                    new AiControlPlaneIdResolutionRequest
                     {
-                        Success = true,
-                        RuntimeInstanceId = this.runtimeInstanceId,
-                        Message = this.runtimeInstanceId is null
-                            ? "Scale-out provider returned success without runtime instance id."
-                            : "Scale-out provider fulfilled request."
-                    });
-            }
+                        RequestedControlPlaneId = this.options.ControlPlaneId,
+                        Source = "runtime-scale-out-request-watcher",
+                        AllowGeneratedFallback = false
+                    },
+                    cancellationToken)
+                .ConfigureAwait(false);
         }
 
         /// <summary>
-        /// Scale-out provider selector that rejects requests.
+        /// Creates a provider request from a persisted scale-out request record.
         /// </summary>
-        private sealed class RejectedScaleOutProviderSelector : IAiRuntimeScaleOutProviderSelector
+        /// <param name="request">The persisted scale-out request record.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <returns>The provider request.</returns>
+        private async Task<AiRuntimeScaleOutProviderRequest> CreateProviderRequestAsync(
+            AiRuntimeScaleOutRequestRecord request,
+            CancellationToken cancellationToken)
         {
-            /// <inheritdoc />
-            public Task<AiRuntimeScaleOutProviderResult> RequestScaleOutAsync(
-                AiRuntimeScaleOutProviderRequest request,
-                CancellationToken cancellationToken = default)
+            ArgumentNullException.ThrowIfNull(request);
+
+            var metadata =
+                new Dictionary<string, string>(
+                    request.Metadata,
+                    StringComparer.OrdinalIgnoreCase);
+
+            var controlPlaneMetadata =
+                await this.controlPlaneIdResolver
+                    .ResolveMetadataAsync(
+                        new AiControlPlaneIdResolutionRequest
+                        {
+                            RequestedControlPlaneId = request.ControlPlaneId,
+                            Metadata = metadata,
+                            Source = "runtime-scale-out-request-watcher-provider-request",
+                            AllowGeneratedFallback = false
+                        },
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+            foreach (var pair in controlPlaneMetadata)
             {
-                return Task.FromResult(
-                    new AiRuntimeScaleOutProviderResult
-                    {
-                        Success = false,
-                        Rejected = true,
-                        FailureReason = "provider rejected",
-                        Message = "provider rejected"
-                    });
-            }
-        }
-
-        /// <summary>
-        /// Scale-out provider selector that throws.
-        /// </summary>
-        private sealed class ThrowingScaleOutProviderSelector : IAiRuntimeScaleOutProviderSelector
-        {
-            /// <inheritdoc />
-            public Task<AiRuntimeScaleOutProviderResult> RequestScaleOutAsync(
-                AiRuntimeScaleOutProviderRequest request,
-                CancellationToken cancellationToken = default)
-            {
-                throw new InvalidOperationException("provider exploded");
-            }
-        }
-
-        /// <summary>
-        /// Captures fulfilled run requeue calls.
-        /// </summary>
-        private sealed class CapturingScaleOutFulfilledRunRequeueService : IAiScaleOutFulfilledRunRequeueService
-        {
-            /// <summary>
-            /// Gets the requeued request identifiers.
-            /// </summary>
-            public List<string> RequeuedRequestIds { get; } = new();
-
-            /// <summary>
-            /// Gets the requeued runtime instance identifiers.
-            /// </summary>
-            public List<string> RequeuedRuntimeInstanceIds { get; } = new();
-
-            /// <inheritdoc />
-            public Task RequeueAsync(
-                AiRuntimeScaleOutRequestRecord request,
-                string runtimeInstanceId,
-                CancellationToken cancellationToken = default)
-            {
-                this.RequeuedRequestIds.Add(request.RequestId);
-                this.RequeuedRuntimeInstanceIds.Add(runtimeInstanceId);
-                return Task.CompletedTask;
-            }
-        }
-
-        /// <summary>
-        /// Captures decision ledger records written by the runtime observability sink.
-        /// </summary>
-        private sealed class CapturingDecisionLedgerRecorder : IAiDecisionLedgerRecorder
-        {
-            /// <summary>
-            /// Gets the captured ledger entries.
-            /// </summary>
-            public List<CapturedLedgerEntry> Entries { get; } = new();
-
-            /// <inheritdoc />
-            public Task RecordAsync(
-                AiRuntimeLedgerEventCorrelationContext context,
-                AiDecisionLedgerCategory category,
-                string eventType,
-                AiDecisionLedgerOutcome outcome,
-                string? reason = null,
-                IReadOnlyDictionary<string, string?>? metadata = null,
-                CancellationToken cancellationToken = default)
-            {
-                this.Entries.Add(
-                    new CapturedLedgerEntry(
-                        context,
-                        category,
-                        eventType,
-                        outcome,
-                        reason,
-                        metadata));
-
-                return Task.CompletedTask;
-            }
-        }
-
-        /// <summary>
-        /// Represents a captured decision ledger entry.
-        /// </summary>
-        /// <param name="Context">The captured ledger correlation context.</param>
-        /// <param name="Category">The captured ledger category.</param>
-        /// <param name="EventType">The captured ledger event type.</param>
-        /// <param name="Outcome">The captured ledger outcome.</param>
-        /// <param name="Reason">The captured ledger reason.</param>
-        /// <param name="Metadata">The captured ledger metadata.</param>
-        private sealed record CapturedLedgerEntry(
-            AiRuntimeLedgerEventCorrelationContext Context,
-            AiDecisionLedgerCategory Category,
-            string EventType,
-            AiDecisionLedgerOutcome Outcome,
-            string? Reason,
-            IReadOnlyDictionary<string, string?>? Metadata);
-
-        /// <summary>
-        /// Provides a minimal runtime observability facade for scale-out watcher observability tests.
-        /// </summary>
-        private sealed class FakeRuntimeObservability : IAiRuntimeObservability
-        {
-            /// <summary>
-            /// Initializes a new instance of the <see cref="FakeRuntimeObservability"/> class.
-            /// </summary>
-            /// <param name="ledger">The decision ledger recorder.</param>
-            public FakeRuntimeObservability(IAiDecisionLedgerRecorder ledger)
-            {
-                this.Ledger = ledger ?? throw new ArgumentNullException(nameof(ledger));
+                metadata[pair.Key] = pair.Value;
             }
 
-            /// <inheritdoc />
-            public IAiRuntimeMetrics Metrics => throw new NotSupportedException();
-
-            /// <inheritdoc />
-            public IAiRuntimeTracer Tracer => throw new NotSupportedException();
-
-            /// <inheritdoc />
-            public IAiDecisionLedgerRecorder Ledger { get; }
-
-            /// <inheritdoc />
-            public IAiRuntimeCorrelationAccessor Correlation => throw new NotSupportedException();
+            return new AiRuntimeScaleOutProviderRequest
+            {
+                RequestId = request.RequestId,
+                ControlPlaneId = request.ControlPlaneId,
+                ExecutionContextSnapshot = request.ExecutionContextSnapshot,
+                SharedRunId = request.SharedRunId,
+                TenantId = request.TenantId,
+                TenantGroupId = request.TenantGroupId,
+                PipelineKey = request.PipelineKey,
+                IsolationMode = request.IsolationMode,
+                PreferDedicatedCapacity = request.PreferDedicatedCapacity,
+                AllowSharedFallback = request.AllowSharedFallback,
+                MaxRuntimeInstances = request.MaxRuntimeInstances,
+                RuntimeInstanceIdPrefix = request.RuntimeInstanceIdPrefix,
+                WorkerCountPerInstance = request.WorkerCountPerInstance,
+                MaxConcurrentRunsPerInstance = request.MaxConcurrentRunsPerInstance,
+                LocalQueueCapacity = request.LocalQueueCapacity,
+                VisibleInstanceCount = request.VisibleInstanceCount,
+                AvailableInstanceCount = request.AvailableInstanceCount,
+                CurrentInstanceCount = request.CurrentInstanceCount,
+                MaxInstanceCount = request.MaxInstanceCount,
+                RequestedTargetInstanceCount = request.RequestedTargetInstanceCount,
+                ProviderHint = request.ProviderHint,
+                CorrelationId = request.CorrelationId,
+                RequestedBy = request.RequestedBy,
+                Source = request.Source,
+                Reason = request.Reason,
+                Metadata = metadata
+            };
         }
     }
 }

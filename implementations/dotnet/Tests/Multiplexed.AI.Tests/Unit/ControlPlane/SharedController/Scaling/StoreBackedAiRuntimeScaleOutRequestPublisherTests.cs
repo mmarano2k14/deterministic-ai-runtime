@@ -22,7 +22,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController.Scaling
         public async Task PublishAsync_Should_Persist_ScaleOut_Request()
         {
             var store = new InMemoryAiRuntimeScaleOutRequestStore();
-            var resolver = new TestControlPlaneIdResolver("cp-resolved");
+            var resolver = new StaticAiControlPlaneIdResolver("cp-resolved");
             var publisher = CreatePublisher(store, resolver);
 
             var request = CreateRequest(controlPlaneId: "cp-shared-run");
@@ -67,7 +67,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController.Scaling
             string providerName)
         {
             var store = new InMemoryAiRuntimeScaleOutRequestStore();
-            var resolver = new TestControlPlaneIdResolver("cp-resolved");
+            var resolver = new StaticAiControlPlaneIdResolver("cp-resolved");
             var publisher = CreatePublisher(store, resolver, providerName);
 
             var request = CreateRequest(controlPlaneId: "cp-shared-run");
@@ -94,7 +94,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController.Scaling
             string? providerName)
         {
             var store = new InMemoryAiRuntimeScaleOutRequestStore();
-            var resolver = new TestControlPlaneIdResolver("cp-resolved");
+            var resolver = new StaticAiControlPlaneIdResolver("cp-resolved");
             var publisher = CreatePublisher(store, resolver, providerName);
 
             var request = CreateRequest(controlPlaneId: "cp-shared-run");
@@ -117,7 +117,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController.Scaling
         public async Task PublishAsync_Should_Use_Resolver_When_SharedRun_ControlPlaneId_Is_Missing()
         {
             var store = new InMemoryAiRuntimeScaleOutRequestStore();
-            var resolver = new TestControlPlaneIdResolver("cp-resolved");
+            var resolver = new StaticAiControlPlaneIdResolver("cp-resolved");
             var publisher = CreatePublisher(store, resolver);
 
             var request = CreateRequest(controlPlaneId: null);
@@ -141,7 +141,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController.Scaling
         public async Task PublishAsync_Should_Throw_When_ControlPlaneId_Cannot_Be_Resolved()
         {
             var store = new InMemoryAiRuntimeScaleOutRequestStore();
-            var resolver = new TestControlPlaneIdResolver(null);
+            var resolver = new StaticAiControlPlaneIdResolver(null);
             var publisher = CreatePublisher(store, resolver);
 
             var request = CreateRequest(controlPlaneId: null);
@@ -157,7 +157,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController.Scaling
         public async Task PublishAsync_Should_Cap_Target_Instance_Count_To_Max_Instance_Count()
         {
             var store = new InMemoryAiRuntimeScaleOutRequestStore();
-            var resolver = new TestControlPlaneIdResolver("cp-resolved");
+            var resolver = new StaticAiControlPlaneIdResolver("cp-resolved");
             var publisher = CreatePublisher(store, resolver);
 
             var request = CreateRequest(
@@ -184,7 +184,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController.Scaling
         public async Task PublishAsync_Should_Deduplicate_Repeated_SharedRun_Request()
         {
             var store = new InMemoryAiRuntimeScaleOutRequestStore();
-            var resolver = new TestControlPlaneIdResolver("cp-resolved");
+            var resolver = new StaticAiControlPlaneIdResolver("cp-resolved");
             var publisher = CreatePublisher(store, resolver);
 
             var request = CreateRequest(controlPlaneId: "cp-shared-run");
@@ -291,36 +291,6 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController.Scaling
                     ["test"] = true
                 }
             };
-        }
-
-        /// <summary>
-        /// Provides a test implementation of the control-plane id resolver.
-        /// </summary>
-        private sealed class TestControlPlaneIdResolver : IAiControlPlaneIdResolver
-        {
-            /// <summary>
-            /// The control-plane identifier returned by the resolver.
-            /// </summary>
-            private readonly string? controlPlaneId;
-
-            /// <summary>
-            /// Initializes a new instance of the <see cref="TestControlPlaneIdResolver" /> class.
-            /// </summary>
-            /// <param name="controlPlaneId">The control-plane identifier to return.</param>
-            public TestControlPlaneIdResolver(
-                string? controlPlaneId)
-            {
-                this.controlPlaneId = controlPlaneId;
-            }
-
-            /// <inheritdoc />
-            public Task<string?> ResolveAsync(
-                CancellationToken cancellationToken = default)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-
-                return Task.FromResult(this.controlPlaneId);
-            }
         }
     }
 }

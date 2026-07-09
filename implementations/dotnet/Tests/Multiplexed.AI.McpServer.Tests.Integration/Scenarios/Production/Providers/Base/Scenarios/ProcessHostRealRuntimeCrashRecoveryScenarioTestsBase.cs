@@ -18,8 +18,9 @@ using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Ledger;
 using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Models;
 using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Output;
 using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Providers.Base.Profiles;
-using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Providers.Http;
+using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Providers.Http.Process;
 using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Scenarios;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.ProcessControl;
 using Multiplexed.AI.Stores;
 using Xunit;
 using Xunit.Abstractions;
@@ -176,8 +177,11 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             await using var host =
                 new GenericMcpServerTestHost(settings);
 
+            var processControlSelector =
+                host.Services.GetRequiredService<AiRuntimeHostProcessControlSelector>();
+
             var processControl =
-                host.Services.GetRequiredService<IAiRuntimeHostProcessControl>();
+                processControlSelector.GetRequired(this.profile.HostCreationMode);
 
             var registry =
                 host.Services.GetRequiredService<IAiRuntimeInstanceRegistry>();
@@ -908,8 +912,11 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             var dagStore =
                 host.Services.GetRequiredService<IAiDagExecutionStore>();
 
+            var processControlSelector =
+                host.Services.GetRequiredService<AiRuntimeHostProcessControlSelector>();
+
             var processControl =
-                host.Services.GetRequiredService<IAiRuntimeHostProcessControl>();
+                processControlSelector.GetRequired(this.profile.HostCreationMode);
 
             var runExecutionIndex =
                 host.Services.GetRequiredService<IAiRuntimeRunExecutionIndex>();
@@ -1149,8 +1156,11 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             await using var host =
                 new GenericMcpServerTestHost(settings);
 
+            var processControlSelector =
+                host.Services.GetRequiredService<AiRuntimeHostProcessControlSelector>();
+
             var processControl =
-                host.Services.GetRequiredService<IAiRuntimeHostProcessControl>();
+                processControlSelector.GetRequired(this.profile.HostCreationMode);
 
             var registry =
                 host.Services.GetRequiredService<IAiRuntimeInstanceRegistry>();

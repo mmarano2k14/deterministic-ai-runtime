@@ -75,7 +75,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController.Scaling
                     store,
                     selector,
                     new TestScaleOutFulfilledRunRequeueService(),
-                    new TestControlPlaneIdResolver("cp-test"),
+                    new StaticAiControlPlaneIdResolver("cp-test"),
                     Options.Create(new AiRuntimeScaleOutRequestWatcherOptions
                     {
                         Enabled = true,
@@ -166,7 +166,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController.Scaling
                     store,
                     selector,
                     new TestScaleOutFulfilledRunRequeueService(),
-                    new TestControlPlaneIdResolver("cp-test"),
+                    new StaticAiControlPlaneIdResolver("cp-test"),
                     Options.Create(new AiRuntimeScaleOutRequestWatcherOptions
                     {
                         Enabled = true,
@@ -226,6 +226,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController.Scaling
                 factory,
                 registry,
                 new TestRuntimeHostIdentity("host-test"),
+                new StaticAiControlPlaneIdResolver("cp-test"),
                 Options.Create(new AiLocalRuntimeInstancePoolOptions
                 {
                     Enabled = true,
@@ -282,38 +283,6 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController.Scaling
                     ["test"] = "true"
                 }
             };
-        }
-
-        /// <summary>
-        /// Provides a test control-plane id resolver.
-        /// </summary>
-        private sealed class TestControlPlaneIdResolver : IAiControlPlaneIdResolver
-        {
-            /// <summary>
-            /// The control-plane identifier.
-            /// </summary>
-            private readonly string? controlPlaneId;
-
-            /// <summary>
-            /// Initializes a new instance of the <see cref="TestControlPlaneIdResolver" /> class.
-            /// </summary>
-            /// <param name="controlPlaneId">The control-plane identifier.</param>
-            public TestControlPlaneIdResolver(
-                string? controlPlaneId)
-            {
-                this.controlPlaneId =
-                    controlPlaneId;
-            }
-
-            /// <inheritdoc />
-            public Task<string?> ResolveAsync(
-                CancellationToken cancellationToken = default)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-
-                return Task.FromResult(
-                    this.controlPlaneId);
-            }
         }
 
         /// <summary>

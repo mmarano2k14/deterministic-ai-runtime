@@ -2,6 +2,7 @@
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Multiplexed.Abstractions.AI.ControlPlane.Discovery;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Identity;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Pool;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Scaling;
@@ -39,11 +40,13 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
 
         private readonly IAiLocalRuntimeInstanceScaler scaler;
         private readonly IAiRuntimeHostIdentity runtimeHostIdentity;
+        private readonly IAiControlPlaneIdResolver controlPlaneIdResolver;
         private readonly AiLocalRuntimeInstancePoolOptions options;
         private readonly IConfiguration configuration;
         private readonly ILogger<AiLocalRuntimeInstancePoolHostedService> logger;
 
         private int stopRequested;
+        private string? resolvedControlPlaneId;
 
         /// <summary>
         /// Initializes a new instance of the
@@ -51,12 +54,14 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
         /// </summary>
         /// <param name="scaler">The local runtime instance scaler.</param>
         /// <param name="runtimeHostIdentity">The runtime host identity.</param>
+        /// <param name="controlPlaneIdResolver">The logical control-plane id resolver.</param>
         /// <param name="options">The local runtime instance pool options.</param>
         /// <param name="configuration">The application configuration.</param>
         /// <param name="logger">The logger.</param>
         public AiLocalRuntimeInstancePoolHostedService(
             IAiLocalRuntimeInstanceScaler scaler,
             IAiRuntimeHostIdentity runtimeHostIdentity,
+            IAiControlPlaneIdResolver controlPlaneIdResolver,
             IOptions<AiLocalRuntimeInstancePoolOptions> options,
             IConfiguration configuration,
             ILogger<AiLocalRuntimeInstancePoolHostedService> logger)
@@ -68,6 +73,10 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
             this.runtimeHostIdentity =
                 runtimeHostIdentity
                 ?? throw new ArgumentNullException(nameof(runtimeHostIdentity));
+
+            this.controlPlaneIdResolver =
+                controlPlaneIdResolver
+                ?? throw new ArgumentNullException(nameof(controlPlaneIdResolver));
 
             this.options =
                 options?.Value
@@ -93,7 +102,8 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
                 GetEnableSharedQueuePump();
 
             var controlPlaneId =
-                ResolveControlPlaneId();
+                await this.ResolveControlPlaneIdAsync(cancellationToken)
+                    .ConfigureAwait(false);
 
             this.logger.LogInformation(
                 "Evaluating local runtime instance pool startup. HostMode={HostMode}, EnableSharedQueuePump={EnableSharedQueuePump}, HostId={HostId}, ControlPlaneId={ControlPlaneId}, Enabled={Enabled}, InstanceCount={InstanceCount}, WorkerCountPerInstance={WorkerCountPerInstance}, MaxConcurrentRunsPerInstance={MaxConcurrentRunsPerInstance}, LocalQueueCapacity={LocalQueueCapacity}, RuntimeInstanceIdPrefix={RuntimeInstanceIdPrefix}",
@@ -139,6 +149,13 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
                 this.options.LocalQueueCapacity?.ToString() ?? "unlimited",
                 this.options.RuntimeInstanceIdPrefix);
 
+            var metadata =
+                await this.CreateScaleOutMetadataAsync(
+                        hostMode,
+                        enableSharedQueuePump,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
             var result =
                 await this.scaler
                     .EnsureCapacityAsync(
@@ -156,18 +173,7 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
                             RequestedBy = "local-runtime-instance-pool",
                             Source = nameof(AiLocalRuntimeInstancePoolHostedService),
                             Reason = "Initial local runtime instance pool startup.",
-                            Metadata = new Dictionary<string, string>(
-                                StringComparer.OrdinalIgnoreCase)
-                            {
-                                ["hostMode"] = hostMode,
-                                ["enableSharedQueuePump"] = enableSharedQueuePump,
-                                ["runtimeHostId"] = this.runtimeHostIdentity.HostId,
-                                ["runtimeInstanceIdPrefix"] = this.options.RuntimeInstanceIdPrefix,
-                                ["controlPlaneId"] = controlPlaneId,
-                                ["control-plane.id"] = controlPlaneId,
-                                ["controlplane.id"] = controlPlaneId,
-                                ["runtime.controlPlaneId"] = controlPlaneId
-                            }
+                            Metadata = metadata
                         },
                         cancellationToken)
                     .ConfigureAwait(false);
@@ -201,7 +207,8 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
                 GetEnableSharedQueuePump();
 
             var controlPlaneId =
-                ResolveControlPlaneId();
+                await this.ResolveControlPlaneIdAsync(cancellationToken)
+                    .ConfigureAwait(false);
 
             if (Interlocked.Exchange(ref this.stopRequested, 1) == 1)
             {
@@ -242,7 +249,7 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
         }
 
         /// <inheritdoc />
-        public ValueTask DisposeAsync()
+        public async ValueTask DisposeAsync()
         {
             var hostMode =
                 GetHostMode();
@@ -251,7 +258,8 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
                 GetEnableSharedQueuePump();
 
             var controlPlaneId =
-                ResolveControlPlaneId();
+                await this.ResolveControlPlaneIdAsync(CancellationToken.None)
+                    .ConfigureAwait(false);
 
             this.logger.LogInformation(
                 "Disposing local runtime instance pool hosted service. HostMode={HostMode}, EnableSharedQueuePump={EnableSharedQueuePump}, HostId={HostId}, ControlPlaneId={ControlPlaneId}, ActiveInstanceCount={ActiveInstanceCount}, StopRequested={StopRequested}, RuntimeInstanceIdPrefix={RuntimeInstanceIdPrefix}",
@@ -270,33 +278,74 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
                 this.runtimeHostIdentity.HostId,
                 controlPlaneId,
                 this.options.RuntimeInstanceIdPrefix);
-
-            return ValueTask.CompletedTask;
         }
 
         /// <summary>
-        /// Resolves the control-plane identifier inherited by local pool startup runtime instances.
+        /// Resolves the logical control-plane identifier used by local runtime instance pool startup.
         /// </summary>
-        /// <returns>The resolved control-plane identifier.</returns>
-        private string ResolveControlPlaneId()
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <returns>The resolved logical control-plane identifier.</returns>
+        private async Task<string> ResolveControlPlaneIdAsync(
+            CancellationToken cancellationToken)
         {
-            var configuredControlPlaneId =
-                this.configuration["AiRuntimeInstanceRegistration:ControlPlaneId"];
+            var cachedControlPlaneId =
+                Volatile.Read(ref this.resolvedControlPlaneId);
 
-            if (!string.IsNullOrWhiteSpace(configuredControlPlaneId))
+            if (!string.IsNullOrWhiteSpace(cachedControlPlaneId))
             {
-                return configuredControlPlaneId.Trim();
+                return cachedControlPlaneId;
             }
 
-            configuredControlPlaneId =
-                this.configuration["AiMcpHost:ControlPlaneId"];
+            var controlPlaneId =
+                await this.controlPlaneIdResolver
+                    .ResolveAsync(
+                        new AiControlPlaneIdResolutionRequest
+                        {
+                            Source = "local-runtime-instance-pool-hosted-service",
+                            AllowGeneratedFallback = false
+                        },
+                        cancellationToken)
+                    .ConfigureAwait(false);
 
-            if (!string.IsNullOrWhiteSpace(configuredControlPlaneId))
-            {
-                return configuredControlPlaneId.Trim();
-            }
+            Volatile.Write(
+                ref this.resolvedControlPlaneId,
+                controlPlaneId);
 
-            return this.runtimeHostIdentity.HostId;
+            return controlPlaneId;
+        }
+
+        /// <summary>
+        /// Creates metadata for the local runtime instance pool scale-out request.
+        /// </summary>
+        /// <param name="hostMode">The configured MCP host mode.</param>
+        /// <param name="enableSharedQueuePump">The configured shared queue pump flag.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <returns>The scale-out metadata.</returns>
+        private async Task<IReadOnlyDictionary<string, string>> CreateScaleOutMetadataAsync(
+            string hostMode,
+            string enableSharedQueuePump,
+            CancellationToken cancellationToken)
+        {
+            var metadata =
+                new Dictionary<string, string>(
+                    await this.controlPlaneIdResolver
+                        .ResolveMetadataAsync(
+                            new AiControlPlaneIdResolutionRequest
+                            {
+                                Source = "local-runtime-instance-pool-hosted-service",
+                                AllowGeneratedFallback = false
+                            },
+                            cancellationToken)
+                        .ConfigureAwait(false),
+                    StringComparer.OrdinalIgnoreCase)
+                {
+                    ["hostMode"] = hostMode,
+                    ["enableSharedQueuePump"] = enableSharedQueuePump,
+                    ["runtimeHostId"] = this.runtimeHostIdentity.HostId,
+                    ["runtimeInstanceIdPrefix"] = this.options.RuntimeInstanceIdPrefix
+                };
+
+            return metadata;
         }
 
         /// <summary>

@@ -11,6 +11,16 @@
         public required string RuntimeInstanceId { get; init; }
 
         /// <summary>
+        /// Gets or sets the logical control-plane identifier used to scope the shared queue claim.
+        /// </summary>
+        public string? ControlPlaneId { get; init; }
+
+        /// <summary>
+        /// Gets or sets the metadata used to resolve logical control-plane scope and enrich claim diagnostics.
+        /// </summary>
+        public IReadOnlyDictionary<string, string>? Metadata { get; init; }
+
+        /// <summary>
         /// Optional worker id or controller id attempting the claim.
         /// </summary>
         public string? WorkerId { get; init; }

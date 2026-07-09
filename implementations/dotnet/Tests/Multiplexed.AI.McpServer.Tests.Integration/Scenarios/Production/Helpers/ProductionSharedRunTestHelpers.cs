@@ -20,6 +20,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
         /// </summary>
         /// <param name="mcp">The configured MCP test client.</param>
         /// <param name="tenant">The production tenant scenario definition.</param>
+        /// <param name="controlPlaneId">The logical control-plane identifier.</param>
         /// <param name="pipelineName">The pipeline name.</param>
         /// <param name="requestedBy">The logical requester identifier.</param>
         /// <param name="source">The logical request source.</param>
@@ -27,12 +28,14 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
         public static async Task<string> SubmitOneRunAsync(
             McpTestClient mcp,
             ProductionTenantScenarioDefinition tenant,
+            string controlPlaneId,
             string pipelineName,
             string requestedBy,
             string source)
         {
             ArgumentNullException.ThrowIfNull(mcp);
             ArgumentNullException.ThrowIfNull(tenant);
+            ArgumentException.ThrowIfNullOrWhiteSpace(controlPlaneId);
             ArgumentException.ThrowIfNullOrWhiteSpace(pipelineName);
             ArgumentException.ThrowIfNullOrWhiteSpace(requestedBy);
             ArgumentException.ThrowIfNullOrWhiteSpace(source);
@@ -49,6 +52,19 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
                     ["stepCount"] = tenant.Run.StepCount
                 };
 
+            var metadata =
+                new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    [AiRuntimeInstanceIsolationMetadataKeys.TenantId] = tenant.TenantId,
+                    [AiRuntimeInstanceIsolationMetadataKeys.TenantGroupId] = tenant.TenantGroupId,
+                    ["pipelineName"] = pipelineName,
+                    ["runtimeInstanceIdPrefix"] = tenant.RuntimeInstanceIdPrefix
+                };
+
+            AddLogicalControlPlaneMetadata(
+                metadata,
+                controlPlaneId);
+
             var submitRequest =
                 new AiSharedRuntimeControllerRequest
                 {
@@ -57,13 +73,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
                     TenantId = tenant.TenantId,
                     RequestedBy = requestedBy,
                     Source = source,
-                    Metadata = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
-                    {
-                        [AiRuntimeInstanceIsolationMetadataKeys.TenantId] = tenant.TenantId,
-                        [AiRuntimeInstanceIsolationMetadataKeys.TenantGroupId] = tenant.TenantGroupId,
-                        ["pipelineName"] = pipelineName,
-                        ["runtimeInstanceIdPrefix"] = tenant.RuntimeInstanceIdPrefix
-                    },
+                    Metadata = metadata,
                     RunRequest = McpTestPipelineFactory.CreateRunRequest(
                         pipelineName,
                         stepCount: tenant.Run.StepCount,
@@ -232,7 +242,19 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
                 $"Could not extract SharedRunId from submit result type '{resultType.FullName}'.");
         }
 
-
+        /// <summary>
+        /// Submits one shared run and waits until it has been dispatched to a runtime instance.
+        /// </summary>
+        /// <param name="mcp">The configured MCP test client.</param>
+        /// <param name="scaleOutRequestStore">The runtime scale-out request store.</param>
+        /// <param name="tenant">The production tenant scenario definition.</param>
+        /// <param name="controlPlaneId">The logical control-plane identifier.</param>
+        /// <param name="pipelineName">The pipeline name.</param>
+        /// <param name="requestedBy">The logical requester identifier.</param>
+        /// <param name="source">The logical request source.</param>
+        /// <param name="scaleOutTimeout">The scale-out fulfillment timeout.</param>
+        /// <param name="dispatchTimeout">The dispatch timeout.</param>
+        /// <returns>The dispatched shared run record.</returns>
         public static async Task<AiSharedRunRecord> SubmitAndDispatchOneRunAsync(
             McpTestClient mcp,
             IAiRuntimeScaleOutRequestStore scaleOutRequestStore,
@@ -244,18 +266,25 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
             TimeSpan scaleOutTimeout,
             TimeSpan dispatchTimeout)
         {
+            ArgumentNullException.ThrowIfNull(mcp);
+            ArgumentNullException.ThrowIfNull(scaleOutRequestStore);
+            ArgumentNullException.ThrowIfNull(tenant);
+            ArgumentException.ThrowIfNullOrWhiteSpace(controlPlaneId);
+            ArgumentException.ThrowIfNullOrWhiteSpace(pipelineName);
+            ArgumentException.ThrowIfNullOrWhiteSpace(requestedBy);
+            ArgumentException.ThrowIfNullOrWhiteSpace(source);
+
             var sharedRunId =
-                await ProductionSharedRunTestHelpers
-                    .SubmitOneRunAsync(
+                await SubmitOneRunAsync(
                         mcp,
                         tenant,
+                        controlPlaneId,
                         pipelineName,
                         requestedBy,
                         source)
                     .ConfigureAwait(false);
 
-            await ProductionSharedRunTestHelpers
-                .WaitForAnyTenantScaleOutRequestFulfilledAsync(
+            await WaitForAnyTenantScaleOutRequestFulfilledAsync(
                     scaleOutRequestStore,
                     controlPlaneId,
                     tenant,
@@ -263,13 +292,109 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
                     scaleOutTimeout)
                 .ConfigureAwait(false);
 
-            return await ProductionSharedRunTestHelpers
-                .WaitForSingleDispatchedRunAsync(
+            await DumpDispatchStateBeforeWaitAsync(
+                    mcp,
+                    tenant,
+                    controlPlaneId,
+                    pipelineName,
+                    sharedRunId)
+                .ConfigureAwait(false);
+
+            return await WaitForSingleDispatchedRunAsync(
                     mcp,
                     pipelineName,
                     sharedRunId,
                     dispatchTimeout)
                 .ConfigureAwait(false);
+        }
+
+        /// <summary>
+        /// Dumps shared run state after scale-out fulfillment and before waiting for dispatch.
+        /// </summary>
+        /// <param name="mcp">The configured MCP test client.</param>
+        /// <param name="tenant">The production tenant scenario definition.</param>
+        /// <param name="controlPlaneId">The logical control-plane identifier.</param>
+        /// <param name="pipelineName">The pipeline name.</param>
+        /// <param name="sharedRunId">The shared run identifier.</param>
+        /// <returns>A task that completes when diagnostics have been written.</returns>
+        private static async Task DumpDispatchStateBeforeWaitAsync(
+            McpTestClient mcp,
+            ProductionTenantScenarioDefinition tenant,
+            string controlPlaneId,
+            string pipelineName,
+            string sharedRunId)
+        {
+            ArgumentNullException.ThrowIfNull(mcp);
+            ArgumentNullException.ThrowIfNull(tenant);
+            ArgumentException.ThrowIfNullOrWhiteSpace(controlPlaneId);
+            ArgumentException.ThrowIfNullOrWhiteSpace(pipelineName);
+            ArgumentException.ThrowIfNullOrWhiteSpace(sharedRunId);
+
+            Console.WriteLine(
+                $"[DISPATCH DEBUG BEFORE WAIT] ControlPlaneId='{controlPlaneId}', TenantId='{tenant.TenantId}', TenantGroupId='{tenant.TenantGroupId}', Pipeline='{pipelineName}', SharedRunId='{sharedRunId}'.");
+
+            var result =
+                await mcp
+                    .ListSharedRunsAsync(
+                        new AiSharedRuntimeControllerRequest
+                        {
+                            Operation = AiSharedRuntimeControllerOperation.ListRuns,
+                            TenantId = tenant.TenantId,
+                            PipelineKey = pipelineName,
+                            IncludeCompleted = true,
+                            IncludeFailed = true,
+                            IncludeCancelled = true,
+                            IncludeDiagnostics = true,
+                            CorrelationId = $"dispatch-debug-{sharedRunId}",
+                            RequestedBy = "production-shared-run-test-helper",
+                            Source = "integration-test",
+                            Reason = "Dump shared run state after scale-out fulfillment before dispatch wait.",
+                            Metadata = new Dictionary<string, string>
+                            {
+                                ["controlPlaneId"] = controlPlaneId,
+                                ["tenant.id"] = tenant.TenantId,
+                                ["tenant.group.id"] = tenant.TenantGroupId,
+                                ["pipelineName"] = pipelineName,
+                                ["sharedRunId"] = sharedRunId
+                            }
+                        })
+                    .ConfigureAwait(false);
+
+            Console.WriteLine(
+                $"[DISPATCH DEBUG RESULT] Success='{result.Success}', Message='{result.Message}', SharedRunCount='{result.Runs.Count}'.");
+
+            foreach (var run in result.Runs)
+            {
+                Console.WriteLine(
+                    $"[DISPATCH DEBUG RUN] SharedRunId='{run.SharedRunId}', Status='{run.Status}', AssignedRuntimeInstanceId='{run.AssignedRuntimeInstanceId}', LocalRunId='{run.LocalRunId}', ExecutionId='{run.ExecutionId}', FailureReason='{run.FailureReason}'.");
+            }
+        }
+
+        /// <summary>
+        /// Adds logical control-plane identity metadata to a shared-run submission.
+        /// </summary>
+        /// <param name="metadata">The metadata dictionary to mutate.</param>
+        /// <param name="controlPlaneId">The logical control-plane identifier.</param>
+        private static void AddLogicalControlPlaneMetadata(
+            IDictionary<string, string> metadata,
+            string controlPlaneId)
+        {
+            ArgumentNullException.ThrowIfNull(metadata);
+            ArgumentException.ThrowIfNullOrWhiteSpace(controlPlaneId);
+
+            metadata["logicalControlPlaneId"] = controlPlaneId;
+            metadata["controlPlaneId"] = controlPlaneId;
+            metadata["control-plane.id"] = controlPlaneId;
+            metadata["controlplane.id"] = controlPlaneId;
+            metadata["runtime.controlPlaneId"] = controlPlaneId;
+            metadata["runtime.control-plane.id"] = controlPlaneId;
+            metadata["runtime.controlplane.id"] = controlPlaneId;
+            metadata["scenario.controlPlaneId"] = controlPlaneId;
+            metadata["scenario.control-plane.id"] = controlPlaneId;
+            metadata["scenario.controlplane.id"] = controlPlaneId;
+            metadata["scaleout.controlPlaneId"] = controlPlaneId;
+            metadata["scaleout.control-plane.id"] = controlPlaneId;
+            metadata["scaleout.controlplane.id"] = controlPlaneId;
         }
     }
 }

@@ -190,7 +190,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.Observability
         {
             return new StoreBackedAiRuntimeScaleOutRequestPublisher(
                 store,
-                new FixedControlPlaneIdResolver("control-plane-1"),
+                new StaticAiControlPlaneIdResolver("control-plane-1"),
                 Options.Create(
                     new AiRuntimeInstanceRegistrationOptions
                     {
@@ -271,30 +271,6 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.Observability
             {
                 this.Events.Add(controlPlaneEvent);
                 return Task.CompletedTask;
-            }
-        }
-
-        /// <summary>
-        /// Control-plane id resolver that returns a fixed id.
-        /// </summary>
-        private sealed class FixedControlPlaneIdResolver : IAiControlPlaneIdResolver
-        {
-            private readonly string? controlPlaneId;
-
-            /// <summary>
-            /// Initializes a new instance of the <see cref="FixedControlPlaneIdResolver"/> class.
-            /// </summary>
-            /// <param name="controlPlaneId">The control-plane identifier.</param>
-            public FixedControlPlaneIdResolver(string? controlPlaneId)
-            {
-                this.controlPlaneId = controlPlaneId;
-            }
-
-            /// <inheritdoc />
-            public Task<string?> ResolveAsync(
-                CancellationToken cancellationToken = default)
-            {
-                return Task.FromResult(this.controlPlaneId);
             }
         }
 

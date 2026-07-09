@@ -3,7 +3,7 @@ using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Providers.
 using Xunit;
 using Xunit.Abstractions;
 
-namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Providers.Grpc
+namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Providers.Grpc.Process
 {
     /// <summary>
     /// Proves real gRPC process-host runtime crash recovery without synthetic DAG reseeding.

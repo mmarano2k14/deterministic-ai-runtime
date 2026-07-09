@@ -48,7 +48,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController.Scaling
                                 RuntimeInstanceIdPrefix = "simulated-runtime"
                             }))),
                     new TestScaleOutFulfilledRunRequeueService(),
-                    new TestControlPlaneIdResolver("cp-test"),
+                    new StaticAiControlPlaneIdResolver("cp-test"),
                     Options.Create(new AiRuntimeScaleOutRequestWatcherOptions
                     {
                         Enabled = true,
@@ -112,7 +112,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController.Scaling
                                 FailureReason = "simulated failure"
                             }))),
                     new TestScaleOutFulfilledRunRequeueService(),
-                    new TestControlPlaneIdResolver("cp-test"),
+                    new StaticAiControlPlaneIdResolver("cp-test"),
                     Options.Create(new AiRuntimeScaleOutRequestWatcherOptions
                     {
                         Enabled = true,
@@ -170,7 +170,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController.Scaling
                     new TestScaleOutProviderSelector(
                         new SimulatedAiRuntimeScaleOutProvider()),
                     new TestScaleOutFulfilledRunRequeueService(),
-                    new TestControlPlaneIdResolver("cp-test"),
+                    new StaticAiControlPlaneIdResolver("cp-test"),
                     Options.Create(new AiRuntimeScaleOutRequestWatcherOptions
                     {
                         Enabled = true,
@@ -225,7 +225,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController.Scaling
                     new TestScaleOutProviderSelector(
                         new SimulatedAiRuntimeScaleOutProvider()),
                     new TestScaleOutFulfilledRunRequeueService(),
-                    new TestControlPlaneIdResolver("cp-test"),
+                    new StaticAiControlPlaneIdResolver("cp-test"),
                     Options.Create(new AiRuntimeScaleOutRequestWatcherOptions
                     {
                         Enabled = true,
@@ -331,7 +331,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController.Scaling
                     new TestScaleOutProviderSelector(
                         httpProvider),
                     new TestScaleOutFulfilledRunRequeueService(),
-                    new TestControlPlaneIdResolver("cp-test"),
+                    new StaticAiControlPlaneIdResolver("cp-test"),
                     Options.Create(new AiRuntimeScaleOutRequestWatcherOptions
                     {
                         Enabled = true,
@@ -774,38 +774,6 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController.Scaling
                     .RequestScaleOutAsync(
                         request,
                         cancellationToken);
-            }
-        }
-
-        /// <summary>
-        /// Provides a fixed control-plane id resolver for tests.
-        /// </summary>
-        private sealed class TestControlPlaneIdResolver : IAiControlPlaneIdResolver
-        {
-            /// <summary>
-            /// The control-plane identifier returned by the resolver.
-            /// </summary>
-            private readonly string? controlPlaneId;
-
-            /// <summary>
-            /// Initializes a new instance of the <see cref="TestControlPlaneIdResolver" /> class.
-            /// </summary>
-            /// <param name="controlPlaneId">The control-plane identifier to return.</param>
-            public TestControlPlaneIdResolver(
-                string? controlPlaneId)
-            {
-                this.controlPlaneId =
-                    controlPlaneId;
-            }
-
-            /// <inheritdoc />
-            public Task<string?> ResolveAsync(
-                CancellationToken cancellationToken = default)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-
-                return Task.FromResult(
-                    this.controlPlaneId);
             }
         }
     }

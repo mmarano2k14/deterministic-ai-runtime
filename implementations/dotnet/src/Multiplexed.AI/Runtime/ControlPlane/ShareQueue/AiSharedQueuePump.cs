@@ -1,5 +1,6 @@
 ﻿using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Multiplexed.Abstractions.AI.ControlPlane.Discovery;
 using Multiplexed.Abstractions.AI.ControlPlane.Observability;
 using Multiplexed.Abstractions.AI.ControlPlane.Observability.Area;
 using Multiplexed.Abstractions.AI.ControlPlane.Observability.Events;
@@ -37,6 +38,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
 
         private readonly IAiSharedQueueDispatcher _dispatcher;
         private readonly AiSharedQueuePumpOptions _options;
+        private readonly IAiControlPlaneIdResolver _controlPlaneIdResolver;
         private readonly ILogger<AiSharedQueuePump> _logger;
         private readonly IAiControlPlaneObserver _observer;
 
@@ -45,6 +47,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
         /// </summary>
         /// <param name="dispatcher">The shared queue dispatcher.</param>
         /// <param name="options">The pump options.</param>
+        /// <param name="controlPlaneIdResolver">The logical control-plane identifier resolver.</param>
         /// <param name="logger">The logger.</param>
         /// <exception cref="ArgumentNullException">
         /// Thrown when <paramref name="dispatcher"/>, <paramref name="options"/>, or <paramref name="logger"/> is null.
@@ -52,10 +55,12 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
         public AiSharedQueuePump(
             IAiSharedQueueDispatcher dispatcher,
             IOptions<AiSharedQueuePumpOptions> options,
+            IAiControlPlaneIdResolver controlPlaneIdResolver,
             ILogger<AiSharedQueuePump> logger)
             : this(
                 dispatcher,
                 options,
+                controlPlaneIdResolver,
                 logger,
                 new NoopAiControlPlaneObserver())
         {
@@ -66,6 +71,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
         /// </summary>
         /// <param name="dispatcher">The shared queue dispatcher.</param>
         /// <param name="options">The pump options.</param>
+        /// <param name="controlPlaneIdResolver">The logical control-plane identifier resolver.</param>
         /// <param name="logger">The logger.</param>
         /// <param name="observer">The control-plane observer.</param>
         /// <exception cref="ArgumentNullException">
@@ -74,11 +80,13 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
         public AiSharedQueuePump(
             IAiSharedQueueDispatcher dispatcher,
             IOptions<AiSharedQueuePumpOptions> options,
+            IAiControlPlaneIdResolver controlPlaneIdResolver,
             ILogger<AiSharedQueuePump> logger,
             IAiControlPlaneObserver observer)
         {
             _dispatcher = dispatcher ?? throw new ArgumentNullException(nameof(dispatcher));
             _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
+            _controlPlaneIdResolver = controlPlaneIdResolver ?? throw new ArgumentNullException(nameof(controlPlaneIdResolver));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _observer = observer ?? throw new ArgumentNullException(nameof(observer));
         }
@@ -92,7 +100,29 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
             ArgumentException.ThrowIfNullOrWhiteSpace(request.PumpRuntimeInstanceId);
 
             var startedAtUtc = DateTimeOffset.UtcNow;
-            var controlPlaneId = ResolveControlPlaneId(request.Metadata);
+            var controlPlaneId =
+                await ResolveControlPlaneIdAsync(
+                        request.Metadata,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+            var controlPlaneMetadata =
+                await _controlPlaneIdResolver
+                    .ResolveMetadataAsync(
+                        new AiControlPlaneIdResolutionRequest
+                        {
+                            RequestedControlPlaneId = controlPlaneId,
+                            Metadata = request.Metadata,
+                            Source = "shared-queue-pump-metadata",
+                            AllowGeneratedFallback = false
+                        },
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+            var dispatchMetadata =
+                MergeMetadata(
+                    request.Metadata,
+                    controlPlaneMetadata);
 
             if (!_options.Enabled)
             {
@@ -201,7 +231,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                                 RequestedBy = request.RequestedBy,
                                 Source = source,
                                 Reason = request.Reason ?? "Shared queue pump dispatch cycle.",
-                                Metadata = request.Metadata
+                                Metadata = dispatchMetadata
                             },
                             cancellationToken)
                         .ConfigureAwait(false);
@@ -529,17 +559,59 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
         /// Resolves the logical control-plane identifier from pump metadata.
         /// </summary>
         /// <param name="metadata">The pump metadata.</param>
-        /// <returns>The logical control-plane identifier, or an empty string when unavailable.</returns>
-        private static string ResolveControlPlaneId(
-            IReadOnlyDictionary<string, string> metadata)
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <returns>The resolved logical control-plane identifier.</returns>
+        private async Task<string> ResolveControlPlaneIdAsync(
+            IReadOnlyDictionary<string, string>? metadata,
+            CancellationToken cancellationToken)
         {
-            if (metadata.TryGetValue("controlPlaneId", out var controlPlaneId) &&
-                !string.IsNullOrWhiteSpace(controlPlaneId))
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var controlPlaneId =
+                await _controlPlaneIdResolver
+                    .ResolveAsync(
+                        new AiControlPlaneIdResolutionRequest
+                        {
+                            Metadata = metadata,
+                            Source = "shared-queue-pump",
+                            AllowGeneratedFallback = false
+                        },
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+            if (string.IsNullOrWhiteSpace(controlPlaneId))
             {
-                return controlPlaneId;
+                throw new InvalidOperationException(
+                    "The resolved control-plane identifier cannot be null or empty.");
             }
 
-            return string.Empty;
+            return controlPlaneId;
+        }
+
+        /// <summary>
+        /// Merges metadata dictionaries.
+        /// </summary>
+        /// <param name="sources">The metadata sources.</param>
+        /// <returns>The merged metadata dictionary.</returns>
+        private static IReadOnlyDictionary<string, string> MergeMetadata(
+            params IReadOnlyDictionary<string, string>[] sources)
+        {
+            var merged =
+                new Dictionary<string, string>(
+                    StringComparer.OrdinalIgnoreCase);
+
+            foreach (var source in sources)
+            {
+                foreach (var pair in source)
+                {
+                    if (!string.IsNullOrWhiteSpace(pair.Key))
+                    {
+                        merged[pair.Key] = pair.Value;
+                    }
+                }
+            }
+
+            return merged;
         }
 
         /// <summary>

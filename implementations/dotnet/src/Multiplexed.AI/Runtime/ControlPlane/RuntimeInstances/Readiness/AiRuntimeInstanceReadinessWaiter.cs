@@ -496,7 +496,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Readiness
                     $"MetadataRuntimeInstanceIdAlt='{GetMetadataValue(snapshot.Metadata, "runtime.instance.id")}', " +
                     $"MetadataControlPlaneId='{GetMetadataValue(snapshot.Metadata, "controlPlaneId")}', " +
                     $"MetadataRuntimeControlPlaneId='{GetMetadataValue(snapshot.Metadata, "runtime.controlPlaneId")}'.");
-                            }
+            }
 
             var requestedTenantId = request.ExecutionContextSnapshot?.TenantId;
             var requestedTenantGroupId = request.ExecutionContextSnapshot?.TenantGroupId;
@@ -953,11 +953,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Readiness
                 new FixedExecutionContextSnapshotProvider(
                     request.ExecutionContextSnapshot);
 
-            var effectiveControlPlaneIdResolver =
-                string.IsNullOrWhiteSpace(request.ControlPlaneId)
-                    ? this.controlPlaneIdResolver
-                    : new FixedAiControlPlaneIdResolver(request.ControlPlaneId);
-
             Console.WriteLine(
                 $"[READINESS STORE SELECTION] " +
                 $"RequestedRuntimeInstanceId='{request.RuntimeInstanceId}', " +
@@ -968,19 +963,19 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Readiness
                 $"HasRedis='{this.redis is not null}', " +
                 $"HasRegistrationOptions='{this.registrationOptions is not null}', " +
                 $"HasResolver='{this.controlPlaneIdResolver is not null}', " +
-                $"UsingFixedResolver='{!string.IsNullOrWhiteSpace(request.ControlPlaneId)}'.");
+                $"UsingCentralResolver='true'.");
 
             return (
                 new RedisAiRuntimeInstanceRegistry(
                     this.redis,
                     this.registrationOptions,
-                    effectiveControlPlaneIdResolver,
+                    this.controlPlaneIdResolver,
                     this.visibilityEvaluator,
                     executionContextProvider),
                 new RedisAiRuntimeInstanceCapacityStore(
                     this.redis,
                     this.registrationOptions,
-                    effectiveControlPlaneIdResolver,
+                    this.controlPlaneIdResolver,
                     this.visibilityEvaluator,
                     executionContextProvider));
         }
@@ -1170,35 +1165,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Readiness
                 FailureReason = failureReason,
                 TimedOut = timedOut
             };
-        }
-
-        /// <summary>
-        /// Resolves a fixed control-plane id for request-scoped readiness store access.
-        /// </summary>
-        private sealed class FixedAiControlPlaneIdResolver : IAiControlPlaneIdResolver
-        {
-            private readonly string controlPlaneId;
-
-            /// <summary>
-            /// Initializes a new instance of the <see cref="FixedAiControlPlaneIdResolver"/> class.
-            /// </summary>
-            /// <param name="controlPlaneId">The fixed control-plane id.</param>
-            public FixedAiControlPlaneIdResolver(
-                string controlPlaneId)
-            {
-                ArgumentException.ThrowIfNullOrWhiteSpace(controlPlaneId);
-
-                this.controlPlaneId = controlPlaneId;
-            }
-
-            /// <inheritdoc />
-            public Task<string> ResolveAsync(
-                CancellationToken cancellationToken = default)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-
-                return Task.FromResult(this.controlPlaneId);
-            }
         }
 
         /// <summary>

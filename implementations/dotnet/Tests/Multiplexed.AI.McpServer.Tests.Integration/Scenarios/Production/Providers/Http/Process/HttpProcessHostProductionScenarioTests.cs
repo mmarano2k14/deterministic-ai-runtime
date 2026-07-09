@@ -6,7 +6,7 @@ using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Providers.
 using Xunit;
 using Xunit.Abstractions;
 
-namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Providers.Http
+namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Providers.Http.Process
 {
     /// <summary>
     /// Contains production-grade HTTP process-host runtime scenario tests.

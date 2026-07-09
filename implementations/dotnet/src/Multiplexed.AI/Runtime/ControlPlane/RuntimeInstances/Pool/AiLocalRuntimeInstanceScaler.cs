@@ -1,6 +1,7 @@
 ﻿using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Multiplexed.Abstractions.AI.ControlPlane.Discovery;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Identity;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Pool;
@@ -36,6 +37,7 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
         private readonly IAiLocalRuntimeInstanceHostFactory hostFactory;
         private readonly IAiSharedRuntimeInstanceRegistry sharedRuntimeInstanceRegistry;
         private readonly IAiRuntimeHostIdentity runtimeHostIdentity;
+        private readonly IAiControlPlaneIdResolver controlPlaneIdResolver;
         private readonly AiLocalRuntimeInstancePoolOptions options;
         private readonly IConfiguration configuration;
         private readonly ILogger<AiLocalRuntimeInstanceScaler> logger;
@@ -51,6 +53,7 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
         /// <param name="hostFactory">The local runtime instance host factory.</param>
         /// <param name="sharedRuntimeInstanceRegistry">The shared runtime instance registry.</param>
         /// <param name="runtimeHostIdentity">The runtime host identity.</param>
+        /// <param name="controlPlaneIdResolver">The logical control-plane id resolver.</param>
         /// <param name="options">The local runtime instance pool options.</param>
         /// <param name="configuration">The application configuration.</param>
         /// <param name="logger">The logger.</param>
@@ -58,6 +61,7 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
             IAiLocalRuntimeInstanceHostFactory hostFactory,
             IAiSharedRuntimeInstanceRegistry sharedRuntimeInstanceRegistry,
             IAiRuntimeHostIdentity runtimeHostIdentity,
+            IAiControlPlaneIdResolver controlPlaneIdResolver,
             IOptions<AiLocalRuntimeInstancePoolOptions> options,
             IConfiguration configuration,
             ILogger<AiLocalRuntimeInstanceScaler> logger)
@@ -73,6 +77,10 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
             this.runtimeHostIdentity =
                 runtimeHostIdentity
                 ?? throw new ArgumentNullException(nameof(runtimeHostIdentity));
+
+            this.controlPlaneIdResolver =
+                controlPlaneIdResolver
+                ?? throw new ArgumentNullException(nameof(controlPlaneIdResolver));
 
             this.options =
                 options?.Value
@@ -109,7 +117,10 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
             ValidateOptions();
 
             var settings =
-                ResolveScaleOutSettings(request);
+                await this.ResolveScaleOutSettingsAsync(
+                        request,
+                        cancellationToken)
+                    .ConfigureAwait(false);
 
             ValidateScaleOutSettings(settings);
 
@@ -142,12 +153,15 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
                         RuntimeInstanceId = matchingHosts.LastOrDefault()?.RuntimeInstanceId,
                         ProviderOperationId = $"local-scaleout-noop-{request.RequestId}",
                         Message = $"Local runtime instance capacity already satisfies scoped target '{targetInstanceCount}'.",
-                        Metadata = CreateMetadata(
-                            request,
-                            "noop",
-                            matchingHosts.Count,
-                            targetInstanceCount,
-                            createdInstanceCount: 0)
+                        Metadata = await this.CreateMetadataAsync(
+                                request,
+                                settings,
+                                "noop",
+                                matchingHosts.Count,
+                                targetInstanceCount,
+                                createdInstanceCount: 0,
+                                cancellationToken)
+                            .ConfigureAwait(false)
                     };
                 }
 
@@ -180,13 +194,14 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
                     DateTimeOffset.UtcNow;
 
                 this.logger.LogInformation(
-                    "Local runtime instance scale-out fulfilled. HostId={HostId}, RequestId={RequestId}, SharedRunId={SharedRunId}, TenantId={TenantId}, TenantGroupId={TenantGroupId}, IsolationMode={IsolationMode}, ActiveInstanceCount={ActiveInstanceCount}, ScopedActiveInstanceCount={ScopedActiveInstanceCount}, TargetInstanceCount={TargetInstanceCount}, CreatedInstanceCount={CreatedInstanceCount}, RuntimeInstanceIdPrefix={RuntimeInstanceIdPrefix}, WorkerCountPerInstance={WorkerCountPerInstance}, MaxConcurrentRunsPerInstance={MaxConcurrentRunsPerInstance}, LocalQueueCapacity={LocalQueueCapacity}, DurationMs={DurationMs}",
+                    "Local runtime instance scale-out fulfilled. HostId={HostId}, RequestId={RequestId}, SharedRunId={SharedRunId}, TenantId={TenantId}, TenantGroupId={TenantGroupId}, IsolationMode={IsolationMode}, ControlPlaneId={ControlPlaneId}, ActiveInstanceCount={ActiveInstanceCount}, ScopedActiveInstanceCount={ScopedActiveInstanceCount}, TargetInstanceCount={TargetInstanceCount}, CreatedInstanceCount={CreatedInstanceCount}, RuntimeInstanceIdPrefix={RuntimeInstanceIdPrefix}, WorkerCountPerInstance={WorkerCountPerInstance}, MaxConcurrentRunsPerInstance={MaxConcurrentRunsPerInstance}, LocalQueueCapacity={LocalQueueCapacity}, DurationMs={DurationMs}",
                     this.runtimeHostIdentity.HostId,
                     request.RequestId,
                     request.SharedRunId,
                     request.TenantId,
                     request.TenantGroupId,
                     request.IsolationMode,
+                    settings.ControlPlaneId,
                     this.hosts.Count,
                     matchingHosts.Count,
                     targetInstanceCount,
@@ -204,29 +219,36 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
                     RuntimeInstanceId = lastCreatedHost?.RuntimeInstanceId ?? matchingHosts.LastOrDefault()?.RuntimeInstanceId,
                     ProviderOperationId = $"local-scaleout-{request.RequestId}",
                     Message = $"Local runtime instance scale-out fulfilled. Created {createdInstanceCount} runtime instance(s).",
-                    Metadata = CreateMetadata(
-                        request,
-                        "fulfilled",
-                        matchingHosts.Count,
-                        targetInstanceCount,
-                        createdInstanceCount)
+                    Metadata = await this.CreateMetadataAsync(
+                            request,
+                            settings,
+                            "fulfilled",
+                            matchingHosts.Count,
+                            targetInstanceCount,
+                            createdInstanceCount,
+                            cancellationToken)
+                        .ConfigureAwait(false)
                 };
             }
             catch (Exception exception) when (exception is not OperationCanceledException)
             {
                 this.logger.LogWarning(
                     exception,
-                    "Local runtime instance scale-out failed. HostId={HostId}, RequestId={RequestId}, SharedRunId={SharedRunId}, TenantId={TenantId}, ActiveInstanceCount={ActiveInstanceCount}",
+                    "Local runtime instance scale-out failed. HostId={HostId}, RequestId={RequestId}, SharedRunId={SharedRunId}, TenantId={TenantId}, ControlPlaneId={ControlPlaneId}, ActiveInstanceCount={ActiveInstanceCount}",
                     this.runtimeHostIdentity.HostId,
                     request.RequestId,
                     request.SharedRunId,
                     request.TenantId,
+                    settings.ControlPlaneId,
                     this.hosts.Count);
 
-                return CreateRejectedResult(
-                    request,
-                    "local-runtime-instance-scaleout-failed",
-                    exception.Message);
+                return await this.CreateRejectedResultAsync(
+                        request,
+                        settings,
+                        "local-runtime-instance-scaleout-failed",
+                        exception.Message,
+                        cancellationToken)
+                    .ConfigureAwait(false);
             }
             finally
             {
@@ -398,12 +420,13 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
                     runtimeId);
 
             this.logger.LogInformation(
-                "Creating local runtime instance host. HostMode={HostMode}, EnableSharedQueuePump={EnableSharedQueuePump}, HostId={HostId}, RuntimeId={RuntimeId}, RuntimeInstanceId={RuntimeInstanceId}, Index={Index}, TargetInstanceCount={TargetInstanceCount}, WorkerCountPerInstance={WorkerCountPerInstance}, MaxConcurrentRunsPerInstance={MaxConcurrentRunsPerInstance}, LocalQueueCapacity={LocalQueueCapacity}, MetadataCount={MetadataCount}",
+                "Creating local runtime instance host. HostMode={HostMode}, EnableSharedQueuePump={EnableSharedQueuePump}, HostId={HostId}, RuntimeId={RuntimeId}, RuntimeInstanceId={RuntimeInstanceId}, ControlPlaneId={ControlPlaneId}, Index={Index}, TargetInstanceCount={TargetInstanceCount}, WorkerCountPerInstance={WorkerCountPerInstance}, MaxConcurrentRunsPerInstance={MaxConcurrentRunsPerInstance}, LocalQueueCapacity={LocalQueueCapacity}, MetadataCount={MetadataCount}",
                 hostMode,
                 enableSharedQueuePump,
                 this.runtimeHostIdentity.HostId,
                 runtimeId,
                 runtimeInstanceId,
+                settings.ControlPlaneId,
                 index,
                 targetInstanceCount,
                 settings.WorkerCountPerInstance,
@@ -449,9 +472,11 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
         /// Resolves the effective local runtime instance scale-out settings for a request.
         /// </summary>
         /// <param name="request">The provider scale-out request.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
         /// <returns>The resolved local runtime instance scale-out settings.</returns>
-        private LocalRuntimeInstanceScaleOutSettings ResolveScaleOutSettings(
-            AiRuntimeScaleOutProviderRequest request)
+        private async Task<LocalRuntimeInstanceScaleOutSettings> ResolveScaleOutSettingsAsync(
+            AiRuntimeScaleOutProviderRequest request,
+            CancellationToken cancellationToken)
         {
             var runtimeInstanceIdPrefix =
                 string.IsNullOrWhiteSpace(request.RuntimeInstanceIdPrefix)
@@ -470,18 +495,34 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
                 request.LocalQueueCapacity ?? this.options.LocalQueueCapacity;
 
             var metadata =
-                CreateHostMetadata(
-                    request,
-                    runtimeInstanceIdPrefix,
-                    workerCountPerInstance,
-                    maxConcurrentRunsPerInstance,
-                    localQueueCapacity);
+                await this.CreateHostMetadataAsync(
+                        request,
+                        runtimeInstanceIdPrefix,
+                        workerCountPerInstance,
+                        maxConcurrentRunsPerInstance,
+                        localQueueCapacity,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+            var controlPlaneId =
+                await this.controlPlaneIdResolver
+                    .ResolveAsync(
+                        new AiControlPlaneIdResolutionRequest
+                        {
+                            RequestedControlPlaneId = request.ControlPlaneId,
+                            Metadata = metadata,
+                            Source = "local-runtime-instance-scaler",
+                            AllowGeneratedFallback = false
+                        },
+                        cancellationToken)
+                    .ConfigureAwait(false);
 
             return new LocalRuntimeInstanceScaleOutSettings(
                 runtimeInstanceIdPrefix,
                 workerCountPerInstance,
                 maxConcurrentRunsPerInstance,
                 localQueueCapacity,
+                controlPlaneId,
                 metadata);
         }
 
@@ -493,13 +534,15 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
         /// <param name="workerCountPerInstance">The resolved worker count per instance.</param>
         /// <param name="maxConcurrentRunsPerInstance">The resolved maximum concurrent run count per instance.</param>
         /// <param name="localQueueCapacity">The resolved local queue capacity.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
         /// <returns>The metadata dictionary.</returns>
-        private IReadOnlyDictionary<string, string> CreateHostMetadata(
+        private async Task<IReadOnlyDictionary<string, string>> CreateHostMetadataAsync(
             AiRuntimeScaleOutProviderRequest request,
             string runtimeInstanceIdPrefix,
             int workerCountPerInstance,
             int maxConcurrentRunsPerInstance,
-            int? localQueueCapacity)
+            int? localQueueCapacity,
+            CancellationToken cancellationToken)
         {
             var metadata =
                 new Dictionary<string, string>(
@@ -514,15 +557,22 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
                 }
             }
 
-            var controlPlaneId =
-                this.ResolveControlPlaneId(request);
+            var controlPlaneMetadata =
+                await this.controlPlaneIdResolver
+                    .ResolveMetadataAsync(
+                        new AiControlPlaneIdResolutionRequest
+                        {
+                            RequestedControlPlaneId = request.ControlPlaneId,
+                            Metadata = metadata,
+                            Source = "local-runtime-instance-scaler",
+                            AllowGeneratedFallback = false
+                        },
+                        cancellationToken)
+                    .ConfigureAwait(false);
 
-            if (!string.IsNullOrWhiteSpace(controlPlaneId))
+            foreach (var pair in controlPlaneMetadata)
             {
-                metadata["controlPlaneId"] = controlPlaneId;
-                metadata["control-plane.id"] = controlPlaneId;
-                metadata["controlplane.id"] = controlPlaneId;
-                metadata["runtime.controlPlaneId"] = controlPlaneId;
+                metadata[pair.Key] = pair.Value;
             }
 
             metadata[AiRuntimeInstanceProviderMetadataKeys.ProviderName] =
@@ -580,42 +630,6 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
             }
 
             return metadata;
-        }
-
-        /// <summary>
-        /// Resolves the effective control-plane identifier inherited by local runtime instances.
-        /// </summary>
-        /// <param name="request">The provider scale-out request.</param>
-        /// <returns>The resolved control-plane identifier, or an empty value when no explicit value is available.</returns>
-        private string? ResolveControlPlaneId(
-            AiRuntimeScaleOutProviderRequest request)
-        {
-            var configuredControlPlaneId =
-                this.configuration["AiRuntimeInstanceRegistration:ControlPlaneId"];
-
-            if (string.IsNullOrWhiteSpace(configuredControlPlaneId))
-            {
-                configuredControlPlaneId =
-                    this.configuration["AiMcpHost:ControlPlaneId"];
-            }
-
-            if (!string.IsNullOrWhiteSpace(request.ControlPlaneId) &&
-                !string.Equals(request.ControlPlaneId, this.runtimeHostIdentity.HostId, StringComparison.OrdinalIgnoreCase))
-            {
-                return request.ControlPlaneId;
-            }
-
-            if (!string.IsNullOrWhiteSpace(configuredControlPlaneId))
-            {
-                return configuredControlPlaneId;
-            }
-
-            if (!string.IsNullOrWhiteSpace(request.ControlPlaneId))
-            {
-                return request.ControlPlaneId;
-            }
-
-            return null;
         }
 
         /// <summary>
@@ -714,13 +728,17 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
         /// Creates a rejected scale-out provider result.
         /// </summary>
         /// <param name="request">The provider scale-out request.</param>
+        /// <param name="settings">The resolved scale-out settings.</param>
         /// <param name="failureReason">The failure reason code.</param>
         /// <param name="message">The failure message.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
         /// <returns>The rejected provider result.</returns>
-        private static AiRuntimeScaleOutProviderResult CreateRejectedResult(
+        private async Task<AiRuntimeScaleOutProviderResult> CreateRejectedResultAsync(
             AiRuntimeScaleOutProviderRequest request,
+            LocalRuntimeInstanceScaleOutSettings settings,
             string failureReason,
-            string message)
+            string message,
+            CancellationToken cancellationToken)
         {
             return new AiRuntimeScaleOutProviderResult
             {
@@ -729,12 +747,15 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
                 FailureReason = failureReason,
                 Message = message,
                 ProviderOperationId = $"local-scaleout-rejected-{request.RequestId}",
-                Metadata = CreateMetadata(
-                    request,
-                    "rejected",
-                    activeInstanceCount: 0,
-                    targetInstanceCount: request.RequestedTargetInstanceCount,
-                    createdInstanceCount: 0)
+                Metadata = await this.CreateMetadataAsync(
+                        request,
+                        settings,
+                        "rejected",
+                        activeInstanceCount: 0,
+                        targetInstanceCount: request.RequestedTargetInstanceCount,
+                        createdInstanceCount: 0,
+                        cancellationToken)
+                    .ConfigureAwait(false)
             };
         }
 
@@ -742,33 +763,53 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
         /// Creates provider result metadata for local scale-out operations.
         /// </summary>
         /// <param name="request">The provider scale-out request.</param>
+        /// <param name="settings">The resolved scale-out settings.</param>
         /// <param name="status">The provider operation status.</param>
         /// <param name="activeInstanceCount">The active runtime instance count within the requested scope.</param>
         /// <param name="targetInstanceCount">The target runtime instance count within the requested scope.</param>
         /// <param name="createdInstanceCount">The number of runtime instances created by this operation.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
         /// <returns>The metadata dictionary.</returns>
-        private static IReadOnlyDictionary<string, string> CreateMetadata(
+        private async Task<IReadOnlyDictionary<string, string>> CreateMetadataAsync(
             AiRuntimeScaleOutProviderRequest request,
+            LocalRuntimeInstanceScaleOutSettings settings,
             string status,
             int activeInstanceCount,
             int targetInstanceCount,
-            int createdInstanceCount)
+            int createdInstanceCount,
+            CancellationToken cancellationToken)
         {
             var metadata =
                 new Dictionary<string, string>(
                     request.Metadata ?? new Dictionary<string, string>(),
-                    StringComparer.OrdinalIgnoreCase)
-                {
-                    [AiRuntimeInstanceProviderMetadataKeys.ProviderName] = ProviderName,
-                    ["provider"] = ProviderName,
-                    ["providerStatus"] = status,
-                    ["scaleOutRequestId"] = request.RequestId,
-                    ["sharedRunId"] = request.SharedRunId,
-                    ["controlPlaneId"] = request.ControlPlaneId,
-                    ["activeInstanceCount"] = activeInstanceCount.ToString(CultureInfo.InvariantCulture),
-                    ["targetInstanceCount"] = targetInstanceCount.ToString(CultureInfo.InvariantCulture),
-                    ["createdInstanceCount"] = createdInstanceCount.ToString(CultureInfo.InvariantCulture)
-                };
+                    StringComparer.OrdinalIgnoreCase);
+
+            var controlPlaneMetadata =
+                await this.controlPlaneIdResolver
+                    .ResolveMetadataAsync(
+                        new AiControlPlaneIdResolutionRequest
+                        {
+                            RequestedControlPlaneId = settings.ControlPlaneId,
+                            Metadata = metadata,
+                            Source = "local-runtime-instance-scaler-result",
+                            AllowGeneratedFallback = false
+                        },
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+            foreach (var pair in controlPlaneMetadata)
+            {
+                metadata[pair.Key] = pair.Value;
+            }
+
+            metadata[AiRuntimeInstanceProviderMetadataKeys.ProviderName] = ProviderName;
+            metadata["provider"] = ProviderName;
+            metadata["providerStatus"] = status;
+            metadata["scaleOutRequestId"] = request.RequestId;
+            metadata["sharedRunId"] = request.SharedRunId;
+            metadata["activeInstanceCount"] = activeInstanceCount.ToString(CultureInfo.InvariantCulture);
+            metadata["targetInstanceCount"] = targetInstanceCount.ToString(CultureInfo.InvariantCulture);
+            metadata["createdInstanceCount"] = createdInstanceCount.ToString(CultureInfo.InvariantCulture);
 
             if (!string.IsNullOrWhiteSpace(request.TenantId))
             {
@@ -954,12 +995,14 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
         /// <param name="WorkerCountPerInstance">The worker count per instance.</param>
         /// <param name="MaxConcurrentRunsPerInstance">The maximum concurrent run count per instance.</param>
         /// <param name="LocalQueueCapacity">The local queue capacity.</param>
+        /// <param name="ControlPlaneId">The logical control-plane identifier.</param>
         /// <param name="Metadata">The metadata copied to the created runtime instance host.</param>
         private sealed record LocalRuntimeInstanceScaleOutSettings(
             string RuntimeInstanceIdPrefix,
             int WorkerCountPerInstance,
             int MaxConcurrentRunsPerInstance,
             int? LocalQueueCapacity,
+            string ControlPlaneId,
             IReadOnlyDictionary<string, string> Metadata);
     }
 }

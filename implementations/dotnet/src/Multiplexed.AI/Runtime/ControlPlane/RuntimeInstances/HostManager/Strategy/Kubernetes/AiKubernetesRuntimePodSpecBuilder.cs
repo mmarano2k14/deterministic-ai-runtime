@@ -1,4 +1,6 @@
 ﻿using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers.Transport;
 using System;
 using System.Collections.Generic;
 using System.Globalization;
@@ -59,45 +61,24 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
                     : request.TransportName;
 
             var tenantId =
-                request.ExecutionContextSnapshot?.TenantId;
+                request.ExecutionContextSnapshot?.TenantId ?? request.TenantId;
 
             var tenantGroupId =
-                request.ExecutionContextSnapshot?.TenantGroupId;
+                request.ExecutionContextSnapshot?.TenantGroupId ?? request.TenantGroupId;
 
             var containerPort =
                 this.options.ContainerPort.ToString(CultureInfo.InvariantCulture);
+
+            var endpoint =
+                $"http://0.0.0.0:{containerPort}";
 
             var environmentVariables =
                 new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
                 {
                     ["AiMcpHost__Mode"] = "RuntimeInstanceOnly",
-                    ["AiRuntimeInstanceRegistration__RuntimeInstanceId"] = request.RuntimeInstanceId,
-                    ["AiRuntimeInstanceRegistration__ProviderName"] = request.ProviderName,
-                    ["AiRuntimeInstanceRegistration__TransportName"] = transportName,
-                    ["AiRuntimeInstanceRegistration__Role"] = "Runtime",
-
-                    ["AiRuntimeInstanceRegistration__Metadata__host.provider"] = AiRuntimeHostProviderNames.Kubernetes,
-                    ["AiRuntimeInstanceRegistration__Metadata__host.creation.mode"] = AiRuntimeHostCreationMode.Kubernetes.ToString(),
-                    ["AiRuntimeInstanceRegistration__Metadata__provider.name"] = request.ProviderName,
-                    ["AiRuntimeInstanceRegistration__Metadata__provider"] = request.ProviderName,
-                    ["AiRuntimeInstanceRegistration__Metadata__transport.name"] = transportName,
-
-                    ["AiRuntimeInstanceRegistration__ProviderMetadata__host.provider"] = AiRuntimeHostProviderNames.Kubernetes,
-                    ["AiRuntimeInstanceRegistration__ProviderMetadata__host.creation.mode"] = AiRuntimeHostCreationMode.Kubernetes.ToString(),
-                    ["AiRuntimeInstanceRegistration__ProviderMetadata__provider.name"] = request.ProviderName,
-                    ["AiRuntimeInstanceRegistration__ProviderMetadata__provider"] = request.ProviderName,
-                    ["AiRuntimeInstanceRegistration__ProviderMetadata__transport.name"] = transportName,
-
-                    ["AiLocalRuntimeInstancePool__Metadata__host.provider"] = AiRuntimeHostProviderNames.Kubernetes,
-                    ["AiLocalRuntimeInstancePool__Metadata__host.creation.mode"] = AiRuntimeHostCreationMode.Kubernetes.ToString(),
-                    ["AiLocalRuntimeInstancePool__Metadata__provider.name"] = request.ProviderName,
-                    ["AiLocalRuntimeInstancePool__Metadata__provider"] = request.ProviderName,
-                    ["AiLocalRuntimeInstancePool__Metadata__transport.name"] = transportName,
-
-                    ["ASPNETCORE_URLS"] = $"http://0.0.0.0:{containerPort}",
-                    ["DOTNET_URLS"] = $"http://0.0.0.0:{containerPort}",
                     ["AiMcpHost__Port"] = containerPort,
-
+                    ["ASPNETCORE_URLS"] = endpoint,
+                    ["DOTNET_URLS"] = endpoint,
                     ["AiMcpHost__EnableSharedQueuePump"] = "false",
                     ["AiMcpHost__EnableReplayTools"] = "false",
                     ["AiMcpHost__EnableObservabilityTools"] = "false",
@@ -109,16 +90,73 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
                     ["AiLocalRuntimeInstancePool__LocalQueueCapacity"] = request.LocalQueueCapacity.ToString(CultureInfo.InvariantCulture),
                     ["AiLocalRuntimeInstancePool__RuntimeInstanceIdPrefix"] = ResolveRuntimeInstanceIdPrefix(request),
 
+                    ["AiEngine__RuntimeInstanceId"] = request.RuntimeInstanceId,
+                    ["AiEngine__PipelineBackgroundController__RuntimeInstanceId"] = request.RuntimeInstanceId,
                     ["AiEngine__PipelineBackgroundController__MaxConcurrentRuns"] = request.MaxConcurrentRunsPerInstance.ToString(CultureInfo.InvariantCulture),
                     ["AiEngine__PipelineBackgroundController__QueueCapacity"] = request.LocalQueueCapacity.ToString(CultureInfo.InvariantCulture),
                     ["AiEngine__PipelineBackgroundController__Distributed__Enabled"] = "true",
                     ["AiEngine__PipelineBackgroundController__Distributed__WorkerCount"] = request.WorkerCountPerInstance.ToString(CultureInfo.InvariantCulture),
+                    ["AiEngine__RuntimeInstanceWorker__RuntimeInstanceId"] = request.RuntimeInstanceId,
 
                     ["AiRuntimeInstanceRegistration__Enabled"] = "true",
+                    ["AiRuntimeInstanceRegistration__RuntimeInstanceId"] = request.RuntimeInstanceId,
+                    ["AiRuntimeInstanceRegistration__ProviderName"] = request.ProviderName,
+                    ["AiRuntimeInstanceRegistration__TransportName"] = transportName,
+                    ["AiRuntimeInstanceRegistration__Role"] = "Runtime",
                     ["AiRuntimeInstanceRegistration__WorkerCount"] = request.WorkerCountPerInstance.ToString(CultureInfo.InvariantCulture),
                     ["AiRuntimeInstanceRegistration__MaxConcurrentRuns"] = request.MaxConcurrentRunsPerInstance.ToString(CultureInfo.InvariantCulture),
                     ["AiRuntimeInstanceRegistration__QueueCapacity"] = request.LocalQueueCapacity.ToString(CultureInfo.InvariantCulture),
-                    ["AiRuntimeInstanceRegistration__RuntimeVersion"] = "kubernetes-host"
+                    ["AiRuntimeInstanceRegistration__RuntimeVersion"] = "kubernetes-host",
+                    ["AiRuntimeInstanceRegistration__HeartbeatInterval"] = "00:00:02",
+
+                    ["AiRuntimeInstanceRegistration__Metadata__host.provider"] = AiRuntimeHostProviderNames.Kubernetes,
+                    ["AiRuntimeInstanceRegistration__Metadata__host.creation.mode"] = AiRuntimeHostCreationMode.Kubernetes.ToString(),
+                    ["AiRuntimeInstanceRegistration__Metadata__hostCreation.mode"] = AiRuntimeHostCreationMode.Kubernetes.ToString(),
+                    ["AiRuntimeInstanceRegistration__Metadata__hostCreation.strategy"] = nameof(KubernetesAiRuntimeHostCreationStrategy),
+                    ["AiRuntimeInstanceRegistration__Metadata__provider.name"] = request.ProviderName,
+                    ["AiRuntimeInstanceRegistration__Metadata__provider"] = request.ProviderName,
+                    ["AiRuntimeInstanceRegistration__Metadata__transport.name"] = transportName,
+                    ["AiRuntimeInstanceRegistration__Metadata__transport.endpoint"] = request.TransportEndpoint ?? string.Empty,
+                    ["AiRuntimeInstanceRegistration__Metadata__runtime.instance.id"] = request.RuntimeInstanceId,
+                    ["AiRuntimeInstanceRegistration__Metadata__hostType"] = "runtime-instance-kubernetes",
+                    ["AiRuntimeInstanceRegistration__Metadata__deployment"] = "kubernetes-host",
+
+                    ["AiRuntimeInstanceRegistration__ProviderMetadata__host.provider"] = AiRuntimeHostProviderNames.Kubernetes,
+                    ["AiRuntimeInstanceRegistration__ProviderMetadata__host.creation.mode"] = AiRuntimeHostCreationMode.Kubernetes.ToString(),
+                    ["AiRuntimeInstanceRegistration__ProviderMetadata__hostCreation.mode"] = AiRuntimeHostCreationMode.Kubernetes.ToString(),
+                    ["AiRuntimeInstanceRegistration__ProviderMetadata__hostCreation.strategy"] = nameof(KubernetesAiRuntimeHostCreationStrategy),
+                    ["AiRuntimeInstanceRegistration__ProviderMetadata__provider.name"] = request.ProviderName,
+                    ["AiRuntimeInstanceRegistration__ProviderMetadata__provider"] = request.ProviderName,
+                    ["AiRuntimeInstanceRegistration__ProviderMetadata__transport.name"] = transportName,
+                    ["AiRuntimeInstanceRegistration__ProviderMetadata__transport.endpoint"] = request.TransportEndpoint ?? string.Empty,
+                    ["AiRuntimeInstanceRegistration__ProviderMetadata__runtime.instance.id"] = request.RuntimeInstanceId,
+
+                    ["AiLocalRuntimeInstancePool__Metadata__host.provider"] = AiRuntimeHostProviderNames.Kubernetes,
+                    ["AiLocalRuntimeInstancePool__Metadata__host.creation.mode"] = AiRuntimeHostCreationMode.Kubernetes.ToString(),
+                    ["AiLocalRuntimeInstancePool__Metadata__hostCreation.mode"] = AiRuntimeHostCreationMode.Kubernetes.ToString(),
+                    ["AiLocalRuntimeInstancePool__Metadata__hostCreation.strategy"] = nameof(KubernetesAiRuntimeHostCreationStrategy),
+                    ["AiLocalRuntimeInstancePool__Metadata__provider.name"] = request.ProviderName,
+                    ["AiLocalRuntimeInstancePool__Metadata__provider"] = request.ProviderName,
+                    ["AiLocalRuntimeInstancePool__Metadata__transport.name"] = transportName,
+
+                    ["RuntimeInstanceId"] = request.RuntimeInstanceId,
+                    ["AI_RUNTIME_INSTANCE_ID"] = request.RuntimeInstanceId,
+                    ["MULTIPLEXED_AI_RUNTIME_INSTANCE_ID"] = request.RuntimeInstanceId,
+
+                    ["AiPayloadStore__Enabled"] = "true",
+                    ["AiPayloadStore__Provider"] = "mongo-redis",
+                    ["AiPayloadStore__RequireReplaySafePayloads"] = "true",
+
+                    ["AiEngine__PayloadStore__Enabled"] = "true",
+                    ["AiEngine__PayloadStore__Provider"] = "mongo-redis",
+                    ["AiEngine__PayloadStore__RequireReplaySafePayloads"] = "true",
+
+                    ["AiEngine__Payloads__Enabled"] = "true",
+                    ["AiEngine__Payloads__Provider"] = "mongo-redis",
+                    ["AiEngine__Payloads__RequireReplaySafePayloads"] = "true",
+
+                    ["AiDecisionLedger__Provider"] = "mongo",
+                    ["AiObservability__Ledger__Provider"] = "mongo"
                 };
 
             AddKestrelEnvironmentVariables(
@@ -135,13 +173,15 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
                 tenantId,
                 tenantGroupId);
 
-            foreach (var environmentVariable in this.options.EnvironmentVariables)
-            {
-                if (!string.IsNullOrWhiteSpace(environmentVariable.Key))
-                {
-                    environmentVariables[environmentVariable.Key] = environmentVariable.Value;
-                }
-            }
+            AddRuntimeIsolationEnvironmentVariables(
+                environmentVariables,
+                request,
+                tenantId,
+                tenantGroupId);
+
+            AddConfiguredEnvironmentVariablesWithoutOverridingRuntimeRequest(
+                environmentVariables,
+                this.options.EnvironmentVariables);
 
             return new AiKubernetesRuntimePodSpec
             {
@@ -205,7 +245,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
         }
 
         /// <summary>
-        /// Adds control-plane environment variables used by the runtime registration and local runtime pool.
+        /// Adds control-plane environment variables used by the runtime registration, discovery, and local runtime pool.
         /// </summary>
         /// <param name="environmentVariables">The environment variables.</param>
         /// <param name="controlPlaneId">The control-plane id.</param>
@@ -222,6 +262,14 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
             environmentVariables["AiMcpHost__ControlPlaneHostId"] = controlPlaneId;
             environmentVariables["AiControlPlaneHostIdentity__ControlPlaneHostId"] = controlPlaneId;
             environmentVariables["AiControlPlaneHostIdentity__ControlPlaneId"] = controlPlaneId;
+
+            environmentVariables["AiEngine__ControlPlane__ControlPlaneId"] = controlPlaneId;
+            environmentVariables["AiEngine__ControlPlane__RedisDiscoveryKey"] = $"multiplexed-ai:{controlPlaneId}";
+            environmentVariables["AiEngine__ControlPlane__EnableDiscovery"] = "true";
+            environmentVariables["AiEngine__ControlPlane__PublishDiscovery"] = "false";
+            environmentVariables["AiEngine__ControlPlane__RequireDiscovery"] = "true";
+            environmentVariables["AiEngine__ControlPlane__DiscoveryResolutionTimeout"] = "00:00:10";
+            environmentVariables["AiEngine__ControlPlane__DiscoveryResolutionPollInterval"] = "00:00:00.100";
 
             environmentVariables["AiRuntimeInstanceRegistration__ControlPlaneId"] = controlPlaneId;
             environmentVariables["AiRuntimeInstanceRegistration__ControlPlaneHostId"] = controlPlaneId;
@@ -293,6 +341,70 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
                 environmentVariables["AiLocalRuntimeInstancePool__Metadata__tenant.group.id"] = tenantGroupId;
                 environmentVariables["AiLocalRuntimeInstancePool__Metadata__tenant.groupId"] = tenantGroupId;
                 environmentVariables["AiLocalRuntimeInstancePool__Metadata__tenantGroupId"] = tenantGroupId;
+            }
+        }
+
+        /// <summary>
+        /// Adds runtime isolation and capacity metadata derived from the host start request.
+        /// </summary>
+        /// <param name="environmentVariables">The environment variables.</param>
+        /// <param name="request">The runtime host start request.</param>
+        /// <param name="tenantId">The resolved tenant id.</param>
+        /// <param name="tenantGroupId">The resolved tenant group id.</param>
+        private static void AddRuntimeIsolationEnvironmentVariables(
+            IDictionary<string, string> environmentVariables,
+            AiRuntimeHostStartRequest request,
+            string? tenantId,
+            string? tenantGroupId)
+        {
+            ArgumentNullException.ThrowIfNull(environmentVariables);
+            ArgumentNullException.ThrowIfNull(request);
+
+            environmentVariables[$"AiRuntimeInstanceRegistration__Metadata__{AiRuntimeInstanceIsolationMetadataKeys.TenantId}"] = tenantId ?? string.Empty;
+            environmentVariables[$"AiRuntimeInstanceRegistration__Metadata__{AiRuntimeInstanceIsolationMetadataKeys.TenantGroupId}"] = tenantGroupId ?? string.Empty;
+            environmentVariables[$"AiRuntimeInstanceRegistration__Metadata__{AiRuntimeInstanceIsolationMetadataKeys.IsolationMode}"] = request.IsolationMode ?? string.Empty;
+            environmentVariables[$"AiRuntimeInstanceRegistration__Metadata__{AiRuntimeInstanceIsolationMetadataKeys.PreferDedicatedCapacity}"] = request.PreferDedicatedCapacity.ToString();
+            environmentVariables[$"AiRuntimeInstanceRegistration__Metadata__{AiRuntimeInstanceIsolationMetadataKeys.AllowSharedFallback}"] = request.AllowSharedFallback.ToString();
+
+            environmentVariables["AiRuntimeInstanceRegistration__Metadata__runtime.maxRuntimeInstances"] = request.MaxRuntimeInstances?.ToString(CultureInfo.InvariantCulture) ?? string.Empty;
+            environmentVariables["AiRuntimeInstanceRegistration__Metadata__runtime.instanceIdPrefix"] = request.RuntimeInstanceIdPrefix ?? string.Empty;
+            environmentVariables["AiRuntimeInstanceRegistration__Metadata__runtime.workerCountPerInstance"] = request.WorkerCountPerInstance.ToString(CultureInfo.InvariantCulture);
+            environmentVariables["AiRuntimeInstanceRegistration__Metadata__runtime.maxConcurrentRunsPerInstance"] = request.MaxConcurrentRunsPerInstance.ToString(CultureInfo.InvariantCulture);
+            environmentVariables["AiRuntimeInstanceRegistration__Metadata__runtime.localQueueCapacity"] = request.LocalQueueCapacity.ToString(CultureInfo.InvariantCulture);
+
+            environmentVariables[$"AiLocalRuntimeInstancePool__Metadata__{AiRuntimeInstanceIsolationMetadataKeys.TenantId}"] = tenantId ?? string.Empty;
+            environmentVariables[$"AiLocalRuntimeInstancePool__Metadata__{AiRuntimeInstanceIsolationMetadataKeys.TenantGroupId}"] = tenantGroupId ?? string.Empty;
+            environmentVariables[$"AiLocalRuntimeInstancePool__Metadata__{AiRuntimeInstanceIsolationMetadataKeys.IsolationMode}"] = request.IsolationMode ?? string.Empty;
+            environmentVariables[$"AiLocalRuntimeInstancePool__Metadata__{AiRuntimeInstanceIsolationMetadataKeys.PreferDedicatedCapacity}"] = request.PreferDedicatedCapacity.ToString();
+            environmentVariables[$"AiLocalRuntimeInstancePool__Metadata__{AiRuntimeInstanceIsolationMetadataKeys.AllowSharedFallback}"] = request.AllowSharedFallback.ToString();
+
+            environmentVariables["AiLocalRuntimeInstancePool__Metadata__runtime.maxRuntimeInstances"] = request.MaxRuntimeInstances?.ToString(CultureInfo.InvariantCulture) ?? string.Empty;
+            environmentVariables["AiLocalRuntimeInstancePool__Metadata__runtime.instanceIdPrefix"] = request.RuntimeInstanceIdPrefix ?? string.Empty;
+            environmentVariables["AiLocalRuntimeInstancePool__Metadata__runtime.workerCountPerInstance"] = request.WorkerCountPerInstance.ToString(CultureInfo.InvariantCulture);
+            environmentVariables["AiLocalRuntimeInstancePool__Metadata__runtime.maxConcurrentRunsPerInstance"] = request.MaxConcurrentRunsPerInstance.ToString(CultureInfo.InvariantCulture);
+            environmentVariables["AiLocalRuntimeInstancePool__Metadata__runtime.localQueueCapacity"] = request.LocalQueueCapacity.ToString(CultureInfo.InvariantCulture);
+        }
+
+        /// <summary>
+        /// Adds configured pod environment variables without overriding runtime request derived values.
+        /// </summary>
+        /// <param name="environmentVariables">The environment variables.</param>
+        /// <param name="configuredEnvironmentVariables">The configured environment variables.</param>
+        private static void AddConfiguredEnvironmentVariablesWithoutOverridingRuntimeRequest(
+            IDictionary<string, string> environmentVariables,
+            IDictionary<string, string> configuredEnvironmentVariables)
+        {
+            ArgumentNullException.ThrowIfNull(environmentVariables);
+            ArgumentNullException.ThrowIfNull(configuredEnvironmentVariables);
+
+            foreach (var environmentVariable in configuredEnvironmentVariables)
+            {
+                if (!string.IsNullOrWhiteSpace(environmentVariable.Key))
+                {
+                    environmentVariables.TryAdd(
+                        environmentVariable.Key,
+                        environmentVariable.Value ?? string.Empty);
+                }
             }
         }
     }

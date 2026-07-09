@@ -11,6 +11,7 @@ using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Queue;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Redis;
 using Multiplexed.Abstractions.AI.Execution.Instance.Worker;
 using Multiplexed.Abstractions.Core.ExecutionContext;
+using Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Fake;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery.Transition;
@@ -72,7 +73,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Shared
                         KeyPrefix = keyPrefix,
                         ListScanLimit = 100
                     }),
-                    new StaticAiControlPlaneIdResolver("test-control-plane"));
+                    new StaticControlPlaneIdResolver("test-control-plane"));
 
                 await ExecuteRecoveryRedispatchScenarioAsync(
                     registry,
@@ -475,35 +476,6 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Shared
                     ["scenario"] = "runtime-recovery-redispatch"
                 }
             };
-        }
-
-        /// <summary>
-        /// Static control plane identifier resolver for Redis integration tests.
-        /// </summary>
-        private sealed class StaticAiControlPlaneIdResolver : IAiControlPlaneIdResolver
-        {
-            private readonly string controlPlaneId;
-
-            /// <summary>
-            /// Initializes a new instance of the <see cref="StaticAiControlPlaneIdResolver"/> class.
-            /// </summary>
-            /// <param name="controlPlaneId">The control plane identifier.</param>
-            public StaticAiControlPlaneIdResolver(
-                string controlPlaneId)
-            {
-                ArgumentException.ThrowIfNullOrWhiteSpace(controlPlaneId);
-
-                this.controlPlaneId = controlPlaneId;
-            }
-
-            /// <inheritdoc />
-            public Task<string> ResolveAsync(
-                CancellationToken cancellationToken = default)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-
-                return Task.FromResult(controlPlaneId);
-            }
         }
     }
 }

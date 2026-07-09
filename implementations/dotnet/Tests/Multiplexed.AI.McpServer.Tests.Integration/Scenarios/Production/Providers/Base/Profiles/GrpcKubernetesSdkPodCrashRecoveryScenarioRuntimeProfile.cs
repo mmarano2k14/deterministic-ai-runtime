@@ -1,31 +1,31 @@
 ﻿using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager;
 using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Definitions;
-using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Providers.Http.Runners;
+using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Providers.Grpc.Runners;
 
 namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Providers.Base.Profiles
 {
     /// <summary>
-    /// Provides the HTTP runtime profile for process-host production scenarios.
+    /// Provides the gRPC Kubernetes SDK runtime profile for production pod crash recovery scenarios.
     /// </summary>
-    internal sealed class HttpProcessHostScenarioRuntimeProfile : IProcessHostScenarioRuntimeProfile
+    public sealed class GrpcKubernetesSdkPodCrashRecoveryScenarioRuntimeProfile : IProcessHostScenarioRuntimeProfile
     {
         /// <inheritdoc />
-        public string ProviderName => "http";
+        public string ProviderName => "grpc";
 
         /// <inheritdoc />
-        public string ProviderLabel => "http-process-host";
+        public string ProviderLabel => "gk8s-crash";
 
         /// <inheritdoc />
-        public string LogPrefix => "HTTP PROCESS HOST";
+        public string LogPrefix => "GRPC K8S SDK POD CRASH RECOVERY";
 
         /// <inheritdoc />
-        public string RequestedBy => "http-process-host-real-runtime-crash-recovery-test";
+        public string RequestedBy => "grpc-kubernetes-sdk-pod-crash-recovery-test";
 
         /// <inheritdoc />
         public string Source => "integration-test";
 
         /// <inheritdoc />
-        public AiRuntimeHostCreationMode HostCreationMode => AiRuntimeHostCreationMode.Process;
+        public AiRuntimeHostCreationMode HostCreationMode => AiRuntimeHostCreationMode.Kubernetes;
 
         /// <inheritdoc />
         public Dictionary<string, string?> BuildSettings(
@@ -33,10 +33,10 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             string controlPlaneId,
             string runtimeHostAssemblyPath)
         {
-            return HttpProcessHostProductionScenarioSettingsBuilder.Build(
+            return GrpcKubernetesSdkPodCrashRecoveryProductionScenarioSettingsBuilder.Build(
                 scenario,
                 controlPlaneId,
-                runtimeHostAssemblyPath);
+                runtimeHostAssemblyPath); 
         }
     }
 }

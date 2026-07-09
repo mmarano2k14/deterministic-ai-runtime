@@ -79,6 +79,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
                 await CreateReadyRuntimeRegistryAsync(),
                 new FakeRuntimeScaleOutRequestPublisher(),
                 new HardcodedAiTenantRuntimeSettingsProvider(),
+                new StaticAiControlPlaneIdResolver("control-plane-1"),
                 new FakeExecutionContextAccessor(),
                 NullLogger<AiSharedQueueDispatcher>.Instance);
 

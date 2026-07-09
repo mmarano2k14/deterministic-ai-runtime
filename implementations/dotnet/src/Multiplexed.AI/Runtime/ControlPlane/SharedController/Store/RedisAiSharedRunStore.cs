@@ -78,12 +78,27 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Store
 
             var controlPlaneId = await ResolveControlPlaneIdAsync(
                     record.ControlPlaneId,
+                    record.Metadata,
                     cancellationToken)
                 .ConfigureAwait(false);
 
+            var controlPlaneMetadata =
+                await _controlPlaneIdResolver
+                    .ResolveMetadataAsync(
+                        new AiControlPlaneIdResolutionRequest
+                        {
+                            RequestedControlPlaneId = controlPlaneId,
+                            Metadata = record.Metadata,
+                            Source = "redis-shared-run-store-create-metadata",
+                            AllowGeneratedFallback = false
+                        },
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
             var effectiveRecord = EnsureControlPlaneId(
                 record,
-                controlPlaneId);
+                controlPlaneId,
+                controlPlaneMetadata);
 
             var runKey = BuildRunKey(
                 controlPlaneId,
@@ -146,6 +161,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Store
 
             var controlPlaneId = await ResolveControlPlaneIdAsync(
                     requestedControlPlaneId: null,
+                    metadata: null,
                     cancellationToken)
                 .ConfigureAwait(false);
 
@@ -166,6 +182,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Store
 
             var controlPlaneId = await ResolveControlPlaneIdAsync(
                     requestedControlPlaneId: null,
+                    metadata: null,
                     cancellationToken)
                 .ConfigureAwait(false);
 
@@ -280,6 +297,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Store
 
             var controlPlaneId = await ResolveControlPlaneIdAsync(
                     requestedControlPlaneId: null,
+                    metadata: null,
                     cancellationToken)
                 .ConfigureAwait(false);
 
@@ -357,6 +375,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Store
 
             var controlPlaneId = await ResolveControlPlaneIdAsync(
                     requestedControlPlaneId: null,
+                    metadata: null,
                     cancellationToken)
                 .ConfigureAwait(false);
 
@@ -432,6 +451,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Store
 
             var controlPlaneId = await ResolveControlPlaneIdAsync(
                     requestedControlPlaneId: null,
+                    metadata: null,
                     cancellationToken)
                 .ConfigureAwait(false);
 
@@ -470,6 +490,105 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Store
                 new("reason", message ?? existing.Reason ?? string.Empty),
                 new("failureReason", failureReason ?? string.Empty),
                 new("updatedAtUtc", updatedAtUtc)
+                    })
+                .ConfigureAwait(false);
+
+            cancellationToken.ThrowIfCancellationRequested();
+
+            return await GetAsync(
+                    controlPlaneId,
+                    sharedRunId,
+                    cancellationToken)
+                .ConfigureAwait(false);
+        }
+
+        /// <inheritdoc />
+        public async Task<AiSharedRunRecord?> MarkRequeuedAfterScaleOutAsync(
+            string sharedRunId,
+            string? reason = null,
+            IReadOnlyDictionary<string, string>? metadata = null,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(sharedRunId);
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var controlPlaneId = await ResolveControlPlaneIdAsync(
+                    requestedControlPlaneId: null,
+                    metadata,
+                    cancellationToken)
+                .ConfigureAwait(false);
+
+            var existing = await GetAsync(
+                    controlPlaneId,
+                    sharedRunId,
+                    cancellationToken)
+                .ConfigureAwait(false);
+
+            if (existing is null)
+            {
+                return null;
+            }
+
+            if (IsTerminal(existing.Status))
+            {
+                return existing;
+            }
+
+            var mergedMetadata = new Dictionary<string, string>(
+                existing.Metadata,
+                StringComparer.OrdinalIgnoreCase);
+
+            if (metadata is not null)
+            {
+                foreach (var item in metadata)
+                {
+                    mergedMetadata[item.Key] = item.Value;
+                }
+            }
+
+            var controlPlaneMetadata =
+                await _controlPlaneIdResolver
+                    .ResolveMetadataAsync(
+                        new AiControlPlaneIdResolutionRequest
+                        {
+                            RequestedControlPlaneId = controlPlaneId,
+                            Metadata = mergedMetadata,
+                            Source = "redis-shared-run-store-requeued-after-scaleout-metadata",
+                            AllowGeneratedFallback = false
+                        },
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+            foreach (var item in controlPlaneMetadata)
+            {
+                mergedMetadata[item.Key] = item.Value;
+            }
+
+            mergedMetadata["scaleOutRequeued"] = "true";
+            mergedMetadata["scaleOutRequeuedAtUtc"] = DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture);
+
+            var runKey = BuildRunKey(
+                controlPlaneId,
+                sharedRunId);
+
+            var updatedAtUtc = DateTimeOffset.UtcNow.ToString(
+                "O",
+                CultureInfo.InvariantCulture);
+
+            var requeueReason = string.IsNullOrWhiteSpace(reason)
+                ? "Scale-out fulfilled; shared run requeued for dispatch."
+                : reason;
+
+            await _database
+                .HashSetAsync(
+                    runKey,
+                    new HashEntry[]
+                    {
+                new("status", AiSharedRunStatus.QueuedGlobally.ToString()),
+                new("reason", requeueReason),
+                new("failureReason", string.Empty),
+                new("updatedAtUtc", updatedAtUtc),
+                new("metadataJson", Serialize(mergedMetadata))
                     })
                 .ConfigureAwait(false);
 
@@ -688,18 +807,23 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Store
 
         private async Task<string> ResolveControlPlaneIdAsync(
             string? requestedControlPlaneId,
+            IReadOnlyDictionary<string, string>? metadata,
             CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            if (!string.IsNullOrWhiteSpace(requestedControlPlaneId))
-            {
-                return requestedControlPlaneId;
-            }
-
-            var resolvedControlPlaneId = await _controlPlaneIdResolver
-                .ResolveAsync(cancellationToken)
-                .ConfigureAwait(false);
+            var resolvedControlPlaneId =
+                await _controlPlaneIdResolver
+                    .ResolveAsync(
+                        new AiControlPlaneIdResolutionRequest
+                        {
+                            RequestedControlPlaneId = requestedControlPlaneId,
+                            Metadata = metadata,
+                            Source = "redis-shared-run-store",
+                            AllowGeneratedFallback = false
+                        },
+                        cancellationToken)
+                    .ConfigureAwait(false);
 
             if (string.IsNullOrWhiteSpace(resolvedControlPlaneId))
             {
@@ -714,17 +838,31 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Store
             AiSharedRunRecord record,
             string controlPlaneId)
         {
-            if (string.Equals(record.ControlPlaneId, controlPlaneId, StringComparison.Ordinal))
-            {
-                return record;
-            }
+            return EnsureControlPlaneId(
+                record,
+                controlPlaneId,
+                controlPlaneMetadata: null);
+        }
 
+        private static AiSharedRunRecord EnsureControlPlaneId(
+            AiSharedRunRecord record,
+            string controlPlaneId,
+            IReadOnlyDictionary<string, string>? controlPlaneMetadata)
+        {
             var metadata = new Dictionary<string, string>(
                 record.Metadata,
-                StringComparer.Ordinal)
+                StringComparer.OrdinalIgnoreCase);
+
+            if (controlPlaneMetadata is not null)
             {
-                ["controlPlaneId"] = controlPlaneId
-            };
+                foreach (var pair in controlPlaneMetadata)
+                {
+                    if (!string.IsNullOrWhiteSpace(pair.Key))
+                    {
+                        metadata[pair.Key] = pair.Value;
+                    }
+                }
+            }
 
             return new AiSharedRunRecord
             {

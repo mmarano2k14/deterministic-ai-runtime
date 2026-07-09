@@ -509,14 +509,16 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Capacity
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            if (!string.IsNullOrWhiteSpace(requestedControlPlaneId))
-            {
-                return requestedControlPlaneId;
-            }
-
             var resolvedControlPlaneId =
-                await controlPlaneIdResolver
-                    .ResolveAsync(cancellationToken)
+                await this.controlPlaneIdResolver
+                    .ResolveAsync(
+                        new AiControlPlaneIdResolutionRequest
+                        {
+                            RequestedControlPlaneId = requestedControlPlaneId,
+                            Source = "redis-runtime-instance-capacity-store",
+                            AllowGeneratedFallback = false
+                        },
+                        cancellationToken)
                     .ConfigureAwait(false);
 
             if (string.IsNullOrWhiteSpace(resolvedControlPlaneId))

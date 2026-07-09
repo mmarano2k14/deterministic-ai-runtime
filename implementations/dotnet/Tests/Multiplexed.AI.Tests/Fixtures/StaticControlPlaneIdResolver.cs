@@ -5,15 +5,15 @@ namespace Multiplexed.AI.Tests.Fixtures
     /// <summary>
     /// Static control-plane id resolver used by tests that require a deterministic logical control-plane id.
     /// </summary>
-    public sealed class StaticAiControlPlaneIdResolver : IAiControlPlaneIdResolver
+    public sealed class StaticControlPlaneIdResolver : IAiControlPlaneIdResolver
     {
         private readonly string controlPlaneId;
 
         /// <summary>
-        /// Initializes a new instance of the <see cref="StaticAiControlPlaneIdResolver" /> class.
+        /// Initializes a new instance of the <see cref="StaticControlPlaneIdResolver" /> class.
         /// </summary>
         /// <param name="controlPlaneId">The control-plane id to return.</param>
-        public StaticAiControlPlaneIdResolver(
+        public StaticControlPlaneIdResolver(
             string controlPlaneId)
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(controlPlaneId);

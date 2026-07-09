@@ -1,4 +1,5 @@
 ﻿using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Definitions;
+using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Providers.Base;
 
 namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Providers.Grpc.Runners
 {
@@ -77,7 +78,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             settings["AiKubernetesRuntimeHost:ClientMode"] = "KubernetesSdk";
             settings["AiKubernetesRuntimeHost:RequireRuntimeReadiness"] = "true";
             settings["AiKubernetesRuntimeHost:Namespace"] = "ai-runtime";
-            settings["AiKubernetesRuntimeHost:RuntimeImage"] = "multiplexed-ai-runtime:k8s-debug-026";
+            settings["AiKubernetesRuntimeHost:RuntimeImage"] = KubernetesSdkScenarioConstants.RuntimeImage;
             settings["AiKubernetesRuntimeHost:ImagePullPolicy"] = "Never";
             settings["AiKubernetesRuntimeHost:ContainerName"] = "runtime-instance";
             settings["AiKubernetesRuntimeHost:ContainerPort"] = "8080";

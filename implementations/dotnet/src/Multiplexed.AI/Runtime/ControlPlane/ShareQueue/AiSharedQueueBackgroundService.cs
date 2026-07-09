@@ -89,13 +89,23 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                 await ResolveControlPlaneIdAsync(stoppingToken)
                     .ConfigureAwait(false);
 
+            var controlPlaneMetadata =
+                await _controlPlaneIdResolver
+                    .ResolveMetadataAsync(
+                        new AiControlPlaneIdResolutionRequest
+                        {
+                            RequestedControlPlaneId = controlPlaneId,
+                            Metadata = _options.Metadata,
+                            Source = "shared-queue-background-service-metadata",
+                            AllowGeneratedFallback = false
+                        },
+                        stoppingToken)
+                    .ConfigureAwait(false);
+
             var metadata =
                 MergeMetadata(
                     _options.Metadata,
-                    new Dictionary<string, string>
-                    {
-                        ["controlPlaneId"] = controlPlaneId
-                    });
+                    controlPlaneMetadata);
 
             await WaitForRuntimeReadinessAsync(
                     controlPlaneId,
@@ -505,7 +515,14 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
 
             var controlPlaneId =
                 await _controlPlaneIdResolver
-                    .ResolveAsync(cancellationToken)
+                    .ResolveAsync(
+                        new AiControlPlaneIdResolutionRequest
+                        {
+                            Metadata = _options.Metadata,
+                            Source = "shared-queue-background-service",
+                            AllowGeneratedFallback = false
+                        },
+                        cancellationToken)
                     .ConfigureAwait(false);
 
             if (string.IsNullOrWhiteSpace(controlPlaneId))

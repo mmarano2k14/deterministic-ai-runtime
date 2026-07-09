@@ -1,5 +1,6 @@
 ﻿using Microsoft.Extensions.Logging;
 using Multiplexed.Abstractions.AI.ControlPlane.Admission;
+using Multiplexed.Abstractions.AI.ControlPlane.Discovery;
 using Multiplexed.Abstractions.AI.ControlPlane.Admission.Reservations;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Forensics;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
@@ -58,6 +59,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
         private readonly IAiRuntimeInstanceRegistry _runtimeInstanceRegistry;
         private readonly IAiRuntimeScaleOutRequestPublisher _scaleOutPublisher;
         private readonly IAiTenantRuntimeSettingsProvider _tenantRuntimeSettingsProvider;
+        private readonly IAiControlPlaneIdResolver _controlPlaneIdResolver;
         private readonly IExecutionContextAccessor _executionContextAccessor;
         private readonly IAiRuntimeRecoveryForensicsRecorder _forensicsRecorder;
         private readonly ILogger<AiSharedQueueDispatcher> _logger;
@@ -74,6 +76,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
             IAiRuntimeInstanceRegistry runtimeInstanceRegistry,
             IAiRuntimeScaleOutRequestPublisher scaleOutPublisher,
             IAiTenantRuntimeSettingsProvider tenantRuntimeSettingsProvider,
+            IAiControlPlaneIdResolver controlPlaneIdResolver,
             IExecutionContextAccessor executionContextAccessor,
             ILogger<AiSharedQueueDispatcher> logger)
             : this(
@@ -85,6 +88,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                 runtimeInstanceRegistry,
                 scaleOutPublisher,
                 tenantRuntimeSettingsProvider,
+                controlPlaneIdResolver,
                 executionContextAccessor,
                 logger,
                 new NoopAiRuntimeRecoveryForensicsRecorder())
@@ -103,6 +107,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
             IAiRuntimeInstanceRegistry runtimeInstanceRegistry,
             IAiRuntimeScaleOutRequestPublisher scaleOutPublisher,
             IAiTenantRuntimeSettingsProvider tenantRuntimeSettingsProvider,
+            IAiControlPlaneIdResolver controlPlaneIdResolver,
             IExecutionContextAccessor executionContextAccessor,
             ILogger<AiSharedQueueDispatcher> logger,
             IAiRuntimeRecoveryForensicsRecorder forensicsRecorder)
@@ -115,6 +120,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
             _runtimeInstanceRegistry = runtimeInstanceRegistry ?? throw new ArgumentNullException(nameof(runtimeInstanceRegistry));
             _scaleOutPublisher = scaleOutPublisher ?? throw new ArgumentNullException(nameof(scaleOutPublisher));
             _tenantRuntimeSettingsProvider = tenantRuntimeSettingsProvider ?? throw new ArgumentNullException(nameof(tenantRuntimeSettingsProvider));
+            _controlPlaneIdResolver = controlPlaneIdResolver ?? throw new ArgumentNullException(nameof(controlPlaneIdResolver));
             _executionContextAccessor = executionContextAccessor ?? throw new ArgumentNullException(nameof(executionContextAccessor));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _forensicsRecorder = forensicsRecorder ?? throw new ArgumentNullException(nameof(forensicsRecorder));
@@ -143,17 +149,27 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
 
             try
             {
+                var requestControlPlaneId =
+                    await ResolveControlPlaneIdAsync(
+                            requestedControlPlaneId: null,
+                            metadata: request.Metadata,
+                            source: "shared-queue-dispatcher-claim",
+                            cancellationToken)
+                        .ConfigureAwait(false);
+
                 var queueItem = await _sharedQueue
                     .ClaimNextAsync(
                         new AiSharedQueueClaimRequest
                         {
+                            ControlPlaneId = requestControlPlaneId,
                             RuntimeInstanceId = request.RuntimeInstanceId,
                             WorkerId = request.WorkerId,
                             TenantId = request.TenantId,
                             PipelineKey = request.PipelineKey,
                             ClaimTtl = request.ClaimTtl,
                             CorrelationId = request.CorrelationId,
-                            Reason = request.Reason ?? "Claimed for shared queue dispatch."
+                            Reason = request.Reason ?? "Claimed for shared queue dispatch.",
+                            Metadata = request.Metadata
                         },
                         cancellationToken)
                     .ConfigureAwait(false);
@@ -229,20 +245,39 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                     };
                 }
 
-                var controlPlaneId =
-                    ResolveControlPlaneId(
-                        queueItem,
-                        sharedRun);
-
-                var operationMetadata =
+                var baseOperationMetadata =
                     MergeMetadata(
                         sharedRun.Metadata,
                         queueItem.Metadata,
-                        request.Metadata,
-                        new Dictionary<string, string>
-                        {
-                            ["controlPlaneId"] = controlPlaneId
-                        });
+                        request.Metadata);
+
+                var controlPlaneId =
+                    await ResolveControlPlaneIdAsync(
+                            requestedControlPlaneId: FirstNonEmpty(
+                                queueItem.ControlPlaneId,
+                                sharedRun.ControlPlaneId),
+                            metadata: baseOperationMetadata,
+                            source: "shared-queue-dispatcher-operation",
+                            cancellationToken)
+                        .ConfigureAwait(false);
+
+                var controlPlaneMetadata =
+                    await _controlPlaneIdResolver
+                        .ResolveMetadataAsync(
+                            new AiControlPlaneIdResolutionRequest
+                            {
+                                RequestedControlPlaneId = controlPlaneId,
+                                Metadata = baseOperationMetadata,
+                                Source = "shared-queue-dispatcher-operation-metadata",
+                                AllowGeneratedFallback = false
+                            },
+                            cancellationToken)
+                        .ConfigureAwait(false);
+
+                var operationMetadata =
+                    MergeMetadata(
+                        baseOperationMetadata,
+                        controlPlaneMetadata);
 
                 _logger.LogDebug(
                     "Shared run record loaded. SharedRunId={SharedRunId}, ControlPlaneId={ControlPlaneId}, TenantId={TenantId}, PipelineKey={PipelineKey}, AssignedRuntimeInstanceId={AssignedRuntimeInstanceId}, Status={Status}",
@@ -1420,38 +1455,60 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
         }
 
         /// <summary>
-        /// Resolves the logical control-plane identifier from a queue item and its shared run.
+        /// Resolves the logical control-plane identifier used by shared queue dispatch operations.
         /// </summary>
-        /// <param name="queueItem">The claimed shared queue item.</param>
-        /// <param name="sharedRun">The loaded shared run record.</param>
+        /// <param name="requestedControlPlaneId">The preferred control-plane identifier when already known.</param>
+        /// <param name="metadata">The metadata that may contain a logical control-plane identifier.</param>
+        /// <param name="source">The diagnostic source of the resolution request.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
         /// <returns>The resolved logical control-plane identifier.</returns>
-        private static string ResolveControlPlaneId(
-            AiSharedQueueItem queueItem,
-            AiSharedRunRecord sharedRun)
+        private async Task<string> ResolveControlPlaneIdAsync(
+            string? requestedControlPlaneId,
+            IReadOnlyDictionary<string, string>? metadata,
+            string source,
+            CancellationToken cancellationToken)
         {
-            if (!string.IsNullOrWhiteSpace(queueItem.ControlPlaneId))
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var controlPlaneId =
+                await _controlPlaneIdResolver
+                    .ResolveAsync(
+                        new AiControlPlaneIdResolutionRequest
+                        {
+                            RequestedControlPlaneId = requestedControlPlaneId,
+                            Metadata = metadata,
+                            Source = source,
+                            AllowGeneratedFallback = false
+                        },
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+            if (string.IsNullOrWhiteSpace(controlPlaneId))
             {
-                return queueItem.ControlPlaneId;
+                throw new InvalidOperationException(
+                    "The resolved control-plane identifier cannot be null or empty.");
             }
 
-            if (!string.IsNullOrWhiteSpace(sharedRun.ControlPlaneId))
+            return controlPlaneId;
+        }
+
+        /// <summary>
+        /// Returns the first non-empty value.
+        /// </summary>
+        /// <param name="values">The candidate values.</param>
+        /// <returns>The first non-empty value, or null when none is available.</returns>
+        private static string? FirstNonEmpty(
+            params string?[] values)
+        {
+            foreach (var value in values)
             {
-                return sharedRun.ControlPlaneId;
+                if (!string.IsNullOrWhiteSpace(value))
+                {
+                    return value;
+                }
             }
 
-            if (queueItem.Metadata.TryGetValue("controlPlaneId", out var queueControlPlaneId) &&
-                !string.IsNullOrWhiteSpace(queueControlPlaneId))
-            {
-                return queueControlPlaneId;
-            }
-
-            if (sharedRun.Metadata.TryGetValue("controlPlaneId", out var sharedRunControlPlaneId) &&
-                !string.IsNullOrWhiteSpace(sharedRunControlPlaneId))
-            {
-                return sharedRunControlPlaneId;
-            }
-
-            return string.Empty;
+            return null;
         }
 
         /// <summary>
@@ -1463,7 +1520,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
             params IReadOnlyDictionary<string, string>[] sources)
         {
             var merged = new Dictionary<string, string>(
-                StringComparer.Ordinal);
+                StringComparer.OrdinalIgnoreCase);
 
             foreach (var source in sources)
             {
@@ -1556,5 +1613,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                     })
                 .ToList();
         }
+
     }
 }

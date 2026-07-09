@@ -124,74 +124,66 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue.Redis
             ArgumentNullException.ThrowIfNull(entry);
             ArgumentException.ThrowIfNullOrWhiteSpace(entry.RunId);
 
-            Console.WriteLine($"[REDIS RUN INDEX] REGISTER BEGIN RunId='{entry.RunId}', RuntimeInstanceId='{entry.RuntimeInstanceId}', TenantId='{entry.ExecutionContextSnapshot?.TenantId}', TokenCancelled='{cancellationToken.IsCancellationRequested}'.");
+            cancellationToken.ThrowIfCancellationRequested();
 
-            try
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-
-                Console.WriteLine($"[REDIS RUN INDEX] BEFORE RESOLVE CONTROL PLANE RunId='{entry.RunId}'.");
-
-                var controlPlaneId =
-                    await ResolveControlPlaneIdAsync(cancellationToken)
-                        .ConfigureAwait(false);
-
-                Console.WriteLine($"[REDIS RUN INDEX] AFTER RESOLVE CONTROL PLANE RunId='{entry.RunId}', ControlPlaneId='{controlPlaneId}'.");
-
-                var now = DateTimeOffset.UtcNow;
-                var createdAtUtc = entry.CreatedAtUtc == default ? now : entry.CreatedAtUtc;
-                var executionContextSnapshot = entry.ExecutionContextSnapshot ?? TryResolveSnapshot();
-
-                var effectiveEntry = new AiRuntimeRunExecutionIndexEntry
-                {
-                    RunId = entry.RunId,
-                    ExecutionId = entry.ExecutionId,
-                    RuntimeInstanceId = entry.RuntimeInstanceId,
-                    Status = string.IsNullOrWhiteSpace(entry.Status) ? StatusQueued : entry.Status,
-                    FailureReason = entry.FailureReason,
-                    ExecutionContextSnapshot = executionContextSnapshot,
-                    CreatedAtUtc = createdAtUtc,
-                    StartedAtUtc = entry.StartedAtUtc,
-                    CompletedAtUtc = entry.CompletedAtUtc,
-                    Metadata = entry.Metadata
-                };
-
-                var score = BuildIndexScore(createdAtUtc);
-                var expireSeconds = GetExpireSeconds();
-                var keys = BuildRegisterKeys(controlPlaneId, effectiveEntry.RunId, effectiveEntry.ExecutionContextSnapshot?.TenantId);
-                var values = BuildRegisterValues(effectiveEntry, score, expireSeconds);
-
-                Console.WriteLine($"[REDIS RUN INDEX] BEFORE REGISTER SCRIPT RunId='{effectiveEntry.RunId}', ControlPlaneId='{controlPlaneId}', KeyCount='{keys.Length}', ValueCount='{values.Length}', ExpireSeconds='{expireSeconds}'.");
-
-                var result = await _scripts
-                    .ExecuteRegisterQueuedAsync(
-                        _database,
-                        keys,
-                        values)
+            var controlPlaneId =
+                await ResolveControlPlaneIdAsync(
+                        entry.Metadata,
+                        cancellationToken)
                     .ConfigureAwait(false);
 
-                Console.WriteLine($"[REDIS RUN INDEX] AFTER REGISTER SCRIPT RunId='{effectiveEntry.RunId}', Result='{result}'.");
+            var now = DateTimeOffset.UtcNow;
+            var createdAtUtc = entry.CreatedAtUtc == default ? now : entry.CreatedAtUtc;
+            var executionContextSnapshot = entry.ExecutionContextSnapshot ?? TryResolveSnapshot();
 
-                var status = result.ToString();
-
-                if (string.Equals(status, "registered", StringComparison.Ordinal))
-                {
-                    Console.WriteLine($"[REDIS RUN INDEX] REGISTER SUCCESS RunId='{effectiveEntry.RunId}'.");
-                    return;
-                }
-
-                if (string.Equals(status, "invalid-field-pairs", StringComparison.Ordinal))
-                {
-                    throw new InvalidOperationException($"Invalid Redis register arguments for runtime run index entry '{effectiveEntry.RunId}': field/value pairs are not balanced.");
-                }
-
-                throw new InvalidOperationException($"Unexpected Redis register result for runtime run index entry '{effectiveEntry.RunId}': '{status}'.");
-            }
-            catch (Exception exception)
+            var effectiveEntry = new AiRuntimeRunExecutionIndexEntry
             {
-                Console.WriteLine($"[REDIS RUN INDEX] REGISTER FAILED RunId='{entry.RunId}', ExceptionType='{exception.GetType().FullName}', Message='{exception.Message}', TokenCancelled='{cancellationToken.IsCancellationRequested}'.");
-                throw;
+                RunId = entry.RunId,
+                ExecutionId = entry.ExecutionId,
+                RuntimeInstanceId = entry.RuntimeInstanceId,
+                Status = string.IsNullOrWhiteSpace(entry.Status) ? StatusQueued : entry.Status,
+                FailureReason = entry.FailureReason,
+                ExecutionContextSnapshot = executionContextSnapshot,
+                CreatedAtUtc = createdAtUtc,
+                StartedAtUtc = entry.StartedAtUtc,
+                CompletedAtUtc = entry.CompletedAtUtc,
+                Metadata = entry.Metadata
+            };
+
+            var score = BuildIndexScore(createdAtUtc);
+            var expireSeconds = GetExpireSeconds();
+            var keys = BuildRegisterKeys(
+                controlPlaneId,
+                effectiveEntry.RunId,
+                effectiveEntry.ExecutionContextSnapshot?.TenantId);
+
+            var values = BuildRegisterValues(
+                effectiveEntry,
+                score,
+                expireSeconds);
+
+            var result = await _scripts
+                .ExecuteRegisterQueuedAsync(
+                    _database,
+                    keys,
+                    values)
+                .ConfigureAwait(false);
+
+            var status = result.ToString();
+
+            if (string.Equals(status, "registered", StringComparison.Ordinal))
+            {
+                return;
             }
+
+            if (string.Equals(status, "invalid-field-pairs", StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    $"Invalid Redis register arguments for runtime run index entry '{effectiveEntry.RunId}': field/value pairs are not balanced.");
+            }
+
+            throw new InvalidOperationException(
+                $"Unexpected Redis register result for runtime run index entry '{effectiveEntry.RunId}': '{status}'.");
         }
 
         /// <inheritdoc />
@@ -803,19 +795,42 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue.Redis
         }
 
         /// <summary>
-        /// Resolves the current control-plane identifier.
+        /// Resolves the current logical control-plane identifier.
         /// </summary>
         /// <param name="cancellationToken">A token used to cancel the operation.</param>
-        /// <returns>The resolved control-plane identifier.</returns>
+        /// <returns>The resolved logical control-plane identifier.</returns>
+        private Task<string> ResolveControlPlaneIdAsync(
+            CancellationToken cancellationToken)
+        {
+            return ResolveControlPlaneIdAsync(
+                metadata: null,
+                cancellationToken);
+        }
+
+        /// <summary>
+        /// Resolves the current logical control-plane identifier.
+        /// </summary>
+        /// <param name="metadata">The metadata that may contain a logical control-plane identifier.</param>
+        /// <param name="cancellationToken">A token used to cancel the operation.</param>
+        /// <returns>The resolved logical control-plane identifier.</returns>
         /// <exception cref="InvalidOperationException">Thrown when the control-plane identifier is empty.</exception>
         private async Task<string> ResolveControlPlaneIdAsync(
+            IReadOnlyDictionary<string, string>? metadata,
             CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            var resolvedControlPlaneId = await _controlPlaneIdResolver
-                .ResolveAsync(cancellationToken)
-                .ConfigureAwait(false);
+            var resolvedControlPlaneId =
+                await _controlPlaneIdResolver
+                    .ResolveAsync(
+                        new AiControlPlaneIdResolutionRequest
+                        {
+                            Metadata = metadata,
+                            Source = "redis-runtime-run-execution-index",
+                            AllowGeneratedFallback = false
+                        },
+                        cancellationToken)
+                    .ConfigureAwait(false);
 
             if (string.IsNullOrWhiteSpace(resolvedControlPlaneId))
             {

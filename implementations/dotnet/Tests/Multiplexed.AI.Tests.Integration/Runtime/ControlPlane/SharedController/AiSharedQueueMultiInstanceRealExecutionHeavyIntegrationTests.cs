@@ -1329,6 +1329,7 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedController
                 runtimeInstanceRegistry,
                 new FakeRuntimeScaleOutRequestPublisher(),
                 new HardcodedAiTenantRuntimeSettingsProvider(),
+                new StaticControlPlaneIdResolver("controlPlaneId"),
                 new FakeExecutionContextAccessor(),
                 NullLogger<AiSharedQueueDispatcher>.Instance);
 
@@ -1344,6 +1345,7 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedController
                     WorkerId = $"{runtimeInstance.RuntimeInstanceId}-shared-queue-worker",
                     Source = "multi-instance-real-heavy-test"
                 }),
+                new StaticControlPlaneIdResolver("controlPlaneId"),
                 NullLogger<AiSharedQueuePump>.Instance);
 
             var startedAtUtc = DateTimeOffset.UtcNow;

@@ -25,7 +25,7 @@ using Multiplexed.AI.Stores;
 using Xunit;
 using Xunit.Abstractions;
 
-namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Providers.Http
+namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Providers.Http.Process
 {
     /// <summary>
     /// HTTP process-host DAG resume recovery tests proving that a failed runtime can stop
@@ -138,6 +138,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                     .SubmitOneRunAsync(
                         mcp,
                         tenant,
+                        controlPlaneId,
                         pipelineName,
                         RequestedBy,
                         Source)
@@ -500,6 +501,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                     .SubmitOneRunAsync(
                         mcp,
                         tenant,
+                        controlPlaneId,
                         pipelineName,
                         RequestedBy,
                         Source)
@@ -953,6 +955,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                     .SubmitOneRunAsync(
                         mcp,
                         tenant,
+                        controlPlaneId,
                         pipelineName,
                         RequestedBy,
                         Source)
@@ -1149,6 +1152,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                     .SubmitOneRunAsync(
                         mcp,
                         tenant,
+                        controlPlaneId,
                         pipelineName,
                         RequestedBy,
                         Source)

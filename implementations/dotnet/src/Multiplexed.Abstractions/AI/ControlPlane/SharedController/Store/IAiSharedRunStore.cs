@@ -83,6 +83,30 @@
             CancellationToken cancellationToken = default);
 
         /// <summary>
+        /// Marks a shared run as requeued after a scale-out request has been fulfilled.
+        /// </summary>
+        /// <param name="sharedRunId">The shared controller run identifier.</param>
+        /// <param name="reason">The optional requeue reason.</param>
+        /// <param name="metadata">The optional metadata to merge into the shared run record.</param>
+        /// <param name="cancellationToken">A token used to cancel the operation.</param>
+        /// <returns>
+        /// The updated shared run record, the existing terminal record,
+        /// or <c>null</c> when the run is unknown.
+        /// </returns>
+        /// <remarks>
+        /// This transition is used to make a scale-out fulfilled run visible as queued again
+        /// in the shared run store, so observers and wait helpers do not remain stuck on
+        /// <see cref="AiSharedRunStatus.ScaleOutRequested"/>.
+        ///
+        /// Distributed implementations should perform the terminal-state check and update atomically.
+        /// </remarks>
+        Task<AiSharedRunRecord?> MarkRequeuedAfterScaleOutAsync(
+            string sharedRunId,
+            string? reason = null,
+            IReadOnlyDictionary<string, string>? metadata = null,
+            CancellationToken cancellationToken = default);
+
+        /// <summary>
         /// Marks a shared run as dispatched to a runtime instance.
         /// </summary>
         /// <param name="sharedRunId">The shared controller run identifier.</param>

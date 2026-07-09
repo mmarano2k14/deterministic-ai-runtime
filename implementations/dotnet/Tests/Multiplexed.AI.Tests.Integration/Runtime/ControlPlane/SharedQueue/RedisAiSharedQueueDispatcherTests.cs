@@ -111,6 +111,7 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedQueue
                 runtimeInstanceRegistry,
                 new FakeRuntimeScaleOutRequestPublisher(),
                 new HardcodedAiTenantRuntimeSettingsProvider(),
+                new StaticAiControlPlaneIdResolver("control-plane-1"),
                 new FakeExecutionContextAccessor(),
                 NullLogger<AiSharedQueueDispatcher>.Instance);
 
@@ -184,6 +185,7 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedQueue
                 new InMemoryAiRuntimeInstanceRegistry(),
                 new FakeRuntimeScaleOutRequestPublisher(),
                 new HardcodedAiTenantRuntimeSettingsProvider(),
+                new StaticAiControlPlaneIdResolver("control-plane-1"),
                 new FakeExecutionContextAccessor(),
                 NullLogger<AiSharedQueueDispatcher>.Instance);
 
@@ -222,6 +224,7 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedQueue
                 new InMemoryAiRuntimeInstanceRegistry(),
                 new FakeRuntimeScaleOutRequestPublisher(),
                 new HardcodedAiTenantRuntimeSettingsProvider(),
+                new StaticAiControlPlaneIdResolver("control-plane-1"),
                 new FakeExecutionContextAccessor(),
                 NullLogger<AiSharedQueueDispatcher>.Instance);
 
@@ -288,6 +291,7 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedQueue
                 runtimeInstanceRegistry,
                 new FakeRuntimeScaleOutRequestPublisher(),
                 new HardcodedAiTenantRuntimeSettingsProvider(),
+                new StaticAiControlPlaneIdResolver("control-plane-1"),
                 new FakeExecutionContextAccessor(),
                 NullLogger<AiSharedQueueDispatcher>.Instance);
 
@@ -367,6 +371,7 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedQueue
                         runtimeInstanceRegistry,
                         new FakeRuntimeScaleOutRequestPublisher(),
                         new HardcodedAiTenantRuntimeSettingsProvider(),
+                        new StaticAiControlPlaneIdResolver("control-plane-1"),
                         new FakeExecutionContextAccessor(),
                         NullLogger<AiSharedQueueDispatcher>.Instance);
 

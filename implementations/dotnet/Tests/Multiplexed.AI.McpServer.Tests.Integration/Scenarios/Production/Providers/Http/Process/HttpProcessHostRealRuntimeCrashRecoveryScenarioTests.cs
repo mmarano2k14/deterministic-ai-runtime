@@ -3,7 +3,7 @@ using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Providers.
 using Xunit;
 using Xunit.Abstractions;
 
-namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Providers.Http
+namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Providers.Http.Process
 {
     /// <summary>
     /// Proves real HTTP process-host runtime crash recovery without synthetic DAG reseeding.

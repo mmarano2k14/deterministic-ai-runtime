@@ -356,7 +356,22 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController
             CancellationToken cancellationToken)
         {
             var controlPlaneId =
-                await ResolveControlPlaneIdAsync(cancellationToken)
+                await ResolveControlPlaneIdAsync(
+                        request.Metadata,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+            var controlPlaneMetadata =
+                await _controlPlaneIdResolver
+                    .ResolveMetadataAsync(
+                        new AiControlPlaneIdResolutionRequest
+                        {
+                            RequestedControlPlaneId = controlPlaneId,
+                            Metadata = request.Metadata,
+                            Source = "shared-runtime-controller-submit-run-metadata",
+                            AllowGeneratedFallback = false
+                        },
+                        cancellationToken)
                     .ConfigureAwait(false);
 
             var now = DateTimeOffset.UtcNow;
@@ -372,10 +387,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController
             var metadata =
                 MergeMetadata(
                     request.Metadata,
-                    new Dictionary<string, string>
-                    {
-                        ["controlPlaneId"] = controlPlaneId
-                    });
+                    controlPlaneMetadata);
 
             var admissionDecision = await _admissionController
                 .AdmitAsync(
@@ -677,13 +689,15 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController
                 .ClaimNextAsync(
                     new AiSharedQueueClaimRequest
                     {
+                        ControlPlaneId = sharedRun.ControlPlaneId,
                         RuntimeInstanceId = runtimeInstanceId,
                         WorkerId = $"direct-dispatch-{localRunId}",
                         TenantId = sharedRun.ExecutionContextSnapshot.TenantId,
                         PipelineKey = sharedRun.PipelineKey,
                         ClaimTtl = TimeSpan.FromMinutes(30),
                         CorrelationId = sharedRun.CorrelationId,
-                        Reason = reason ?? "Direct dispatch ownership claimed."
+                        Reason = reason ?? "Direct dispatch ownership claimed.",
+                        Metadata = ownershipMetadata
                     },
                     cancellationToken)
                 .ConfigureAwait(false);
@@ -1132,16 +1146,25 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController
         /// <summary>
         /// Resolves the logical control-plane identifier used to scope shared run records.
         /// </summary>
+        /// <param name="metadata">The metadata that may contain a logical control-plane identifier.</param>
         /// <param name="cancellationToken">The cancellation token.</param>
         /// <returns>The resolved logical control-plane identifier.</returns>
         private async Task<string> ResolveControlPlaneIdAsync(
+            IReadOnlyDictionary<string, string>? metadata,
             CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
             var controlPlaneId =
                 await _controlPlaneIdResolver
-                    .ResolveAsync(cancellationToken)
+                    .ResolveAsync(
+                        new AiControlPlaneIdResolutionRequest
+                        {
+                            Metadata = metadata,
+                            Source = "shared-runtime-controller",
+                            AllowGeneratedFallback = false
+                        },
+                        cancellationToken)
                     .ConfigureAwait(false);
 
             if (string.IsNullOrWhiteSpace(controlPlaneId))

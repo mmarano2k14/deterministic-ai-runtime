@@ -135,13 +135,28 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
             var controlPlaneId =
                 await ResolveControlPlaneIdAsync(
                         item.ControlPlaneId,
+                        item.Metadata,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+            var controlPlaneMetadata =
+                await _controlPlaneIdResolver
+                    .ResolveMetadataAsync(
+                        new AiControlPlaneIdResolutionRequest
+                        {
+                            RequestedControlPlaneId = controlPlaneId,
+                            Metadata = item.Metadata,
+                            Source = "redis-shared-queue-enqueue-metadata",
+                            AllowGeneratedFallback = false
+                        },
                         cancellationToken)
                     .ConfigureAwait(false);
 
             var effectiveItem =
                 EnsureControlPlaneId(
                     item,
-                    controlPlaneId);
+                    controlPlaneId,
+                    controlPlaneMetadata);
 
             var itemKey =
                 BuildItemKey(
@@ -222,6 +237,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
             var controlPlaneId =
                 await ResolveControlPlaneIdAsync(
                         requestedControlPlaneId: null,
+                        metadata: null,
                         cancellationToken)
                     .ConfigureAwait(false);
 
@@ -242,6 +258,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
             var controlPlaneId =
                 await ResolveControlPlaneIdAsync(
                         requestedControlPlaneId: null,
+                        metadata: null,
                         cancellationToken)
                     .ConfigureAwait(false);
 
@@ -357,7 +374,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
 
             var controlPlaneId =
                 await ResolveControlPlaneIdAsync(
-                        requestedControlPlaneId: null,
+                        request.ControlPlaneId,
+                        request.Metadata,
                         cancellationToken)
                     .ConfigureAwait(false);
 
@@ -512,6 +530,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
             var controlPlaneId =
                 await ResolveControlPlaneIdAsync(
                         requestedControlPlaneId: null,
+                        metadata: null,
                         cancellationToken)
                     .ConfigureAwait(false);
 
@@ -579,6 +598,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
             var controlPlaneId =
                 await ResolveControlPlaneIdAsync(
                         requestedControlPlaneId: null,
+                        metadata: null,
                         cancellationToken)
                     .ConfigureAwait(false);
 
@@ -683,6 +703,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
             var controlPlaneId =
                 await ResolveControlPlaneIdAsync(
                         requestedControlPlaneId: null,
+                        metadata: null,
                         cancellationToken)
                     .ConfigureAwait(false);
 
@@ -718,6 +739,24 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
                 MergeMetadata(
                     existing.Metadata,
                     metadata);
+
+            var controlPlaneMetadata =
+                await _controlPlaneIdResolver
+                    .ResolveMetadataAsync(
+                        new AiControlPlaneIdResolutionRequest
+                        {
+                            RequestedControlPlaneId = controlPlaneId,
+                            Metadata = mergedMetadata,
+                            Source = "redis-shared-queue-requeue-dispatched-metadata",
+                            AllowGeneratedFallback = false
+                        },
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+            mergedMetadata =
+                MergeMetadata(
+                    mergedMetadata,
+                    controlPlaneMetadata);
 
             var metadataJson =
                 Serialize(mergedMetadata);
@@ -779,6 +818,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
             var controlPlaneId =
                 await ResolveControlPlaneIdAsync(
                         requestedControlPlaneId: null,
+                        metadata: null,
                         cancellationToken)
                     .ConfigureAwait(false);
 
@@ -1165,18 +1205,22 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
 
         private async Task<string> ResolveControlPlaneIdAsync(
             string? requestedControlPlaneId,
+            IReadOnlyDictionary<string, string>? metadata,
             CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            if (!string.IsNullOrWhiteSpace(requestedControlPlaneId))
-            {
-                return requestedControlPlaneId;
-            }
-
             var resolvedControlPlaneId =
                 await _controlPlaneIdResolver
-                    .ResolveAsync(cancellationToken)
+                    .ResolveAsync(
+                        new AiControlPlaneIdResolutionRequest
+                        {
+                            RequestedControlPlaneId = requestedControlPlaneId,
+                            Metadata = metadata,
+                            Source = "redis-shared-queue",
+                            AllowGeneratedFallback = false
+                        },
+                        cancellationToken)
                     .ConfigureAwait(false);
 
             if (string.IsNullOrWhiteSpace(resolvedControlPlaneId))
@@ -1192,21 +1236,32 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
             AiSharedQueueItem item,
             string controlPlaneId)
         {
-            if (string.Equals(
-                    item.ControlPlaneId,
-                    controlPlaneId,
-                    StringComparison.Ordinal))
-            {
-                return item;
-            }
+            return EnsureControlPlaneId(
+                item,
+                controlPlaneId,
+                controlPlaneMetadata: null);
+        }
 
+        private static AiSharedQueueItem EnsureControlPlaneId(
+            AiSharedQueueItem item,
+            string controlPlaneId,
+            IReadOnlyDictionary<string, string>? controlPlaneMetadata)
+        {
             var metadata =
                 new Dictionary<string, string>(
                     item.Metadata,
-                    StringComparer.Ordinal)
+                    StringComparer.OrdinalIgnoreCase);
+
+            if (controlPlaneMetadata is not null)
+            {
+                foreach (var pair in controlPlaneMetadata)
                 {
-                    ["controlPlaneId"] = controlPlaneId
-                };
+                    if (!string.IsNullOrWhiteSpace(pair.Key))
+                    {
+                        metadata[pair.Key] = pair.Value;
+                    }
+                }
+            }
 
             return new AiSharedQueueItem
             {

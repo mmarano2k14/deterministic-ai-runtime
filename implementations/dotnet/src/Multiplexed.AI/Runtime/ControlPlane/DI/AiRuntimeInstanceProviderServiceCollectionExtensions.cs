@@ -6,6 +6,7 @@ using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager.Proc
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Readiness;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.ProcessControl;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strategy;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strategy.Process;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers;
@@ -51,16 +52,18 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
                     FixtureAiRuntimeHostCreationStrategy>());
 
             services.TryAddEnumerable(
-                ServiceDescriptor.Singleton<IAiRuntimeHostCreationStrategy, FixtureAiRuntimeHostCreationStrategy>());
-
-            services.TryAddEnumerable(
-                ServiceDescriptor.Singleton<IAiRuntimeHostCreationStrategy, ProcessAiRuntimeHostCreationStrategy>());
+                ServiceDescriptor.Singleton<
+                    IAiRuntimeHostCreationStrategy,
+                    ProcessAiRuntimeHostCreationStrategy>());
 
             services.TryAddSingleton<IAiRuntimeHostProcessControl>(
                 provider => provider
                     .GetRequiredService<IEnumerable<IAiRuntimeHostCreationStrategy>>()
                     .OfType<ProcessAiRuntimeHostCreationStrategy>()
                     .Single());
+
+            services.TryAddSingleton<
+                AiRuntimeHostProcessControlSelector>();
 
             services.TryAddSingleton<
                 IAiRuntimeHostManager,
@@ -141,6 +144,15 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
                 ServiceDescriptor.Singleton<
                     IAiRuntimeHostCreationStrategy,
                     ProcessAiRuntimeHostCreationStrategy>());
+
+            services.TryAddSingleton<IAiRuntimeHostProcessControl>(
+                provider => provider
+                    .GetRequiredService<IEnumerable<IAiRuntimeHostCreationStrategy>>()
+                    .OfType<ProcessAiRuntimeHostCreationStrategy>()
+                    .Single());
+
+            services.TryAddSingleton<
+                AiRuntimeHostProcessControlSelector>();
 
             services.TryAddSingleton<
                 IAiRuntimeHostManager,

@@ -393,6 +393,7 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedController
                 runtimeInstanceRegistry,
                 new FakeRuntimeScaleOutRequestPublisher(),
                 new HardcodedAiTenantRuntimeSettingsProvider(),
+                new StaticAiControlPlaneIdResolver("control-plane-1"),
                 new FakeExecutionContextAccessor(),
                 NullLogger<AiSharedQueueDispatcher>.Instance);
 
@@ -406,6 +407,7 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedController
                     StopCycleWhenNoItemAvailable = true,
                     StopCycleOnDispatchFailure = true
                 }),
+                new StaticAiControlPlaneIdResolver("control-plane-1"),
                 NullLogger<AiSharedQueuePump>.Instance);
 
             var total = new AiSharedQueuePumpResult

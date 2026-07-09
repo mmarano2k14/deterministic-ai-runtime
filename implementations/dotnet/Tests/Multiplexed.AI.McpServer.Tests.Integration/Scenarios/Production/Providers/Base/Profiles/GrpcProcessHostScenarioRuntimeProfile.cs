@@ -1,4 +1,5 @@
-﻿using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Definitions;
+﻿using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager;
+using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Definitions;
 using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Providers.Base.Profiles;
 using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Providers.Grpc.Runners;
 
@@ -23,6 +24,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
 
         /// <inheritdoc />
         public string Source => "integration-test";
+
+        /// <inheritdoc />
+        public AiRuntimeHostCreationMode HostCreationMode => AiRuntimeHostCreationMode.Process;
 
         /// <inheritdoc />
         public Dictionary<string, string?> BuildSettings(

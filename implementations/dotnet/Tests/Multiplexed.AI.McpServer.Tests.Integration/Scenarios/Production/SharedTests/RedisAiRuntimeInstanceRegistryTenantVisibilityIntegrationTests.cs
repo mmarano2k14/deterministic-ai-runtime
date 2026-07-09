@@ -5,6 +5,7 @@ using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
 using Multiplexed.Abstractions.Core.ExecutionContext;
 using Multiplexed.AI.McpServer.Tests.Integration.Auth;
+using Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Fake;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Capacity;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Isolation;
@@ -344,7 +345,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Shared
             return new RedisAiRuntimeInstanceRegistry(
                 redis,
                 CreateRegistrationOptions(),
-                new FixedAiControlPlaneIdResolver(controlPlaneId),
+                new StaticControlPlaneIdResolver(controlPlaneId),
                 CreateVisibilityEvaluator(),
                 executionContextSnapshot is null
                     ? null
@@ -366,7 +367,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Shared
             return new RedisAiRuntimeInstanceCapacityStore(
                 redis,
                 CreateRegistrationOptions(),
-                new FixedAiControlPlaneIdResolver(controlPlaneId),
+                new StaticControlPlaneIdResolver(controlPlaneId),
                 CreateVisibilityEvaluator(),
                 executionContextSnapshot is null
                     ? null
@@ -611,33 +612,6 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Shared
                 .Trim()
                 .Replace(" ", "-", StringComparison.Ordinal)
                 .Replace("\\", "/", StringComparison.Ordinal);
-        }
-
-        /// <summary>
-        /// Provides a fixed control-plane id resolver.
-        /// </summary>
-        private sealed class FixedAiControlPlaneIdResolver :
-            IAiControlPlaneIdResolver
-        {
-            private readonly string controlPlaneId;
-
-            /// <summary>
-            /// Initializes a new instance of the <see cref="FixedAiControlPlaneIdResolver"/> class.
-            /// </summary>
-            /// <param name="controlPlaneId">The control-plane id.</param>
-            public FixedAiControlPlaneIdResolver(
-                string controlPlaneId)
-            {
-                this.controlPlaneId =
-                    controlPlaneId ?? throw new ArgumentNullException(nameof(controlPlaneId));
-            }
-
-            /// <inheritdoc />
-            public Task<string> ResolveAsync(
-                CancellationToken cancellationToken = default)
-            {
-                return Task.FromResult(this.controlPlaneId);
-            }
         }
 
         /// <summary>

@@ -4,6 +4,7 @@ using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Dispatch;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Pump;
 using Multiplexed.AI.Runtime.ControlPlane.SharedQueue;
+using Multiplexed.AI.Tests.Fixtures;
 
 namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
 {
@@ -30,6 +31,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
                  {
                      MaxDispatchesPerCycle = 10
                  }),
+                 new StaticAiControlPlaneIdResolver("control-plane-1"),
                  NullLogger<AiSharedQueuePump>.Instance);
 
             var result = await pump.PumpOnceAsync(new AiSharedQueuePumpRequest
@@ -68,6 +70,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
                 {
                     MaxDispatchesPerCycle = 10
                 }),
+                new StaticAiControlPlaneIdResolver("control-plane-1"),
                 NullLogger<AiSharedQueuePump>.Instance);
 
             var result = await pump.PumpOnceAsync(new AiSharedQueuePumpRequest
@@ -100,6 +103,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
                 {
                     MaxDispatchesPerCycle = 10
                 }),
+                new StaticAiControlPlaneIdResolver("control-plane-1"),  
                 NullLogger<AiSharedQueuePump>.Instance);
 
             var result = await pump.PumpOnceAsync(new AiSharedQueuePumpRequest
@@ -132,6 +136,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
                 {
                     MaxDispatchesPerCycle = 2
                 }),
+                new StaticAiControlPlaneIdResolver("control-plane-1"),
                 NullLogger<AiSharedQueuePump>.Instance);
 
             var result = await pump.PumpOnceAsync(new AiSharedQueuePumpRequest
@@ -167,6 +172,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
                     MaxDispatchesPerCycle = 10,
                     StopCycleOnDispatchFailure = false
                 }),
+                new StaticAiControlPlaneIdResolver("control-plane-1"),
                 NullLogger<AiSharedQueuePump>.Instance);
 
             var result = await pump.PumpOnceAsync(new AiSharedQueuePumpRequest
@@ -197,6 +203,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
                     MaxDispatchesPerCycle = 10,
                     StopCycleOnDispatchFailure = true
                 }),
+                new StaticAiControlPlaneIdResolver("control-plane-1"),
                 NullLogger<AiSharedQueuePump>.Instance);
 
             var result = await pump.PumpOnceAsync(new AiSharedQueuePumpRequest
@@ -221,6 +228,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
                 {
                     Enabled = false
                 }),
+                new StaticAiControlPlaneIdResolver("control-plane-1"),
                 NullLogger<AiSharedQueuePump>.Instance);
 
             var result = await pump.PumpOnceAsync(new AiSharedQueuePumpRequest
@@ -250,6 +258,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
                     WorkerId = "option-worker",
                     Source = "option-source"
                 }),
+                new StaticAiControlPlaneIdResolver("control-plane-1"),
                 NullLogger<AiSharedQueuePump>.Instance);
 
             await pump.PumpOnceAsync(new AiSharedQueuePumpRequest
@@ -298,6 +307,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
                     WorkerId = "option-worker",
                     Source = "option-source"
                 }),
+                new StaticAiControlPlaneIdResolver("control-plane-1"),
                 NullLogger<AiSharedQueuePump>.Instance);
 
             await pump.PumpOnceAsync(new AiSharedQueuePumpRequest
@@ -316,6 +326,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
             var pump = new AiSharedQueuePump(
                 new FakeSharedQueueDispatcher(Array.Empty<AiSharedQueueDispatchResult>()),
                 Options.Create(new AiSharedQueuePumpOptions()),
+                new StaticAiControlPlaneIdResolver("control-plane-1"),
                 NullLogger<AiSharedQueuePump>.Instance);
 
             await Assert.ThrowsAsync<ArgumentNullException>(() =>
@@ -328,6 +339,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
             var pump = new AiSharedQueuePump(
                 new FakeSharedQueueDispatcher(Array.Empty<AiSharedQueueDispatchResult>()),
                 Options.Create(new AiSharedQueuePumpOptions()),
+                new StaticAiControlPlaneIdResolver("control-plane-1"),
                 NullLogger<AiSharedQueuePump>.Instance);
 
             await Assert.ThrowsAsync<ArgumentException>(() =>

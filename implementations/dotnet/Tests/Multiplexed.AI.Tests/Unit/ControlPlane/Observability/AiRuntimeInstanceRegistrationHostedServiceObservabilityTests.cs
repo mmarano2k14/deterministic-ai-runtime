@@ -203,31 +203,6 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.Observability
         }
 
         /// <summary>
-        /// Fake control-plane identifier resolver.
-        /// </summary>
-        private sealed class StaticControlPlaneIdResolver : IAiControlPlaneIdResolver
-        {
-            private readonly string controlPlaneId;
-
-            /// <summary>
-            /// Initializes a new instance of the <see cref="StaticControlPlaneIdResolver"/> class.
-            /// </summary>
-            /// <param name="controlPlaneId">The control-plane identifier.</param>
-            public StaticControlPlaneIdResolver(
-                string controlPlaneId)
-            {
-                this.controlPlaneId = controlPlaneId;
-            }
-
-            /// <inheritdoc />
-            public Task<string> ResolveAsync(
-                CancellationToken cancellationToken = default)
-            {
-                return Task.FromResult(this.controlPlaneId);
-            }
-        }
-
-        /// <summary>
         /// Fake runtime environment provider.
         /// </summary>
         private sealed class FakeRuntimeEnvironmentProvider : IAiRuntimeEnvironmentProvider

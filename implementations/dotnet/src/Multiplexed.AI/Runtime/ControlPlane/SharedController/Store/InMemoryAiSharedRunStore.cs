@@ -282,6 +282,89 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Store
             }
         }
 
+        /// <inheritdoc />
+        public Task<AiSharedRunRecord?> MarkRequeuedAfterScaleOutAsync(
+            string sharedRunId,
+            string? reason = null,
+            IReadOnlyDictionary<string, string>? metadata = null,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(sharedRunId);
+
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var tenantId =
+                TryResolveTenantId();
+
+            while (true)
+            {
+                if (!_runs.TryGetValue(sharedRunId, out var existing))
+                {
+                    return Task.FromResult<AiSharedRunRecord?>(null);
+                }
+
+                if (!BelongsToTenant(
+                        existing,
+                        tenantId))
+                {
+                    return Task.FromResult<AiSharedRunRecord?>(null);
+                }
+
+                if (IsTerminal(existing.Status))
+                {
+                    return Task.FromResult<AiSharedRunRecord?>(existing);
+                }
+
+                var now =
+                    DateTimeOffset.UtcNow;
+
+                var mergedMetadata =
+                    new Dictionary<string, string>(
+                        existing.Metadata,
+                        StringComparer.OrdinalIgnoreCase);
+
+                if (metadata is not null)
+                {
+                    foreach (var item in metadata)
+                    {
+                        mergedMetadata[item.Key] = item.Value;
+                    }
+                }
+
+                mergedMetadata["scaleOutRequeued"] = "true";
+                mergedMetadata["scaleOutRequeuedAtUtc"] = now.ToString("O");
+
+                var updated = new AiSharedRunRecord
+                {
+                    SharedRunId = existing.SharedRunId,
+                    ControlPlaneId = existing.ControlPlaneId,
+                    Status = AiSharedRunStatus.QueuedGlobally,
+                    RunRequest = existing.RunRequest,
+                    LocalRunId = existing.LocalRunId,
+                    ExecutionId = existing.ExecutionId,
+                    AssignedRuntimeInstanceId = existing.AssignedRuntimeInstanceId,
+                    AdmissionDecision = existing.AdmissionDecision,
+                    ExecutionContextSnapshot = existing.ExecutionContextSnapshot,
+                    PipelineKey = existing.PipelineKey,
+                    CorrelationId = existing.CorrelationId,
+                    RequestedBy = existing.RequestedBy,
+                    Source = existing.Source,
+                    Reason = string.IsNullOrWhiteSpace(reason)
+                        ? "Scale-out fulfilled; shared run requeued for dispatch."
+                        : reason,
+                    FailureReason = string.Empty,
+                    SubmittedAtUtc = existing.SubmittedAtUtc,
+                    UpdatedAtUtc = now,
+                    Metadata = mergedMetadata
+                };
+
+                if (_runs.TryUpdate(sharedRunId, updated, existing))
+                {
+                    return Task.FromResult<AiSharedRunRecord?>(updated);
+                }
+            }
+        }
+
         /// <summary>
         /// Attempts to resolve the current tenant id from the execution context snapshot provider.
         /// </summary>

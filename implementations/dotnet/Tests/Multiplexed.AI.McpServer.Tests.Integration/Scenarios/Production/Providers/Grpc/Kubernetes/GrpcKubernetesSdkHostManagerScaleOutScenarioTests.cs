@@ -3,7 +3,7 @@ using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Providers.
 using Xunit;
 using Xunit.Abstractions;
 
-namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Providers.Grpc
+namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Providers.Grpc.Kubernetes
 {
     /// <summary>
     /// Proves that gRPC runtime scale-out can delegate runtime lifecycle creation to the real Kubernetes SDK client
