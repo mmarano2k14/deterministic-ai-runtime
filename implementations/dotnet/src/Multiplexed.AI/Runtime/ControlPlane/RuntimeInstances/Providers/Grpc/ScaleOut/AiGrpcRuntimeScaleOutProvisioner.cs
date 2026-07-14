@@ -2,6 +2,7 @@
 using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Capacity;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager.ProcessControl;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers.Transport;
@@ -30,6 +31,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Grpc.Sc
         private readonly IAiRuntimeInstanceRegistry registry;
         private readonly IAiRuntimeInstanceCapacityStore capacityStore;
         private readonly IAiRuntimeHostManager runtimeHostManager;
+        private readonly IAiRuntimeHostProcessControl? runtimeHostProcessControl;
         private readonly IAiRuntimeInstanceReadinessWaiter readinessWaiter;
         private readonly IAiTenantRuntimeSettingsProvider tenantRuntimeSettingsProvider;
         private readonly AiGrpcRuntimeScaleOutOptions options;
@@ -45,6 +47,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Grpc.Sc
         /// <param name="tenantRuntimeSettingsProvider">The tenant runtime settings provider.</param>
         /// <param name="options">The gRPC scale-out technical options.</param>
         /// <param name="logger">The logger.</param>
+        /// <param name="runtimeHostProcessControl">
+        /// Optional process-host lifecycle control used only to clean up a process host when provider-level readiness fails.
+        /// Kubernetes and all non-process host creation modes are never affected by this dependency.
+        /// </param>
         public AiGrpcRuntimeScaleOutProvisioner(
             IAiRuntimeInstanceRegistry registry,
             IAiRuntimeInstanceCapacityStore capacityStore,
@@ -52,11 +58,13 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Grpc.Sc
             IAiRuntimeInstanceReadinessWaiter readinessWaiter,
             IAiTenantRuntimeSettingsProvider tenantRuntimeSettingsProvider,
             IOptions<AiGrpcRuntimeScaleOutOptions> options,
-            ILogger<AiGrpcRuntimeScaleOutProvisioner> logger)
+            ILogger<AiGrpcRuntimeScaleOutProvisioner> logger,
+            IAiRuntimeHostProcessControl? runtimeHostProcessControl = null)
         {
             this.registry = registry ?? throw new ArgumentNullException(nameof(registry));
             this.capacityStore = capacityStore ?? throw new ArgumentNullException(nameof(capacityStore));
             this.runtimeHostManager = runtimeHostManager ?? throw new ArgumentNullException(nameof(runtimeHostManager));
+            this.runtimeHostProcessControl = runtimeHostProcessControl;
             this.readinessWaiter = readinessWaiter ?? throw new ArgumentNullException(nameof(readinessWaiter));
             this.tenantRuntimeSettingsProvider = tenantRuntimeSettingsProvider ?? throw new ArgumentNullException(nameof(tenantRuntimeSettingsProvider));
             ArgumentNullException.ThrowIfNull(options);
@@ -334,6 +342,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Grpc.Sc
                         readinessResult.FailureReason,
                         readinessResult.TimedOut);
 
+                    await TryCleanupFailedProcessHostAsync(
+                            request,
+                            fulfilledRuntimeInstanceId)
+                        .ConfigureAwait(false);
+
                     return CreateRejectedResult(request, readinessResult.FailureReason ?? "runtime-readiness-failed", "gRPC runtime scale-out readiness check failed.");
                 }
 
@@ -366,6 +379,75 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Grpc.Sc
                 (DateTimeOffset.UtcNow - startedAtUtc).TotalMilliseconds);
 
             return CreateFulfilledResult(request, fulfilledRuntimeInstanceId, $"grpc-host-manager-scaleout-{request.RequestId}", "gRPC runtime scale-out request was fulfilled by the runtime host manager.", metadata);
+        }
+
+        /// <summary>
+        /// Cleans up a process host that was started successfully but failed provider-level readiness.
+        /// </summary>
+        /// <remarks>
+        /// This cleanup is intentionally restricted to <see cref="AiRuntimeHostCreationMode.Process" />.
+        /// Kubernetes lifecycle remains owned by the Kubernetes host creation strategy and is never touched here.
+        /// Cleanup is best-effort so that a cleanup failure cannot hide the original readiness failure.
+        /// </remarks>
+        /// <param name="request">The scale-out provider request.</param>
+        /// <param name="runtimeInstanceId">The process runtime instance identifier.</param>
+        /// <returns>A task representing the cleanup attempt.</returns>
+        private async Task TryCleanupFailedProcessHostAsync(
+            AiRuntimeScaleOutProviderRequest request,
+            string runtimeInstanceId)
+        {
+            if (options.HostCreationMode != AiRuntimeHostCreationMode.Process)
+            {
+                return;
+            }
+
+            if (runtimeHostProcessControl is null)
+            {
+                logger.LogWarning(
+                    "GRPC SCALE-OUT PROCESS READINESS CLEANUP SKIPPED RequestId={RequestId} SharedRunId={SharedRunId} RuntimeInstanceId={RuntimeInstanceId} Reason={Reason}",
+                    request.RequestId,
+                    request.SharedRunId,
+                    runtimeInstanceId,
+                    "process-control-unavailable");
+
+                return;
+            }
+
+            try
+            {
+                var cleaned =
+                    await runtimeHostProcessControl
+                        .KillAsync(
+                            runtimeInstanceId,
+                            CancellationToken.None)
+                        .ConfigureAwait(false);
+
+                if (cleaned)
+                {
+                    logger.LogWarning(
+                        "GRPC SCALE-OUT PROCESS READINESS CLEANUP COMPLETED RequestId={RequestId} SharedRunId={SharedRunId} RuntimeInstanceId={RuntimeInstanceId}",
+                        request.RequestId,
+                        request.SharedRunId,
+                        runtimeInstanceId);
+                }
+                else
+                {
+                    logger.LogWarning(
+                        "GRPC SCALE-OUT PROCESS READINESS CLEANUP NOT FOUND RequestId={RequestId} SharedRunId={SharedRunId} RuntimeInstanceId={RuntimeInstanceId}",
+                        request.RequestId,
+                        request.SharedRunId,
+                        runtimeInstanceId);
+                }
+            }
+            catch (Exception exception)
+            {
+                logger.LogWarning(
+                    exception,
+                    "GRPC SCALE-OUT PROCESS READINESS CLEANUP FAILED RequestId={RequestId} SharedRunId={SharedRunId} RuntimeInstanceId={RuntimeInstanceId}",
+                    request.RequestId,
+                    request.SharedRunId,
+                    runtimeInstanceId);
+            }
         }
 
         /// <summary>

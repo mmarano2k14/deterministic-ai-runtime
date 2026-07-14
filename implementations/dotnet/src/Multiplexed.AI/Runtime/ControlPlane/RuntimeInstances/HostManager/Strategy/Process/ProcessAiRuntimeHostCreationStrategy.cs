@@ -29,12 +29,14 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
     {
         private const string ProcessRuntimeHostCreationOperation = "runtime-process-host-creation";
 
+        private static readonly SemaphoreSlim PortAllocationLock = new(1, 1);
+        private static readonly ConcurrentDictionary<int, byte> ReservedPorts = new();
+
         private readonly AiRuntimeProcessHostCreationOptions options;
         private readonly ILogger<ProcessAiRuntimeHostCreationStrategy> logger;
         private readonly IAiControlPlaneObserver observer;
-        private readonly ConcurrentDictionary<string, System.Diagnostics.Process> processesByRuntimeInstanceId = new(StringComparer.OrdinalIgnoreCase);
-        private readonly SemaphoreSlim portAllocationLock = new(1, 1);
-        private int nextPort;
+        private readonly ConcurrentDictionary<string, RuntimeHostProcessRegistration> processesByRuntimeInstanceId =
+            new(StringComparer.OrdinalIgnoreCase);
 
         public ProcessAiRuntimeHostCreationStrategy(
             IOptions<AiRuntimeProcessHostCreationOptions> options,
@@ -54,7 +56,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
             this.options = options?.Value ?? throw new ArgumentNullException(nameof(options));
             this.logger = logger ?? throw new ArgumentNullException(nameof(logger));
             this.observer = observer ?? throw new ArgumentNullException(nameof(observer));
-            this.nextPort = this.options.BasePort;
         }
 
         public AiRuntimeHostCreationMode Mode => AiRuntimeHostCreationMode.Process;
@@ -150,6 +151,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
 
                 if (process is null)
                 {
+                    ReleasePort(port);
+
                     var nullProcessResult = AiRuntimeHostStartResult.Rejected(
                         request.ExecutionContextSnapshot,
                         request.RuntimeInstanceId,
@@ -172,9 +175,15 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
 
                 AttachOutputLogging(request, process);
 
-                if (!this.processesByRuntimeInstanceId.TryAdd(request.RuntimeInstanceId, process))
+                var registration = new RuntimeHostProcessRegistration(
+                    process,
+                    port,
+                    endpoint);
+
+                if (!this.processesByRuntimeInstanceId.TryAdd(request.RuntimeInstanceId, registration))
                 {
                     TryKillProcess(process);
+                    ReleasePort(port);
 
                     var duplicateProcessResult = AiRuntimeHostStartResult.Rejected(
                         request.ExecutionContextSnapshot,
@@ -203,7 +212,12 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
                     endpoint,
                     this.options.RuntimeHostAssemblyPath);
 
-                await EnsureProcessDidNotExitImmediatelyAsync(request, process, endpoint, metadata, cancellationToken).ConfigureAwait(false);
+                await EnsureProcessDidNotExitImmediatelyAsync(
+                        request,
+                        registration,
+                        metadata,
+                        cancellationToken)
+                    .ConfigureAwait(false);
 
                 var startedResult = AiRuntimeHostStartResult.Started(
                     request.ExecutionContextSnapshot,
@@ -222,8 +236,32 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
 
                 return startedResult;
             }
+            catch (OperationCanceledException)
+            {
+                if (this.processesByRuntimeInstanceId.TryRemove(request.RuntimeInstanceId, out var cancelledRegistration))
+                {
+                    TryKillProcess(cancelledRegistration.Process);
+                    ReleasePort(cancelledRegistration.Port);
+                }
+                else
+                {
+                    ReleasePort(port);
+                }
+
+                throw;
+            }
             catch (Exception exception) when (exception is not OperationCanceledException)
             {
+                if (this.processesByRuntimeInstanceId.TryRemove(request.RuntimeInstanceId, out var failedRegistration))
+                {
+                    TryKillProcess(failedRegistration.Process);
+                    ReleasePort(failedRegistration.Port);
+                }
+                else
+                {
+                    ReleasePort(port);
+                }
+
                 this.logger.LogError(
                     exception,
                     "Failed to start runtime host process. RuntimeInstanceId={RuntimeInstanceId}, Endpoint={Endpoint}.",
@@ -421,7 +459,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
             ArgumentException.ThrowIfNullOrWhiteSpace(runtimeInstanceId);
             cancellationToken.ThrowIfCancellationRequested();
 
-            if (!this.processesByRuntimeInstanceId.TryRemove(runtimeInstanceId, out var process))
+            if (!this.processesByRuntimeInstanceId.TryRemove(runtimeInstanceId, out var registration))
             {
                 this.logger.LogWarning(
                     "Runtime host process kill requested but no process was registered. RuntimeInstanceId={RuntimeInstanceId}.",
@@ -432,36 +470,41 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
 
             try
             {
-                if (process.HasExited)
+                if (registration.Process.HasExited)
                 {
                     this.logger.LogInformation(
-                        "Runtime host process kill requested but process had already exited. RuntimeInstanceId={RuntimeInstanceId}, ProcessId={ProcessId}, ExitCode={ExitCode}.",
+                        "Runtime host process kill requested but process had already exited. RuntimeInstanceId={RuntimeInstanceId}, ProcessId={ProcessId}, ExitCode={ExitCode}, Port={Port}.",
                         runtimeInstanceId,
-                        process.Id,
-                        process.ExitCode);
+                        registration.Process.Id,
+                        registration.Process.ExitCode,
+                        registration.Port);
 
-                    process.Dispose();
+                    registration.Process.Dispose();
+                    ReleasePort(registration.Port);
                     return true;
                 }
 
                 this.logger.LogWarning(
-                    "Killing runtime host process on demand. RuntimeInstanceId={RuntimeInstanceId}, ProcessId={ProcessId}.",
+                    "Killing runtime host process on demand. RuntimeInstanceId={RuntimeInstanceId}, ProcessId={ProcessId}, Port={Port}.",
                     runtimeInstanceId,
-                    process.Id);
+                    registration.Process.Id,
+                    registration.Port);
 
-                process.Kill(entireProcessTree: true);
+                registration.Process.Kill(entireProcessTree: true);
 
-                await process
+                await registration.Process
                     .WaitForExitAsync(cancellationToken)
                     .ConfigureAwait(false);
 
                 this.logger.LogWarning(
-                    "Runtime host process killed on demand. RuntimeInstanceId={RuntimeInstanceId}, ProcessId={ProcessId}, ExitCode={ExitCode}.",
+                    "Runtime host process killed on demand. RuntimeInstanceId={RuntimeInstanceId}, ProcessId={ProcessId}, ExitCode={ExitCode}, Port={Port}.",
                     runtimeInstanceId,
-                    process.Id,
-                    process.ExitCode);
+                    registration.Process.Id,
+                    registration.Process.ExitCode,
+                    registration.Port);
 
-                process.Dispose();
+                registration.Process.Dispose();
+                ReleasePort(registration.Port);
                 return true;
             }
             catch (Exception exception) when (exception is not OperationCanceledException)
@@ -471,15 +514,14 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
                     "Failed to kill runtime host process on demand. RuntimeInstanceId={RuntimeInstanceId}.",
                     runtimeInstanceId);
 
-                process.Dispose();
+                registration.Process.Dispose();
+                ReleasePort(registration.Port);
                 return false;
             }
         }
 
         public async ValueTask DisposeAsync()
         {
-            this.portAllocationLock.Dispose();
-
             if (!this.options.KillOnDispose)
             {
                 return;
@@ -711,27 +753,51 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
         private async Task<int> AllocatePortAsync(
             CancellationToken cancellationToken)
         {
-            await this.portAllocationLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+            await PortAllocationLock
+                .WaitAsync(cancellationToken)
+                .ConfigureAwait(false);
 
             try
             {
-                for (var attempt = 0; attempt <= this.options.MaxPort - this.options.BasePort; attempt++)
+                for (var candidate = this.options.BasePort;
+                     candidate <= this.options.MaxPort;
+                     candidate++)
                 {
-                    var candidate = this.nextPort;
-                    this.nextPort = this.nextPort >= this.options.MaxPort ? this.options.BasePort : this.nextPort + 1;
-
-                    if (IsPortAvailable(candidate))
+                    if (ReservedPorts.ContainsKey(candidate))
                     {
+                        continue;
+                    }
+
+                    if (!IsPortAvailable(candidate))
+                    {
+                        continue;
+                    }
+
+                    if (ReservedPorts.TryAdd(candidate, 0))
+                    {
+                        this.logger.LogInformation(
+                            "Reserved process-host port. Port={Port}, Range={BasePort}-{MaxPort}.",
+                            candidate,
+                            this.options.BasePort,
+                            this.options.MaxPort);
+
                         return candidate;
                     }
                 }
 
-                throw new InvalidOperationException($"No available TCP port was found in range {this.options.BasePort}-{this.options.MaxPort}.");
+                throw new InvalidOperationException(
+                    $"No available TCP port was found in range {this.options.BasePort}-{this.options.MaxPort}.");
             }
             finally
             {
-                this.portAllocationLock.Release();
+                PortAllocationLock.Release();
             }
+        }
+
+        private static void ReleasePort(
+            int port)
+        {
+            ReservedPorts.TryRemove(port, out _);
         }
 
         private static bool IsPortAvailable(
@@ -751,47 +817,68 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
 
         private async Task EnsureProcessDidNotExitImmediatelyAsync(
             AiRuntimeHostStartRequest request,
-            System.Diagnostics.Process process,
-            string endpoint,
+            RuntimeHostProcessRegistration registration,
             IReadOnlyDictionary<string, string> metadata,
             CancellationToken cancellationToken)
         {
             await Task.Delay(TimeSpan.FromMilliseconds(500), cancellationToken).ConfigureAwait(false);
 
-            if (!process.HasExited)
+            if (!registration.Process.HasExited)
             {
                 return;
             }
 
             this.processesByRuntimeInstanceId.TryRemove(request.RuntimeInstanceId, out _);
+            ReleasePort(registration.Port);
+
+            var exitCode = registration.Process.ExitCode;
+            registration.Process.Dispose();
 
             throw new InvalidOperationException(
-                $"Runtime host process exited immediately. RuntimeInstanceId='{request.RuntimeInstanceId}', Endpoint='{endpoint}', ExitCode='{process.ExitCode}', MetadataCount='{metadata.Count}'.");
+                $"Runtime host process exited immediately. RuntimeInstanceId='{request.RuntimeInstanceId}', Endpoint='{registration.Endpoint}', Port='{registration.Port}', ExitCode='{exitCode}', MetadataCount='{metadata.Count}'.");
         }
 
         private async Task StopProcessAsync(
             string runtimeInstanceId,
-            System.Diagnostics.Process process)
+            RuntimeHostProcessRegistration registration)
         {
             try
             {
-                if (process.HasExited)
+                if (registration.Process.HasExited)
                 {
-                    process.Dispose();
+                    registration.Process.Dispose();
+                    ReleasePort(registration.Port);
                     return;
                 }
 
-                this.logger.LogInformation("Stopping runtime host process. RuntimeInstanceId={RuntimeInstanceId}, ProcessId={ProcessId}.", runtimeInstanceId, process.Id);
+                this.logger.LogInformation(
+                    "Stopping runtime host process. RuntimeInstanceId={RuntimeInstanceId}, ProcessId={ProcessId}, Port={Port}.",
+                    runtimeInstanceId,
+                    registration.Process.Id,
+                    registration.Port);
 
-                process.Kill(entireProcessTree: true);
-                await process.WaitForExitAsync().ConfigureAwait(false);
-                process.Dispose();
+                registration.Process.Kill(entireProcessTree: true);
+                await registration.Process.WaitForExitAsync().ConfigureAwait(false);
+                registration.Process.Dispose();
+                ReleasePort(registration.Port);
             }
             catch (Exception exception)
             {
-                this.logger.LogWarning(exception, "Failed to stop runtime host process. RuntimeInstanceId={RuntimeInstanceId}.", runtimeInstanceId);
+                registration.Process.Dispose();
+                ReleasePort(registration.Port);
+
+                this.logger.LogWarning(
+                    exception,
+                    "Failed to stop runtime host process. RuntimeInstanceId={RuntimeInstanceId}, Port={Port}.",
+                    runtimeInstanceId,
+                    registration.Port);
             }
         }
+
+        private sealed record RuntimeHostProcessRegistration(
+            System.Diagnostics.Process Process,
+            int Port,
+            string Endpoint);
 
         private static void TryKillProcess(
             System.Diagnostics.Process process)
