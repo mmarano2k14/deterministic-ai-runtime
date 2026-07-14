@@ -10,30 +10,12 @@ namespace Multiplexed.AI.Runtime.Execution.Persistence.Snapshot.Mongo
 {
     /// <summary>
     /// MongoDB implementation of <see cref="IAiExecutionSnapshotStore{TContextSnapshot}"/>.
-    ///
-    /// PURPOSE:
-    /// - Persist durable execution snapshots for inspection, audit, replay support,
-    ///   and post-mortem debugging
-    /// - Keep persistence concerns isolated from the execution engine
-    ///
-    /// DESIGN:
-    /// - Uses one document per execution
-    /// - ExecutionId is the durable identity and must be unique
-    /// - The runtime coordination store remains the source of truth for distributed execution
-    /// - MongoDB here acts as a durable snapshot store, not as the live coordination layer
-    ///
-    /// PERSISTENCE MODEL:
-    /// - Uses upsert semantics
-    /// - Immutable fields are written with SetOnInsert
-    /// - Mutable fields are updated with Set
-    ///
-    /// This keeps persistence idempotent and avoids replacing the full document
-    /// unnecessarily.
     /// </summary>
     /// <typeparam name="TContextSnapshot">
     /// The serializable external context snapshot type associated with the execution.
     /// </typeparam>
-    public sealed class MongoAiExecutionSnapshotStore<TContextSnapshot> : IAiExecutionSnapshotStore<TContextSnapshot>
+    public sealed class MongoAiExecutionSnapshotStore<TContextSnapshot>
+        : IAiExecutionSnapshotStore<TContextSnapshot>
     {
         private readonly IMongoCollection<AiExecutionSnapshotDocument<TContextSnapshot>> _collection;
         private readonly ILogger<MongoAiExecutionSnapshotStore<TContextSnapshot>> _logger;
@@ -41,13 +23,6 @@ namespace Multiplexed.AI.Runtime.Execution.Persistence.Snapshot.Mongo
         /// <summary>
         /// Initializes a new instance of the <see cref="MongoAiExecutionSnapshotStore{TContextSnapshot}"/> class.
         /// </summary>
-        /// <param name="database">
-        /// The Mongo database instance.
-        /// The connection string and database selection are expected to be configured
-        /// at the dependency injection level.
-        /// </param>
-        /// <param name="options">The Mongo snapshot options.</param>
-        /// <param name="logger">The logger.</param>
         public MongoAiExecutionSnapshotStore(
             IMongoDatabase database,
             AiExecutionSnapshotMongoOptions options,
@@ -67,6 +42,12 @@ namespace Multiplexed.AI.Runtime.Execution.Persistence.Snapshot.Mongo
                 options.CollectionName);
 
             _logger = logger;
+
+            Console.WriteLine(
+                $"[MONGO SNAPSHOT STORE] " +
+                $"Database='{database.DatabaseNamespace.DatabaseName}', " +
+                $"Collection='{options.CollectionName}', " +
+                $"ContextType='{typeof(TContextSnapshot).FullName}'.");
         }
 
         /// <inheritdoc />
@@ -99,13 +80,28 @@ namespace Multiplexed.AI.Runtime.Execution.Persistence.Snapshot.Mongo
                 .Set(x => x.Steps, snapshot.Steps)
                 .Set(x => x.Events, snapshot.Events);
 
+            Console.WriteLine(
+                $"[MONGO SNAPSHOT STORE UPSERT] " +
+                $"Database='{_collection.Database.DatabaseNamespace.DatabaseName}', " +
+                $"Collection='{_collection.CollectionNamespace.CollectionName}', " +
+                $"ExecutionId='{snapshot.ExecutionId}', " +
+                $"Status='{snapshot.Status}'.");
+
             try
             {
-                await _collection.UpdateOneAsync(
-                    filter,
-                    update,
-                    new UpdateOptions { IsUpsert = true },
-                    cancellationToken);
+                var result = await _collection.UpdateOneAsync(
+                        filter,
+                        update,
+                        new UpdateOptions { IsUpsert = true },
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+                Console.WriteLine(
+                    $"[MONGO SNAPSHOT STORE UPSERT RESULT] " +
+                    $"ExecutionId='{snapshot.ExecutionId}', " +
+                    $"MatchedCount='{result.MatchedCount}', " +
+                    $"ModifiedCount='{result.ModifiedCount}', " +
+                    $"UpsertedId='{result.UpsertedId?.ToString() ?? string.Empty}'.");
 
                 _logger.LogDebug(
                     "AI execution snapshot upserted for execution {ExecutionId}.",
@@ -141,11 +137,30 @@ namespace Multiplexed.AI.Runtime.Execution.Persistence.Snapshot.Mongo
                 .Filter
                 .Eq(x => x.ExecutionId, executionId);
 
+            Console.WriteLine(
+                $"[MONGO SNAPSHOT STORE GET] " +
+                $"Database='{_collection.Database.DatabaseNamespace.DatabaseName}', " +
+                $"Collection='{_collection.CollectionNamespace.CollectionName}', " +
+                $"ExecutionId='{executionId}', " +
+                $"ContextType='{typeof(TContextSnapshot).FullName}'.");
+
             try
             {
-                return await _collection
+                var snapshot = await _collection
                     .Find(filter)
-                    .FirstOrDefaultAsync(cancellationToken);
+                    .FirstOrDefaultAsync(cancellationToken)
+                    .ConfigureAwait(false);
+
+                Console.WriteLine(
+                    $"[MONGO SNAPSHOT STORE GET RESULT] " +
+                    $"Database='{_collection.Database.DatabaseNamespace.DatabaseName}', " +
+                    $"Collection='{_collection.CollectionNamespace.CollectionName}', " +
+                    $"ExecutionId='{executionId}', " +
+                    $"Found='{snapshot is not null}', " +
+                    $"SnapshotExecutionId='{snapshot?.ExecutionId ?? string.Empty}', " +
+                    $"SnapshotStatus='{snapshot?.Status.ToString() ?? string.Empty}'.");
+
+                return snapshot;
             }
             catch (Exception ex)
             {
@@ -153,6 +168,13 @@ namespace Multiplexed.AI.Runtime.Execution.Persistence.Snapshot.Mongo
                     ex,
                     "Failed to load AI execution snapshot for execution {ExecutionId}.",
                     executionId);
+
+                Console.WriteLine(
+                    $"[MONGO SNAPSHOT STORE GET ERROR] " +
+                    $"Database='{_collection.Database.DatabaseNamespace.DatabaseName}', " +
+                    $"Collection='{_collection.CollectionNamespace.CollectionName}', " +
+                    $"ExecutionId='{executionId}', " +
+                    $"Error='{ex}'.");
 
                 throw;
             }
@@ -171,7 +193,9 @@ namespace Multiplexed.AI.Runtime.Execution.Persistence.Snapshot.Mongo
 
             try
             {
-                await _collection.DeleteOneAsync(filter, cancellationToken);
+                await _collection
+                    .DeleteOneAsync(filter, cancellationToken)
+                    .ConfigureAwait(false);
 
                 _logger.LogDebug(
                     "AI execution snapshot deleted for execution {ExecutionId}.",

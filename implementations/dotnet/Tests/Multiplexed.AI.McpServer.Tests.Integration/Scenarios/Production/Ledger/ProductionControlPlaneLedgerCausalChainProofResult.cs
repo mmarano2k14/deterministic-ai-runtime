@@ -32,6 +32,11 @@
         int RecoveredWorkRedispatchedCount)
     {
         /// <summary>
+        /// Gets a value indicating whether process-host-specific creation evidence is required.
+        /// </summary>
+        public bool ProcessRuntimeHostRequired { get; init; } = true;
+
+        /// <summary>
         /// Gets a value indicating whether failed runtime unsafe state was validated by ledger marker or direct registry state.
         /// </summary>
         public bool FailedRuntimeUnsafeValidated =>
@@ -47,7 +52,7 @@
             this.ScaleOutWatcherObservedCount > 0 &&
             this.ProviderSelectedCount > 0 &&
             this.RuntimeHostCreatedCount > 0 &&
-            this.ProcessRuntimeHostStartedCount > 0 &&
+            (!this.ProcessRuntimeHostRequired || this.ProcessRuntimeHostStartedCount > 0) &&
             this.RuntimeCapacityVisibleCount > 0 &&
             this.RuntimeRegistryVisibleCount > 0 &&
             this.FailedRuntimeUnsafeValidated &&

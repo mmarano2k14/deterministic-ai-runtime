@@ -639,6 +639,43 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Grpc
                     exception.Message,
                     exception);
             }
+            catch (RpcException exception)
+                when (exception.StatusCode == StatusCode.Cancelled &&
+                      cancellationToken.IsCancellationRequested)
+            {
+                logger.LogDebug(
+                    exception,
+                    "GRPC COMMAND CANCELLED BY CALLER RuntimeInstanceId={RuntimeInstanceId} Operation={Operation} Endpoint={Endpoint} StatusCode={StatusCode} Detail={Detail}",
+                    request.RuntimeInstanceId,
+                    request.Operation,
+                    endpoint,
+                    exception.StatusCode,
+                    exception.Status.Detail);
+
+                throw;
+            }
+            catch (RpcException exception)
+                when (exception.StatusCode == StatusCode.Cancelled)
+            {
+                logger.LogInformation(
+                    exception,
+                    "GRPC COMMAND CANCELLED TRANSIENT RuntimeInstanceId={RuntimeInstanceId} Operation={Operation} Endpoint={Endpoint} StatusCode={StatusCode} Detail={Detail}",
+                    request.RuntimeInstanceId,
+                    request.Operation,
+                    endpoint,
+                    exception.StatusCode,
+                    exception.Status.Detail);
+
+                Console.WriteLine(
+                    $"[GRPC COMMAND CANCELLED TRANSIENT] RuntimeInstanceId='{request.RuntimeInstanceId}', Operation='{request.Operation}', Endpoint='{endpoint}', StatusCode='{exception.StatusCode}', Detail='{exception.Status.Detail}', Message='{exception.Message}'.");
+
+                return CreateFailedCommandResult(
+                    request,
+                    startedAtUtc,
+                    AiGrpcRuntimeDispatchFailureReasons.RuntimeUnavailable,
+                    exception.Message,
+                    exception);
+            }
             catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
             {
                 logger.LogWarning(

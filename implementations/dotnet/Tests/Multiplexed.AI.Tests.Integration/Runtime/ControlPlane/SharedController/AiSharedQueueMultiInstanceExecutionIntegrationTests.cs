@@ -57,6 +57,8 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedController
         private readonly string _runKeyPrefix =
             $"test:ai:shared-runs:multi-instance:{Guid.NewGuid():N}";
 
+        private const string ControlPlaneId = "test-control-plane";
+
         private readonly string _queueKeyPrefix =
             $"test:ai:shared-queue:multi-instance:{Guid.NewGuid():N}";
 
@@ -181,7 +183,7 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedController
                 queue,
                 new NeverCalledSharedRunDispatcher(),
                 new NoopAiRuntimeScaleOutRequestPublisher(),
-                new StaticAiControlPlaneIdResolver("test-control-plane"),
+                new StaticAiControlPlaneIdResolver(ControlPlaneId),
                 new HardcodedAiTenantRuntimeSettingsProvider(),
                 Options.Create(new AiSharedRuntimeControllerOptions()),
                 new NoopAiControlPlaneObserver(),
@@ -393,7 +395,7 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedController
                 runtimeInstanceRegistry,
                 new FakeRuntimeScaleOutRequestPublisher(),
                 new HardcodedAiTenantRuntimeSettingsProvider(),
-                new StaticAiControlPlaneIdResolver("control-plane-1"),
+                new StaticAiControlPlaneIdResolver(ControlPlaneId),
                 new FakeExecutionContextAccessor(),
                 NullLogger<AiSharedQueueDispatcher>.Instance);
 
@@ -407,7 +409,7 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedController
                     StopCycleWhenNoItemAvailable = true,
                     StopCycleOnDispatchFailure = true
                 }),
-                new StaticAiControlPlaneIdResolver("control-plane-1"),
+                new StaticAiControlPlaneIdResolver(ControlPlaneId),
                 NullLogger<AiSharedQueuePump>.Instance);
 
             var total = new AiSharedQueuePumpResult
@@ -519,7 +521,7 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedController
                     KeyPrefix = _runKeyPrefix,
                     ListScanLimit = 20_000
                 }),
-                new StaticAiControlPlaneIdResolver("test-control-plane"));
+                new StaticAiControlPlaneIdResolver(ControlPlaneId));
         }
 
         private RedisAiSharedQueue CreateQueue()
@@ -536,7 +538,7 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedController
                     KeyPrefix = _queueKeyPrefix,
                     ListScanLimit = 20_000
                 }),
-                new StaticAiControlPlaneIdResolver("test-control-plane"));
+                new StaticAiControlPlaneIdResolver(ControlPlaneId));
         }
 
         private static string FormatDistribution(

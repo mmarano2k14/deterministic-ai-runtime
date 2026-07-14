@@ -449,17 +449,19 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Store
 
             cancellationToken.ThrowIfCancellationRequested();
 
-            var controlPlaneId = await ResolveControlPlaneIdAsync(
-                    requestedControlPlaneId: null,
-                    metadata: null,
-                    cancellationToken)
-                .ConfigureAwait(false);
+            var controlPlaneId =
+                await ResolveControlPlaneIdAsync(
+                        requestedControlPlaneId: null,
+                        metadata: null,
+                        cancellationToken)
+                    .ConfigureAwait(false);
 
-            var existing = await GetAsync(
-                    controlPlaneId,
-                    sharedRunId,
-                    cancellationToken)
-                .ConfigureAwait(false);
+            var existing =
+                await GetAsync(
+                        controlPlaneId,
+                        sharedRunId,
+                        cancellationToken)
+                    .ConfigureAwait(false);
 
             if (existing is null)
             {
@@ -486,7 +488,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Store
                     runKey,
                     new HashEntry[]
                     {
-                new("assignedRuntimeInstanceId", runtimeInstanceId),
+                new("assignedRuntimeInstanceId", string.Empty),
+                new("localRunId", string.Empty),
                 new("reason", message ?? existing.Reason ?? string.Empty),
                 new("failureReason", failureReason ?? string.Empty),
                 new("updatedAtUtc", updatedAtUtc)
@@ -512,17 +515,19 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Store
             ArgumentException.ThrowIfNullOrWhiteSpace(sharedRunId);
             cancellationToken.ThrowIfCancellationRequested();
 
-            var controlPlaneId = await ResolveControlPlaneIdAsync(
-                    requestedControlPlaneId: null,
-                    metadata,
-                    cancellationToken)
-                .ConfigureAwait(false);
+            var controlPlaneId =
+                await ResolveControlPlaneIdAsync(
+                        requestedControlPlaneId: null,
+                        metadata,
+                        cancellationToken)
+                    .ConfigureAwait(false);
 
-            var existing = await GetAsync(
-                    controlPlaneId,
-                    sharedRunId,
-                    cancellationToken)
-                .ConfigureAwait(false);
+            var existing =
+                await GetAsync(
+                        controlPlaneId,
+                        sharedRunId,
+                        cancellationToken)
+                    .ConfigureAwait(false);
 
             if (existing is null)
             {
@@ -534,15 +539,17 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Store
                 return existing;
             }
 
-            var mergedMetadata = new Dictionary<string, string>(
-                existing.Metadata,
-                StringComparer.OrdinalIgnoreCase);
+            var mergedMetadata =
+                new Dictionary<string, string>(
+                    existing.Metadata,
+                    StringComparer.OrdinalIgnoreCase);
 
             if (metadata is not null)
             {
                 foreach (var item in metadata)
                 {
-                    mergedMetadata[item.Key] = item.Value;
+                    mergedMetadata[item.Key] =
+                        item.Value;
                 }
             }
 
@@ -561,23 +568,35 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Store
 
             foreach (var item in controlPlaneMetadata)
             {
-                mergedMetadata[item.Key] = item.Value;
+                mergedMetadata[item.Key] =
+                    item.Value;
             }
 
-            mergedMetadata["scaleOutRequeued"] = "true";
-            mergedMetadata["scaleOutRequeuedAtUtc"] = DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture);
+            var nowUtc =
+                DateTimeOffset.UtcNow;
 
-            var runKey = BuildRunKey(
-                controlPlaneId,
-                sharedRunId);
+            mergedMetadata["scaleOutRequeued"] =
+                "true";
 
-            var updatedAtUtc = DateTimeOffset.UtcNow.ToString(
-                "O",
-                CultureInfo.InvariantCulture);
+            mergedMetadata["scaleOutRequeuedAtUtc"] =
+                nowUtc.ToString(
+                    "O",
+                    CultureInfo.InvariantCulture);
 
-            var requeueReason = string.IsNullOrWhiteSpace(reason)
-                ? "Scale-out fulfilled; shared run requeued for dispatch."
-                : reason;
+            var runKey =
+                BuildRunKey(
+                    controlPlaneId,
+                    sharedRunId);
+
+            var updatedAtUtc =
+                nowUtc.ToString(
+                    "O",
+                    CultureInfo.InvariantCulture);
+
+            var requeueReason =
+                string.IsNullOrWhiteSpace(reason)
+                    ? "Scale-out fulfilled; shared run requeued for dispatch."
+                    : reason;
 
             await _database
                 .HashSetAsync(
@@ -585,6 +604,14 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Store
                     new HashEntry[]
                     {
                 new("status", AiSharedRunStatus.QueuedGlobally.ToString()),
+
+                // Runtime assignment and local run identity are volatile.
+                // They belong to the failed or rejected dispatch attempt and
+                // must never survive a global requeue.
+                new("assignedRuntimeInstanceId", string.Empty),
+                new("localRunId", string.Empty),
+
+                // ExecutionId is intentionally preserved for strict DAG resume.
                 new("reason", requeueReason),
                 new("failureReason", string.Empty),
                 new("updatedAtUtc", updatedAtUtc),

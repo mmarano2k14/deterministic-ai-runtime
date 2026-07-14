@@ -30,12 +30,13 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
     /// Runtime command dispatch and runtime-level readiness remain owned by the configured runtime provider,
     /// such as HTTP or gRPC.
     /// </remarks>
-    public sealed class KubernetesAiRuntimeHostCreationStrategy : IAiRuntimeHostCreationStrategy, IAiRuntimeHostProcessControl , IDisposable
+    public sealed class KubernetesAiRuntimeHostCreationStrategy : IAiRuntimeHostCreationStrategy, IAiRuntimeHostProcessControl, IDisposable
     {
         private readonly AiKubernetesRuntimeHostOptions options;
         private readonly AiKubernetesRuntimePodSpecBuilder podSpecBuilder;
         private readonly IAiKubernetesRuntimeHostClient client;
         private readonly IAiKubernetesRuntimeInstancePublisher runtimeInstancePublisher;
+        private readonly IAiRuntimeInstanceReadinessWaiter readinessWaiter;
         private readonly ILogger<KubernetesAiRuntimeHostCreationStrategy> logger;
         private readonly ConcurrentDictionary<string, DiagnosticsProcess> portForwardProcesses;
 
@@ -64,6 +65,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
             this.podSpecBuilder = podSpecBuilder ?? throw new ArgumentNullException(nameof(podSpecBuilder));
             this.client = client ?? throw new ArgumentNullException(nameof(client));
             this.runtimeInstancePublisher = runtimeInstancePublisher ?? throw new ArgumentNullException(nameof(runtimeInstancePublisher));
+            this.readinessWaiter = readinessWaiter ?? throw new ArgumentNullException(nameof(readinessWaiter));
             this.logger = logger ?? throw new ArgumentNullException(nameof(logger));
             this.portForwardProcesses = new ConcurrentDictionary<string, DiagnosticsProcess>(StringComparer.OrdinalIgnoreCase);
             this.podSpecsByRuntimeInstanceId = new ConcurrentDictionary<string, AiKubernetesRuntimePodSpec>(StringComparer.OrdinalIgnoreCase);
@@ -204,7 +206,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
                     metadata);
             }
 
-            if (this.options.UsePortForwardTransportEndpoint)
+            if (this.ShouldUsePortForwardTransportEndpoint(request))
             {
                 try
                 {
@@ -249,6 +251,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
                     request,
                     metadata);
 
+            ValidateResolvedKubernetesTransportEndpoint(
+                request,
+                transportEndpoint);
+
             metadata =
                 MergeMetadata(
                     metadata,
@@ -282,6 +288,31 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
                 request.ProviderName,
                 request.TransportName,
                 transportEndpoint);
+
+            var runtimeReadinessFailure =
+                await this.WaitForRuntimeReadinessBeforePublicationAsync(
+                        request,
+                        podSpec,
+                        transportEndpoint,
+                        metadata,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+            if (!string.IsNullOrWhiteSpace(runtimeReadinessFailure))
+            {
+                this.StopPortForward(request.RuntimeInstanceId);
+
+                await this.DeleteOnFailureAsync(
+                        podSpec,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+                return CreateRejectedResult(
+                    request,
+                    runtimeReadinessFailure,
+                    true,
+                    metadata);
+            }
 
             await this.runtimeInstancePublisher
                 .PublishAsync(request, startedResult, cancellationToken)
@@ -368,12 +399,225 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
             this.podSpecsByRuntimeInstanceId.Clear();
         }
 
+
         /// <summary>
-        /// Starts a local kubectl port-forward process for a Kubernetes service.
+        /// Determines whether the Kubernetes runtime host must expose a local port-forward endpoint.
+        /// </summary>
+        /// <param name="request">The runtime host start request.</param>
+        /// <returns><see langword="true" /> when a local port-forward endpoint must be used.</returns>
+        private bool ShouldUsePortForwardTransportEndpoint(
+            AiRuntimeHostStartRequest request)
+        {
+            if (this.options.UsePortForwardTransportEndpoint)
+            {
+                return true;
+            }
+
+            if (IsGrpcRuntimeTransport(request))
+            {
+                return true;
+            }
+
+            return IsUnsafeLocalhostKubernetesEndpoint(
+                request.TransportEndpoint);
+        }
+
+        /// <summary>
+        /// Resolves the local TCP port used by kubectl port-forward.
+        /// </summary>
+        /// <param name="request">The runtime host start request.</param>
+        /// <returns>The local TCP port.</returns>
+        private int ResolvePortForwardLocalPort(
+            AiRuntimeHostStartRequest request)
+        {
+            if (IsGrpcRuntimeTransport(request))
+            {
+                return GetFreeTcpPort();
+            }
+
+            if (this.options.PortForwardLocalPort > 0 &&
+                this.portForwardProcesses.IsEmpty)
+            {
+                return this.options.PortForwardLocalPort;
+            }
+
+            return GetFreeTcpPort();
+        }
+
+        /// <summary>
+        /// Determines whether the runtime transport is gRPC.
+        /// </summary>
+        /// <param name="request">The runtime host start request.</param>
+        /// <returns><see langword="true" /> when the provider or transport is gRPC.</returns>
+        private static bool IsGrpcRuntimeTransport(
+            AiRuntimeHostStartRequest request)
+        {
+            return string.Equals(
+                       request.ProviderName,
+                       "grpc",
+                       StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(
+                       request.TransportName,
+                       "grpc",
+                       StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>
+        /// Determines whether a Kubernetes transport endpoint is unsafe for multi-pod dispatch.
+        /// </summary>
+        /// <param name="transportEndpoint">The transport endpoint.</param>
+        /// <returns><see langword="true" /> when the endpoint is unsafe.</returns>
+        private static bool IsUnsafeLocalhostKubernetesEndpoint(
+            string? transportEndpoint)
+        {
+            if (string.IsNullOrWhiteSpace(transportEndpoint))
+            {
+                return false;
+            }
+
+            return transportEndpoint.Contains(
+                       "127.0.0.1:8080",
+                       StringComparison.OrdinalIgnoreCase) ||
+                   transportEndpoint.Contains(
+                       "localhost:8080",
+                       StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>
+        /// Validates that the resolved Kubernetes transport endpoint is safe for dispatch.
+        /// </summary>
+        /// <param name="request">The runtime host start request.</param>
+        /// <param name="transportEndpoint">The resolved transport endpoint.</param>
+        private static void ValidateResolvedKubernetesTransportEndpoint(
+            AiRuntimeHostStartRequest request,
+            string? transportEndpoint)
+        {
+            if (!IsGrpcRuntimeTransport(request))
+            {
+                return;
+            }
+
+            if (string.IsNullOrWhiteSpace(transportEndpoint))
+            {
+                throw new InvalidOperationException(
+                    $"Kubernetes gRPC runtime endpoint was not resolved. RuntimeInstanceId='{request.RuntimeInstanceId}'.");
+            }
+
+            if (IsUnsafeLocalhostKubernetesEndpoint(transportEndpoint))
+            {
+                throw new InvalidOperationException(
+                    $"Kubernetes gRPC runtime endpoint is not unique for multi-pod dispatch. RuntimeInstanceId='{request.RuntimeInstanceId}', Endpoint='{transportEndpoint}'. Enable port-forward or publish a unique NodePort/service endpoint.");
+            }
+        }
+
+        /// <summary>
+        /// Waits for the runtime command endpoint to become ready before the Kubernetes-backed runtime instance is published.
         /// </summary>
         /// <param name="request">The runtime host start request.</param>
         /// <param name="podSpec">The Kubernetes runtime pod specification.</param>
-        /// <param name="serviceName">The Kubernetes service name.</param>
+        /// <param name="transportEndpoint">The resolved transport endpoint.</param>
+        /// <param name="metadata">The runtime metadata.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <returns>A failure reason when readiness fails; otherwise, <see langword="null"/>.</returns>
+        private async Task<string?> WaitForRuntimeReadinessBeforePublicationAsync(
+            AiRuntimeHostStartRequest request,
+            AiKubernetesRuntimePodSpec podSpec,
+            string? transportEndpoint,
+            IReadOnlyDictionary<string, string> metadata,
+            CancellationToken cancellationToken)
+        {
+            if (!this.options.RequireRuntimeReadiness)
+            {
+                return null;
+            }
+
+            var requireTransportEndpoint =
+                IsGrpcRuntimeTransport(request) ||
+                ShouldRequireTransportEndpoint(metadata);
+
+            this.logger.LogInformation(
+                "KUBERNETES RUNTIME READINESS WAIT BEGIN RuntimeInstanceId={RuntimeInstanceId} PodName={PodName} Namespace={Namespace} ProviderName={ProviderName} TransportName={TransportName} TransportEndpoint={TransportEndpoint} RequireTransportEndpoint={RequireTransportEndpoint} Timeout={Timeout} PollInterval={PollInterval}",
+                request.RuntimeInstanceId,
+                podSpec.PodName,
+                podSpec.Namespace,
+                request.ProviderName,
+                request.TransportName,
+                transportEndpoint,
+                requireTransportEndpoint,
+                this.options.ReadinessTimeout,
+                this.options.ReadinessPollInterval);
+
+            var readinessResult =
+                await this.readinessWaiter
+                    .WaitUntilReadyAsync(
+                        new AiRuntimeInstanceReadinessRequest
+                        {
+                            ControlPlaneId = request.ControlPlaneId,
+                            ExecutionContextSnapshot = request.ExecutionContextSnapshot,
+                            RuntimeInstanceId = request.RuntimeInstanceId,
+                            ProviderName = request.ProviderName,
+                            TransportName = request.TransportName,
+                            TransportEndpoint = transportEndpoint,
+                            RequireTransportEndpoint = requireTransportEndpoint,
+                            Timeout = this.options.ReadinessTimeout,
+                            PollInterval = this.options.ReadinessPollInterval
+                        },
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+            this.logger.LogInformation(
+                "KUBERNETES RUNTIME READINESS WAIT RESULT RuntimeInstanceId={RuntimeInstanceId} PodName={PodName} Namespace={Namespace} Success={Success} TimedOut={TimedOut} FailureReason={FailureReason} TransportEndpoint={TransportEndpoint}",
+                request.RuntimeInstanceId,
+                podSpec.PodName,
+                podSpec.Namespace,
+                readinessResult.Success,
+                readinessResult.TimedOut,
+                readinessResult.FailureReason ?? "(none)",
+                readinessResult.TransportEndpoint ?? "(null)");
+
+            if (readinessResult.Success)
+            {
+                return null;
+            }
+
+            return readinessResult.FailureReason ?? "kubernetes-runtime-command-readiness-failed";
+        }
+
+        /// <summary>
+        /// Determines whether runtime readiness must require a transport endpoint.
+        /// </summary>
+        /// <param name="metadata">The runtime metadata.</param>
+        /// <returns><see langword="true"/> when a transport endpoint is required.</returns>
+        private static bool ShouldRequireTransportEndpoint(
+            IReadOnlyDictionary<string, string> metadata)
+        {
+            if (TryGetMetadataValue(metadata, "transport.name", out var transportName) &&
+                string.Equals(transportName, "grpc", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            if (TryGetMetadataValue(metadata, "provider.name", out var providerName) &&
+                string.Equals(providerName, "grpc", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            if (TryGetMetadataValue(metadata, "provider", out var providerAlias) &&
+                string.Equals(providerAlias, "grpc", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// Starts a local kubectl port-forward process for a Kubernetes pod.
+        /// </summary>
+        /// <param name="request">The runtime host start request.</param>
+        /// <param name="podSpec">The Kubernetes runtime pod specification.</param>
+        /// <param name="serviceName">The Kubernetes service name, when available.</param>
         /// <param name="metadata">The Kubernetes metadata.</param>
         /// <param name="cancellationToken">The cancellation token.</param>
         /// <returns>The local port-forward endpoint.</returns>
@@ -387,17 +631,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
             serviceName =
                 ResolveServiceName(
                     serviceName,
-                    metadata);
-
-            if (string.IsNullOrWhiteSpace(serviceName))
-            {
-                throw new InvalidOperationException("Kubernetes service name is required to start port-forward.");
-            }
+                    metadata) ?? string.Empty;
 
             var localPort =
-                this.options.PortForwardLocalPort > 0
-                    ? this.options.PortForwardLocalPort
-                    : GetFreeTcpPort();
+                this.ResolvePortForwardLocalPort(request);
 
             this.StopPortForward(request.RuntimeInstanceId);
 
@@ -419,7 +656,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
             processStartInfo.ArgumentList.Add("port-forward");
             processStartInfo.ArgumentList.Add("-n");
             processStartInfo.ArgumentList.Add(podSpec.Namespace);
-            processStartInfo.ArgumentList.Add($"svc/{serviceName}");
+            processStartInfo.ArgumentList.Add($"pod/{podSpec.PodName}");
             processStartInfo.ArgumentList.Add($"{localPort}:{podSpec.ContainerPort}");
 
             var process =
@@ -610,7 +847,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
         /// </summary>
         /// <param name="serviceName">The service name returned by the Kubernetes client.</param>
         /// <param name="metadata">The metadata.</param>
-        /// <returns>The Kubernetes service name.</returns>
+        /// <returns>The Kubernetes service name, when available.</returns>
         private static string? ResolveServiceName(
             string? serviceName,
             IReadOnlyDictionary<string, string> metadata)
@@ -897,7 +1134,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
             /// <summary>
             /// Initializes a new instance of the <see cref="KubernetesPortForwardEndpoint"/> class.
             /// </summary>
-            /// <param name="serviceName">The Kubernetes service name.</param>
+            /// <param name="serviceName">The Kubernetes service name, when available.</param>
             /// <param name="localPort">The local port.</param>
             /// <param name="endpoint">The local transport endpoint.</param>
             public KubernetesPortForwardEndpoint(

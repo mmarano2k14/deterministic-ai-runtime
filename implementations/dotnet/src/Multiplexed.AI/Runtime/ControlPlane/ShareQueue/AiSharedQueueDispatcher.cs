@@ -531,6 +531,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                             cancellationToken)
                         .ConfigureAwait(false);
 
+                    var dispatchMetadata =
+                        CreateRuntimeDispatchMetadata(
+                            operationMetadata,
+                            targetRuntimeInstanceId);
+
                     try
                     {
                         _logger.LogInformation(
@@ -556,7 +561,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                                         RequestedBy = request.RequestedBy,
                                         Source = request.Source,
                                         Reason = request.Reason ?? "Dispatching claimed shared queue item.",
-                                        Metadata = operationMetadata
+                                        Metadata = dispatchMetadata
                                     },
                                     cancellationToken)
                                 .ConfigureAwait(false);
@@ -655,6 +660,62 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                                 DurationMs = CalculateDurationMs(startedAtUtc, completedAtUtc),
                                 Diagnostics = dispatchResult.Diagnostics
                             };
+                        }
+
+                        if (string.IsNullOrWhiteSpace(dispatchResult.LocalRunId))
+                        {
+                            const string missingLocalRunIdReason =
+                                "Runtime dispatch reported success without returning a local run id.";
+
+                            _logger.LogWarning(
+                                "Shared run dispatch returned success without a local run id. Persisting failure metadata and requeuing shared queue item. SharedRunId={SharedRunId}, ControlPlaneId={ControlPlaneId}, RuntimeInstanceId={RuntimeInstanceId}, ExecutionId={ExecutionId}",
+                                sharedRun.SharedRunId,
+                                controlPlaneId,
+                                targetRuntimeInstanceId,
+                                dispatchResult.ExecutionId);
+
+                            var failedSharedRun =
+                                await _sharedRunStore
+                                    .MarkDispatchFailedAsync(
+                                        sharedRun.SharedRunId,
+                                        targetRuntimeInstanceId,
+                                        "dispatch-local-run-id-missing",
+                                        missingLocalRunIdReason,
+                                        cancellationToken)
+                                    .ConfigureAwait(false);
+
+                            await RequeueBestEffortAsync(
+                                    queueItem,
+                                    missingLocalRunIdReason,
+                                    cancellationToken)
+                                .ConfigureAwait(false);
+
+                            var completedAtUtc =
+                                DateTimeOffset.UtcNow;
+
+                            return new AiSharedQueueDispatchResult
+                            {
+                                Success = false,
+                                SharedRunId = queueItem.SharedRunId,
+                                RuntimeInstanceId = targetRuntimeInstanceId,
+                                QueueItem = queueItem,
+                                SharedRun = failedSharedRun ?? sharedRun,
+                                DispatchResult = dispatchResult,
+                                Message = "Shared queue item was requeued because runtime dispatch did not return a local run id.",
+                                FailureReason = "dispatch-local-run-id-missing",
+                                StartedAtUtc = startedAtUtc,
+                                CompletedAtUtc = completedAtUtc,
+                                DurationMs = CalculateDurationMs(
+                                    startedAtUtc,
+                                    completedAtUtc),
+                                Diagnostics = new[]
+                                    {
+                                        missingLocalRunIdReason,
+                                        $"SharedRunId='{sharedRun.SharedRunId}'",
+                                        $"RuntimeInstanceId='{targetRuntimeInstanceId}'",
+                                        $"ExecutionId='{dispatchResult.ExecutionId}'"
+                                    }
+                                };
                         }
 
                         var dispatchedQueueItem = await _sharedQueue
@@ -1155,6 +1216,43 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
         }
 
         /// <summary>
+        /// Creates metadata for the actual runtime dispatch by removing stale runtime assignment
+        /// and transport values before stamping the selected runtime instance.
+        /// </summary>
+        /// <param name="operationMetadata">The merged operation metadata.</param>
+        /// <param name="targetRuntimeInstanceId">The selected runtime instance id.</param>
+        /// <returns>The sanitized runtime dispatch metadata.</returns>
+        private static IReadOnlyDictionary<string, string> CreateRuntimeDispatchMetadata(
+            IReadOnlyDictionary<string, string> operationMetadata,
+            string targetRuntimeInstanceId)
+        {
+            var metadata =
+                new Dictionary<string, string>(
+                    StringComparer.OrdinalIgnoreCase);
+
+            foreach (var item in operationMetadata)
+            {
+                if (string.IsNullOrWhiteSpace(item.Key) ||
+                    IsStaleRuntimeAssignmentMetadataKey(item.Key) ||
+                    IsStaleRuntimeTransportMetadataKey(item.Key))
+                {
+                    continue;
+                }
+
+                metadata[item.Key] =
+                    item.Value ?? string.Empty;
+            }
+
+            metadata["runtimeInstanceId"] =
+                targetRuntimeInstanceId;
+
+            metadata["runtime.instance.id"] =
+                targetRuntimeInstanceId;
+
+            return metadata;
+        }
+
+        /// <summary>
         /// Copies metadata into the replacement scale-out metadata while removing stale runtime assignment keys.
         /// </summary>
         /// <param name="target">The target metadata dictionary.</param>
@@ -1186,10 +1284,27 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
         {
             return string.Equals(key, "scaleOutRuntimeInstanceId", StringComparison.OrdinalIgnoreCase) ||
                    string.Equals(key, "scaleout.runtimeInstanceId", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(key, "scaleout.runtime.instance.id", StringComparison.OrdinalIgnoreCase) ||
                    string.Equals(key, "runtimeInstanceId", StringComparison.OrdinalIgnoreCase) ||
                    string.Equals(key, "runtime.instance.id", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(key, "runtime.instanceId", StringComparison.OrdinalIgnoreCase) ||
                    string.Equals(key, "host.runtimeInstanceId", StringComparison.OrdinalIgnoreCase) ||
                    string.Equals(key, "transport.runtimeInstanceId", StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>
+        /// Determines whether a metadata key carries stale runtime transport information
+        /// that must not be propagated to replacement runtime dispatch.
+        /// </summary>
+        /// <param name="key">The metadata key.</param>
+        /// <returns><c>true</c> when the key must be removed; otherwise, <c>false</c>.</returns>
+        private static bool IsStaleRuntimeTransportMetadataKey(
+            string key)
+        {
+            return string.Equals(key, "transport.endpoint", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(key, "transportEndpoint", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(key, "grpc.endpoint", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(key, "runtime.command.endpoint", StringComparison.OrdinalIgnoreCase);
         }
 
         /// <summary>

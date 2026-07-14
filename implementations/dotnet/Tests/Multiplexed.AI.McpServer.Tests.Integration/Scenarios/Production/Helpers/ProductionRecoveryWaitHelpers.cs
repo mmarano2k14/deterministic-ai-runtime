@@ -913,6 +913,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
             var lastStatusBreakdown =
                 string.Empty;
 
+            var lastRunningSteps =
+                string.Empty;
+
             while (DateTimeOffset.UtcNow < deadline)
             {
                 var state =
@@ -934,6 +937,21 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
                                 .OrderBy(group => group.Key.ToString(), StringComparer.Ordinal)
                                 .Select(group => $"{group.Key}:{group.Count()}"));
 
+                    lastRunningSteps =
+                        string.Join(
+                            " | ",
+                            state.Steps.Values
+                                .Where(step => step.Status == AiStepExecutionStatus.Running)
+                                .Take(20)
+                                .Select(step =>
+                                    $"Step='{ResolveStepProperty(step, "StepId")}', " +
+                                    $"Status='{step.Status}', " +
+                                    $"Runtime='{ResolveStepProperty(step, "RuntimeInstanceId")}', " +
+                                    $"RunId='{ResolveStepProperty(step, "RunId")}', " +
+                                    $"Worker='{ResolveStepProperty(step, "WorkerId")}', " +
+                                    $"Started='{ResolveStepProperty(step, "StartedAtUtc")}', " +
+                                    $"Updated='{ResolveStepProperty(step, "UpdatedAtUtc")}'"));
+
                     if (lastCompletedCount >= minimumCompletedSteps)
                     {
                         return;
@@ -947,7 +965,11 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
 
             Assert.Fail(
                 "The real DAG execution did not reach the expected progress before process kill. " +
-                $"ExecutionId='{executionId}', ExpectedCompletedSteps='{minimumCompletedSteps}', LastCompletedSteps='{lastCompletedCount}', LastStatusBreakdown='{lastStatusBreakdown}'.");
+                $"ExecutionId='{executionId}', " +
+                $"ExpectedCompletedSteps='{minimumCompletedSteps}', " +
+                $"LastCompletedSteps='{lastCompletedCount}', " +
+                $"LastStatusBreakdown='{lastStatusBreakdown}', " +
+                $"LastRunningSteps='{lastRunningSteps}'.");
 
             throw new InvalidOperationException(
                 "Unreachable assertion path.");
@@ -1142,6 +1164,30 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
 
             throw new InvalidOperationException(
                 "Unreachable assertion path.");
+        }
+
+        /// <summary>
+        /// Resolves a diagnostic property from a DAG step using reflection.
+        /// </summary>
+        /// <param name="step">The step object.</param>
+        /// <param name="propertyName">The property name.</param>
+        /// <returns>The property value when available; otherwise, an empty string.</returns>
+        private static string ResolveStepProperty(
+            object step,
+            string propertyName)
+        {
+            ArgumentNullException.ThrowIfNull(step);
+            ArgumentException.ThrowIfNullOrWhiteSpace(propertyName);
+
+            var property =
+                step
+                    .GetType()
+                    .GetProperty(propertyName);
+
+            var value =
+                property?.GetValue(step);
+
+            return value?.ToString() ?? string.Empty;
         }
 
         /// <summary>

@@ -79,6 +79,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
                     ["AiMcpHost__Port"] = containerPort,
                     ["ASPNETCORE_URLS"] = endpoint,
                     ["DOTNET_URLS"] = endpoint,
+                    ["ASPNETCORE_ENVIRONMENT"] = "Test",
+                    ["DOTNET_ENVIRONMENT"] = "Test",
+
                     ["AiMcpHost__EnableSharedQueuePump"] = "false",
                     ["AiMcpHost__EnableReplayTools"] = "false",
                     ["AiMcpHost__EnableObservabilityTools"] = "false",
@@ -98,7 +101,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
                     ["AiEngine__PipelineBackgroundController__Distributed__WorkerCount"] = request.WorkerCountPerInstance.ToString(CultureInfo.InvariantCulture),
                     ["AiEngine__RuntimeInstanceWorker__RuntimeInstanceId"] = request.RuntimeInstanceId,
 
-                    ["AiRuntimeInstanceRegistration__Enabled"] = "true",
+                    ["AiRuntimeInstanceRegistration__Enabled"] = "false",
                     ["AiRuntimeInstanceRegistration__RuntimeInstanceId"] = request.RuntimeInstanceId,
                     ["AiRuntimeInstanceRegistration__ProviderName"] = request.ProviderName,
                     ["AiRuntimeInstanceRegistration__TransportName"] = transportName,
@@ -116,7 +119,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
                     ["AiRuntimeInstanceRegistration__Metadata__provider.name"] = request.ProviderName,
                     ["AiRuntimeInstanceRegistration__Metadata__provider"] = request.ProviderName,
                     ["AiRuntimeInstanceRegistration__Metadata__transport.name"] = transportName,
-                    ["AiRuntimeInstanceRegistration__Metadata__transport.endpoint"] = request.TransportEndpoint ?? string.Empty,
+                    //["AiRuntimeInstanceRegistration__Metadata__transport.endpoint"] = request.TransportEndpoint ?? string.Empty,
                     ["AiRuntimeInstanceRegistration__Metadata__runtime.instance.id"] = request.RuntimeInstanceId,
                     ["AiRuntimeInstanceRegistration__Metadata__hostType"] = "runtime-instance-kubernetes",
                     ["AiRuntimeInstanceRegistration__Metadata__deployment"] = "kubernetes-host",
@@ -128,7 +131,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
                     ["AiRuntimeInstanceRegistration__ProviderMetadata__provider.name"] = request.ProviderName,
                     ["AiRuntimeInstanceRegistration__ProviderMetadata__provider"] = request.ProviderName,
                     ["AiRuntimeInstanceRegistration__ProviderMetadata__transport.name"] = transportName,
-                    ["AiRuntimeInstanceRegistration__ProviderMetadata__transport.endpoint"] = request.TransportEndpoint ?? string.Empty,
+                    //["AiRuntimeInstanceRegistration__ProviderMetadata__transport.endpoint"] = request.TransportEndpoint ?? string.Empty,
                     ["AiRuntimeInstanceRegistration__ProviderMetadata__runtime.instance.id"] = request.RuntimeInstanceId,
 
                     ["AiLocalRuntimeInstancePool__Metadata__host.provider"] = AiRuntimeHostProviderNames.Kubernetes,

@@ -87,6 +87,14 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
         public override async Task StartAsync(
             CancellationToken cancellationToken)
         {
+
+            SafeLogInformation(
+                "Runtime instance registration options resolved. Enabled={Enabled}, RuntimeInstanceId={RuntimeInstanceId}, ProviderName={ProviderName}, Role={Role}",
+                this.options.Enabled,
+                this.options.RuntimeInstanceId,
+                this.options.ProviderName,
+                this.options.Role);
+
             if (!this.options.Enabled)
             {
                 SafeLogInformation(
@@ -637,8 +645,24 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
                     queueState);
 
             var descriptorMetadata =
-                EnsureProviderMetadata(
-                    metadata);
+                await this.CreateCapacityDescriptorMetadataAsync(
+                        runtimeInstanceId,
+                        metadata,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+            var hasRequiredTransportEndpoint =
+                HasRequiredTransportEndpoint(
+                    descriptorMetadata);
+
+            var descriptorAvailableRunSlots =
+                hasRequiredTransportEndpoint
+                    ? effectiveCapacity.AvailableRunSlots
+                    : 0;
+
+            var descriptorCanAcceptRun =
+                effectiveCapacity.CanAcceptRun &&
+                hasRequiredTransportEndpoint;
 
             var descriptor =
                 new AiRuntimeInstanceCapacityDescriptor
@@ -658,11 +682,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
                     ActiveRunCount = queueState.ActiveRunCount,
                     MaxConcurrentRuns = queueState.MaxConcurrentRuns,
                     MaxRunSlots = queueState.MaxConcurrentRuns,
-                    AvailableRunSlots = effectiveCapacity.AvailableRunSlots,
+                    AvailableRunSlots = descriptorAvailableRunSlots,
                     ReservedRunSlots = 0,
-                    EffectiveAvailableRunSlots = effectiveCapacity.AvailableRunSlots,
+                    EffectiveAvailableRunSlots = descriptorAvailableRunSlots,
                     IsQueuePaused = queueState.IsPaused,
-                    CanAcceptRun = effectiveCapacity.CanAcceptRun,
+                    CanAcceptRun = descriptorCanAcceptRun,
                     LastHeartbeatAtUtc = DateTimeOffset.UtcNow,
                     Metadata = descriptorMetadata
                 };
@@ -770,6 +794,230 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
                         capacityStore.GetType().FullName);
                 }
             }
+        }
+
+        /// <summary>
+        /// Creates capacity descriptor metadata while preserving externally published Kubernetes transport endpoints.
+        /// </summary>
+        /// <param name="runtimeInstanceId">The runtime instance identifier.</param>
+        /// <param name="metadata">The runtime metadata.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <returns>The normalized capacity descriptor metadata.</returns>
+        private async Task<IReadOnlyDictionary<string, string>> CreateCapacityDescriptorMetadataAsync(
+            string runtimeInstanceId,
+            IReadOnlyDictionary<string, string> metadata,
+            CancellationToken cancellationToken)
+        {
+            var result =
+                new Dictionary<string, string>(
+                    EnsureProviderMetadata(
+                        metadata),
+                    StringComparer.OrdinalIgnoreCase);
+
+            if (HasTransportEndpoint(result))
+            {
+                return result;
+            }
+
+            var existingTransportEndpoint =
+                await this.TryResolveExistingTransportEndpointAsync(
+                        runtimeInstanceId,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+            if (!string.IsNullOrWhiteSpace(existingTransportEndpoint))
+            {
+                AddTransportEndpointAliases(
+                    result,
+                    existingTransportEndpoint);
+
+                result["transport.endpoint.source"] = "preserved-existing-capacity-descriptor";
+            }
+
+            return result;
+        }
+
+        /// <summary>
+        /// Resolves an already published transport endpoint for the runtime instance.
+        /// </summary>
+        /// <param name="runtimeInstanceId">The runtime instance identifier.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <returns>The existing transport endpoint, when available.</returns>
+        private async Task<string?> TryResolveExistingTransportEndpointAsync(
+            string runtimeInstanceId,
+            CancellationToken cancellationToken)
+        {
+            foreach (var capacityStore in this.capacityStores)
+            {
+                try
+                {
+                    var descriptors =
+                        await capacityStore
+                            .ListAsync(cancellationToken)
+                            .ConfigureAwait(false);
+
+                    var existingDescriptor =
+                        descriptors.FirstOrDefault(descriptor =>
+                            string.Equals(
+                                descriptor.RuntimeInstanceId,
+                                runtimeInstanceId,
+                                StringComparison.Ordinal));
+
+                    if (existingDescriptor is null)
+                    {
+                        continue;
+                    }
+
+                    if (TryGetTransportEndpoint(
+                            existingDescriptor.Metadata,
+                            out var transportEndpoint) &&
+                        !IsUnsafeKubernetesLocalhostEndpoint(transportEndpoint))
+                    {
+                        return transportEndpoint;
+                    }
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (Exception exception)
+                {
+                    SafeLogWarning(
+                        "Failed to inspect existing runtime capacity descriptor while preserving transport endpoint. RuntimeInstanceId={RuntimeInstanceId}, StoreType={StoreType}, Reason={Reason}",
+                        runtimeInstanceId,
+                        capacityStore.GetType().FullName,
+                        exception.Message);
+                }
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// Determines whether the descriptor has the required transport endpoint before it can accept runs.
+        /// </summary>
+        /// <param name="metadata">The descriptor metadata.</param>
+        /// <returns><see langword="true"/> when the descriptor can be admitted for dispatch.</returns>
+        private static bool HasRequiredTransportEndpoint(
+            IReadOnlyDictionary<string, string> metadata)
+        {
+            if (!IsKubernetesGrpcRuntime(metadata))
+            {
+                return true;
+            }
+
+            return TryGetTransportEndpoint(
+                       metadata,
+                       out var transportEndpoint) &&
+                   !string.IsNullOrWhiteSpace(transportEndpoint) &&
+                   !IsUnsafeKubernetesLocalhostEndpoint(transportEndpoint);
+        }
+
+        /// <summary>
+        /// Determines whether the descriptor represents a Kubernetes-backed gRPC runtime.
+        /// </summary>
+        /// <param name="metadata">The descriptor metadata.</param>
+        /// <returns><see langword="true"/> when this is a Kubernetes gRPC runtime descriptor.</returns>
+        private static bool IsKubernetesGrpcRuntime(
+            IReadOnlyDictionary<string, string> metadata)
+        {
+            var provider =
+                GetMetadataValue(metadata, AiRuntimeInstanceProviderMetadataKeys.ProviderName) ??
+                GetMetadataValue(metadata, "provider");
+
+            var transport =
+                GetMetadataValue(metadata, "transport.name") ??
+                GetMetadataValue(metadata, "transportName") ??
+                provider;
+
+            var hostProvider =
+                GetMetadataValue(metadata, "host.provider");
+
+            var hostType =
+                GetMetadataValue(metadata, "hostType");
+
+            var deployment =
+                GetMetadataValue(metadata, "deployment");
+
+            var isGrpc =
+                string.Equals(provider, "grpc", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(transport, "grpc", StringComparison.OrdinalIgnoreCase);
+
+            var isKubernetes =
+                string.Equals(hostProvider, "kubernetes", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(hostType, "runtime-instance-kubernetes", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(deployment, "kubernetes-host", StringComparison.OrdinalIgnoreCase);
+
+            return isGrpc && isKubernetes;
+        }
+
+        /// <summary>
+        /// Determines whether metadata already contains a transport endpoint.
+        /// </summary>
+        /// <param name="metadata">The metadata.</param>
+        /// <returns><see langword="true"/> when a transport endpoint exists.</returns>
+        private static bool HasTransportEndpoint(
+            IReadOnlyDictionary<string, string> metadata)
+        {
+            return TryGetTransportEndpoint(
+                metadata,
+                out _);
+        }
+
+        /// <summary>
+        /// Gets a transport endpoint from metadata aliases.
+        /// </summary>
+        /// <param name="metadata">The metadata.</param>
+        /// <param name="transportEndpoint">The resolved transport endpoint.</param>
+        /// <returns><see langword="true"/> when an endpoint exists.</returns>
+        private static bool TryGetTransportEndpoint(
+            IReadOnlyDictionary<string, string>? metadata,
+            out string transportEndpoint)
+        {
+            transportEndpoint =
+                GetMetadataValue(metadata, "transport.endpoint") ??
+                GetMetadataValue(metadata, "transportEndpoint") ??
+                GetMetadataValue(metadata, "runtime.command.endpoint") ??
+                GetMetadataValue(metadata, "grpc.endpoint") ??
+                string.Empty;
+
+            return !string.IsNullOrWhiteSpace(transportEndpoint);
+        }
+
+        /// <summary>
+        /// Adds all known transport endpoint metadata aliases.
+        /// </summary>
+        /// <param name="metadata">The metadata dictionary.</param>
+        /// <param name="transportEndpoint">The transport endpoint.</param>
+        private static void AddTransportEndpointAliases(
+            IDictionary<string, string> metadata,
+            string transportEndpoint)
+        {
+            metadata["transport.endpoint"] = transportEndpoint;
+            metadata["transportEndpoint"] = transportEndpoint;
+            metadata["runtime.command.endpoint"] = transportEndpoint;
+            metadata["grpc.endpoint"] = transportEndpoint;
+        }
+
+        /// <summary>
+        /// Determines whether a Kubernetes endpoint is unsafe for multi-pod dispatch.
+        /// </summary>
+        /// <param name="transportEndpoint">The transport endpoint.</param>
+        /// <returns><see langword="true"/> when the endpoint is unsafe.</returns>
+        private static bool IsUnsafeKubernetesLocalhostEndpoint(
+            string? transportEndpoint)
+        {
+            if (string.IsNullOrWhiteSpace(transportEndpoint))
+            {
+                return false;
+            }
+
+            return transportEndpoint.Contains(
+                       "127.0.0.1:8080",
+                       StringComparison.OrdinalIgnoreCase) ||
+                   transportEndpoint.Contains(
+                       "localhost:8080",
+                       StringComparison.OrdinalIgnoreCase);
         }
 
         /// <summary>

@@ -391,24 +391,27 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
         }
 
         /// <summary>
-        /// Verifies that recovered in-flight DAG executions reached the expected completed step count,
-        /// while volatile local queued work is only required to have been durably redispatched.
+        /// Verifies that recovered in-flight DAG executions and recovered local queued DAG executions
+        /// reached the expected completed step count after durable redispatch.
         /// </summary>
         /// <param name="output">The test output helper.</param>
         /// <param name="dagStore">The DAG execution store.</param>
+        /// <param name="runExecutionIndex">The runtime run execution index.</param>
         /// <param name="proof">The failed runtime recovery proof.</param>
         /// <param name="expectedCompletedStepCount">The expected completed step count.</param>
         /// <param name="timeout">The wait timeout.</param>
-        /// <returns>A task that completes when all recovered in-flight DAG executions have reached the expected progress.</returns>
+        /// <returns>A task that completes when all recovered DAG executions have reached the expected progress.</returns>
         public static async Task AssertRecoveredInventoryDagCompletedAsync(
             ITestOutputHelper output,
             IAiDagExecutionStore dagStore,
+            IAiRuntimeRunExecutionIndex runExecutionIndex,
             RealRuntimeCrashFailedRuntimeRecoveryProof proof,
             int expectedCompletedStepCount,
             TimeSpan timeout)
         {
             ArgumentNullException.ThrowIfNull(output);
             ArgumentNullException.ThrowIfNull(dagStore);
+            ArgumentNullException.ThrowIfNull(runExecutionIndex);
             ArgumentNullException.ThrowIfNull(proof);
             ArgumentNullException.ThrowIfNull(proof.FailedInventory);
             ArgumentNullException.ThrowIfNull(proof.RecoveredWorks);
@@ -416,7 +419,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
             var completedInFlightExecutionCount =
                 0;
 
-            var recoveredLocalQueuedCount =
+            var completedRecoveredLocalQueuedCount =
                 0;
 
             foreach (var recovered in proof.RecoveredWorks)
@@ -442,26 +445,39 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
                         recovered.Original.LocalRunId,
                         recovered.ReplacementLocalRunId);
 
-                    recoveredLocalQueuedCount++;
+                    var recoveredExecutionId =
+                        recovered.RecoveredExecutionId;
 
-                    if (string.IsNullOrWhiteSpace(recovered.RecoveredExecutionId))
+                    if (string.IsNullOrWhiteSpace(recoveredExecutionId))
                     {
-                        output.WriteLine(
-                            $"[REAL RUNTIME INVENTORY COMPLETION] Local queued work recovered as replacement queued run. TenantId='{proof.FailedInventory.Tenant.TenantId}', SharedRunId='{recovered.Original.SharedRunId}', FailedLocalRunId='{recovered.Original.LocalRunId}', ReplacementRuntimeInstanceId='{recovered.ReplacementRuntimeInstanceId}', ReplacementLocalRunId='{recovered.ReplacementLocalRunId}'.");
-                    }
-                    else
-                    {
-                        await ProductionRecoveryWaitHelpers
-                            .WaitForDagCompletedStepCountAsync(
-                                dagStore,
-                                recovered.RecoveredExecutionId,
-                                expectedCompletedStepCount,
-                                timeout)
-                            .ConfigureAwait(false);
+                        var runtimeIndexEntry =
+                            await ProductionRecoveryWaitHelpers
+                                .WaitForRuntimeIndexWithExecutionIdAsync(
+                                    runExecutionIndex,
+                                    recovered.ReplacementLocalRunId,
+                                    timeout)
+                                .ConfigureAwait(false);
 
-                        output.WriteLine(
-                            $"[REAL RUNTIME INVENTORY COMPLETION] Recovered local queued DAG execution completed. TenantId='{proof.FailedInventory.Tenant.TenantId}', SharedRunId='{recovered.Original.SharedRunId}', ExecutionId='{recovered.RecoveredExecutionId}', CompletedSteps='{expectedCompletedStepCount}'.");
+                        recoveredExecutionId =
+                            runtimeIndexEntry.ExecutionId;
                     }
+
+                    Assert.False(
+                        string.IsNullOrWhiteSpace(recoveredExecutionId),
+                        $"Recovered local queued work must eventually expose a durable execution id. SharedRunId='{recovered.Original.SharedRunId}', ReplacementRuntimeInstanceId='{recovered.ReplacementRuntimeInstanceId}', ReplacementLocalRunId='{recovered.ReplacementLocalRunId}'.");
+
+                    await ProductionRecoveryWaitHelpers
+                        .WaitForDagCompletedStepCountAsync(
+                            dagStore,
+                            recoveredExecutionId,
+                            expectedCompletedStepCount,
+                            timeout)
+                        .ConfigureAwait(false);
+
+                    completedRecoveredLocalQueuedCount++;
+
+                    output.WriteLine(
+                        $"[REAL RUNTIME INVENTORY COMPLETION] Recovered local queued DAG execution completed. TenantId='{proof.FailedInventory.Tenant.TenantId}', SharedRunId='{recovered.Original.SharedRunId}', FailedLocalRunId='{recovered.Original.LocalRunId}', ReplacementRuntimeInstanceId='{recovered.ReplacementRuntimeInstanceId}', ReplacementLocalRunId='{recovered.ReplacementLocalRunId}', ExecutionId='{recoveredExecutionId}', CompletedSteps='{expectedCompletedStepCount}'.");
 
                     continue;
                 }
@@ -502,7 +518,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
 
             Assert.Equal(
                 proof.FailedInventory.LocalQueuedRuns.Count,
-                recoveredLocalQueuedCount);
+                completedRecoveredLocalQueuedCount);
         }
 
         /// <summary>

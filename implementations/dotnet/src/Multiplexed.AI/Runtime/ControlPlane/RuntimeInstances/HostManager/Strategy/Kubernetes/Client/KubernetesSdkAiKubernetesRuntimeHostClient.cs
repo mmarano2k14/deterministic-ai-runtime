@@ -56,12 +56,34 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
                 var pod =
                     this.resourceFactory.CreatePod(podSpec);
 
-                await client
-                    .CreatePodAsync(
+                var podAlreadyExisted = false;
+                var serviceAlreadyExisted = false;
+
+                try
+                {
+                    await client
+                        .CreatePodAsync(
+                            pod,
+                            podSpec.Namespace,
+                            cancellationToken)
+                        .ConfigureAwait(false);
+                }
+                catch (Exception exception) when (IsAlreadyExists(exception))
+                {
+                    var existingPod =
+                        await client
+                            .ReadPodStatusAsync(
+                                podSpec.PodName,
+                                podSpec.Namespace,
+                                cancellationToken)
+                            .ConfigureAwait(false);
+
+                    ValidateExistingPodIdentity(
                         pod,
-                        podSpec.Namespace,
-                        cancellationToken)
-                    .ConfigureAwait(false);
+                        existingPod);
+
+                    podAlreadyExisted = true;
+                }
 
                 string? serviceName = null;
                 V1Service? createdService = null;
@@ -71,14 +93,33 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
                     var service =
                         this.resourceFactory.CreateService(podSpec);
 
-                    await client
-                        .CreateServiceAsync(
-                            service,
-                            podSpec.Namespace,
-                            cancellationToken)
-                        .ConfigureAwait(false);
-
                     serviceName = service.Metadata.Name;
+
+                    try
+                    {
+                        await client
+                            .CreateServiceAsync(
+                                service,
+                                podSpec.Namespace,
+                                cancellationToken)
+                            .ConfigureAwait(false);
+                    }
+                    catch (Exception exception) when (IsAlreadyExists(exception))
+                    {
+                        var existingService =
+                            await client
+                                .ReadServiceAsync(
+                                    serviceName,
+                                    podSpec.Namespace,
+                                    cancellationToken)
+                                .ConfigureAwait(false);
+
+                        ValidateExistingServiceIdentity(
+                            service,
+                            existingService);
+
+                        serviceAlreadyExisted = true;
+                    }
 
                     createdService =
                         await client
@@ -89,14 +130,28 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
                             .ConfigureAwait(false);
                 }
 
+                var metadata =
+                    new System.Collections.Generic.Dictionary<string, string>(
+                        this.resourceFactory.CreateMetadata(
+                            podSpec,
+                            serviceName,
+                            createdService),
+                        StringComparer.OrdinalIgnoreCase)
+                    {
+                        ["kubernetes.creation.converged"] =
+                            (podAlreadyExisted || serviceAlreadyExisted)
+                                .ToString(),
+                        ["kubernetes.pod.alreadyExists"] =
+                            podAlreadyExisted.ToString(),
+                        ["kubernetes.service.alreadyExists"] =
+                            serviceAlreadyExisted.ToString()
+                    };
+
                 return AiKubernetesRuntimeHostCreateResult.Created(
                     podSpec.Namespace,
                     podSpec.PodName,
                     serviceName,
-                    this.resourceFactory.CreateMetadata(
-                        podSpec,
-                        serviceName,
-                        createdService));
+                    metadata);
             }
             catch (Exception exception)
             {
@@ -272,6 +327,73 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
             }
         }
 
+        private static void ValidateExistingPodIdentity(
+            V1Pod expectedPod,
+            V1Pod existingPod)
+        {
+            ValidateExistingResourceIdentity(
+                "pod",
+                expectedPod.Metadata,
+                existingPod.Metadata);
+        }
+
+        private static void ValidateExistingServiceIdentity(
+            V1Service expectedService,
+            V1Service existingService)
+        {
+            ValidateExistingResourceIdentity(
+                "service",
+                expectedService.Metadata,
+                existingService.Metadata);
+        }
+
+        private static void ValidateExistingResourceIdentity(
+            string resourceKind,
+            V1ObjectMeta? expectedMetadata,
+            V1ObjectMeta? existingMetadata)
+        {
+            var expectedName =
+                expectedMetadata?.Name ?? string.Empty;
+
+            var actualName =
+                existingMetadata?.Name ?? string.Empty;
+
+            if (!string.Equals(
+                    actualName,
+                    expectedName,
+                    StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    $"Kubernetes {resourceKind} identity collision detected. ExpectedName='{expectedName}', ActualName='{actualName}'.");
+            }
+
+            if (expectedMetadata?.Labels is null)
+            {
+                return;
+            }
+
+            foreach (var expectedLabel in expectedMetadata.Labels)
+            {
+                string? actualValue = null;
+
+                var labelExists =
+                    existingMetadata?.Labels is not null &&
+                    existingMetadata.Labels.TryGetValue(
+                        expectedLabel.Key,
+                        out actualValue);
+
+                if (!labelExists ||
+                    !string.Equals(
+                        actualValue,
+                        expectedLabel.Value,
+                        StringComparison.Ordinal))
+                {
+                    throw new InvalidOperationException(
+                        $"Kubernetes {resourceKind} identity collision detected. ResourceName='{expectedName}', Label='{expectedLabel.Key}', ExpectedValue='{expectedLabel.Value}', ActualValue='{actualValue ?? "(missing)"}'.");
+                }
+            }
+        }
+
         private static bool IsPodReady(
             V1Pod pod)
         {
@@ -285,6 +407,13 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
                         condition.Status,
                         "True",
                         StringComparison.OrdinalIgnoreCase)) == true;
+        }
+
+        private static bool IsAlreadyExists(
+            Exception exception)
+        {
+            return exception is HttpOperationException httpOperationException &&
+                httpOperationException.Response.StatusCode == HttpStatusCode.Conflict;
         }
 
         private static bool IsNotFound(

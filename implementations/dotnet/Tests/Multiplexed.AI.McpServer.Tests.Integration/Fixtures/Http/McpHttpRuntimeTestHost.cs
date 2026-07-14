@@ -9,6 +9,7 @@ using Multiplexed.AI.McpServer.Host;
 using Multiplexed.AI.McpServer.Host.Configuration;
 using Multiplexed.AI.McpServer.Hosting;
 using Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Http;
+using Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic;
 
 namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures
 {
@@ -18,6 +19,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures
     public sealed class McpHttpRuntimeTestHost : WebApplicationFactory<Program>
     {
         private readonly HttpClient? runtimeClient;
+        private readonly string mongoDatabaseName;
 
         /// <summary>
         /// Initializes a new instance of the <see cref="McpHttpRuntimeTestHost"/> class.
@@ -27,9 +29,13 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures
         /// When provided, the HTTP runtime provider uses this client instead of a real network client.
         /// </param>
         public McpHttpRuntimeTestHost(
-            HttpClient? runtimeClient = null)
+            HttpClient? runtimeClient = null,
+            string? mongoDatabaseName = null)
         {
             this.runtimeClient = runtimeClient;
+            this.mongoDatabaseName = string.IsNullOrWhiteSpace(mongoDatabaseName)
+                ? GenericMcpServerTestSettings.DefaultDatabaseName
+                : mongoDatabaseName;
         }
 
         /// <summary>
@@ -81,12 +87,12 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures
 
                         ["ConnectionStrings:Redis"] = "localhost:6379",
                         ["ConnectionStrings:Mongo"] = "mongodb://localhost:27017",
-                        ["Mongo:DatabaseName"] = "multiplexed-ai-mcp-http-tests",
+                        ["Mongo:DatabaseName"] = this.mongoDatabaseName,
 
                         ["AiEngine:Snapshots:Enabled"] = "true",
                         ["AiEngine:Snapshots:Mongo:Enabled"] = "true",
                         ["AiEngine:Snapshots:Mongo:ConnectionString"] = "mongodb://localhost:27017",
-                        ["AiEngine:Snapshots:Mongo:DatabaseName"] = "multiplexed-ai-mcp-http-tests",
+                        ["AiEngine:Snapshots:Mongo:DatabaseName"] = this.mongoDatabaseName,
 
                         ["AiEngine:PipelineBackgroundController:MaxConcurrentRuns"] = "5",
                         ["AiEngine:PipelineBackgroundController:QueueCapacity"] = "1000",

@@ -23,7 +23,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Ledger
             IReadOnlyCollection<AiDecisionLedgerEntry> ledgerEntries,
             int expectedRecoveredWorkCount,
             int actualRecoveredWorkCount,
-            bool failedRuntimeUnsafeValidated)
+            bool failedRuntimeUnsafeValidated,
+            bool requireProcessRuntimeHostStarted = true)
         {
             ArgumentNullException.ThrowIfNull(ledgerEntries);
 
@@ -126,14 +127,22 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Ledger
                     failedRuntimeMarkedUnhealthyCount,
                     failedRuntimeUnsafeValidated,
                     executionRecoveryReconciledCount,
-                    recoveredWorkRedispatchedCount);
+                    recoveredWorkRedispatchedCount)
+                {
+                    ProcessRuntimeHostRequired = requireProcessRuntimeHostStarted
+                };
 
             Assert.Equal(expectedRecoveredWorkCount, actualRecoveredWorkCount);
             Assert.True(result.ScaleOutRequestPersistedCount > 0, "Control-plane ledger proof missing distinct successful scale-out request persisted evidence.");
             Assert.True(result.ScaleOutWatcherObservedCount > 0, "Control-plane ledger proof missing distinct successful scale-out watcher evidence.");
             Assert.True(result.ProviderSelectedCount > 0, "Control-plane ledger proof missing distinct successful provider selection evidence.");
             Assert.True(result.RuntimeHostCreatedCount > 0, "Control-plane ledger proof missing distinct successful runtime host creation evidence.");
-            Assert.True(result.ProcessRuntimeHostStartedCount > 0, "Control-plane ledger proof missing distinct successful process runtime host creation evidence.");
+            if (result.ProcessRuntimeHostRequired)
+            {
+                Assert.True(
+                    result.ProcessRuntimeHostStartedCount > 0,
+                    "Control-plane ledger proof missing distinct successful process runtime host creation evidence.");
+            }
             Assert.True(result.RuntimeCapacityVisibleCount > 0, "Control-plane ledger proof missing distinct successful runtime capacity visibility evidence.");
             Assert.True(result.RuntimeRegistryVisibleCount > 0, "Control-plane ledger proof missing distinct successful runtime registry visibility evidence.");
             Assert.True(result.FailedRuntimeUnsafeValidated, $"Control-plane proof missing failed runtime unsafe validation. LedgerUnhealthyRecords='{result.FailedRuntimeMarkedUnhealthyCount}', DirectRegistryUnsafeValidated='{result.DirectFailedRuntimeUnsafeValidated}'.");

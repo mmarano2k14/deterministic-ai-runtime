@@ -97,6 +97,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
 
             settings["AiLocalRuntimeInstancePool:Enabled"] = "false";
 
+            ApplyControlPlanePersistenceSettings(
+                settings);
+
             settings["AiRuntimeInstanceRegistration:ProviderName"] = "grpc";
             settings["AiRuntimeInstanceRegistration:HeartbeatInterval"] = "00:00:05";
             settings["AiRuntimeInstanceRegistration:ProviderMetadata:controlPlaneId"] = controlPlaneId;
@@ -120,6 +123,34 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
 
             ApplyRuntimePodGrpcTransportSettings(
                 settings);
+        }
+
+        /// <summary>
+        /// Aligns control-plane snapshot persistence with the MongoDB database
+        /// used by Kubernetes runtime pods.
+        /// </summary>
+        /// <param name="settings">The settings dictionary to mutate.</param>
+        private static void ApplyControlPlanePersistenceSettings(
+            Dictionary<string, string?> settings)
+        {
+            settings["Mongo:DatabaseName"] =
+                KubernetesSdkScenarioConstants.MongoDatabaseName;
+
+            settings["AiEngine:Snapshots:Enabled"] = "true";
+            settings["AiEngine:Snapshots:Mongo:Enabled"] = "true";
+            settings["AiEngine:Snapshots:Mongo:DatabaseName"] =
+                KubernetesSdkScenarioConstants.MongoDatabaseName;
+            settings["AiEngine:Snapshots:Mongo:CollectionName"] =
+                KubernetesSdkScenarioConstants.SnapshotCollectionName;
+
+            settings["AiExecutionReplay:MetadataStore:Provider"] = "mongo";
+            settings["AiExecutionReplay:MetadataStore:Mongo:DatabaseName"] =
+                KubernetesSdkScenarioConstants.MongoDatabaseName;
+            settings["AiExecutionReplay:MetadataStore:Mongo:CollectionName"] =
+                "ai_execution_replay_metadata";
+
+            settings["AiDecisionLedger:Provider"] = "mongo";
+            settings["AiObservability:Ledger:Provider"] = "mongo";
         }
 
         /// <summary>
@@ -208,6 +239,14 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             settings["AiKubernetesRuntimeHost:EnvironmentVariables:AiEngine__Snapshots__Mongo__ConnectionString"] = KubernetesSdkScenarioConstants.MongoConnectionString;
             settings["AiKubernetesRuntimeHost:EnvironmentVariables:AiEngine__Snapshots__Mongo__DatabaseName"] = KubernetesSdkScenarioConstants.MongoDatabaseName;
             settings["AiKubernetesRuntimeHost:EnvironmentVariables:AiEngine__Snapshots__Mongo__CollectionName"] = KubernetesSdkScenarioConstants.SnapshotCollectionName;
+
+            settings["AiKubernetesRuntimeHost:EnvironmentVariables:AiExecutionReplay__MetadataStore__Provider"] = "mongo";
+            settings["AiKubernetesRuntimeHost:EnvironmentVariables:AiExecutionReplay__MetadataStore__Mongo__DatabaseName"] = KubernetesSdkScenarioConstants.MongoDatabaseName;
+            settings["AiKubernetesRuntimeHost:EnvironmentVariables:AiExecutionReplay__MetadataStore__Mongo__CollectionName"] = "ai_execution_replay_metadata";
+
+            settings["AiKubernetesRuntimeHost:EnvironmentVariables:AiDecisionLedger__Provider"] = "mongo";
+            settings["AiKubernetesRuntimeHost:EnvironmentVariables:AiObservability__Ledger__Provider"] = "mongo";
+            settings["AiKubernetesRuntimeHost:EnvironmentVariables:Mongo__DatabaseName"] = KubernetesSdkScenarioConstants.MongoDatabaseName;
         }
 
         /// <summary>

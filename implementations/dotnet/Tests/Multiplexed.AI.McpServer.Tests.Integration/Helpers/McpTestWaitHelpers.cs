@@ -238,50 +238,108 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Helpers
         }
 
         public static async Task<IReadOnlyList<AiRuntimeQueueControlPlaneResult>> WaitForTerminalRuntimeRunStatusesAsync(
-            McpTestClient mcp,
-            IReadOnlyList<AiSharedRunRecord> dispatchedRuns,
-            TimeSpan timeout)
+    McpTestClient mcp,
+    IReadOnlyList<AiSharedRunRecord> dispatchedRuns,
+    TimeSpan timeout)
         {
             ArgumentNullException.ThrowIfNull(mcp);
             ArgumentNullException.ThrowIfNull(dispatchedRuns);
 
-            var deadline = DateTimeOffset.UtcNow.Add(timeout);
-            IReadOnlyList<AiRuntimeQueueControlPlaneResult> lastStatuses = Array.Empty<AiRuntimeQueueControlPlaneResult>();
+            var deadline =
+                DateTimeOffset.UtcNow.Add(timeout);
+
+            IReadOnlyList<AiRuntimeQueueControlPlaneResult> lastStatuses =
+                Array.Empty<AiRuntimeQueueControlPlaneResult>();
+
+            var attempt =
+                0;
 
             while (DateTimeOffset.UtcNow < deadline)
             {
-                var statuses = new List<AiRuntimeQueueControlPlaneResult>();
+                attempt++;
+
+                var statuses =
+                    new List<AiRuntimeQueueControlPlaneResult>();
 
                 foreach (var run in dispatchedRuns)
                 {
-                    var status = await mcp.GetRuntimeQueueRunStatusAsync(
-                        new AiRuntimeQueueControlPlaneRequest
-                        {
-                            Operation = AiRuntimeQueueControlPlaneOperation.GetRunStatus,
-                            RuntimeInstanceId = run.AssignedRuntimeInstanceId,
-                            RunId = run.LocalRunId,
-                            IncludeRunState = true,
-                            IncludeDiagnostics = true,
-                            RequestedBy = "mcp-integration-test",
-                            Source = "mcp-test"
-                        });
+                    if (string.IsNullOrWhiteSpace(run.AssignedRuntimeInstanceId) ||
+                        string.IsNullOrWhiteSpace(run.LocalRunId))
+                    {
+                        statuses.Add(
+                            new AiRuntimeQueueControlPlaneResult
+                            {
+                                Operation = AiRuntimeQueueControlPlaneOperation.GetRunStatus,
+                                Success = false,
+                                RuntimeInstanceId = run.AssignedRuntimeInstanceId ?? string.Empty,
+                                RunId = run.LocalRunId ?? string.Empty,
+                                ExecutionId = run.ExecutionId,
+                                FailureReason = "shared-run-runtime-binding-missing",
+                                Message = "Shared run does not expose both AssignedRuntimeInstanceId and LocalRunId."
+                            });
+
+                        continue;
+                    }
+
+                    var status =
+                        await mcp.GetRuntimeQueueRunStatusAsync(
+                                new AiRuntimeQueueControlPlaneRequest
+                                {
+                                    Operation = AiRuntimeQueueControlPlaneOperation.GetRunStatus,
+                                    RuntimeInstanceId = run.AssignedRuntimeInstanceId,
+                                    RunId = run.LocalRunId,
+                                    IncludeRunState = true,
+                                    IncludeDiagnostics = true,
+                                    RequestedBy = "mcp-integration-test",
+                                    Source = "mcp-test"
+                                })
+                            .ConfigureAwait(false);
 
                     statuses.Add(status);
                 }
 
-                lastStatuses = statuses;
+                lastStatuses =
+                    statuses;
+
+                var terminalCount =
+                    statuses.Count(IsTerminal);
+
+                var successfulStatusCount =
+                    statuses.Count(status => status.Success);
+
+                var nullRunStateCount =
+                    statuses.Count(status => status.RunState is null);
+
+                var statusBreakdown =
+                    BuildRuntimeQueueStatusBreakdown(statuses);
+
+                Console.WriteLine(
+                    "[WAIT TERMINAL RUNTIME STATUSES] Attempt='{0}' Expected='{1}' Terminal='{2}' Success='{3}' NullRunState='{4}' StatusBreakdown='{5}' ElapsedRemainingMs='{6}' Details='{7}'",
+                    attempt,
+                    dispatchedRuns.Count,
+                    terminalCount,
+                    successfulStatusCount,
+                    nullRunStateCount,
+                    statusBreakdown,
+                    Math.Max(0, (long)(deadline - DateTimeOffset.UtcNow).TotalMilliseconds),
+                    FormatRuntimeQueueStatuses(statuses));
 
                 if (statuses.All(IsTerminal))
                 {
                     return statuses;
                 }
 
-                await Task.Delay(250);
+                await Task
+                    .Delay(TimeSpan.FromMilliseconds(250))
+                    .ConfigureAwait(false);
             }
 
             throw new TimeoutException(
                 "Expected all runtime runs to reach terminal status within timeout. " +
-                $"LastStatuses={string.Join(", ", lastStatuses.Select(x => $"{x.RunId}:{x.RunState?.Status ?? "null"}"))}");
+                $"ExpectedCount='{dispatchedRuns.Count}', " +
+                $"LastStatusBreakdown='{BuildRuntimeQueueStatusBreakdown(lastStatuses)}', " +
+                $"LastStatuses='{FormatRuntimeQueueStatuses(lastStatuses)}', " +
+                $"DispatchedRuns='{FormatSharedRunsForRuntimeStatusWait(dispatchedRuns)}'.");
         }
 
         public static async Task<AiRuntimeQueueControlPlaneResult> WaitForRuntimeRunExecutionIdAsync(
@@ -567,6 +625,76 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Helpers
                 $"Shared run '{sharedRunId}' was not assigned to runtime instance '{expectedRuntimeInstanceId}' within '{timeout}'. " +
                 $"LastStatus='{lastRun?.Status.ToString() ?? "<null>"}', " +
                 $"LastAssignedRuntimeInstanceId='{lastRun?.AssignedRuntimeInstanceId ?? "<null>"}'.");
+        }
+
+        private static string BuildRuntimeQueueStatusBreakdown(
+            IReadOnlyCollection<AiRuntimeQueueControlPlaneResult> statuses)
+        {
+            if (statuses.Count == 0)
+            {
+                return "<none>";
+            }
+
+            return string.Join(
+                ",",
+                statuses
+                    .GroupBy(status => status.RunState?.Status ?? "<null>", StringComparer.OrdinalIgnoreCase)
+                    .OrderBy(group => group.Key, StringComparer.OrdinalIgnoreCase)
+                    .Select(group => $"{group.Key}:{group.Count()}"));
+        }
+
+        private static string FormatRuntimeQueueStatuses(
+            IReadOnlyCollection<AiRuntimeQueueControlPlaneResult> statuses)
+        {
+            if (statuses.Count == 0)
+            {
+                return "<none>";
+            }
+
+            return string.Join(
+                " | ",
+                statuses.Select(status =>
+                    $"Runtime='{status.RuntimeInstanceId}', " +
+                    $"Run='{status.RunId}', " +
+                    $"Execution='{status.ExecutionId ?? status.RunState?.ExecutionId}', " +
+                    $"Success='{status.Success}', " +
+                    $"Status='{status.RunState?.Status ?? "<null>"}', " +
+                    $"FailureReason='{status.FailureReason}', " +
+                    $"Message='{status.Message}', " +
+                    $"Diagnostics='{FormatDiagnostics(status.Diagnostics)}'"));
+        }
+
+        private static string FormatSharedRunsForRuntimeStatusWait(
+            IReadOnlyCollection<AiSharedRunRecord> runs)
+        {
+            if (runs.Count == 0)
+            {
+                return "<none>";
+            }
+
+            return string.Join(
+                " | ",
+                runs.Select(run =>
+                    $"SharedRun='{run.SharedRunId}', " +
+                    $"Runtime='{run.AssignedRuntimeInstanceId}', " +
+                    $"LocalRun='{run.LocalRunId}', " +
+                    $"Execution='{run.ExecutionId}', " +
+                    $"Status='{run.Status}', " +
+                    $"FailureReason='{run.FailureReason}'"));
+        }
+
+        private static string FormatDiagnostics(
+            IReadOnlyCollection<string>? diagnostics)
+        {
+            if (diagnostics is null ||
+                diagnostics.Count == 0)
+            {
+                return string.Empty;
+            }
+
+            return string.Join(
+                ";",
+                diagnostics.Take(10));
         }
     }
 }

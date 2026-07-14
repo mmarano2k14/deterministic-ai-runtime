@@ -248,11 +248,14 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
                 ?? "mongodb://localhost:27017";
 
             var databaseName =
-                configuration["Mongo:DatabaseName"]
+                configuration["AiExecutionReplay:MetadataStore:Mongo:DatabaseName"]
+                ?? configuration["AiReplay:MetadataStore:Mongo:DatabaseName"]
+                ?? configuration["Mongo:DatabaseName"]
                 ?? "multiplexed-ai";
 
             var collectionName =
                 configuration["AiExecutionReplay:MetadataStore:Mongo:CollectionName"]
+                ?? configuration["AiReplay:MetadataStore:Mongo:CollectionName"]
                 ?? "ai_execution_replay_metadata";
 
             services.RemoveAll<IAiExecutionReplayMetadataStore>();

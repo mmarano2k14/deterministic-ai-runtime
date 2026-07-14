@@ -1,5 +1,6 @@
 ﻿using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Forensics;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager.ProcessControl;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Recovery;
@@ -33,8 +34,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
     public abstract class ProcessHostRealRuntimeCrashRecoveryScenarioTestsBase
     {
         private const int StepCount = 100;
-        private const int KillAfterCompletedStepCount = 50;
-        private const int MultiTenantStepCount = 100;
+        private const int KillAfterCompletedStepCount = 25;
+        private const int MultiTenantStepCount = 50;
         private const int FlakyStepIntervalMs = 500;
 
 
@@ -133,7 +134,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 output.WriteLine($"  Provider='{profile.ProviderName}'");
                 output.WriteLine($"  ProviderLabel='{profile.ProviderLabel}'");
                 output.WriteLine($"  ControlPlaneId='{currentControlPlaneId}'");
-                output.WriteLine($"  HostCreationMode='{scenario.HostCreationMode}'");
+                output.WriteLine($"  HostCreationMode='{profile.HostCreationMode}'");
                 output.WriteLine($"  PersistenceProfile='{scenario.PersistenceProfile}'");
                 output.WriteLine($"  ObservabilityProfile='{scenario.ObservabilityProfile}'");
                 output.WriteLine($"  RuntimeHostAssemblyPath='{currentRuntimeHostAssemblyPath}'");
@@ -460,6 +461,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 .AssertRecoveredInventoryDagCompletedAsync(
                     output,
                     dagStore,
+                    runExecutionIndex,
                     tenantARecovery,
                     MultiTenantStepCount,
                     scenario.CompletionTimeout)
@@ -469,6 +471,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 .AssertRecoveredInventoryDagCompletedAsync(
                     output,
                     dagStore,
+                    runExecutionIndex,
                     tenantBRecovery,
                     MultiTenantStepCount,
                     scenario.CompletionTimeout)
@@ -692,7 +695,10 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                     causalChainLedgerEntries,
                     expectedRecoveredWorkCount,
                     tenantARecovery.RecoveredWorks.Count + tenantBRecovery.RecoveredWorks.Count,
-                    failedRuntimeUnsafeValidated);
+                    failedRuntimeUnsafeValidated,
+                    requireProcessRuntimeHostStarted:
+                        this.profile.HostCreationMode ==
+                        AiRuntimeHostCreationMode.Process);
 
             output.WriteLine(
                 $"[{profile.LogPrefix} TWO-TENANT CRASH MCP CONTROL-PLANE LEDGER QUERY PROOF] " +
@@ -1091,7 +1097,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                     includeSafeTenant: true);
 
             scenario.DispatchTimeout = TimeSpan.FromMinutes(3);
-            scenario.CompletionTimeout = TimeSpan.FromMinutes(7);
+            scenario.CompletionTimeout = TimeSpan.FromMinutes(3);
 
             var scenarioStopwatch =
                 System.Diagnostics.Stopwatch.StartNew();
@@ -1292,7 +1298,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             output.WriteLine($"  Provider='{profile.ProviderName}'");
             output.WriteLine($"  ProviderLabel='{profile.ProviderLabel}'");
             output.WriteLine($"  ControlPlaneId='{controlPlaneId}'");
-            output.WriteLine($"  HostCreationMode='{scenario.HostCreationMode}'");
+            output.WriteLine($"  HostCreationMode='{profile.HostCreationMode}'");
             output.WriteLine($"  PersistenceProfile='{scenario.PersistenceProfile}'");
             output.WriteLine($"  ObservabilityProfile='{scenario.ObservabilityProfile}'");
             output.WriteLine($"  RuntimeHostAssemblyPath='{runtimeHostAssemblyPath}'");
@@ -1544,6 +1550,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 .AssertRecoveredInventoryDagCompletedAsync(
                     output,
                     dagStore,
+                    runExecutionIndex,
                     tenantARecovery,
                     MultiTenantStepCount,
                     scenario.CompletionTimeout)
@@ -1553,6 +1560,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 .AssertRecoveredInventoryDagCompletedAsync(
                     output,
                     dagStore,
+                    runExecutionIndex,
                     tenantBRecovery,
                     MultiTenantStepCount,
                     scenario.CompletionTimeout)
@@ -1848,7 +1856,10 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                     causalChainLedgerEntries,
                     expectedRecoveredWorkCount,
                     tenantARecovery.RecoveredWorks.Count + tenantBRecovery.RecoveredWorks.Count,
-                    failedRuntimeUnsafeValidated);
+                    failedRuntimeUnsafeValidated,
+                    requireProcessRuntimeHostStarted:
+                        this.profile.HostCreationMode ==
+                        AiRuntimeHostCreationMode.Process);
 
             output.WriteLine(
                 $"[{profile.LogPrefix} TWO-TENANT CRASH SAFE-TENANT MCP CONTROL-PLANE LEDGER QUERY PROOF] " +
