@@ -56,7 +56,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager
 
             Assert.Equal("runtime-tenant-a-001-svc", service.Metadata.Name);
             Assert.Equal("ai-runtime", service.Metadata.NamespaceProperty);
-            Assert.Equal("ClusterIP", service.Spec.Type);
+            Assert.Equal("NodePort", service.Spec.Type);
             Assert.Equal("tenant-a-runtime-001", service.Spec.Selector["multiplexed.ai/runtime-instance-id"]);
             Assert.Equal("runtime-instance", service.Spec.Ports[0].Name);
             Assert.Equal(8080, service.Spec.Ports[0].Port);

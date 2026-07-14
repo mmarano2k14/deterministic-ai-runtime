@@ -77,7 +77,8 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager
                         ContainerPort = 8080,
                         PodNamePrefix = "runtime",
                         TransportName = "grpc",
-                        DeleteResourcesOnFailure = true
+                        DeleteResourcesOnFailure = true,
+                        ClientMode = AiKubernetesRuntimeHostClientMode.Fake
                     },
                     client: client);
 
@@ -257,7 +258,8 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager
                         ContainerPort = 8080,
                         PodNamePrefix = "runtime",
                         TransportName = "grpc",
-                        DeleteResourcesOnFailure = true
+                        DeleteResourcesOnFailure = true,
+                        ClientMode = AiKubernetesRuntimeHostClientMode.Fake
                     },
                     client: client);
 
@@ -338,7 +340,8 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager
                     ContainerPort = 8080,
                     PodNamePrefix = "runtime",
                     TransportName = "grpc",
-                    DeleteResourcesOnFailure = true
+                    DeleteResourcesOnFailure = true,
+                    ClientMode = AiKubernetesRuntimeHostClientMode.Fake
                 };
 
             return new KubernetesAiRuntimeHostCreationStrategy(

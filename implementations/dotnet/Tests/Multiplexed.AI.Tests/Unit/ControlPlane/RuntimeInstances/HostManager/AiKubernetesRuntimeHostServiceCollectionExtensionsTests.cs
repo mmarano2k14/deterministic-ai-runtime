@@ -1,8 +1,11 @@
 ﻿using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Capacity;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Readiness;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
 using Multiplexed.AI.Runtime.ControlPlane.DI;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strategy;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strategy.Kubernetes;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strategy.Kubernetes.Client;
@@ -28,7 +31,8 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager
         {
             var services = new ServiceCollection();
 
-            services.AddSingleton<IAiRuntimeInstanceReadinessWaiter, FakeRuntimeInstanceReadinessWaiter>();
+            AddRequiredRuntimeServices(services);
+
             services.AddAiKubernetesRuntimeHostProvider(
                 options =>
                 {
@@ -97,6 +101,8 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager
 
             var services = new ServiceCollection();
 
+            AddRequiredRuntimeServices(services);
+
             services.AddAiKubernetesRuntimeHostProvider(configuration);
 
             using var provider = services.BuildServiceProvider();
@@ -125,7 +131,8 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager
             var services = new ServiceCollection();
 
             services.AddSingleton<IAiRuntimeHostCreationStrategy, ExistingRuntimeHostCreationStrategy>();
-            services.AddSingleton<IAiRuntimeInstanceReadinessWaiter, FakeRuntimeInstanceReadinessWaiter>();
+            AddRequiredRuntimeServices(services);
+
             services.AddAiKubernetesRuntimeHostProvider(
                 options =>
                 {
@@ -150,7 +157,8 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager
         {
             var services = new ServiceCollection();
 
-            services.AddSingleton<IAiRuntimeInstanceReadinessWaiter, FakeRuntimeInstanceReadinessWaiter>();
+            AddRequiredRuntimeServices(services);
+
             services.AddAiKubernetesRuntimeHostProvider(
                 options =>
                 {
@@ -168,6 +176,26 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager
             Assert.IsType<KubernetesSdkAiKubernetesRuntimeHostClient>(client);
             Assert.NotNull(resourceFactory);
             Assert.IsType<DefaultKubernetesClientFactory>(clientFactory);
+        }
+
+        private static void AddRequiredRuntimeServices(
+            IServiceCollection services)
+        {
+            ArgumentNullException.ThrowIfNull(services);
+
+            services.AddLogging();
+
+            services.AddSingleton<
+                IAiRuntimeInstanceRegistry,
+                InMemoryAiRuntimeInstanceRegistry>();
+
+            services.AddSingleton<
+                IAiRuntimeInstanceCapacityStore,
+                TestRuntimeInstanceCapacityStore>();
+
+            services.AddSingleton<
+                IAiRuntimeInstanceReadinessWaiter,
+                FakeRuntimeInstanceReadinessWaiter>();
         }
     }
 }

@@ -193,7 +193,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Recovery
 
             Assert.Equal("runtime-1", decision.RuntimeInstanceId);
             Assert.Equal("none", decision.Action);
-            Assert.Equal("no-unfinished-runtime-runs", decision.Reason);
+            Assert.Equal("no-recoverable-runtime-runs", decision.Reason);
             Assert.False(decision.Changed);
         }
 

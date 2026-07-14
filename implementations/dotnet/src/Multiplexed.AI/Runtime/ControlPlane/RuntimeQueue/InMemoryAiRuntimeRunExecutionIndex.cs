@@ -430,6 +430,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue
             string executionId)
         {
             if (string.Equals(existing.Status, StatusCompleted, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(existing.Status, StatusFailed, StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(existing.Status, StatusCancelled, StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(existing.Status, StatusRequeuedForRecovery, StringComparison.OrdinalIgnoreCase))
             {

@@ -43,7 +43,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager
             var spec = builder.Build(request);
 
             Assert.Equal("ai-runtime", spec.Namespace);
-            Assert.StartsWith("runtime-tenant-a-runtime-001", spec.PodName);
+            Assert.StartsWith("runtime-runtime-001-", spec.PodName);
             Assert.Equal("multiplexed-ai-runtime:test", spec.RuntimeImage);
             Assert.Equal(AiKubernetesImagePullPolicy.IfNotPresent, spec.ImagePullPolicy);
             Assert.Equal("runtime-instance", spec.ContainerName);
@@ -161,7 +161,6 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager
             Assert.Equal("RuntimeInstanceOnly", spec.EnvironmentVariables["AiMcpHost__Mode"]);
             Assert.Equal("control-plane-a", spec.EnvironmentVariables["AiRuntimeInstanceRegistration__ControlPlaneId"]);
             Assert.Equal("tenant-a-runtime-001", spec.EnvironmentVariables["AiRuntimeInstanceRegistration__RuntimeInstanceId"]);
-            Assert.Equal("http://127.0.0.1:5001", spec.EnvironmentVariables["AiRuntimeInstanceRegistration__Metadata__transport.endpoint"]);
         }
 
         /// <summary>

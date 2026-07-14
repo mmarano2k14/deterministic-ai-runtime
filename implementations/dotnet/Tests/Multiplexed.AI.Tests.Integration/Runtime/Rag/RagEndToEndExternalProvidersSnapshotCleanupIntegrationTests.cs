@@ -117,8 +117,32 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Rag
             var final = await engine.ExecuteAllAsync(created.ExecutionId);
 
             Assert.NotNull(final);
-            Assert.True(final!.IsTerminal);
-            Assert.Equal(AiExecutionStatus.Completed, final.Status);
+
+            var dagStore =
+                host.ServiceProvider.GetRequiredService<IAiDagExecutionStore>();
+
+            var state =
+                await dagStore.GetStateAsync(created.ExecutionId);
+
+            var stepSummary = state is null
+                ? "state-not-found"
+                : string.Join(
+                    ", ",
+                    state.Steps.Values
+                        .GroupBy(step => step.Status)
+                        .OrderBy(group => group.Key)
+                        .Select(group => $"{group.Key}={group.Count()}"));
+
+            Assert.True(
+                final!.IsTerminal,
+                $"Execution '{final.ExecutionId}' did not reach a terminal state. " +
+                $"Status='{final.Status}', " +
+                $"IsTerminal='{final.IsTerminal}', " +
+                $"StepSummary='{stepSummary}'.");
+
+            Assert.Equal(
+                AiExecutionStatus.Completed,
+                final.Status);
 
             var snapshotStore =
                 host.ServiceProvider.GetRequiredService<IAiExecutionSnapshotStore<ExecutionContextSnapshot>>();

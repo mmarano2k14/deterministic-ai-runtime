@@ -91,6 +91,8 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedController
     {
         private readonly ITestOutputHelper _output;
 
+        private const string ControlPlaneId = "test-control-plane";
+
         private readonly string _runKeyPrefix =
             $"test:ai:shared-runs:real-heavy:{Guid.NewGuid():N}";
 
@@ -296,7 +298,7 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedController
                 queue,
                 new NeverCalledSharedRunDispatcher(),
                 new NoopAiRuntimeScaleOutRequestPublisher(),
-                new StaticAiControlPlaneIdResolver("test-control-plane"),
+                new StaticAiControlPlaneIdResolver(ControlPlaneId),
                 new HardcodedAiTenantRuntimeSettingsProvider(),
                 Options.Create(new AiSharedRuntimeControllerOptions()),
                 new NoopAiControlPlaneObserver(),
@@ -567,7 +569,7 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedController
                 queue,
                 new NeverCalledSharedRunDispatcher(),
                 new NoopAiRuntimeScaleOutRequestPublisher(),
-                new StaticAiControlPlaneIdResolver("test-control-plane"),
+                new StaticAiControlPlaneIdResolver(ControlPlaneId),
                 new HardcodedAiTenantRuntimeSettingsProvider(),
                 Options.Create(new AiSharedRuntimeControllerOptions()),
                 new NoopAiControlPlaneObserver(),
@@ -833,7 +835,7 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedController
                     enableRetention: true));
         }
 
-        
+
 
         [RedisFact]
         public async Task MultiInstance_ExecutionAssistance_Baseline_OneLargeRun_500Steps_OneInstance_10Worker()
@@ -867,7 +869,7 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedController
                 queue,
                 new NeverCalledSharedRunDispatcher(),
                 new NoopAiRuntimeScaleOutRequestPublisher(),
-                new StaticAiControlPlaneIdResolver("test-control-plane"),
+                new StaticAiControlPlaneIdResolver(ControlPlaneId),
                 new HardcodedAiTenantRuntimeSettingsProvider(),
                 Options.Create(new AiSharedRuntimeControllerOptions()),
                 new NoopAiControlPlaneObserver(),
@@ -1329,7 +1331,7 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedController
                 runtimeInstanceRegistry,
                 new FakeRuntimeScaleOutRequestPublisher(),
                 new HardcodedAiTenantRuntimeSettingsProvider(),
-                new StaticControlPlaneIdResolver("controlPlaneId"),
+                new StaticControlPlaneIdResolver(ControlPlaneId),
                 new FakeExecutionContextAccessor(),
                 NullLogger<AiSharedQueueDispatcher>.Instance);
 
@@ -1345,7 +1347,7 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedController
                     WorkerId = $"{runtimeInstance.RuntimeInstanceId}-shared-queue-worker",
                     Source = "multi-instance-real-heavy-test"
                 }),
-                new StaticControlPlaneIdResolver("controlPlaneId"),
+                new StaticControlPlaneIdResolver(ControlPlaneId),
                 NullLogger<AiSharedQueuePump>.Instance);
 
             var startedAtUtc = DateTimeOffset.UtcNow;
@@ -2094,7 +2096,7 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedController
                     KeyPrefix = _runKeyPrefix,
                     ListScanLimit = 20_000
                 }),
-                new StaticAiControlPlaneIdResolver("test-control-plane"));
+                new StaticAiControlPlaneIdResolver(ControlPlaneId));
         }
 
         private RedisAiSharedQueue CreateQueue()
@@ -2111,7 +2113,7 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedController
                     KeyPrefix = _queueKeyPrefix,
                     ListScanLimit = 20_000
                 }),
-                new StaticAiControlPlaneIdResolver("test-control-plane"));
+                new StaticAiControlPlaneIdResolver(ControlPlaneId));
         }
 
         private static AiEngineOptions CreateOptions(

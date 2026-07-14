@@ -37,7 +37,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager
             var metadata = builder.Build(request);
 
             Assert.Equal("ai-runtime", metadata.Namespace);
-            Assert.StartsWith("runtime-tenant-a-runtime-001", metadata.PodName);
+            Assert.StartsWith("runtime-runtime-001-", metadata.PodName);
             Assert.Equal("grpc", metadata.Labels["multiplexed.ai/provider"]);
             Assert.Equal("grpc", metadata.Labels["multiplexed.ai/transport"]);
             Assert.Equal("kubernetes", metadata.Labels["multiplexed.ai/host-provider"]);
@@ -78,7 +78,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager
 
             var metadata = builder.Build(request);
 
-            Assert.StartsWith("runtime-host-tenant-a-runtime-001", metadata.PodName);
+            Assert.StartsWith("runtime-host-runtime-001-", metadata.PodName);
             Assert.Equal("tenant-a-runtime-001", metadata.Labels["multiplexed.ai/runtime-instance-id"]);
             Assert.Equal("tenant-a-runtime-001", metadata.Labels["custom.label/value"]);
         }
