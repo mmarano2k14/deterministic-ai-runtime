@@ -126,7 +126,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
             _forensicsRecorder = forensicsRecorder ?? throw new ArgumentNullException(nameof(forensicsRecorder));
         }
 
-        /// <inheritdoc />
         public async Task<AiSharedQueueDispatchResult> DispatchNextAsync(
             AiSharedQueueDispatchRequest request,
             CancellationToken cancellationToken = default)
@@ -138,6 +137,25 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
             string? reservedRuntimeInstanceId = null;
             string? reservedSharedRunId = null;
             AiSharedQueueItem? ownedQueueItem = null;
+
+            static bool MatchesDispatchOwnership(
+                AiSharedRunRecord? candidate,
+                string runtimeInstanceId,
+                string localRunId,
+                string? executionId)
+            {
+                if (candidate is null ||
+                    candidate.Status != AiSharedRunStatus.Dispatched ||
+                    !string.Equals(candidate.AssignedRuntimeInstanceId, runtimeInstanceId, StringComparison.Ordinal) ||
+                    !string.Equals(candidate.LocalRunId, localRunId, StringComparison.Ordinal))
+                {
+                    return false;
+                }
+
+                return string.IsNullOrWhiteSpace(executionId)
+                    ? string.IsNullOrWhiteSpace(candidate.ExecutionId)
+                    : string.Equals(candidate.ExecutionId, executionId, StringComparison.Ordinal);
+            }
 
             _logger.LogDebug(
                 "Shared queue dispatch started. PumpRuntimeInstanceId={PumpRuntimeInstanceId}, WorkerId={WorkerId}, TenantId={TenantId}, PipelineKey={PipelineKey}, ClaimTtlMs={ClaimTtlMs}, CorrelationId={CorrelationId}",
@@ -308,6 +326,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                         sharedRun.ExecutionContextSnapshot.TenantGroupId,
                         sharedRun.ExecutionContextSnapshot.ContextKey);
 
+
                     var safePreferredRuntimeInstanceId =
                         await ResolveSafePreferredRuntimeInstanceIdAsync(
                                 sharedRun.AssignedRuntimeInstanceId,
@@ -374,8 +393,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                             DurationMs = CalculateDurationMs(startedAtUtc, completedAtUtc),
                             Diagnostics = new[]
                             {
-                        admissionDecision.Reason ?? SharedQueueRedispatchReplacementReason
-                    }
+                                 admissionDecision.Reason ?? SharedQueueRedispatchReplacementReason
+                            }
                         };
                     }
 
@@ -411,8 +430,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                             DurationMs = CalculateDurationMs(startedAtUtc, completedAtUtc),
                             Diagnostics = new[]
                             {
-                        admissionDecision.Reason ?? "Admission did not assign a runtime instance."
-                    }
+                                admissionDecision.Reason ?? "Admission did not assign a runtime instance."
+                            }
                         };
                     }
 
@@ -458,8 +477,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                             DurationMs = CalculateDurationMs(startedAtUtc, completedAtUtc),
                             Diagnostics = new[]
                             {
-                                "Selected runtime instance is the failed runtime for this recovery redispatch.",
-                                "Replacement scale-out request was published."
+                                 "Selected runtime instance is the failed runtime for this recovery redispatch.",
+                                 "Replacement scale-out request was published."
                             }
                         };
                     }
@@ -494,8 +513,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                             DurationMs = CalculateDurationMs(startedAtUtc, completedAtUtc),
                             Diagnostics = new[]
                             {
-                        "Selected runtime instance is not routable."
-                    }
+                                 "Selected runtime instance is not routable."
+                            }
                         };
                     }
 
@@ -713,40 +732,125 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                                     completedAtUtc),
                                 Diagnostics = new[]
                                     {
-                                        missingLocalRunIdReason,
-                                        $"SharedRunId='{sharedRun.SharedRunId}'",
-                                        $"RuntimeInstanceId='{targetRuntimeInstanceId}'",
-                                        $"ExecutionId='{dispatchResult.ExecutionId}'"
+                                         missingLocalRunIdReason,
+                                         $"SharedRunId='{sharedRun.SharedRunId}'",
+                                         $"RuntimeInstanceId='{targetRuntimeInstanceId}'",
+                                         $"ExecutionId='{dispatchResult.ExecutionId}'"
                                     }
-                                };
+                            };
                         }
 
-                        var dispatchedQueueItem = await _sharedQueue
-                            .MarkDispatchedAsync(
-                                queueItem.SharedRunId,
-                                queueItem.ClaimToken!,
-                                dispatchResult.Message,
-                                cancellationToken)
-                            .ConfigureAwait(false);
+                        var dispatchedLocalRunId =
+                            dispatchResult.LocalRunId!;
 
-                        if (dispatchedQueueItem is null)
+                        /*
+                         * Runtime acceptance has already happened. From this point forward,
+                         * persistence must not reuse the caller cancellation token.
+                         *
+                         * Durable shared-run ownership is committed and verified before the
+                         * queue item is allowed to become terminally Dispatched.
+                         */
+                        AiSharedRunRecord? dispatchedRun = null;
+                        Exception? lastSharedRunPersistenceException = null;
+
+                        for (var attempt = 1;
+                             attempt <= 2 &&
+                             !MatchesDispatchOwnership(
+                                 dispatchedRun,
+                                 targetRuntimeInstanceId,
+                                 dispatchedLocalRunId,
+                                 dispatchResult.ExecutionId);
+                             attempt++)
+                        {
+                            try
+                            {
+                                dispatchedRun = await _sharedRunStore
+                                    .MarkDispatchedAsync(
+                                        sharedRun.SharedRunId,
+                                        targetRuntimeInstanceId,
+                                        dispatchedLocalRunId,
+                                        dispatchResult.ExecutionId,
+                                        dispatchResult.Message,
+                                        CancellationToken.None)
+                                    .ConfigureAwait(false);
+                            }
+                            catch (Exception exception)
+                            {
+                                lastSharedRunPersistenceException = exception;
+
+                                _logger.LogWarning(
+                                    exception,
+                                    "Shared-run dispatch ownership persistence attempt failed after runtime acceptance. The store will be read back before the attempt is classified. SharedRunId={SharedRunId}, ControlPlaneId={ControlPlaneId}, RuntimeInstanceId={RuntimeInstanceId}, LocalRunId={LocalRunId}, ExecutionId={ExecutionId}, Attempt={Attempt}",
+                                    sharedRun.SharedRunId,
+                                    controlPlaneId,
+                                    targetRuntimeInstanceId,
+                                    dispatchedLocalRunId,
+                                    dispatchResult.ExecutionId,
+                                    attempt);
+                            }
+
+                            if (MatchesDispatchOwnership(
+                                    dispatchedRun,
+                                    targetRuntimeInstanceId,
+                                    dispatchedLocalRunId,
+                                    dispatchResult.ExecutionId))
+                            {
+                                break;
+                            }
+
+                            try
+                            {
+                                var persistedRun = await _sharedRunStore
+                                    .GetAsync(
+                                        sharedRun.SharedRunId,
+                                        CancellationToken.None)
+                                    .ConfigureAwait(false);
+
+                                if (MatchesDispatchOwnership(
+                                        persistedRun,
+                                        targetRuntimeInstanceId,
+                                        dispatchedLocalRunId,
+                                        dispatchResult.ExecutionId))
+                                {
+                                    dispatchedRun = persistedRun;
+                                    break;
+                                }
+                            }
+                            catch (Exception exception)
+                            {
+                                lastSharedRunPersistenceException = exception;
+
+                                _logger.LogWarning(
+                                    exception,
+                                    "Shared-run dispatch ownership read-back failed after runtime acceptance. SharedRunId={SharedRunId}, ControlPlaneId={ControlPlaneId}, RuntimeInstanceId={RuntimeInstanceId}, LocalRunId={LocalRunId}, ExecutionId={ExecutionId}, Attempt={Attempt}",
+                                    sharedRun.SharedRunId,
+                                    controlPlaneId,
+                                    targetRuntimeInstanceId,
+                                    dispatchedLocalRunId,
+                                    dispatchResult.ExecutionId,
+                                    attempt);
+                            }
+                        }
+
+                        if (!MatchesDispatchOwnership(
+                                dispatchedRun,
+                                targetRuntimeInstanceId,
+                                dispatchedLocalRunId,
+                                dispatchResult.ExecutionId))
                         {
                             _logger.LogWarning(
-                                "Shared queue item could not be marked as dispatched before marking the shared run as dispatched. SharedRunId={SharedRunId}, ControlPlaneId={ControlPlaneId}, RuntimeInstanceId={RuntimeInstanceId}, ClaimToken={ClaimToken}, LocalRunId={LocalRunId}, ExecutionId={ExecutionId}",
-                                queueItem.SharedRunId,
+                                "Shared-run dispatch ownership could not be confirmed after runtime acceptance. The claimed queue item will be requeued and must not become Dispatched. SharedRunId={SharedRunId}, ControlPlaneId={ControlPlaneId}, RuntimeInstanceId={RuntimeInstanceId}, LocalRunId={LocalRunId}, ExecutionId={ExecutionId}, LastException={LastException}",
+                                sharedRun.SharedRunId,
                                 controlPlaneId,
                                 targetRuntimeInstanceId,
-                                queueItem.ClaimToken,
-                                dispatchResult.LocalRunId,
-                                dispatchResult.ExecutionId);
+                                dispatchedLocalRunId,
+                                dispatchResult.ExecutionId,
+                                lastSharedRunPersistenceException?.Message);
 
-                            var failedSharedRun = await _sharedRunStore
-                                .MarkDispatchFailedAsync(
-                                    sharedRun.SharedRunId,
-                                    targetRuntimeInstanceId,
-                                    "Shared queue item could not be marked as dispatched.",
-                                    "Shared queue item could not be marked as dispatched before shared run dispatch persistence.",
-                                    cancellationToken)
+                            await RequeueBestEffortAsync(
+                                    queueItem,
+                                    "Runtime accepted the run but durable shared-run ownership was not confirmed.",
+                                    CancellationToken.None)
                                 .ConfigureAwait(false);
 
                             var completedAtUtc = DateTimeOffset.UtcNow;
@@ -757,21 +861,143 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                                 SharedRunId = queueItem.SharedRunId,
                                 RuntimeInstanceId = targetRuntimeInstanceId,
                                 QueueItem = queueItem,
-                                SharedRun = failedSharedRun ?? sharedRun,
+                                SharedRun = dispatchedRun ?? sharedRun,
                                 DispatchResult = dispatchResult,
-                                Message = "Shared queue item could not be marked as dispatched, so the shared run record was not marked as dispatched.",
-                                FailureReason = "shared-queue-mark-dispatched-rejected",
+                                Message = "Shared queue item was requeued because durable dispatch ownership was not confirmed.",
+                                FailureReason = "shared-run-dispatch-ownership-not-confirmed",
                                 StartedAtUtc = startedAtUtc,
                                 CompletedAtUtc = completedAtUtc,
                                 DurationMs = CalculateDurationMs(startedAtUtc, completedAtUtc),
                                 Diagnostics = new[]
                                 {
-                                    "Shared queue item could not be marked as dispatched.",
-                                    $"SharedRunId='{queueItem.SharedRunId}'",
+                                    $"ExpectedRuntimeInstanceId='{targetRuntimeInstanceId}'",
+                                    $"ExpectedLocalRunId='{dispatchedLocalRunId}'",
+                                    $"ExpectedExecutionId='{dispatchResult.ExecutionId}'",
+                                    $"ActualRuntimeInstanceId='{dispatchedRun?.AssignedRuntimeInstanceId}'",
+                                    $"ActualLocalRunId='{dispatchedRun?.LocalRunId}'",
+                                    $"ActualExecutionId='{dispatchedRun?.ExecutionId}'",
+                                    $"LastPersistenceException='{lastSharedRunPersistenceException?.Message}'"
+                                }
+                            };
+                        }
+
+                        _logger.LogInformation(
+                            "Shared-run dispatch ownership durably persisted before queue finalization. SharedRunId={SharedRunId}, ControlPlaneId={ControlPlaneId}, RuntimeInstanceId={RuntimeInstanceId}, LocalRunId={LocalRunId}, ExecutionId={ExecutionId}",
+                            dispatchedRun!.SharedRunId,
+                            controlPlaneId,
+                            dispatchedRun.AssignedRuntimeInstanceId,
+                            dispatchedRun.LocalRunId,
+                            dispatchedRun.ExecutionId);
+
+                        /*
+                         * Finalize the queue only after exact durable ownership is confirmed.
+                         * A timeout can be ambiguous, so retry the idempotent claim-token
+                         * transition and read the queue item back before declaring failure.
+                         */
+                        AiSharedQueueItem? dispatchedQueueItem = null;
+                        Exception? lastQueueFinalizationException = null;
+
+                        for (var attempt = 1; attempt <= 3 && dispatchedQueueItem is null; attempt++)
+                        {
+                            try
+                            {
+                                dispatchedQueueItem = await _sharedQueue
+                                    .MarkDispatchedAsync(
+                                        queueItem.SharedRunId,
+                                        queueItem.ClaimToken!,
+                                        dispatchResult.Message,
+                                        CancellationToken.None)
+                                    .ConfigureAwait(false);
+                            }
+                            catch (Exception exception)
+                            {
+                                lastQueueFinalizationException = exception;
+
+                                _logger.LogWarning(
+                                    exception,
+                                    "Shared queue finalization attempt failed after durable shared-run ownership was confirmed. The queue item will be read back before the attempt is classified. SharedRunId={SharedRunId}, ControlPlaneId={ControlPlaneId}, ClaimToken={ClaimToken}, RuntimeInstanceId={RuntimeInstanceId}, LocalRunId={LocalRunId}, Attempt={Attempt}",
+                                    queueItem.SharedRunId,
+                                    controlPlaneId,
+                                    queueItem.ClaimToken,
+                                    targetRuntimeInstanceId,
+                                    dispatchedLocalRunId,
+                                    attempt);
+                            }
+
+                            if (dispatchedQueueItem is not null)
+                            {
+                                break;
+                            }
+
+                            try
+                            {
+                                var currentQueueItem = await _sharedQueue
+                                    .GetAsync(
+                                        queueItem.SharedRunId,
+                                        CancellationToken.None)
+                                    .ConfigureAwait(false);
+
+                                if (currentQueueItem?.Status == AiSharedQueueItemStatus.Dispatched &&
+                                    string.Equals(
+                                        currentQueueItem.ClaimToken,
+                                        queueItem.ClaimToken,
+                                        StringComparison.Ordinal))
+                                {
+                                    dispatchedQueueItem = currentQueueItem;
+                                    break;
+                                }
+                            }
+                            catch (Exception exception)
+                            {
+                                lastQueueFinalizationException = exception;
+
+                                _logger.LogWarning(
+                                    exception,
+                                    "Shared queue finalization read-back failed after durable shared-run ownership was confirmed. SharedRunId={SharedRunId}, ControlPlaneId={ControlPlaneId}, ClaimToken={ClaimToken}, RuntimeInstanceId={RuntimeInstanceId}, LocalRunId={LocalRunId}, Attempt={Attempt}",
+                                    queueItem.SharedRunId,
+                                    controlPlaneId,
+                                    queueItem.ClaimToken,
+                                    targetRuntimeInstanceId,
+                                    dispatchedLocalRunId,
+                                    attempt);
+                            }
+                        }
+
+                        if (dispatchedQueueItem is null)
+                        {
+                            _logger.LogError(
+                                "Shared-run ownership is durable, but shared queue finalization could not be confirmed. The queue item is intentionally not requeued because redispatching would duplicate an already accepted runtime run. SharedRunId={SharedRunId}, ControlPlaneId={ControlPlaneId}, ClaimToken={ClaimToken}, RuntimeInstanceId={RuntimeInstanceId}, LocalRunId={LocalRunId}, ExecutionId={ExecutionId}, LastException={LastException}",
+                                queueItem.SharedRunId,
+                                controlPlaneId,
+                                queueItem.ClaimToken,
+                                targetRuntimeInstanceId,
+                                dispatchedLocalRunId,
+                                dispatchResult.ExecutionId,
+                                lastQueueFinalizationException?.Message);
+
+                            var completedAtUtc = DateTimeOffset.UtcNow;
+
+                            return new AiSharedQueueDispatchResult
+                            {
+                                Success = false,
+                                SharedRunId = queueItem.SharedRunId,
+                                RuntimeInstanceId = targetRuntimeInstanceId,
+                                QueueItem = queueItem,
+                                SharedRun = dispatchedRun,
+                                DispatchResult = dispatchResult,
+                                Message = "Durable dispatch ownership exists, but shared queue finalization could not be confirmed.",
+                                FailureReason = "shared-queue-dispatch-finalization-not-confirmed",
+                                StartedAtUtc = startedAtUtc,
+                                CompletedAtUtc = completedAtUtc,
+                                DurationMs = CalculateDurationMs(startedAtUtc, completedAtUtc),
+                                Diagnostics = new[]
+                                {
+                                    "The queue item was not requeued because the runtime already accepted the run.",
+                                    $"ClaimToken='{queueItem.ClaimToken}'",
                                     $"RuntimeInstanceId='{targetRuntimeInstanceId}'",
-                                    $"ClaimTokenPresent='{!string.IsNullOrWhiteSpace(queueItem.ClaimToken)}'",
-                                    $"LocalRunId='{dispatchResult.LocalRunId}'",
-                                    $"ExecutionId='{dispatchResult.ExecutionId}'"
+                                    $"LocalRunId='{dispatchedLocalRunId}'",
+                                    $"ExecutionId='{dispatchResult.ExecutionId}'",
+                                    $"LastFinalizationException='{lastQueueFinalizationException?.Message}'"
                                 }
                             };
                         }
@@ -779,119 +1005,14 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                         ownedQueueItem =
                             dispatchedQueueItem;
 
-                        _logger.LogDebug(
-                            "Shared queue item marked as dispatched before shared run persistence. SharedRunId={SharedRunId}, ControlPlaneId={ControlPlaneId}, RuntimeInstanceId={RuntimeInstanceId}, ClaimToken={ClaimToken}",
-                            queueItem.SharedRunId,
-                            controlPlaneId,
-                            targetRuntimeInstanceId,
-                            queueItem.ClaimToken);
-
-                        var dispatchedRun = await _sharedRunStore
-                            .MarkDispatchedAsync(
-                                sharedRun.SharedRunId,
-                                targetRuntimeInstanceId,
-                                dispatchResult.LocalRunId,
-                                dispatchResult.ExecutionId,
-                                dispatchResult.Message,
-                                cancellationToken)
-                            .ConfigureAwait(false);
-
-                        if (dispatchedRun is null)
-                        {
-                            _logger.LogWarning(
-                                "Shared run record could not be marked as dispatched after the shared queue item was marked as dispatched. Requeueing dispatched queue item for safety. SharedRunId={SharedRunId}, ControlPlaneId={ControlPlaneId}, RuntimeInstanceId={RuntimeInstanceId}, LocalRunId={LocalRunId}, ExecutionId={ExecutionId}",
-                                sharedRun.SharedRunId,
-                                controlPlaneId,
-                                targetRuntimeInstanceId,
-                                dispatchResult.LocalRunId,
-                                dispatchResult.ExecutionId);
-
-                            await RequeueDispatchedBestEffortAsync(
-                                    dispatchedQueueItem,
-                                    "Shared run record could not be marked as dispatched after queue dispatch persistence.",
-                                    operationMetadata,
-                                    cancellationToken)
-                                .ConfigureAwait(false);
-
-                            var completedAtUtc = DateTimeOffset.UtcNow;
-
-                            return new AiSharedQueueDispatchResult
-                            {
-                                Success = false,
-                                SharedRunId = queueItem.SharedRunId,
-                                RuntimeInstanceId = targetRuntimeInstanceId,
-                                QueueItem = dispatchedQueueItem,
-                                SharedRun = sharedRun,
-                                DispatchResult = dispatchResult,
-                                Message = "Shared queue item was requeued because the shared run record could not be marked as dispatched.",
-                                FailureReason = "shared-run-mark-dispatched-rejected",
-                                StartedAtUtc = startedAtUtc,
-                                CompletedAtUtc = completedAtUtc,
-                                DurationMs = CalculateDurationMs(startedAtUtc, completedAtUtc),
-                                Diagnostics = new[]
-                                {
-                                    "Shared run record could not be marked as dispatched."
-                                }
-                            };
-                        }
-
                         _logger.LogInformation(
-                            "Shared run record marked as dispatched. SharedRunId={SharedRunId}, ControlPlaneId={ControlPlaneId}, RuntimeInstanceId={RuntimeInstanceId}, LocalRunId={LocalRunId}, ExecutionId={ExecutionId}",
+                            "Shared queue item finalized after durable shared-run ownership persistence. SharedRunId={SharedRunId}, ControlPlaneId={ControlPlaneId}, RuntimeInstanceId={RuntimeInstanceId}, LocalRunId={LocalRunId}, ExecutionId={ExecutionId}, ClaimToken={ClaimToken}",
                             sharedRun.SharedRunId,
                             controlPlaneId,
                             targetRuntimeInstanceId,
-                            dispatchResult.LocalRunId,
-                            dispatchResult.ExecutionId);
-
-                        var verifyDispatchedRun = await _sharedRunStore
-                            .GetAsync(
-                                sharedRun.SharedRunId,
-                                cancellationToken)
-                            .ConfigureAwait(false);
-
-                        if (verifyDispatchedRun is null ||
-                            !string.Equals(
-                                verifyDispatchedRun.AssignedRuntimeInstanceId,
-                                targetRuntimeInstanceId,
-                                StringComparison.Ordinal))
-                        {
-                            _logger.LogWarning(
-                                "Shared run dispatch assignment verification failed after queue dispatch persistence. Requeueing dispatched queue item for safety. SharedRunId={SharedRunId}, ControlPlaneId={ControlPlaneId}, ExpectedRuntimeInstanceId={ExpectedRuntimeInstanceId}, ActualRuntimeInstanceId={ActualRuntimeInstanceId}, LocalRunId={LocalRunId}, ExecutionId={ExecutionId}",
-                                sharedRun.SharedRunId,
-                                controlPlaneId,
-                                targetRuntimeInstanceId,
-                                verifyDispatchedRun?.AssignedRuntimeInstanceId,
-                                dispatchResult.LocalRunId,
-                                dispatchResult.ExecutionId);
-
-                            await RequeueDispatchedBestEffortAsync(
-                                    dispatchedQueueItem,
-                                    "Shared run dispatch assignment verification failed after queue dispatch persistence.",
-                                    operationMetadata,
-                                    cancellationToken)
-                                .ConfigureAwait(false);
-
-                            var completedAtUtc = DateTimeOffset.UtcNow;
-
-                            return new AiSharedQueueDispatchResult
-                            {
-                                Success = false,
-                                SharedRunId = queueItem.SharedRunId,
-                                RuntimeInstanceId = targetRuntimeInstanceId,
-                                QueueItem = dispatchedQueueItem,
-                                SharedRun = verifyDispatchedRun ?? sharedRun,
-                                DispatchResult = dispatchResult,
-                                Message = "Shared queue item was requeued because shared run dispatch assignment verification failed.",
-                                FailureReason = "shared-run-dispatch-assignment-verification-failed",
-                                StartedAtUtc = startedAtUtc,
-                                CompletedAtUtc = completedAtUtc,
-                                DurationMs = CalculateDurationMs(startedAtUtc, completedAtUtc),
-                                Diagnostics = new[]
-                                {
-                                    $"ExpectedRuntimeInstanceId='{targetRuntimeInstanceId}', ActualRuntimeInstanceId='{verifyDispatchedRun?.AssignedRuntimeInstanceId}'"
-                                }
-                            };
-                        }
+                            dispatchedLocalRunId,
+                            dispatchResult.ExecutionId,
+                            queueItem.ClaimToken);
 
                         var completedAtUtcSuccess =
                             DateTimeOffset.UtcNow;
@@ -1005,11 +1126,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                         completedAtUtc),
                     Diagnostics = new[]
                     {
-                        exception.Message,
-                        $"ExceptionType='{exception.GetType().FullName}'",
-                        $"OwnedSharedRunId='{ownedQueueItem?.SharedRunId}'",
-                        $"OwnedQueueStatus='{ownedQueueItem?.Status}'",
-                        $"OwnedClaimTokenPresent='{!string.IsNullOrWhiteSpace(ownedQueueItem?.ClaimToken)}'"
+                         exception.Message,
+                         $"ExceptionType='{exception.GetType().FullName}'",
+                         $"OwnedSharedRunId='{ownedQueueItem?.SharedRunId}'",
+                         $"OwnedQueueStatus='{ownedQueueItem?.Status}'",
+                         $"OwnedClaimTokenPresent='{!string.IsNullOrWhiteSpace(ownedQueueItem?.ClaimToken)}'"
                     }
                 };
             }
