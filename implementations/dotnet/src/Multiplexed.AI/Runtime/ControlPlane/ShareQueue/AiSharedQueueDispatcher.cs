@@ -137,6 +137,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
             var startedAtUtc = DateTimeOffset.UtcNow;
             string? reservedRuntimeInstanceId = null;
             string? reservedSharedRunId = null;
+            AiSharedQueueItem? ownedQueueItem = null;
 
             _logger.LogDebug(
                 "Shared queue dispatch started. PumpRuntimeInstanceId={PumpRuntimeInstanceId}, WorkerId={WorkerId}, TenantId={TenantId}, PipelineKey={PipelineKey}, ClaimTtlMs={ClaimTtlMs}, CorrelationId={CorrelationId}",
@@ -157,7 +158,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                             cancellationToken)
                         .ConfigureAwait(false);
 
-                var queueItem = await _sharedQueue
+                ownedQueueItem = await _sharedQueue
                     .ClaimNextAsync(
                         new AiSharedQueueClaimRequest
                         {
@@ -173,6 +174,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                         },
                         cancellationToken)
                     .ConfigureAwait(false);
+
+                var queueItem = ownedQueueItem;
 
                 if (queueItem is null)
                 {
@@ -773,6 +776,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                             };
                         }
 
+                        ownedQueueItem =
+                            dispatchedQueueItem;
+
                         _logger.LogDebug(
                             "Shared queue item marked as dispatched before shared run persistence. SharedRunId={SharedRunId}, ControlPlaneId={ControlPlaneId}, RuntimeInstanceId={RuntimeInstanceId}, ClaimToken={ClaimToken}",
                             queueItem.SharedRunId,
@@ -927,11 +933,53 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
             {
                 _logger.LogError(
                     exception,
-                    "Shared queue dispatch failed with exception. PumpRuntimeInstanceId={PumpRuntimeInstanceId}, WorkerId={WorkerId}, ReservedSharedRunId={ReservedSharedRunId}, ReservedRuntimeInstanceId={ReservedRuntimeInstanceId}",
+                    "Shared queue dispatch failed with exception. " +
+                    "PumpRuntimeInstanceId={PumpRuntimeInstanceId}, " +
+                    "WorkerId={WorkerId}, " +
+                    "OwnedSharedRunId={OwnedSharedRunId}, " +
+                    "OwnedQueueStatus={OwnedQueueStatus}, " +
+                    "OwnedClaimToken={OwnedClaimToken}, " +
+                    "ReservedSharedRunId={ReservedSharedRunId}, " +
+                    "ReservedRuntimeInstanceId={ReservedRuntimeInstanceId}",
                     request.RuntimeInstanceId,
                     request.WorkerId,
+                    ownedQueueItem?.SharedRunId,
+                    ownedQueueItem?.Status,
+                    ownedQueueItem?.ClaimToken,
                     reservedSharedRunId,
                     reservedRuntimeInstanceId);
+
+                /*
+                 * Cleanup must not reuse the failing operation cancellation token.
+                 * Once ownership has been acquired, an unhandled exception must not
+                 * leave the queue item permanently Claimed or Dispatched.
+                 */
+                if (ownedQueueItem is not null)
+                {
+                    var requeueReason =
+                        "Unhandled shared queue dispatch exception: " +
+                        $"{exception.GetType().Name}: {exception.Message}";
+
+                    if (ownedQueueItem.Status ==
+                        AiSharedQueueItemStatus.Dispatched)
+                    {
+                        await RequeueDispatchedBestEffortAsync(
+                                ownedQueueItem,
+                                requeueReason,
+                                ownedQueueItem.Metadata,
+                                CancellationToken.None)
+                            .ConfigureAwait(false);
+                    }
+                    else if (ownedQueueItem.Status ==
+                             AiSharedQueueItemStatus.Claimed)
+                    {
+                        await RequeueBestEffortAsync(
+                                ownedQueueItem,
+                                requeueReason,
+                                CancellationToken.None)
+                            .ConfigureAwait(false);
+                    }
+                }
 
                 await ReleaseReservationBestEffortAsync(
                         reservedSharedRunId,
@@ -945,13 +993,24 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                 return new AiSharedQueueDispatchResult
                 {
                     Success = false,
+                    SharedRunId = ownedQueueItem?.SharedRunId,
                     RuntimeInstanceId = request.RuntimeInstanceId,
+                    QueueItem = ownedQueueItem,
                     Message = "Shared queue dispatch failed.",
                     FailureReason = exception.Message,
                     StartedAtUtc = startedAtUtc,
                     CompletedAtUtc = completedAtUtc,
-                    DurationMs = CalculateDurationMs(startedAtUtc, completedAtUtc),
-                    Diagnostics = new[] { exception.Message }
+                    DurationMs = CalculateDurationMs(
+                        startedAtUtc,
+                        completedAtUtc),
+                    Diagnostics = new[]
+                    {
+                        exception.Message,
+                        $"ExceptionType='{exception.GetType().FullName}'",
+                        $"OwnedSharedRunId='{ownedQueueItem?.SharedRunId}'",
+                        $"OwnedQueueStatus='{ownedQueueItem?.Status}'",
+                        $"OwnedClaimTokenPresent='{!string.IsNullOrWhiteSpace(ownedQueueItem?.ClaimToken)}'"
+                    }
                 };
             }
         }
@@ -1524,50 +1583,127 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
         }
 
         /// <summary>
-        /// Attempts to requeue a claimed queue item without masking the original failure.
+        /// Attempts to requeue a claimed queue item without masking the original
+        /// dispatch failure.
         /// </summary>
-        private async Task RequeueBestEffortAsync(
+        /// <param name="queueItem">The claimed queue item.</param>
+        /// <param name="reason">The requeue reason.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <returns>
+        /// <c>true</c> when the item is pending after the operation; otherwise,
+        /// <c>false</c>.
+        /// </returns>
+        private async Task<bool> RequeueBestEffortAsync(
             AiSharedQueueItem queueItem,
             string reason,
             CancellationToken cancellationToken)
         {
-            if (string.IsNullOrWhiteSpace(queueItem.ClaimToken))
+            ArgumentNullException.ThrowIfNull(queueItem);
+
+            if (string.IsNullOrWhiteSpace(
+                    queueItem.ClaimToken))
             {
                 _logger.LogWarning(
-                    "Shared queue item could not be requeued because claim token is missing. SharedRunId={SharedRunId}, ControlPlaneId={ControlPlaneId}, Reason={Reason}",
+                    "Shared queue item could not be requeued because claim token is missing. " +
+                    "SharedRunId={SharedRunId}, ControlPlaneId={ControlPlaneId}, " +
+                    "Status={Status}, Reason={Reason}",
                     queueItem.SharedRunId,
                     queueItem.ControlPlaneId,
+                    queueItem.Status,
                     reason);
 
-                return;
+                return false;
             }
 
             try
             {
-                await _sharedQueue
-                    .RequeueAsync(
-                        queueItem.SharedRunId,
-                        queueItem.ClaimToken,
-                        reason,
-                        cancellationToken)
-                    .ConfigureAwait(false);
+                var requeued =
+                    await _sharedQueue
+                        .RequeueAsync(
+                            queueItem.SharedRunId,
+                            queueItem.ClaimToken,
+                            reason,
+                            cancellationToken)
+                        .ConfigureAwait(false);
 
-                _logger.LogDebug(
-                    "Shared queue item requeued. SharedRunId={SharedRunId}, ControlPlaneId={ControlPlaneId}, ClaimToken={ClaimToken}, Reason={Reason}",
+                if (requeued is not null)
+                {
+                    _logger.LogDebug(
+                        "Shared queue item requeued. " +
+                        "SharedRunId={SharedRunId}, ControlPlaneId={ControlPlaneId}, " +
+                        "ClaimToken={ClaimToken}, Status={Status}, Reason={Reason}",
+                        queueItem.SharedRunId,
+                        queueItem.ControlPlaneId,
+                        queueItem.ClaimToken,
+                        requeued.Status,
+                        reason);
+
+                    return true;
+                }
+
+                /*
+                 * Re-read the item to distinguish an idempotent already-pending
+                 * transition from a rejected claim ownership transition.
+                 */
+                var current =
+                    await _sharedQueue
+                        .GetAsync(
+                            queueItem.SharedRunId,
+                            cancellationToken)
+                        .ConfigureAwait(false);
+
+                if (current is
+                    {
+                        Status: AiSharedQueueItemStatus.Pending
+                    })
+                {
+                    _logger.LogDebug(
+                        "Shared queue item was already pending after requeue returned null. " +
+                        "SharedRunId={SharedRunId}, ControlPlaneId={ControlPlaneId}, " +
+                        "OriginalClaimToken={OriginalClaimToken}, CurrentReason={CurrentReason}",
+                        queueItem.SharedRunId,
+                        queueItem.ControlPlaneId,
+                        queueItem.ClaimToken,
+                        current.Reason);
+
+                    return true;
+                }
+
+                _logger.LogWarning(
+                    "Shared queue item requeue was rejected and the item is not pending. " +
+                    "SharedRunId={SharedRunId}, ControlPlaneId={ControlPlaneId}, " +
+                    "OriginalStatus={OriginalStatus}, CurrentStatus={CurrentStatus}, " +
+                    "OriginalClaimToken={OriginalClaimToken}, CurrentClaimToken={CurrentClaimToken}, " +
+                    "CurrentClaimedByRuntimeInstanceId={CurrentClaimedByRuntimeInstanceId}, " +
+                    "CurrentClaimedByWorkerId={CurrentClaimedByWorkerId}, " +
+                    "CurrentClaimExpiresAtUtc={CurrentClaimExpiresAtUtc}, Reason={Reason}",
                     queueItem.SharedRunId,
                     queueItem.ControlPlaneId,
+                    queueItem.Status,
+                    current?.Status,
                     queueItem.ClaimToken,
+                    current?.ClaimToken,
+                    current?.ClaimedByRuntimeInstanceId,
+                    current?.ClaimedByWorkerId,
+                    current?.ClaimExpiresAtUtc,
                     reason);
+
+                return false;
             }
             catch (Exception exception)
             {
                 _logger.LogWarning(
                     exception,
-                    "Shared queue item requeue failed. SharedRunId={SharedRunId}, ControlPlaneId={ControlPlaneId}, ClaimToken={ClaimToken}, Reason={Reason}",
+                    "Shared queue item requeue failed. " +
+                    "SharedRunId={SharedRunId}, ControlPlaneId={ControlPlaneId}, " +
+                    "ClaimToken={ClaimToken}, Status={Status}, Reason={Reason}",
                     queueItem.SharedRunId,
                     queueItem.ControlPlaneId,
                     queueItem.ClaimToken,
+                    queueItem.Status,
                     reason);
+
+                return false;
             }
         }
 

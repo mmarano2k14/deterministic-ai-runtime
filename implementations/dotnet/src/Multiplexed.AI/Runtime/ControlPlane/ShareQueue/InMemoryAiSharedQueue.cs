@@ -69,6 +69,134 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue
             return Task.FromResult<IReadOnlyList<AiSharedQueueItem>>(items);
         }
 
+
+        /// <inheritdoc />
+        public Task<AiSharedQueueItem?> ClaimAsync(
+            string sharedRunId,
+            AiSharedQueueClaimRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(sharedRunId);
+            ArgumentNullException.ThrowIfNull(request);
+            ArgumentException.ThrowIfNullOrWhiteSpace(
+                request.RuntimeInstanceId);
+
+            cancellationToken.ThrowIfCancellationRequested();
+
+            while (true)
+            {
+                if (!_items.TryGetValue(
+                        sharedRunId,
+                        out var existing))
+                {
+                    return Task.FromResult<AiSharedQueueItem?>(
+                        null);
+                }
+
+                if (existing.Status !=
+                    AiSharedQueueItemStatus.Pending)
+                {
+                    return Task.FromResult<AiSharedQueueItem?>(
+                        null);
+                }
+
+                if (!MatchesTenant(
+                        existing,
+                        request.TenantId))
+                {
+                    return Task.FromResult<AiSharedQueueItem?>(
+                        null);
+                }
+
+                if (!MatchesPipeline(
+                        existing,
+                        request.PipelineKey))
+                {
+                    return Task.FromResult<AiSharedQueueItem?>(
+                        null);
+                }
+
+                if (!string.IsNullOrWhiteSpace(
+                        request.ControlPlaneId) &&
+                    !string.Equals(
+                        existing.ControlPlaneId,
+                        request.ControlPlaneId,
+                        StringComparison.Ordinal))
+                {
+                    return Task.FromResult<AiSharedQueueItem?>(
+                        null);
+                }
+
+                var now =
+                    DateTimeOffset.UtcNow;
+
+                var claimTtl =
+                    request.ClaimTtl <= TimeSpan.Zero
+                        ? TimeSpan.FromSeconds(30)
+                        : request.ClaimTtl;
+
+                var claimed =
+                    new AiSharedQueueItem
+                    {
+                        SharedRunId =
+                            existing.SharedRunId,
+
+                        ControlPlaneId =
+                            existing.ControlPlaneId,
+
+                        Status =
+                            AiSharedQueueItemStatus.Claimed,
+
+                        ExecutionContextSnapshot =
+                            existing.ExecutionContextSnapshot,
+
+                        PipelineKey =
+                            existing.PipelineKey,
+
+                        Priority =
+                            existing.Priority,
+
+                        ClaimedByRuntimeInstanceId =
+                            request.RuntimeInstanceId,
+
+                        ClaimedByWorkerId =
+                            request.WorkerId,
+
+                        ClaimToken =
+                            Guid.NewGuid().ToString("N"),
+
+                        EnqueuedAtUtc =
+                            existing.EnqueuedAtUtc,
+
+                        UpdatedAtUtc =
+                            now,
+
+                        ClaimedAtUtc =
+                            now,
+
+                        ClaimExpiresAtUtc =
+                            now.Add(claimTtl),
+
+                        Reason =
+                            request.Reason,
+
+                        Metadata =
+                            existing.Metadata
+                    };
+
+                if (_items.TryUpdate(
+                        sharedRunId,
+                        claimed,
+                        existing))
+                {
+                    return Task.FromResult<AiSharedQueueItem?>(
+                        claimed);
+                }
+
+                cancellationToken.ThrowIfCancellationRequested();
+            }
+        }
+
         /// <inheritdoc />
         public Task<AiSharedQueueItem?> ClaimNextAsync(
             AiSharedQueueClaimRequest request,

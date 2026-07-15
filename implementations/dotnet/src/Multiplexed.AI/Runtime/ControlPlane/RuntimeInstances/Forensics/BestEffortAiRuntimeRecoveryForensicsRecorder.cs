@@ -12,12 +12,15 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics
     /// </summary>
     public sealed class BestEffortAiRuntimeRecoveryForensicsRecorder : IAiRuntimeRecoveryForensicsRecorder
     {
+        private const string ResumeContextSeededEventType = "resume.context.seeded";
+
         private readonly IAiRuntimeRecoveryForensicsStore _store;
         private readonly AiRuntimeRecoveryForensicsOptions _options;
         private readonly ILogger<BestEffortAiRuntimeRecoveryForensicsRecorder> _logger;
 
         /// <summary>
-        /// Initializes a new instance of the <see cref="BestEffortAiRuntimeRecoveryForensicsRecorder"/> class.
+        /// Initializes a new instance of the
+        /// <see cref="BestEffortAiRuntimeRecoveryForensicsRecorder"/> class.
         /// </summary>
         /// <param name="store">The runtime recovery forensics store.</param>
         /// <param name="options">The runtime recovery forensics options.</param>
@@ -33,7 +36,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics
         }
 
         /// <inheritdoc />
-        public async Task RecordAsync(AiRuntimeRecoveryForensicsRecord record, CancellationToken cancellationToken = default)
+        public async Task RecordAsync(
+            AiRuntimeRecoveryForensicsRecord record,
+            CancellationToken cancellationToken = default)
         {
             ArgumentNullException.ThrowIfNull(record);
 
@@ -44,20 +49,43 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics
 
             try
             {
-                await _store.UpsertAsync(record, cancellationToken).ConfigureAwait(false);
+                await _store
+                    .UpsertAsync(record, cancellationToken)
+                    .ConfigureAwait(false);
             }
-            catch (Exception ex) when (!_options.StrictPersistence)
+            catch (Exception ex)
             {
+                if (_options.StrictPersistence)
+                {
+                    _logger.LogError(
+                        ex,
+                        "Failed to persist runtime recovery forensics record. " +
+                        "ForensicsId={ForensicsId} ExecutionId={ExecutionId} " +
+                        "ExceptionType={ExceptionType} ExceptionMessage={ExceptionMessage}",
+                        record.Identity.ForensicsId,
+                        record.Identity.ExecutionId,
+                        ex.GetType().FullName,
+                        ex.Message);
+
+                    throw;
+                }
+
                 _logger.LogWarning(
                     ex,
-                    "Failed to persist runtime recovery forensics record. ForensicsId={ForensicsId} ExecutionId={ExecutionId}",
+                    "Failed to persist runtime recovery forensics record. " +
+                    "ForensicsId={ForensicsId} ExecutionId={ExecutionId} " +
+                    "ExceptionType={ExceptionType} ExceptionMessage={ExceptionMessage}",
                     record.Identity.ForensicsId,
-                    record.Identity.ExecutionId);
+                    record.Identity.ExecutionId,
+                    ex.GetType().FullName,
+                    ex.Message);
             }
         }
 
         /// <inheritdoc />
-        public async Task RecordEventAsync(AiRuntimeRecoveryForensicsEvent evt, CancellationToken cancellationToken = default)
+        public async Task RecordEventAsync(
+            AiRuntimeRecoveryForensicsEvent evt,
+            CancellationToken cancellationToken = default)
         {
             ArgumentNullException.ThrowIfNull(evt);
 
@@ -66,17 +94,65 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics
                 return;
             }
 
+            var diagnoseResumeContextSeeded = string.Equals(
+                evt.EventType,
+                ResumeContextSeededEventType,
+                StringComparison.Ordinal);
+
             try
             {
-                await _store.AppendEventAsync(evt.ForensicsId, evt, cancellationToken).ConfigureAwait(false);
+                if (diagnoseResumeContextSeeded)
+                {
+                    _logger.LogWarning(
+                        "[FORENSICS DIAGNOSTIC BEFORE] " +
+                        "ForensicsId={ForensicsId} EventId={EventId} EventType={EventType}",
+                        evt.ForensicsId,
+                        evt.EventId,
+                        evt.EventType);
+                }
+
+                await _store
+                    .AppendEventAsync(evt.ForensicsId, evt, cancellationToken)
+                    .ConfigureAwait(false);
+
+                if (diagnoseResumeContextSeeded)
+                {
+                    _logger.LogWarning(
+                        "[FORENSICS DIAGNOSTIC AFTER] " +
+                        "ForensicsId={ForensicsId} EventId={EventId} EventType={EventType}",
+                        evt.ForensicsId,
+                        evt.EventId,
+                        evt.EventType);
+                }
             }
-            catch (Exception ex) when (!_options.StrictPersistence)
+            catch (Exception ex)
             {
+                if (_options.StrictPersistence)
+                {
+                    _logger.LogError(
+                        ex,
+                        "Failed to persist runtime recovery forensics event. " +
+                        "ForensicsId={ForensicsId} EventId={EventId} EventType={EventType} " +
+                        "ExceptionType={ExceptionType} ExceptionMessage={ExceptionMessage}",
+                        evt.ForensicsId,
+                        evt.EventId,
+                        evt.EventType,
+                        ex.GetType().FullName,
+                        ex.Message);
+
+                    throw;
+                }
+
                 _logger.LogWarning(
                     ex,
-                    "Failed to persist runtime recovery forensics event. ForensicsId={ForensicsId} EventType={EventType}",
+                    "Failed to persist runtime recovery forensics event. " +
+                    "ForensicsId={ForensicsId} EventId={EventId} EventType={EventType} " +
+                    "ExceptionType={ExceptionType} ExceptionMessage={ExceptionMessage}",
                     evt.ForensicsId,
-                    evt.EventType);
+                    evt.EventId,
+                    evt.EventType,
+                    ex.GetType().FullName,
+                    ex.Message);
             }
         }
     }

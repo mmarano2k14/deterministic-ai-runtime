@@ -363,6 +363,180 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
         }
 
         /// <inheritdoc />
+        public async Task<AiSharedQueueItem?> ClaimAsync(
+            string sharedRunId,
+            AiSharedQueueClaimRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(sharedRunId);
+            ArgumentNullException.ThrowIfNull(request);
+            ArgumentException.ThrowIfNullOrWhiteSpace(
+                request.RuntimeInstanceId);
+
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var controlPlaneId =
+                await ResolveControlPlaneIdAsync(
+                        request.ControlPlaneId,
+                        request.Metadata,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+            var now =
+                DateTimeOffset.UtcNow;
+
+            var claimTtl =
+                request.ClaimTtl <= TimeSpan.Zero
+                    ? TimeSpan.FromSeconds(30)
+                    : request.ClaimTtl;
+
+            var claimToken =
+                Guid.NewGuid().ToString("N");
+
+            var effectiveTenantId =
+                string.IsNullOrWhiteSpace(request.TenantId)
+                    ? null
+                    : request.TenantId;
+
+            var tenantPendingIndexKey =
+                string.IsNullOrWhiteSpace(effectiveTenantId)
+                    ? (RedisKey)string.Empty
+                    : BuildTenantPendingIndexKey(
+                        controlPlaneId,
+                        effectiveTenantId);
+
+            var result =
+                await _scripts
+                    .ExecuteClaimAsync(
+                        _database,
+                        new RedisKey[]
+                        {
+                    BuildItemKey(
+                        controlPlaneId,
+                        sharedRunId),
+
+                    BuildPendingIndexKey(
+                        controlPlaneId),
+
+                    tenantPendingIndexKey
+                        },
+                        new RedisValue[]
+                        {
+                    sharedRunId,
+                    request.RuntimeInstanceId,
+                    request.WorkerId ?? string.Empty,
+                    claimToken,
+                    FormatDate(now),
+                    FormatDate(now.Add(claimTtl)),
+                    effectiveTenantId ?? string.Empty,
+                    request.PipelineKey ?? string.Empty,
+                    request.Reason ?? string.Empty
+                        })
+                    .ConfigureAwait(false);
+
+            var status =
+                result.ToString();
+
+            if (string.Equals(
+                    status,
+                    "missing",
+                    StringComparison.Ordinal) ||
+                string.Equals(
+                    status,
+                    "not-pending",
+                    StringComparison.Ordinal) ||
+                string.Equals(
+                    status,
+                    "shared-run-mismatch",
+                    StringComparison.Ordinal) ||
+                string.Equals(
+                    status,
+                    "tenant-mismatch",
+                    StringComparison.Ordinal) ||
+                string.Equals(
+                    status,
+                    "pipeline-mismatch",
+                    StringComparison.Ordinal))
+            {
+                return null;
+            }
+
+            if (string.Equals(
+                    status,
+                    "invalid-snapshot",
+                    StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    $"Shared queue item '{sharedRunId}' contains an invalid execution context snapshot.");
+            }
+
+            if (!string.Equals(
+                    status,
+                    "claimed",
+                    StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    $"Unexpected Redis targeted claim result for shared queue item '{sharedRunId}': '{status}'.");
+            }
+
+            var rawItem =
+                await GetRawAsync(
+                        controlPlaneId,
+                        sharedRunId,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+            if (rawItem is null)
+            {
+                return null;
+            }
+
+            if (!BelongsToControlPlane(
+                    rawItem.ControlPlaneId,
+                    controlPlaneId))
+            {
+                await CleanupItemAsync(
+                        controlPlaneId,
+                        sharedRunId,
+                        rawItem.ExecutionContextSnapshot.TenantId,
+                        deleteItem: true)
+                    .ConfigureAwait(false);
+
+                return null;
+            }
+
+            var item =
+                EnsureControlPlaneId(
+                    rawItem,
+                    controlPlaneId);
+
+            if (!BelongsToTenant(
+                    item,
+                    effectiveTenantId))
+            {
+                return null;
+            }
+
+            if (!string.Equals(
+                    item.SharedRunId,
+                    sharedRunId,
+                    StringComparison.Ordinal) ||
+                item.Status != AiSharedQueueItemStatus.Claimed ||
+                !string.Equals(
+                    item.ClaimToken,
+                    claimToken,
+                    StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    $"Redis targeted claim postcondition failed for shared queue item '{sharedRunId}'. " +
+                    $"Status='{item.Status}', " +
+                    $"ClaimTokenMatches='{string.Equals(item.ClaimToken, claimToken, StringComparison.Ordinal)}'.");
+            }
+
+            return item;
+        }
+
+        /// <inheritdoc />
         public async Task<AiSharedQueueItem?> ClaimNextAsync(
             AiSharedQueueClaimRequest request,
             CancellationToken cancellationToken = default)

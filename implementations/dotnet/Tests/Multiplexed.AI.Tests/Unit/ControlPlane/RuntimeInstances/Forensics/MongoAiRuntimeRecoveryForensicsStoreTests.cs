@@ -1,11 +1,12 @@
-﻿using System;
-using System.Linq;
-using System.Threading.Tasks;
-using FluentAssertions;
+﻿using FluentAssertions;
 using Microsoft.Extensions.Options;
 using MongoDB.Driver;
+using MongoDB.Driver.Core.Events;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Forensics;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics;
+using System;
+using System.Linq;
+using System.Threading.Tasks;
 using Xunit;
 
 namespace Multiplexed.AI.Tests.Runtime.ControlPlane.RuntimeInstances.Forensics
@@ -256,6 +257,252 @@ namespace Multiplexed.AI.Tests.Runtime.ControlPlane.RuntimeInstances.Forensics
         }
 
         /// <summary>
+        /// Verifies that concurrent event appends do not lose uniquely identified
+        /// recovery timeline events for the same forensics record.
+        /// </summary>
+        [Fact]
+        public async Task AppendEventAsync_Should_Not_Lose_Unique_Events_When_Appended_Concurrently()
+        {
+            var fixture = await TryCreateFixtureAsync();
+
+            if (fixture is null)
+            {
+                return;
+            }
+
+            await using (fixture)
+            {
+                const int eventCount = 100;
+
+                var store = fixture.CreateStore();
+                var forensicsId = $"mongo-forensics-concurrent-{Guid.NewGuid():N}";
+                var executionId = $"mongo-execution-concurrent-{Guid.NewGuid():N}";
+                var sharedRunId = $"mongo-shared-run-concurrent-{Guid.NewGuid():N}";
+                var startedAtUtc = DateTimeOffset.UtcNow;
+
+                await store.UpsertAsync(
+                    CreateRecord(
+                        forensicsId,
+                        executionId,
+                        sharedRunId));
+
+                var events = Enumerable
+                    .Range(0, eventCount)
+                    .Select(index =>
+                        CreateEvent(
+                            $"mongo-event-concurrent-{index:D3}",
+                            forensicsId,
+                            index % 2 == 0
+                                ? AiRuntimeRecoveryForensicsEventType.ResumeContextSeeded
+                                : AiRuntimeRecoveryForensicsEventType.DagResumeStarted,
+                            executionId,
+                            sharedRunId,
+                            $"local-run-{index:D3}",
+                            $"runtime-{index:D3}",
+                            startedAtUtc.AddMilliseconds(index)))
+                    .ToArray();
+
+                var startGate = new TaskCompletionSource<bool>(
+                    TaskCreationOptions.RunContinuationsAsynchronously);
+
+                var appendTasks = events
+                    .Select(
+                        async evt =>
+                        {
+                            await startGate.Task.ConfigureAwait(false);
+
+                            await store
+                                .AppendEventAsync(
+                                    forensicsId,
+                                    evt)
+                                .ConfigureAwait(false);
+                        })
+                    .ToArray();
+
+                startGate.SetResult(true);
+
+                await Task.WhenAll(appendTasks);
+
+                var loaded = await store.GetByForensicsIdAsync(forensicsId);
+
+                loaded.Should().NotBeNull();
+
+                loaded!.Events
+                    .Should()
+                    .HaveCount(eventCount);
+
+                loaded.Events
+                    .Select(x => x.EventId)
+                    .Should()
+                    .OnlyHaveUniqueItems()
+                    .And
+                    .BeEquivalentTo(events.Select(x => x.EventId));
+            }
+        }
+
+        /// <summary>
+        /// Verifies that an upsert based on an older document snapshot does not
+        /// overwrite an event appended after that snapshot was read.
+        /// </summary>
+        [Fact]
+        public async Task UpsertAsync_Should_Not_Overwrite_Event_Appended_After_Its_Read()
+        {
+            var fixture = await TryCreateFixtureAsync();
+
+            if (fixture is null)
+            {
+                return;
+            }
+
+            await using (fixture)
+            {
+                var connectionString =
+                    Environment.GetEnvironmentVariable(
+                        MongoConnectionStringEnvironmentVariable);
+
+                connectionString.Should().NotBeNullOrWhiteSpace();
+
+                var forensicsId =
+                    $"mongo-forensics-upsert-append-race-{Guid.NewGuid():N}";
+
+                var executionId =
+                    $"mongo-execution-upsert-append-race-{Guid.NewGuid():N}";
+
+                var sharedRunId =
+                    $"mongo-shared-run-upsert-append-race-{Guid.NewGuid():N}";
+
+                var eventId =
+                    $"mongo-event-upsert-append-race-{Guid.NewGuid():N}";
+
+                var initialRecord =
+                    CreateRecord(
+                        forensicsId,
+                        executionId,
+                        sharedRunId);
+
+                var normalStore =
+                    fixture.CreateStore();
+
+                await normalStore
+                    .UpsertAsync(initialRecord)
+                    .ConfigureAwait(false);
+
+                var replaceCommandReached =
+                    new TaskCompletionSource<bool>(
+                        TaskCreationOptions.RunContinuationsAsynchronously);
+
+                using var releaseReplaceCommand =
+                    new ManualResetEventSlim(false);
+
+                var interceptedUpdateCount = 0;
+
+                var blockingClientSettings =
+                    MongoClientSettings.FromConnectionString(
+                        connectionString!);
+
+                blockingClientSettings.ClusterConfigurator =
+                    clusterBuilder =>
+                    {
+                        clusterBuilder.Subscribe<CommandStartedEvent>(
+                            commandEvent =>
+                            {
+                                if (!string.Equals(
+                                        commandEvent.CommandName,
+                                        "update",
+                                        StringComparison.Ordinal) ||
+                                    Interlocked.CompareExchange(
+                                        ref interceptedUpdateCount,
+                                        1,
+                                        0) != 0)
+                                {
+                                    return;
+                                }
+
+                                replaceCommandReached.TrySetResult(true);
+
+                                if (!releaseReplaceCommand.Wait(
+                                        TimeSpan.FromSeconds(30)))
+                                {
+                                    throw new TimeoutException(
+                                        "Timed out while waiting to release the blocked MongoDB replace command.");
+                                }
+                            });
+                    };
+
+                var blockingClient =
+                    new MongoClient(blockingClientSettings);
+
+                var blockingDatabase =
+                    blockingClient.GetDatabase(
+                        fixture.DatabaseName);
+
+                var staleUpsertStore =
+                    fixture.CreateStore(blockingDatabase);
+
+                var staleRecord =
+                    initialRecord with
+                    {
+                        UpdatedAtUtc =
+                            initialRecord.UpdatedAtUtc.AddSeconds(10),
+
+                        Recovery =
+                            initialRecord.Recovery! with
+                            {
+                                Reason =
+                                    "stale-upsert-after-document-read"
+                            }
+                    };
+
+                var staleUpsertTask =
+                    staleUpsertStore.UpsertAsync(staleRecord);
+
+                try
+                {
+                    await replaceCommandReached
+                        .Task
+                        .WaitAsync(TimeSpan.FromSeconds(10))
+                        .ConfigureAwait(false);
+
+                    await normalStore
+                        .AppendEventAsync(
+                            forensicsId,
+                            CreateEvent(
+                                eventId,
+                                forensicsId,
+                                AiRuntimeRecoveryForensicsEventType.ResumeContextSeeded,
+                                executionId,
+                                sharedRunId,
+                                "replacement-local-run",
+                                "replacement-runtime",
+                                DateTimeOffset.UtcNow))
+                        .ConfigureAwait(false);
+                }
+                finally
+                {
+                    releaseReplaceCommand.Set();
+                }
+
+                await staleUpsertTask
+                    .ConfigureAwait(false);
+
+                var loaded =
+                    await normalStore
+                        .GetByForensicsIdAsync(forensicsId)
+                        .ConfigureAwait(false);
+
+                loaded.Should().NotBeNull();
+
+                loaded!.Events
+                    .Should()
+                    .ContainSingle(
+                        evt => string.Equals(
+                            evt.EventId,
+                            eventId,
+                            StringComparison.Ordinal));
+            }
+        }
+
+        /// <summary>
         /// Tries to create a MongoDB fixture.
         /// </summary>
         /// <returns>The fixture when MongoDB test configuration is available; otherwise, null.</returns>
@@ -435,6 +682,11 @@ namespace Multiplexed.AI.Tests.Runtime.ControlPlane.RuntimeInstances.Forensics
         {
             private readonly IMongoDatabase _database;
             private readonly string _collectionName;
+            /// <summary>
+            /// Gets the isolated MongoDB database name.
+            /// </summary>
+            public string DatabaseName =>
+                _database.DatabaseNamespace.DatabaseName;
 
             /// <summary>
             /// Initializes a new instance of the <see cref="MongoForensicsTestFixture"/> class.
@@ -456,16 +708,21 @@ namespace Multiplexed.AI.Tests.Runtime.ControlPlane.RuntimeInstances.Forensics
             /// <summary>
             /// Creates the MongoDB recovery forensics store.
             /// </summary>
+            /// <param name="database">
+            /// The optional MongoDB database instance. When omitted, the fixture database is used.
+            /// </param>
             /// <returns>The MongoDB recovery forensics store.</returns>
-            public MongoAiRuntimeRecoveryForensicsStore CreateStore()
+            public MongoAiRuntimeRecoveryForensicsStore CreateStore(
+                IMongoDatabase? database = null)
             {
                 return new MongoAiRuntimeRecoveryForensicsStore(
-                    _database,
-                    Options.Create(new AiRuntimeRecoveryForensicsMongoOptions
-                    {
-                        CollectionName = _collectionName,
-                        EnsureIndexes = true
-                    }));
+                    database ?? _database,
+                    Options.Create(
+                        new AiRuntimeRecoveryForensicsMongoOptions
+                        {
+                            CollectionName = _collectionName,
+                            EnsureIndexes = true
+                        }));
             }
 
             /// <inheritdoc />

@@ -22,13 +22,15 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
 
         private byte[]? _enqueueSha;
         private byte[]? _claimNextSha;
+        private byte[]? _claimSha;
         private byte[]? _markDispatchedSha;
         private byte[]? _requeueSha;
         private byte[]? _requeueDispatchedSha;
         private byte[]? _cancelSha;
 
         /// <summary>
-        /// Initializes a new instance of the <see cref="RedisAiSharedQueueScriptCache"/> class.
+        /// Initializes a new instance of the
+        /// <see cref="RedisAiSharedQueueScriptCache"/> class.
         /// </summary>
         /// <param name="connection">The Redis connection multiplexer.</param>
         /// <exception cref="ArgumentNullException">
@@ -37,7 +39,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
         public RedisAiSharedQueueScriptCache(
             IConnectionMultiplexer connection)
         {
-            _connection = connection ?? throw new ArgumentNullException(nameof(connection));
+            _connection =
+                connection ??
+                throw new ArgumentNullException(
+                    nameof(connection));
         }
 
         /// <summary>
@@ -68,6 +73,22 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
                 database,
                 ScriptKind.ClaimNext,
                 RedisAiSharedQueueScripts.ClaimNext,
+                keys,
+                values);
+        }
+
+        /// <summary>
+        /// Executes the atomic targeted claim script.
+        /// </summary>
+        public Task<RedisResult> ExecuteClaimAsync(
+            IDatabase database,
+            RedisKey[] keys,
+            RedisValue[] values)
+        {
+            return ExecuteAsync(
+                database,
+                ScriptKind.Claim,
+                RedisAiSharedQueueScripts.Claim,
                 keys,
                 values);
         }
@@ -137,7 +158,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
         }
 
         /// <summary>
-        /// Executes a Lua script by SHA and reloads it automatically when Redis reports NOSCRIPT.
+        /// Executes a Lua script by SHA and reloads it automatically
+        /// when Redis reports NOSCRIPT.
         /// </summary>
         private async Task<RedisResult> ExecuteAsync(
             IDatabase database,
@@ -148,10 +170,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
         {
             ArgumentNullException.ThrowIfNull(database);
 
-            var sha = await GetOrLoadShaAsync(
-                    kind,
-                    script)
-                .ConfigureAwait(false);
+            var sha =
+                await GetOrLoadShaAsync(
+                        kind,
+                        script)
+                    .ConfigureAwait(false);
 
             try
             {
@@ -162,13 +185,15 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
                         values)
                     .ConfigureAwait(false);
             }
-            catch (RedisServerException exception) when (IsNoScript(exception))
+            catch (RedisServerException exception)
+                when (IsNoScript(exception))
             {
-                sha = await ReloadShaAsync(
-                        kind,
-                        script,
-                        forceReload: true)
-                    .ConfigureAwait(false);
+                sha =
+                    await ReloadShaAsync(
+                            kind,
+                            script,
+                            forceReload: true)
+                        .ConfigureAwait(false);
 
                 return await database
                     .ScriptEvaluateAsync(
@@ -186,7 +211,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
             ScriptKind kind,
             string script)
         {
-            var current = GetSha(kind);
+            var current =
+                GetSha(kind);
 
             if (current is not null &&
                 current.Length > 0)
@@ -202,18 +228,22 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
         }
 
         /// <summary>
-        /// Loads or reloads a Lua script into Redis and updates the cached SHA.
+        /// Loads or reloads a Lua script into Redis
+        /// and updates the cached SHA.
         /// </summary>
         private async Task<byte[]> ReloadShaAsync(
             ScriptKind kind,
             string script,
             bool forceReload)
         {
-            await _loadLock.WaitAsync().ConfigureAwait(false);
+            await _loadLock
+                .WaitAsync()
+                .ConfigureAwait(false);
 
             try
             {
-                var current = GetSha(kind);
+                var current =
+                    GetSha(kind);
 
                 if (!forceReload &&
                     current is not null &&
@@ -222,7 +252,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
                     return current;
                 }
 
-                var endpoint = _connection.GetEndPoints().FirstOrDefault();
+                var endpoint =
+                    _connection
+                        .GetEndPoints()
+                        .FirstOrDefault();
 
                 if (endpoint is null)
                 {
@@ -230,11 +263,15 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
                         "No Redis endpoint is available for Lua script loading.");
                 }
 
-                var server = _connection.GetServer(endpoint);
+                var server =
+                    _connection.GetServer(
+                        endpoint);
 
-                var loaded = await server
-                    .ScriptLoadAsync(script)
-                    .ConfigureAwait(false);
+                var loaded =
+                    await server
+                        .ScriptLoadAsync(
+                            script)
+                        .ConfigureAwait(false);
 
                 if (loaded is null ||
                     loaded.Length == 0)
@@ -243,7 +280,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
                         $"Redis returned an empty SHA for shared queue script '{kind}'.");
                 }
 
-                SetSha(kind, loaded);
+                SetSha(
+                    kind,
+                    loaded);
 
                 return loaded;
             }
@@ -272,13 +311,29 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
         {
             return kind switch
             {
-                ScriptKind.Enqueue => _enqueueSha,
-                ScriptKind.ClaimNext => _claimNextSha,
-                ScriptKind.MarkDispatched => _markDispatchedSha,
-                ScriptKind.Requeue => _requeueSha,
-                ScriptKind.RequeueDispatched => _requeueDispatchedSha,
-                ScriptKind.Cancel => _cancelSha,
-                _ => null
+                ScriptKind.Enqueue =>
+                    _enqueueSha,
+
+                ScriptKind.ClaimNext =>
+                    _claimNextSha,
+
+                ScriptKind.Claim =>
+                    _claimSha,
+
+                ScriptKind.MarkDispatched =>
+                    _markDispatchedSha,
+
+                ScriptKind.Requeue =>
+                    _requeueSha,
+
+                ScriptKind.RequeueDispatched =>
+                    _requeueDispatchedSha,
+
+                ScriptKind.Cancel =>
+                    _cancelSha,
+
+                _ =>
+                    null
             };
         }
 
@@ -297,6 +352,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
 
                 case ScriptKind.ClaimNext:
                     _claimNextSha = sha;
+                    break;
+
+                case ScriptKind.Claim:
+                    _claimSha = sha;
                     break;
 
                 case ScriptKind.MarkDispatched:
@@ -350,7 +409,12 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
             /// <summary>
             /// Atomic cancel script.
             /// </summary>
-            Cancel = 5
+            Cancel = 5,
+
+            /// <summary>
+            /// Atomic targeted shared-run claim script.
+            /// </summary>
+            Claim = 6
         }
     }
 }

@@ -5,6 +5,7 @@ using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Scaling;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Store;
+using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Queue;
 using Multiplexed.Abstractions.AI.Execution;
 using Multiplexed.AI.McpServer.Tests.Integration.Fixtures;
 using Multiplexed.AI.McpServer.Tests.Integration.Helpers;
@@ -171,15 +172,42 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
                             refreshedRun.ExecutionId ??
                             indexEntry?.ExecutionId;
 
-                        var kind =
-                            string.IsNullOrWhiteSpace(executionId)
-                                ? RealRuntimeCrashWorkKind.LocalQueued
-                                : RealRuntimeCrashWorkKind.InFlightExecution;
+                        if (indexEntry is null)
+                        {
+                            continue;
+                        }
+
+                        RealRuntimeCrashWorkKind? kind =
+                            null;
+
+                        if (string.Equals(
+                                indexEntry.Status,
+                                "running",
+                                StringComparison.OrdinalIgnoreCase) &&
+                            !string.IsNullOrWhiteSpace(executionId))
+                        {
+                            kind =
+                                RealRuntimeCrashWorkKind.InFlightExecution;
+                        }
+                        else if (string.Equals(
+                                     indexEntry.Status,
+                                     "queued",
+                                     StringComparison.OrdinalIgnoreCase) &&
+                                 string.IsNullOrWhiteSpace(executionId))
+                        {
+                            kind =
+                                RealRuntimeCrashWorkKind.LocalQueued;
+                        }
+
+                        if (kind is null)
+                        {
+                            continue;
+                        }
 
                         works.Add(
                             new RealRuntimeCrashWorkProof
                             {
-                                Kind = kind,
+                                Kind = kind.Value,
                                 SharedRun = refreshedRun,
                                 SharedRunId = refreshedRun.SharedRunId,
                                 LocalRunId = localRunId!,
@@ -215,18 +243,10 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
 
                 if (selectedInventory is not null)
                 {
-                    foreach (var inFlight in selectedInventory.InFlightExecutions)
-                    {
-                        await ProductionRecoveryWaitHelpers
-                            .WaitForDagCompletedStepCountAsync(
-                                dagStore,
-                                inFlight.ExecutionId!,
-                                minimumCompletedStepsBeforeKill,
-                                progressTimeout)
-                            .ConfigureAwait(false);
-                    }
+                    WriteAssignedWorkInventory(
+                        output,
+                        selectedInventory);
 
-                    WriteAssignedWorkInventory(output, selectedInventory);
                     return selectedInventory;
                 }
 
@@ -243,41 +263,395 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
         }
 
         /// <summary>
-        /// Kills the runtime process that owns a real assigned work inventory, waits for automatic recovery,
+        /// Waits until the selected in-flight execution reaches the required progress,
+        /// immediately kills the owning runtime process, waits for automatic recovery,
         /// and verifies strict resume semantics for all in-flight executions.
         /// </summary>
-        public static async Task<RealRuntimeCrashFailedRuntimeRecoveryProof> KillRuntimeAndRecoverAssignedInventoryAsync(
-            ITestOutputHelper output,
-            IAiRuntimeHostProcessControl processControl,
-            IAiRuntimeInstanceRegistry registry,
-            IAiRuntimeRunExecutionIndex runExecutionIndex,
-            IAiSharedRunStore sharedRunStore,
-            IAiDagExecutionStore dagStore,
-            RealRuntimeCrashAssignedWorkInventoryProof inventory,
-            TimeSpan unsafeTimeout,
-            TimeSpan requeueTimeout,
-            TimeSpan redispatchTimeout,
-            TimeSpan executionResolveTimeout)
+        public static async Task<RealRuntimeCrashFailedRuntimeRecoveryProof>
+            KillRuntimeAndRecoverAssignedInventoryAsync(
+                ITestOutputHelper output,
+                IAiRuntimeHostProcessControl processControl,
+                IAiRuntimeInstanceRegistry registry,
+                IAiRuntimeRunExecutionIndex runExecutionIndex,
+                IAiSharedRunStore sharedRunStore,
+                IAiSharedQueue sharedQueue,
+                IAiDagExecutionStore dagStore,
+                RealRuntimeCrashAssignedWorkInventoryProof inventory,
+                int minimumCompletedStepsBeforeKill,
+                TimeSpan progressTimeout,
+                TimeSpan unsafeTimeout,
+                TimeSpan requeueTimeout,
+                TimeSpan redispatchTimeout,
+                TimeSpan executionResolveTimeout)
         {
             ArgumentNullException.ThrowIfNull(output);
             ArgumentNullException.ThrowIfNull(processControl);
             ArgumentNullException.ThrowIfNull(registry);
             ArgumentNullException.ThrowIfNull(runExecutionIndex);
             ArgumentNullException.ThrowIfNull(sharedRunStore);
+            ArgumentNullException.ThrowIfNull(sharedQueue);
             ArgumentNullException.ThrowIfNull(dagStore);
             ArgumentNullException.ThrowIfNull(inventory);
 
+            ArgumentOutOfRangeException.ThrowIfNegativeOrZero(
+                minimumCompletedStepsBeforeKill);
+
+            if (progressTimeout <= TimeSpan.Zero)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(progressTimeout),
+                    progressTimeout,
+                    "The progress timeout must be greater than zero.");
+            }
+
+            var inFlightWork =
+                Assert.Single(
+                    inventory.InFlightExecutions);
+
+            Assert.False(
+                string.IsNullOrWhiteSpace(
+                    inFlightWork.ExecutionId));
+
+            /*
+             * Start local-queued diagnostic reads without awaiting them.
+             * They must never delay observation and termination of the in-flight DAG.
+             */
+            var localQueuedPreKillSnapshotTasks =
+                inventory.LocalQueuedRuns
+                    .Select(CaptureLocalQueuedPreKillSnapshotAsync)
+                    .ToArray();
+
+            var progressDeadline =
+                DateTimeOffset.UtcNow.Add(
+                    progressTimeout);
+
+            RealRuntimeCrashWorkStateSnapshot?
+                observedCrashSnapshot =
+                    null;
+
+            RealRuntimeCrashWorkStateSnapshot?
+                lastObservedInFlightSnapshot =
+                    null;
+
             var killed =
-                await processControl
-                    .KillAsync(inventory.RuntimeInstanceId)
-                    .ConfigureAwait(false);
+                false;
+
+            var killRequestedAtUtc =
+                default(DateTimeOffset);
+
+            var killCompletedAtUtc =
+                default(DateTimeOffset);
+
+            while (DateTimeOffset.UtcNow < progressDeadline)
+            {
+                /*
+                 * Read only the in-flight DAG here.
+                 *
+                 * The runtime execution index is intentionally read last so that
+                 * the lifecycle state used to trigger KillAsync is the freshest
+                 * durable observation.
+                 */
+                var dagState =
+                    await dagStore
+                        .GetStateAsync(
+                            inFlightWork.ExecutionId!)
+                        .ConfigureAwait(false);
+
+                var completedStepCount =
+                    0;
+
+                var totalStepCount =
+                    0;
+
+                var statusBreakdown =
+                    string.Empty;
+
+                if (dagState is not null)
+                {
+                    completedStepCount =
+                        dagState.Steps.Values.Count(step =>
+                            step.Status ==
+                            AiStepExecutionStatus.Completed);
+
+                    totalStepCount =
+                        dagState.Steps.Count;
+
+                    statusBreakdown =
+                        string.Join(
+                            ",",
+                            dagState.Steps.Values
+                                .GroupBy(step => step.Status)
+                                .OrderBy(group => group.Key)
+                                .Select(group =>
+                                    $"{group.Key}:{group.Count()}"));
+                }
+
+                var dagRecord =
+                    await dagStore
+                        .GetRecordAsync(
+                            inFlightWork.ExecutionId!)
+                        .ConfigureAwait(false);
+
+                /*
+                 * This must remain the final durable read before evaluating
+                 * the crash condition and calling KillAsync.
+                 */
+                var indexEntry =
+                    await runExecutionIndex
+                        .GetAsync(
+                            inFlightWork.LocalRunId)
+                        .ConfigureAwait(false);
+
+                var currentInFlightSnapshot =
+                    new RealRuntimeCrashWorkStateSnapshot(
+                        indexEntry?.Status,
+                        indexEntry?.RuntimeInstanceId,
+                        indexEntry?.ExecutionId,
+                        indexEntry?.CompletedAtUtc,
+                        dagRecord?.Status.ToString(),
+                        completedStepCount,
+                        totalStepCount,
+                        statusBreakdown,
+                        DateTimeOffset.UtcNow);
+
+                lastObservedInFlightSnapshot =
+                    currentInFlightSnapshot;
+
+                var runtimeInstanceMatches =
+                    string.Equals(
+                        currentInFlightSnapshot.RuntimeInstanceId,
+                        inventory.RuntimeInstanceId,
+                        StringComparison.Ordinal);
+
+                var executionMatches =
+                    string.Equals(
+                        currentInFlightSnapshot.ExecutionId,
+                        inFlightWork.ExecutionId,
+                        StringComparison.Ordinal);
+
+                var indexIsRunning =
+                    string.Equals(
+                        currentInFlightSnapshot.IndexStatus,
+                        "running",
+                        StringComparison.OrdinalIgnoreCase);
+
+                var dagIsRunning =
+                    string.Equals(
+                        currentInFlightSnapshot.DagStatus,
+                        "Running",
+                        StringComparison.OrdinalIgnoreCase);
+
+                var requiredProgressReached =
+                    currentInFlightSnapshot.DagCompletedStepCount >=
+                    minimumCompletedStepsBeforeKill;
+
+                var executionStillIncomplete =
+                    currentInFlightSnapshot.DagTotalStepCount > 0 &&
+                    currentInFlightSnapshot.DagCompletedStepCount <
+                    currentInFlightSnapshot.DagTotalStepCount;
+
+                if (runtimeInstanceMatches &&
+                    executionMatches &&
+                    indexIsRunning &&
+                    dagIsRunning &&
+                    requiredProgressReached &&
+                    executionStillIncomplete)
+                {
+                    observedCrashSnapshot =
+                        currentInFlightSnapshot;
+
+                    /*
+                     * No additional read, logging operation, delay, or snapshot
+                     * capture is permitted between this timestamp and KillAsync.
+                     */
+                    killRequestedAtUtc =
+                        DateTimeOffset.UtcNow;
+
+                    killed =
+                        await processControl
+                            .KillAsync(
+                                inventory.RuntimeInstanceId)
+                            .ConfigureAwait(false);
+
+                    killCompletedAtUtc =
+                        DateTimeOffset.UtcNow;
+
+                    break;
+                }
+
+                var indexIsCompleted =
+                    string.Equals(
+                        currentInFlightSnapshot.IndexStatus,
+                        "completed",
+                        StringComparison.OrdinalIgnoreCase);
+
+                var dagIsCompleted =
+                    string.Equals(
+                        currentInFlightSnapshot.DagStatus,
+                        "Completed",
+                        StringComparison.OrdinalIgnoreCase);
+
+                var allDagStepsCompleted =
+                    currentInFlightSnapshot.DagTotalStepCount > 0 &&
+                    currentInFlightSnapshot.DagCompletedStepCount >=
+                    currentInFlightSnapshot.DagTotalStepCount;
+
+                if (indexIsCompleted ||
+                    dagIsCompleted ||
+                    allDagStepsCompleted)
+                {
+                    Assert.Fail(
+                        "The selected in-flight execution completed before the runtime process could be killed. " +
+                        $"TenantId='{inventory.Tenant.TenantId}', " +
+                        $"RuntimeInstanceId='{inventory.RuntimeInstanceId}', " +
+                        $"SharedRunId='{inFlightWork.SharedRunId}', " +
+                        $"LocalRunId='{inFlightWork.LocalRunId}', " +
+                        $"ExecutionId='{inFlightWork.ExecutionId}', " +
+                        $"IndexStatus='{currentInFlightSnapshot.IndexStatus}', " +
+                        $"IndexRuntimeInstanceId='{currentInFlightSnapshot.RuntimeInstanceId}', " +
+                        $"IndexExecutionId='{currentInFlightSnapshot.ExecutionId}', " +
+                        $"DagStatus='{currentInFlightSnapshot.DagStatus}', " +
+                        $"CompletedSteps='{currentInFlightSnapshot.DagCompletedStepCount}', " +
+                        $"TotalSteps='{currentInFlightSnapshot.DagTotalStepCount}', " +
+                        $"MinimumCompletedSteps='{minimumCompletedStepsBeforeKill}', " +
+                        $"IndexCompletedAtUtc='{currentInFlightSnapshot.IndexCompletedAtUtc?.ToString("O") ?? string.Empty}', " +
+                        $"CapturedAtUtc='{currentInFlightSnapshot.CapturedAtUtc:O}'.");
+                }
+
+                await Task
+                 .Delay(
+                     TimeSpan.FromMilliseconds(50))
+                 .ConfigureAwait(false);
+            }
+
+            if (observedCrashSnapshot is null)
+            {
+                Assert.Fail(
+                    "The selected in-flight execution did not reach the required crash progress before the timeout. " +
+                    $"TenantId='{inventory.Tenant.TenantId}', " +
+                    $"RuntimeInstanceId='{inventory.RuntimeInstanceId}', " +
+                    $"SharedRunId='{inFlightWork.SharedRunId}', " +
+                    $"LocalRunId='{inFlightWork.LocalRunId}', " +
+                    $"ExecutionId='{inFlightWork.ExecutionId}', " +
+                    $"ExpectedCompletedSteps='{minimumCompletedStepsBeforeKill}', " +
+                    $"LastIndexStatus='{lastObservedInFlightSnapshot?.IndexStatus}', " +
+                    $"LastIndexRuntimeInstanceId='{lastObservedInFlightSnapshot?.RuntimeInstanceId}', " +
+                    $"LastIndexExecutionId='{lastObservedInFlightSnapshot?.ExecutionId}', " +
+                    $"LastDagStatus='{lastObservedInFlightSnapshot?.DagStatus}', " +
+                    $"LastCompletedSteps='{lastObservedInFlightSnapshot?.DagCompletedStepCount}', " +
+                    $"LastTotalSteps='{lastObservedInFlightSnapshot?.DagTotalStepCount}', " +
+                    $"ProgressTimeout='{progressTimeout}'.");
+
+                throw new InvalidOperationException(
+                    "Unreachable assertion path.");
+            }
 
             Assert.True(
                 killed,
-                $"Runtime process was not killed. RuntimeInstanceId='{inventory.RuntimeInstanceId}'.");
+                $"Runtime process was not killed. " +
+                $"TenantId='{inventory.Tenant.TenantId}', " +
+                $"RuntimeInstanceId='{inventory.RuntimeInstanceId}', " +
+                $"ExecutionId='{inFlightWork.ExecutionId}'.");
 
             output.WriteLine(
-                $"[REAL RUNTIME INVENTORY CRASH] Runtime process killed. TenantId='{inventory.Tenant.TenantId}', RuntimeInstanceId='{inventory.RuntimeInstanceId}', WorkCount='{inventory.Works.Count}', InFlight='{inventory.InFlightExecutions.Count}', LocalQueued='{inventory.LocalQueuedRuns.Count}'.");
+                $"[REAL RUNTIME INVENTORY CRASH READY] " +
+                $"TenantId='{inventory.Tenant.TenantId}', " +
+                $"RuntimeInstanceId='{inventory.RuntimeInstanceId}', " +
+                $"SharedRunId='{inFlightWork.SharedRunId}', " +
+                $"LocalRunId='{inFlightWork.LocalRunId}', " +
+                $"ExecutionId='{inFlightWork.ExecutionId}', " +
+                $"IndexStatus='{observedCrashSnapshot.IndexStatus}', " +
+                $"DagStatus='{observedCrashSnapshot.DagStatus}', " +
+                $"CompletedSteps='{observedCrashSnapshot.DagCompletedStepCount}', " +
+                $"TotalSteps='{observedCrashSnapshot.DagTotalStepCount}', " +
+                $"MinimumCompletedSteps='{minimumCompletedStepsBeforeKill}'.");
+
+            /*
+             * Full inventory capture is safe now because the runtime process
+             * has already been terminated.
+             */
+            var postKillSnapshots =
+                await CaptureWorkStateSnapshotsAsync(
+                        runExecutionIndex,
+                        dagStore,
+                        inventory)
+                    .ConfigureAwait(false);
+
+            var localQueuedPreKillSnapshots =
+                await Task
+                    .WhenAll(
+                        localQueuedPreKillSnapshotTasks)
+                    .ConfigureAwait(false);
+
+            var preKillSnapshotMap =
+                localQueuedPreKillSnapshots
+                    .ToDictionary(
+                        pair => pair.Key,
+                        pair => pair.Value,
+                        StringComparer.Ordinal);
+
+            preKillSnapshotMap[inFlightWork.LocalRunId] =
+                observedCrashSnapshot;
+
+            IReadOnlyDictionary<string, RealRuntimeCrashWorkStateSnapshot>
+                preKillSnapshots =
+                    preKillSnapshotMap;
+
+            output.WriteLine(
+                $"[REAL RUNTIME INVENTORY CRASH] Runtime process killed. " +
+                $"TenantId='{inventory.Tenant.TenantId}', " +
+                $"RuntimeInstanceId='{inventory.RuntimeInstanceId}', " +
+                $"WorkCount='{inventory.Works.Count}', " +
+                $"InFlight='{inventory.InFlightExecutions.Count}', " +
+                $"LocalQueued='{inventory.LocalQueuedRuns.Count}', " +
+                $"KillRequestedAtUtc='{killRequestedAtUtc:O}', " +
+                $"KillCompletedAtUtc='{killCompletedAtUtc:O}', " +
+                $"KillDuration='{killCompletedAtUtc - killRequestedAtUtc}'.");
+
+            foreach (var work in inventory.Works)
+            {
+                var preKill =
+                    preKillSnapshots[work.LocalRunId];
+
+                var postKill =
+                    postKillSnapshots[work.LocalRunId];
+
+                var completionTiming =
+                    ClassifyCompletionTiming(
+                        postKill.IndexCompletedAtUtc,
+                        killRequestedAtUtc,
+                        killCompletedAtUtc);
+
+                output.WriteLine(
+                    $"[REAL RUNTIME INVENTORY KILL WINDOW] " +
+                    $"TenantId='{inventory.Tenant.TenantId}', " +
+                    $"FailedRuntimeInstanceId='{inventory.RuntimeInstanceId}', " +
+                    $"SharedRunId='{work.SharedRunId}', " +
+                    $"LocalRunId='{work.LocalRunId}', " +
+                    $"ExpectedExecutionId='{work.ExecutionId}', " +
+                    $"Kind='{work.Kind}', " +
+                    $"PreKillIndexStatus='{preKill.IndexStatus}', " +
+                    $"PreKillIndexRuntimeInstanceId='{preKill.RuntimeInstanceId}', " +
+                    $"PreKillIndexExecutionId='{preKill.ExecutionId}', " +
+                    $"PreKillIndexCompletedAtUtc='{preKill.IndexCompletedAtUtc?.ToString("O") ?? string.Empty}', " +
+                    $"PreKillDagStatus='{preKill.DagStatus}', " +
+                    $"PreKillCompletedSteps='{preKill.DagCompletedStepCount}', " +
+                    $"PreKillTotalSteps='{preKill.DagTotalStepCount}', " +
+                    $"PreKillDagStepStatusBreakdown='{preKill.DagStepStatusBreakdown}', " +
+                    $"PreKillCapturedAtUtc='{preKill.CapturedAtUtc:O}', " +
+                    $"PostKillIndexStatus='{postKill.IndexStatus}', " +
+                    $"PostKillIndexRuntimeInstanceId='{postKill.RuntimeInstanceId}', " +
+                    $"PostKillIndexExecutionId='{postKill.ExecutionId}', " +
+                    $"PostKillIndexCompletedAtUtc='{postKill.IndexCompletedAtUtc?.ToString("O") ?? string.Empty}', " +
+                    $"PostKillDagStatus='{postKill.DagStatus}', " +
+                    $"PostKillCompletedSteps='{postKill.DagCompletedStepCount}', " +
+                    $"PostKillTotalSteps='{postKill.DagTotalStepCount}', " +
+                    $"PostKillDagStepStatusBreakdown='{postKill.DagStepStatusBreakdown}', " +
+                    $"PostKillCapturedAtUtc='{postKill.CapturedAtUtc:O}', " +
+                    $"KillRequestedAtUtc='{killRequestedAtUtc:O}', " +
+                    $"KillCompletedAtUtc='{killCompletedAtUtc:O}', " +
+                    $"CompletionTiming='{completionTiming}'.");
+            }
 
             await ProductionRecoveryWaitHelpers
                 .WaitForRuntimeInstanceUnsafeAsync(
@@ -287,14 +661,22 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
                 .ConfigureAwait(false);
 
             output.WriteLine(
-                $"[REAL RUNTIME INVENTORY CRASH] Runtime instance marked unsafe. TenantId='{inventory.Tenant.TenantId}', RuntimeInstanceId='{inventory.RuntimeInstanceId}'. Waiting for automatic execution recovery reconciliation.");
+                $"[REAL RUNTIME INVENTORY CRASH] Runtime instance marked unsafe. " +
+                $"TenantId='{inventory.Tenant.TenantId}', " +
+                $"RuntimeInstanceId='{inventory.RuntimeInstanceId}'. " +
+                "Waiting for automatic execution recovery reconciliation.");
 
             foreach (var work in inventory.Works)
             {
                 await WaitForWorkRequeuedForRecoveryAsync(
                         runExecutionIndex,
+                        dagStore,
                         inventory,
                         work,
+                        preKillSnapshots[work.LocalRunId],
+                        postKillSnapshots[work.LocalRunId],
+                        killRequestedAtUtc,
+                        killCompletedAtUtc,
                         requeueTimeout)
                     .ConfigureAwait(false);
             }
@@ -308,21 +690,37 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
                     await ProductionRecoveryWaitHelpers
                         .WaitForRecoveredRunRedispatchedAsync(
                             sharedRunStore,
+                            sharedQueue,
                             work.SharedRunId,
                             inventory.RuntimeInstanceId,
                             work.LocalRunId,
                             redispatchTimeout)
                         .ConfigureAwait(false);
 
-                Assert.False(string.IsNullOrWhiteSpace(redispatchedRun.AssignedRuntimeInstanceId));
-                Assert.False(string.IsNullOrWhiteSpace(redispatchedRun.LocalRunId));
-                Assert.NotEqual(inventory.RuntimeInstanceId, redispatchedRun.AssignedRuntimeInstanceId);
-                Assert.NotEqual(work.LocalRunId, redispatchedRun.LocalRunId);
-                AssertRuntimeBelongsToTenant(redispatchedRun.AssignedRuntimeInstanceId!, inventory.Tenant);
+                Assert.False(
+                    string.IsNullOrWhiteSpace(
+                        redispatchedRun.AssignedRuntimeInstanceId));
+
+                Assert.False(
+                    string.IsNullOrWhiteSpace(
+                        redispatchedRun.LocalRunId));
+
+                Assert.NotEqual(
+                    inventory.RuntimeInstanceId,
+                    redispatchedRun.AssignedRuntimeInstanceId);
+
+                Assert.NotEqual(
+                    work.LocalRunId,
+                    redispatchedRun.LocalRunId);
+
+                AssertRuntimeBelongsToTenant(
+                    redispatchedRun.AssignedRuntimeInstanceId!,
+                    inventory.Tenant);
 
                 string recoveredExecutionId;
 
-                if (work.Kind == RealRuntimeCrashWorkKind.InFlightExecution)
+                if (work.Kind ==
+                    RealRuntimeCrashWorkKind.InFlightExecution)
                 {
                     var recoveredExecution =
                         await ProductionRecoveryWaitHelpers
@@ -337,8 +735,13 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
                     recoveredExecutionId =
                         recoveredExecution.ExecutionId;
 
-                    Assert.False(string.IsNullOrWhiteSpace(work.ExecutionId));
-                    Assert.Equal(work.ExecutionId, recoveredExecutionId);
+                    Assert.False(
+                        string.IsNullOrWhiteSpace(
+                            work.ExecutionId));
+
+                    Assert.Equal(
+                        work.ExecutionId,
+                        recoveredExecutionId);
                 }
                 else
                 {
@@ -351,16 +754,42 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
                             .ConfigureAwait(false);
 
                     recoveredExecutionId =
-                        replacementIndex.ExecutionId ?? string.Empty;
+                        replacementIndex.ExecutionId ??
+                        string.Empty;
 
                     Assert.True(
-                        string.Equals(replacementIndex.Status, "queued", StringComparison.OrdinalIgnoreCase) ||
-                        string.Equals(replacementIndex.Status, "running", StringComparison.OrdinalIgnoreCase) ||
-                        string.Equals(replacementIndex.Status, "completed", StringComparison.OrdinalIgnoreCase),
-                        $"Recovered local queued run has an unexpected runtime index status. SharedRunId='{work.SharedRunId}', ReplacementLocalRunId='{redispatchedRun.LocalRunId}', Status='{replacementIndex.Status}'.");
+                        string.Equals(
+                            replacementIndex.Status,
+                            "queued",
+                            StringComparison.OrdinalIgnoreCase) ||
+                        string.Equals(
+                            replacementIndex.Status,
+                            "creating-execution",
+                            StringComparison.OrdinalIgnoreCase) ||
+                        string.Equals(
+                            replacementIndex.Status,
+                            "running",
+                            StringComparison.OrdinalIgnoreCase) ||
+                        string.Equals(
+                            replacementIndex.Status,
+                            "completed",
+                            StringComparison.OrdinalIgnoreCase),
+                        $"Recovered local queued run has an unexpected runtime index status. " +
+                        $"SharedRunId='{work.SharedRunId}', " +
+                        $"ReplacementLocalRunId='{redispatchedRun.LocalRunId}', " +
+                        $"Status='{replacementIndex.Status}'.");
 
                     output.WriteLine(
-                        $"[REAL RUNTIME INVENTORY LOCAL QUEUED RECOVERY] Local queued work redispatched. TenantId='{inventory.Tenant.TenantId}', SharedRunId='{work.SharedRunId}', FailedRuntimeInstanceId='{inventory.RuntimeInstanceId}', FailedLocalRunId='{work.LocalRunId}', ReplacementRuntimeInstanceId='{redispatchedRun.AssignedRuntimeInstanceId}', ReplacementLocalRunId='{redispatchedRun.LocalRunId}', ReplacementIndexStatus='{replacementIndex.Status}', ReplacementExecutionId='{replacementIndex.ExecutionId}'.");
+                        $"[REAL RUNTIME INVENTORY LOCAL QUEUED RECOVERY] " +
+                        $"Local queued work redispatched. " +
+                        $"TenantId='{inventory.Tenant.TenantId}', " +
+                        $"SharedRunId='{work.SharedRunId}', " +
+                        $"FailedRuntimeInstanceId='{inventory.RuntimeInstanceId}', " +
+                        $"FailedLocalRunId='{work.LocalRunId}', " +
+                        $"ReplacementRuntimeInstanceId='{redispatchedRun.AssignedRuntimeInstanceId}', " +
+                        $"ReplacementLocalRunId='{redispatchedRun.LocalRunId}', " +
+                        $"ReplacementIndexStatus='{replacementIndex.Status}', " +
+                        $"ReplacementExecutionId='{replacementIndex.ExecutionId}'.");
                 }
 
                 recoveredWorks.Add(
@@ -368,13 +797,25 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
                     {
                         Original = work,
                         RedispatchedRun = redispatchedRun,
-                        ReplacementRuntimeInstanceId = redispatchedRun.AssignedRuntimeInstanceId!,
-                        ReplacementLocalRunId = redispatchedRun.LocalRunId!,
-                        RecoveredExecutionId = recoveredExecutionId
+                        ReplacementRuntimeInstanceId =
+                            redispatchedRun.AssignedRuntimeInstanceId!,
+                        ReplacementLocalRunId =
+                            redispatchedRun.LocalRunId!,
+                        RecoveredExecutionId =
+                            recoveredExecutionId
                     });
 
                 output.WriteLine(
-                    $"[REAL RUNTIME INVENTORY RECOVERY] Work recovered. TenantId='{inventory.Tenant.TenantId}', Kind='{work.Kind}', SharedRunId='{work.SharedRunId}', FailedRuntimeInstanceId='{inventory.RuntimeInstanceId}', FailedLocalRunId='{work.LocalRunId}', ReplacementRuntimeInstanceId='{redispatchedRun.AssignedRuntimeInstanceId}', ReplacementLocalRunId='{redispatchedRun.LocalRunId}', ExecutionIdBefore='{work.ExecutionId}', ExecutionIdAfter='{recoveredExecutionId}'.");
+                    $"[REAL RUNTIME INVENTORY RECOVERY] Work recovered. " +
+                    $"TenantId='{inventory.Tenant.TenantId}', " +
+                    $"Kind='{work.Kind}', " +
+                    $"SharedRunId='{work.SharedRunId}', " +
+                    $"FailedRuntimeInstanceId='{inventory.RuntimeInstanceId}', " +
+                    $"FailedLocalRunId='{work.LocalRunId}', " +
+                    $"ReplacementRuntimeInstanceId='{redispatchedRun.AssignedRuntimeInstanceId}', " +
+                    $"ReplacementLocalRunId='{redispatchedRun.LocalRunId}', " +
+                    $"ExecutionIdBefore='{work.ExecutionId}', " +
+                    $"ExecutionIdAfter='{recoveredExecutionId}'.");
             }
 
             var proof =
@@ -384,10 +825,38 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
                     RecoveredWorks = recoveredWorks
                 };
 
-            AssertRecoveredInventoryStrictResume(proof);
-            WriteRecoveredInventory(output, proof);
+            AssertRecoveredInventoryStrictResume(
+                proof);
+
+            WriteRecoveredInventory(
+                output,
+                proof);
 
             return proof;
+
+            async Task<KeyValuePair<string, RealRuntimeCrashWorkStateSnapshot>>
+                CaptureLocalQueuedPreKillSnapshotAsync(
+                    RealRuntimeCrashWorkProof work)
+            {
+                var indexEntry =
+                    await runExecutionIndex
+                        .GetAsync(
+                            work.LocalRunId)
+                        .ConfigureAwait(false);
+
+                return new KeyValuePair<string, RealRuntimeCrashWorkStateSnapshot>(
+                work.LocalRunId,
+                new RealRuntimeCrashWorkStateSnapshot(
+                    indexEntry?.Status,
+                    indexEntry?.RuntimeInstanceId,
+                    indexEntry?.ExecutionId,
+                    indexEntry?.CompletedAtUtc,
+                    null,
+                    0,
+                    0,
+                    string.Empty,
+                    DateTimeOffset.UtcNow));
+            }
         }
 
         /// <summary>
@@ -799,15 +1268,28 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
         }
 
         private static async Task WaitForWorkRequeuedForRecoveryAsync(
-            IAiRuntimeRunExecutionIndex runExecutionIndex,
-            RealRuntimeCrashAssignedWorkInventoryProof inventory,
-            RealRuntimeCrashWorkProof work,
-            TimeSpan timeout)
+    IAiRuntimeRunExecutionIndex runExecutionIndex,
+    IAiDagExecutionStore dagStore,
+    RealRuntimeCrashAssignedWorkInventoryProof inventory,
+    RealRuntimeCrashWorkProof work,
+    RealRuntimeCrashWorkStateSnapshot preKillSnapshot,
+    RealRuntimeCrashWorkStateSnapshot postKillSnapshot,
+    DateTimeOffset killRequestedAtUtc,
+    DateTimeOffset killCompletedAtUtc,
+    TimeSpan timeout)
         {
+            ArgumentNullException.ThrowIfNull(runExecutionIndex);
+            ArgumentNullException.ThrowIfNull(dagStore);
+            ArgumentNullException.ThrowIfNull(inventory);
+            ArgumentNullException.ThrowIfNull(work);
+            ArgumentNullException.ThrowIfNull(preKillSnapshot);
+            ArgumentNullException.ThrowIfNull(postKillSnapshot);
+
             var deadline =
                 DateTimeOffset.UtcNow.Add(timeout);
 
-            AiRuntimeRunExecutionIndexEntry? lastEntry = null;
+            AiRuntimeRunExecutionIndexEntry? lastEntry =
+                null;
 
             while (DateTimeOffset.UtcNow < deadline)
             {
@@ -817,19 +1299,36 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
                         .ConfigureAwait(false);
 
                 var runtimeMatches =
-                    string.Equals(lastEntry?.RuntimeInstanceId, inventory.RuntimeInstanceId, StringComparison.Ordinal);
+                    string.Equals(
+                        lastEntry?.RuntimeInstanceId,
+                        inventory.RuntimeInstanceId,
+                        StringComparison.Ordinal);
 
                 var executionMatches =
                     string.IsNullOrWhiteSpace(work.ExecutionId) ||
-                    string.Equals(lastEntry?.ExecutionId, work.ExecutionId, StringComparison.Ordinal);
+                    string.Equals(
+                        lastEntry?.ExecutionId,
+                        work.ExecutionId,
+                        StringComparison.Ordinal);
 
                 var statusMatches =
                     work.Kind == RealRuntimeCrashWorkKind.InFlightExecution
-                        ? string.Equals(lastEntry?.Status, "requeued-for-recovery", StringComparison.OrdinalIgnoreCase)
-                        : string.Equals(lastEntry?.Status, "queued", StringComparison.OrdinalIgnoreCase) ||
-                            string.Equals(lastEntry?.Status, "requeued-for-recovery", StringComparison.OrdinalIgnoreCase);
+                        ? string.Equals(
+                            lastEntry?.Status,
+                            "requeued-for-recovery",
+                            StringComparison.OrdinalIgnoreCase)
+                        : string.Equals(
+                              lastEntry?.Status,
+                              "queued",
+                              StringComparison.OrdinalIgnoreCase) ||
+                          string.Equals(
+                              lastEntry?.Status,
+                              "requeued-for-recovery",
+                              StringComparison.OrdinalIgnoreCase);
 
-                if (statusMatches && runtimeMatches && executionMatches)
+                if (statusMatches &&
+                    runtimeMatches &&
+                    executionMatches)
                 {
                     return;
                 }
@@ -839,11 +1338,105 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
                     .ConfigureAwait(false);
             }
 
+            string? dagStatus =
+                null;
+
+            var completedStepCount =
+                0;
+
+            var totalStepCount =
+                0;
+
+            var stepStatusBreakdown =
+                string.Empty;
+
+            if (work.Kind == RealRuntimeCrashWorkKind.InFlightExecution &&
+                !string.IsNullOrWhiteSpace(work.ExecutionId))
+            {
+                var dagRecord =
+                    await dagStore
+                        .GetRecordAsync(work.ExecutionId)
+                        .ConfigureAwait(false);
+
+                var dagState =
+                    await dagStore
+                        .GetStateAsync(work.ExecutionId)
+                        .ConfigureAwait(false);
+
+                dagStatus =
+                    dagRecord?.Status.ToString();
+
+                if (dagState is not null)
+                {
+                    completedStepCount =
+                        dagState.Steps.Values.Count(step =>
+                            step.Status == AiStepExecutionStatus.Completed);
+
+                    totalStepCount =
+                        dagState.Steps.Count;
+
+                    stepStatusBreakdown =
+                        string.Join(
+                            ",",
+                            dagState.Steps.Values
+                                .GroupBy(step => step.Status)
+                                .OrderBy(group => group.Key)
+                                .Select(group =>
+                                    $"{group.Key}:{group.Count()}"));
+                }
+            }
+
+            var completionTiming =
+                ClassifyCompletionTiming(
+                    postKillSnapshot.IndexCompletedAtUtc,
+                    killRequestedAtUtc,
+                    killCompletedAtUtc);
+
             Assert.Fail(
                 "Runtime work was not observed in a recoverable pre-redispatch state within the timeout. " +
-                $"TenantId='{inventory.Tenant.TenantId}', FailedRuntimeInstanceId='{inventory.RuntimeInstanceId}', SharedRunId='{work.SharedRunId}', LocalRunId='{work.LocalRunId}', Kind='{work.Kind}', ExpectedExecutionId='{work.ExecutionId}', LastStatus='{lastEntry?.Status}', LastRuntimeInstanceId='{lastEntry?.RuntimeInstanceId}', LastExecutionId='{lastEntry?.ExecutionId}'.");
+                $"TenantId='{inventory.Tenant.TenantId}', " +
+                $"FailedRuntimeInstanceId='{inventory.RuntimeInstanceId}', " +
+                $"SharedRunId='{work.SharedRunId}', " +
+                $"LocalRunId='{work.LocalRunId}', " +
+                $"Kind='{work.Kind}', " +
+                $"ExpectedExecutionId='{work.ExecutionId}', " +
 
-            throw new InvalidOperationException("Unreachable assertion path.");
+                $"LastStatus='{lastEntry?.Status}', " +
+                $"LastRuntimeInstanceId='{lastEntry?.RuntimeInstanceId}', " +
+                $"LastExecutionId='{lastEntry?.ExecutionId}', " +
+                $"LastIndexCompletedAtUtc='{lastEntry?.CompletedAtUtc?.ToString("O") ?? string.Empty}', " +
+                $"DagStatus='{dagStatus}', " +
+                $"DagCompletedStepCount='{completedStepCount}', " +
+                $"DagTotalStepCount='{totalStepCount}', " +
+                $"DagStepStatusBreakdown='{stepStatusBreakdown}', " +
+
+                $"PreKillIndexStatus='{preKillSnapshot.IndexStatus}', " +
+                $"PreKillIndexRuntimeInstanceId='{preKillSnapshot.RuntimeInstanceId}', " +
+                $"PreKillIndexExecutionId='{preKillSnapshot.ExecutionId}', " +
+                $"PreKillIndexCompletedAtUtc='{preKillSnapshot.IndexCompletedAtUtc?.ToString("O") ?? string.Empty}', " +
+                $"PreKillDagStatus='{preKillSnapshot.DagStatus}', " +
+                $"PreKillCompletedSteps='{preKillSnapshot.DagCompletedStepCount}', " +
+                $"PreKillTotalSteps='{preKillSnapshot.DagTotalStepCount}', " +
+                $"PreKillDagStepStatusBreakdown='{preKillSnapshot.DagStepStatusBreakdown}', " +
+                $"PreKillCapturedAtUtc='{preKillSnapshot.CapturedAtUtc:O}', " +
+
+                $"PostKillIndexStatus='{postKillSnapshot.IndexStatus}', " +
+                $"PostKillIndexRuntimeInstanceId='{postKillSnapshot.RuntimeInstanceId}', " +
+                $"PostKillIndexExecutionId='{postKillSnapshot.ExecutionId}', " +
+                $"PostKillIndexCompletedAtUtc='{postKillSnapshot.IndexCompletedAtUtc?.ToString("O") ?? string.Empty}', " +
+                $"PostKillDagStatus='{postKillSnapshot.DagStatus}', " +
+                $"PostKillCompletedSteps='{postKillSnapshot.DagCompletedStepCount}', " +
+                $"PostKillTotalSteps='{postKillSnapshot.DagTotalStepCount}', " +
+                $"PostKillDagStepStatusBreakdown='{postKillSnapshot.DagStepStatusBreakdown}', " +
+                $"PostKillCapturedAtUtc='{postKillSnapshot.CapturedAtUtc:O}', " +
+
+                $"KillRequestedAtUtc='{killRequestedAtUtc:O}', " +
+                $"KillCompletedAtUtc='{killCompletedAtUtc:O}', " +
+                $"KillDuration='{killCompletedAtUtc - killRequestedAtUtc}', " +
+                $"CompletionTiming='{completionTiming}'.");
+
+            throw new InvalidOperationException(
+                "Unreachable assertion path.");
         }
 
         private static void WriteAssignedWorkInventory(
@@ -1278,5 +1871,146 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
                 index++;
             }
         }
+
+        private static async Task<IReadOnlyDictionary<string, RealRuntimeCrashWorkStateSnapshot>>
+    CaptureWorkStateSnapshotsAsync(
+        IAiRuntimeRunExecutionIndex runExecutionIndex,
+        IAiDagExecutionStore dagStore,
+        RealRuntimeCrashAssignedWorkInventoryProof inventory,
+        string? captureLastLocalRunId = null)
+        {
+            ArgumentNullException.ThrowIfNull(runExecutionIndex);
+            ArgumentNullException.ThrowIfNull(dagStore);
+            ArgumentNullException.ThrowIfNull(inventory);
+
+            var snapshots =
+                new Dictionary<string, RealRuntimeCrashWorkStateSnapshot>(
+                    StringComparer.Ordinal);
+
+            var orderedWorks =
+                inventory.Works
+                    .OrderBy(work =>
+                        string.Equals(
+                            work.LocalRunId,
+                            captureLastLocalRunId,
+                            StringComparison.Ordinal)
+                            ? 1
+                            : 0)
+                    .ToArray();
+
+            foreach (var work in orderedWorks)
+            {
+                string? dagStatus =
+                    null;
+
+                var completedStepCount =
+                    0;
+
+                var totalStepCount =
+                    0;
+
+                var statusBreakdown =
+                    string.Empty;
+
+                if (!string.IsNullOrWhiteSpace(work.ExecutionId))
+                {
+                    /*
+                     * Read DAG state first because it can change while the execution
+                     * is progressing.
+                     */
+                    var dagState =
+                        await dagStore
+                            .GetStateAsync(work.ExecutionId)
+                            .ConfigureAwait(false);
+
+                    if (dagState is not null)
+                    {
+                        completedStepCount =
+                            dagState.Steps.Values.Count(step =>
+                                step.Status == AiStepExecutionStatus.Completed);
+
+                        totalStepCount =
+                            dagState.Steps.Count;
+
+                        statusBreakdown =
+                            string.Join(
+                                ",",
+                                dagState.Steps.Values
+                                    .GroupBy(step => step.Status)
+                                    .OrderBy(group => group.Key)
+                                    .Select(group =>
+                                        $"{group.Key}:{group.Count()}"));
+                    }
+
+                    /*
+                     * Read the durable DAG record after the detailed state.
+                     */
+                    var dagRecord =
+                        await dagStore
+                            .GetRecordAsync(work.ExecutionId)
+                            .ConfigureAwait(false);
+
+                    dagStatus =
+                        dagRecord?.Status.ToString();
+                }
+
+                /*
+                 * Read the runtime index last so its lifecycle status is the freshest
+                 * observation stored in the diagnostic snapshot.
+                 */
+                var indexEntry =
+                    await runExecutionIndex
+                        .GetAsync(work.LocalRunId)
+                        .ConfigureAwait(false);
+
+                snapshots[work.LocalRunId] =
+                    new RealRuntimeCrashWorkStateSnapshot(
+                        indexEntry?.Status,
+                        indexEntry?.RuntimeInstanceId,
+                        indexEntry?.ExecutionId,
+                        indexEntry?.CompletedAtUtc,
+                        dagStatus,
+                        completedStepCount,
+                        totalStepCount,
+                        statusBreakdown,
+                        DateTimeOffset.UtcNow);
+            }
+
+            return snapshots;
+        }
+
+        private static string ClassifyCompletionTiming(
+            DateTimeOffset? completedAtUtc,
+            DateTimeOffset killRequestedAtUtc,
+            DateTimeOffset killCompletedAtUtc)
+        {
+            if (completedAtUtc is null)
+            {
+                return "not-completed";
+            }
+
+            if (completedAtUtc < killRequestedAtUtc)
+            {
+                return "before-kill-request";
+            }
+
+            if (completedAtUtc <= killCompletedAtUtc)
+            {
+                return "during-kill";
+            }
+
+            return "after-kill-return";
+        }
+
+        private sealed record RealRuntimeCrashWorkStateSnapshot(
+            string? IndexStatus,
+            string? RuntimeInstanceId,
+            string? ExecutionId,
+            DateTimeOffset? IndexCompletedAtUtc,
+            string? DagStatus,
+            int DagCompletedStepCount,
+            int DagTotalStepCount,
+            string DagStepStatusBreakdown,
+            DateTimeOffset CapturedAtUtc);
     }
 }

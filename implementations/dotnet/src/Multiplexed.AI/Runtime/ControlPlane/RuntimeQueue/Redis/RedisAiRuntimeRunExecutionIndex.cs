@@ -68,6 +68,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue.Redis
             PropertyNameCaseInsensitive = true
         };
 
+        private const string MarkCompletedIgnoredRequeuedForRecovery = "ignored-requeued-for-recovery";
+
         private readonly IDatabase _database;
         private readonly RedisAiRuntimeRunExecutionIndexOptions _options;
         private readonly RedisAiRuntimeRunExecutionIndexScriptCache _scripts;
@@ -226,7 +228,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue.Redis
                 "started",
                 "start");
         }
-
         /// <inheritdoc />
         public async Task MarkCompletedAsync(
             string runId,
@@ -242,7 +243,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue.Redis
                 await ResolveControlPlaneIdAsync(cancellationToken)
                     .ConfigureAwait(false);
 
-            if (!await CanMutateAsync(controlPlaneId, runId, cancellationToken).ConfigureAwait(false))
+            if (!await CanMutateAsync(
+                    controlPlaneId,
+                    runId,
+                    cancellationToken)
+                .ConfigureAwait(false))
             {
                 return;
             }
@@ -252,14 +257,25 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue.Redis
                     _database,
                     new RedisKey[]
                     {
-                        BuildItemKey(controlPlaneId, runId)
+                BuildItemKey(controlPlaneId, runId)
                     },
                     new RedisValue[]
                     {
-                        executionId,
-                        FormatDate(DateTimeOffset.UtcNow)
+                executionId,
+                FormatDate(DateTimeOffset.UtcNow)
                     })
                 .ConfigureAwait(false);
+
+            var status =
+                result.ToString();
+
+            if (string.Equals(
+                    status,
+                    MarkCompletedIgnoredRequeuedForRecovery,
+                    StringComparison.Ordinal))
+            {
+                return;
+            }
 
             EnsureMutationResult(
                 result,

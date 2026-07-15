@@ -141,12 +141,129 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
         /// <param name="parallelism">The number of scenarios executed concurrently.</param>
         /// <returns>A task that completes when all concurrent scenarios have finished.</returns>
         [Theory]
-        [InlineData(2)]
+        [InlineData(10)]
         public Task Grpc_ProcessHost_Should_Execute_MultiTenant_Crash_Recovery_Scenarios_In_Parallel(
             int parallelism)
         {
             return ExecuteMultiTenantCrashRecoveryScenariosInParallelAsync(
                 parallelism);
+        }
+
+        /// <summary>
+        /// Verifies repeatedly that multiple multi-tenant crash-recovery scenarios
+        /// can execute concurrently without cross-scenario interference.
+        /// </summary>
+        /// <param name="parallelism">
+        /// The number of crash-recovery scenarios executed concurrently during each iteration.
+        /// </param>
+        /// <returns>
+        /// A task that completes when all parallel stability iterations have finished.
+        /// </returns>
+        [Theory]
+        [InlineData(3)]
+        public async Task Grpc_ProcessHost_Should_Execute_MultiTenant_Crash_Recovery_Scenarios_In_Parallel_Loop(
+            int parallelism)
+        {
+            const int iterationCount = 5;
+
+            ArgumentOutOfRangeException.ThrowIfLessThan(
+                parallelism,
+                1);
+
+            var overallStopwatch =
+                Stopwatch.StartNew();
+
+            var failures =
+                new List<Exception>();
+
+            _output.WriteLine(string.Empty);
+            _output.WriteLine(
+                $"# PARALLEL CRASH-RECOVERY STABILITY LOOP - STARTING {iterationCount} ITERATIONS");
+
+            _output.WriteLine(
+                $"[PARALLEL STABILITY SUMMARY] " +
+                $"Iterations='{iterationCount}', " +
+                $"ParallelismPerIteration='{parallelism}', " +
+                $"ExpectedScenarios='{iterationCount * parallelism}', " +
+                $"ExpectedTenants='{iterationCount * parallelism * 3}', " +
+                $"ExpectedSubmittedRuns='{iterationCount * parallelism * 9}', " +
+                $"ExpectedImpactedTenants='{iterationCount * parallelism * 2}', " +
+                $"ExpectedSafeTenants='{iterationCount * parallelism}'.");
+
+            for (var iteration = 1; iteration <= iterationCount; iteration++)
+            {
+                var iterationStopwatch =
+                    Stopwatch.StartNew();
+
+                _output.WriteLine(string.Empty);
+                _output.WriteLine(
+                    $"# PARALLEL CRASH-RECOVERY STABILITY ITERATION {iteration}/{iterationCount}");
+
+                try
+                {
+                    await ExecuteMultiTenantCrashRecoveryScenariosInParallelAsync(
+                            parallelism)
+                        .ConfigureAwait(false);
+
+                    iterationStopwatch.Stop();
+
+                    _output.WriteLine(
+                        $"[PARALLEL STABILITY PASS] " +
+                        $"Iteration='{iteration}', " +
+                        $"IterationCount='{iterationCount}', " +
+                        $"Parallelism='{parallelism}', " +
+                        $"Duration='{iterationStopwatch.Elapsed}'.");
+                }
+                catch (Exception exception)
+                {
+                    iterationStopwatch.Stop();
+
+                    var wrappedException =
+                        new InvalidOperationException(
+                            $"Parallel gRPC process-host crash-recovery stability iteration " +
+                            $"{iteration}/{iterationCount} with parallelism '{parallelism}' " +
+                            $"failed after '{iterationStopwatch.Elapsed}'.",
+                            exception);
+
+                    failures.Add(
+                        wrappedException);
+
+                    _output.WriteLine(
+                        $"[PARALLEL STABILITY FAIL] " +
+                        $"Iteration='{iteration}', " +
+                        $"IterationCount='{iterationCount}', " +
+                        $"Parallelism='{parallelism}', " +
+                        $"Duration='{iterationStopwatch.Elapsed}', " +
+                        $"ExceptionType='{exception.GetType().FullName}', " +
+                        $"Message='{exception.Message}'.");
+
+                    _output.WriteLine(
+                        exception.ToString());
+                }
+            }
+
+            overallStopwatch.Stop();
+
+            _output.WriteLine(string.Empty);
+            _output.WriteLine(
+                "# PARALLEL CRASH-RECOVERY STABILITY LOOP - FINAL SUMMARY");
+
+            _output.WriteLine(
+                $"[PARALLEL STABILITY FINAL SUMMARY] " +
+                $"Iterations='{iterationCount}', " +
+                $"ParallelismPerIteration='{parallelism}', " +
+                $"TotalScenarios='{iterationCount * parallelism}', " +
+                $"PassedIterations='{iterationCount - failures.Count}', " +
+                $"FailedIterations='{failures.Count}', " +
+                $"TotalDuration='{overallStopwatch.Elapsed}'.");
+
+            if (failures.Count > 0)
+            {
+                throw new AggregateException(
+                    $"{failures.Count} of {iterationCount} parallel gRPC process-host " +
+                    $"crash-recovery stability iterations failed with parallelism '{parallelism}'.",
+                    failures);
+            }
         }
 
         private async Task ExecuteMultiTenantCrashRecoveryScenariosInParallelAsync(

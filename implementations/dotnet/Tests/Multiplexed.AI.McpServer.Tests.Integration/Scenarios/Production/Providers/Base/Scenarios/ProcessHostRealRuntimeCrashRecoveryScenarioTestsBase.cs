@@ -8,6 +8,7 @@ using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Scaling;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Store;
+using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Queue;
 using Multiplexed.Abstractions.AI.Execution;
 using Multiplexed.Abstractions.AI.Observability.Ledger;
 using Multiplexed.AI.McpServer.Tests.Integration.Fixtures;
@@ -22,6 +23,7 @@ using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Output;
 using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Providers.Base.Profiles;
 using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Providers.Http.Process;
 using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Scenarios;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.ProcessControl;
 using Multiplexed.AI.Stores;
 using System.Net.Http;
@@ -204,6 +206,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             var forensicsQueryService =
                 host.Services.GetRequiredService<IAiRuntimeRecoveryForensicsQueryService>();
 
+            var sharedQueue =
+                host.Services.GetRequiredService<IAiSharedQueue>();
+
             var recoveryOptions =
                 host.Services
                     .GetRequiredService<IOptions<AiRuntimeExecutionRecoveryReconciliationOptions>>()
@@ -354,19 +359,28 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 "[PASS TARGET] Kill one real process per tenant, wait for unsafe detection, automatic requeue, replacement selection, and redispatch without manual reconciliation.");
 
             var tenantARecoveryTask =
-                ProductionRealRuntimeCrashRecoveryTestHelpers
-                    .KillRuntimeAndRecoverAssignedInventoryAsync(
-                        output,
-                        processControl,
-                        registry,
-                        runExecutionIndex,
-                        sharedRunStore,
-                        dagStore,
-                        tenantAInventory,
-                        unsafeTimeout: TimeSpan.FromSeconds(60),
-                        requeueTimeout: TimeSpan.FromSeconds(180),
-                        redispatchTimeout: scenario.DispatchTimeout,
-                        executionResolveTimeout: TimeSpan.FromSeconds(60));
+            ProductionRealRuntimeCrashRecoveryTestHelpers
+                .KillRuntimeAndRecoverAssignedInventoryAsync(
+                    output,
+                    processControl,
+                    registry,
+                    runExecutionIndex,
+                    sharedRunStore,
+                    sharedQueue,
+                    dagStore,
+                    tenantAInventory,
+                    minimumCompletedStepsBeforeKill:
+                        KillAfterCompletedStepCount,
+                    progressTimeout:
+                        TimeSpan.FromMinutes(3),
+                    unsafeTimeout:
+                        TimeSpan.FromSeconds(60),
+                    requeueTimeout:
+                        TimeSpan.FromSeconds(180),
+                    redispatchTimeout:
+                        scenario.DispatchTimeout,
+                    executionResolveTimeout:
+                        TimeSpan.FromSeconds(60));
 
             var tenantBRecoveryTask =
                 ProductionRealRuntimeCrashRecoveryTestHelpers
@@ -376,12 +390,21 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                         registry,
                         runExecutionIndex,
                         sharedRunStore,
+                        sharedQueue,
                         dagStore,
                         tenantBInventory,
-                        unsafeTimeout: TimeSpan.FromSeconds(60),
-                        requeueTimeout: TimeSpan.FromSeconds(180),
-                        redispatchTimeout: scenario.DispatchTimeout,
-                        executionResolveTimeout: TimeSpan.FromSeconds(60));
+                        minimumCompletedStepsBeforeKill:
+                            KillAfterCompletedStepCount,
+                        progressTimeout:
+                            TimeSpan.FromMinutes(3),
+                        unsafeTimeout:
+                            TimeSpan.FromSeconds(60),
+                        requeueTimeout:
+                            TimeSpan.FromSeconds(180),
+                        redispatchTimeout:
+                            scenario.DispatchTimeout,
+                        executionResolveTimeout:
+                            TimeSpan.FromSeconds(60));
 
             await Task
                 .WhenAll(
@@ -932,6 +955,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             var registry =
                 host.Services.GetRequiredService<IAiRuntimeInstanceRegistry>();
 
+            var sharedQueue = host.Services.GetRequiredService<IAiSharedQueue>();
+
             using var httpClient =
                 host.CreateClient();
 
@@ -1040,14 +1065,15 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 $"[{profile.LogPrefix} REAL RUNTIME CRASH PROOF] In-flight execution requeued for recovery. FailedRuntimeInstanceId='{failedRuntimeInstanceId}', LocalRunId='{localRunId}', ExecutionId='{executionId}', IndexStatus='{requeuedEntry.Status}', IndexRuntimeInstanceId='{requeuedEntry.RuntimeInstanceId}'.");
 
             var redispatchedRun =
-                await ProductionRecoveryWaitHelpers
-                    .WaitForRecoveredRunRedispatchedAsync(
-                        sharedRunStore,
-                        dispatchedRunWithExecutionId.SharedRunId,
-                        failedRuntimeInstanceId,
-                        localRunId,
-                        TimeSpan.FromMinutes(2))
-                    .ConfigureAwait(false);
+             await ProductionRecoveryWaitHelpers
+                 .WaitForRecoveredRunRedispatchedAsync(
+                     sharedRunStore,
+                     sharedQueue,
+                     dispatchedRunWithExecutionId.SharedRunId,
+                     failedRuntimeInstanceId,
+                     localRunId,
+                     TimeSpan.FromMinutes(2))
+                 .ConfigureAwait(false);
 
             output.WriteLine(
                 $"[{profile.LogPrefix} REAL RUNTIME CRASH PROOF] Recovered shared run redispatched. SharedRunId='{redispatchedRun.SharedRunId}', NewRuntimeInstanceId='{redispatchedRun.AssignedRuntimeInstanceId}', NewLocalRunId='{redispatchedRun.LocalRunId}', OriginalRuntimeInstanceId='{failedRuntimeInstanceId}', OriginalLocalRunId='{localRunId}'.");
@@ -1160,6 +1186,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                     runtimeHostAssemblyPath);
 
             settings["Tests:UseCapturingLedgerRecorder"] = "false";
+            settings["AiRuntimeRecoveryForensics:StrictPersistence"] = "true";
 
             await using var host =
                 new GenericMcpServerTestHost(settings);
@@ -1192,6 +1219,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 host.Services
                     .GetRequiredService<IOptions<AiRuntimeExecutionRecoveryReconciliationOptions>>()
                     .Value;
+
+            var sharedQueue = host.Services.GetRequiredService<IAiSharedQueue>();
 
             ProductionRecoveryOptionsAssertions.AssertDagResumeRecoveryEnabled(
                 recoveryOptions);
@@ -1336,12 +1365,21 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                                 registry,
                                 runExecutionIndex,
                                 sharedRunStore,
+                                sharedQueue,
                                 dagStore,
                                 inventory,
-                                unsafeTimeout: TimeSpan.FromSeconds(60),
-                                requeueTimeout: TimeSpan.FromSeconds(180),
-                                redispatchTimeout: scenario.DispatchTimeout,
-                                executionResolveTimeout: TimeSpan.FromSeconds(60))
+                                minimumCompletedStepsBeforeKill:
+                                    KillAfterCompletedStepCount,
+                                progressTimeout:
+                                    TimeSpan.FromMinutes(3),
+                                unsafeTimeout:
+                                    TimeSpan.FromSeconds(60),
+                                requeueTimeout:
+                                    TimeSpan.FromSeconds(180),
+                                redispatchTimeout:
+                                    scenario.DispatchTimeout,
+                                executionResolveTimeout:
+                                    TimeSpan.FromSeconds(60))
                             .ConfigureAwait(false);
 
                     return new ProcessHostImpactedTenantExecutionResult(

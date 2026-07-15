@@ -1295,12 +1295,13 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
                 "Unreachable assertion path.");
         }
 
-       
+
 
         /// <summary>
         /// Waits until a recovered shared run is redispatched with a new local runtime run identifier.
         /// </summary>
         /// <param name="sharedRunStore">The shared run store.</param>
+        /// <param name="sharedQueue">The durable shared queue.</param>
         /// <param name="sharedRunId">The shared run identifier.</param>
         /// <param name="failedRuntimeInstanceId">The failed runtime instance identifier.</param>
         /// <param name="failedLocalRunId">The failed local run identifier.</param>
@@ -1308,20 +1309,33 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
         /// <returns>The redispatched shared run record.</returns>
         public static async Task<AiSharedRunRecord> WaitForRecoveredRunRedispatchedAsync(
             IAiSharedRunStore sharedRunStore,
+            IAiSharedQueue sharedQueue,
             string sharedRunId,
             string failedRuntimeInstanceId,
             string failedLocalRunId,
             TimeSpan timeout)
         {
             ArgumentNullException.ThrowIfNull(sharedRunStore);
+            ArgumentNullException.ThrowIfNull(sharedQueue);
             ArgumentException.ThrowIfNullOrWhiteSpace(sharedRunId);
             ArgumentException.ThrowIfNullOrWhiteSpace(failedRuntimeInstanceId);
             ArgumentException.ThrowIfNullOrWhiteSpace(failedLocalRunId);
+
+            if (timeout <= TimeSpan.Zero)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(timeout),
+                    timeout,
+                    "The wait timeout must be greater than zero.");
+            }
 
             var deadline =
                 DateTimeOffset.UtcNow.Add(timeout);
 
             AiSharedRunRecord? lastRun =
+                null;
+
+            AiSharedQueueItem? lastQueueItem =
                 null;
 
             while (DateTimeOffset.UtcNow < deadline)
@@ -1332,22 +1346,86 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
                         .ConfigureAwait(false);
 
                 if (lastRun is not null &&
-                    !string.IsNullOrWhiteSpace(lastRun.AssignedRuntimeInstanceId) &&
-                    !string.IsNullOrWhiteSpace(lastRun.LocalRunId) &&
-                    !string.Equals(lastRun.LocalRunId, failedLocalRunId, StringComparison.Ordinal))
+                    !string.IsNullOrWhiteSpace(
+                        lastRun.AssignedRuntimeInstanceId) &&
+                    !string.IsNullOrWhiteSpace(
+                        lastRun.LocalRunId) &&
+                    !string.Equals(
+                        lastRun.AssignedRuntimeInstanceId,
+                        failedRuntimeInstanceId,
+                        StringComparison.Ordinal) &&
+                    !string.Equals(
+                        lastRun.LocalRunId,
+                        failedLocalRunId,
+                        StringComparison.Ordinal))
                 {
                     return lastRun;
                 }
+
+                /*
+                 * Capture the durable queue state only while redispatch has not
+                 * converged. This tells us whether the work is pending, claimed,
+                 * dispatched, missing, or abandoned by a queue worker.
+                 */
+                lastQueueItem =
+                    await sharedQueue
+                        .GetAsync(sharedRunId)
+                        .ConfigureAwait(false);
 
                 await Task
                     .Delay(TimeSpan.FromMilliseconds(250))
                     .ConfigureAwait(false);
             }
 
+            /*
+             * Perform one final read after the timeout so the failure message
+             * contains the freshest available shared-store and queue states.
+             */
+            lastRun =
+                await sharedRunStore
+                    .GetAsync(sharedRunId)
+                    .ConfigureAwait(false);
+
+            lastQueueItem =
+                await sharedQueue
+                    .GetAsync(sharedRunId)
+                    .ConfigureAwait(false);
+
+            var queueMetadata =
+                lastQueueItem?.Metadata is { Count: > 0 }
+                    ? string.Join(
+                        ";",
+                        lastQueueItem.Metadata
+                            .OrderBy(pair => pair.Key, StringComparer.Ordinal)
+                            .Select(pair =>
+                                $"{pair.Key}={pair.Value}"))
+                    : string.Empty;
+
             Assert.Fail(
                 "Recovered shared run was not redispatched with a new local runtime run id within the timeout. " +
-                $"SharedRunId='{sharedRunId}', FailedRuntimeInstanceId='{failedRuntimeInstanceId}', FailedLocalRunId='{failedLocalRunId}', " +
-                $"LastStatus='{lastRun?.Status}', LastRuntimeInstanceId='{lastRun?.AssignedRuntimeInstanceId}', LastLocalRunId='{lastRun?.LocalRunId}', LastExecutionId='{lastRun?.ExecutionId}'.");
+                $"SharedRunId='{sharedRunId}', " +
+                $"FailedRuntimeInstanceId='{failedRuntimeInstanceId}', " +
+                $"FailedLocalRunId='{failedLocalRunId}', " +
+                $"Timeout='{timeout}', " +
+
+                $"LastStatus='{lastRun?.Status}', " +
+                $"LastRuntimeInstanceId='{lastRun?.AssignedRuntimeInstanceId}', " +
+                $"LastLocalRunId='{lastRun?.LocalRunId}', " +
+                $"LastExecutionId='{lastRun?.ExecutionId}', " +
+                $"LastReason='{lastRun?.Reason}', " +
+                $"LastFailureReason='{lastRun?.FailureReason}', " +
+                $"LastUpdatedAtUtc='{lastRun?.UpdatedAtUtc:O}', " +
+
+                $"QueueItemExists='{lastQueueItem is not null}', " +
+                $"QueueStatus='{lastQueueItem?.Status}', " +
+                $"QueueRuntimeInstanceId='{lastQueueItem?.ClaimedByRuntimeInstanceId}', " +
+                $"QueueWorkerId='{lastQueueItem?.ClaimedByWorkerId}', " +
+                $"QueueClaimToken='{lastQueueItem?.ClaimToken}', " +
+                $"QueueClaimedAtUtc='{lastQueueItem?.ClaimedAtUtc?.ToString("O") ?? string.Empty}', " +
+                $"QueueClaimExpiresAtUtc='{lastQueueItem?.ClaimExpiresAtUtc?.ToString("O") ?? string.Empty}', " +
+                $"QueueUpdatedAtUtc='{lastQueueItem?.UpdatedAtUtc:O}', " +
+                $"QueueReason='{lastQueueItem?.Reason}', " +
+                $"QueueMetadata='{queueMetadata}'.");
 
             throw new InvalidOperationException(
                 "Unreachable assertion path.");

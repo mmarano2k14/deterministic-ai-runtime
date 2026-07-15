@@ -467,7 +467,6 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeQueue
         /// </summary>
         [Theory]
         [InlineData("completed")]
-        [InlineData("failed")]
         [InlineData("cancelled")]
         [InlineData("requeued-for-recovery")]
         public async Task MarkRequeuedForRecoveryAsync_Should_Return_False_When_Run_Is_Terminal(
@@ -551,6 +550,169 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeQueue
             {
                 Assert.Equal("terminal", entry.FailureReason);
             }
+        }
+
+        /// <summary>
+        /// Verifies that a failed runtime run remains recoverable when the expected
+        /// execution identifier matches the failed execution.
+        /// </summary>
+        [Fact]
+        public async Task MarkRequeuedForRecoveryAsync_Should_Return_True_When_Failed_ExecutionId_Matches()
+        {
+            var runId =
+                $"run-failed-recovery-match-{Guid.NewGuid():N}";
+
+            const string executionId =
+                "execution-1";
+
+            await tenantAStore!
+                .RegisterQueuedAsync(
+                    CreateEntry(
+                        runId,
+                        "tenant-a",
+                        runtimeInstanceId: "runtime-a"))
+                .ConfigureAwait(false);
+
+            await tenantAStore
+                .MarkStartedAsync(
+                    runId,
+                    executionId)
+                .ConfigureAwait(false);
+
+            await tenantAStore
+                .MarkFailedAsync(
+                    runId,
+                    executionId,
+                    "runtime-failed")
+                .ConfigureAwait(false);
+
+            var requeued =
+                await tenantAStore
+                    .MarkRequeuedForRecoveryAsync(
+                        runId,
+                        executionId,
+                        "runtime-execution-recovery-requeue")
+                    .ConfigureAwait(false);
+
+            var entry =
+                await tenantAStore
+                    .GetAsync(runId)
+                    .ConfigureAwait(false);
+
+            Assert.True(requeued);
+            Assert.NotNull(entry);
+            Assert.Equal("requeued-for-recovery", entry!.Status);
+            Assert.Equal(executionId, entry.ExecutionId);
+        }
+
+        /// <summary>
+        /// Verifies that a failed runtime run cannot be recovered by a different
+        /// execution identifier.
+        /// </summary>
+        [Fact]
+        public async Task MarkRequeuedForRecoveryAsync_Should_Return_False_When_Failed_ExecutionId_Differs()
+        {
+            var runId =
+                $"run-failed-recovery-mismatch-{Guid.NewGuid():N}";
+
+            const string executionId =
+                "execution-1";
+
+            await tenantAStore!
+                .RegisterQueuedAsync(
+                    CreateEntry(
+                        runId,
+                        "tenant-a",
+                        runtimeInstanceId: "runtime-a"))
+                .ConfigureAwait(false);
+
+            await tenantAStore
+                .MarkStartedAsync(
+                    runId,
+                    executionId)
+                .ConfigureAwait(false);
+
+            await tenantAStore
+                .MarkFailedAsync(
+                    runId,
+                    executionId,
+                    "runtime-failed")
+                .ConfigureAwait(false);
+
+            var requeued =
+                await tenantAStore
+                    .MarkRequeuedForRecoveryAsync(
+                        runId,
+                        "execution-2",
+                        "runtime-execution-recovery-requeue")
+                    .ConfigureAwait(false);
+
+            var entry =
+                await tenantAStore
+                    .GetAsync(runId)
+                    .ConfigureAwait(false);
+
+            Assert.False(requeued);
+            Assert.NotNull(entry);
+            Assert.Equal("failed", entry!.Status);
+            Assert.Equal(executionId, entry.ExecutionId);
+        }
+
+        /// <summary>
+        /// Verifies that a late completion from the failed runtime cannot overwrite
+        /// a runtime run already marked as requeued for recovery.
+        /// </summary>
+        [Fact]
+        public async Task MarkCompletedAsync_Should_Not_Overwrite_Requeued_For_Recovery()
+        {
+            var runId =
+                $"run-late-completion-after-recovery-{Guid.NewGuid():N}";
+
+            const string executionId =
+                "execution-1";
+
+            const string recoveryReason =
+                "runtime-execution-recovery-requeue";
+
+            await tenantAStore!
+                .RegisterQueuedAsync(
+                    CreateEntry(
+                        runId,
+                        "tenant-a",
+                        runtimeInstanceId: "runtime-a"))
+                .ConfigureAwait(false);
+
+            await tenantAStore
+                .MarkStartedAsync(
+                    runId,
+                    executionId)
+                .ConfigureAwait(false);
+
+            var requeued =
+                await tenantAStore
+                    .MarkRequeuedForRecoveryAsync(
+                        runId,
+                        executionId,
+                        recoveryReason)
+                    .ConfigureAwait(false);
+
+            await tenantAStore
+                .MarkCompletedAsync(
+                    runId,
+                    executionId)
+                .ConfigureAwait(false);
+
+            var entry =
+                await tenantAStore
+                    .GetAsync(runId)
+                    .ConfigureAwait(false);
+
+            Assert.True(requeued);
+            Assert.NotNull(entry);
+            Assert.Equal(executionId, entry!.ExecutionId);
+            Assert.Equal("requeued-for-recovery", entry.Status);
+            Assert.Equal(recoveryReason, entry.FailureReason);
+            Assert.NotNull(entry.CompletedAtUtc);
         }
 
         private static AiRuntimeRunExecutionIndexEntry CreateEntry(
