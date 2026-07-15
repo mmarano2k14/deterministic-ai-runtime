@@ -347,6 +347,19 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
                 return Task.FromResult<AiSharedQueueItem?>(ClaimedItem);
             }
 
+            public Task<AiSharedQueueItem?> ClaimAsync(
+               string sharedRunId,
+               AiSharedQueueClaimRequest request,
+               CancellationToken cancellationToken = default)
+            {
+                ArgumentException.ThrowIfNullOrWhiteSpace(sharedRunId);
+                ArgumentNullException.ThrowIfNull(request);
+                cancellationToken.ThrowIfCancellationRequested();
+
+                return Task.FromResult<AiSharedQueueItem?>(
+                    null);
+            }
+
             /// <inheritdoc />
             public Task<AiSharedQueueItem?> CancelAsync(
                 string sharedRunId,

@@ -236,5 +236,17 @@ namespace Multiplexed.AI.Tests.Integration.Fixtures
                     UpdatedAtUtc = DateTime.UtcNow
                 });
         }
+
+        public Task<AiExecutionControlState> PauseExecutionForRecoveryAsync(string executionId, string recoveryOwnerId, string? reason = null, CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(
+               CreateRunningState(executionId));
+        }
+
+        public Task<AiExecutionControlState> ResumeExecutionFromRecoveryAsync(string executionId, string recoveryOwnerId, CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(
+               CreateRunningState(executionId));
+        }
     }
 }

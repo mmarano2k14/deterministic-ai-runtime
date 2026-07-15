@@ -176,5 +176,36 @@ namespace Multiplexed.Abstractions.AI.Execution.Control
         Task<AiExecutionControlState?> GetStateAsync(
             string executionId,
             CancellationToken cancellationToken = default);
+
+        /// <summary>
+        /// Requests a durable runtime-recovery-owned pause for an execution.
+        /// </summary>
+        /// <param name="executionId">The durable execution identifier.</param>
+        /// <param name="recoveryOwnerId">
+        /// The deterministic recovery owner identifier.
+        /// </param>
+        /// <param name="reason">The recovery pause reason.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <returns>The durable execution control state.</returns>
+        Task<AiExecutionControlState> PauseExecutionForRecoveryAsync(
+            string executionId,
+            string recoveryOwnerId,
+            string? reason = null,
+            CancellationToken cancellationToken = default);
+
+        /// <summary>
+        /// Requests a durable resume owned by the recovery operation that created
+        /// the current pause.
+        /// </summary>
+        /// <param name="executionId">The durable execution identifier.</param>
+        /// <param name="recoveryOwnerId">
+        /// The deterministic recovery owner identifier.
+        /// </param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <returns>The durable execution control state.</returns>
+        Task<AiExecutionControlState> ResumeExecutionFromRecoveryAsync(
+            string executionId,
+            string recoveryOwnerId,
+            CancellationToken cancellationToken = default);
     }
 }

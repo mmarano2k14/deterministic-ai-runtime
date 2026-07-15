@@ -496,6 +496,115 @@ namespace Multiplexed.AI.Stores.Cache.Redis.Lua
             """);
 
         /// <summary>
+        /// Recovers all currently running steps for an explicit runtime recovery.
+        ///
+        /// RULES:
+        /// - only Running steps are considered
+        /// - lease expiration is deliberately ignored
+        /// - recovered steps transition back to Ready
+        /// - claim ownership is cleared
+        /// - RecoveryCount is incremented
+        ///
+        /// IMPORTANT:
+        /// - this operation must run only after recovery pause ownership has
+        ///   been acquired for the execution
+        /// - infrastructure recovery does not consume business RetryCount
+        /// - repeated execution is idempotent
+        /// </summary>
+        public static readonly LuaScript RecoverRunningForRecoveryPreparedScript =
+            LuaScript.Prepare(
+                """
+                local function normalize_array(value)
+                    if value == nil or value == cjson.null then
+                        return cjson.decode('[]')
+                    end
+
+                    local count = 0
+
+                    for _, _ in ipairs(value) do
+                        count = count + 1
+                    end
+
+                    if count == 0 then
+                        return cjson.decode('[]')
+                    end
+
+                    return value
+                end
+
+                local stepNames =
+                    redis.call(
+                        'SMEMBERS',
+                        @stepIndexKey)
+
+                local nowUnix =
+                    tonumber(@nowUnix)
+
+                local stepKeyPrefix =
+                    @stepKeyPrefix
+
+                local recovered =
+                    0
+
+                table.sort(stepNames)
+
+                for _, stepName in ipairs(stepNames) do
+                    local stepKey =
+                        stepKeyPrefix .. stepName
+
+                    local raw =
+                        redis.call(
+                            'GET',
+                            stepKey)
+
+                    if raw then
+                        local step =
+                            cjson.decode(raw)
+
+                        if step and
+                           (step.Status == 'Running' or step.Status == 2) then
+                            step.Status =
+                                'Ready'
+
+                            step.ClaimedBy =
+                                cjson.null
+
+                            step.ClaimToken =
+                                cjson.null
+
+                            step.ClaimedAtUtc =
+                                cjson.null
+
+                            step.LeaseExpiresAtUtc =
+                                cjson.null
+
+                            step.UpdatedAtUtc =
+                                nowUnix
+
+                            step.RecoveryCount =
+                                (tonumber(step.RecoveryCount) or 0) + 1
+
+                            step.Version =
+                                (tonumber(step.Version) or 0) + 1
+
+                            step.DependsOn =
+                                normalize_array(step.DependsOn)
+
+                            redis.call(
+                                'SET',
+                                stepKey,
+                                cjson.encode(step))
+
+                            recovered =
+                                recovered + 1
+                        end
+                    end
+                end
+
+                return recovered
+                """);
+
+        /// <summary>
         /// Atomically finalizes the global execution record.
         ///
         /// GUARANTEES:

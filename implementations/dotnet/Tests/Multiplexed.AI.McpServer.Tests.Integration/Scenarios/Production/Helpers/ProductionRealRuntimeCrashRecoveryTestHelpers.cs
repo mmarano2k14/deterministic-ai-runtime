@@ -293,8 +293,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
             ArgumentNullException.ThrowIfNull(dagStore);
             ArgumentNullException.ThrowIfNull(inventory);
 
-            ArgumentOutOfRangeException.ThrowIfNegativeOrZero(
-                minimumCompletedStepsBeforeKill);
+            ArgumentOutOfRangeException.ThrowIfNegativeOrZero(minimumCompletedStepsBeforeKill);
 
             if (progressTimeout <= TimeSpan.Zero)
             {
@@ -304,146 +303,92 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
                     "The progress timeout must be greater than zero.");
             }
 
-            var inFlightWork =
-                Assert.Single(
-                    inventory.InFlightExecutions);
+            var inFlightWork = Assert.Single(inventory.InFlightExecutions);
 
-            Assert.False(
-                string.IsNullOrWhiteSpace(
-                    inFlightWork.ExecutionId));
+            Assert.False(string.IsNullOrWhiteSpace(inFlightWork.ExecutionId));
 
             /*
              * Start local-queued diagnostic reads without awaiting them.
              * They must never delay observation and termination of the in-flight DAG.
              */
-            var localQueuedPreKillSnapshotTasks =
-                inventory.LocalQueuedRuns
-                    .Select(CaptureLocalQueuedPreKillSnapshotAsync)
-                    .ToArray();
+            var localQueuedPreKillSnapshotTasks = inventory.LocalQueuedRuns
+                .Select(CaptureLocalQueuedPreKillSnapshotAsync)
+                .ToArray();
 
-            var progressDeadline =
-                DateTimeOffset.UtcNow.Add(
-                    progressTimeout);
+            var progressDeadline = DateTimeOffset.UtcNow.Add(progressTimeout);
 
-            RealRuntimeCrashWorkStateSnapshot?
-                observedCrashSnapshot =
-                    null;
+            RealRuntimeCrashWorkStateSnapshot? observedCrashSnapshot = null;
+            RealRuntimeCrashWorkStateSnapshot? lastObservedInFlightSnapshot = null;
 
-            RealRuntimeCrashWorkStateSnapshot?
-                lastObservedInFlightSnapshot =
-                    null;
-
-            var killed =
-                false;
-
-            var killRequestedAtUtc =
-                default(DateTimeOffset);
-
-            var killCompletedAtUtc =
-                default(DateTimeOffset);
+            var killed = false;
+            var killRequestedAtUtc = default(DateTimeOffset);
+            var killCompletedAtUtc = default(DateTimeOffset);
 
             while (DateTimeOffset.UtcNow < progressDeadline)
             {
                 /*
-                 * Read only the in-flight DAG here.
+                 * Read only the lightweight durable execution record here.
                  *
-                 * The runtime execution index is intentionally read last so that
-                 * the lifecycle state used to trigger KillAsync is the freshest
-                 * durable observation.
+                 * GetStateAsync must not be used in this polling loop because the Redis
+                 * implementation reconstructs the full DAG by reading every individual
+                 * step key. Under parallel crash scenarios, those reads create avoidable
+                 * Redis pressure and enlarge the interval between progress detection and
+                 * process termination.
                  */
-                var dagState =
-                    await dagStore
-                        .GetStateAsync(
-                            inFlightWork.ExecutionId!)
-                        .ConfigureAwait(false);
+                var dagRecord = await dagStore
+                    .GetRecordAsync(inFlightWork.ExecutionId!)
+                    .ConfigureAwait(false);
 
-                var completedStepCount =
-                    0;
+                var completedStepCount = dagRecord?.CompletedSteps?.Count ?? 0;
+                var totalStepCount = dagRecord?.Steps?.Count ?? 0;
 
-                var totalStepCount =
-                    0;
-
-                var statusBreakdown =
-                    string.Empty;
-
-                if (dagState is not null)
-                {
-                    completedStepCount =
-                        dagState.Steps.Values.Count(step =>
-                            step.Status ==
-                            AiStepExecutionStatus.Completed);
-
-                    totalStepCount =
-                        dagState.Steps.Count;
-
-                    statusBreakdown =
-                        string.Join(
-                            ",",
-                            dagState.Steps.Values
-                                .GroupBy(step => step.Status)
-                                .OrderBy(group => group.Key)
-                                .Select(group =>
-                                    $"{group.Key}:{group.Count()}"));
-                }
-
-                var dagRecord =
-                    await dagStore
-                        .GetRecordAsync(
-                            inFlightWork.ExecutionId!)
-                        .ConfigureAwait(false);
+                var statusBreakdown = dagRecord is null
+                    ? string.Empty
+                    : $"Completed:{completedStepCount},Remaining:{Math.Max(0, totalStepCount - completedStepCount)}";
 
                 /*
-                 * This must remain the final durable read before evaluating
-                 * the crash condition and calling KillAsync.
+                 * This must remain the final durable read before evaluating the crash
+                 * condition and calling KillAsync.
                  */
-                var indexEntry =
-                    await runExecutionIndex
-                        .GetAsync(
-                            inFlightWork.LocalRunId)
-                        .ConfigureAwait(false);
+                var indexEntry = await runExecutionIndex
+                    .GetAsync(inFlightWork.LocalRunId)
+                    .ConfigureAwait(false);
 
-                var currentInFlightSnapshot =
-                    new RealRuntimeCrashWorkStateSnapshot(
-                        indexEntry?.Status,
-                        indexEntry?.RuntimeInstanceId,
-                        indexEntry?.ExecutionId,
-                        indexEntry?.CompletedAtUtc,
-                        dagRecord?.Status.ToString(),
-                        completedStepCount,
-                        totalStepCount,
-                        statusBreakdown,
-                        DateTimeOffset.UtcNow);
+                var currentInFlightSnapshot = new RealRuntimeCrashWorkStateSnapshot(
+                    indexEntry?.Status,
+                    indexEntry?.RuntimeInstanceId,
+                    indexEntry?.ExecutionId,
+                    indexEntry?.CompletedAtUtc,
+                    dagRecord?.Status.ToString(),
+                    completedStepCount,
+                    totalStepCount,
+                    statusBreakdown,
+                    DateTimeOffset.UtcNow);
 
-                lastObservedInFlightSnapshot =
-                    currentInFlightSnapshot;
+                lastObservedInFlightSnapshot = currentInFlightSnapshot;
 
-                var runtimeInstanceMatches =
-                    string.Equals(
-                        currentInFlightSnapshot.RuntimeInstanceId,
-                        inventory.RuntimeInstanceId,
-                        StringComparison.Ordinal);
+                var runtimeInstanceMatches = string.Equals(
+                    currentInFlightSnapshot.RuntimeInstanceId,
+                    inventory.RuntimeInstanceId,
+                    StringComparison.Ordinal);
 
-                var executionMatches =
-                    string.Equals(
-                        currentInFlightSnapshot.ExecutionId,
-                        inFlightWork.ExecutionId,
-                        StringComparison.Ordinal);
+                var executionMatches = string.Equals(
+                    currentInFlightSnapshot.ExecutionId,
+                    inFlightWork.ExecutionId,
+                    StringComparison.Ordinal);
 
-                var indexIsRunning =
-                    string.Equals(
-                        currentInFlightSnapshot.IndexStatus,
-                        "running",
-                        StringComparison.OrdinalIgnoreCase);
+                var indexIsRunning = string.Equals(
+                    currentInFlightSnapshot.IndexStatus,
+                    "running",
+                    StringComparison.OrdinalIgnoreCase);
 
-                var dagIsRunning =
-                    string.Equals(
-                        currentInFlightSnapshot.DagStatus,
-                        "Running",
-                        StringComparison.OrdinalIgnoreCase);
+                var dagIsRunning = string.Equals(
+                    currentInFlightSnapshot.DagStatus,
+                    "Running",
+                    StringComparison.OrdinalIgnoreCase);
 
                 var requiredProgressReached =
-                    currentInFlightSnapshot.DagCompletedStepCount >=
-                    minimumCompletedStepsBeforeKill;
+                    currentInFlightSnapshot.DagCompletedStepCount >= minimumCompletedStepsBeforeKill;
 
                 var executionStillIncomplete =
                     currentInFlightSnapshot.DagTotalStepCount > 0 &&
@@ -457,48 +402,38 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
                     requiredProgressReached &&
                     executionStillIncomplete)
                 {
-                    observedCrashSnapshot =
-                        currentInFlightSnapshot;
+                    observedCrashSnapshot = currentInFlightSnapshot;
 
                     /*
-                     * No additional read, logging operation, delay, or snapshot
-                     * capture is permitted between this timestamp and KillAsync.
+                     * No additional read, logging operation, delay, or snapshot capture
+                     * is permitted between this timestamp and KillAsync.
                      */
-                    killRequestedAtUtc =
-                        DateTimeOffset.UtcNow;
+                    killRequestedAtUtc = DateTimeOffset.UtcNow;
 
-                    killed =
-                        await processControl
-                            .KillAsync(
-                                inventory.RuntimeInstanceId)
-                            .ConfigureAwait(false);
+                    killed = await processControl
+                        .KillAsync(inventory.RuntimeInstanceId)
+                        .ConfigureAwait(false);
 
-                    killCompletedAtUtc =
-                        DateTimeOffset.UtcNow;
-
+                    killCompletedAtUtc = DateTimeOffset.UtcNow;
                     break;
                 }
 
-                var indexIsCompleted =
-                    string.Equals(
-                        currentInFlightSnapshot.IndexStatus,
-                        "completed",
-                        StringComparison.OrdinalIgnoreCase);
+                var indexIsCompleted = string.Equals(
+                    currentInFlightSnapshot.IndexStatus,
+                    "completed",
+                    StringComparison.OrdinalIgnoreCase);
 
-                var dagIsCompleted =
-                    string.Equals(
-                        currentInFlightSnapshot.DagStatus,
-                        "Completed",
-                        StringComparison.OrdinalIgnoreCase);
+                var dagIsCompleted = string.Equals(
+                    currentInFlightSnapshot.DagStatus,
+                    "Completed",
+                    StringComparison.OrdinalIgnoreCase);
 
                 var allDagStepsCompleted =
                     currentInFlightSnapshot.DagTotalStepCount > 0 &&
                     currentInFlightSnapshot.DagCompletedStepCount >=
                     currentInFlightSnapshot.DagTotalStepCount;
 
-                if (indexIsCompleted ||
-                    dagIsCompleted ||
-                    allDagStepsCompleted)
+                if (indexIsCompleted || dagIsCompleted || allDagStepsCompleted)
                 {
                     Assert.Fail(
                         "The selected in-flight execution completed before the runtime process could be killed. " +
@@ -518,10 +453,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
                         $"CapturedAtUtc='{currentInFlightSnapshot.CapturedAtUtc:O}'.");
                 }
 
-                await Task
-                 .Delay(
-                     TimeSpan.FromMilliseconds(50))
-                 .ConfigureAwait(false);
+                await Task.Delay(TimeSpan.FromMilliseconds(50)).ConfigureAwait(false);
             }
 
             if (observedCrashSnapshot is null)
@@ -542,8 +474,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
                     $"LastTotalSteps='{lastObservedInFlightSnapshot?.DagTotalStepCount}', " +
                     $"ProgressTimeout='{progressTimeout}'.");
 
-                throw new InvalidOperationException(
-                    "Unreachable assertion path.");
+                throw new InvalidOperationException("Unreachable assertion path.");
             }
 
             Assert.True(
@@ -570,32 +501,25 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
              * Full inventory capture is safe now because the runtime process
              * has already been terminated.
              */
-            var postKillSnapshots =
-                await CaptureWorkStateSnapshotsAsync(
-                        runExecutionIndex,
-                        dagStore,
-                        inventory)
-                    .ConfigureAwait(false);
+            var postKillSnapshots = await CaptureWorkStateSnapshotsAsync(
+                    runExecutionIndex,
+                    dagStore,
+                    inventory)
+                .ConfigureAwait(false);
 
-            var localQueuedPreKillSnapshots =
-                await Task
-                    .WhenAll(
-                        localQueuedPreKillSnapshotTasks)
-                    .ConfigureAwait(false);
+            var localQueuedPreKillSnapshots = await Task
+                .WhenAll(localQueuedPreKillSnapshotTasks)
+                .ConfigureAwait(false);
 
-            var preKillSnapshotMap =
-                localQueuedPreKillSnapshots
-                    .ToDictionary(
-                        pair => pair.Key,
-                        pair => pair.Value,
-                        StringComparer.Ordinal);
+            var preKillSnapshotMap = localQueuedPreKillSnapshots.ToDictionary(
+                pair => pair.Key,
+                pair => pair.Value,
+                StringComparer.Ordinal);
 
-            preKillSnapshotMap[inFlightWork.LocalRunId] =
-                observedCrashSnapshot;
+            preKillSnapshotMap[inFlightWork.LocalRunId] = observedCrashSnapshot;
 
-            IReadOnlyDictionary<string, RealRuntimeCrashWorkStateSnapshot>
-                preKillSnapshots =
-                    preKillSnapshotMap;
+            IReadOnlyDictionary<string, RealRuntimeCrashWorkStateSnapshot> preKillSnapshots =
+                preKillSnapshotMap;
 
             output.WriteLine(
                 $"[REAL RUNTIME INVENTORY CRASH] Runtime process killed. " +
@@ -610,17 +534,13 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
 
             foreach (var work in inventory.Works)
             {
-                var preKill =
-                    preKillSnapshots[work.LocalRunId];
+                var preKill = preKillSnapshots[work.LocalRunId];
+                var postKill = postKillSnapshots[work.LocalRunId];
 
-                var postKill =
-                    postKillSnapshots[work.LocalRunId];
-
-                var completionTiming =
-                    ClassifyCompletionTiming(
-                        postKill.IndexCompletedAtUtc,
-                        killRequestedAtUtc,
-                        killCompletedAtUtc);
+                var completionTiming = ClassifyCompletionTiming(
+                    postKill.IndexCompletedAtUtc,
+                    killRequestedAtUtc,
+                    killCompletedAtUtc);
 
                 output.WriteLine(
                     $"[REAL RUNTIME INVENTORY KILL WINDOW] " +
@@ -681,37 +601,24 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
                     .ConfigureAwait(false);
             }
 
-            var recoveredWorks =
-                new List<RealRuntimeCrashRecoveredWorkProof>();
+            var recoveredWorks = new List<RealRuntimeCrashRecoveredWorkProof>();
 
             foreach (var work in inventory.Works)
             {
-                var redispatchedRun =
-                    await ProductionRecoveryWaitHelpers
-                        .WaitForRecoveredRunRedispatchedAsync(
-                            sharedRunStore,
-                            sharedQueue,
-                            work.SharedRunId,
-                            inventory.RuntimeInstanceId,
-                            work.LocalRunId,
-                            redispatchTimeout)
-                        .ConfigureAwait(false);
+                var redispatchedRun = await ProductionRecoveryWaitHelpers
+                    .WaitForRecoveredRunRedispatchedAsync(
+                        sharedRunStore,
+                        sharedQueue,
+                        work.SharedRunId,
+                        inventory.RuntimeInstanceId,
+                        work.LocalRunId,
+                        redispatchTimeout)
+                    .ConfigureAwait(false);
 
-                Assert.False(
-                    string.IsNullOrWhiteSpace(
-                        redispatchedRun.AssignedRuntimeInstanceId));
-
-                Assert.False(
-                    string.IsNullOrWhiteSpace(
-                        redispatchedRun.LocalRunId));
-
-                Assert.NotEqual(
-                    inventory.RuntimeInstanceId,
-                    redispatchedRun.AssignedRuntimeInstanceId);
-
-                Assert.NotEqual(
-                    work.LocalRunId,
-                    redispatchedRun.LocalRunId);
+                Assert.False(string.IsNullOrWhiteSpace(redispatchedRun.AssignedRuntimeInstanceId));
+                Assert.False(string.IsNullOrWhiteSpace(redispatchedRun.LocalRunId));
+                Assert.NotEqual(inventory.RuntimeInstanceId, redispatchedRun.AssignedRuntimeInstanceId);
+                Assert.NotEqual(work.LocalRunId, redispatchedRun.LocalRunId);
 
                 AssertRuntimeBelongsToTenant(
                     redispatchedRun.AssignedRuntimeInstanceId!,
@@ -719,43 +626,32 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
 
                 string recoveredExecutionId;
 
-                if (work.Kind ==
-                    RealRuntimeCrashWorkKind.InFlightExecution)
+                if (work.Kind == RealRuntimeCrashWorkKind.InFlightExecution)
                 {
-                    var recoveredExecution =
-                        await ProductionRecoveryWaitHelpers
-                            .WaitForDurableDagExecutionAsync(
-                                sharedRunStore,
-                                runExecutionIndex,
-                                dagStore,
-                                redispatchedRun.SharedRunId,
-                                executionResolveTimeout)
-                            .ConfigureAwait(false);
+                    var recoveredExecution = await ProductionRecoveryWaitHelpers
+                        .WaitForDurableDagExecutionAsync(
+                            sharedRunStore,
+                            runExecutionIndex,
+                            dagStore,
+                            redispatchedRun.SharedRunId,
+                            executionResolveTimeout)
+                        .ConfigureAwait(false);
 
-                    recoveredExecutionId =
-                        recoveredExecution.ExecutionId;
+                    recoveredExecutionId = recoveredExecution.ExecutionId;
 
-                    Assert.False(
-                        string.IsNullOrWhiteSpace(
-                            work.ExecutionId));
-
-                    Assert.Equal(
-                        work.ExecutionId,
-                        recoveredExecutionId);
+                    Assert.False(string.IsNullOrWhiteSpace(work.ExecutionId));
+                    Assert.Equal(work.ExecutionId, recoveredExecutionId);
                 }
                 else
                 {
-                    var replacementIndex =
-                        await WaitForReplacementLocalQueuedRunIndexAsync(
-                                runExecutionIndex,
-                                redispatchedRun.LocalRunId!,
-                                redispatchedRun.AssignedRuntimeInstanceId!,
-                                executionResolveTimeout)
-                            .ConfigureAwait(false);
+                    var replacementIndex = await WaitForReplacementLocalQueuedRunIndexAsync(
+                            runExecutionIndex,
+                            redispatchedRun.LocalRunId!,
+                            redispatchedRun.AssignedRuntimeInstanceId!,
+                            executionResolveTimeout)
+                        .ConfigureAwait(false);
 
-                    recoveredExecutionId =
-                        replacementIndex.ExecutionId ??
-                        string.Empty;
+                    recoveredExecutionId = replacementIndex.ExecutionId ?? string.Empty;
 
                     Assert.True(
                         string.Equals(
@@ -799,10 +695,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
                         RedispatchedRun = redispatchedRun,
                         ReplacementRuntimeInstanceId =
                             redispatchedRun.AssignedRuntimeInstanceId!,
-                        ReplacementLocalRunId =
-                            redispatchedRun.LocalRunId!,
-                        RecoveredExecutionId =
-                            recoveredExecutionId
+                        ReplacementLocalRunId = redispatchedRun.LocalRunId!,
+                        RecoveredExecutionId = recoveredExecutionId
                     });
 
                 output.WriteLine(
@@ -818,19 +712,14 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
                     $"ExecutionIdAfter='{recoveredExecutionId}'.");
             }
 
-            var proof =
-                new RealRuntimeCrashFailedRuntimeRecoveryProof
-                {
-                    FailedInventory = inventory,
-                    RecoveredWorks = recoveredWorks
-                };
+            var proof = new RealRuntimeCrashFailedRuntimeRecoveryProof
+            {
+                FailedInventory = inventory,
+                RecoveredWorks = recoveredWorks
+            };
 
-            AssertRecoveredInventoryStrictResume(
-                proof);
-
-            WriteRecoveredInventory(
-                output,
-                proof);
+            AssertRecoveredInventoryStrictResume(proof);
+            WriteRecoveredInventory(output, proof);
 
             return proof;
 
@@ -838,24 +727,22 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
                 CaptureLocalQueuedPreKillSnapshotAsync(
                     RealRuntimeCrashWorkProof work)
             {
-                var indexEntry =
-                    await runExecutionIndex
-                        .GetAsync(
-                            work.LocalRunId)
-                        .ConfigureAwait(false);
+                var indexEntry = await runExecutionIndex
+                    .GetAsync(work.LocalRunId)
+                    .ConfigureAwait(false);
 
                 return new KeyValuePair<string, RealRuntimeCrashWorkStateSnapshot>(
-                work.LocalRunId,
-                new RealRuntimeCrashWorkStateSnapshot(
-                    indexEntry?.Status,
-                    indexEntry?.RuntimeInstanceId,
-                    indexEntry?.ExecutionId,
-                    indexEntry?.CompletedAtUtc,
-                    null,
-                    0,
-                    0,
-                    string.Empty,
-                    DateTimeOffset.UtcNow));
+                    work.LocalRunId,
+                    new RealRuntimeCrashWorkStateSnapshot(
+                        indexEntry?.Status,
+                        indexEntry?.RuntimeInstanceId,
+                        indexEntry?.ExecutionId,
+                        indexEntry?.CompletedAtUtc,
+                        null,
+                        0,
+                        0,
+                        string.Empty,
+                        DateTimeOffset.UtcNow));
             }
         }
 

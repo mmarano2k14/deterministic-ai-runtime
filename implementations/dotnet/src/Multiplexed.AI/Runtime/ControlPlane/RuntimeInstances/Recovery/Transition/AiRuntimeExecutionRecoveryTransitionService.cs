@@ -5,8 +5,10 @@ using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Recovery.Transit
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Ownership;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Queue;
+using Multiplexed.Abstractions.AI.Execution.Control;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery;
+using Multiplexed.AI.Stores;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery.Transition
 {
@@ -22,8 +24,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery.Transiti
     /// When dry-run is enabled, it validates the transition and reports the action
     /// without mutating shared queue state or runtime execution index state.
     ///
-    /// When mutation is enabled, it requeues the dispatched shared queue item and
-    /// then marks the local runtime execution index entry as requeued for recovery.
+    /// When mutation is enabled for an in-flight execution, it first acquires a
+    /// durable runtime-recovery-owned pause, recovers any running DAG step claims,
+    /// marks the execution durably paused, then requeues the dispatched shared queue
+    /// item and marks the local runtime execution index entry as requeued. Local
+    /// queued work has no durable execution and bypasses execution control recovery.
     /// </remarks>
     public sealed class AiRuntimeExecutionRecoveryTransitionService : IAiRuntimeExecutionRecoveryTransitionService
     {
@@ -42,6 +47,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery.Transiti
         private readonly IAiSharedQueue sharedQueue;
         private readonly IAiRuntimeRunExecutionIndex runtimeRunExecutionIndex;
         private readonly IAiRuntimeRecoveryForensicsRecorder forensicsRecorder;
+        private readonly IAiExecutionControlService? executionControlService;
+        private readonly IAiDagExecutionStore? dagExecutionStore;
         private readonly AiRuntimeExecutionRecoveryReconciliationOptions options;
 
         /// <summary>
@@ -99,6 +106,71 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery.Transiti
             this.sharedQueue = sharedQueue;
             this.runtimeRunExecutionIndex = runtimeRunExecutionIndex;
             this.forensicsRecorder = forensicsRecorder;
+            this.executionControlService = null;
+            this.dagExecutionStore = null;
+            this.options = options.Value;
+        }
+
+        /// <summary>
+        /// Initializes a new instance of the <see cref="AiRuntimeExecutionRecoveryTransitionService"/> class
+        /// with durable execution control support for in-flight recovery.
+        /// </summary>
+        /// <param name="sharedQueue">The shared queue.</param>
+        /// <param name="runtimeRunExecutionIndex">The runtime run execution index.</param>
+        /// <param name="options">The runtime execution recovery reconciliation options.</param>
+        /// <param name="forensicsRecorder">The runtime recovery forensics recorder.</param>
+        /// <param name="executionControlService">The durable execution control service.</param>
+        public AiRuntimeExecutionRecoveryTransitionService(
+            IAiSharedQueue sharedQueue,
+            IAiRuntimeRunExecutionIndex runtimeRunExecutionIndex,
+            IOptions<AiRuntimeExecutionRecoveryReconciliationOptions> options,
+            IAiRuntimeRecoveryForensicsRecorder forensicsRecorder,
+            IAiExecutionControlService executionControlService)
+        {
+            ArgumentNullException.ThrowIfNull(sharedQueue);
+            ArgumentNullException.ThrowIfNull(runtimeRunExecutionIndex);
+            ArgumentNullException.ThrowIfNull(options);
+            ArgumentNullException.ThrowIfNull(forensicsRecorder);
+            ArgumentNullException.ThrowIfNull(executionControlService);
+
+            this.sharedQueue = sharedQueue;
+            this.runtimeRunExecutionIndex = runtimeRunExecutionIndex;
+            this.forensicsRecorder = forensicsRecorder;
+            this.executionControlService = executionControlService;
+            this.dagExecutionStore = null;
+            this.options = options.Value;
+        }
+
+        /// <summary>
+        /// Initializes a new instance of the <see cref="AiRuntimeExecutionRecoveryTransitionService"/> class
+        /// with durable execution control and DAG claim recovery support.
+        /// </summary>
+        /// <param name="sharedQueue">The shared queue.</param>
+        /// <param name="runtimeRunExecutionIndex">The runtime run execution index.</param>
+        /// <param name="options">The runtime execution recovery reconciliation options.</param>
+        /// <param name="forensicsRecorder">The runtime recovery forensics recorder.</param>
+        /// <param name="executionControlService">The durable execution control service.</param>
+        /// <param name="dagExecutionStore">The distributed DAG execution store.</param>
+        public AiRuntimeExecutionRecoveryTransitionService(
+            IAiSharedQueue sharedQueue,
+            IAiRuntimeRunExecutionIndex runtimeRunExecutionIndex,
+            IOptions<AiRuntimeExecutionRecoveryReconciliationOptions> options,
+            IAiRuntimeRecoveryForensicsRecorder forensicsRecorder,
+            IAiExecutionControlService executionControlService,
+            IAiDagExecutionStore dagExecutionStore)
+        {
+            ArgumentNullException.ThrowIfNull(sharedQueue);
+            ArgumentNullException.ThrowIfNull(runtimeRunExecutionIndex);
+            ArgumentNullException.ThrowIfNull(options);
+            ArgumentNullException.ThrowIfNull(forensicsRecorder);
+            ArgumentNullException.ThrowIfNull(executionControlService);
+            ArgumentNullException.ThrowIfNull(dagExecutionStore);
+
+            this.sharedQueue = sharedQueue;
+            this.runtimeRunExecutionIndex = runtimeRunExecutionIndex;
+            this.forensicsRecorder = forensicsRecorder;
+            this.executionControlService = executionControlService;
+            this.dagExecutionStore = dagExecutionStore;
             this.options = options.Value;
         }
 
@@ -216,6 +288,68 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery.Transiti
                 };
             }
 
+            var requiresRecoveryPause =
+                this.options.EnableDagExecutionResume &&
+                !isLocalQueuedRecovery;
+
+            if (requiresRecoveryPause)
+            {
+                if (this.executionControlService is null)
+                {
+                    return CreateRejectedResult(
+                        ownership,
+                        "execution-control-service-unavailable");
+                }
+
+                if (this.dagExecutionStore is null)
+                {
+                    return CreateRejectedResult(
+                        ownership,
+                        "dag-execution-store-unavailable");
+                }
+
+                var controlState = await this.executionControlService
+                    .PauseExecutionForRecoveryAsync(
+                        ownership.ExecutionId!,
+                        forensicsId,
+                        reason,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+                if (!IsRecoveryPauseOwnedBy(
+                        controlState,
+                        forensicsId,
+                        allowPausing: true))
+                {
+                    return CreateRejectedResult(
+                        ownership,
+                        "execution-control-recovery-pause-rejected");
+                }
+
+                await this.dagExecutionStore
+                    .RecoverRunningStepsForRecoveryAsync(
+                        ownership.ExecutionId!,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+                var pausedState = await this.executionControlService
+                    .MarkPausedAsync(
+                        ownership.ExecutionId!,
+                        forensicsId,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+                if (!IsRecoveryPauseOwnedBy(
+                        pausedState,
+                        forensicsId,
+                        allowPausing: false))
+                {
+                    return CreateRejectedResult(
+                        ownership,
+                        "execution-control-recovery-mark-paused-rejected");
+                }
+            }
+
             var metadata =
                 this.options.EnableDagExecutionResume
                     ? CreateRecoveryMetadata(
@@ -301,6 +435,56 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery.Transiti
                 Action = "requeue-shared-run",
                 Reason = reason
             };
+        }
+
+        /// <summary>
+        /// Creates a rejected recovery transition result for the supplied ownership.
+        /// </summary>
+        /// <param name="ownership">The resolved shared run ownership.</param>
+        /// <param name="reason">The rejection reason.</param>
+        /// <returns>The rejected transition result.</returns>
+        private static AiRuntimeExecutionRecoveryTransitionResult CreateRejectedResult(
+            AiSharedRunOwnershipResolutionResult ownership,
+            string reason)
+        {
+            return new AiRuntimeExecutionRecoveryTransitionResult
+            {
+                Accepted = false,
+                Changed = false,
+                SharedRunId = ownership.SharedRunId,
+                RuntimeInstanceId = ownership.RuntimeInstanceId,
+                LocalRunId = ownership.LocalRunId,
+                ExecutionId = ownership.ExecutionId,
+                Action = "none",
+                Reason = reason
+            };
+        }
+
+        /// <summary>
+        /// Determines whether an execution control state is owned by the expected recovery transition.
+        /// </summary>
+        /// <param name="state">The execution control state.</param>
+        /// <param name="recoveryOwnerId">The expected deterministic recovery owner identifier.</param>
+        /// <param name="allowPausing">A value indicating whether the pausing state is accepted.</param>
+        /// <returns><c>true</c> when the state is owned by the recovery transition; otherwise, <c>false</c>.</returns>
+        private static bool IsRecoveryPauseOwnedBy(
+            AiExecutionControlState state,
+            string recoveryOwnerId,
+            bool allowPausing)
+        {
+            ArgumentNullException.ThrowIfNull(state);
+
+            if (!string.Equals(
+                    state.RequestedBy,
+                    recoveryOwnerId,
+                    StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            return state.Status == AiExecutionControlStatus.Paused ||
+                   (allowPausing &&
+                    state.Status == AiExecutionControlStatus.Pausing);
         }
 
         /// <summary>

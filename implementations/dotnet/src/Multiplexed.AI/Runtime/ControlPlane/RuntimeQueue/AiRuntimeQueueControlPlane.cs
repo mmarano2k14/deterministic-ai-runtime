@@ -26,8 +26,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue
     /// </remarks>
     public sealed class AiRuntimeQueueControlPlane : IAiRuntimeQueueControlPlane
     {
+        private const string RecoveryForensicsIdMetadataKey = "recovery.forensicsId";
         private const string RecoveryModeMetadataKey = "recovery.mode";
         private const string RecoveryModeResumeExistingExecution = "resume-existing-execution";
+        private const string RecoveryModeRequeueLocalQueuedRun = "requeue-local-queued-run";
         private const string RecoveryFailedExecutionIdMetadataKey = "recovery.failedExecutionId";
 
         private readonly IAiRuntimePipelineBackgroundController _controller;
@@ -310,12 +312,15 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue
             AiRuntimeQueueControlPlaneRequest request,
             CancellationToken cancellationToken)
         {
-            var resumeExecutionId =
-                TryResolveResumeExecutionId(
+            var recoveryResume =
+                ResolveRecoveryResume(
                     request.Metadata);
 
+            var resumeExecutionId =
+                recoveryResume?.ExecutionId;
+
             Console.WriteLine(
-                $"[RUNTIME QUEUE RECOVERY RESUME] ResumeExecutionId='{resumeExecutionId ?? string.Empty}', HasMetadata='{request.Metadata is not null}', Metadata='{string.Join(";", request.Metadata?.Select(pair => $"{pair.Key}={pair.Value}") ?? Array.Empty<string>())}'");
+                $"[RUNTIME QUEUE RECOVERY RESUME] ResumeExecutionId='{resumeExecutionId ?? string.Empty}', RecoveryOwnerId='{recoveryResume?.RecoveryOwnerId ?? string.Empty}', HasMetadata='{request.Metadata is not null}', Metadata='{string.Join(";", request.Metadata?.Select(pair => $"{pair.Key}={pair.Value}") ?? Array.Empty<string>())}'");
 
             var enrichedRunRequest =
                 CreateMetadataEnrichedRunRequest(
@@ -910,7 +915,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue
         /// </summary>
         /// <param name="metadata">The enqueue metadata.</param>
         /// <returns>The execution identifier to resume, or <c>null</c>.</returns>
-        private static string? TryResolveResumeExecutionId(
+        private static RecoveryResumeRequest? ResolveRecoveryResume(
             IReadOnlyDictionary<string, string>? metadata)
         {
             if (metadata is null ||
@@ -923,12 +928,26 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue
                     metadata,
                     RecoveryModeMetadataKey,
                     out var mode) ||
-                !string.Equals(
+                string.IsNullOrWhiteSpace(mode))
+            {
+                return null;
+            }
+
+            if (string.Equals(
+                    mode,
+                    RecoveryModeRequeueLocalQueuedRun,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return null;
+            }
+
+            if (!string.Equals(
                     mode,
                     RecoveryModeResumeExistingExecution,
                     StringComparison.OrdinalIgnoreCase))
             {
-                return null;
+                throw new InvalidOperationException(
+                    $"Unsupported runtime recovery mode '{mode}'.");
             }
 
             if (!TryGetMetadataValue(
@@ -937,10 +956,31 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue
                     out var executionId) ||
                 string.IsNullOrWhiteSpace(executionId))
             {
-                return null;
+                throw new InvalidOperationException(
+                    $"Recovery metadata '{RecoveryFailedExecutionIdMetadataKey}' is required when '{RecoveryModeMetadataKey}' is '{RecoveryModeResumeExistingExecution}'.");
             }
 
-            return executionId;
+            if (!TryGetMetadataValue(
+                    metadata,
+                    RecoveryForensicsIdMetadataKey,
+                    out var recoveryOwnerId) ||
+                string.IsNullOrWhiteSpace(recoveryOwnerId))
+            {
+                throw new InvalidOperationException(
+                    $"Recovery metadata '{RecoveryForensicsIdMetadataKey}' is required when '{RecoveryModeMetadataKey}' is '{RecoveryModeResumeExistingExecution}'.");
+            }
+
+            if (!recoveryOwnerId.StartsWith(
+                    "runtime-recovery:",
+                    StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    $"Recovery owner id '{recoveryOwnerId}' is not a valid runtime recovery owner.");
+            }
+
+            return new RecoveryResumeRequest(
+                executionId,
+                recoveryOwnerId);
         }
 
         /// <summary>
@@ -1024,6 +1064,15 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue
                 CompletedAtUtc = entry.CompletedAtUtc
             };
         }
+
+        /// <summary>
+        /// Represents a validated existing-execution recovery resume request.
+        /// </summary>
+        /// <param name="ExecutionId">The durable execution identifier to resume.</param>
+        /// <param name="RecoveryOwnerId">The deterministic recovery owner identifier.</param>
+        private sealed record RecoveryResumeRequest(
+            string ExecutionId,
+            string RecoveryOwnerId);
 
         /// <summary>
         /// Represents the raw result of an inner runtime queue operation before it is converted
