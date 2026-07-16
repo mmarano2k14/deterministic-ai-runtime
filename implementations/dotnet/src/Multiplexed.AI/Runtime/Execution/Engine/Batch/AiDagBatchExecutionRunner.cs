@@ -1,4 +1,6 @@
 ﻿using Multiplexed.Abstractions.AI.Concurrency;
+using Multiplexed.Abstractions.AI.ControlPlane.Discovery;
+using Multiplexed.Abstractions.AI.ControlPlane.Signals;
 using Multiplexed.Abstractions.AI.Execution;
 using Multiplexed.Abstractions.AI.Execution.Scheduling;
 using Multiplexed.Abstractions.AI.Pipeline;
@@ -53,6 +55,8 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Batch
         private readonly AiDagExecutionFinalizationService _finalizationService;
         private readonly AiDagExecutionLifecycleHelper _lifecycleHelper;
         private readonly AiDagRetentionCoordinator _retentionCoordinator;
+        private readonly IAiRuntimeSignalPublisher _runtimeSignalPublisher;
+        private readonly IAiControlPlaneIdResolver _controlPlaneIdResolver;
 
         /// <summary>
         /// Initializes a new instance of the <see cref="AiDagBatchExecutionRunner"/> class.
@@ -75,6 +79,12 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Batch
         /// <param name="retentionCoordinator">
         /// The coordinator responsible for applying policy-driven retention after batch transitions.
         /// </param>
+        /// <param name="runtimeSignalPublisher">
+        /// The best-effort runtime signal publisher used to wake control-plane observers.
+        /// </param>
+        /// <param name="controlPlaneIdResolver">
+        /// The resolver used to obtain the logical control-plane identifier.
+        /// </param>
         /// <exception cref="ArgumentNullException">
         /// Thrown when one of the required dependencies is <see langword="null"/>.
         /// </exception>
@@ -84,7 +94,9 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Batch
             AiDagClaimedStepExecutor claimedStepExecutor,
             AiDagExecutionFinalizationService finalizationService,
             AiDagExecutionLifecycleHelper lifecycleHelper,
-            AiDagRetentionCoordinator retentionCoordinator)
+            AiDagRetentionCoordinator retentionCoordinator,
+            IAiRuntimeSignalPublisher runtimeSignalPublisher,
+            IAiControlPlaneIdResolver controlPlaneIdResolver)
         {
             _engineServices = engineServices
                 ?? throw new ArgumentNullException(nameof(engineServices));
@@ -103,6 +115,18 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Batch
 
             _retentionCoordinator = retentionCoordinator
                 ?? throw new ArgumentNullException(nameof(retentionCoordinator));
+
+            _runtimeSignalPublisher = runtimeSignalPublisher
+                ?? throw new ArgumentNullException(nameof(runtimeSignalPublisher));
+
+            _controlPlaneIdResolver = controlPlaneIdResolver
+                ?? throw new ArgumentNullException(nameof(controlPlaneIdResolver));
+
+            Console.WriteLine(
+                $"[AI RUNTIME SIGNAL][DAG BATCH RUNNER CONSTRUCTED] " +
+                $"Assembly='{typeof(AiDagBatchExecutionRunner).Assembly.Location}', " +
+                $"Publisher='{_runtimeSignalPublisher.GetType().FullName}', " +
+                $"Resolver='{_controlPlaneIdResolver.GetType().FullName}'.");
         }
 
         /// <summary>
@@ -339,6 +363,12 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Batch
 
                         _engineServices.Logger.Engine.LogInformation(
                             $"[AI DAG BATCH] Step completed. ExecutionId='{executionId}', StepName='{claimedStep.StepName}'.");
+
+                        await PublishDagProgressChangedAsync(
+                                record,
+                                resolvedPipeline.Steps.Count,
+                                workerId)
+                            .ConfigureAwait(false);
                     }
                     else
                     {
@@ -491,6 +521,110 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Batch
                        executionId,
                        cancellationToken)
                    ?? record;
+        }
+
+        /// <summary>
+        /// Publishes a best-effort signal after a batch DAG step completion
+        /// has been persisted durably.
+        /// </summary>
+        /// <param name="record">The execution record associated with the completed step.</param>
+        /// <param name="totalStepCount">The total configured DAG step count.</param>
+        /// <param name="runtimeInstanceId">The runtime instance progressing the execution.</param>
+        /// <returns>A task representing the asynchronous signal publication.</returns>
+        private async Task PublishDagProgressChangedAsync(
+            AiExecutionRecord record,
+            int totalStepCount,
+            string runtimeInstanceId)
+        {
+            ArgumentNullException.ThrowIfNull(record);
+            ArgumentException.ThrowIfNullOrWhiteSpace(runtimeInstanceId);
+
+            try
+            {
+                var completedState = await _engineServices.DagStore
+                    .GetStateAsync(
+                        record.ExecutionId,
+                        CancellationToken.None)
+                    .ConfigureAwait(false);
+
+                if (completedState is null)
+                {
+                    Console.WriteLine(
+                        $"[AI RUNTIME SIGNAL][DAG BATCH PUBLISH SKIPPED] " +
+                        $"Reason='ExecutionStateUnavailable', ExecutionId='{record.ExecutionId}', " +
+                        $"RuntimeInstanceId='{runtimeInstanceId}'.");
+
+                    return;
+                }
+
+                var controlPlaneId = await _controlPlaneIdResolver
+                    .ResolveAsync(
+                        new AiControlPlaneIdResolutionRequest
+                        {
+                            Source = "dag-progress-changed-signal",
+                            AllowGeneratedFallback = false
+                        },
+                        CancellationToken.None)
+                    .ConfigureAwait(false);
+
+                if (string.IsNullOrWhiteSpace(controlPlaneId))
+                {
+                    Console.WriteLine(
+                        $"[AI RUNTIME SIGNAL][DAG BATCH PUBLISH SKIPPED] " +
+                        $"Reason='ControlPlaneIdUnavailable', ExecutionId='{record.ExecutionId}', " +
+                        $"RuntimeInstanceId='{runtimeInstanceId}'.");
+
+                    return;
+                }
+
+                var completedStepCount = completedState.Steps.Values.Count(
+                    step => step.Status == AiStepExecutionStatus.Completed);
+
+                var signal = new AiRuntimeSignal
+                {
+                    Type = AiRuntimeSignalType.DagProgressChanged,
+                    ControlPlaneId = controlPlaneId,
+                    TenantId = record.ExecutionContextSnapshot?.TenantId,
+                    ExecutionId = record.ExecutionId,
+                    RuntimeInstanceId = runtimeInstanceId,
+                    CompletedStepCount = completedStepCount,
+                    TotalStepCount = totalStepCount,
+                    ExecutionVersion = record.Version
+                };
+
+                Console.WriteLine(
+                    $"[AI RUNTIME SIGNAL][DAG BATCH PUBLISH CALL] " +
+                    $"SignalType='{signal.Type}', ControlPlaneId='{signal.ControlPlaneId}', " +
+                    $"ExecutionId='{signal.ExecutionId}', RuntimeInstanceId='{signal.RuntimeInstanceId}', " +
+                    $"CompletedStepCount='{signal.CompletedStepCount}', TotalStepCount='{signal.TotalStepCount}', " +
+                    $"ExecutionVersion='{signal.ExecutionVersion}'.");
+
+                await _runtimeSignalPublisher
+                    .PublishAsync(
+                        signal,
+                        CancellationToken.None)
+                    .ConfigureAwait(false);
+
+                Console.WriteLine(
+                    $"[AI RUNTIME SIGNAL][DAG BATCH PUBLISH RETURNED] " +
+                    $"SignalType='{signal.Type}', ControlPlaneId='{signal.ControlPlaneId}', " +
+                    $"ExecutionId='{signal.ExecutionId}', RuntimeInstanceId='{signal.RuntimeInstanceId}', " +
+                    $"CompletedStepCount='{signal.CompletedStepCount}', TotalStepCount='{signal.TotalStepCount}', " +
+                    $"ExecutionVersion='{signal.ExecutionVersion}'.");
+            }
+            catch (Exception exception)
+            {
+                /*
+                 * Runtime signals are wake-up notifications only. Signal publication,
+                 * state reload, or control-plane identity resolution must never invalidate
+                 * a durable batch step completion that already succeeded.
+                 */
+                Console.WriteLine(
+                    $"[AI RUNTIME SIGNAL][DAG BATCH PUBLISH FAILED] " +
+                    $"ExecutionId='{record.ExecutionId}', RuntimeInstanceId='{runtimeInstanceId}', " +
+                    $"ExceptionType='{exception.GetType().FullName}', " +
+                    $"ExceptionMessage='{exception.Message}'.");
+            }
         }
 
         /// <summary>

@@ -6,6 +6,7 @@ using Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Store;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Dispatch;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Queue;
+using Multiplexed.Abstractions.AI.ControlPlane.Signals;
 using Multiplexed.Abstractions.AI.Execution;
 using Multiplexed.Abstractions.AI.Execution.State;
 using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Models;
@@ -1296,7 +1297,6 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
         }
 
 
-
         /// <summary>
         /// Waits until a recovered shared run is redispatched with a new local runtime run identifier.
         /// </summary>
@@ -1338,12 +1338,34 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
             AiSharedQueueItem? lastQueueItem =
                 null;
 
+            StackExchange.Redis.RedisTimeoutException? lastRedisTimeout =
+                null;
+
+            var redisTimeoutCount =
+                0;
+
             while (DateTimeOffset.UtcNow < deadline)
             {
-                lastRun =
-                    await sharedRunStore
-                        .GetAsync(sharedRunId)
+                try
+                {
+                    lastRun =
+                        await sharedRunStore
+                            .GetAsync(sharedRunId)
+                            .ConfigureAwait(false);
+                }
+                catch (StackExchange.Redis.RedisTimeoutException exception)
+                {
+                    lastRedisTimeout =
+                        exception;
+
+                    redisTimeoutCount++;
+
+                    await Task
+                        .Delay(TimeSpan.FromMilliseconds(250))
                         .ConfigureAwait(false);
+
+                    continue;
+                }
 
                 if (lastRun is not null &&
                     !string.IsNullOrWhiteSpace(
@@ -1366,11 +1388,25 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
                  * Capture the durable queue state only while redispatch has not
                  * converged. This tells us whether the work is pending, claimed,
                  * dispatched, missing, or abandoned by a queue worker.
+                 *
+                 * A transient Redis timeout is tolerated because this method owns
+                 * a larger convergence timeout. The recovery proof still fails when
+                 * durable convergence does not occur before that deadline.
                  */
-                lastQueueItem =
-                    await sharedQueue
-                        .GetAsync(sharedRunId)
-                        .ConfigureAwait(false);
+                try
+                {
+                    lastQueueItem =
+                        await sharedQueue
+                            .GetAsync(sharedRunId)
+                            .ConfigureAwait(false);
+                }
+                catch (StackExchange.Redis.RedisTimeoutException exception)
+                {
+                    lastRedisTimeout =
+                        exception;
+
+                    redisTimeoutCount++;
+                }
 
                 await Task
                     .Delay(TimeSpan.FromMilliseconds(250))
@@ -1378,18 +1414,41 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
             }
 
             /*
-             * Perform one final read after the timeout so the failure message
+             * Perform final best-effort reads after the timeout so the failure message
              * contains the freshest available shared-store and queue states.
+             *
+             * A Redis timeout here must not replace the actual convergence assertion.
+             * The most recent successfully observed values remain available below.
              */
-            lastRun =
-                await sharedRunStore
-                    .GetAsync(sharedRunId)
-                    .ConfigureAwait(false);
+            try
+            {
+                lastRun =
+                    await sharedRunStore
+                        .GetAsync(sharedRunId)
+                        .ConfigureAwait(false);
+            }
+            catch (StackExchange.Redis.RedisTimeoutException exception)
+            {
+                lastRedisTimeout =
+                    exception;
 
-            lastQueueItem =
-                await sharedQueue
-                    .GetAsync(sharedRunId)
-                    .ConfigureAwait(false);
+                redisTimeoutCount++;
+            }
+
+            try
+            {
+                lastQueueItem =
+                    await sharedQueue
+                        .GetAsync(sharedRunId)
+                        .ConfigureAwait(false);
+            }
+            catch (StackExchange.Redis.RedisTimeoutException exception)
+            {
+                lastRedisTimeout =
+                    exception;
+
+                redisTimeoutCount++;
+            }
 
             var queueMetadata =
                 lastQueueItem?.Metadata is { Count: > 0 }
@@ -1425,10 +1484,529 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
                 $"QueueClaimExpiresAtUtc='{lastQueueItem?.ClaimExpiresAtUtc?.ToString("O") ?? string.Empty}', " +
                 $"QueueUpdatedAtUtc='{lastQueueItem?.UpdatedAtUtc:O}', " +
                 $"QueueReason='{lastQueueItem?.Reason}', " +
-                $"QueueMetadata='{queueMetadata}'.");
+                $"QueueMetadata='{queueMetadata}', " +
+
+                $"RedisTimeoutCount='{redisTimeoutCount}', " +
+                $"LastRedisTimeoutType='{lastRedisTimeout?.GetType().FullName}', " +
+                $"LastRedisTimeoutMessage='{lastRedisTimeout?.Message}'.");
 
             throw new InvalidOperationException(
                 "Unreachable assertion path.");
+        }
+
+        /// <summary>
+        /// Waits until a real durable DAG execution reaches the expected completed step count
+        /// by combining targeted runtime signals with a slow durable polling fallback.
+        /// </summary>
+        /// <remarks>
+        /// Runtime signals are wake-up notifications only. Durable DAG state remains authoritative.
+        ///
+        /// The subscription is activated before the initial durable read so a completion signal
+        /// cannot be missed between state inspection and signal registration.
+        ///
+        /// When no matching signal is received, the durable store is checked at the configured
+        /// fallback interval. This preserves correctness when Redis Pub/Sub messages are delayed
+        /// or lost without creating the high read pressure of the original hot polling loop.
+        /// </remarks>
+        /// <param name="dagStore">The durable DAG execution store.</param>
+        /// <param name="signalSubscriber">The targeted runtime signal subscriber.</param>
+        /// <param name="controlPlaneId">The logical control-plane identifier.</param>
+        /// <param name="executionId">The durable execution identifier.</param>
+        /// <param name="minimumCompletedSteps">The minimum completed step count.</param>
+        /// <param name="timeout">The global wait timeout.</param>
+        /// <param name="fallbackPollInterval">The durable fallback polling interval.</param>
+        /// <returns>A task that completes when durable DAG progress is confirmed.</returns>
+        public static async Task WaitForDagCompletedStepCountHybridAsync(
+            IAiDagExecutionStore dagStore,
+            IAiRuntimeSignalSubscriber signalSubscriber,
+            string controlPlaneId,
+            string executionId,
+            int minimumCompletedSteps,
+            TimeSpan timeout,
+            TimeSpan fallbackPollInterval)
+        {
+            ArgumentNullException.ThrowIfNull(dagStore);
+            ArgumentNullException.ThrowIfNull(signalSubscriber);
+            ArgumentException.ThrowIfNullOrWhiteSpace(controlPlaneId);
+            ArgumentException.ThrowIfNullOrWhiteSpace(executionId);
+            ArgumentOutOfRangeException.ThrowIfNegativeOrZero(minimumCompletedSteps);
+
+            if (timeout <= TimeSpan.Zero)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(timeout),
+                    timeout,
+                    "The wait timeout must be greater than zero.");
+            }
+
+            if (fallbackPollInterval <= TimeSpan.Zero)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(fallbackPollInterval),
+                    fallbackPollInterval,
+                    "The fallback polling interval must be greater than zero.");
+            }
+
+            var deadline = DateTimeOffset.UtcNow.Add(timeout);
+
+            var lastCompletedCount = 0;
+            var lastStatusBreakdown = string.Empty;
+            var lastRunningSteps = string.Empty;
+
+            var signalObserved = false;
+            int? lastSignalCompletedStepCount = null;
+            int? lastSignalTotalStepCount = null;
+            DateTimeOffset? lastSignalOccurredAtUtc = null;
+
+            var durableReadCount = 0;
+            var fallbackReadCount = 0;
+            var redisTimeoutCount = 0;
+
+            StackExchange.Redis.RedisTimeoutException? lastRedisTimeout = null;
+
+            using var signalLifetime = new CancellationTokenSource();
+
+            await using var subscription = await signalSubscriber
+                .SubscribeAsync(
+                    AiRuntimeSignalType.DagProgressChanged,
+                    controlPlaneId,
+                    executionId,
+                    signalLifetime.Token)
+                .ConfigureAwait(false);
+
+            var matchingSignalTask = WaitForDagProgressSignalAsync(
+                subscription,
+                controlPlaneId,
+                executionId,
+                minimumCompletedSteps,
+                signalLifetime.Token);
+
+            async Task<bool> RefreshDurableProgressAsync()
+            {
+                durableReadCount++;
+
+                try
+                {
+                    var state = await dagStore
+                        .GetStateAsync(executionId)
+                        .ConfigureAwait(false);
+
+                    if (state is null)
+                    {
+                        return false;
+                    }
+
+                    lastCompletedCount = state.Steps.Values.Count(step =>
+                        step.Status == AiStepExecutionStatus.Completed);
+
+                    lastStatusBreakdown = string.Join(
+                        ",",
+                        state.Steps.Values
+                            .GroupBy(step => step.Status)
+                            .OrderBy(group => group.Key.ToString(), StringComparer.Ordinal)
+                            .Select(group => $"{group.Key}:{group.Count()}"));
+
+                    lastRunningSteps = string.Join(
+                        " | ",
+                        state.Steps.Values
+                            .Where(step => step.Status == AiStepExecutionStatus.Running)
+                            .Take(20)
+                            .Select(step =>
+                                $"Step='{ResolveStepProperty(step, "StepId")}', " +
+                                $"Status='{step.Status}', " +
+                                $"Runtime='{ResolveStepProperty(step, "RuntimeInstanceId")}', " +
+                                $"RunId='{ResolveStepProperty(step, "RunId")}', " +
+                                $"Worker='{ResolveStepProperty(step, "WorkerId")}', " +
+                                $"Started='{ResolveStepProperty(step, "StartedAtUtc")}', " +
+                                $"Updated='{ResolveStepProperty(step, "UpdatedAtUtc")}'"));
+
+                    return lastCompletedCount >= minimumCompletedSteps;
+                }
+                catch (StackExchange.Redis.RedisTimeoutException exception)
+                {
+                    lastRedisTimeout = exception;
+                    redisTimeoutCount++;
+
+                    return false;
+                }
+            }
+
+            try
+            {
+                /*
+                 * The subscription is active before this initial read.
+                 *
+                 * This ordering closes the race where the DAG reaches the threshold
+                 * immediately before signal subscription becomes active.
+                 */
+                if (await RefreshDurableProgressAsync().ConfigureAwait(false))
+                {
+                    return;
+                }
+
+                while (DateTimeOffset.UtcNow < deadline)
+                {
+                    var remaining = deadline - DateTimeOffset.UtcNow;
+
+                    if (remaining <= TimeSpan.Zero)
+                    {
+                        break;
+                    }
+
+                    var waitDuration = remaining < fallbackPollInterval
+                        ? remaining
+                        : fallbackPollInterval;
+
+                    if (!signalObserved)
+                    {
+                        var fallbackDelayTask = Task.Delay(waitDuration);
+
+                        var completedTask = await Task
+                            .WhenAny(
+                                matchingSignalTask,
+                                fallbackDelayTask)
+                            .ConfigureAwait(false);
+
+                        if (completedTask == matchingSignalTask)
+                        {
+                            var signal = await matchingSignalTask.ConfigureAwait(false);
+
+                            signalObserved = true;
+                            lastSignalCompletedStepCount = signal.CompletedStepCount;
+                            lastSignalTotalStepCount = signal.TotalStepCount;
+                            lastSignalOccurredAtUtc = signal.OccurredAtUtc;
+                        }
+                        else
+                        {
+                            fallbackReadCount++;
+                        }
+                    }
+                    else
+                    {
+                        await Task
+                            .Delay(waitDuration)
+                            .ConfigureAwait(false);
+
+                        fallbackReadCount++;
+                    }
+
+                    /*
+                     * A signal never proves progress by itself.
+                     * Every wake-up or fallback interval is confirmed through durable state.
+                     */
+                    if (await RefreshDurableProgressAsync().ConfigureAwait(false))
+                    {
+                        return;
+                    }
+                }
+
+                /*
+                 * One final best-effort durable read provides the freshest diagnostics
+                 * and accepts convergence that occurred at the timeout boundary.
+                 */
+                if (await RefreshDurableProgressAsync().ConfigureAwait(false))
+                {
+                    return;
+                }
+
+                Assert.Fail(
+                    "The real DAG execution did not reach the expected progress before process kill using hybrid signal observation. " +
+                    $"ControlPlaneId='{controlPlaneId}', " +
+                    $"ExecutionId='{executionId}', " +
+                    $"ExpectedCompletedSteps='{minimumCompletedSteps}', " +
+                    $"LastCompletedSteps='{lastCompletedCount}', " +
+                    $"LastStatusBreakdown='{lastStatusBreakdown}', " +
+                    $"LastRunningSteps='{lastRunningSteps}', " +
+                    $"SignalObserved='{signalObserved}', " +
+                    $"LastSignalCompletedStepCount='{lastSignalCompletedStepCount}', " +
+                    $"LastSignalTotalStepCount='{lastSignalTotalStepCount}', " +
+                    $"LastSignalOccurredAtUtc='{lastSignalOccurredAtUtc?.ToString("O") ?? string.Empty}', " +
+                    $"DurableReadCount='{durableReadCount}', " +
+                    $"FallbackReadCount='{fallbackReadCount}', " +
+                    $"RedisTimeoutCount='{redisTimeoutCount}', " +
+                    $"LastRedisTimeout='{lastRedisTimeout?.Message}'.");
+
+                throw new InvalidOperationException(
+                    "Unreachable assertion path.");
+            }
+            finally
+            {
+                signalLifetime.Cancel();
+
+                try
+                {
+                    await matchingSignalTask.ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    // Expected when durable state converges before a matching signal is consumed.
+                }
+            }
+        }
+
+        /// <summary>
+        /// Waits until a recovered shared run is durably redispatched, using a targeted
+        /// shared-run signal as a wake-up notification and a slow durable fallback.
+        /// </summary>
+        public static async Task<AiSharedRunRecord> WaitForRecoveredRunRedispatchedHybridAsync(
+            IAiSharedRunStore sharedRunStore,
+            IAiSharedQueue sharedQueue,
+            string sharedRunId,
+            string failedRuntimeInstanceId,
+            string failedLocalRunId,
+            Task<AiRuntimeSignal> sharedRunDispatchedSignalTask,
+            TimeSpan timeout,
+            TimeSpan fallbackPollInterval)
+        {
+            ArgumentNullException.ThrowIfNull(sharedRunStore);
+            ArgumentNullException.ThrowIfNull(sharedQueue);
+            ArgumentNullException.ThrowIfNull(sharedRunDispatchedSignalTask);
+            ArgumentException.ThrowIfNullOrWhiteSpace(sharedRunId);
+            ArgumentException.ThrowIfNullOrWhiteSpace(failedRuntimeInstanceId);
+            ArgumentException.ThrowIfNullOrWhiteSpace(failedLocalRunId);
+
+            if (timeout <= TimeSpan.Zero)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(timeout),
+                    timeout,
+                    "The wait timeout must be greater than zero.");
+            }
+
+            if (fallbackPollInterval <= TimeSpan.Zero)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(fallbackPollInterval),
+                    fallbackPollInterval,
+                    "The fallback polling interval must be greater than zero.");
+            }
+
+            var deadline = DateTimeOffset.UtcNow.Add(timeout);
+
+            AiSharedRunRecord? lastRun = null;
+            AiSharedQueueItem? lastQueueItem = null;
+            AiRuntimeSignal? observedSignal = null;
+
+            StackExchange.Redis.RedisTimeoutException? lastRedisTimeout = null;
+
+            var redisTimeoutCount = 0;
+            var fallbackReadCount = 0;
+            var initialDurableRead = true;
+            Task<AiRuntimeSignal>? pendingSignalTask = sharedRunDispatchedSignalTask;
+
+            while (DateTimeOffset.UtcNow < deadline)
+            {
+                if (!initialDurableRead)
+                {
+                    var remaining = deadline - DateTimeOffset.UtcNow;
+
+                    if (remaining <= TimeSpan.Zero)
+                    {
+                        break;
+                    }
+
+                    var waitDuration = remaining < fallbackPollInterval
+                        ? remaining
+                        : fallbackPollInterval;
+
+                    var fallbackDelayTask = Task.Delay(waitDuration);
+
+                    if (pendingSignalTask is not null)
+                    {
+                        var completedTask = await Task
+                            .WhenAny(
+                                pendingSignalTask,
+                                fallbackDelayTask)
+                            .ConfigureAwait(false);
+
+                        if (completedTask == pendingSignalTask)
+                        {
+                            try
+                            {
+                                observedSignal = await pendingSignalTask
+                                    .ConfigureAwait(false);
+                            }
+                            catch (OperationCanceledException)
+                            {
+                                // The signal is best-effort; durable fallback remains authoritative.
+                            }
+                            catch (InvalidOperationException)
+                            {
+                                // The signal stream closed; durable fallback remains authoritative.
+                            }
+
+                            pendingSignalTask = null;
+                        }
+                        else
+                        {
+                            fallbackReadCount++;
+                        }
+                    }
+                    else
+                    {
+                        await fallbackDelayTask.ConfigureAwait(false);
+                        fallbackReadCount++;
+                    }
+                }
+
+                initialDurableRead = false;
+
+                try
+                {
+                    lastRun = await sharedRunStore
+                        .GetAsync(sharedRunId)
+                        .ConfigureAwait(false);
+                }
+                catch (StackExchange.Redis.RedisTimeoutException exception)
+                {
+                    lastRedisTimeout = exception;
+                    redisTimeoutCount++;
+                    continue;
+                }
+
+                if (lastRun is not null &&
+                    !string.IsNullOrWhiteSpace(lastRun.AssignedRuntimeInstanceId) &&
+                    !string.IsNullOrWhiteSpace(lastRun.LocalRunId) &&
+                    !string.Equals(
+                        lastRun.AssignedRuntimeInstanceId,
+                        failedRuntimeInstanceId,
+                        StringComparison.Ordinal) &&
+                    !string.Equals(
+                        lastRun.LocalRunId,
+                        failedLocalRunId,
+                        StringComparison.Ordinal))
+                {
+                    return lastRun;
+                }
+
+                try
+                {
+                    lastQueueItem = await sharedQueue
+                        .GetAsync(sharedRunId)
+                        .ConfigureAwait(false);
+                }
+                catch (StackExchange.Redis.RedisTimeoutException exception)
+                {
+                    lastRedisTimeout = exception;
+                    redisTimeoutCount++;
+                }
+            }
+
+            try
+            {
+                lastRun = await sharedRunStore
+                    .GetAsync(sharedRunId)
+                    .ConfigureAwait(false);
+            }
+            catch (StackExchange.Redis.RedisTimeoutException exception)
+            {
+                lastRedisTimeout = exception;
+                redisTimeoutCount++;
+            }
+
+            try
+            {
+                lastQueueItem = await sharedQueue
+                    .GetAsync(sharedRunId)
+                    .ConfigureAwait(false);
+            }
+            catch (StackExchange.Redis.RedisTimeoutException exception)
+            {
+                lastRedisTimeout = exception;
+                redisTimeoutCount++;
+            }
+
+            var queueMetadata = lastQueueItem?.Metadata is { Count: > 0 }
+                ? string.Join(
+                    ";",
+                    lastQueueItem.Metadata
+                        .OrderBy(pair => pair.Key, StringComparer.Ordinal)
+                        .Select(pair => $"{pair.Key}={pair.Value}"))
+                : string.Empty;
+
+            Assert.Fail(
+                "Recovered shared run was not redispatched with a new local runtime run id within the hybrid timeout. " +
+                $"SharedRunId='{sharedRunId}', " +
+                $"FailedRuntimeInstanceId='{failedRuntimeInstanceId}', " +
+                $"FailedLocalRunId='{failedLocalRunId}', " +
+                $"Timeout='{timeout}', " +
+                $"SignalObserved='{observedSignal is not null}', " +
+                $"SignalRuntimeInstanceId='{observedSignal?.RuntimeInstanceId}', " +
+                $"SignalLocalRunId='{observedSignal?.LocalRunId}', " +
+                $"SignalExecutionId='{observedSignal?.ExecutionId}', " +
+                $"FallbackReadCount='{fallbackReadCount}', " +
+                $"LastStatus='{lastRun?.Status}', " +
+                $"LastRuntimeInstanceId='{lastRun?.AssignedRuntimeInstanceId}', " +
+                $"LastLocalRunId='{lastRun?.LocalRunId}', " +
+                $"LastExecutionId='{lastRun?.ExecutionId}', " +
+                $"LastReason='{lastRun?.Reason}', " +
+                $"LastFailureReason='{lastRun?.FailureReason}', " +
+                $"LastUpdatedAtUtc='{lastRun?.UpdatedAtUtc:O}', " +
+                $"QueueItemExists='{lastQueueItem is not null}', " +
+                $"QueueStatus='{lastQueueItem?.Status}', " +
+                $"QueueRuntimeInstanceId='{lastQueueItem?.ClaimedByRuntimeInstanceId}', " +
+                $"QueueWorkerId='{lastQueueItem?.ClaimedByWorkerId}', " +
+                $"QueueClaimToken='{lastQueueItem?.ClaimToken}', " +
+                $"QueueClaimedAtUtc='{lastQueueItem?.ClaimedAtUtc?.ToString("O") ?? string.Empty}', " +
+                $"QueueClaimExpiresAtUtc='{lastQueueItem?.ClaimExpiresAtUtc?.ToString("O") ?? string.Empty}', " +
+                $"QueueUpdatedAtUtc='{lastQueueItem?.UpdatedAtUtc:O}', " +
+                $"QueueReason='{lastQueueItem?.Reason}', " +
+                $"QueueMetadata='{queueMetadata}', " +
+                $"RedisTimeoutCount='{redisTimeoutCount}', " +
+                $"LastRedisTimeoutType='{lastRedisTimeout?.GetType().FullName}', " +
+                $"LastRedisTimeoutMessage='{lastRedisTimeout?.Message}'.");
+
+            throw new InvalidOperationException(
+                "Unreachable assertion path.");
+        }
+
+        /// <summary>
+        /// Waits for the first targeted DAG progress signal that reports the required progress.
+        /// </summary>
+        /// <param name="subscription">The active targeted runtime signal subscription.</param>
+        /// <param name="controlPlaneId">The expected logical control-plane identifier.</param>
+        /// <param name="executionId">The expected durable execution identifier.</param>
+        /// <param name="minimumCompletedSteps">The minimum completed step count.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <returns>The first matching DAG progress signal.</returns>
+        private static async Task<AiRuntimeSignal> WaitForDagProgressSignalAsync(
+            IAiRuntimeSignalSubscription subscription,
+            string controlPlaneId,
+            string executionId,
+            int minimumCompletedSteps,
+            CancellationToken cancellationToken)
+        {
+            ArgumentNullException.ThrowIfNull(subscription);
+            ArgumentException.ThrowIfNullOrWhiteSpace(controlPlaneId);
+            ArgumentException.ThrowIfNullOrWhiteSpace(executionId);
+            ArgumentOutOfRangeException.ThrowIfNegativeOrZero(minimumCompletedSteps);
+
+            await foreach (var signal in subscription
+                .ReadAllAsync(cancellationToken)
+                .ConfigureAwait(false))
+            {
+                if (signal.Type != AiRuntimeSignalType.DagProgressChanged ||
+                    !string.Equals(
+                        signal.ControlPlaneId,
+                        controlPlaneId,
+                        StringComparison.Ordinal) ||
+                    !string.Equals(
+                        signal.ExecutionId,
+                        executionId,
+                        StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                if (signal.CompletedStepCount is int completedStepCount &&
+                    completedStepCount >= minimumCompletedSteps)
+                {
+                    return signal;
+                }
+            }
+
+            throw new InvalidOperationException(
+                "The targeted DAG progress signal subscription completed unexpectedly.");
         }
 
     }

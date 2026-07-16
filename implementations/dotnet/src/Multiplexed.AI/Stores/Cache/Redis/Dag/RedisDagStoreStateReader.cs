@@ -86,39 +86,53 @@ namespace Multiplexed.AI.Stores.Cache.Redis.Dag
 
             state.ExecutionId = executionId;
 
-            foreach (var stepNameValue in stepNames)
+            var indexedStepNames = stepNames
+                .Select(stepNameValue => (string?)stepNameValue)
+                .Where(stepName => !string.IsNullOrWhiteSpace(stepName))
+                .Select(stepName => stepName!)
+                .ToArray();
+
+            if (indexedStepNames.Length > 0)
             {
-                var stepName = (string?)stepNameValue;
+                var stepKeys = new RedisKey[indexedStepNames.Length];
 
-                if (string.IsNullOrWhiteSpace(stepName))
-                    continue;
-
-                var stepKey = _services.KeyBuilder.GetDagStepKey(executionId, stepName);
-                var raw = await _services.Database.StringGetAsync(stepKey);
-
-                if (!raw.HasValue)
-                    continue;
-
-                var repairedJson = JsonSerializationHelpers.RepairStepJson((string)raw!);
-                repairedJson = JsonSerializationHelpers.RepairRetryJson(repairedJson);
-
-                var step = JsonSerializer.Deserialize<AiStepState>(
-                    repairedJson,
-                    _services.JsonOptions);
-
-                if (step is not null)
+                for (var index = 0; index < indexedStepNames.Length; index++)
                 {
-                    step.DependsOn ??= new List<string>();
+                    stepKeys[index] = _services.KeyBuilder.GetDagStepKey(
+                        executionId,
+                        indexedStepNames[index]);
+                }
 
-                    if (state.Steps.TryGetValue(step.StepName, out var blobStep) &&
-                        RedisDagStoreHelper.IsTerminal(blobStep.Status) &&
-                        RedisDagStoreHelper.IsNonTerminal(step.Status))
-                    {
-                        state.Steps[step.StepName] = blobStep;
+                var rawSteps = await LoadIndexedStepValuesAsync(stepKeys);
+
+                for (var index = 0; index < indexedStepNames.Length; index++)
+                {
+                    var raw = rawSteps[index];
+
+                    if (!raw.HasValue)
                         continue;
-                    }
 
-                    state.Steps[step.StepName] = step;
+                    var repairedJson = JsonSerializationHelpers.RepairStepJson((string)raw!);
+                    repairedJson = JsonSerializationHelpers.RepairRetryJson(repairedJson);
+
+                    var step = JsonSerializer.Deserialize<AiStepState>(
+                        repairedJson,
+                        _services.JsonOptions);
+
+                    if (step is not null)
+                    {
+                        step.DependsOn ??= new List<string>();
+
+                        if (state.Steps.TryGetValue(step.StepName, out var blobStep) &&
+                            RedisDagStoreHelper.IsTerminal(blobStep.Status) &&
+                            RedisDagStoreHelper.IsNonTerminal(step.Status))
+                        {
+                            state.Steps[step.StepName] = blobStep;
+                            continue;
+                        }
+
+                        state.Steps[step.StepName] = step;
+                    }
                 }
             }
 
@@ -158,6 +172,56 @@ namespace Multiplexed.AI.Stores.Cache.Redis.Dag
             }
 
             return state;
+        }
+
+        /// <summary>
+        /// Loads indexed step payloads with one multi-key read when Redis is not clustered.
+        /// Redis Cluster keeps the existing one-key-per-command behavior because the current
+        /// DAG keys do not yet share an execution hash tag and may belong to different slots.
+        /// </summary>
+        private async Task<RedisValue[]> LoadIndexedStepValuesAsync(
+            RedisKey[] stepKeys)
+        {
+            ArgumentNullException.ThrowIfNull(stepKeys);
+
+            if (stepKeys.Length == 0)
+            {
+                return Array.Empty<RedisValue>();
+            }
+
+            if (!UsesRedisCluster())
+            {
+                return await _services.Database
+                    .StringGetAsync(stepKeys)
+                    .ConfigureAwait(false);
+            }
+
+            var values = new RedisValue[stepKeys.Length];
+
+            for (var index = 0; index < stepKeys.Length; index++)
+            {
+                values[index] = await _services.Database
+                    .StringGetAsync(stepKeys[index])
+                    .ConfigureAwait(false);
+            }
+
+            return values;
+        }
+
+        /// <summary>
+        /// Determines whether the configured Redis topology contains a cluster server.
+        /// </summary>
+        private bool UsesRedisCluster()
+        {
+            foreach (var endpoint in _services.Multiplexer.GetEndPoints())
+            {
+                if (_services.Multiplexer.GetServer(endpoint).ServerType == ServerType.Cluster)
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         /// <summary>

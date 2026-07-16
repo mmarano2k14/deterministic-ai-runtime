@@ -1,4 +1,5 @@
-﻿using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Forensics;
+﻿using Multiplexed.Abstractions.AI.ControlPlane.Signals;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Forensics;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager.ProcessControl;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Recovery;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
@@ -44,6 +45,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
         /// <param name="scaleOutTimeout">The scale-out wait timeout.</param>
         /// <param name="dispatchTimeout">The dispatch wait timeout.</param>
         /// <param name="progressTimeout">The DAG progress wait timeout.</param>
+        /// <param name="observationMode">The production recovery observation mode.</param>
         /// <returns>The real assigned work inventory selected for process crash.</returns>
         public static async Task<RealRuntimeCrashAssignedWorkInventoryProof> SubmitAndBuildAssignedWorkInventoryAsync(
             ITestOutputHelper output,
@@ -63,7 +65,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
             int minimumCompletedStepsBeforeKill,
             TimeSpan scaleOutTimeout,
             TimeSpan dispatchTimeout,
-            TimeSpan progressTimeout)
+            TimeSpan progressTimeout,
+            ProductionRecoveryObservationMode observationMode =
+                ProductionRecoveryObservationMode.Polling)
         {
             ArgumentNullException.ThrowIfNull(output);
             ArgumentNullException.ThrowIfNull(mcp);
@@ -80,6 +84,15 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
             ArgumentOutOfRangeException.ThrowIfNegative(minimumInFlightExecutionCount);
             ArgumentOutOfRangeException.ThrowIfNegative(minimumLocalQueuedRunCount);
             ArgumentOutOfRangeException.ThrowIfNegativeOrZero(minimumCompletedStepsBeforeKill);
+
+            if (observationMode != ProductionRecoveryObservationMode.Polling &&
+                observationMode != ProductionRecoveryObservationMode.HybridSignals)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(observationMode),
+                    observationMode,
+                    "The production recovery observation mode is not supported.");
+            }
 
             var dispatchedRuns = new List<(AiSharedRunRecord Run, string PipelineName)>();
 
@@ -267,6 +280,25 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
         /// immediately kills the owning runtime process, waits for automatic recovery,
         /// and verifies strict resume semantics for all in-flight executions.
         /// </summary>
+        /// <param name="output">The test output helper.</param>
+        /// <param name="processControl">The runtime host process control.</param>
+        /// <param name="registry">The runtime instance registry.</param>
+        /// <param name="runExecutionIndex">The runtime run execution index.</param>
+        /// <param name="sharedRunStore">The shared run store.</param>
+        /// <param name="sharedQueue">The durable shared queue.</param>
+        /// <param name="dagStore">The durable DAG execution store.</param>
+        /// <param name="inventory">The selected failed-runtime inventory.</param>
+        /// <param name="minimumCompletedStepsBeforeKill">The minimum durable progress required before process termination.</param>
+        /// <param name="progressTimeout">The maximum crash-window observation duration.</param>
+        /// <param name="unsafeTimeout">The maximum unsafe-runtime detection duration.</param>
+        /// <param name="requeueTimeout">The maximum recovery requeue duration.</param>
+        /// <param name="redispatchTimeout">The maximum replacement redispatch duration.</param>
+        /// <param name="executionResolveTimeout">The maximum durable execution resolution duration.</param>
+        /// <param name="observationMode">The production recovery observation mode.</param>
+        /// <param name="signalSubscriber">The runtime signal subscriber used only in hybrid mode.</param>
+        /// <param name="controlPlaneId">The logical control-plane identifier used only in hybrid mode.</param>
+        /// <param name="hybridFallbackPollInterval">The slow durable fallback interval used only in hybrid mode.</param>
+        /// <returns>The failed-runtime recovery proof.</returns>
         public static async Task<RealRuntimeCrashFailedRuntimeRecoveryProof>
             KillRuntimeAndRecoverAssignedInventoryAsync(
                 ITestOutputHelper output,
@@ -282,7 +314,12 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
                 TimeSpan unsafeTimeout,
                 TimeSpan requeueTimeout,
                 TimeSpan redispatchTimeout,
-                TimeSpan executionResolveTimeout)
+                TimeSpan executionResolveTimeout,
+                ProductionRecoveryObservationMode observationMode =
+                    ProductionRecoveryObservationMode.Polling,
+                IAiRuntimeSignalSubscriber? signalSubscriber = null,
+                string? controlPlaneId = null,
+                TimeSpan? hybridFallbackPollInterval = null)
         {
             ArgumentNullException.ThrowIfNull(output);
             ArgumentNullException.ThrowIfNull(processControl);
@@ -303,92 +340,587 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
                     "The progress timeout must be greater than zero.");
             }
 
-            var inFlightWork = Assert.Single(inventory.InFlightExecutions);
+            if (observationMode != ProductionRecoveryObservationMode.Polling &&
+                observationMode != ProductionRecoveryObservationMode.HybridSignals)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(observationMode),
+                    observationMode,
+                    "The production recovery observation mode is not supported.");
+            }
 
-            Assert.False(string.IsNullOrWhiteSpace(inFlightWork.ExecutionId));
+            var resolvedHybridFallbackPollInterval =
+                hybridFallbackPollInterval ?? TimeSpan.FromSeconds(2);
 
-            /*
-             * Start local-queued diagnostic reads without awaiting them.
-             * They must never delay observation and termination of the in-flight DAG.
-             */
-            var localQueuedPreKillSnapshotTasks = inventory.LocalQueuedRuns
-                .Select(CaptureLocalQueuedPreKillSnapshotAsync)
-                .ToArray();
+            if (observationMode == ProductionRecoveryObservationMode.HybridSignals)
+            {
+                ArgumentNullException.ThrowIfNull(signalSubscriber);
+                ArgumentException.ThrowIfNullOrWhiteSpace(controlPlaneId);
 
-            var progressDeadline = DateTimeOffset.UtcNow.Add(progressTimeout);
+                if (resolvedHybridFallbackPollInterval <= TimeSpan.Zero)
+                {
+                    throw new ArgumentOutOfRangeException(
+                        nameof(hybridFallbackPollInterval),
+                        resolvedHybridFallbackPollInterval,
+                        "The hybrid fallback polling interval must be greater than zero.");
+                }
+            }
 
-            RealRuntimeCrashWorkStateSnapshot? observedCrashSnapshot = null;
-            RealRuntimeCrashWorkStateSnapshot? lastObservedInFlightSnapshot = null;
+            using var sharedRunSignalLifetime =
+                new CancellationTokenSource();
 
-            var killed = false;
-            var killRequestedAtUtc = default(DateTimeOffset);
-            var killCompletedAtUtc = default(DateTimeOffset);
+            var sharedRunDispatchSubscriptions =
+                new Dictionary<string, IAiRuntimeSignalSubscription>(
+                    StringComparer.Ordinal);
+
+            var sharedRunDispatchSignalTasks =
+                new Dictionary<string, Task<AiRuntimeSignal>>(
+                    StringComparer.Ordinal);
+
+            try
+            {
+                if (observationMode == ProductionRecoveryObservationMode.HybridSignals)
+                {
+                    foreach (var work in inventory.Works)
+                    {
+                        var subscription = await signalSubscriber!
+                            .SubscribeAsync(
+                                AiRuntimeSignalType.SharedRunDispatched,
+                                controlPlaneId!,
+                                work.SharedRunId)
+                            .ConfigureAwait(false);
+
+                        sharedRunDispatchSubscriptions.Add(
+                            work.SharedRunId,
+                            subscription);
+
+                        sharedRunDispatchSignalTasks.Add(
+                            work.SharedRunId,
+                            ReadRequiredSharedRunDispatchedSignalAsync(
+                                subscription,
+                                controlPlaneId!,
+                                work.SharedRunId,
+                                sharedRunSignalLifetime.Token));
+
+                        output.WriteLine(
+                            $"[REAL RUNTIME INVENTORY REDISPATCH SIGNAL SUBSCRIBED] " +
+                            $"ObservationMode='{observationMode}', " +
+                            $"TenantId='{inventory.Tenant.TenantId}', " +
+                            $"SharedRunId='{work.SharedRunId}', " +
+                            $"Kind='{work.Kind}'.");
+                    }
+                }
+
+                var inFlightWork = Assert.Single(inventory.InFlightExecutions);
+
+                Assert.False(string.IsNullOrWhiteSpace(inFlightWork.ExecutionId));
+
+                /*
+                 * Start local-queued diagnostic reads without awaiting them.
+                 * They must never delay observation and termination of the in-flight DAG.
+                 */
+                var localQueuedPreKillSnapshotTasks = inventory.LocalQueuedRuns
+                    .Select(CaptureLocalQueuedPreKillSnapshotAsync)
+                    .ToArray();
+
+                var killObservation =
+                    observationMode == ProductionRecoveryObservationMode.HybridSignals
+                        ? await ObserveCrashProgressAndKillHybridAsync(
+                                processControl,
+                                runExecutionIndex,
+                                dagStore,
+                                signalSubscriber!,
+                                controlPlaneId!,
+                                inventory,
+                                inFlightWork,
+                                minimumCompletedStepsBeforeKill,
+                                progressTimeout,
+                                resolvedHybridFallbackPollInterval)
+                            .ConfigureAwait(false)
+                        : await ObserveCrashProgressAndKillPollingAsync(
+                                processControl,
+                                runExecutionIndex,
+                                dagStore,
+                                inventory,
+                                inFlightWork,
+                                minimumCompletedStepsBeforeKill,
+                                progressTimeout)
+                            .ConfigureAwait(false);
+
+                var observedCrashSnapshot =
+                    killObservation.ObservedCrashSnapshot;
+
+                var lastObservedInFlightSnapshot =
+                    killObservation.LastObservedInFlightSnapshot;
+
+                var killed =
+                    killObservation.Killed;
+
+                var killRequestedAtUtc =
+                    killObservation.KillRequestedAtUtc;
+
+                var killCompletedAtUtc =
+                    killObservation.KillCompletedAtUtc;
+
+                if (observedCrashSnapshot is null)
+                {
+                    Assert.Fail(
+                        "The selected in-flight execution did not reach the required crash progress before the timeout. " +
+                        $"TenantId='{inventory.Tenant.TenantId}', " +
+                        $"RuntimeInstanceId='{inventory.RuntimeInstanceId}', " +
+                        $"SharedRunId='{inFlightWork.SharedRunId}', " +
+                        $"LocalRunId='{inFlightWork.LocalRunId}', " +
+                        $"ExecutionId='{inFlightWork.ExecutionId}', " +
+                        $"ExpectedCompletedSteps='{minimumCompletedStepsBeforeKill}', " +
+                        $"LastIndexStatus='{lastObservedInFlightSnapshot?.IndexStatus}', " +
+                        $"LastIndexRuntimeInstanceId='{lastObservedInFlightSnapshot?.RuntimeInstanceId}', " +
+                        $"LastIndexExecutionId='{lastObservedInFlightSnapshot?.ExecutionId}', " +
+                        $"LastDagStatus='{lastObservedInFlightSnapshot?.DagStatus}', " +
+                        $"LastCompletedSteps='{lastObservedInFlightSnapshot?.DagCompletedStepCount}', " +
+                        $"LastTotalSteps='{lastObservedInFlightSnapshot?.DagTotalStepCount}', " +
+                        $"ObservationMode='{observationMode}', " +
+                        $"ProgressWakeSource='{killObservation.ProgressWakeSource}', " +
+                        $"SignalObserved='{killObservation.ProgressSignal is not null}', " +
+                        $"SignalCompletedSteps='{killObservation.ProgressSignal?.CompletedStepCount}', " +
+                        $"SignalTotalSteps='{killObservation.ProgressSignal?.TotalStepCount}', " +
+                        $"FallbackReadCount='{killObservation.FallbackReadCount}', " +
+                        $"ProgressTimeout='{progressTimeout}'.");
+
+                    throw new InvalidOperationException("Unreachable assertion path.");
+                }
+
+                Assert.True(
+                    killed,
+                    $"Runtime process was not killed. " +
+                    $"TenantId='{inventory.Tenant.TenantId}', " +
+                    $"RuntimeInstanceId='{inventory.RuntimeInstanceId}', " +
+                    $"ExecutionId='{inFlightWork.ExecutionId}'.");
+
+                output.WriteLine(
+                    $"[REAL RUNTIME INVENTORY CRASH READY] " +
+                    $"TenantId='{inventory.Tenant.TenantId}', " +
+                    $"RuntimeInstanceId='{inventory.RuntimeInstanceId}', " +
+                    $"SharedRunId='{inFlightWork.SharedRunId}', " +
+                    $"LocalRunId='{inFlightWork.LocalRunId}', " +
+                    $"ExecutionId='{inFlightWork.ExecutionId}', " +
+                    $"IndexStatus='{observedCrashSnapshot.IndexStatus}', " +
+                    $"DagStatus='{observedCrashSnapshot.DagStatus}', " +
+                    $"CompletedSteps='{observedCrashSnapshot.DagCompletedStepCount}', " +
+                    $"TotalSteps='{observedCrashSnapshot.DagTotalStepCount}', " +
+                    $"MinimumCompletedSteps='{minimumCompletedStepsBeforeKill}', " +
+                    $"ObservationMode='{observationMode}', " +
+                    $"ProgressWakeSource='{killObservation.ProgressWakeSource}', " +
+                    $"SignalObserved='{killObservation.ProgressSignal is not null}', " +
+                    $"SignalCompletedSteps='{killObservation.ProgressSignal?.CompletedStepCount}', " +
+                    $"SignalTotalSteps='{killObservation.ProgressSignal?.TotalStepCount}', " +
+                    $"FallbackReadCount='{killObservation.FallbackReadCount}'.");
+
+                /*
+                 * Full inventory capture is safe now because the runtime process
+                 * has already been terminated.
+                 */
+                var postKillSnapshots = await CaptureWorkStateSnapshotsAsync(
+                        runExecutionIndex,
+                        dagStore,
+                        inventory)
+                    .ConfigureAwait(false);
+
+                var localQueuedPreKillSnapshots = await Task
+                    .WhenAll(localQueuedPreKillSnapshotTasks)
+                    .ConfigureAwait(false);
+
+                var preKillSnapshotMap = localQueuedPreKillSnapshots.ToDictionary(
+                    pair => pair.Key,
+                    pair => pair.Value,
+                    StringComparer.Ordinal);
+
+                preKillSnapshotMap[inFlightWork.LocalRunId] = observedCrashSnapshot;
+
+                IReadOnlyDictionary<string, RealRuntimeCrashWorkStateSnapshot> preKillSnapshots =
+                    preKillSnapshotMap;
+
+                output.WriteLine(
+                    $"[REAL RUNTIME INVENTORY CRASH] Runtime process killed. " +
+                    $"TenantId='{inventory.Tenant.TenantId}', " +
+                    $"RuntimeInstanceId='{inventory.RuntimeInstanceId}', " +
+                    $"WorkCount='{inventory.Works.Count}', " +
+                    $"InFlight='{inventory.InFlightExecutions.Count}', " +
+                    $"LocalQueued='{inventory.LocalQueuedRuns.Count}', " +
+                    $"KillRequestedAtUtc='{killRequestedAtUtc:O}', " +
+                    $"KillCompletedAtUtc='{killCompletedAtUtc:O}', " +
+                    $"KillDuration='{killCompletedAtUtc - killRequestedAtUtc}'.");
+
+                foreach (var work in inventory.Works)
+                {
+                    var preKill = preKillSnapshots[work.LocalRunId];
+                    var postKill = postKillSnapshots[work.LocalRunId];
+
+                    var completionTiming = ClassifyCompletionTiming(
+                        postKill.IndexCompletedAtUtc,
+                        killRequestedAtUtc,
+                        killCompletedAtUtc);
+
+                    output.WriteLine(
+                        $"[REAL RUNTIME INVENTORY KILL WINDOW] " +
+                        $"TenantId='{inventory.Tenant.TenantId}', " +
+                        $"FailedRuntimeInstanceId='{inventory.RuntimeInstanceId}', " +
+                        $"SharedRunId='{work.SharedRunId}', " +
+                        $"LocalRunId='{work.LocalRunId}', " +
+                        $"ExpectedExecutionId='{work.ExecutionId}', " +
+                        $"Kind='{work.Kind}', " +
+                        $"PreKillIndexStatus='{preKill.IndexStatus}', " +
+                        $"PreKillIndexRuntimeInstanceId='{preKill.RuntimeInstanceId}', " +
+                        $"PreKillIndexExecutionId='{preKill.ExecutionId}', " +
+                        $"PreKillIndexCompletedAtUtc='{preKill.IndexCompletedAtUtc?.ToString("O") ?? string.Empty}', " +
+                        $"PreKillDagStatus='{preKill.DagStatus}', " +
+                        $"PreKillCompletedSteps='{preKill.DagCompletedStepCount}', " +
+                        $"PreKillTotalSteps='{preKill.DagTotalStepCount}', " +
+                        $"PreKillDagStepStatusBreakdown='{preKill.DagStepStatusBreakdown}', " +
+                        $"PreKillCapturedAtUtc='{preKill.CapturedAtUtc:O}', " +
+                        $"PostKillIndexStatus='{postKill.IndexStatus}', " +
+                        $"PostKillIndexRuntimeInstanceId='{postKill.RuntimeInstanceId}', " +
+                        $"PostKillIndexExecutionId='{postKill.ExecutionId}', " +
+                        $"PostKillIndexCompletedAtUtc='{postKill.IndexCompletedAtUtc?.ToString("O") ?? string.Empty}', " +
+                        $"PostKillDagStatus='{postKill.DagStatus}', " +
+                        $"PostKillCompletedSteps='{postKill.DagCompletedStepCount}', " +
+                        $"PostKillTotalSteps='{postKill.DagTotalStepCount}', " +
+                        $"PostKillDagStepStatusBreakdown='{postKill.DagStepStatusBreakdown}', " +
+                        $"PostKillCapturedAtUtc='{postKill.CapturedAtUtc:O}', " +
+                        $"KillRequestedAtUtc='{killRequestedAtUtc:O}', " +
+                        $"KillCompletedAtUtc='{killCompletedAtUtc:O}', " +
+                        $"CompletionTiming='{completionTiming}'.");
+                }
+
+                await ProductionRecoveryWaitHelpers
+                    .WaitForRuntimeInstanceUnsafeAsync(
+                        registry,
+                        inventory.RuntimeInstanceId,
+                        unsafeTimeout)
+                    .ConfigureAwait(false);
+
+                output.WriteLine(
+                    $"[REAL RUNTIME INVENTORY CRASH] Runtime instance marked unsafe. " +
+                    $"TenantId='{inventory.Tenant.TenantId}', " +
+                    $"RuntimeInstanceId='{inventory.RuntimeInstanceId}'. " +
+                    "Waiting for automatic execution recovery reconciliation.");
+
+                foreach (var work in inventory.Works)
+                {
+                    await WaitForWorkRequeuedForRecoveryAsync(
+                            runExecutionIndex,
+                            dagStore,
+                            inventory,
+                            work,
+                            preKillSnapshots[work.LocalRunId],
+                            postKillSnapshots[work.LocalRunId],
+                            killRequestedAtUtc,
+                            killCompletedAtUtc,
+                            requeueTimeout)
+                        .ConfigureAwait(false);
+                }
+
+                var recoveredWorks = new List<RealRuntimeCrashRecoveredWorkProof>();
+
+                foreach (var work in inventory.Works)
+                {
+                    var redispatchedRun =
+                        observationMode == ProductionRecoveryObservationMode.HybridSignals
+                            ? await ProductionRecoveryWaitHelpers
+                                .WaitForRecoveredRunRedispatchedHybridAsync(
+                                    sharedRunStore,
+                                    sharedQueue,
+                                    work.SharedRunId,
+                                    inventory.RuntimeInstanceId,
+                                    work.LocalRunId,
+                                    sharedRunDispatchSignalTasks[work.SharedRunId],
+                                    redispatchTimeout,
+                                    resolvedHybridFallbackPollInterval)
+                                .ConfigureAwait(false)
+                            : await ProductionRecoveryWaitHelpers
+                                .WaitForRecoveredRunRedispatchedAsync(
+                                    sharedRunStore,
+                                    sharedQueue,
+                                    work.SharedRunId,
+                                    inventory.RuntimeInstanceId,
+                                    work.LocalRunId,
+                                    redispatchTimeout)
+                                .ConfigureAwait(false);
+
+                    Assert.False(string.IsNullOrWhiteSpace(redispatchedRun.AssignedRuntimeInstanceId));
+                    Assert.False(string.IsNullOrWhiteSpace(redispatchedRun.LocalRunId));
+                    Assert.NotEqual(inventory.RuntimeInstanceId, redispatchedRun.AssignedRuntimeInstanceId);
+                    Assert.NotEqual(work.LocalRunId, redispatchedRun.LocalRunId);
+
+                    AssertRuntimeBelongsToTenant(
+                        redispatchedRun.AssignedRuntimeInstanceId!,
+                        inventory.Tenant);
+
+                    string recoveredExecutionId;
+
+                    if (work.Kind == RealRuntimeCrashWorkKind.InFlightExecution)
+                    {
+                        var recoveredExecution = await ProductionRecoveryWaitHelpers
+                            .WaitForDurableDagExecutionAsync(
+                                sharedRunStore,
+                                runExecutionIndex,
+                                dagStore,
+                                redispatchedRun.SharedRunId,
+                                executionResolveTimeout)
+                            .ConfigureAwait(false);
+
+                        recoveredExecutionId = recoveredExecution.ExecutionId;
+
+                        Assert.False(string.IsNullOrWhiteSpace(work.ExecutionId));
+                        Assert.Equal(work.ExecutionId, recoveredExecutionId);
+                    }
+                    else
+                    {
+                        var replacementIndex = await WaitForReplacementLocalQueuedRunIndexAsync(
+                                runExecutionIndex,
+                                redispatchedRun.LocalRunId!,
+                                redispatchedRun.AssignedRuntimeInstanceId!,
+                                executionResolveTimeout)
+                            .ConfigureAwait(false);
+
+                        recoveredExecutionId = replacementIndex.ExecutionId ?? string.Empty;
+
+                        Assert.True(
+                            string.Equals(
+                                replacementIndex.Status,
+                                "queued",
+                                StringComparison.OrdinalIgnoreCase) ||
+                            string.Equals(
+                                replacementIndex.Status,
+                                "creating-execution",
+                                StringComparison.OrdinalIgnoreCase) ||
+                            string.Equals(
+                                replacementIndex.Status,
+                                "running",
+                                StringComparison.OrdinalIgnoreCase) ||
+                            string.Equals(
+                                replacementIndex.Status,
+                                "completed",
+                                StringComparison.OrdinalIgnoreCase),
+                            $"Recovered local queued run has an unexpected runtime index status. " +
+                            $"SharedRunId='{work.SharedRunId}', " +
+                            $"ReplacementLocalRunId='{redispatchedRun.LocalRunId}', " +
+                            $"Status='{replacementIndex.Status}'.");
+
+                        output.WriteLine(
+                            $"[REAL RUNTIME INVENTORY LOCAL QUEUED RECOVERY] " +
+                            $"Local queued work redispatched. " +
+                            $"TenantId='{inventory.Tenant.TenantId}', " +
+                            $"SharedRunId='{work.SharedRunId}', " +
+                            $"FailedRuntimeInstanceId='{inventory.RuntimeInstanceId}', " +
+                            $"FailedLocalRunId='{work.LocalRunId}', " +
+                            $"ReplacementRuntimeInstanceId='{redispatchedRun.AssignedRuntimeInstanceId}', " +
+                            $"ReplacementLocalRunId='{redispatchedRun.LocalRunId}', " +
+                            $"ReplacementIndexStatus='{replacementIndex.Status}', " +
+                            $"ReplacementExecutionId='{replacementIndex.ExecutionId}'.");
+                    }
+
+                    recoveredWorks.Add(
+                        new RealRuntimeCrashRecoveredWorkProof
+                        {
+                            Original = work,
+                            RedispatchedRun = redispatchedRun,
+                            ReplacementRuntimeInstanceId =
+                                redispatchedRun.AssignedRuntimeInstanceId!,
+                            ReplacementLocalRunId = redispatchedRun.LocalRunId!,
+                            RecoveredExecutionId = recoveredExecutionId
+                        });
+
+                    output.WriteLine(
+                        $"[REAL RUNTIME INVENTORY RECOVERY] Work recovered. " +
+                        $"TenantId='{inventory.Tenant.TenantId}', " +
+                        $"Kind='{work.Kind}', " +
+                        $"SharedRunId='{work.SharedRunId}', " +
+                        $"FailedRuntimeInstanceId='{inventory.RuntimeInstanceId}', " +
+                        $"FailedLocalRunId='{work.LocalRunId}', " +
+                        $"ReplacementRuntimeInstanceId='{redispatchedRun.AssignedRuntimeInstanceId}', " +
+                        $"ReplacementLocalRunId='{redispatchedRun.LocalRunId}', " +
+                        $"ExecutionIdBefore='{work.ExecutionId}', " +
+                        $"ExecutionIdAfter='{recoveredExecutionId}'.");
+                }
+
+                var proof = new RealRuntimeCrashFailedRuntimeRecoveryProof
+                {
+                    FailedInventory = inventory,
+                    RecoveredWorks = recoveredWorks
+                };
+
+                AssertRecoveredInventoryStrictResume(proof);
+                WriteRecoveredInventory(output, proof);
+
+                return proof;
+
+                async Task<KeyValuePair<string, RealRuntimeCrashWorkStateSnapshot>>
+                    CaptureLocalQueuedPreKillSnapshotAsync(
+                        RealRuntimeCrashWorkProof work)
+                {
+                    var indexEntry = await runExecutionIndex
+                        .GetAsync(work.LocalRunId)
+                        .ConfigureAwait(false);
+
+                    return new KeyValuePair<string, RealRuntimeCrashWorkStateSnapshot>(
+                        work.LocalRunId,
+                        new RealRuntimeCrashWorkStateSnapshot(
+                            indexEntry?.Status,
+                            indexEntry?.RuntimeInstanceId,
+                            indexEntry?.ExecutionId,
+                            indexEntry?.CompletedAtUtc,
+                            null,
+                            0,
+                            0,
+                            string.Empty,
+                            DateTimeOffset.UtcNow));
+                }
+            }
+            finally
+            {
+                sharedRunSignalLifetime.Cancel();
+
+                foreach (var subscription in
+                    sharedRunDispatchSubscriptions.Values)
+                {
+                    await subscription
+                        .DisposeAsync()
+                        .ConfigureAwait(false);
+                }
+
+                foreach (var signalTask in
+                    sharedRunDispatchSignalTasks.Values)
+                {
+                    if (!signalTask.IsCompleted)
+                    {
+                        continue;
+                    }
+
+                    try
+                    {
+                        await signalTask.ConfigureAwait(false);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        // Expected when durable convergence wins before the signal.
+                    }
+                    catch (InvalidOperationException)
+                    {
+                        // A best-effort signal stream may close during test-host shutdown.
+                    }
+                }
+            }
+        }
+
+        /// <summary>
+        /// Observes the crash window through the historical durable polling path.
+        /// </summary>
+        private static async Task<RealRuntimeCrashKillObservation> ObserveCrashProgressAndKillPollingAsync(
+            IAiRuntimeHostProcessControl processControl,
+            IAiRuntimeRunExecutionIndex runExecutionIndex,
+            IAiDagExecutionStore dagStore,
+            RealRuntimeCrashAssignedWorkInventoryProof inventory,
+            RealRuntimeCrashWorkProof inFlightWork,
+            int minimumCompletedStepsBeforeKill,
+            TimeSpan progressTimeout)
+        {
+            ArgumentNullException.ThrowIfNull(processControl);
+            ArgumentNullException.ThrowIfNull(runExecutionIndex);
+            ArgumentNullException.ThrowIfNull(dagStore);
+            ArgumentNullException.ThrowIfNull(inventory);
+            ArgumentNullException.ThrowIfNull(inFlightWork);
+
+            var progressDeadline =
+                DateTimeOffset.UtcNow.Add(progressTimeout);
+
+            RealRuntimeCrashWorkStateSnapshot? observedCrashSnapshot =
+                null;
+
+            RealRuntimeCrashWorkStateSnapshot? lastObservedInFlightSnapshot =
+                null;
+
+            var killed =
+                false;
+
+            var killRequestedAtUtc =
+                default(DateTimeOffset);
+
+            var killCompletedAtUtc =
+                default(DateTimeOffset);
 
             while (DateTimeOffset.UtcNow < progressDeadline)
             {
                 /*
-                 * Read only the lightweight durable execution record here.
-                 *
-                 * GetStateAsync must not be used in this polling loop because the Redis
-                 * implementation reconstructs the full DAG by reading every individual
-                 * step key. Under parallel crash scenarios, those reads create avoidable
-                 * Redis pressure and enlarge the interval between progress detection and
-                 * process termination.
+                 * This is the historical polling implementation. Keep this path
+                 * unchanged so Polling remains the stable baseline.
                  */
-                var dagRecord = await dagStore
-                    .GetRecordAsync(inFlightWork.ExecutionId!)
-                    .ConfigureAwait(false);
+                var dagRecord =
+                    await dagStore
+                        .GetRecordAsync(inFlightWork.ExecutionId!)
+                        .ConfigureAwait(false);
 
-                var completedStepCount = dagRecord?.CompletedSteps?.Count ?? 0;
-                var totalStepCount = dagRecord?.Steps?.Count ?? 0;
+                var completedStepCount =
+                    dagRecord?.CompletedSteps?.Count ?? 0;
 
-                var statusBreakdown = dagRecord is null
-                    ? string.Empty
-                    : $"Completed:{completedStepCount},Remaining:{Math.Max(0, totalStepCount - completedStepCount)}";
+                var totalStepCount =
+                    dagRecord?.Steps?.Count ?? 0;
+
+                var statusBreakdown =
+                    dagRecord is null
+                        ? string.Empty
+                        : $"Completed:{completedStepCount},Remaining:{Math.Max(0, totalStepCount - completedStepCount)}";
 
                 /*
-                 * This must remain the final durable read before evaluating the crash
-                 * condition and calling KillAsync.
+                 * The runtime execution index remains the final durable read before
+                 * evaluating the crash condition and calling KillAsync.
                  */
-                var indexEntry = await runExecutionIndex
-                    .GetAsync(inFlightWork.LocalRunId)
-                    .ConfigureAwait(false);
+                var indexEntry =
+                    await runExecutionIndex
+                        .GetAsync(inFlightWork.LocalRunId)
+                        .ConfigureAwait(false);
 
-                var currentInFlightSnapshot = new RealRuntimeCrashWorkStateSnapshot(
-                    indexEntry?.Status,
-                    indexEntry?.RuntimeInstanceId,
-                    indexEntry?.ExecutionId,
-                    indexEntry?.CompletedAtUtc,
-                    dagRecord?.Status.ToString(),
-                    completedStepCount,
-                    totalStepCount,
-                    statusBreakdown,
-                    DateTimeOffset.UtcNow);
+                var currentInFlightSnapshot =
+                    new RealRuntimeCrashWorkStateSnapshot(
+                        indexEntry?.Status,
+                        indexEntry?.RuntimeInstanceId,
+                        indexEntry?.ExecutionId,
+                        indexEntry?.CompletedAtUtc,
+                        dagRecord?.Status.ToString(),
+                        completedStepCount,
+                        totalStepCount,
+                        statusBreakdown,
+                        DateTimeOffset.UtcNow);
 
-                lastObservedInFlightSnapshot = currentInFlightSnapshot;
+                lastObservedInFlightSnapshot =
+                    currentInFlightSnapshot;
 
-                var runtimeInstanceMatches = string.Equals(
-                    currentInFlightSnapshot.RuntimeInstanceId,
-                    inventory.RuntimeInstanceId,
-                    StringComparison.Ordinal);
+                var runtimeInstanceMatches =
+                    string.Equals(
+                        currentInFlightSnapshot.RuntimeInstanceId,
+                        inventory.RuntimeInstanceId,
+                        StringComparison.Ordinal);
 
-                var executionMatches = string.Equals(
-                    currentInFlightSnapshot.ExecutionId,
-                    inFlightWork.ExecutionId,
-                    StringComparison.Ordinal);
+                var executionMatches =
+                    string.Equals(
+                        currentInFlightSnapshot.ExecutionId,
+                        inFlightWork.ExecutionId,
+                        StringComparison.Ordinal);
 
-                var indexIsRunning = string.Equals(
-                    currentInFlightSnapshot.IndexStatus,
-                    "running",
-                    StringComparison.OrdinalIgnoreCase);
+                var indexIsRunning =
+                    string.Equals(
+                        currentInFlightSnapshot.IndexStatus,
+                        "running",
+                        StringComparison.OrdinalIgnoreCase);
 
-                var dagIsRunning = string.Equals(
-                    currentInFlightSnapshot.DagStatus,
-                    "Running",
-                    StringComparison.OrdinalIgnoreCase);
+                var dagIsRunning =
+                    string.Equals(
+                        currentInFlightSnapshot.DagStatus,
+                        "Running",
+                        StringComparison.OrdinalIgnoreCase);
 
                 var requiredProgressReached =
-                    currentInFlightSnapshot.DagCompletedStepCount >= minimumCompletedStepsBeforeKill;
+                    currentInFlightSnapshot.DagCompletedStepCount >=
+                    minimumCompletedStepsBeforeKill;
 
                 var executionStillIncomplete =
                     currentInFlightSnapshot.DagTotalStepCount > 0 &&
@@ -402,38 +934,47 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
                     requiredProgressReached &&
                     executionStillIncomplete)
                 {
-                    observedCrashSnapshot = currentInFlightSnapshot;
+                    observedCrashSnapshot =
+                        currentInFlightSnapshot;
 
                     /*
                      * No additional read, logging operation, delay, or snapshot capture
                      * is permitted between this timestamp and KillAsync.
                      */
-                    killRequestedAtUtc = DateTimeOffset.UtcNow;
+                    killRequestedAtUtc =
+                        DateTimeOffset.UtcNow;
 
-                    killed = await processControl
-                        .KillAsync(inventory.RuntimeInstanceId)
-                        .ConfigureAwait(false);
+                    killed =
+                        await processControl
+                            .KillAsync(inventory.RuntimeInstanceId)
+                            .ConfigureAwait(false);
 
-                    killCompletedAtUtc = DateTimeOffset.UtcNow;
+                    killCompletedAtUtc =
+                        DateTimeOffset.UtcNow;
+
                     break;
                 }
 
-                var indexIsCompleted = string.Equals(
-                    currentInFlightSnapshot.IndexStatus,
-                    "completed",
-                    StringComparison.OrdinalIgnoreCase);
+                var indexIsCompleted =
+                    string.Equals(
+                        currentInFlightSnapshot.IndexStatus,
+                        "completed",
+                        StringComparison.OrdinalIgnoreCase);
 
-                var dagIsCompleted = string.Equals(
-                    currentInFlightSnapshot.DagStatus,
-                    "Completed",
-                    StringComparison.OrdinalIgnoreCase);
+                var dagIsCompleted =
+                    string.Equals(
+                        currentInFlightSnapshot.DagStatus,
+                        "Completed",
+                        StringComparison.OrdinalIgnoreCase);
 
                 var allDagStepsCompleted =
                     currentInFlightSnapshot.DagTotalStepCount > 0 &&
                     currentInFlightSnapshot.DagCompletedStepCount >=
                     currentInFlightSnapshot.DagTotalStepCount;
 
-                if (indexIsCompleted || dagIsCompleted || allDagStepsCompleted)
+                if (indexIsCompleted ||
+                    dagIsCompleted ||
+                    allDagStepsCompleted)
                 {
                     Assert.Fail(
                         "The selected in-flight execution completed before the runtime process could be killed. " +
@@ -442,6 +983,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
                         $"SharedRunId='{inFlightWork.SharedRunId}', " +
                         $"LocalRunId='{inFlightWork.LocalRunId}', " +
                         $"ExecutionId='{inFlightWork.ExecutionId}', " +
+                        $"ObservationMode='{ProductionRecoveryObservationMode.Polling}', " +
                         $"IndexStatus='{currentInFlightSnapshot.IndexStatus}', " +
                         $"IndexRuntimeInstanceId='{currentInFlightSnapshot.RuntimeInstanceId}', " +
                         $"IndexExecutionId='{currentInFlightSnapshot.ExecutionId}', " +
@@ -453,297 +995,391 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
                         $"CapturedAtUtc='{currentInFlightSnapshot.CapturedAtUtc:O}'.");
                 }
 
-                await Task.Delay(TimeSpan.FromMilliseconds(50)).ConfigureAwait(false);
+                await Task
+                    .Delay(TimeSpan.FromMilliseconds(50))
+                    .ConfigureAwait(false);
             }
 
-            if (observedCrashSnapshot is null)
-            {
-                Assert.Fail(
-                    "The selected in-flight execution did not reach the required crash progress before the timeout. " +
-                    $"TenantId='{inventory.Tenant.TenantId}', " +
-                    $"RuntimeInstanceId='{inventory.RuntimeInstanceId}', " +
-                    $"SharedRunId='{inFlightWork.SharedRunId}', " +
-                    $"LocalRunId='{inFlightWork.LocalRunId}', " +
-                    $"ExecutionId='{inFlightWork.ExecutionId}', " +
-                    $"ExpectedCompletedSteps='{minimumCompletedStepsBeforeKill}', " +
-                    $"LastIndexStatus='{lastObservedInFlightSnapshot?.IndexStatus}', " +
-                    $"LastIndexRuntimeInstanceId='{lastObservedInFlightSnapshot?.RuntimeInstanceId}', " +
-                    $"LastIndexExecutionId='{lastObservedInFlightSnapshot?.ExecutionId}', " +
-                    $"LastDagStatus='{lastObservedInFlightSnapshot?.DagStatus}', " +
-                    $"LastCompletedSteps='{lastObservedInFlightSnapshot?.DagCompletedStepCount}', " +
-                    $"LastTotalSteps='{lastObservedInFlightSnapshot?.DagTotalStepCount}', " +
-                    $"ProgressTimeout='{progressTimeout}'.");
-
-                throw new InvalidOperationException("Unreachable assertion path.");
-            }
-
-            Assert.True(
+            return new RealRuntimeCrashKillObservation(
+                observedCrashSnapshot,
+                lastObservedInFlightSnapshot,
                 killed,
-                $"Runtime process was not killed. " +
-                $"TenantId='{inventory.Tenant.TenantId}', " +
-                $"RuntimeInstanceId='{inventory.RuntimeInstanceId}', " +
-                $"ExecutionId='{inFlightWork.ExecutionId}'.");
+                killRequestedAtUtc,
+                killCompletedAtUtc,
+                "Polling",
+                0,
+                null);
+        }
 
-            output.WriteLine(
-                $"[REAL RUNTIME INVENTORY CRASH READY] " +
-                $"TenantId='{inventory.Tenant.TenantId}', " +
-                $"RuntimeInstanceId='{inventory.RuntimeInstanceId}', " +
-                $"SharedRunId='{inFlightWork.SharedRunId}', " +
-                $"LocalRunId='{inFlightWork.LocalRunId}', " +
-                $"ExecutionId='{inFlightWork.ExecutionId}', " +
-                $"IndexStatus='{observedCrashSnapshot.IndexStatus}', " +
-                $"DagStatus='{observedCrashSnapshot.DagStatus}', " +
-                $"CompletedSteps='{observedCrashSnapshot.DagCompletedStepCount}', " +
-                $"TotalSteps='{observedCrashSnapshot.DagTotalStepCount}', " +
-                $"MinimumCompletedSteps='{minimumCompletedStepsBeforeKill}'.");
+        /// <summary>
+        /// Observes the crash window through targeted DAG progress signals with a slow durable fallback.
+        /// </summary>
+        private static async Task<RealRuntimeCrashKillObservation> ObserveCrashProgressAndKillHybridAsync(
+            IAiRuntimeHostProcessControl processControl,
+            IAiRuntimeRunExecutionIndex runExecutionIndex,
+            IAiDagExecutionStore dagStore,
+            IAiRuntimeSignalSubscriber signalSubscriber,
+            string controlPlaneId,
+            RealRuntimeCrashAssignedWorkInventoryProof inventory,
+            RealRuntimeCrashWorkProof inFlightWork,
+            int minimumCompletedStepsBeforeKill,
+            TimeSpan progressTimeout,
+            TimeSpan fallbackPollInterval)
+        {
+            ArgumentNullException.ThrowIfNull(processControl);
+            ArgumentNullException.ThrowIfNull(runExecutionIndex);
+            ArgumentNullException.ThrowIfNull(dagStore);
+            ArgumentNullException.ThrowIfNull(signalSubscriber);
+            ArgumentException.ThrowIfNullOrWhiteSpace(controlPlaneId);
+            ArgumentNullException.ThrowIfNull(inventory);
+            ArgumentNullException.ThrowIfNull(inFlightWork);
 
-            /*
-             * Full inventory capture is safe now because the runtime process
-             * has already been terminated.
-             */
-            var postKillSnapshots = await CaptureWorkStateSnapshotsAsync(
-                    runExecutionIndex,
-                    dagStore,
-                    inventory)
-                .ConfigureAwait(false);
+            var progressDeadline =
+                DateTimeOffset.UtcNow.Add(progressTimeout);
 
-            var localQueuedPreKillSnapshots = await Task
-                .WhenAll(localQueuedPreKillSnapshotTasks)
-                .ConfigureAwait(false);
+            RealRuntimeCrashWorkStateSnapshot? observedCrashSnapshot =
+                null;
 
-            var preKillSnapshotMap = localQueuedPreKillSnapshots.ToDictionary(
-                pair => pair.Key,
-                pair => pair.Value,
-                StringComparer.Ordinal);
+            RealRuntimeCrashWorkStateSnapshot? lastObservedInFlightSnapshot =
+                null;
 
-            preKillSnapshotMap[inFlightWork.LocalRunId] = observedCrashSnapshot;
+            var killed =
+                false;
 
-            IReadOnlyDictionary<string, RealRuntimeCrashWorkStateSnapshot> preKillSnapshots =
-                preKillSnapshotMap;
+            var killRequestedAtUtc =
+                default(DateTimeOffset);
 
-            output.WriteLine(
-                $"[REAL RUNTIME INVENTORY CRASH] Runtime process killed. " +
-                $"TenantId='{inventory.Tenant.TenantId}', " +
-                $"RuntimeInstanceId='{inventory.RuntimeInstanceId}', " +
-                $"WorkCount='{inventory.Works.Count}', " +
-                $"InFlight='{inventory.InFlightExecutions.Count}', " +
-                $"LocalQueued='{inventory.LocalQueuedRuns.Count}', " +
-                $"KillRequestedAtUtc='{killRequestedAtUtc:O}', " +
-                $"KillCompletedAtUtc='{killCompletedAtUtc:O}', " +
-                $"KillDuration='{killCompletedAtUtc - killRequestedAtUtc}'.");
+            var killCompletedAtUtc =
+                default(DateTimeOffset);
 
-            foreach (var work in inventory.Works)
-            {
-                var preKill = preKillSnapshots[work.LocalRunId];
-                var postKill = postKillSnapshots[work.LocalRunId];
+            var progressWakeSource =
+                "DurableInitial";
 
-                var completionTiming = ClassifyCompletionTiming(
-                    postKill.IndexCompletedAtUtc,
-                    killRequestedAtUtc,
-                    killCompletedAtUtc);
+            var fallbackReadCount =
+                0;
 
-                output.WriteLine(
-                    $"[REAL RUNTIME INVENTORY KILL WINDOW] " +
-                    $"TenantId='{inventory.Tenant.TenantId}', " +
-                    $"FailedRuntimeInstanceId='{inventory.RuntimeInstanceId}', " +
-                    $"SharedRunId='{work.SharedRunId}', " +
-                    $"LocalRunId='{work.LocalRunId}', " +
-                    $"ExpectedExecutionId='{work.ExecutionId}', " +
-                    $"Kind='{work.Kind}', " +
-                    $"PreKillIndexStatus='{preKill.IndexStatus}', " +
-                    $"PreKillIndexRuntimeInstanceId='{preKill.RuntimeInstanceId}', " +
-                    $"PreKillIndexExecutionId='{preKill.ExecutionId}', " +
-                    $"PreKillIndexCompletedAtUtc='{preKill.IndexCompletedAtUtc?.ToString("O") ?? string.Empty}', " +
-                    $"PreKillDagStatus='{preKill.DagStatus}', " +
-                    $"PreKillCompletedSteps='{preKill.DagCompletedStepCount}', " +
-                    $"PreKillTotalSteps='{preKill.DagTotalStepCount}', " +
-                    $"PreKillDagStepStatusBreakdown='{preKill.DagStepStatusBreakdown}', " +
-                    $"PreKillCapturedAtUtc='{preKill.CapturedAtUtc:O}', " +
-                    $"PostKillIndexStatus='{postKill.IndexStatus}', " +
-                    $"PostKillIndexRuntimeInstanceId='{postKill.RuntimeInstanceId}', " +
-                    $"PostKillIndexExecutionId='{postKill.ExecutionId}', " +
-                    $"PostKillIndexCompletedAtUtc='{postKill.IndexCompletedAtUtc?.ToString("O") ?? string.Empty}', " +
-                    $"PostKillDagStatus='{postKill.DagStatus}', " +
-                    $"PostKillCompletedSteps='{postKill.DagCompletedStepCount}', " +
-                    $"PostKillTotalSteps='{postKill.DagTotalStepCount}', " +
-                    $"PostKillDagStepStatusBreakdown='{postKill.DagStepStatusBreakdown}', " +
-                    $"PostKillCapturedAtUtc='{postKill.CapturedAtUtc:O}', " +
-                    $"KillRequestedAtUtc='{killRequestedAtUtc:O}', " +
-                    $"KillCompletedAtUtc='{killCompletedAtUtc:O}', " +
-                    $"CompletionTiming='{completionTiming}'.");
-            }
+            AiRuntimeSignal? progressSignal =
+                null;
 
-            await ProductionRecoveryWaitHelpers
-                .WaitForRuntimeInstanceUnsafeAsync(
-                    registry,
-                    inventory.RuntimeInstanceId,
-                    unsafeTimeout)
-                .ConfigureAwait(false);
+            using var signalLifetime =
+                new CancellationTokenSource();
 
-            output.WriteLine(
-                $"[REAL RUNTIME INVENTORY CRASH] Runtime instance marked unsafe. " +
-                $"TenantId='{inventory.Tenant.TenantId}', " +
-                $"RuntimeInstanceId='{inventory.RuntimeInstanceId}'. " +
-                "Waiting for automatic execution recovery reconciliation.");
-
-            foreach (var work in inventory.Works)
-            {
-                await WaitForWorkRequeuedForRecoveryAsync(
-                        runExecutionIndex,
-                        dagStore,
-                        inventory,
-                        work,
-                        preKillSnapshots[work.LocalRunId],
-                        postKillSnapshots[work.LocalRunId],
-                        killRequestedAtUtc,
-                        killCompletedAtUtc,
-                        requeueTimeout)
-                    .ConfigureAwait(false);
-            }
-
-            var recoveredWorks = new List<RealRuntimeCrashRecoveredWorkProof>();
-
-            foreach (var work in inventory.Works)
-            {
-                var redispatchedRun = await ProductionRecoveryWaitHelpers
-                    .WaitForRecoveredRunRedispatchedAsync(
-                        sharedRunStore,
-                        sharedQueue,
-                        work.SharedRunId,
-                        inventory.RuntimeInstanceId,
-                        work.LocalRunId,
-                        redispatchTimeout)
+            await using var subscription =
+                await signalSubscriber
+                    .SubscribeAsync(
+                        AiRuntimeSignalType.DagProgressChanged,
+                        controlPlaneId,
+                        inFlightWork.ExecutionId!)
                     .ConfigureAwait(false);
 
-                Assert.False(string.IsNullOrWhiteSpace(redispatchedRun.AssignedRuntimeInstanceId));
-                Assert.False(string.IsNullOrWhiteSpace(redispatchedRun.LocalRunId));
-                Assert.NotEqual(inventory.RuntimeInstanceId, redispatchedRun.AssignedRuntimeInstanceId);
-                Assert.NotEqual(work.LocalRunId, redispatchedRun.LocalRunId);
 
-                AssertRuntimeBelongsToTenant(
-                    redispatchedRun.AssignedRuntimeInstanceId!,
-                    inventory.Tenant);
 
-                string recoveredExecutionId;
+            Task<AiRuntimeSignal>? progressSignalTask =
+                ReadRequiredDagProgressSignalAsync(
+                    subscription,
+                    controlPlaneId,
+                    inFlightWork.ExecutionId!,
+                    minimumCompletedStepsBeforeKill,
+                    signalLifetime.Token);
 
-                if (work.Kind == RealRuntimeCrashWorkKind.InFlightExecution)
+            var initialDurableRead =
+                true;
+
+            try
+            {
+                while (DateTimeOffset.UtcNow < progressDeadline)
                 {
-                    var recoveredExecution = await ProductionRecoveryWaitHelpers
-                        .WaitForDurableDagExecutionAsync(
-                            sharedRunStore,
-                            runExecutionIndex,
-                            dagStore,
-                            redispatchedRun.SharedRunId,
-                            executionResolveTimeout)
-                        .ConfigureAwait(false);
-
-                    recoveredExecutionId = recoveredExecution.ExecutionId;
-
-                    Assert.False(string.IsNullOrWhiteSpace(work.ExecutionId));
-                    Assert.Equal(work.ExecutionId, recoveredExecutionId);
-                }
-                else
-                {
-                    var replacementIndex = await WaitForReplacementLocalQueuedRunIndexAsync(
-                            runExecutionIndex,
-                            redispatchedRun.LocalRunId!,
-                            redispatchedRun.AssignedRuntimeInstanceId!,
-                            executionResolveTimeout)
-                        .ConfigureAwait(false);
-
-                    recoveredExecutionId = replacementIndex.ExecutionId ?? string.Empty;
-
-                    Assert.True(
-                        string.Equals(
-                            replacementIndex.Status,
-                            "queued",
-                            StringComparison.OrdinalIgnoreCase) ||
-                        string.Equals(
-                            replacementIndex.Status,
-                            "creating-execution",
-                            StringComparison.OrdinalIgnoreCase) ||
-                        string.Equals(
-                            replacementIndex.Status,
-                            "running",
-                            StringComparison.OrdinalIgnoreCase) ||
-                        string.Equals(
-                            replacementIndex.Status,
-                            "completed",
-                            StringComparison.OrdinalIgnoreCase),
-                        $"Recovered local queued run has an unexpected runtime index status. " +
-                        $"SharedRunId='{work.SharedRunId}', " +
-                        $"ReplacementLocalRunId='{redispatchedRun.LocalRunId}', " +
-                        $"Status='{replacementIndex.Status}'.");
-
-                    output.WriteLine(
-                        $"[REAL RUNTIME INVENTORY LOCAL QUEUED RECOVERY] " +
-                        $"Local queued work redispatched. " +
-                        $"TenantId='{inventory.Tenant.TenantId}', " +
-                        $"SharedRunId='{work.SharedRunId}', " +
-                        $"FailedRuntimeInstanceId='{inventory.RuntimeInstanceId}', " +
-                        $"FailedLocalRunId='{work.LocalRunId}', " +
-                        $"ReplacementRuntimeInstanceId='{redispatchedRun.AssignedRuntimeInstanceId}', " +
-                        $"ReplacementLocalRunId='{redispatchedRun.LocalRunId}', " +
-                        $"ReplacementIndexStatus='{replacementIndex.Status}', " +
-                        $"ReplacementExecutionId='{replacementIndex.ExecutionId}'.");
-                }
-
-                recoveredWorks.Add(
-                    new RealRuntimeCrashRecoveredWorkProof
+                    if (!initialDurableRead)
                     {
-                        Original = work,
-                        RedispatchedRun = redispatchedRun,
-                        ReplacementRuntimeInstanceId =
-                            redispatchedRun.AssignedRuntimeInstanceId!,
-                        ReplacementLocalRunId = redispatchedRun.LocalRunId!,
-                        RecoveredExecutionId = recoveredExecutionId
-                    });
+                        var remaining =
+                            progressDeadline - DateTimeOffset.UtcNow;
 
-                output.WriteLine(
-                    $"[REAL RUNTIME INVENTORY RECOVERY] Work recovered. " +
-                    $"TenantId='{inventory.Tenant.TenantId}', " +
-                    $"Kind='{work.Kind}', " +
-                    $"SharedRunId='{work.SharedRunId}', " +
-                    $"FailedRuntimeInstanceId='{inventory.RuntimeInstanceId}', " +
-                    $"FailedLocalRunId='{work.LocalRunId}', " +
-                    $"ReplacementRuntimeInstanceId='{redispatchedRun.AssignedRuntimeInstanceId}', " +
-                    $"ReplacementLocalRunId='{redispatchedRun.LocalRunId}', " +
-                    $"ExecutionIdBefore='{work.ExecutionId}', " +
-                    $"ExecutionIdAfter='{recoveredExecutionId}'.");
+                        if (remaining <= TimeSpan.Zero)
+                        {
+                            break;
+                        }
+
+                        var waitDuration =
+                            remaining < fallbackPollInterval
+                                ? remaining
+                                : fallbackPollInterval;
+
+                        var fallbackDelayTask =
+                            Task.Delay(waitDuration);
+
+                        if (progressSignalTask is not null)
+                        {
+                            var completedTask =
+                                await Task
+                                    .WhenAny(
+                                        progressSignalTask,
+                                        fallbackDelayTask)
+                                    .ConfigureAwait(false);
+
+                            if (completedTask == progressSignalTask)
+                            {
+                                progressSignal =
+                                    await progressSignalTask
+                                        .ConfigureAwait(false);
+
+                                progressSignalTask =
+                                    null;
+
+                                progressWakeSource =
+                                    "DagProgressChanged";
+                            }
+                            else
+                            {
+                                fallbackReadCount++;
+                                progressWakeSource =
+                                    "DurableFallback";
+                            }
+                        }
+                        else
+                        {
+                            await fallbackDelayTask
+                                .ConfigureAwait(false);
+
+                            fallbackReadCount++;
+                            progressWakeSource =
+                                "DurableFallback";
+                        }
+                    }
+
+                    initialDurableRead =
+                        false;
+
+                    /*
+                     * Signals only wake the observer. The complete durable DAG state
+                     * remains the authoritative progress proof in hybrid mode.
+                     */
+                    var dagState =
+                        await dagStore
+                            .GetStateAsync(inFlightWork.ExecutionId!)
+                            .ConfigureAwait(false);
+
+                    var completedStepCount =
+                        dagState?.Steps.Values.Count(step =>
+                            step.Status == AiStepExecutionStatus.Completed) ?? 0;
+
+                    var totalStepCount =
+                        dagState?.Steps.Count ?? 0;
+
+                    var statusBreakdown =
+                        dagState is null
+                            ? string.Empty
+                            : string.Join(
+                                ",",
+                                dagState.Steps.Values
+                                    .GroupBy(step => step.Status)
+                                    .OrderBy(group => group.Key)
+                                    .Select(group =>
+                                        $"{group.Key}:{group.Count()}"));
+
+                    var dagRecord =
+                        await dagStore
+                            .GetRecordAsync(inFlightWork.ExecutionId!)
+                            .ConfigureAwait(false);
+
+                    /*
+                     * The runtime execution index remains the final durable read before
+                     * evaluating the crash condition and calling KillAsync.
+                     */
+                    var indexEntry =
+                        await runExecutionIndex
+                            .GetAsync(inFlightWork.LocalRunId)
+                            .ConfigureAwait(false);
+
+                    var currentInFlightSnapshot =
+                        new RealRuntimeCrashWorkStateSnapshot(
+                            indexEntry?.Status,
+                            indexEntry?.RuntimeInstanceId,
+                            indexEntry?.ExecutionId,
+                            indexEntry?.CompletedAtUtc,
+                            dagRecord?.Status.ToString(),
+                            completedStepCount,
+                            totalStepCount,
+                            statusBreakdown,
+                            DateTimeOffset.UtcNow);
+
+                    lastObservedInFlightSnapshot =
+                        currentInFlightSnapshot;
+
+                    var runtimeInstanceMatches =
+                        string.Equals(
+                            currentInFlightSnapshot.RuntimeInstanceId,
+                            inventory.RuntimeInstanceId,
+                            StringComparison.Ordinal);
+
+                    var executionMatches =
+                        string.Equals(
+                            currentInFlightSnapshot.ExecutionId,
+                            inFlightWork.ExecutionId,
+                            StringComparison.Ordinal);
+
+                    var indexIsRunning =
+                        string.Equals(
+                            currentInFlightSnapshot.IndexStatus,
+                            "running",
+                            StringComparison.OrdinalIgnoreCase);
+
+                    var dagIsRunning =
+                        string.Equals(
+                            currentInFlightSnapshot.DagStatus,
+                            "Running",
+                            StringComparison.OrdinalIgnoreCase);
+
+                    var requiredProgressReached =
+                        currentInFlightSnapshot.DagCompletedStepCount >=
+                        minimumCompletedStepsBeforeKill;
+
+                    var executionStillIncomplete =
+                        currentInFlightSnapshot.DagTotalStepCount > 0 &&
+                        currentInFlightSnapshot.DagCompletedStepCount <
+                        currentInFlightSnapshot.DagTotalStepCount;
+
+                    if (runtimeInstanceMatches &&
+                        executionMatches &&
+                        indexIsRunning &&
+                        dagIsRunning &&
+                        requiredProgressReached &&
+                        executionStillIncomplete)
+                    {
+                        observedCrashSnapshot =
+                            currentInFlightSnapshot;
+
+                        /*
+                         * No additional read, logging operation, delay, or snapshot capture
+                         * is permitted between this timestamp and KillAsync.
+                         */
+                        killRequestedAtUtc =
+                            DateTimeOffset.UtcNow;
+
+                        killed =
+                            await processControl
+                                .KillAsync(inventory.RuntimeInstanceId)
+                                .ConfigureAwait(false);
+
+                        killCompletedAtUtc =
+                            DateTimeOffset.UtcNow;
+
+                        break;
+                    }
+
+                    var indexIsCompleted =
+                        string.Equals(
+                            currentInFlightSnapshot.IndexStatus,
+                            "completed",
+                            StringComparison.OrdinalIgnoreCase);
+
+                    var dagIsCompleted =
+                        string.Equals(
+                            currentInFlightSnapshot.DagStatus,
+                            "Completed",
+                            StringComparison.OrdinalIgnoreCase);
+
+                    var allDagStepsCompleted =
+                        currentInFlightSnapshot.DagTotalStepCount > 0 &&
+                        currentInFlightSnapshot.DagCompletedStepCount >=
+                        currentInFlightSnapshot.DagTotalStepCount;
+
+                    if (indexIsCompleted ||
+                        dagIsCompleted ||
+                        allDagStepsCompleted)
+                    {
+                        Assert.Fail(
+                            "The selected in-flight execution completed before the runtime process could be killed. " +
+                            $"TenantId='{inventory.Tenant.TenantId}', " +
+                            $"RuntimeInstanceId='{inventory.RuntimeInstanceId}', " +
+                            $"SharedRunId='{inFlightWork.SharedRunId}', " +
+                            $"LocalRunId='{inFlightWork.LocalRunId}', " +
+                            $"ExecutionId='{inFlightWork.ExecutionId}', " +
+                            $"ObservationMode='{ProductionRecoveryObservationMode.HybridSignals}', " +
+                            $"ProgressWakeSource='{progressWakeSource}', " +
+                            $"SignalObserved='{progressSignal is not null}', " +
+                            $"SignalCompletedSteps='{progressSignal?.CompletedStepCount}', " +
+                            $"SignalTotalSteps='{progressSignal?.TotalStepCount}', " +
+                            $"FallbackReadCount='{fallbackReadCount}', " +
+                            $"IndexStatus='{currentInFlightSnapshot.IndexStatus}', " +
+                            $"IndexRuntimeInstanceId='{currentInFlightSnapshot.RuntimeInstanceId}', " +
+                            $"IndexExecutionId='{currentInFlightSnapshot.ExecutionId}', " +
+                            $"DagStatus='{currentInFlightSnapshot.DagStatus}', " +
+                            $"CompletedSteps='{currentInFlightSnapshot.DagCompletedStepCount}', " +
+                            $"TotalSteps='{currentInFlightSnapshot.DagTotalStepCount}', " +
+                            $"MinimumCompletedSteps='{minimumCompletedStepsBeforeKill}', " +
+                            $"IndexCompletedAtUtc='{currentInFlightSnapshot.IndexCompletedAtUtc?.ToString("O") ?? string.Empty}', " +
+                            $"CapturedAtUtc='{currentInFlightSnapshot.CapturedAtUtc:O}'.");
+                    }
+                }
+            }
+            finally
+            {
+                signalLifetime.Cancel();
+
+                if (progressSignalTask is not null)
+                {
+                    try
+                    {
+                        await progressSignalTask
+                            .ConfigureAwait(false);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        // Expected when durable convergence or process termination wins.
+                    }
+                }
             }
 
-            var proof = new RealRuntimeCrashFailedRuntimeRecoveryProof
+            return new RealRuntimeCrashKillObservation(
+                observedCrashSnapshot,
+                lastObservedInFlightSnapshot,
+                killed,
+                killRequestedAtUtc,
+                killCompletedAtUtc,
+                progressWakeSource,
+                fallbackReadCount,
+                progressSignal);
+        }
+
+        /// <summary>
+        /// Reads the first targeted DAG progress signal that reaches the required threshold.
+        /// </summary>
+        private static async Task<AiRuntimeSignal> ReadRequiredDagProgressSignalAsync(
+            IAiRuntimeSignalSubscription subscription,
+            string controlPlaneId,
+            string executionId,
+            int minimumCompletedSteps,
+            CancellationToken cancellationToken)
+        {
+            ArgumentNullException.ThrowIfNull(subscription);
+            ArgumentException.ThrowIfNullOrWhiteSpace(controlPlaneId);
+            ArgumentException.ThrowIfNullOrWhiteSpace(executionId);
+            ArgumentOutOfRangeException.ThrowIfNegativeOrZero(minimumCompletedSteps);
+
+            await foreach (var signal in subscription
+                .ReadAllAsync(cancellationToken)
+                .ConfigureAwait(false))
             {
-                FailedInventory = inventory,
-                RecoveredWorks = recoveredWorks
-            };
+                if (signal.Type != AiRuntimeSignalType.DagProgressChanged ||
+                    !string.Equals(
+                        signal.ControlPlaneId,
+                        controlPlaneId,
+                        StringComparison.Ordinal) ||
+                    !string.Equals(
+                        signal.ExecutionId,
+                        executionId,
+                        StringComparison.Ordinal) ||
+                    signal.CompletedStepCount is not int completedStepCount ||
+                    completedStepCount < minimumCompletedSteps)
+                {
+                    continue;
+                }
 
-            AssertRecoveredInventoryStrictResume(proof);
-            WriteRecoveredInventory(output, proof);
-
-            return proof;
-
-            async Task<KeyValuePair<string, RealRuntimeCrashWorkStateSnapshot>>
-                CaptureLocalQueuedPreKillSnapshotAsync(
-                    RealRuntimeCrashWorkProof work)
-            {
-                var indexEntry = await runExecutionIndex
-                    .GetAsync(work.LocalRunId)
-                    .ConfigureAwait(false);
-
-                return new KeyValuePair<string, RealRuntimeCrashWorkStateSnapshot>(
-                    work.LocalRunId,
-                    new RealRuntimeCrashWorkStateSnapshot(
-                        indexEntry?.Status,
-                        indexEntry?.RuntimeInstanceId,
-                        indexEntry?.ExecutionId,
-                        indexEntry?.CompletedAtUtc,
-                        null,
-                        0,
-                        0,
-                        string.Empty,
-                        DateTimeOffset.UtcNow));
+                return signal;
             }
+
+            throw new InvalidOperationException(
+                "The targeted DAG progress signal subscription completed unexpectedly.");
         }
 
         /// <summary>
@@ -1888,6 +2524,53 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
 
             return "after-kill-return";
         }
+
+        /// <summary>
+        /// Reads the first targeted shared-run dispatch signal for the requested shared run.
+        /// </summary>
+        private static async Task<AiRuntimeSignal> ReadRequiredSharedRunDispatchedSignalAsync(
+            IAiRuntimeSignalSubscription subscription,
+            string controlPlaneId,
+            string sharedRunId,
+            CancellationToken cancellationToken)
+        {
+            ArgumentNullException.ThrowIfNull(subscription);
+            ArgumentException.ThrowIfNullOrWhiteSpace(controlPlaneId);
+            ArgumentException.ThrowIfNullOrWhiteSpace(sharedRunId);
+
+            await foreach (var signal in subscription
+                .ReadAllAsync(cancellationToken)
+                .ConfigureAwait(false))
+            {
+                if (signal.Type != AiRuntimeSignalType.SharedRunDispatched ||
+                    !string.Equals(
+                        signal.ControlPlaneId,
+                        controlPlaneId,
+                        StringComparison.Ordinal) ||
+                    !string.Equals(
+                        signal.SharedRunId,
+                        sharedRunId,
+                        StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                return signal;
+            }
+
+            throw new InvalidOperationException(
+                "The targeted shared-run dispatch signal subscription completed unexpectedly.");
+        }
+
+        private sealed record RealRuntimeCrashKillObservation(
+            RealRuntimeCrashWorkStateSnapshot? ObservedCrashSnapshot,
+            RealRuntimeCrashWorkStateSnapshot? LastObservedInFlightSnapshot,
+            bool Killed,
+            DateTimeOffset KillRequestedAtUtc,
+            DateTimeOffset KillCompletedAtUtc,
+            string ProgressWakeSource,
+            int FallbackReadCount,
+            AiRuntimeSignal? ProgressSignal);
 
         private sealed record RealRuntimeCrashWorkStateSnapshot(
             string? IndexStatus,

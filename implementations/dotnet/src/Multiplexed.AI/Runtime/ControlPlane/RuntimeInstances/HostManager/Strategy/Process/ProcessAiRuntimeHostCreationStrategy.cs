@@ -541,17 +541,25 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
             int port,
             IReadOnlyDictionary<string, string> metadata)
         {
+            ArgumentNullException.ThrowIfNull(request);
+            ArgumentNullException.ThrowIfNull(metadata);
+            ArgumentException.ThrowIfNullOrWhiteSpace(endpoint);
+
             var startInfo = new ProcessStartInfo
             {
                 FileName = this.options.DotnetExecutablePath,
                 Arguments = $"\"{this.options.RuntimeHostAssemblyPath}\"",
                 UseShellExecute = false,
-                RedirectStandardOutput = this.options.RedirectOutput,
-                RedirectStandardError = this.options.RedirectOutput,
+
+                // Required to capture logs emitted by the external runtime process.
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+
                 CreateNoWindow = true
             };
 
-            var assemblyDirectory = Path.GetDirectoryName(this.options.RuntimeHostAssemblyPath);
+            var assemblyDirectory = Path.GetDirectoryName(
+                this.options.RuntimeHostAssemblyPath);
 
             if (!string.IsNullOrWhiteSpace(this.options.WorkingDirectory))
             {
@@ -562,7 +570,12 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
                 startInfo.WorkingDirectory = assemblyDirectory;
             }
 
-            ApplyEnvironment(startInfo, request, endpoint, port, metadata);
+            ApplyEnvironment(
+                startInfo,
+                request,
+                endpoint,
+                port,
+                metadata);
 
             return startInfo;
         }

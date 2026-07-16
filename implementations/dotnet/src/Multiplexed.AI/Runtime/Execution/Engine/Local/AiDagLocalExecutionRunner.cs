@@ -1,4 +1,6 @@
-﻿using Multiplexed.Abstractions.AI.Execution;
+﻿using Multiplexed.Abstractions.AI.ControlPlane.Discovery;
+using Multiplexed.Abstractions.AI.ControlPlane.Signals;
+using Multiplexed.Abstractions.AI.Execution;
 using Multiplexed.Abstractions.AI.Observability.Tracing;
 using Multiplexed.Abstractions.AI.Pipeline;
 using Multiplexed.Abstractions.AI.Steps;
@@ -21,21 +23,33 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Local
     {
         private readonly IAiDagExecutionEngineServices _engineServices;
         private readonly AiDagExecutionLifecycleHelper _lifecycleHelper;
+        private readonly IAiRuntimeSignalPublisher _runtimeSignalPublisher;
+        private readonly IAiControlPlaneIdResolver _controlPlaneIdResolver;
 
         /// <summary>
         /// Initializes a new instance of the <see cref="AiDagLocalExecutionRunner"/> class.
         /// </summary>
         /// <param name="engineServices">The DAG execution engine services.</param>
         /// <param name="lifecycleHelper">The terminal lifecycle helper.</param>
+        /// <param name="runtimeSignalPublisher">The runtime signal publisher.</param>
+        /// <param name="controlPlaneIdResolver">The logical control-plane identifier resolver.</param>
         public AiDagLocalExecutionRunner(
             IAiDagExecutionEngineServices engineServices,
-            AiDagExecutionLifecycleHelper lifecycleHelper)
+            AiDagExecutionLifecycleHelper lifecycleHelper,
+            IAiRuntimeSignalPublisher runtimeSignalPublisher,
+            IAiControlPlaneIdResolver controlPlaneIdResolver)
         {
             _engineServices = engineServices
                 ?? throw new ArgumentNullException(nameof(engineServices));
 
             _lifecycleHelper = lifecycleHelper
                 ?? throw new ArgumentNullException(nameof(lifecycleHelper));
+
+            _runtimeSignalPublisher = runtimeSignalPublisher
+                ?? throw new ArgumentNullException(nameof(runtimeSignalPublisher));
+
+            _controlPlaneIdResolver = controlPlaneIdResolver
+                ?? throw new ArgumentNullException(nameof(controlPlaneIdResolver));
         }
 
         /// <summary>
@@ -67,6 +81,9 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Local
             ArgumentNullException.ThrowIfNull(persistAsync);
             ArgumentNullException.ThrowIfNull(ensurePipelineName);
             ArgumentNullException.ThrowIfNull(validateExecutionId);
+
+            _engineServices.Logger.Engine.LogInformation(
+                $"[AI DAG RUNNER SELECTED] Runner='Local', ExecutionId='{executionId}'.");
 
             validateExecutionId(executionId);
 
@@ -380,6 +397,16 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Local
                     state,
                     cancellationToken);
 
+                if (stepResult.Success)
+                {
+                    await PublishDagProgressChangedAsync(
+                            record,
+                            state,
+                            resolvedPipeline.Steps.Count,
+                            workerId)
+                        .ConfigureAwait(false);
+                }
+
                 if (record.IsTerminal)
                 {
                     _engineServices.Logger.Engine.ExecutionCompleted(record);
@@ -398,5 +425,100 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Local
                 _engineServices.Accessor.Clear();
             }
         }
+
+        /// <summary>
+        /// Publishes a best-effort signal after a local DAG step completion
+        /// has been persisted durably.
+        /// </summary>
+        /// <param name="record">The persisted execution record.</param>
+        /// <param name="state">The persisted DAG execution state.</param>
+        /// <param name="totalStepCount">The total configured DAG step count.</param>
+        /// <param name="runtimeInstanceId">The runtime instance progressing the execution.</param>
+        /// <returns>A task representing the asynchronous signal publication.</returns>
+        private async Task PublishDagProgressChangedAsync(
+            AiExecutionRecord record,
+            AiExecutionState state,
+            int totalStepCount,
+            string runtimeInstanceId)
+        {
+            ArgumentNullException.ThrowIfNull(record);
+            ArgumentNullException.ThrowIfNull(state);
+            ArgumentException.ThrowIfNullOrWhiteSpace(runtimeInstanceId);
+
+            try
+            {
+                var controlPlaneId = await _controlPlaneIdResolver
+                    .ResolveAsync(
+                        new AiControlPlaneIdResolutionRequest
+                        {
+                            Source = "dag-progress-changed-signal",
+                            AllowGeneratedFallback = false
+                        },
+                        CancellationToken.None)
+                    .ConfigureAwait(false);
+
+                if (string.IsNullOrWhiteSpace(controlPlaneId))
+                {
+                    _engineServices.Logger.Engine.LogWarning(
+                        $"[AI RUNTIME SIGNAL][DAG PUBLISH SKIPPED] " +
+                        $"ExecutionPath='Local', Reason='ControlPlaneIdUnavailable', " +
+                        $"ExecutionId='{record.ExecutionId}', RuntimeInstanceId='{runtimeInstanceId}'.");
+
+                    return;
+                }
+
+                var completedStepCount = state.Steps.Values.Count(
+                    step => step.Status == AiStepExecutionStatus.Completed);
+
+                var signal = new AiRuntimeSignal
+                {
+                    Type = AiRuntimeSignalType.DagProgressChanged,
+                    ControlPlaneId = controlPlaneId,
+                    TenantId = record.ExecutionContextSnapshot?.TenantId,
+                    ExecutionId = record.ExecutionId,
+                    RuntimeInstanceId = runtimeInstanceId,
+                    CompletedStepCount = completedStepCount,
+                    TotalStepCount = totalStepCount,
+                    ExecutionVersion = record.Version
+                };
+
+                _engineServices.Logger.Engine.LogInformation(
+                    $"[AI RUNTIME SIGNAL][DAG PUBLISH REQUESTED] " +
+                    $"ExecutionPath='Local', SignalType='{signal.Type}', " +
+                    $"ControlPlaneId='{signal.ControlPlaneId}', ExecutionId='{signal.ExecutionId}', " +
+                    $"RuntimeInstanceId='{signal.RuntimeInstanceId}', " +
+                    $"CompletedStepCount='{signal.CompletedStepCount}', TotalStepCount='{signal.TotalStepCount}', " +
+                    $"ExecutionVersion='{signal.ExecutionVersion}'.");
+
+                await _runtimeSignalPublisher
+                    .PublishAsync(
+                        signal,
+                        CancellationToken.None)
+                    .ConfigureAwait(false);
+
+                _engineServices.Logger.Engine.LogInformation(
+                    $"[AI RUNTIME SIGNAL][DAG PUBLISH COMPLETED] " +
+                    $"ExecutionPath='Local', SignalType='{signal.Type}', " +
+                    $"ControlPlaneId='{signal.ControlPlaneId}', ExecutionId='{signal.ExecutionId}', " +
+                    $"RuntimeInstanceId='{signal.RuntimeInstanceId}', " +
+                    $"CompletedStepCount='{signal.CompletedStepCount}', TotalStepCount='{signal.TotalStepCount}', " +
+                    $"ExecutionVersion='{signal.ExecutionVersion}'.");
+            }
+            catch (Exception exception)
+            {
+                /*
+                 * Runtime signals are wake-up notifications only. A signal
+                 * publication or identity-resolution failure must never invalidate
+                 * the durable local step completion that already succeeded.
+                 */
+                _engineServices.Logger.Engine.LogWarning(
+                    $"[AI RUNTIME SIGNAL][DAG PUBLISH FAILED] " +
+                    $"ExecutionPath='Local', ExecutionId='{record.ExecutionId}', " +
+                    $"RuntimeInstanceId='{runtimeInstanceId}', " +
+                    $"ExceptionType='{exception.GetType().FullName}', " +
+                    $"ExceptionMessage='{exception.Message}'.");
+            }
+        }
+
     }
 }

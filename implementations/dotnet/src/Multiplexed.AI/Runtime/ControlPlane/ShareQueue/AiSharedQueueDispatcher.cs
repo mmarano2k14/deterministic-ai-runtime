@@ -1,6 +1,7 @@
 ﻿using Microsoft.Extensions.Logging;
 using Multiplexed.Abstractions.AI.ControlPlane.Admission;
 using Multiplexed.Abstractions.AI.ControlPlane.Discovery;
+using Multiplexed.Abstractions.AI.ControlPlane.Signals;
 using Multiplexed.Abstractions.AI.ControlPlane.Admission.Reservations;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Forensics;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
@@ -62,6 +63,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
         private readonly IAiControlPlaneIdResolver _controlPlaneIdResolver;
         private readonly IExecutionContextAccessor _executionContextAccessor;
         private readonly IAiRuntimeRecoveryForensicsRecorder _forensicsRecorder;
+        private readonly IAiRuntimeSignalPublisher? _runtimeSignalPublisher;
         private readonly ILogger<AiSharedQueueDispatcher> _logger;
 
         /// <summary>
@@ -110,7 +112,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
             IAiControlPlaneIdResolver controlPlaneIdResolver,
             IExecutionContextAccessor executionContextAccessor,
             ILogger<AiSharedQueueDispatcher> logger,
-            IAiRuntimeRecoveryForensicsRecorder forensicsRecorder)
+            IAiRuntimeRecoveryForensicsRecorder forensicsRecorder,
+            IAiRuntimeSignalPublisher? runtimeSignalPublisher = null)
         {
             _sharedQueue = sharedQueue ?? throw new ArgumentNullException(nameof(sharedQueue));
             _sharedRunStore = sharedRunStore ?? throw new ArgumentNullException(nameof(sharedRunStore));
@@ -124,6 +127,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
             _executionContextAccessor = executionContextAccessor ?? throw new ArgumentNullException(nameof(executionContextAccessor));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _forensicsRecorder = forensicsRecorder ?? throw new ArgumentNullException(nameof(forensicsRecorder));
+            _runtimeSignalPublisher = runtimeSignalPublisher;
         }
 
         public async Task<AiSharedQueueDispatchResult> DispatchNextAsync(
@@ -1014,6 +1018,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                             dispatchResult.ExecutionId,
                             queueItem.ClaimToken);
 
+                        await PublishSharedRunDispatchedSignalBestEffortAsync(
+                                controlPlaneId,
+                                dispatchedRun!)
+                            .ConfigureAwait(false);
+
                         var completedAtUtcSuccess =
                             DateTimeOffset.UtcNow;
 
@@ -1133,6 +1142,60 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                          $"OwnedClaimTokenPresent='{!string.IsNullOrWhiteSpace(ownedQueueItem?.ClaimToken)}'"
                     }
                 };
+            }
+        }
+
+        /// <summary>
+        /// Publishes a best-effort signal after durable shared-run ownership and queue finalization
+        /// have both been confirmed.
+        /// </summary>
+        /// <param name="controlPlaneId">The logical control-plane identifier.</param>
+        /// <param name="dispatchedRun">The durably dispatched shared run.</param>
+        /// <returns>A task representing the publication attempt.</returns>
+        private async Task PublishSharedRunDispatchedSignalBestEffortAsync(
+            string controlPlaneId,
+            AiSharedRunRecord dispatchedRun)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(controlPlaneId);
+            ArgumentNullException.ThrowIfNull(dispatchedRun);
+
+            if (_runtimeSignalPublisher is null)
+            {
+                return;
+            }
+
+            try
+            {
+                await _runtimeSignalPublisher
+                    .PublishAsync(
+                        new AiRuntimeSignal
+                        {
+                            Type = AiRuntimeSignalType.SharedRunDispatched,
+                            ControlPlaneId = controlPlaneId,
+                            TenantId = dispatchedRun.ExecutionContextSnapshot.TenantId,
+                            SharedRunId = dispatchedRun.SharedRunId,
+                            RuntimeInstanceId = dispatchedRun.AssignedRuntimeInstanceId!,
+                            LocalRunId = dispatchedRun.LocalRunId!,
+                            ExecutionId = dispatchedRun.ExecutionId
+                        },
+                        CancellationToken.None)
+                    .ConfigureAwait(false);
+            }
+            catch (Exception exception)
+            {
+                /*
+                 * Runtime signals are wake-up notifications only. Publication must
+                 * never invalidate the already confirmed durable dispatch or trigger
+                 * the outer dispatcher cleanup path.
+                 */
+                _logger.LogWarning(
+                    exception,
+                    "Shared-run dispatched signal publication failed after durable dispatch confirmation. SharedRunId={SharedRunId}, ControlPlaneId={ControlPlaneId}, RuntimeInstanceId={RuntimeInstanceId}, LocalRunId={LocalRunId}, ExecutionId={ExecutionId}",
+                    dispatchedRun.SharedRunId,
+                    controlPlaneId,
+                    dispatchedRun.AssignedRuntimeInstanceId,
+                    dispatchedRun.LocalRunId,
+                    dispatchedRun.ExecutionId);
             }
         }
 

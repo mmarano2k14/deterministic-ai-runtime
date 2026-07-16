@@ -1,4 +1,7 @@
-﻿using Multiplexed.Abstractions.AI.Execution.Control;
+﻿using Microsoft.Extensions.DependencyInjection;
+using Multiplexed.Abstractions.AI.ControlPlane.Discovery;
+using Multiplexed.Abstractions.AI.ControlPlane.Signals;
+using Multiplexed.Abstractions.AI.Execution.Control;
 using Multiplexed.AI.Runtime.Execution.Engine.Batch;
 using Multiplexed.AI.Runtime.Execution.Engine.Core;
 using Multiplexed.AI.Runtime.Execution.Engine.Creation;
@@ -30,6 +33,12 @@ namespace Multiplexed.AI.Tests.Integration.Fixtures
         {
             ArgumentNullException.ThrowIfNull(engineServices);
 
+            var runtimeSignalPublisher = engineServices.Services
+                .GetRequiredService<IAiRuntimeSignalPublisher>();
+
+            var controlPlaneIdResolver = engineServices.Services
+                .GetRequiredService<IAiControlPlaneIdResolver>();
+
             var lifecycleHelper = new AiDagExecutionLifecycleHelper(
                 engineServices);
 
@@ -51,7 +60,9 @@ namespace Multiplexed.AI.Tests.Integration.Fixtures
 
             var localRunner = new AiDagLocalExecutionRunner(
                 engineServices,
-                lifecycleHelper);
+                lifecycleHelper,
+                runtimeSignalPublisher,
+                controlPlaneIdResolver);
 
             var distributedRunner = new AiDagDistributedExecutionRunner(
                 engineServices,
@@ -59,14 +70,19 @@ namespace Multiplexed.AI.Tests.Integration.Fixtures
                 claimedStepExecutor,
                 retentionCoordinator,
                 finalizationService,
-                lifecycleHelper);
+                lifecycleHelper,
+                runtimeSignalPublisher,
+                controlPlaneIdResolver);
 
             var batchRunner = new AiDagBatchExecutionRunner(
                 engineServices,
                 claimService,
                 claimedStepExecutor,
                 finalizationService,
-                lifecycleHelper, retentionCoordinator);
+                lifecycleHelper,
+                retentionCoordinator,
+                runtimeSignalPublisher,
+                controlPlaneIdResolver);
 
             return new AiDagExecutionEngineRuntimeServices(
                 creator,
@@ -177,19 +193,6 @@ namespace Multiplexed.AI.Tests.Integration.Fixtures
                 AiExecutionControlDecision.Continue());
         }
 
-        private static AiExecutionControlState CreateRunningState(
-            string executionId)
-        {
-            return new AiExecutionControlState
-            {
-                ExecutionId = executionId,
-                Status = AiExecutionControlStatus.Running,
-                PendingAction = AiExecutionControlAction.None,
-                Version = 1,
-                UpdatedAtUtc = DateTime.UtcNow
-            };
-        }
-
         /// <inheritdoc />
         public Task<AiExecutionControlState> MarkRunningAsync(
             string executionId,
@@ -208,7 +211,11 @@ namespace Multiplexed.AI.Tests.Integration.Fixtures
                 });
         }
 
-        public Task<AiExecutionControlState> MarkCancelledAsync(string executionId, string? requestedBy = null, CancellationToken cancellationToken = default)
+        /// <inheritdoc />
+        public Task<AiExecutionControlState> MarkCancelledAsync(
+            string executionId,
+            string? requestedBy = null,
+            CancellationToken cancellationToken = default)
         {
             return Task.FromResult(
                 new AiExecutionControlState
@@ -222,6 +229,7 @@ namespace Multiplexed.AI.Tests.Integration.Fixtures
                 });
         }
 
+        /// <inheritdoc />
         public Task<AiExecutionControlState?> GetStateAsync(
             string executionId,
             CancellationToken cancellationToken = default)
@@ -237,16 +245,38 @@ namespace Multiplexed.AI.Tests.Integration.Fixtures
                 });
         }
 
-        public Task<AiExecutionControlState> PauseExecutionForRecoveryAsync(string executionId, string recoveryOwnerId, string? reason = null, CancellationToken cancellationToken = default)
+        /// <inheritdoc />
+        public Task<AiExecutionControlState> PauseExecutionForRecoveryAsync(
+            string executionId,
+            string recoveryOwnerId,
+            string? reason = null,
+            CancellationToken cancellationToken = default)
         {
             return Task.FromResult(
-               CreateRunningState(executionId));
+                CreateRunningState(executionId));
         }
 
-        public Task<AiExecutionControlState> ResumeExecutionFromRecoveryAsync(string executionId, string recoveryOwnerId, CancellationToken cancellationToken = default)
+        /// <inheritdoc />
+        public Task<AiExecutionControlState> ResumeExecutionFromRecoveryAsync(
+            string executionId,
+            string recoveryOwnerId,
+            CancellationToken cancellationToken = default)
         {
             return Task.FromResult(
-               CreateRunningState(executionId));
+                CreateRunningState(executionId));
+        }
+
+        private static AiExecutionControlState CreateRunningState(
+            string executionId)
+        {
+            return new AiExecutionControlState
+            {
+                ExecutionId = executionId,
+                Status = AiExecutionControlStatus.Running,
+                PendingAction = AiExecutionControlAction.None,
+                Version = 1,
+                UpdatedAtUtc = DateTime.UtcNow
+            };
         }
     }
 }

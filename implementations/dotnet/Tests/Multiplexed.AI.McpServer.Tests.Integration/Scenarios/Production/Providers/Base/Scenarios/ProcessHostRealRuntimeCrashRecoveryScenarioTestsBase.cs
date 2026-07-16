@@ -1,6 +1,7 @@
 ﻿using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Forensics;
+using Multiplexed.Abstractions.AI.ControlPlane.Signals;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager.ProcessControl;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Recovery;
@@ -42,23 +43,63 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
         private const int MultiTenantStepCount = 50;
         private const int FlakyStepIntervalMs = 500;
 
-
-
         private readonly ITestOutputHelper output;
         private readonly IProcessHostScenarioRuntimeProfile profile;
 
         /// <summary>
-        /// Initializes a new instance of the <see cref="ProcessHostRealRuntimeCrashRecoveryScenarioTestsBase"/> class.
+        /// Initializes a new instance of the <see cref="ProcessHostRealRuntimeCrashRecoveryScenarioTestsBase"/> class
+        /// using the historical durable polling observation mode.
         /// </summary>
         /// <param name="output">The test output helper.</param>
         /// <param name="profile">The process-host scenario runtime profile.</param>
         protected ProcessHostRealRuntimeCrashRecoveryScenarioTestsBase(
             ITestOutputHelper output,
             IProcessHostScenarioRuntimeProfile profile)
+            : this(
+                output,
+                profile,
+                ProductionRecoveryObservationMode.HybridSignals)
+        {
+        }
+
+        /// <summary>
+        /// Initializes a new instance of the <see cref="ProcessHostRealRuntimeCrashRecoveryScenarioTestsBase"/> class
+        /// using the requested recovery observation mode.
+        /// </summary>
+        /// <param name="output">The test output helper.</param>
+        /// <param name="profile">The process-host scenario runtime profile.</param>
+        /// <param name="observationMode">The recovery observation mode.</param>
+        /// <param name="hybridFallbackPollInterval">The durable fallback polling interval used in hybrid mode.</param>
+        protected ProcessHostRealRuntimeCrashRecoveryScenarioTestsBase(
+            ITestOutputHelper output,
+            IProcessHostScenarioRuntimeProfile profile,
+            ProductionRecoveryObservationMode observationMode,
+            TimeSpan? hybridFallbackPollInterval = null)
         {
             this.output = output ?? throw new ArgumentNullException(nameof(output));
             this.profile = profile ?? throw new ArgumentNullException(nameof(profile));
+
+            ObservationMode = observationMode;
+            HybridFallbackPollInterval = hybridFallbackPollInterval ?? TimeSpan.FromSeconds(2);
+
+            if (HybridFallbackPollInterval <= TimeSpan.Zero)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(hybridFallbackPollInterval),
+                    HybridFallbackPollInterval,
+                    "The hybrid fallback polling interval must be greater than zero.");
+            }
         }
+
+        /// <summary>
+        /// Gets how runtime progress and redispatch are observed.
+        /// </summary>
+        protected ProductionRecoveryObservationMode ObservationMode { get; }
+
+        /// <summary>
+        /// Gets the durable fallback interval used by hybrid observation.
+        /// </summary>
+        protected TimeSpan HybridFallbackPollInterval { get; }
 
         /// <summary>
         /// Verifies that two tenants can recover real process-host runtime crashes with strict DAG resume,
@@ -142,6 +183,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 output.WriteLine($"  PersistenceProfile='{scenario.PersistenceProfile}'");
                 output.WriteLine($"  ObservabilityProfile='{scenario.ObservabilityProfile}'");
                 output.WriteLine($"  RuntimeHostAssemblyPath='{currentRuntimeHostAssemblyPath}'");
+                output.WriteLine($"  ObservationMode='{ObservationMode}'");
+                output.WriteLine($"  HybridFallbackPollInterval='{HybridFallbackPollInterval}'");
                 output.WriteLine(string.Empty);
                 output.WriteLine("Timeout budget:");
                 output.WriteLine($"  ScaleOutTimeout: {scenario.ScaleOutTimeout}");
@@ -181,6 +224,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
 
             await using var host =
                 new GenericMcpServerTestHost(settings);
+
+            var signalSubscriber =
+                ResolveSignalSubscriber(host.Services);
 
             var processControlSelector =
                 host.Services.GetRequiredService<AiRuntimeHostProcessControlSelector>();
@@ -301,7 +347,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                         minimumCompletedStepsBeforeKill: KillAfterCompletedStepCount,
                         scaleOutTimeout: scenario.ScaleOutTimeout,
                         dispatchTimeout: scenario.DispatchTimeout,
-                        progressTimeout: TimeSpan.FromMinutes(3));
+                        progressTimeout: TimeSpan.FromMinutes(3),
+                        observationMode: ObservationMode);
 
             var tenantBInventoryTask =
                 ProductionRealRuntimeCrashRecoveryTestHelpers
@@ -323,7 +370,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                         minimumCompletedStepsBeforeKill: KillAfterCompletedStepCount,
                         scaleOutTimeout: scenario.ScaleOutTimeout,
                         dispatchTimeout: scenario.DispatchTimeout,
-                        progressTimeout: TimeSpan.FromMinutes(3));
+                        progressTimeout: TimeSpan.FromMinutes(3),
+                        observationMode: ObservationMode);
 
             await Task
                 .WhenAll(
@@ -380,7 +428,15 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                     redispatchTimeout:
                         scenario.DispatchTimeout,
                     executionResolveTimeout:
-                        TimeSpan.FromSeconds(60));
+                        TimeSpan.FromSeconds(60),
+                    observationMode:
+                        ObservationMode,
+                    signalSubscriber:
+                        signalSubscriber,
+                    controlPlaneId:
+                        controlPlaneId,
+                    hybridFallbackPollInterval:
+                        HybridFallbackPollInterval);
 
             var tenantBRecoveryTask =
                 ProductionRealRuntimeCrashRecoveryTestHelpers
@@ -404,7 +460,15 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                         redispatchTimeout:
                             scenario.DispatchTimeout,
                         executionResolveTimeout:
-                            TimeSpan.FromSeconds(60));
+                            TimeSpan.FromSeconds(60),
+                        observationMode:
+                            ObservationMode,
+                        signalSubscriber:
+                            signalSubscriber,
+                        controlPlaneId:
+                            controlPlaneId,
+                        hybridFallbackPollInterval:
+                            HybridFallbackPollInterval);
 
             await Task
                 .WhenAll(
@@ -934,6 +998,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             await using var host =
                 new GenericMcpServerTestHost(settings);
 
+            var signalSubscriber =
+                ResolveSignalSubscriber(host.Services);
+
             var sharedRunStore =
                 host.Services.GetRequiredService<IAiSharedRunStore>();
 
@@ -1019,9 +1086,10 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             output.WriteLine(
                 $"[{profile.LogPrefix} REAL RUNTIME CRASH PROOF] Real run dispatched. SharedRunId='{dispatchedRunWithExecutionId.SharedRunId}', RuntimeInstanceId='{failedRuntimeInstanceId}', LocalRunId='{localRunId}', ExecutionId='{executionId}', SharedStoreExecutionId='{dispatchedRunWithExecutionId.ExecutionId}'.");
 
-            await ProductionRecoveryWaitHelpers
-                .WaitForDagCompletedStepCountAsync(
+            await WaitForDagCompletedStepCountByObservationModeAsync(
                     dagStore,
+                    signalSubscriber,
+                    controlPlaneId,
                     executionId,
                     KillAfterCompletedStepCount,
                     TimeSpan.FromMinutes(2))
@@ -1101,9 +1169,10 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 $"[{profile.LogPrefix} REAL RUNTIME CRASH PROOF] Strict DAG resume validated. Runtime process crash recovered on a replacement runtime while preserving the original durable execution id. " +
                 $"OriginalExecutionId='{executionId}', RecoveredExecutionId='{recoveredExecutionId}', OriginalRuntimeInstanceId='{failedRuntimeInstanceId}', ReplacementRuntimeInstanceId='{redispatchedRun.AssignedRuntimeInstanceId}'.");
 
-            await ProductionRecoveryWaitHelpers
-                .WaitForDagCompletedStepCountAsync(
+            await WaitForDagCompletedStepCountByObservationModeAsync(
                     dagStore,
+                    signalSubscriber,
+                    controlPlaneId,
                     executionId,
                     StepCount,
                     scenario.CompletionTimeout)
@@ -1190,6 +1259,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
 
             await using var host =
                 new GenericMcpServerTestHost(settings);
+
+            var signalSubscriber =
+                ResolveSignalSubscriber(host.Services);
 
             var processControlSelector =
                 host.Services.GetRequiredService<AiRuntimeHostProcessControlSelector>();
@@ -1309,6 +1381,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 output.WriteLine($"  PersistenceProfile='{scenario.PersistenceProfile}'");
                 output.WriteLine($"  ObservabilityProfile='{scenario.ObservabilityProfile}'");
                 output.WriteLine($"  RuntimeHostAssemblyPath='{runtimeHostAssemblyPath}'");
+                output.WriteLine($"  ObservationMode='{ObservationMode}'");
+                output.WriteLine($"  HybridFallbackPollInterval='{HybridFallbackPollInterval}'");
                 output.WriteLine(string.Empty);
 
                 foreach (var context in tenantContexts)
@@ -1347,7 +1421,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                                 minimumCompletedStepsBeforeKill: KillAfterCompletedStepCount,
                                 scaleOutTimeout: scenario.ScaleOutTimeout,
                                 dispatchTimeout: scenario.DispatchTimeout,
-                                progressTimeout: TimeSpan.FromMinutes(3))
+                                progressTimeout: TimeSpan.FromMinutes(3),
+                                observationMode: ObservationMode)
                             .ConfigureAwait(false);
 
                     ProductionRealRuntimeCrashRecoveryTestHelpers.AssertRuntimeBelongsToTenant(
@@ -1379,7 +1454,15 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                                 redispatchTimeout:
                                     scenario.DispatchTimeout,
                                 executionResolveTimeout:
-                                    TimeSpan.FromSeconds(60))
+                                    TimeSpan.FromSeconds(60),
+                                observationMode:
+                                    ObservationMode,
+                                signalSubscriber:
+                                    signalSubscriber,
+                                controlPlaneId:
+                                    controlPlaneId,
+                                hybridFallbackPollInterval:
+                                    HybridFallbackPollInterval)
                             .ConfigureAwait(false);
 
                     return new ProcessHostImpactedTenantExecutionResult(
@@ -1411,7 +1494,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                                 minimumCompletedStepsBeforeKill: KillAfterCompletedStepCount,
                                 scaleOutTimeout: scenario.ScaleOutTimeout,
                                 dispatchTimeout: scenario.DispatchTimeout,
-                                progressTimeout: TimeSpan.FromMinutes(3))
+                                progressTimeout: TimeSpan.FromMinutes(3),
+                                observationMode: ObservationMode)
                             .ConfigureAwait(false);
 
                     ProductionRealRuntimeCrashRecoveryTestHelpers.AssertRuntimeBelongsToTenant(
@@ -1600,9 +1684,10 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                     .WhenAll(
                         safeExecutions.Select(async item =>
                         {
-                            await ProductionRecoveryWaitHelpers
-                                .WaitForDagCompletedStepCountAsync(
+                            await WaitForDagCompletedStepCountByObservationModeAsync(
                                     dagStore,
+                                    signalSubscriber,
+                                    controlPlaneId,
                                     item.Execution.ExecutionId,
                                     MultiTenantStepCount,
                                     scenario.CompletionTimeout)
@@ -2111,6 +2196,63 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                     httpClient.Dispose();
                 }
             }
+        }
+
+        /// <summary>
+        /// Resolves the runtime signal subscriber only when hybrid observation is enabled.
+        /// </summary>
+        /// <param name="services">The scenario service provider.</param>
+        /// <returns>The runtime signal subscriber in hybrid mode; otherwise, <c>null</c>.</returns>
+        private IAiRuntimeSignalSubscriber? ResolveSignalSubscriber(
+            IServiceProvider services)
+        {
+            ArgumentNullException.ThrowIfNull(services);
+
+            return ObservationMode == ProductionRecoveryObservationMode.HybridSignals
+                ? services.GetRequiredService<IAiRuntimeSignalSubscriber>()
+                : null;
+        }
+
+        /// <summary>
+        /// Waits for durable DAG progress using the configured observation mode.
+        /// </summary>
+        private async Task WaitForDagCompletedStepCountByObservationModeAsync(
+            IAiDagExecutionStore dagStore,
+            IAiRuntimeSignalSubscriber? signalSubscriber,
+            string controlPlaneId,
+            string executionId,
+            int minimumCompletedSteps,
+            TimeSpan timeout)
+        {
+            ArgumentNullException.ThrowIfNull(dagStore);
+            ArgumentException.ThrowIfNullOrWhiteSpace(controlPlaneId);
+            ArgumentException.ThrowIfNullOrWhiteSpace(executionId);
+
+            if (ObservationMode == ProductionRecoveryObservationMode.HybridSignals)
+            {
+                ArgumentNullException.ThrowIfNull(signalSubscriber);
+
+                await ProductionRecoveryWaitHelpers
+                    .WaitForDagCompletedStepCountHybridAsync(
+                        dagStore,
+                        signalSubscriber,
+                        controlPlaneId,
+                        executionId,
+                        minimumCompletedSteps,
+                        timeout,
+                        HybridFallbackPollInterval)
+                    .ConfigureAwait(false);
+
+                return;
+            }
+
+            await ProductionRecoveryWaitHelpers
+                .WaitForDagCompletedStepCountAsync(
+                    dagStore,
+                    executionId,
+                    minimumCompletedSteps,
+                    timeout)
+                .ConfigureAwait(false);
         }
 
         private sealed record ProcessHostTenantScenarioContext(

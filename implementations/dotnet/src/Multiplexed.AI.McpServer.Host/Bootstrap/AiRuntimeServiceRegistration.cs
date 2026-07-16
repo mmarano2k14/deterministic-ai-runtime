@@ -15,6 +15,7 @@ using Multiplexed.AI.Observability.Ledger;
 using Multiplexed.AI.Runtime;
 using Multiplexed.AI.Runtime.AI.Providers.Llm.OpenAI.DI;
 using Multiplexed.AI.Runtime.AI.Rag.DI;
+using Multiplexed.AI.Runtime.ControlPlane.DI;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Isolation;
 using Multiplexed.AI.Runtime.Execution.Persistence.Replay.Metadata;
@@ -60,6 +61,8 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
 
             services.AddSingleton<IConnectionMultiplexer>(_ =>
                 ConnectionMultiplexer.Connect(redisConnectionString));
+
+            services.AddAiRuntimeSignals();
 
             services.AddMultiplexRealtime()
                 .AddSignalRRealtimeTransport(realtimeOptions =>

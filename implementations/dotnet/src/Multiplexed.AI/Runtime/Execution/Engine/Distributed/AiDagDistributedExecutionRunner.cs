@@ -1,4 +1,6 @@
 ﻿using Multiplexed.Abstractions.AI.Concurrency;
+using Multiplexed.Abstractions.AI.ControlPlane.Discovery;
+using Multiplexed.Abstractions.AI.ControlPlane.Signals;
 using Multiplexed.Abstractions.AI.Execution;
 using Multiplexed.Abstractions.AI.Execution.Scheduling;
 using Multiplexed.Abstractions.AI.Observability.Ledger;
@@ -49,6 +51,8 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Distributed
         private readonly AiDagRetentionCoordinator _retentionCoordinator;
         private readonly AiDagExecutionFinalizationService _finalizationService;
         private readonly AiDagExecutionLifecycleHelper _lifecycleHelper;
+        private readonly IAiRuntimeSignalPublisher? _runtimeSignalPublisher;
+        private readonly IAiControlPlaneIdResolver? _controlPlaneIdResolver;
 
 
         /// <summary>
@@ -60,6 +64,12 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Distributed
         /// <param name="retentionCoordinator">The retention coordinator.</param>
         /// <param name="finalizationService">The distributed finalization service.</param>
         /// <param name="lifecycleHelper">The terminal lifecycle helper.</param>
+        /// <param name="runtimeSignalPublisher">
+        /// The optional best-effort runtime signal publisher.
+        /// </param>
+        /// <param name="controlPlaneIdResolver">
+        /// The optional logical control-plane identifier resolver.
+        /// </param>
         /// <exception cref="ArgumentNullException">
         /// Thrown when one of the required services is <see langword="null"/>.
         /// </exception>
@@ -69,7 +79,9 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Distributed
             AiDagClaimedStepExecutor claimedStepExecutor,
             AiDagRetentionCoordinator retentionCoordinator,
             AiDagExecutionFinalizationService finalizationService,
-            AiDagExecutionLifecycleHelper lifecycleHelper)
+            AiDagExecutionLifecycleHelper lifecycleHelper,
+            IAiRuntimeSignalPublisher? runtimeSignalPublisher,
+            IAiControlPlaneIdResolver? controlPlaneIdResolver)
         {
             _engineServices = engineServices
                 ?? throw new ArgumentNullException(nameof(engineServices));
@@ -88,6 +100,12 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Distributed
 
             _lifecycleHelper = lifecycleHelper
                 ?? throw new ArgumentNullException(nameof(lifecycleHelper));
+
+            _runtimeSignalPublisher = runtimeSignalPublisher
+                ?? throw new ArgumentNullException(nameof(runtimeSignalPublisher));
+
+            _controlPlaneIdResolver = controlPlaneIdResolver
+                ?? throw new ArgumentNullException(nameof(controlPlaneIdResolver));
         }
 
         /// <summary>
@@ -132,6 +150,9 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Distributed
             CancellationToken cancellationToken = default)
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(executionId);
+
+            _engineServices.Logger.Engine.LogInformation(
+                $"[AI DAG RUNNER SELECTED] Runner='Distributed', ExecutionId='{executionId}'.");
 
             validateExecutionId(executionId);
 
@@ -534,6 +555,13 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Distributed
                             executionId,
                             cancellationToken).ConfigureAwait(false) ?? state;
 
+                        await PublishDagProgressChangedAsync(
+                                record,
+                                completedState,
+                                resolvedPipeline.Steps.Count,
+                                workerId)
+                            .ConfigureAwait(false);
+
                         var claimedStep = resolvedPipeline.Steps.First(
                             x => x.Name == claimed.StepName);
 
@@ -634,6 +662,112 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Distributed
             finally
             {
                 _engineServices.Accessor.Clear();
+            }
+        }
+
+        /// <summary>
+        /// Publishes a best-effort signal after a durable DAG step completion.
+        /// </summary>
+        /// <param name="record">The execution record.</param>
+        /// <param name="state">The reconstructed durable DAG state.</param>
+        /// <param name="totalStepCount">The total configured DAG step count.</param>
+        /// <param name="runtimeInstanceId">The runtime instance progressing the execution.</param>
+        /// <returns>A task representing the asynchronous signal publication.</returns>
+        private async Task PublishDagProgressChangedAsync(
+            AiExecutionRecord record,
+            AiExecutionState state,
+            int totalStepCount,
+            string runtimeInstanceId)
+        {
+            ArgumentNullException.ThrowIfNull(record);
+            ArgumentNullException.ThrowIfNull(state);
+            ArgumentException.ThrowIfNullOrWhiteSpace(runtimeInstanceId);
+
+            if (_runtimeSignalPublisher is null)
+            {
+                _engineServices.Logger.Engine.LogWarning(
+                    $"[AI RUNTIME SIGNAL][PUBLISHER UNAVAILABLE] " +
+                    $"IAiRuntimeSignalPublisher could not be injected into the distributed DAG runner. " +
+                    $"ExecutionId='{record.ExecutionId}', RuntimeInstanceId='{runtimeInstanceId}'.");
+
+                return;
+            }
+
+            if (_controlPlaneIdResolver is null)
+            {
+                _engineServices.Logger.Engine.LogWarning(
+                    $"[AI RUNTIME SIGNAL][CONTROL PLANE RESOLVER UNAVAILABLE] " +
+                    $"IAiControlPlaneIdResolver could not be injected into the distributed DAG runner. " +
+                    $"ExecutionId='{record.ExecutionId}', RuntimeInstanceId='{runtimeInstanceId}'.");
+
+                return;
+            }
+
+            try
+            {
+                var controlPlaneId = await _controlPlaneIdResolver
+                    .ResolveAsync(
+                        new AiControlPlaneIdResolutionRequest
+                        {
+                            Source = "dag-progress-changed-signal",
+                            AllowGeneratedFallback = false
+                        },
+                        CancellationToken.None)
+                    .ConfigureAwait(false);
+
+                if (string.IsNullOrWhiteSpace(controlPlaneId))
+                {
+                    _engineServices.Logger.Engine.LogWarning(
+                        $"[AI RUNTIME SIGNAL][CONTROL PLANE ID UNRESOLVED] " +
+                        $"DAG progress signal was not published because the logical control-plane id could not be resolved. " +
+                        $"ExecutionId='{record.ExecutionId}', RuntimeInstanceId='{runtimeInstanceId}'.");
+
+                    return;
+                }
+
+                var completedStepCount = state.Steps.Values.Count(
+                    step => step.Status == AiStepExecutionStatus.Completed);
+
+                var signal = new AiRuntimeSignal
+                {
+                    Type = AiRuntimeSignalType.DagProgressChanged,
+                    ControlPlaneId = controlPlaneId,
+                    TenantId = record.ExecutionContextSnapshot?.TenantId,
+                    ExecutionId = record.ExecutionId,
+                    RuntimeInstanceId = runtimeInstanceId,
+                    CompletedStepCount = completedStepCount,
+                    TotalStepCount = totalStepCount,
+                    ExecutionVersion = record.Version
+                };
+
+                _engineServices.Logger.Engine.LogInformation(
+                    $"[AI RUNTIME SIGNAL][DAG PUBLISH REQUESTED] " +
+                    $"ControlPlaneId='{signal.ControlPlaneId}', ExecutionId='{signal.ExecutionId}', " +
+                    $"RuntimeInstanceId='{signal.RuntimeInstanceId}', CompletedStepCount='{signal.CompletedStepCount}', " +
+                    $"TotalStepCount='{signal.TotalStepCount}', ExecutionVersion='{signal.ExecutionVersion}'.");
+
+                await _runtimeSignalPublisher
+                    .PublishAsync(
+                        signal,
+                        CancellationToken.None)
+                    .ConfigureAwait(false);
+
+                _engineServices.Logger.Engine.LogInformation(
+                    $"[AI RUNTIME SIGNAL][DAG PUBLISH COMPLETED] " +
+                    $"ControlPlaneId='{signal.ControlPlaneId}', ExecutionId='{signal.ExecutionId}', " +
+                    $"RuntimeInstanceId='{signal.RuntimeInstanceId}', CompletedStepCount='{signal.CompletedStepCount}'.");
+            }
+            catch (Exception exception)
+            {
+                /*
+                 * Runtime signals are wake-up notifications only. A signal
+                 * publication or identity-resolution failure must never invalidate
+                 * the durable step completion that already succeeded.
+                 */
+                _engineServices.Logger.Engine.LogWarning(
+                    $"[AI RUNTIME SIGNAL][DAG PUBLISH FAILED] " +
+                    $"ExecutionId='{record.ExecutionId}', RuntimeInstanceId='{runtimeInstanceId}', " +
+                    $"ExceptionType='{exception.GetType().FullName}', ExceptionMessage='{exception.Message}'.");
             }
         }
 
