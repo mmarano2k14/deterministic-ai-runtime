@@ -193,6 +193,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
                 PodName = metadata.PodName,
                 RuntimeImage = this.options.RuntimeImage,
                 ContainerName = this.options.ContainerName,
+                TransportName = transportName ?? this.options.TransportName,
                 ContainerPort = this.options.ContainerPort,
                 ServiceAccountName = this.options.ServiceAccountName,
                 Labels = metadata.Labels,

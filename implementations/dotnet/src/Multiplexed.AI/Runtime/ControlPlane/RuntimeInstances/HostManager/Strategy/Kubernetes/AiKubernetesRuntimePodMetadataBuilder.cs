@@ -1,4 +1,4 @@
-﻿using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager.Kubernetes;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers;
 using System;
@@ -214,9 +214,34 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
             var sanitized =
                 SanitizeDnsLabel(value);
 
-            return sanitized.Length <= MaxLabelValueLength
-                ? sanitized
-                : sanitized[..MaxLabelValueLength].TrimEnd('-', '.');
+            if (sanitized.Length <= MaxLabelValueLength)
+            {
+                return sanitized;
+            }
+
+            /*
+             * Kubernetes label values are limited to 63 characters. Truncating a
+             * runtime identity at the boundary is unsafe because runtime ids created
+             * by one control plane share a long prefix and normally differ only near
+             * the end. A Service selector built from the truncated value can therefore
+             * select several runtime pods.
+             *
+             * Preserve a readable prefix and append a stable hash of the complete
+             * source value so the pod label and its Service selector remain both
+             * Kubernetes-safe and runtime-specific.
+             */
+            var hash =
+                ComputeStableHash(
+                    value ?? string.Empty);
+
+            var hashSuffix =
+                $"-{hash}";
+
+            var readablePrefix =
+                sanitized[..(MaxLabelValueLength - hashSuffix.Length)]
+                    .TrimEnd('-', '.');
+
+            return $"{readablePrefix}{hashSuffix}";
         }
 
         /// <summary>

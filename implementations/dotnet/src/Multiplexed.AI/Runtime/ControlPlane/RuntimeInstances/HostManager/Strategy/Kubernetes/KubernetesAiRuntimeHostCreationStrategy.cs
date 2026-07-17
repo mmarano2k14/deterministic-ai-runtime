@@ -1,10 +1,12 @@
-﻿using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager.ProcessControl;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers.Transport;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Readiness;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strategy.Kubernetes.Client;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strategy.Kubernetes.Gateway;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strategy.Kubernetes.Gateway.Transport;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strategy.Kubernetes.Publisher;
 using System;
 using System.Collections.Concurrent;
@@ -32,22 +34,50 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
     /// </remarks>
     public sealed class KubernetesAiRuntimeHostCreationStrategy : IAiRuntimeHostCreationStrategy, IAiRuntimeHostProcessControl, IDisposable
     {
-        /// <summary>
-        /// Serializes dynamic local port allocation and kubectl binding across all
-        /// Kubernetes host strategy instances in the current control-plane process.
-        /// </summary>
-        private static readonly SemaphoreSlim PortForwardStartupGate =
-            new(initialCount: 1, maxCount: 1);
-
         private readonly AiKubernetesRuntimeHostOptions options;
         private readonly AiKubernetesRuntimePodSpecBuilder podSpecBuilder;
         private readonly IAiKubernetesRuntimeHostClient client;
         private readonly IAiKubernetesRuntimeInstancePublisher runtimeInstancePublisher;
         private readonly IAiRuntimeInstanceReadinessWaiter readinessWaiter;
+        private readonly IAiKubernetesRuntimeGatewayManager? gatewayManager;
+        private readonly IAiKubernetesGatewayTransportEndpointManager? gatewayTransportEndpointManager;
         private readonly ILogger<KubernetesAiRuntimeHostCreationStrategy> logger;
-        private readonly ConcurrentDictionary<string, DiagnosticsProcess> portForwardProcesses;
-
+        private readonly ConcurrentDictionary<string, KubernetesPortForwardRegistration> portForwardProcesses;
+        private readonly ConcurrentDictionary<string, SemaphoreSlim> portForwardLifecycleGates;
         private readonly ConcurrentDictionary<string, AiKubernetesRuntimePodSpec> podSpecsByRuntimeInstanceId;
+
+        /// <summary>
+        /// Initializes a new instance of the <see cref="KubernetesAiRuntimeHostCreationStrategy"/> class
+        /// without Gateway API lifecycle dependencies.
+        /// </summary>
+        /// <remarks>
+        /// This overload preserves compatibility with direct test construction while Gateway mode remains disabled.
+        /// Dependency injection selects the Gateway-aware overload when the Gateway services are registered.
+        /// </remarks>
+        /// <param name="options">The Kubernetes runtime host options.</param>
+        /// <param name="podSpecBuilder">The Kubernetes runtime pod specification builder.</param>
+        /// <param name="client">The Kubernetes runtime host client.</param>
+        /// <param name="runtimeInstancePublisher">The Kubernetes runtime instance publisher.</param>
+        /// <param name="readinessWaiter">The runtime instance readiness waiter.</param>
+        /// <param name="logger">The logger.</param>
+        public KubernetesAiRuntimeHostCreationStrategy(
+            IOptions<AiKubernetesRuntimeHostOptions> options,
+            AiKubernetesRuntimePodSpecBuilder podSpecBuilder,
+            IAiKubernetesRuntimeHostClient client,
+            IAiKubernetesRuntimeInstancePublisher runtimeInstancePublisher,
+            IAiRuntimeInstanceReadinessWaiter readinessWaiter,
+            ILogger<KubernetesAiRuntimeHostCreationStrategy> logger)
+            : this(
+                options,
+                podSpecBuilder,
+                client,
+                runtimeInstancePublisher,
+                readinessWaiter,
+                gatewayManager: null,
+                gatewayTransportEndpointManager: null,
+                logger)
+        {
+        }
 
         /// <summary>
         /// Initializes a new instance of the <see cref="KubernetesAiRuntimeHostCreationStrategy"/> class.
@@ -56,7 +86,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
         /// <param name="podSpecBuilder">The Kubernetes runtime pod specification builder.</param>
         /// <param name="client">The Kubernetes runtime host client.</param>
         /// <param name="runtimeInstancePublisher">The Kubernetes runtime instance publisher.</param>
-        /// <param name="readinessWaiter">The runtime instance readiness waiter kept for constructor compatibility.</param>
+        /// <param name="readinessWaiter">The runtime instance readiness waiter.</param>
+        /// <param name="gatewayManager">The shared Kubernetes Gateway lifecycle manager.</param>
+        /// <param name="gatewayTransportEndpointManager">The shared Gateway transport endpoint manager.</param>
         /// <param name="logger">The logger.</param>
         public KubernetesAiRuntimeHostCreationStrategy(
             IOptions<AiKubernetesRuntimeHostOptions> options,
@@ -64,6 +96,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
             IAiKubernetesRuntimeHostClient client,
             IAiKubernetesRuntimeInstancePublisher runtimeInstancePublisher,
             IAiRuntimeInstanceReadinessWaiter readinessWaiter,
+            IAiKubernetesRuntimeGatewayManager? gatewayManager,
+            IAiKubernetesGatewayTransportEndpointManager? gatewayTransportEndpointManager,
             ILogger<KubernetesAiRuntimeHostCreationStrategy> logger)
         {
             ArgumentNullException.ThrowIfNull(options);
@@ -73,8 +107,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
             this.client = client ?? throw new ArgumentNullException(nameof(client));
             this.runtimeInstancePublisher = runtimeInstancePublisher ?? throw new ArgumentNullException(nameof(runtimeInstancePublisher));
             this.readinessWaiter = readinessWaiter ?? throw new ArgumentNullException(nameof(readinessWaiter));
+            this.gatewayManager = gatewayManager;
+            this.gatewayTransportEndpointManager = gatewayTransportEndpointManager;
             this.logger = logger ?? throw new ArgumentNullException(nameof(logger));
-            this.portForwardProcesses = new ConcurrentDictionary<string, DiagnosticsProcess>(StringComparer.OrdinalIgnoreCase);
+            this.portForwardProcesses = new ConcurrentDictionary<string, KubernetesPortForwardRegistration>(StringComparer.OrdinalIgnoreCase);
+            this.portForwardLifecycleGates = new ConcurrentDictionary<string, SemaphoreSlim>(StringComparer.OrdinalIgnoreCase);
             this.podSpecsByRuntimeInstanceId = new ConcurrentDictionary<string, AiKubernetesRuntimePodSpec>(StringComparer.OrdinalIgnoreCase);
         }
 
@@ -204,7 +241,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
 
             if (!hostReadinessResult.Success)
             {
-                await this.DeleteOnFailureAsync(podSpec, cancellationToken).ConfigureAwait(false);
+                await this.DeleteOnFailureAsync(
+                        request.RuntimeInstanceId,
+                        podSpec,
+                        cancellationToken)
+                    .ConfigureAwait(false);
 
                 return CreateRejectedResult(
                     request,
@@ -213,12 +254,12 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
                     metadata);
             }
 
-            if (this.ShouldUsePortForwardTransportEndpoint(request))
+            if (this.options.UseGatewayTransportEndpoint)
             {
                 try
                 {
-                    var portForwardEndpoint =
-                        await this.StartPortForwardAsync(
+                    var gatewayMetadata =
+                        await this.ResolveGatewayTransportMetadataAsync(
                                 request,
                                 podSpec,
                                 createResult.ServiceName,
@@ -229,111 +270,212 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
                     metadata =
                         MergeMetadata(
                             metadata,
-                            CreatePortForwardTransportEndpointMetadata(
-                                portForwardEndpoint.Endpoint,
-                                portForwardEndpoint.LocalPort,
-                                portForwardEndpoint.ServiceName));
+                            gatewayMetadata);
                 }
                 catch (Exception exception) when (exception is not OperationCanceledException)
                 {
                     this.logger.LogWarning(
                         exception,
-                        "KUBERNETES PORT-FORWARD START FAILED RuntimeInstanceId={RuntimeInstanceId} ServiceName={ServiceName} Reason={Reason}",
+                        "KUBERNETES GATEWAY TRANSPORT RESOLUTION FAILED RuntimeInstanceId={RuntimeInstanceId} ServiceName={ServiceName} ProviderName={ProviderName} TransportName={TransportName} Reason={Reason}",
                         request.RuntimeInstanceId,
                         createResult.ServiceName,
+                        request.ProviderName,
+                        request.TransportName,
                         exception.Message);
 
-                    await this.DeleteOnFailureAsync(podSpec, cancellationToken).ConfigureAwait(false);
+                    await this.DeleteOnFailureAsync(
+                            request.RuntimeInstanceId,
+                            podSpec,
+                            cancellationToken)
+                        .ConfigureAwait(false);
 
                     return CreateRejectedResult(
                         request,
-                        $"kubernetes-port-forward-start-failed:{exception.Message}",
+                        $"kubernetes-gateway-transport-resolution-failed:{exception.Message}",
                         true,
                         metadata);
                 }
             }
 
-            var transportEndpoint =
-                ResolveKubernetesTransportEndpoint(
+            var usePortForwardTransportEndpoint =
+                !this.options.UseGatewayTransportEndpoint &&
+                this.ShouldUsePortForwardTransportEndpoint(request);
+
+            SemaphoreSlim? portForwardLifecycleGate = null;
+
+            if (usePortForwardTransportEndpoint)
+            {
+                /*
+                 * Several scale-out requests can converge on the same replacement
+                 * runtime instance id. Serialize the port-forward/readiness/publication
+                 * lifecycle only for that runtime id so one request cannot replace a
+                 * tunnel while another request is dispatching through it.
+                 */
+                portForwardLifecycleGate =
+                    this.portForwardLifecycleGates.GetOrAdd(
+                        request.RuntimeInstanceId,
+                        static _ => new SemaphoreSlim(1, 1));
+
+                await portForwardLifecycleGate
+                    .WaitAsync(cancellationToken)
+                    .ConfigureAwait(false);
+            }
+
+            try
+            {
+                KubernetesPortForwardEndpoint? portForwardEndpoint = null;
+
+                if (usePortForwardTransportEndpoint)
+                {
+                    try
+                    {
+                        portForwardEndpoint =
+                            await this.StartPortForwardAsync(
+                                    request,
+                                    podSpec,
+                                    createResult.ServiceName,
+                                    metadata,
+                                    cancellationToken)
+                                .ConfigureAwait(false);
+
+                        metadata =
+                            MergeMetadata(
+                                metadata,
+                                CreatePortForwardTransportEndpointMetadata(
+                                    portForwardEndpoint.Endpoint,
+                                    portForwardEndpoint.LocalPort,
+                                    portForwardEndpoint.ServiceName));
+                    }
+                    catch (Exception exception) when (exception is not OperationCanceledException)
+                    {
+                        this.logger.LogWarning(
+                            exception,
+                            "KUBERNETES PORT-FORWARD START FAILED RuntimeInstanceId={RuntimeInstanceId} ServiceName={ServiceName} Reason={Reason}",
+                            request.RuntimeInstanceId,
+                            createResult.ServiceName,
+                            exception.Message);
+
+                        await this.DeleteOnFailureAsync(
+                                request.RuntimeInstanceId,
+                                podSpec,
+                                cancellationToken)
+                            .ConfigureAwait(false);
+
+                        return CreateRejectedResult(
+                            request,
+                            $"kubernetes-port-forward-start-failed:{exception.Message}",
+                            true,
+                            metadata);
+                    }
+                }
+
+                var transportEndpoint =
+                    ResolveKubernetesTransportEndpoint(
+                        request,
+                        metadata);
+
+                ValidateResolvedKubernetesTransportEndpoint(
                     request,
-                    metadata);
+                    transportEndpoint);
 
-            ValidateResolvedKubernetesTransportEndpoint(
-                request,
-                transportEndpoint);
+                metadata =
+                    MergeMetadata(
+                        metadata,
+                        CreateTransportEndpointMetadata(transportEndpoint));
 
-            metadata =
-                MergeMetadata(
-                    metadata,
-                    CreateTransportEndpointMetadata(transportEndpoint));
+                Console.WriteLine(
+                    $"[KUBERNETES TRANSPORT ENDPOINT RESOLVED] RuntimeInstanceId='{request.RuntimeInstanceId}', RequestTransportEndpoint='{request.TransportEndpoint}', ResolvedTransportEndpoint='{transportEndpoint}', Metadata='{string.Join(";", metadata.Select(item => $"{item.Key}={item.Value}"))}'.");
 
-            Console.WriteLine(
-                $"[KUBERNETES TRANSPORT ENDPOINT RESOLVED] RuntimeInstanceId='{request.RuntimeInstanceId}', RequestTransportEndpoint='{request.TransportEndpoint}', ResolvedTransportEndpoint='{transportEndpoint}', Metadata='{string.Join(";", metadata.Select(item => $"{item.Key}={item.Value}"))}'.");
-
-            this.logger.LogInformation(
-                "KUBERNETES HOST STARTED AFTER POD READINESS RuntimeInstanceId={RuntimeInstanceId} ProviderName={ProviderName} TransportName={TransportName} RequestTransportEndpoint={RequestTransportEndpoint} ResolvedTransportEndpoint={ResolvedTransportEndpoint} RequireRuntimeReadiness={RequireRuntimeReadiness}",
-                request.RuntimeInstanceId,
-                request.ProviderName,
-                request.TransportName,
-                request.TransportEndpoint,
-                transportEndpoint,
-                this.options.RequireRuntimeReadiness);
-
-            var startedResult =
-                AiRuntimeHostStartResult.Started(
-                    request.ExecutionContextSnapshot,
+                this.logger.LogInformation(
+                    "KUBERNETES HOST STARTED AFTER POD READINESS RuntimeInstanceId={RuntimeInstanceId} ProviderName={ProviderName} TransportName={TransportName} RequestTransportEndpoint={RequestTransportEndpoint} ResolvedTransportEndpoint={ResolvedTransportEndpoint} RequireRuntimeReadiness={RequireRuntimeReadiness}",
                     request.RuntimeInstanceId,
                     request.ProviderName,
                     request.TransportName,
+                    request.TransportEndpoint,
                     transportEndpoint,
-                    metadata);
+                    this.options.RequireRuntimeReadiness);
 
-            this.logger.LogInformation(
-                "KUBERNETES RUNTIME INSTANCE PUBLICATION BEGIN RuntimeInstanceId={RuntimeInstanceId} ControlPlaneId={ControlPlaneId} ProviderName={ProviderName} TransportName={TransportName} TransportEndpoint={TransportEndpoint}",
-                request.RuntimeInstanceId,
-                request.ControlPlaneId,
-                request.ProviderName,
-                request.TransportName,
-                transportEndpoint);
-
-            var runtimeReadinessFailure =
-                await this.WaitForRuntimeReadinessBeforePublicationAsync(
-                        request,
-                        podSpec,
+                var startedResult =
+                    AiRuntimeHostStartResult.Started(
+                        request.ExecutionContextSnapshot,
+                        request.RuntimeInstanceId,
+                        request.ProviderName,
+                        request.TransportName,
                         transportEndpoint,
-                        metadata,
+                        metadata);
+
+                this.logger.LogInformation(
+                    "KUBERNETES RUNTIME INSTANCE PUBLICATION BEGIN RuntimeInstanceId={RuntimeInstanceId} ControlPlaneId={ControlPlaneId} ProviderName={ProviderName} TransportName={TransportName} TransportEndpoint={TransportEndpoint}",
+                    request.RuntimeInstanceId,
+                    request.ControlPlaneId,
+                    request.ProviderName,
+                    request.TransportName,
+                    transportEndpoint);
+
+                var runtimeReadinessFailure =
+                    await this.WaitForRuntimeReadinessBeforePublicationAsync(
+                            request,
+                            podSpec,
+                            transportEndpoint,
+                            metadata,
+                            cancellationToken)
+                        .ConfigureAwait(false);
+
+                if (!string.IsNullOrWhiteSpace(runtimeReadinessFailure))
+                {
+                    /*
+                     * A reused port-forward belongs to a runtime already published by
+                     * another converging request. A duplicate request must never tear
+                     * down that live tunnel or delete the shared Kubernetes host.
+                     */
+                    if (portForwardEndpoint is null ||
+                        !portForwardEndpoint.ReusedExisting)
+                    {
+                        this.StopPortForward(request.RuntimeInstanceId);
+
+                        await this.DeleteOnFailureAsync(
+                                request.RuntimeInstanceId,
+                                podSpec,
+                                cancellationToken)
+                            .ConfigureAwait(false);
+                    }
+                    else
+                    {
+                        this.logger.LogWarning(
+                            "KUBERNETES RUNTIME READINESS FAILED FOR REUSED PORT-FORWARD RuntimeInstanceId={RuntimeInstanceId} Endpoint={Endpoint} FailureReason={FailureReason}. Existing tunnel and Kubernetes host are preserved.",
+                            request.RuntimeInstanceId,
+                            portForwardEndpoint.Endpoint,
+                            runtimeReadinessFailure);
+                    }
+
+                    return CreateRejectedResult(
+                        request,
+                        runtimeReadinessFailure,
+                        true,
+                        metadata);
+                }
+
+                await this.runtimeInstancePublisher
+                    .PublishAsync(
+                        request,
+                        startedResult,
                         cancellationToken)
                     .ConfigureAwait(false);
 
-            if (!string.IsNullOrWhiteSpace(runtimeReadinessFailure))
-            {
-                this.StopPortForward(request.RuntimeInstanceId);
+                this.logger.LogInformation(
+                    "KUBERNETES RUNTIME INSTANCE PUBLICATION COMPLETED RuntimeInstanceId={RuntimeInstanceId} ControlPlaneId={ControlPlaneId} ProviderName={ProviderName} TransportName={TransportName} TransportEndpoint={TransportEndpoint}",
+                    request.RuntimeInstanceId,
+                    request.ControlPlaneId,
+                    request.ProviderName,
+                    request.TransportName,
+                    transportEndpoint);
 
-                await this.DeleteOnFailureAsync(
-                        podSpec,
-                        cancellationToken)
-                    .ConfigureAwait(false);
-
-                return CreateRejectedResult(
-                    request,
-                    runtimeReadinessFailure,
-                    true,
-                    metadata);
+                return startedResult;
             }
-
-            await this.runtimeInstancePublisher
-                .PublishAsync(request, startedResult, cancellationToken)
-                .ConfigureAwait(false);
-
-            this.logger.LogInformation(
-                "KUBERNETES RUNTIME INSTANCE PUBLICATION COMPLETED RuntimeInstanceId={RuntimeInstanceId} ControlPlaneId={ControlPlaneId} ProviderName={ProviderName} TransportName={TransportName} TransportEndpoint={TransportEndpoint}",
-                request.RuntimeInstanceId,
-                request.ControlPlaneId,
-                request.ProviderName,
-                request.TransportName,
-                transportEndpoint);
-
-            return startedResult;
+            finally
+            {
+                portForwardLifecycleGate?.Release();
+            }
         }
 
         /// <inheritdoc />
@@ -378,6 +520,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
 
             if (result.Success)
             {
+                await this.DeleteGatewayRuntimeRouteBestEffortAsync(
+                        runtimeInstanceId,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
                 await this.runtimeInstancePublisher
                     .UnpublishAsync(
                         runtimeInstanceId,
@@ -403,9 +550,191 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
                 this.StopPortForward(item.Key);
             }
 
+            foreach (var gate in this.portForwardLifecycleGates.Values)
+            {
+                gate.Dispose();
+            }
+
+            this.portForwardLifecycleGates.Clear();
             this.podSpecsByRuntimeInstanceId.Clear();
         }
 
+
+        /// <summary>
+        /// Ensures the shared Kubernetes Gateway and runtime-specific route, then resolves
+        /// the endpoint that the control plane must publish for HTTP or gRPC dispatch.
+        /// </summary>
+        /// <param name="request">The runtime host start request.</param>
+        /// <param name="podSpec">The runtime pod specification.</param>
+        /// <param name="serviceName">The runtime Service name returned by the host client.</param>
+        /// <param name="metadata">The current Kubernetes host metadata.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <returns>The Gateway route and transport metadata.</returns>
+        private async Task<IReadOnlyDictionary<string, string>> ResolveGatewayTransportMetadataAsync(
+            AiRuntimeHostStartRequest request,
+            AiKubernetesRuntimePodSpec podSpec,
+            string? serviceName,
+            IReadOnlyDictionary<string, string> metadata,
+            CancellationToken cancellationToken)
+        {
+            if (this.gatewayManager is null)
+            {
+                throw new InvalidOperationException(
+                    "kubernetes-gateway-manager-not-registered: Gateway transport mode is enabled, but IAiKubernetesRuntimeGatewayManager is unavailable.");
+            }
+
+            if (this.gatewayTransportEndpointManager is null)
+            {
+                throw new InvalidOperationException(
+                    "kubernetes-gateway-transport-manager-not-registered: Gateway transport mode is enabled, but IAiKubernetesGatewayTransportEndpointManager is unavailable.");
+            }
+
+            var runtimeServiceName =
+                ResolveServiceName(
+                    serviceName,
+                    metadata);
+
+            if (string.IsNullOrWhiteSpace(runtimeServiceName))
+            {
+                throw new InvalidOperationException(
+                    $"kubernetes-gateway-runtime-service-missing: Runtime '{request.RuntimeInstanceId}' has no Kubernetes Service available for Gateway routing.");
+            }
+
+            var gatewayEndpoint =
+                await this.gatewayManager
+                    .EnsureGatewayAsync(
+                        request.ControlPlaneId,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+            AiKubernetesRuntimeRouteResult routeResult;
+
+            if (IsGrpcRuntimeTransport(request))
+            {
+                routeResult =
+                    await this.gatewayManager
+                        .EnsureGrpcRouteAsync(
+                            request.ControlPlaneId,
+                            request.RuntimeInstanceId,
+                            runtimeServiceName,
+                            podSpec.ContainerPort,
+                            cancellationToken)
+                        .ConfigureAwait(false);
+            }
+            else if (IsHttpRuntimeTransport(request))
+            {
+                routeResult =
+                    await this.gatewayManager
+                        .EnsureHttpRouteAsync(
+                            request.ControlPlaneId,
+                            request.RuntimeInstanceId,
+                            runtimeServiceName,
+                            podSpec.ContainerPort,
+                            cancellationToken)
+                        .ConfigureAwait(false);
+            }
+            else
+            {
+                throw new InvalidOperationException(
+                    $"kubernetes-gateway-transport-unsupported: Runtime '{request.RuntimeInstanceId}' uses provider '{request.ProviderName}' and transport '{request.TransportName}'. Only HTTP and gRPC Gateway routes are supported.");
+            }
+
+            var transportEndpoint =
+                await this.gatewayTransportEndpointManager
+                    .ResolveAsync(
+                        gatewayEndpoint,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+            this.logger.LogInformation(
+                "KUBERNETES GATEWAY TRANSPORT RESOLVED RuntimeInstanceId={RuntimeInstanceId} GatewayName={GatewayName} GatewayServiceName={GatewayServiceName} RouteName={RouteName} RouteKind={RouteKind} RuntimeServiceName={RuntimeServiceName} RoutingHeaderName={RoutingHeaderName} TransportEndpoint={TransportEndpoint} InternalEndpoint={InternalEndpoint} UsesPortForward={UsesPortForward} LocalPort={LocalPort}",
+                request.RuntimeInstanceId,
+                gatewayEndpoint.GatewayName,
+                gatewayEndpoint.ServiceName,
+                routeResult.RouteName,
+                routeResult.RouteKind,
+                routeResult.RuntimeServiceName,
+                routeResult.RoutingHeaderName,
+                transportEndpoint.Endpoint,
+                transportEndpoint.InternalEndpoint,
+                transportEndpoint.UsesPortForward,
+                transportEndpoint.LocalPort);
+
+            return CreateGatewayTransportEndpointMetadata(
+                gatewayEndpoint,
+                routeResult,
+                transportEndpoint);
+        }
+
+        /// <summary>
+        /// Determines whether the runtime transport is HTTP.
+        /// </summary>
+        /// <param name="request">The runtime host start request.</param>
+        /// <returns><see langword="true" /> when the provider or transport is HTTP.</returns>
+        private static bool IsHttpRuntimeTransport(
+            AiRuntimeHostStartRequest request)
+        {
+            return string.Equals(
+                       request.ProviderName,
+                       "http",
+                       StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(
+                       request.TransportName,
+                       "http",
+                       StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>
+        /// Creates metadata for a runtime exposed through the shared Kubernetes Gateway.
+        /// </summary>
+        /// <param name="gatewayEndpoint">The shared Gateway endpoint.</param>
+        /// <param name="routeResult">The runtime-specific route.</param>
+        /// <param name="transportEndpoint">The endpoint reachable by the control plane.</param>
+        /// <returns>The Gateway transport metadata.</returns>
+        private static IReadOnlyDictionary<string, string> CreateGatewayTransportEndpointMetadata(
+            AiKubernetesGatewayEndpoint gatewayEndpoint,
+            AiKubernetesRuntimeRouteResult routeResult,
+            AiKubernetesGatewayTransportEndpoint transportEndpoint)
+        {
+            var metadata =
+                new Dictionary<string, string>(
+                    StringComparer.OrdinalIgnoreCase)
+                {
+                    [AiRuntimeInstanceCommandTransportMetadataKeys.TransportEndpoint] = transportEndpoint.Endpoint,
+                    ["transport.endpoint"] = transportEndpoint.Endpoint,
+                    ["transportEndpoint"] = transportEndpoint.Endpoint,
+                    ["kubernetes.transport.endpoint.source"] =
+                        transportEndpoint.UsesPortForward
+                            ? "gateway-port-forward"
+                            : "gateway-service",
+                    ["kubernetes.gateway.name"] = gatewayEndpoint.GatewayName,
+                    ["kubernetes.gateway.namespace"] = gatewayEndpoint.Namespace,
+                    ["kubernetes.gateway.class.name"] = gatewayEndpoint.GatewayClassName,
+                    ["kubernetes.gateway.listener.name"] = gatewayEndpoint.ListenerName,
+                    ["kubernetes.gateway.listener.port"] = gatewayEndpoint.ListenerPort.ToString(),
+                    ["kubernetes.gateway.service.name"] = gatewayEndpoint.ServiceName,
+                    ["kubernetes.gateway.service.namespace"] = gatewayEndpoint.ServiceNamespace,
+                    ["kubernetes.gateway.service.port"] = gatewayEndpoint.ServicePort.ToString(),
+                    ["kubernetes.gateway.internalEndpoint"] = gatewayEndpoint.InternalEndpoint,
+                    ["kubernetes.gateway.transport.endpoint"] = transportEndpoint.Endpoint,
+                    ["kubernetes.gateway.transport.internalEndpoint"] = transportEndpoint.InternalEndpoint,
+                    ["kubernetes.gateway.transport.usesPortForward"] = transportEndpoint.UsesPortForward.ToString(),
+                    ["kubernetes.gateway.route.name"] = routeResult.RouteName,
+                    ["kubernetes.gateway.route.kind"] = routeResult.RouteKind.ToString(),
+                    ["kubernetes.runtime.service.name"] = routeResult.RuntimeServiceName,
+                    ["kubernetes.runtime.service.port"] = routeResult.BackendPort.ToString(),
+                    ["gateway.routing.header"] = routeResult.RoutingHeaderName,
+                    ["gateway.routing.value"] = routeResult.RoutingHeaderValue
+                };
+
+            if (transportEndpoint.LocalPort is int localPort)
+            {
+                metadata["kubernetes.gateway.transport.localPort"] =
+                    localPort.ToString();
+            }
+
+            return metadata;
+        }
 
         /// <summary>
         /// Determines whether the Kubernetes runtime host must expose a local port-forward endpoint.
@@ -644,156 +973,170 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
                     serviceName,
                     metadata) ?? string.Empty;
 
-            await PortForwardStartupGate
-                .WaitAsync(cancellationToken)
-                .ConfigureAwait(false);
+            if (this.portForwardProcesses.TryGetValue(
+                    request.RuntimeInstanceId,
+                    out var existingRegistration))
+            {
+                var processRunning =
+                    IsProcessRunning(
+                        existingRegistration.Process);
+
+                if (processRunning &&
+                    string.Equals(
+                        existingRegistration.PodName,
+                        podSpec.PodName,
+                        StringComparison.OrdinalIgnoreCase) &&
+                    string.Equals(
+                        existingRegistration.Namespace,
+                        podSpec.Namespace,
+                        StringComparison.OrdinalIgnoreCase) &&
+                    existingRegistration.RemotePort == podSpec.ContainerPort)
+                {
+                    this.logger.LogInformation(
+                        "KUBERNETES PORT-FORWARD REUSED RuntimeInstanceId={RuntimeInstanceId} PodName={PodName} ServiceName={ServiceName} Namespace={Namespace} LocalPort={LocalPort} RemotePort={RemotePort} Endpoint={Endpoint} ProcessId={ProcessId}",
+                        request.RuntimeInstanceId,
+                        existingRegistration.PodName,
+                        existingRegistration.ServiceName,
+                        existingRegistration.Namespace,
+                        existingRegistration.LocalPort,
+                        existingRegistration.RemotePort,
+                        existingRegistration.Endpoint,
+                        existingRegistration.ProcessId);
+
+                    Console.WriteLine(
+                        $"[KUBERNETES PORT-FORWARD REUSED] RuntimeInstanceId='{request.RuntimeInstanceId}', PodName='{existingRegistration.PodName}', ServiceName='{existingRegistration.ServiceName}', Namespace='{existingRegistration.Namespace}', LocalPort='{existingRegistration.LocalPort}', RemotePort='{existingRegistration.RemotePort}', ProcessId='{existingRegistration.ProcessId}', Endpoint='{existingRegistration.Endpoint}'.");
+
+                    return new KubernetesPortForwardEndpoint(
+                        existingRegistration.ServiceName,
+                        existingRegistration.LocalPort,
+                        existingRegistration.Endpoint,
+                        reusedExisting: true);
+                }
+
+                this.logger.LogWarning(
+                    "KUBERNETES PORT-FORWARD STALE REGISTRATION RuntimeInstanceId={RuntimeInstanceId} ExistingPodName={ExistingPodName} RequestedPodName={RequestedPodName} ExistingNamespace={ExistingNamespace} RequestedNamespace={RequestedNamespace} ExistingRemotePort={ExistingRemotePort} RequestedRemotePort={RequestedRemotePort} ProcessRunning={ProcessRunning}. Replacing stale registration.",
+                    request.RuntimeInstanceId,
+                    existingRegistration.PodName,
+                    podSpec.PodName,
+                    existingRegistration.Namespace,
+                    podSpec.Namespace,
+                    existingRegistration.RemotePort,
+                    podSpec.ContainerPort,
+                    processRunning);
+
+                this.StopPortForward(
+                    request.RuntimeInstanceId);
+            }
+
+            var localPort =
+                this.ResolvePortForwardLocalPort(request);
+
+            var kubectlPath =
+                string.IsNullOrWhiteSpace(this.options.KubectlPath)
+                    ? "kubectl"
+                    : this.options.KubectlPath;
+
+            var processStartInfo =
+                new ProcessStartInfo
+                {
+                    FileName = kubectlPath,
+                    UseShellExecute = false,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    CreateNoWindow = true
+                };
+
+            processStartInfo.ArgumentList.Add("port-forward");
+            processStartInfo.ArgumentList.Add("-n");
+            processStartInfo.ArgumentList.Add(podSpec.Namespace);
+            processStartInfo.ArgumentList.Add($"pod/{podSpec.PodName}");
+            processStartInfo.ArgumentList.Add($"{localPort}:{podSpec.ContainerPort}");
+
+            var process =
+                new DiagnosticsProcess
+                {
+                    StartInfo = processStartInfo,
+                    EnableRaisingEvents = true
+                };
+
+            this.logger.LogInformation(
+                "KUBERNETES PORT-FORWARD START BEGIN RuntimeInstanceId={RuntimeInstanceId} PodName={PodName} ServiceName={ServiceName} Namespace={Namespace} LocalPort={LocalPort} RemotePort={RemotePort} KubectlPath={KubectlPath}",
+                request.RuntimeInstanceId,
+                podSpec.PodName,
+                serviceName,
+                podSpec.Namespace,
+                localPort,
+                podSpec.ContainerPort,
+                kubectlPath);
+
+            if (!process.Start())
+            {
+                process.Dispose();
+
+                throw new InvalidOperationException(
+                    "kubectl port-forward process did not start.");
+            }
+
+            var endpoint =
+                $"http://127.0.0.1:{localPort}";
+
+            var registration =
+                new KubernetesPortForwardRegistration(
+                    process,
+                    process.Id,
+                    podSpec.PodName,
+                    serviceName,
+                    podSpec.Namespace,
+                    localPort,
+                    podSpec.ContainerPort,
+                    endpoint);
+
+            if (!this.portForwardProcesses.TryAdd(
+                    request.RuntimeInstanceId,
+                    registration))
+            {
+                KillProcess(process);
+                process.Dispose();
+
+                throw new InvalidOperationException(
+                    $"A port-forward process is already registered for runtime instance '{request.RuntimeInstanceId}'.");
+            }
 
             try
             {
-                /*
-                 * Keep local port selection and the actual kubectl bind in one
-                 * process-wide critical section. GetFreeTcpPort releases its
-                 * temporary listener before kubectl binds, so independent test
-                 * hosts could otherwise select the same port under parallel scale-out.
-                 */
-                this.StopPortForward(request.RuntimeInstanceId);
-
-                var localPort =
-                    this.ResolvePortForwardLocalPort(request);
-
-                var kubectlPath =
-                    string.IsNullOrWhiteSpace(this.options.KubectlPath)
-                        ? "kubectl"
-                        : this.options.KubectlPath;
-
-                var processStartInfo =
-                    new ProcessStartInfo
-                    {
-                        FileName = kubectlPath,
-                        UseShellExecute = false,
-                        RedirectStandardOutput = true,
-                        RedirectStandardError = true,
-                        CreateNoWindow = true
-                    };
-
-                processStartInfo.ArgumentList.Add("port-forward");
-                processStartInfo.ArgumentList.Add("-n");
-                processStartInfo.ArgumentList.Add(podSpec.Namespace);
-                processStartInfo.ArgumentList.Add($"pod/{podSpec.PodName}");
-                processStartInfo.ArgumentList.Add($"{localPort}:{podSpec.ContainerPort}");
-
-                var process =
-                    new DiagnosticsProcess
-                    {
-                        StartInfo = processStartInfo,
-                        EnableRaisingEvents = true
-                    };
-
-                process.OutputDataReceived += (_, eventArgs) =>
-                {
-                    if (string.IsNullOrWhiteSpace(eventArgs.Data))
-                    {
-                        return;
-                    }
-
-                    this.logger.LogDebug(
-                        "KUBERNETES PORT-FORWARD STDOUT RuntimeInstanceId={RuntimeInstanceId} LocalPort={LocalPort} Message={Message}",
-                        request.RuntimeInstanceId,
+                await WaitForLocalPortOpenAsync(
                         localPort,
-                        eventArgs.Data);
-                };
-
-                process.ErrorDataReceived += (_, eventArgs) =>
-                {
-                    if (string.IsNullOrWhiteSpace(eventArgs.Data))
-                    {
-                        return;
-                    }
-
-                    this.logger.LogDebug(
-                        "KUBERNETES PORT-FORWARD STDERR RuntimeInstanceId={RuntimeInstanceId} LocalPort={LocalPort} Message={Message}",
-                        request.RuntimeInstanceId,
-                        localPort,
-                        eventArgs.Data);
-                };
-
-                this.logger.LogInformation(
-                    "KUBERNETES PORT-FORWARD START BEGIN RuntimeInstanceId={RuntimeInstanceId} ServiceName={ServiceName} PodName={PodName} Namespace={Namespace} LocalPort={LocalPort} RemotePort={RemotePort} KubectlPath={KubectlPath}",
-                    request.RuntimeInstanceId,
-                    serviceName,
-                    podSpec.PodName,
-                    podSpec.Namespace,
-                    localPort,
-                    podSpec.ContainerPort,
-                    kubectlPath);
-
-                if (!process.Start())
-                {
-                    process.Dispose();
-                    throw new InvalidOperationException(
-                        "kubectl port-forward process did not start.");
-                }
-
-                if (!this.portForwardProcesses.TryAdd(
-                        request.RuntimeInstanceId,
-                        process))
-                {
-                    KillProcess(process);
-                    process.Dispose();
-
-                    throw new InvalidOperationException(
-                        $"A port-forward process is already registered for runtime instance '{request.RuntimeInstanceId}'.");
-                }
-
-                try
-                {
-                    /*
-                     * Redirected stdout and stderr must be consumed continuously.
-                     * kubectl writes one line for startup and for forwarded
-                     * connections; an undrained pipe can fill and block the tunnel.
-                     */
-                    process.BeginOutputReadLine();
-                    process.BeginErrorReadLine();
-
-                    await WaitForLocalPortOpenAsync(
-                            process,
-                            localPort,
-                            this.options.PortForwardStartupTimeout,
-                            cancellationToken)
-                        .ConfigureAwait(false);
-                }
-                catch
-                {
-                    this.StopPortForward(request.RuntimeInstanceId);
-                    throw;
-                }
-
-                var endpoint =
-                    $"http://127.0.0.1:{localPort}";
-
-                this.logger.LogInformation(
-                    "KUBERNETES PORT-FORWARD STARTED RuntimeInstanceId={RuntimeInstanceId} ServiceName={ServiceName} PodName={PodName} Namespace={Namespace} LocalPort={LocalPort} RemotePort={RemotePort} ProcessId={ProcessId} Endpoint={Endpoint}",
-                    request.RuntimeInstanceId,
-                    serviceName,
-                    podSpec.PodName,
-                    podSpec.Namespace,
-                    localPort,
-                    podSpec.ContainerPort,
-                    process.Id,
-                    endpoint);
-
-                Console.WriteLine(
-                    $"[KUBERNETES PORT-FORWARD STARTED] RuntimeInstanceId='{request.RuntimeInstanceId}', ServiceName='{serviceName}', PodName='{podSpec.PodName}', Namespace='{podSpec.Namespace}', LocalPort='{localPort}', RemotePort='{podSpec.ContainerPort}', ProcessId='{process.Id}', Endpoint='{endpoint}'.");
-
-                return new KubernetesPortForwardEndpoint(
-                    serviceName,
-                    localPort,
-                    endpoint);
+                        this.options.PortForwardStartupTimeout,
+                        cancellationToken)
+                    .ConfigureAwait(false);
             }
-            finally
+            catch
             {
-                PortForwardStartupGate.Release();
+                this.StopPortForward(
+                    request.RuntimeInstanceId);
+
+                throw;
             }
+
+            this.logger.LogInformation(
+                "KUBERNETES PORT-FORWARD STARTED RuntimeInstanceId={RuntimeInstanceId} PodName={PodName} ServiceName={ServiceName} Namespace={Namespace} LocalPort={LocalPort} RemotePort={RemotePort} Endpoint={Endpoint} ProcessId={ProcessId}",
+                request.RuntimeInstanceId,
+                podSpec.PodName,
+                serviceName,
+                podSpec.Namespace,
+                localPort,
+                podSpec.ContainerPort,
+                endpoint,
+                process.Id);
+
+            Console.WriteLine(
+                $"[KUBERNETES PORT-FORWARD STARTED] RuntimeInstanceId='{request.RuntimeInstanceId}', PodName='{podSpec.PodName}', ServiceName='{serviceName}', Namespace='{podSpec.Namespace}', LocalPort='{localPort}', RemotePort='{podSpec.ContainerPort}', ProcessId='{process.Id}', Endpoint='{endpoint}'.");
+
+            return new KubernetesPortForwardEndpoint(
+                serviceName,
+                localPort,
+                endpoint,
+                reusedExisting: false);
         }
 
         /// <summary>
@@ -803,18 +1146,41 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
         private void StopPortForward(
             string runtimeInstanceId)
         {
-            if (!this.portForwardProcesses.TryRemove(runtimeInstanceId, out var process))
+            if (!this.portForwardProcesses.TryRemove(
+                    runtimeInstanceId,
+                    out var registration))
             {
                 return;
             }
 
             try
             {
-                KillProcess(process);
+                KillProcess(
+                    registration.Process);
             }
             finally
             {
-                process.Dispose();
+                registration.Process.Dispose();
+            }
+        }
+
+        /// <summary>
+        /// Determines whether a kubectl port-forward process is still running.
+        /// </summary>
+        /// <param name="process">The process.</param>
+        /// <returns><see langword="true"/> when the process is alive; otherwise, <see langword="false"/>.</returns>
+        private static bool IsProcessRunning(
+            DiagnosticsProcess process)
+        {
+            ArgumentNullException.ThrowIfNull(process);
+
+            try
+            {
+                return !process.HasExited;
+            }
+            catch (InvalidOperationException)
+            {
+                return false;
             }
         }
 
@@ -838,37 +1204,17 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
         }
 
         /// <summary>
-        /// Waits until the local kubectl port-forward process accepts TCP connections.
+        /// Waits until a local TCP port is reachable.
         /// </summary>
-        /// <param name="process">The kubectl port-forward process.</param>
         /// <param name="localPort">The local TCP port.</param>
         /// <param name="timeout">The timeout.</param>
         /// <param name="cancellationToken">The cancellation token.</param>
         /// <returns>The asynchronous operation.</returns>
         private static async Task WaitForLocalPortOpenAsync(
-            DiagnosticsProcess process,
             int localPort,
             TimeSpan timeout,
             CancellationToken cancellationToken)
         {
-            ArgumentNullException.ThrowIfNull(process);
-
-            if (localPort <= 0)
-            {
-                throw new ArgumentOutOfRangeException(
-                    nameof(localPort),
-                    localPort,
-                    "The local port-forward port must be greater than zero.");
-            }
-
-            if (timeout <= TimeSpan.Zero)
-            {
-                throw new ArgumentOutOfRangeException(
-                    nameof(timeout),
-                    timeout,
-                    "The port-forward startup timeout must be greater than zero.");
-            }
-
             var deadline =
                 DateTimeOffset.UtcNow.Add(timeout);
 
@@ -876,49 +1222,25 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
-                if (process.HasExited)
-                {
-                    throw new InvalidOperationException(
-                        $"kubectl port-forward exited before its local endpoint became reachable. " +
-                        $"ProcessId='{process.Id}', ExitCode='{process.ExitCode}', " +
-                        $"LocalEndpoint='127.0.0.1:{localPort}'.");
-                }
-
                 try
                 {
-                    using var client =
-                        new TcpClient();
+                    using var client = new TcpClient();
 
-                    using var probeCancellationTokenSource =
-                        CancellationTokenSource.CreateLinkedTokenSource(
-                            cancellationToken);
-
-                    probeCancellationTokenSource.CancelAfter(
-                        TimeSpan.FromMilliseconds(500));
-
-                    await client
-                        .ConnectAsync(
+                    var connectTask =
+                        client.ConnectAsync(
                             IPAddress.Loopback,
-                            localPort,
-                            probeCancellationTokenSource.Token)
-                        .ConfigureAwait(false);
+                            localPort);
 
-                    if (client.Connected)
+                    var completedTask =
+                        await Task.WhenAny(
+                                connectTask,
+                                Task.Delay(TimeSpan.FromMilliseconds(200), cancellationToken))
+                            .ConfigureAwait(false);
+
+                    if (completedTask == connectTask && client.Connected)
                     {
-                        if (process.HasExited)
-                        {
-                            throw new InvalidOperationException(
-                                $"The local port became reachable, but kubectl port-forward exited. " +
-                                $"ProcessId='{process.Id}', ExitCode='{process.ExitCode}', " +
-                                $"LocalEndpoint='127.0.0.1:{localPort}'.");
-                        }
-
                         return;
                     }
-                }
-                catch (OperationCanceledException)
-                    when (!cancellationToken.IsCancellationRequested)
-                {
                 }
                 catch (SocketException)
                 {
@@ -927,25 +1249,13 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
                 {
                 }
 
-                await Task
-                    .Delay(
+                await Task.Delay(
                         TimeSpan.FromMilliseconds(100),
                         cancellationToken)
                     .ConfigureAwait(false);
             }
 
-            if (process.HasExited)
-            {
-                throw new InvalidOperationException(
-                    $"kubectl port-forward exited before startup completed. " +
-                    $"ProcessId='{process.Id}', ExitCode='{process.ExitCode}', " +
-                    $"LocalEndpoint='127.0.0.1:{localPort}'.");
-            }
-
-            throw new TimeoutException(
-                $"Local kubectl port-forward endpoint did not become reachable on " +
-                $"'127.0.0.1:{localPort}' within '{timeout}'. " +
-                $"ProcessId='{process.Id}', HasExited='{process.HasExited}'.");
+            throw new TimeoutException($"Local kubectl port-forward endpoint did not become reachable on 127.0.0.1:{localPort} within '{timeout}'.");
         }
 
         /// <summary>
@@ -1047,10 +1357,12 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
         /// <summary>
         /// Deletes Kubernetes resources after a failed host creation flow when configured to do so.
         /// </summary>
+        /// <param name="runtimeInstanceId">The runtime instance id.</param>
         /// <param name="podSpec">The Kubernetes runtime pod specification.</param>
         /// <param name="cancellationToken">The cancellation token.</param>
         /// <returns>The asynchronous operation.</returns>
         private async Task DeleteOnFailureAsync(
+            string runtimeInstanceId,
             AiKubernetesRuntimePodSpec podSpec,
             CancellationToken cancellationToken)
         {
@@ -1059,22 +1371,89 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
                 return;
             }
 
+            /*
+             * A Gateway route can already exist when transport resolution or runtime
+             * readiness fails. Remove it before deleting the runtime Service so the
+             * shared Gateway never retains a dangling backend reference.
+             */
+            await this.DeleteGatewayRuntimeRouteBestEffortAsync(
+                    runtimeInstanceId,
+                    cancellationToken)
+                .ConfigureAwait(false);
+
             this.logger.LogInformation(
-                "KUBERNETES HOST DELETE ON FAILURE BEGIN PodName={PodName} Namespace={Namespace}",
+                "KUBERNETES HOST DELETE ON FAILURE BEGIN RuntimeInstanceId={RuntimeInstanceId} PodName={PodName} Namespace={Namespace}",
+                runtimeInstanceId,
                 podSpec.PodName,
                 podSpec.Namespace);
 
             var deleteResult =
                 await this.client
-                    .DeleteRuntimeHostAsync(podSpec, cancellationToken)
+                    .DeleteRuntimeHostAsync(
+                        podSpec,
+                        cancellationToken)
                     .ConfigureAwait(false);
 
             this.logger.LogInformation(
-                "KUBERNETES HOST DELETE ON FAILURE RESULT PodName={PodName} Namespace={Namespace} Success={Success} FailureReason={FailureReason}",
+                "KUBERNETES HOST DELETE ON FAILURE RESULT RuntimeInstanceId={RuntimeInstanceId} PodName={PodName} Namespace={Namespace} Success={Success} FailureReason={FailureReason}",
+                runtimeInstanceId,
                 podSpec.PodName,
                 podSpec.Namespace,
                 deleteResult.Success,
                 deleteResult.FailureReason ?? "(none)");
+        }
+
+        /// <summary>
+        /// Deletes the runtime-specific Gateway routes without deleting or restarting
+        /// the shared Gateway infrastructure.
+        /// </summary>
+        /// <param name="runtimeInstanceId">The runtime instance id.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <returns>The asynchronous operation.</returns>
+        private async Task DeleteGatewayRuntimeRouteBestEffortAsync(
+            string runtimeInstanceId,
+            CancellationToken cancellationToken)
+        {
+            if (!this.options.UseGatewayTransportEndpoint)
+            {
+                return;
+            }
+
+            if (this.gatewayManager is null)
+            {
+                this.logger.LogWarning(
+                    "KUBERNETES RUNTIME ROUTE DELETE SKIPPED RuntimeInstanceId={RuntimeInstanceId} Reason=gateway-manager-not-registered GatewayPreserved=True",
+                    runtimeInstanceId);
+
+                return;
+            }
+
+            try
+            {
+                await this.gatewayManager
+                    .DeleteRuntimeRouteAsync(
+                        runtimeInstanceId,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+                when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception exception)
+            {
+                /*
+                 * Route cleanup must not hide a successful pod/service deletion or
+                 * prevent unpublication. The dangling route is observable and can be
+                 * retried independently because deletion is idempotent.
+                 */
+                this.logger.LogWarning(
+                    exception,
+                    "KUBERNETES RUNTIME ROUTE DELETE FAILED RuntimeInstanceId={RuntimeInstanceId} Reason={Reason} GatewayPreserved=True",
+                    runtimeInstanceId,
+                    exception.Message);
+            }
         }
 
         /// <summary>
@@ -1256,6 +1635,75 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
         }
 
         /// <summary>
+        /// Represents a registered local kubectl port-forward process.
+        /// </summary>
+        private sealed class KubernetesPortForwardRegistration
+        {
+            /// <summary>
+            /// Initializes a new instance of the <see cref="KubernetesPortForwardRegistration"/> class.
+            /// </summary>
+            public KubernetesPortForwardRegistration(
+                DiagnosticsProcess process,
+                int processId,
+                string podName,
+                string serviceName,
+                string @namespace,
+                int localPort,
+                int remotePort,
+                string endpoint)
+            {
+                Process = process ?? throw new ArgumentNullException(nameof(process));
+                ProcessId = processId;
+                PodName = podName ?? throw new ArgumentNullException(nameof(podName));
+                ServiceName = serviceName ?? throw new ArgumentNullException(nameof(serviceName));
+                Namespace = @namespace ?? throw new ArgumentNullException(nameof(@namespace));
+                LocalPort = localPort;
+                RemotePort = remotePort;
+                Endpoint = endpoint ?? throw new ArgumentNullException(nameof(endpoint));
+            }
+
+            /// <summary>
+            /// Gets the kubectl process.
+            /// </summary>
+            public DiagnosticsProcess Process { get; }
+
+            /// <summary>
+            /// Gets the kubectl process id captured at startup.
+            /// </summary>
+            public int ProcessId { get; }
+
+            /// <summary>
+            /// Gets the Kubernetes pod name.
+            /// </summary>
+            public string PodName { get; }
+
+            /// <summary>
+            /// Gets the Kubernetes service name.
+            /// </summary>
+            public string ServiceName { get; }
+
+            /// <summary>
+            /// Gets the Kubernetes namespace.
+            /// </summary>
+            public string Namespace { get; }
+
+            /// <summary>
+            /// Gets the local forwarded port.
+            /// </summary>
+            public int LocalPort { get; }
+
+            /// <summary>
+            /// Gets the pod container port.
+            /// </summary>
+            public int RemotePort { get; }
+
+            /// <summary>
+            /// Gets the local transport endpoint.
+            /// </summary>
+            public string Endpoint { get; }
+        }
+
+        /// <summary>
         /// Represents a local Kubernetes port-forward endpoint.
         /// </summary>
         private sealed class KubernetesPortForwardEndpoint
@@ -1266,14 +1714,17 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
             /// <param name="serviceName">The Kubernetes service name, when available.</param>
             /// <param name="localPort">The local port.</param>
             /// <param name="endpoint">The local transport endpoint.</param>
+            /// <param name="reusedExisting">Whether an existing live port-forward was reused.</param>
             public KubernetesPortForwardEndpoint(
                 string serviceName,
                 int localPort,
-                string endpoint)
+                string endpoint,
+                bool reusedExisting)
             {
                 ServiceName = serviceName ?? throw new ArgumentNullException(nameof(serviceName));
                 LocalPort = localPort;
                 Endpoint = endpoint ?? throw new ArgumentNullException(nameof(endpoint));
+                ReusedExisting = reusedExisting;
             }
 
             /// <summary>
@@ -1290,6 +1741,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
             /// Gets the local endpoint.
             /// </summary>
             public string Endpoint { get; }
+
+            /// <summary>
+            /// Gets a value indicating whether an existing live port-forward was reused.
+            /// </summary>
+            public bool ReusedExisting { get; }
         }
     }
 }

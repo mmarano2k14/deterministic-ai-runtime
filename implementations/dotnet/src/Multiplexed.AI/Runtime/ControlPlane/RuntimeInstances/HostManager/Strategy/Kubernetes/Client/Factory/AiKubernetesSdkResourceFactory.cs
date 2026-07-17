@@ -1,4 +1,4 @@
-﻿using k8s.Models;
+using k8s.Models;
 using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager.Kubernetes;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers.Transport;
@@ -111,7 +111,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
                 },
                 Spec = new V1ServiceSpec
                 {
-                    Type = "NodePort",
+                    Type = this.options.UseGatewayTransportEndpoint
+                        ? "ClusterIP"
+                        : "NodePort",
                     Selector = new Dictionary<string, string>
                     {
                         ["multiplexed.ai/runtime-instance-id"] = podSpec.Labels["multiplexed.ai/runtime-instance-id"]
@@ -123,7 +125,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
                             {
                                 Name = podSpec.ContainerName,
                                 Port = podSpec.ContainerPort,
-                                TargetPort = podSpec.ContainerPort
+                                TargetPort = podSpec.ContainerPort,
+                                AppProtocol = this.options.UseGatewayTransportEndpoint
+                                    ? ResolveGatewayBackendAppProtocol(podSpec.TransportName)
+                                    : null
                             }
                         }
                 }
@@ -181,9 +186,13 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
                 metadata["kubernetes.service.dns"] = serviceDnsName;
                 metadata["kubernetes.service.endpoint"] = serviceEndpoint;
                 metadata["kubernetes.service.url"] = serviceEndpoint;
-                metadata["transport.endpoint"] = serviceEndpoint;
-                metadata["transportEndpoint"] = serviceEndpoint;
-                metadata[AiRuntimeInstanceCommandTransportMetadataKeys.TransportEndpoint] = serviceEndpoint;
+
+                if (!this.options.UseGatewayTransportEndpoint)
+                {
+                    metadata["transport.endpoint"] = serviceEndpoint;
+                    metadata["transportEndpoint"] = serviceEndpoint;
+                    metadata[AiRuntimeInstanceCommandTransportMetadataKeys.TransportEndpoint] = serviceEndpoint;
+                }
             }
 
             return metadata;
@@ -217,7 +226,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
                     .FirstOrDefault()?
                     .NodePort;
 
-            if (this.options.PublishNodePortTransportEndpoint &&
+            if (!this.options.UseGatewayTransportEndpoint &&
+                this.options.PublishNodePortTransportEndpoint &&
                 !string.IsNullOrWhiteSpace(serviceName) &&
                 nodePort.HasValue &&
                 nodePort.Value > 0)
@@ -238,6 +248,23 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
             }
 
             return metadata;
+        }
+
+
+        /// <summary>
+        /// Resolves the application protocol advertised by a runtime Service backend in Gateway mode.
+        /// </summary>
+        /// <param name="transportName">The runtime transport name.</param>
+        /// <returns>The Kubernetes Service appProtocol value.</returns>
+        private static string ResolveGatewayBackendAppProtocol(
+            string? transportName)
+        {
+            return string.Equals(
+                    transportName,
+                    "grpc",
+                    StringComparison.OrdinalIgnoreCase)
+                ? "kubernetes.io/h2c"
+                : "http";
         }
 
         /// <summary>

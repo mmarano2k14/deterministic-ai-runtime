@@ -32,6 +32,15 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
         public string ContainerName { get; init; } = string.Empty;
 
         /// <summary>
+        /// Gets the runtime command transport exposed by the pod.
+        /// </summary>
+        /// <remarks>
+        /// This value is used later to select HTTPRoute or GRPCRoute and to configure
+        /// the runtime Service application protocol.
+        /// </remarks>
+        public string TransportName { get; init; } = string.Empty;
+
+        /// <summary>
         /// Gets the runtime container port.
         /// </summary>
         public int ContainerPort { get; init; }

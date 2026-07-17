@@ -6,6 +6,8 @@ using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strategy;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strategy.Kubernetes;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strategy.Kubernetes.Client;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strategy.Kubernetes.Client.Factory;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strategy.Kubernetes.Gateway;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strategy.Kubernetes.Gateway.Transport;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strategy.Kubernetes.Publisher;
 using System;
 
@@ -55,6 +57,26 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
             services.TryAddSingleton<AiKubernetesSdkResourceFactory>();
             services.TryAddSingleton<IKubernetesClientFactory, DefaultKubernetesClientFactory>();
             services.TryAddSingleton<KubernetesSdkAiKubernetesRuntimeHostClient>();
+
+            /*
+             * Gateway infrastructure is registered but remains dormant until
+             * UseGatewayTransportEndpoint is enabled by the Kubernetes host strategy.
+             *
+             * The shared transport endpoint manager is a singleton so one DI root
+             * acquires one reference to the process-wide Gateway port-forward and
+             * releases it when the root is disposed.
+             */
+            services.TryAddSingleton<AiKubernetesGatewayResourceFactory>();
+            services.TryAddSingleton<KubernetesSdkAiKubernetesRuntimeGatewayManager>();
+            services.TryAddSingleton<IAiKubernetesRuntimeGatewayManager>(
+                serviceProvider =>
+                    serviceProvider.GetRequiredService<KubernetesSdkAiKubernetesRuntimeGatewayManager>());
+
+            services.TryAddSingleton<KubectlAiKubernetesGatewayTransportEndpointManager>();
+            services.TryAddSingleton<IAiKubernetesGatewayTransportEndpointManager>(
+                serviceProvider =>
+                    serviceProvider.GetRequiredService<KubectlAiKubernetesGatewayTransportEndpointManager>());
+
             services.TryAddSingleton<IAiKubernetesRuntimeInstancePublisher, KubernetesAiRuntimeInstancePublisher>();
 
             services.TryAddSingleton<IAiKubernetesRuntimeHostClient>(

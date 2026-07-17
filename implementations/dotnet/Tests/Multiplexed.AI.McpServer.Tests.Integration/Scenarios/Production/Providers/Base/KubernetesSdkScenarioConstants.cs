@@ -1,4 +1,4 @@
-﻿namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Providers.Base
+namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Providers.Base
 {
     /// <summary>
     /// Provides constants used by Kubernetes SDK production scenarios.
@@ -13,7 +13,7 @@
         /// <summary>
         /// The current local Kubernetes runtime image used by Minikube-based integration tests.
         /// </summary>
-        public const string RuntimeImage = "multiplexed-ai-runtime:k8s-debug-048";
+        public const string RuntimeImage = "multiplexed-ai-runtime:k8s-debug-051";
 
         /// <summary>
         /// The Kubernetes image pull policy used for locally built Minikube images.
@@ -59,6 +59,87 @@
         /// The kubectl executable name.
         /// </summary>
         public const string KubectlPath = "kubectl";
+
+        /// <summary>
+        /// The shared Kubernetes Gateway resource name.
+        /// </summary>
+        public const string GatewayName = "ai-runtime-gateway";
+
+        /// <summary>
+        /// The shared Kubernetes Gateway listener name.
+        /// </summary>
+        public const string GatewayListenerName = "runtime";
+
+        /// <summary>
+        /// The shared Kubernetes Gateway listener port.
+        /// </summary>
+        public const string GatewayPort = "8080";
+
+        /// <summary>
+        /// The routing header shared by HTTPRoute and GRPCRoute resources.
+        /// </summary>
+        public const string GatewayRouteHeaderName = "x-ai-runtime-instance-id";
+
+        /// <summary>
+        /// The timeout used while waiting for Gateway and route readiness.
+        /// </summary>
+        public const string GatewayReadinessTimeout = "00:01:00";
+
+        /// <summary>
+        /// The polling interval used while waiting for Gateway and route readiness.
+        /// </summary>
+        public const string GatewayReadinessPollInterval = "00:00:01";
+
+        /// <summary>
+        /// The environment variable that can override the GatewayClass used by local tests.
+        /// </summary>
+        public const string GatewayClassNameEnvironmentVariable =
+            "AI_KUBERNETES_GATEWAY_CLASS_NAME";
+
+        /// <summary>
+        /// The environment variable that can override the Gateway API controller name.
+        /// </summary>
+        public const string GatewayControllerNameEnvironmentVariable =
+            "AI_KUBERNETES_GATEWAY_CONTROLLER_NAME";
+
+        /// <summary>
+        /// Gets the GatewayClass used by local Kubernetes integration tests.
+        /// </summary>
+        /// <remarks>
+        /// Envoy Gateway quickstart installations commonly expose the <c>eg</c>
+        /// GatewayClass. The environment override keeps the scenario portable to
+        /// another conformant Gateway API controller without changing test code.
+        /// </remarks>
+        public static string GatewayClassName
+        {
+            get
+            {
+                var configuredValue =
+                    System.Environment.GetEnvironmentVariable(
+                        GatewayClassNameEnvironmentVariable);
+
+                return string.IsNullOrWhiteSpace(configuredValue)
+                    ? "eg"
+                    : configuredValue.Trim();
+            }
+        }
+
+        /// <summary>
+        /// Gets the Gateway API controller name used by local Kubernetes integration tests.
+        /// </summary>
+        public static string GatewayControllerName
+        {
+            get
+            {
+                var configuredValue =
+                    System.Environment.GetEnvironmentVariable(
+                        GatewayControllerNameEnvironmentVariable);
+
+                return string.IsNullOrWhiteSpace(configuredValue)
+                    ? "gateway.envoyproxy.io/gatewayclass-controller"
+                    : configuredValue.Trim();
+            }
+        }
 
         /// <summary>
         /// The Redis connection string used from inside Minikube pods.

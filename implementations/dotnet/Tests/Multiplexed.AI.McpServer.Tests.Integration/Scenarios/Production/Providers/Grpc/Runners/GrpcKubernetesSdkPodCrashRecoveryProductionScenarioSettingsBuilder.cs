@@ -1,4 +1,4 @@
-﻿using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Definitions;
+using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Definitions;
 using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Providers.Base;
 
 namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Providers.Grpc.Runners
@@ -89,11 +89,52 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             settings["AiKubernetesRuntimeHost:UseServicePerRuntime"] = "true";
             settings["AiKubernetesRuntimeHost:DeleteResourcesOnFailure"] = "true";
             settings["AiKubernetesRuntimeHost:StartupTimeout"] = KubernetesSdkScenarioConstants.StartupTimeout;
+
+            /*
+             * The crash-recovery scenario now uses the same production-like shared
+             * Kubernetes Gateway transport path as the runtime-readiness scenario.
+             *
+             * Each runtime still owns one ClusterIP Service and one GRPCRoute, while
+             * the control plane reaches every runtime through one shared Gateway
+             * endpoint and the x-ai-runtime-instance-id routing metadata.
+             */
+            settings["AiKubernetesRuntimeHost:UseGatewayTransportEndpoint"] = "true";
+            settings["AiKubernetesRuntimeHost:GatewayName"] =
+                KubernetesSdkScenarioConstants.GatewayName;
+            settings["AiKubernetesRuntimeHost:GatewayClassName"] =
+                KubernetesSdkScenarioConstants.GatewayClassName;
+            settings["AiKubernetesRuntimeHost:GatewayControllerName"] =
+                KubernetesSdkScenarioConstants.GatewayControllerName;
+            settings["AiKubernetesRuntimeHost:CreateGatewayClassWhenMissing"] = "true";
+            settings["AiKubernetesRuntimeHost:GatewayListenerName"] =
+                KubernetesSdkScenarioConstants.GatewayListenerName;
+            settings["AiKubernetesRuntimeHost:GatewayPort"] =
+                KubernetesSdkScenarioConstants.GatewayPort;
+            settings["AiKubernetesRuntimeHost:GatewayRouteHeaderName"] =
+                KubernetesSdkScenarioConstants.GatewayRouteHeaderName;
+            settings["AiKubernetesRuntimeHost:CreateGatewayWhenMissing"] = "true";
+            settings["AiKubernetesRuntimeHost:RequireGatewayProgrammed"] = "true";
+            settings["AiKubernetesRuntimeHost:GatewayReadinessTimeout"] =
+                KubernetesSdkScenarioConstants.GatewayReadinessTimeout;
+            settings["AiKubernetesRuntimeHost:GatewayReadinessPollInterval"] =
+                KubernetesSdkScenarioConstants.GatewayReadinessPollInterval;
+
+            /*
+             * The control plane still runs outside Minikube, therefore one local
+             * kubectl port-forward is kept, but it now targets the shared Gateway
+             * Service rather than an individual runtime pod.
+             */
             settings["AiKubernetesRuntimeHost:UsePortForwardTransportEndpoint"] = "true";
             settings["AiKubernetesRuntimeHost:PortForwardLocalPort"] = "0";
-            settings["AiKubernetesRuntimeHost:PublishNodePortTransportEndpoint"] = "true";
-            settings["AiKubernetesRuntimeHost:NodePortHost"] = KubernetesSdkScenarioConstants.NodePortHost;
-            settings["AiKubernetesRuntimeHost:KubectlPath"] = KubernetesSdkScenarioConstants.KubectlPath;
+            settings["AiKubernetesRuntimeHost:KubectlPath"] =
+                KubernetesSdkScenarioConstants.KubectlPath;
+
+            /*
+             * Runtime Services remain internal ClusterIP backends in Gateway mode.
+             */
+            settings["AiKubernetesRuntimeHost:PublishNodePortTransportEndpoint"] = "false";
+            settings["AiKubernetesRuntimeHost:NodePortHost"] =
+                KubernetesSdkScenarioConstants.NodePortHost;
 
             settings["AiLocalRuntimeInstancePool:Enabled"] = "false";
 

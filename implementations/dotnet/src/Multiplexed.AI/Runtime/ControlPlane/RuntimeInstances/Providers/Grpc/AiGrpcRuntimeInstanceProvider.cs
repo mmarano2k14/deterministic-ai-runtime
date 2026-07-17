@@ -43,6 +43,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Grpc
         IAiRuntimeScaleOutProvider,
         IAiRuntimeInstanceControlPlaneContext
     {
+        private const string GatewayRoutingHeaderMetadataKey = "gateway.routing.header";
+        private const string DefaultGatewayRoutingHeaderName = "x-ai-runtime-instance-id";
         private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
         private readonly ILogger<AiGrpcRuntimeInstanceProvider> logger;
         private readonly AiGrpcRuntimeInstanceProviderOptions options;
@@ -585,9 +587,26 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Grpc
                             JsonOptions)
                     };
 
+                var routingHeaderName =
+                    ResolveGatewayRoutingHeaderName(
+                        request.Descriptor?.Metadata);
+
+                var routingHeaders =
+                    CreateGatewayRoutingHeaders(
+                        routingHeaderName,
+                        request.RuntimeInstanceId);
+
+                logger.LogInformation(
+                    "GRPC COMMAND ROUTING METADATA RESOLVED RuntimeInstanceId={RuntimeInstanceId} Operation={Operation} Endpoint={Endpoint} RoutingHeaderName={RoutingHeaderName}",
+                    request.RuntimeInstanceId,
+                    request.Operation,
+                    endpoint,
+                    routingHeaderName);
+
                 var grpcResponse =
                     await client.ExecuteCommandAsync(
                             grpcRequest,
+                            headers: routingHeaders,
                             cancellationToken: timeoutCancellationTokenSource.Token)
                         .ResponseAsync
                         .ConfigureAwait(false);
@@ -963,6 +982,86 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Grpc
 
             return GrpcCommandEndpointResolution.Succeeded(
                 commandEndpoint);
+        }
+
+        /// <summary>
+        /// Resolves the gRPC metadata header used by the Kubernetes Gateway route.
+        /// </summary>
+        /// <param name="metadata">The runtime descriptor metadata.</param>
+        /// <returns>The normalized gRPC metadata header name.</returns>
+        private static string ResolveGatewayRoutingHeaderName(
+            IReadOnlyDictionary<string, string>? metadata)
+        {
+            var configuredHeaderName =
+                GetMetadataValue(
+                    metadata,
+                    GatewayRoutingHeaderMetadataKey);
+
+            var headerName =
+                string.IsNullOrWhiteSpace(configuredHeaderName)
+                    ? DefaultGatewayRoutingHeaderName
+                    : configuredHeaderName.Trim().ToLowerInvariant();
+
+            if (!IsValidGrpcMetadataKey(headerName))
+            {
+                throw new InvalidOperationException(
+                    $"The configured Kubernetes Gateway routing metadata key '{headerName}' is invalid for gRPC.");
+            }
+
+            return headerName;
+        }
+
+        /// <summary>
+        /// Creates the gRPC routing metadata sent to the Kubernetes Gateway.
+        /// </summary>
+        /// <param name="routingHeaderName">The routing metadata header name.</param>
+        /// <param name="runtimeInstanceId">The runtime instance id used as the routing value.</param>
+        /// <returns>The gRPC call metadata.</returns>
+        private static Metadata CreateGatewayRoutingHeaders(
+            string routingHeaderName,
+            string runtimeInstanceId)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(routingHeaderName);
+            ArgumentException.ThrowIfNullOrWhiteSpace(runtimeInstanceId);
+
+            return new Metadata
+            {
+                {
+                    routingHeaderName,
+                    runtimeInstanceId
+                }
+            };
+        }
+
+        /// <summary>
+        /// Determines whether a metadata key can be used as a textual gRPC header.
+        /// </summary>
+        /// <param name="key">The metadata key.</param>
+        /// <returns><see langword="true"/> when the key is valid; otherwise, <see langword="false"/>.</returns>
+        private static bool IsValidGrpcMetadataKey(
+            string key)
+        {
+            if (string.IsNullOrWhiteSpace(key) ||
+                key.EndsWith("-bin", StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            foreach (var character in key)
+            {
+                if ((character >= 'a' && character <= 'z') ||
+                    (character >= '0' && character <= '9') ||
+                    character == '-' ||
+                    character == '_' ||
+                    character == '.')
+                {
+                    continue;
+                }
+
+                return false;
+            }
+
+            return true;
         }
 
         /// <summary>

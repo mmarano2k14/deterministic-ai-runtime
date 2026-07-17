@@ -1,4 +1,4 @@
-﻿using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Definitions;
+using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Definitions;
 using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Providers.Base;
 
 namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Providers.Grpc.Runners
@@ -41,14 +41,21 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 controlPlaneId);
 
             Console.WriteLine(
-                "[RUNTIME READY BUILDER FINAL] ScenarioDebug='{0}', HostCreationMode='{1}', ClientMode='{2}', GrpcRequireReadiness='{3}', KubernetesRequireRuntimeReadiness='{4}', RuntimeImage='{5}', ImagePullPolicy='{6}'",
+                "[RUNTIME READY BUILDER FINAL] ScenarioDebug='{0}', HostCreationMode='{1}', ClientMode='{2}', GrpcRequireReadiness='{3}', KubernetesRequireRuntimeReadiness='{4}', RuntimeImage='{5}', ImagePullPolicy='{6}', UseGateway='{7}', GatewayName='{8}', GatewayClassName='{9}', GatewayControllerName='{10}', GatewayListenerName='{11}', GatewayPort='{12}', SharedGatewayPortForward='{13}'",
                 settings.GetValueOrDefault("ScenarioDebug:Profile"),
                 settings.GetValueOrDefault("AiGrpcRuntimeScaleOut:HostCreationMode"),
                 settings.GetValueOrDefault("AiKubernetesRuntimeHost:ClientMode"),
                 settings.GetValueOrDefault("AiGrpcRuntimeScaleOut:RequireReadiness"),
                 settings.GetValueOrDefault("AiKubernetesRuntimeHost:RequireRuntimeReadiness"),
                 settings.GetValueOrDefault("AiKubernetesRuntimeHost:RuntimeImage"),
-                settings.GetValueOrDefault("AiKubernetesRuntimeHost:ImagePullPolicy"));
+                settings.GetValueOrDefault("AiKubernetesRuntimeHost:ImagePullPolicy"),
+                settings.GetValueOrDefault("AiKubernetesRuntimeHost:UseGatewayTransportEndpoint"),
+                settings.GetValueOrDefault("AiKubernetesRuntimeHost:GatewayName"),
+                settings.GetValueOrDefault("AiKubernetesRuntimeHost:GatewayClassName"),
+                settings.GetValueOrDefault("AiKubernetesRuntimeHost:GatewayControllerName"),
+                settings.GetValueOrDefault("AiKubernetesRuntimeHost:GatewayListenerName"),
+                settings.GetValueOrDefault("AiKubernetesRuntimeHost:GatewayPort"),
+                settings.GetValueOrDefault("AiKubernetesRuntimeHost:UsePortForwardTransportEndpoint"));
 
             return settings;
         }
@@ -88,12 +95,44 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             settings["AiKubernetesRuntimeHost:DeleteResourcesOnFailure"] = "true";
             settings["AiKubernetesRuntimeHost:StartupTimeout"] = "00:00:30";
 
+            /*
+             * Activate the shared Kubernetes Gateway path for the first functional
+             * scenario. UsePortForwardTransportEndpoint remains enabled because the
+             * control plane runs outside Minikube; it now targets the single Gateway
+             * Service rather than one port-forward per runtime pod.
+             */
+            settings["AiKubernetesRuntimeHost:UseGatewayTransportEndpoint"] = "true";
+            settings["AiKubernetesRuntimeHost:GatewayName"] =
+                KubernetesSdkScenarioConstants.GatewayName;
+            settings["AiKubernetesRuntimeHost:GatewayClassName"] =
+                KubernetesSdkScenarioConstants.GatewayClassName;
+            settings["AiKubernetesRuntimeHost:GatewayControllerName"] =
+                KubernetesSdkScenarioConstants.GatewayControllerName;
+            settings["AiKubernetesRuntimeHost:CreateGatewayClassWhenMissing"] = "true";
+            settings["AiKubernetesRuntimeHost:GatewayListenerName"] =
+                KubernetesSdkScenarioConstants.GatewayListenerName;
+            settings["AiKubernetesRuntimeHost:GatewayPort"] =
+                KubernetesSdkScenarioConstants.GatewayPort;
+            settings["AiKubernetesRuntimeHost:GatewayRouteHeaderName"] =
+                KubernetesSdkScenarioConstants.GatewayRouteHeaderName;
+            settings["AiKubernetesRuntimeHost:CreateGatewayWhenMissing"] = "true";
+            settings["AiKubernetesRuntimeHost:RequireGatewayProgrammed"] = "true";
+            settings["AiKubernetesRuntimeHost:GatewayReadinessTimeout"] =
+                KubernetesSdkScenarioConstants.GatewayReadinessTimeout;
+            settings["AiKubernetesRuntimeHost:GatewayReadinessPollInterval"] =
+                KubernetesSdkScenarioConstants.GatewayReadinessPollInterval;
+
             settings["AiKubernetesRuntimeHost:UsePortForwardTransportEndpoint"] = "true";
             settings["AiKubernetesRuntimeHost:PortForwardLocalPort"] = "0";
-            settings["AiKubernetesRuntimeHost:KubectlPath"] = "kubectl";
+            settings["AiKubernetesRuntimeHost:KubectlPath"] =
+                KubernetesSdkScenarioConstants.KubectlPath;
 
-
-
+            /*
+             * Runtime Services are ClusterIP in Gateway mode. NodePort publication is
+             * deliberately disabled so the shared Gateway remains the only external
+             * transport endpoint.
+             */
+            settings["AiKubernetesRuntimeHost:PublishNodePortTransportEndpoint"] = "false";
 
             settings["AiLocalRuntimeInstancePool:Enabled"] = "false";
 
@@ -164,8 +203,13 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             settings["AiKubernetesRuntimeHost:EnvironmentVariables:AiEngine__Snapshots__Mongo__CollectionName"] = "ai_execution_snapshots";
 
 
-            settings["AiKubernetesRuntimeHost:PublishNodePortTransportEndpoint"] = "true";
-            settings["AiKubernetesRuntimeHost:NodePortHost"] = "192.168.49.2";
+            /*
+             * Keep the host value available for legacy scenarios, but do not publish
+             * per-runtime NodePort endpoints while Gateway mode is active.
+             */
+            settings["AiKubernetesRuntimeHost:PublishNodePortTransportEndpoint"] = "false";
+            settings["AiKubernetesRuntimeHost:NodePortHost"] =
+                KubernetesSdkScenarioConstants.NodePortHost;
         }
     }
 }

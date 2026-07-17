@@ -1,4 +1,4 @@
-﻿using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strategy.Kubernetes.Client;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strategy.Kubernetes.Client;
 using System;
 using System.Collections.Generic;
 
@@ -137,6 +137,109 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
         /// Gets or sets a value indicating whether Kubernetes NodePort endpoints should be published as runtime transport endpoints.
         /// </summary>
         public bool PublishNodePortTransportEndpoint { get; set; } = true;
+
+        /// <summary>
+        /// Gets or sets a value indicating whether runtime transport endpoints should be exposed through
+        /// a shared Kubernetes Gateway instead of directly through each runtime service.
+        /// </summary>
+        /// <remarks>
+        /// The default value preserves the current per-runtime endpoint behavior.
+        /// </remarks>
+        public bool UseGatewayTransportEndpoint { get; set; }
+
+        /// <summary>
+        /// Gets or sets the name of the shared Kubernetes Gateway.
+        /// </summary>
+        public string GatewayName { get; set; } = "ai-runtime-gateway";
+
+        /// <summary>
+        /// Gets or sets the Kubernetes GatewayClass name used when the shared Gateway must be created.
+        /// </summary>
+        /// <remarks>
+        /// This value is required when <see cref="UseGatewayTransportEndpoint"/> is enabled.
+        /// The GatewayClass and its controller remain cluster-level prerequisites.
+        /// </remarks>
+        public string GatewayClassName { get; set; } = string.Empty;
+
+        /// <summary>
+        /// Gets or sets the Gateway API controller name responsible for the configured
+        /// <see cref="GatewayClassName"/>.
+        /// </summary>
+        /// <remarks>
+        /// Envoy Gateway uses
+        /// <c>gateway.envoyproxy.io/gatewayclass-controller</c> by default.
+        /// Existing GatewayClass resources must declare the same controller name.
+        /// </remarks>
+        public string GatewayControllerName { get; set; } =
+            "gateway.envoyproxy.io/gatewayclass-controller";
+
+        /// <summary>
+        /// Gets or sets a value indicating whether the configured GatewayClass should
+        /// be created dynamically when it is missing.
+        /// </summary>
+        /// <remarks>
+        /// The Gateway API CRDs and a matching controller deployment must already
+        /// exist in the cluster. This option only manages the GatewayClass resource.
+        /// </remarks>
+        public bool CreateGatewayClassWhenMissing { get; set; } = true;
+
+        /// <summary>
+        /// Gets or sets the listener name exposed by the shared Kubernetes Gateway.
+        /// </summary>
+        public string GatewayListenerName { get; set; } = "runtime";
+
+        /// <summary>
+        /// Gets or sets the listener port exposed by the shared Kubernetes Gateway.
+        /// </summary>
+        public int GatewayPort { get; set; } = 8080;
+
+        /// <summary>
+        /// Gets or sets the optional Kubernetes Service name backing the shared Gateway.
+        /// </summary>
+        /// <remarks>
+        /// Leave this value empty to discover the controller-managed Service dynamically.
+        /// </remarks>
+        public string? GatewayServiceName { get; set; }
+
+        /// <summary>
+        /// Gets or sets the optional namespace containing the Kubernetes Service
+        /// backing the shared Gateway.
+        /// </summary>
+        /// <remarks>
+        /// Leave this value empty to discover the controller-managed Service across
+        /// namespaces. Some Gateway controllers create their data-plane Service in
+        /// a controller-owned namespace rather than beside the Gateway resource.
+        /// </remarks>
+        public string? GatewayServiceNamespace { get; set; }
+
+        /// <summary>
+        /// Gets or sets the request header used by HTTPRoute and GRPCRoute resources
+        /// to select the target runtime instance.
+        /// </summary>
+        public string GatewayRouteHeaderName { get; set; } =
+            "x-ai-runtime-instance-id";
+
+        /// <summary>
+        /// Gets or sets a value indicating whether the shared Kubernetes Gateway should be created when missing.
+        /// </summary>
+        public bool CreateGatewayWhenMissing { get; set; } = true;
+
+        /// <summary>
+        /// Gets or sets a value indicating whether Gateway readiness requires the Programmed condition.
+        /// </summary>
+        public bool RequireGatewayProgrammed { get; set; } = true;
+
+        /// <summary>
+        /// Gets or sets the timeout used while waiting for the shared Kubernetes Gateway to become ready.
+        /// </summary>
+        public TimeSpan GatewayReadinessTimeout { get; set; } =
+            TimeSpan.FromSeconds(60);
+
+        /// <summary>
+        /// Gets or sets the polling interval used while waiting for Gateway and route readiness.
+        /// </summary>
+        public TimeSpan GatewayReadinessPollInterval { get; set; } =
+            TimeSpan.FromMilliseconds(500);
 
         /// <summary>
         /// Gets or sets a value indicating whether the Kubernetes SDK host manager should publish a local kubectl port-forward endpoint instead of the Kubernetes NodePort endpoint.

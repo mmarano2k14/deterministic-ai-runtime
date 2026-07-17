@@ -84,6 +84,86 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager
         }
 
         /// <summary>
+        /// Verifies that long runtime identifiers sharing the same prefix retain
+        /// distinct Kubernetes selector labels.
+        /// </summary>
+        [Fact]
+        public void Build_Should_Create_Unique_Selector_Labels_For_Long_Runtime_Instance_Ids()
+        {
+            const string sharedPrefix =
+                "http-process-host-real-runtime-crash-recovery-two-tenant-plus-safe-inventory-" +
+                "5f7bacfb96324d05bcadd4e2ebadd2df:";
+
+            var builder =
+                new AiKubernetesRuntimePodMetadataBuilder(
+                    new AiKubernetesRuntimeHostOptions
+                    {
+                        Namespace = "ai-runtime"
+                    });
+
+            var runtimeA =
+                builder.Build(
+                    CreateRequest(
+                        runtimeInstanceId: sharedPrefix + "tenant-real-crash-a-runtime-1",
+                        providerName: "grpc",
+                        transportName: "grpc"));
+
+            var runtimeB =
+                builder.Build(
+                    CreateRequest(
+                        runtimeInstanceId: sharedPrefix + "tenant-real-crash-b-runtime-1",
+                        providerName: "grpc",
+                        transportName: "grpc"));
+
+            var runtimeALabel =
+                runtimeA.Labels["multiplexed.ai/runtime-instance-id"];
+
+            var runtimeBLabel =
+                runtimeB.Labels["multiplexed.ai/runtime-instance-id"];
+
+            Assert.True(runtimeALabel.Length <= 63);
+            Assert.True(runtimeBLabel.Length <= 63);
+            Assert.NotEqual(runtimeALabel, runtimeBLabel);
+        }
+
+        /// <summary>
+        /// Verifies that a long runtime identity produces a stable selector label
+        /// across repeated metadata builds.
+        /// </summary>
+        [Fact]
+        public void Build_Should_Create_Stable_Selector_Label_For_Long_Runtime_Instance_Id()
+        {
+            const string runtimeInstanceId =
+                "http-process-host-real-runtime-crash-recovery-two-tenant-plus-safe-inventory-" +
+                "5f7bacfb96324d05bcadd4e2ebadd2df:tenant-real-crash-a-runtime-1";
+
+            var builder =
+                new AiKubernetesRuntimePodMetadataBuilder(
+                    new AiKubernetesRuntimeHostOptions
+                    {
+                        Namespace = "ai-runtime"
+                    });
+
+            var first =
+                builder.Build(
+                    CreateRequest(
+                        runtimeInstanceId,
+                        providerName: "grpc",
+                        transportName: "grpc"));
+
+            var second =
+                builder.Build(
+                    CreateRequest(
+                        runtimeInstanceId,
+                        providerName: "grpc",
+                        transportName: "grpc"));
+
+            Assert.Equal(
+                first.Labels["multiplexed.ai/runtime-instance-id"],
+                second.Labels["multiplexed.ai/runtime-instance-id"]);
+        }
+
+        /// <summary>
         /// Verifies that tenant context is preserved in Kubernetes metadata.
         /// </summary>
         [Fact]
