@@ -1,7 +1,6 @@
 ﻿using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Forensics;
-using Multiplexed.Abstractions.AI.ControlPlane.Signals;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager.ProcessControl;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Recovery;
@@ -10,6 +9,7 @@ using Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Scaling;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Store;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Queue;
+using Multiplexed.Abstractions.AI.ControlPlane.Signals;
 using Multiplexed.Abstractions.AI.Execution;
 using Multiplexed.Abstractions.AI.Observability.Ledger;
 using Multiplexed.AI.McpServer.Tests.Integration.Fixtures;
@@ -27,6 +27,7 @@ using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Scenarios;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.ProcessControl;
 using Multiplexed.AI.Stores;
+using System.Diagnostics;
 using System.Net.Http;
 using Xunit;
 using Xunit.Abstractions;
@@ -2197,6 +2198,186 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 }
             }
         }
+
+        /// <summary>
+        /// Executes multiple isolated multi-tenant process-host crash-recovery scenarios concurrently.
+        /// </summary>
+        /// <param name="parallelism">
+        /// The number of crash-recovery scenarios to execute concurrently.
+        /// </param>
+        /// <returns>
+        /// A task that completes when every concurrent scenario has completed.
+        /// </returns>
+        /// <exception cref="AggregateException">
+        /// Thrown when one or more concurrent crash-recovery scenarios fail.
+        /// </exception>
+        protected async Task ExecuteMultiTenantCrashRecoveryScenariosInParallelAsync(
+            int parallelism)
+        {
+            ArgumentOutOfRangeException.ThrowIfLessThan(
+                parallelism,
+                1);
+
+            var overallStopwatch = Stopwatch.StartNew();
+
+            output.WriteLine(
+                $"# PARALLEL CRASH-RECOVERY PROOF - STARTING {parallelism} SCENARIOS");
+
+            output.WriteLine(
+                $"[PARALLEL SUMMARY] Parallelism='{parallelism}', " +
+                $"ExpectedTenants='{parallelism * 3}', " +
+                $"ExpectedSubmittedRuns='{parallelism * 9}', " +
+                $"ExpectedImpactedTenants='{parallelism * 2}', " +
+                $"ExpectedSafeTenants='{parallelism}'.");
+
+            var scenarioTasks = Enumerable
+                .Range(
+                    1,
+                    parallelism)
+                .Select(
+                    scenarioNumber =>
+                    {
+                        var scenarioId = Guid.NewGuid()
+                            .ToString("N")[..8];
+
+                        return ExecuteScenarioWithDiagnosticsAsync(
+                            scenarioNumber,
+                            parallelism,
+                            scenarioId);
+                    })
+                .ToArray();
+
+            var results = await Task
+                .WhenAll(scenarioTasks)
+                .ConfigureAwait(false);
+
+            overallStopwatch.Stop();
+
+            output.WriteLine(string.Empty);
+            output.WriteLine(
+                "# PARALLEL CRASH-RECOVERY PROOF - RESULTS");
+
+            foreach (var result in results.OrderBy(
+                         result => result.ScenarioNumber))
+            {
+                output.WriteLine(
+                    $"[PARALLEL SCENARIO {result.ScenarioNumber}/{parallelism}] " +
+                    $"ScenarioId='{result.ScenarioId}', " +
+                    $"Outcome='{(result.Exception is null ? "PASSED" : "FAILED")}', " +
+                    $"Duration='{result.Duration}'.");
+
+                if (result.Exception is null)
+                {
+                    continue;
+                }
+
+                output.WriteLine(
+                    $"[PARALLEL SCENARIO {result.ScenarioNumber}/{parallelism} FAILURE] " +
+                    $"ScenarioId='{result.ScenarioId}', " +
+                    $"ExceptionType='{result.Exception.GetType().FullName}', " +
+                    $"Message='{result.Exception.Message}'.");
+
+                output.WriteLine(
+                    result.Exception.ToString());
+            }
+
+            var failures = results
+                .Where(result => result.Exception is not null)
+                .ToArray();
+
+            output.WriteLine(string.Empty);
+
+            output.WriteLine(
+                $"[PARALLEL SUMMARY] " +
+                $"Parallelism='{parallelism}', " +
+                $"Passed='{results.Length - failures.Length}', " +
+                $"Failed='{failures.Length}', " +
+                $"TotalDuration='{overallStopwatch.Elapsed}'.");
+
+            if (failures.Length > 0)
+            {
+                throw new AggregateException(
+                    $"{failures.Length} of {parallelism} parallel crash-recovery scenarios failed.",
+                    failures.Select(result => result.Exception!));
+            }
+        }
+
+        /// <summary>
+        /// Executes one isolated multi-tenant process-host crash-recovery scenario
+        /// and captures its diagnostic result without interrupting sibling scenarios.
+        /// </summary>
+        /// <param name="scenarioNumber">The one-based scenario number.</param>
+        /// <param name="parallelism">The total number of concurrent scenarios.</param>
+        /// <param name="scenarioId">The diagnostic scenario identifier.</param>
+        /// <returns>The captured scenario result.</returns>
+        private async Task<ParallelScenarioResult> ExecuteScenarioWithDiagnosticsAsync(
+            int scenarioNumber,
+            int parallelism,
+            string scenarioId)
+        {
+            var stopwatch = Stopwatch.StartNew();
+
+            output.WriteLine(string.Empty);
+
+            output.WriteLine(
+                $"# PARALLEL SCENARIO {scenarioNumber}/{parallelism} - START");
+
+            output.WriteLine(
+                $"[PARALLEL SCENARIO {scenarioNumber}/{parallelism}] " +
+                $"ScenarioId='{scenarioId}', " +
+                $"StartedAtUtc='{DateTimeOffset.UtcNow:O}'.");
+
+            try
+            {
+                await ProcessHost_Should_Recover_Two_Tenants_After_Real_Runtime_Process_Kills_Without_Impacting_Safe_Tenant_With_Strict_Dag_Resume_Replay_Ledger_And_Trace()
+                    .ConfigureAwait(false);
+
+                stopwatch.Stop();
+
+                output.WriteLine(
+                    $"[PARALLEL SCENARIO {scenarioNumber}/{parallelism}] " +
+                    $"ScenarioId='{scenarioId}', " +
+                    $"Outcome='PASSED', " +
+                    $"Duration='{stopwatch.Elapsed}'.");
+
+                return new ParallelScenarioResult(
+                    scenarioNumber,
+                    scenarioId,
+                    stopwatch.Elapsed,
+                    Exception: null);
+            }
+            catch (Exception exception)
+            {
+                stopwatch.Stop();
+
+                output.WriteLine(
+                    $"[PARALLEL SCENARIO {scenarioNumber}/{parallelism}] " +
+                    $"ScenarioId='{scenarioId}', " +
+                    $"Outcome='FAILED', " +
+                    $"Duration='{stopwatch.Elapsed}', " +
+                    $"ExceptionType='{exception.GetType().FullName}', " +
+                    $"Message='{exception.Message}'.");
+
+                return new ParallelScenarioResult(
+                    scenarioNumber,
+                    scenarioId,
+                    stopwatch.Elapsed,
+                    exception);
+            }
+        }
+
+        /// <summary>
+        /// Represents the captured outcome of one parallel crash-recovery scenario.
+        /// </summary>
+        /// <param name="ScenarioNumber">The one-based scenario number.</param>
+        /// <param name="ScenarioId">The diagnostic scenario identifier.</param>
+        /// <param name="Duration">The total scenario duration.</param>
+        /// <param name="Exception">The captured failure, when present.</param>
+        private sealed record ParallelScenarioResult(
+            int ScenarioNumber,
+            string ScenarioId,
+            TimeSpan Duration,
+            Exception? Exception);
 
         /// <summary>
         /// Resolves the runtime signal subscriber only when hybrid observation is enabled.

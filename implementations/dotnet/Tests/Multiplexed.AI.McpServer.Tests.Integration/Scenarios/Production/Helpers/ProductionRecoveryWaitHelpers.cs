@@ -303,146 +303,6 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
         }
 
         /// <summary>
-        /// Waits until the runtime run execution index exposes the seeded unfinished run.
-        /// </summary>
-        /// <param name="runtimeRunExecutionIndex">The runtime run execution index.</param>
-        /// <param name="runtimeInstanceId">The runtime instance identifier.</param>
-        /// <param name="localRunId">The local runtime run identifier.</param>
-        /// <param name="executionId">The durable execution identifier.</param>
-        /// <param name="timeout">The maximum wait duration.</param>
-        /// <returns>A task that completes when the unfinished run is visible.</returns>
-        public static async Task WaitForSeededUnfinishedRuntimeRunVisibleAsync(
-            IAiRuntimeRunExecutionIndex runtimeRunExecutionIndex,
-            string runtimeInstanceId,
-            string localRunId,
-            string executionId,
-            TimeSpan timeout)
-        {
-            ArgumentNullException.ThrowIfNull(runtimeRunExecutionIndex);
-            ArgumentException.ThrowIfNullOrWhiteSpace(runtimeInstanceId);
-            ArgumentException.ThrowIfNullOrWhiteSpace(localRunId);
-            ArgumentException.ThrowIfNullOrWhiteSpace(executionId);
-
-            var deadline =
-                DateTimeOffset.UtcNow.Add(timeout);
-
-            IReadOnlyList<AiRuntimeRunExecutionIndexEntry>? lastEntries = null;
-            AiRuntimeRunExecutionIndexEntry? lastMatchingEntry = null;
-
-            while (DateTimeOffset.UtcNow < deadline)
-            {
-                lastEntries =
-                    await runtimeRunExecutionIndex
-                        .ListUnfinishedByRuntimeInstanceAsync(runtimeInstanceId)
-                        .ConfigureAwait(false);
-
-                lastMatchingEntry =
-                    lastEntries.FirstOrDefault(
-                        entry =>
-                            string.Equals(entry.RunId, localRunId, StringComparison.Ordinal) &&
-                            string.Equals(entry.RuntimeInstanceId, runtimeInstanceId, StringComparison.Ordinal) &&
-                            string.Equals(entry.ExecutionId, executionId, StringComparison.Ordinal));
-
-                if (lastMatchingEntry is not null)
-                {
-                    return;
-                }
-
-                await Task
-                    .Delay(TimeSpan.FromMilliseconds(100))
-                    .ConfigureAwait(false);
-            }
-
-            Assert.Fail(
-                "Seeded runtime run execution index entry was not visible as unfinished before recovery. " +
-                $"RuntimeInstanceId='{runtimeInstanceId}', " +
-                $"LocalRunId='{localRunId}', " +
-                $"ExecutionId='{executionId}', " +
-                $"LastUnfinishedCount='{lastEntries?.Count}', " +
-                $"LastEntries='{FormatRuntimeRunExecutionIndexEntries(lastEntries)}'.");
-
-            throw new InvalidOperationException(
-                "Unreachable assertion path.");
-        }
-
-        /// <summary>
-        /// Waits until the runtime run execution index exposes any execution for the local runtime run.
-        /// </summary>
-        /// <param name="runExecutionIndex">The runtime run execution index.</param>
-        /// <param name="localRunId">The local runtime run identifier.</param>
-        /// <param name="timeout">The maximum wait duration.</param>
-        /// <returns>The runtime run execution index entry.</returns>
-        public static async Task<AiRuntimeRunExecutionIndexEntry> WaitForAnyRunExecutionIndexAsync(
-            IAiRuntimeRunExecutionIndex runExecutionIndex,
-            string localRunId,
-            TimeSpan timeout)
-        {
-            ArgumentNullException.ThrowIfNull(runExecutionIndex);
-            ArgumentException.ThrowIfNullOrWhiteSpace(localRunId);
-
-            var deadline =
-                DateTimeOffset.UtcNow.Add(timeout);
-
-            AiRuntimeRunExecutionIndexEntry? lastEntry = null;
-
-            while (DateTimeOffset.UtcNow < deadline)
-            {
-                lastEntry =
-                    await runExecutionIndex
-                        .GetAsync(localRunId)
-                        .ConfigureAwait(false);
-
-                if (lastEntry is not null &&
-                    !string.IsNullOrWhiteSpace(lastEntry.ExecutionId))
-                {
-                    return lastEntry;
-                }
-
-                await Task
-                    .Delay(TimeSpan.FromMilliseconds(100))
-                    .ConfigureAwait(false);
-            }
-
-            Assert.Fail(
-                $"Runtime run execution index entry was not found within '{timeout}'. " +
-                $"LocalRunId='{localRunId}', " +
-                $"LastEntryExecutionId='{lastEntry?.ExecutionId}', " +
-                $"LastEntryStatus='{lastEntry?.Status}'.");
-
-            throw new InvalidOperationException(
-                "Unreachable assertion path.");
-        }
-
-        /// <summary>
-        /// Formats runtime run execution index entries for test diagnostics.
-        /// </summary>
-        /// <param name="entries">The index entries.</param>
-        /// <returns>A compact diagnostic string.</returns>
-        private static string FormatRuntimeRunExecutionIndexEntries(
-            IReadOnlyList<AiRuntimeRunExecutionIndexEntry>? entries)
-        {
-            if (entries is null ||
-                entries.Count == 0)
-            {
-                return "<none>";
-            }
-
-            return string.Join(
-                " | ",
-                entries
-                    .Take(20)
-                    .Select(
-                        entry =>
-                            $"Runtime='{entry.RuntimeInstanceId}', " +
-                            $"Run='{entry.RunId}', " +
-                            $"Execution='{entry.ExecutionId}', " +
-                            $"Status='{entry.Status}', " +
-                            $"SharedRun='{ResolveIndexMetadata(entry.Metadata, "sharedRunId")}', " +
-                            $"RecoveryMode='{ResolveIndexMetadata(entry.Metadata, "recovery.mode")}', " +
-                            $"FailureReason='{entry.FailureReason}'"));
-        }
-
-        /// <summary>
         /// Resolves an index metadata value.
         /// </summary>
         /// <param name="metadata">The metadata dictionary.</param>
@@ -474,7 +334,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
             return string.Empty;
         }
 
-        
+
 
         /// <summary>
         /// Determines whether the shared run is already assigned away from the failed runtime.
@@ -1352,6 +1212,21 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
                         await sharedRunStore
                             .GetAsync(sharedRunId)
                             .ConfigureAwait(false);
+
+                    if (lastRun is not null &&
+                        !string.IsNullOrWhiteSpace(lastRun.AssignedRuntimeInstanceId) &&
+                        !string.IsNullOrWhiteSpace(lastRun.LocalRunId) &&
+                        !string.Equals(
+                            lastRun.AssignedRuntimeInstanceId,
+                            failedRuntimeInstanceId,
+                            StringComparison.Ordinal) &&
+                        !string.Equals(
+                            lastRun.LocalRunId,
+                            failedLocalRunId,
+                            StringComparison.Ordinal))
+                    {
+                        return lastRun;
+                    }
                 }
                 catch (StackExchange.Redis.RedisTimeoutException exception)
                 {
@@ -1433,6 +1308,14 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
                     exception;
 
                 redisTimeoutCount++;
+            }
+
+            if (IsRecoveredRunRedispatched(
+                    lastRun,
+                    failedRuntimeInstanceId,
+                    failedLocalRunId))
+            {
+                return lastRun!;
             }
 
             try
@@ -1856,6 +1739,21 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
                     lastRun = await sharedRunStore
                         .GetAsync(sharedRunId)
                         .ConfigureAwait(false);
+
+                    if (lastRun is not null &&
+                        !string.IsNullOrWhiteSpace(lastRun.AssignedRuntimeInstanceId) &&
+                        !string.IsNullOrWhiteSpace(lastRun.LocalRunId) &&
+                        !string.Equals(
+                            lastRun.AssignedRuntimeInstanceId,
+                            failedRuntimeInstanceId,
+                            StringComparison.Ordinal) &&
+                        !string.Equals(
+                            lastRun.LocalRunId,
+                            failedLocalRunId,
+                            StringComparison.Ordinal))
+                    {
+                        return lastRun;
+                    }
                 }
                 catch (StackExchange.Redis.RedisTimeoutException exception)
                 {
@@ -1902,6 +1800,14 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
             {
                 lastRedisTimeout = exception;
                 redisTimeoutCount++;
+            }
+
+            if (IsRecoveredRunRedispatched(
+                    lastRun,
+                    failedRuntimeInstanceId,
+                    failedLocalRunId))
+            {
+                return lastRun!;
             }
 
             try
@@ -1958,6 +1864,35 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
 
             throw new InvalidOperationException(
                 "Unreachable assertion path.");
+        }
+
+        /// <summary>
+        /// Determines whether a recovered shared run has been durably assigned to a
+        /// replacement runtime with a new local runtime run identifier.
+        /// </summary>
+        /// <param name="record">The shared run record.</param>
+        /// <param name="failedRuntimeInstanceId">The failed runtime instance identifier.</param>
+        /// <param name="failedLocalRunId">The failed local runtime run identifier.</param>
+        /// <returns>
+        /// <see langword="true"/> when durable redispatch has converged;
+        /// otherwise, <see langword="false"/>.
+        /// </returns>
+        private static bool IsRecoveredRunRedispatched(
+            AiSharedRunRecord? record,
+            string failedRuntimeInstanceId,
+            string failedLocalRunId)
+        {
+            return record is not null &&
+                !string.IsNullOrWhiteSpace(record.AssignedRuntimeInstanceId) &&
+                !string.IsNullOrWhiteSpace(record.LocalRunId) &&
+                !string.Equals(
+                    record.AssignedRuntimeInstanceId,
+                    failedRuntimeInstanceId,
+                    StringComparison.Ordinal) &&
+                !string.Equals(
+                    record.LocalRunId,
+                    failedLocalRunId,
+                    StringComparison.Ordinal);
         }
 
         /// <summary>

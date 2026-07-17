@@ -32,6 +32,13 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
     /// </remarks>
     public sealed class KubernetesAiRuntimeHostCreationStrategy : IAiRuntimeHostCreationStrategy, IAiRuntimeHostProcessControl, IDisposable
     {
+        /// <summary>
+        /// Serializes dynamic local port allocation and kubectl binding across all
+        /// Kubernetes host strategy instances in the current control-plane process.
+        /// </summary>
+        private static readonly SemaphoreSlim PortForwardStartupGate =
+            new(initialCount: 1, maxCount: 1);
+
         private readonly AiKubernetesRuntimeHostOptions options;
         private readonly AiKubernetesRuntimePodSpecBuilder podSpecBuilder;
         private readonly IAiKubernetesRuntimeHostClient client;
@@ -628,99 +635,165 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
             IReadOnlyDictionary<string, string> metadata,
             CancellationToken cancellationToken)
         {
+            ArgumentNullException.ThrowIfNull(request);
+            ArgumentNullException.ThrowIfNull(podSpec);
+            ArgumentNullException.ThrowIfNull(metadata);
+
             serviceName =
                 ResolveServiceName(
                     serviceName,
                     metadata) ?? string.Empty;
 
-            var localPort =
-                this.ResolvePortForwardLocalPort(request);
-
-            this.StopPortForward(request.RuntimeInstanceId);
-
-            var kubectlPath =
-                string.IsNullOrWhiteSpace(this.options.KubectlPath)
-                    ? "kubectl"
-                    : this.options.KubectlPath;
-
-            var processStartInfo =
-                new ProcessStartInfo
-                {
-                    FileName = kubectlPath,
-                    UseShellExecute = false,
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                    CreateNoWindow = true
-                };
-
-            processStartInfo.ArgumentList.Add("port-forward");
-            processStartInfo.ArgumentList.Add("-n");
-            processStartInfo.ArgumentList.Add(podSpec.Namespace);
-            processStartInfo.ArgumentList.Add($"pod/{podSpec.PodName}");
-            processStartInfo.ArgumentList.Add($"{localPort}:{podSpec.ContainerPort}");
-
-            var process =
-                new DiagnosticsProcess
-                {
-                    StartInfo = processStartInfo,
-                    EnableRaisingEvents = true
-                };
-
-            this.logger.LogInformation(
-                "KUBERNETES PORT-FORWARD START BEGIN RuntimeInstanceId={RuntimeInstanceId} ServiceName={ServiceName} Namespace={Namespace} LocalPort={LocalPort} RemotePort={RemotePort} KubectlPath={KubectlPath}",
-                request.RuntimeInstanceId,
-                serviceName,
-                podSpec.Namespace,
-                localPort,
-                podSpec.ContainerPort,
-                kubectlPath);
-
-            if (!process.Start())
-            {
-                process.Dispose();
-                throw new InvalidOperationException("kubectl port-forward process did not start.");
-            }
-
-            if (!this.portForwardProcesses.TryAdd(request.RuntimeInstanceId, process))
-            {
-                KillProcess(process);
-                process.Dispose();
-                throw new InvalidOperationException($"A port-forward process is already registered for runtime instance '{request.RuntimeInstanceId}'.");
-            }
+            await PortForwardStartupGate
+                .WaitAsync(cancellationToken)
+                .ConfigureAwait(false);
 
             try
             {
-                await WaitForLocalPortOpenAsync(
-                        localPort,
-                        this.options.PortForwardStartupTimeout,
-                        cancellationToken)
-                    .ConfigureAwait(false);
-            }
-            catch
-            {
+                /*
+                 * Keep local port selection and the actual kubectl bind in one
+                 * process-wide critical section. GetFreeTcpPort releases its
+                 * temporary listener before kubectl binds, so independent test
+                 * hosts could otherwise select the same port under parallel scale-out.
+                 */
                 this.StopPortForward(request.RuntimeInstanceId);
-                throw;
+
+                var localPort =
+                    this.ResolvePortForwardLocalPort(request);
+
+                var kubectlPath =
+                    string.IsNullOrWhiteSpace(this.options.KubectlPath)
+                        ? "kubectl"
+                        : this.options.KubectlPath;
+
+                var processStartInfo =
+                    new ProcessStartInfo
+                    {
+                        FileName = kubectlPath,
+                        UseShellExecute = false,
+                        RedirectStandardOutput = true,
+                        RedirectStandardError = true,
+                        CreateNoWindow = true
+                    };
+
+                processStartInfo.ArgumentList.Add("port-forward");
+                processStartInfo.ArgumentList.Add("-n");
+                processStartInfo.ArgumentList.Add(podSpec.Namespace);
+                processStartInfo.ArgumentList.Add($"pod/{podSpec.PodName}");
+                processStartInfo.ArgumentList.Add($"{localPort}:{podSpec.ContainerPort}");
+
+                var process =
+                    new DiagnosticsProcess
+                    {
+                        StartInfo = processStartInfo,
+                        EnableRaisingEvents = true
+                    };
+
+                process.OutputDataReceived += (_, eventArgs) =>
+                {
+                    if (string.IsNullOrWhiteSpace(eventArgs.Data))
+                    {
+                        return;
+                    }
+
+                    this.logger.LogDebug(
+                        "KUBERNETES PORT-FORWARD STDOUT RuntimeInstanceId={RuntimeInstanceId} LocalPort={LocalPort} Message={Message}",
+                        request.RuntimeInstanceId,
+                        localPort,
+                        eventArgs.Data);
+                };
+
+                process.ErrorDataReceived += (_, eventArgs) =>
+                {
+                    if (string.IsNullOrWhiteSpace(eventArgs.Data))
+                    {
+                        return;
+                    }
+
+                    this.logger.LogDebug(
+                        "KUBERNETES PORT-FORWARD STDERR RuntimeInstanceId={RuntimeInstanceId} LocalPort={LocalPort} Message={Message}",
+                        request.RuntimeInstanceId,
+                        localPort,
+                        eventArgs.Data);
+                };
+
+                this.logger.LogInformation(
+                    "KUBERNETES PORT-FORWARD START BEGIN RuntimeInstanceId={RuntimeInstanceId} ServiceName={ServiceName} PodName={PodName} Namespace={Namespace} LocalPort={LocalPort} RemotePort={RemotePort} KubectlPath={KubectlPath}",
+                    request.RuntimeInstanceId,
+                    serviceName,
+                    podSpec.PodName,
+                    podSpec.Namespace,
+                    localPort,
+                    podSpec.ContainerPort,
+                    kubectlPath);
+
+                if (!process.Start())
+                {
+                    process.Dispose();
+                    throw new InvalidOperationException(
+                        "kubectl port-forward process did not start.");
+                }
+
+                if (!this.portForwardProcesses.TryAdd(
+                        request.RuntimeInstanceId,
+                        process))
+                {
+                    KillProcess(process);
+                    process.Dispose();
+
+                    throw new InvalidOperationException(
+                        $"A port-forward process is already registered for runtime instance '{request.RuntimeInstanceId}'.");
+                }
+
+                try
+                {
+                    /*
+                     * Redirected stdout and stderr must be consumed continuously.
+                     * kubectl writes one line for startup and for forwarded
+                     * connections; an undrained pipe can fill and block the tunnel.
+                     */
+                    process.BeginOutputReadLine();
+                    process.BeginErrorReadLine();
+
+                    await WaitForLocalPortOpenAsync(
+                            process,
+                            localPort,
+                            this.options.PortForwardStartupTimeout,
+                            cancellationToken)
+                        .ConfigureAwait(false);
+                }
+                catch
+                {
+                    this.StopPortForward(request.RuntimeInstanceId);
+                    throw;
+                }
+
+                var endpoint =
+                    $"http://127.0.0.1:{localPort}";
+
+                this.logger.LogInformation(
+                    "KUBERNETES PORT-FORWARD STARTED RuntimeInstanceId={RuntimeInstanceId} ServiceName={ServiceName} PodName={PodName} Namespace={Namespace} LocalPort={LocalPort} RemotePort={RemotePort} ProcessId={ProcessId} Endpoint={Endpoint}",
+                    request.RuntimeInstanceId,
+                    serviceName,
+                    podSpec.PodName,
+                    podSpec.Namespace,
+                    localPort,
+                    podSpec.ContainerPort,
+                    process.Id,
+                    endpoint);
+
+                Console.WriteLine(
+                    $"[KUBERNETES PORT-FORWARD STARTED] RuntimeInstanceId='{request.RuntimeInstanceId}', ServiceName='{serviceName}', PodName='{podSpec.PodName}', Namespace='{podSpec.Namespace}', LocalPort='{localPort}', RemotePort='{podSpec.ContainerPort}', ProcessId='{process.Id}', Endpoint='{endpoint}'.");
+
+                return new KubernetesPortForwardEndpoint(
+                    serviceName,
+                    localPort,
+                    endpoint);
             }
-
-            var endpoint =
-                $"http://127.0.0.1:{localPort}";
-
-            this.logger.LogInformation(
-                "KUBERNETES PORT-FORWARD STARTED RuntimeInstanceId={RuntimeInstanceId} ServiceName={ServiceName} Namespace={Namespace} LocalPort={LocalPort} RemotePort={RemotePort} Endpoint={Endpoint}",
-                request.RuntimeInstanceId,
-                serviceName,
-                podSpec.Namespace,
-                localPort,
-                podSpec.ContainerPort,
-                endpoint);
-
-            Console.WriteLine(
-                $"[KUBERNETES PORT-FORWARD STARTED] RuntimeInstanceId='{request.RuntimeInstanceId}', ServiceName='{serviceName}', Namespace='{podSpec.Namespace}', LocalPort='{localPort}', RemotePort='{podSpec.ContainerPort}', Endpoint='{endpoint}'.");
-
-            return new KubernetesPortForwardEndpoint(
-                serviceName,
-                localPort,
-                endpoint);
+            finally
+            {
+                PortForwardStartupGate.Release();
+            }
         }
 
         /// <summary>
@@ -765,17 +838,37 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
         }
 
         /// <summary>
-        /// Waits until a local TCP port is reachable.
+        /// Waits until the local kubectl port-forward process accepts TCP connections.
         /// </summary>
+        /// <param name="process">The kubectl port-forward process.</param>
         /// <param name="localPort">The local TCP port.</param>
         /// <param name="timeout">The timeout.</param>
         /// <param name="cancellationToken">The cancellation token.</param>
         /// <returns>The asynchronous operation.</returns>
         private static async Task WaitForLocalPortOpenAsync(
+            DiagnosticsProcess process,
             int localPort,
             TimeSpan timeout,
             CancellationToken cancellationToken)
         {
+            ArgumentNullException.ThrowIfNull(process);
+
+            if (localPort <= 0)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(localPort),
+                    localPort,
+                    "The local port-forward port must be greater than zero.");
+            }
+
+            if (timeout <= TimeSpan.Zero)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(timeout),
+                    timeout,
+                    "The port-forward startup timeout must be greater than zero.");
+            }
+
             var deadline =
                 DateTimeOffset.UtcNow.Add(timeout);
 
@@ -783,25 +876,49 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
+                if (process.HasExited)
+                {
+                    throw new InvalidOperationException(
+                        $"kubectl port-forward exited before its local endpoint became reachable. " +
+                        $"ProcessId='{process.Id}', ExitCode='{process.ExitCode}', " +
+                        $"LocalEndpoint='127.0.0.1:{localPort}'.");
+                }
+
                 try
                 {
-                    using var client = new TcpClient();
+                    using var client =
+                        new TcpClient();
 
-                    var connectTask =
-                        client.ConnectAsync(
+                    using var probeCancellationTokenSource =
+                        CancellationTokenSource.CreateLinkedTokenSource(
+                            cancellationToken);
+
+                    probeCancellationTokenSource.CancelAfter(
+                        TimeSpan.FromMilliseconds(500));
+
+                    await client
+                        .ConnectAsync(
                             IPAddress.Loopback,
-                            localPort);
+                            localPort,
+                            probeCancellationTokenSource.Token)
+                        .ConfigureAwait(false);
 
-                    var completedTask =
-                        await Task.WhenAny(
-                                connectTask,
-                                Task.Delay(TimeSpan.FromMilliseconds(200), cancellationToken))
-                            .ConfigureAwait(false);
-
-                    if (completedTask == connectTask && client.Connected)
+                    if (client.Connected)
                     {
+                        if (process.HasExited)
+                        {
+                            throw new InvalidOperationException(
+                                $"The local port became reachable, but kubectl port-forward exited. " +
+                                $"ProcessId='{process.Id}', ExitCode='{process.ExitCode}', " +
+                                $"LocalEndpoint='127.0.0.1:{localPort}'.");
+                        }
+
                         return;
                     }
+                }
+                catch (OperationCanceledException)
+                    when (!cancellationToken.IsCancellationRequested)
+                {
                 }
                 catch (SocketException)
                 {
@@ -810,13 +927,25 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
                 {
                 }
 
-                await Task.Delay(
+                await Task
+                    .Delay(
                         TimeSpan.FromMilliseconds(100),
                         cancellationToken)
                     .ConfigureAwait(false);
             }
 
-            throw new TimeoutException($"Local kubectl port-forward endpoint did not become reachable on 127.0.0.1:{localPort} within '{timeout}'.");
+            if (process.HasExited)
+            {
+                throw new InvalidOperationException(
+                    $"kubectl port-forward exited before startup completed. " +
+                    $"ProcessId='{process.Id}', ExitCode='{process.ExitCode}', " +
+                    $"LocalEndpoint='127.0.0.1:{localPort}'.");
+            }
+
+            throw new TimeoutException(
+                $"Local kubectl port-forward endpoint did not become reachable on " +
+                $"'127.0.0.1:{localPort}' within '{timeout}'. " +
+                $"ProcessId='{process.Id}', HasExited='{process.HasExited}'.");
         }
 
         /// <summary>

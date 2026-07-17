@@ -684,8 +684,15 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
                 Console.WriteLine(
                     "[REDIS CONTROL PLANE] Redis connection string detected. Registering IConnectionMultiplexer if missing.");
 
+                var redisConfiguration =
+                    ConfigurationOptions.Parse(
+                        redisConnectionString);
+
+                redisConfiguration.SyncTimeout = 10_000;
+                redisConfiguration.AsyncTimeout = 10_000;
+
                 services.TryAddSingleton<IConnectionMultiplexer>(
-                    _ => ConnectionMultiplexer.Connect(redisConnectionString));
+                    _ => ConnectionMultiplexer.Connect(redisConfiguration));
             }
             else
             {

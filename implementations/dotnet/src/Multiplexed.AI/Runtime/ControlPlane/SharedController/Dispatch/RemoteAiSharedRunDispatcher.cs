@@ -648,6 +648,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Dispatch
                     cancellationToken)
                 .ConfigureAwait(false);
 
+
             await this.forensicsRecorder
                 .RecordEventAsync(
                     new AiRuntimeRecoveryForensicsEvent

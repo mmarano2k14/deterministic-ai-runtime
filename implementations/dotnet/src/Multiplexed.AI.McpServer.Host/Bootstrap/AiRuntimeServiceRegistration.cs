@@ -59,8 +59,15 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
                 configuration.GetConnectionString("Redis")
                 ?? "localhost:6379";
 
+            var redisConfiguration =
+                ConfigurationOptions.Parse(
+                    redisConnectionString);
+
+            redisConfiguration.SyncTimeout = 10_000;
+            redisConfiguration.AsyncTimeout = 10_000;
+
             services.AddSingleton<IConnectionMultiplexer>(_ =>
-                ConnectionMultiplexer.Connect(redisConnectionString));
+                ConnectionMultiplexer.Connect(redisConfiguration));
 
             services.AddAiRuntimeSignals();
 

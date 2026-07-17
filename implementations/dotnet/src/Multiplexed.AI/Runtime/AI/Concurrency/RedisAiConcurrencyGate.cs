@@ -437,12 +437,11 @@ namespace Multiplexed.AI.Runtime.AI.Concurrency
         /// <para>
         /// Only scopes with a positive configured limit are included.
         /// </para>
-        ///
         /// <para>
-        /// Optional scopes such as provider, model, and operation are included only when the
-        /// corresponding context values are available.
+        /// Provider, model, and operation limits are scoped by execution identifier.
+        /// This ensures that concurrency configured for one DAG run does not throttle
+        /// unrelated executions using the same provider, model, or operation.
         /// </para>
-        ///
         /// <para>
         /// The actual single-step ownership guarantee still belongs to the DAG claim operation.
         /// This gate only controls distributed capacity, not step ownership.
@@ -452,7 +451,12 @@ namespace Multiplexed.AI.Runtime.AI.Concurrency
             AiConcurrencyContext context,
             AiConcurrencyDefinition definition)
         {
-            var scopes = new List<ConcurrencyScope>();
+            ArgumentNullException.ThrowIfNull(context);
+            ArgumentNullException.ThrowIfNull(definition);
+            ArgumentException.ThrowIfNullOrWhiteSpace(context.ExecutionId);
+
+            var scopes =
+                new List<ConcurrencyScope>();
 
             AddScope(
                 scopes,
@@ -471,21 +475,24 @@ namespace Multiplexed.AI.Runtime.AI.Concurrency
 
             AddScope(
                 scopes,
-                $"ai:concurrency:scope:provider:{context.Provider}",
+                $"ai:concurrency:scope:provider:{context.ExecutionId}:{context.Provider}",
                 definition.MaxProviderConcurrency,
+                context.ExecutionId,
                 context.Provider);
 
             AddScope(
                 scopes,
-                $"ai:concurrency:scope:model:{context.Provider}:{context.Model}",
+                $"ai:concurrency:scope:model:{context.ExecutionId}:{context.Provider}:{context.Model}",
                 definition.MaxModelConcurrency,
+                context.ExecutionId,
                 context.Provider,
                 context.Model);
 
             AddScope(
                 scopes,
-                $"ai:concurrency:scope:operation:{context.Operation}",
+                $"ai:concurrency:scope:operation:{context.ExecutionId}:{context.Operation}",
                 definition.MaxOperationConcurrency,
+                context.ExecutionId,
                 context.Operation);
 
             AddScope(

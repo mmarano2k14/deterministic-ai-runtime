@@ -141,7 +141,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
         /// <param name="tenant">The tenant scenario definition.</param>
         /// <param name="pipelineName">The pipeline name.</param>
         /// <param name="timeout">The maximum wait duration.</param>
-        /// <returns>A task that completes when a fulfilled tenant scale-out request is observed.</returns>
+        /// <returns>
+        /// A task that completes when a fulfilled tenant scale-out request is observed.
+        /// </returns>
         public static async Task WaitForAnyTenantScaleOutRequestFulfilledAsync(
             IAiRuntimeScaleOutRequestStore store,
             string controlPlaneId,
@@ -154,8 +156,19 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
             ArgumentNullException.ThrowIfNull(tenant);
             ArgumentException.ThrowIfNullOrWhiteSpace(pipelineName);
 
+            if (timeout <= TimeSpan.Zero)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(timeout),
+                    timeout,
+                    "The scale-out fulfillment timeout must be greater than zero.");
+            }
+
+            var startedAtUtc =
+                DateTimeOffset.UtcNow;
+
             var deadline =
-                DateTimeOffset.UtcNow.Add(timeout);
+                startedAtUtc.Add(timeout);
 
             IReadOnlyCollection<AiRuntimeScaleOutRequestRecord> lastRequests =
                 Array.Empty<AiRuntimeScaleOutRequestRecord>();
@@ -163,33 +176,95 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
             while (DateTimeOffset.UtcNow < deadline)
             {
                 lastRequests =
-                    await store
-                        .ListAsync(
-                            new AiRuntimeScaleOutRequestQuery
-                            {
-                                ControlPlaneId = controlPlaneId,
-                                TenantId = tenant.TenantId,
-                                PipelineKey = pipelineName,
-                                MaxResults = 100
-                            })
+                    await ListTenantScaleOutRequestsAsync(
+                            store,
+                            controlPlaneId,
+                            tenant.TenantId,
+                            pipelineName)
                         .ConfigureAwait(false);
 
-                if (lastRequests.Any(request =>
-                        request.Status == AiRuntimeScaleOutRequestStatus.Fulfilled &&
-                        !string.IsNullOrWhiteSpace(request.FulfilledRuntimeInstanceId)))
+                if (HasFulfilledScaleOutRequest(lastRequests))
                 {
                     return;
                 }
 
+                var remaining =
+                    deadline - DateTimeOffset.UtcNow;
+
+                if (remaining <= TimeSpan.Zero)
+                {
+                    break;
+                }
+
                 await Task
-                    .Delay(TimeSpan.FromMilliseconds(100))
+                    .Delay(
+                        remaining < TimeSpan.FromMilliseconds(100)
+                            ? remaining
+                            : TimeSpan.FromMilliseconds(100))
                     .ConfigureAwait(false);
             }
 
+            /*
+             * Perform one final durable read after the nominal deadline.
+             *
+             * Kubernetes may complete pod readiness and persist fulfillment exactly at
+             * the timeout boundary. The durable store remains authoritative, so valid
+             * convergence observed by this final read must be accepted.
+             */
+            lastRequests =
+                await ListTenantScaleOutRequestsAsync(
+                        store,
+                        controlPlaneId,
+                        tenant.TenantId,
+                        pipelineName)
+                    .ConfigureAwait(false);
+
+            if (HasFulfilledScaleOutRequest(lastRequests))
+            {
+                return;
+            }
+
+            var completedAtUtc =
+                DateTimeOffset.UtcNow;
+
+            var statusBreakdown =
+                lastRequests.Count == 0
+                    ? "(none)"
+                    : string.Join(
+                        ",",
+                        lastRequests
+                            .GroupBy(request => request.Status)
+                            .OrderBy(group => group.Key.ToString(), StringComparer.Ordinal)
+                            .Select(group => $"{group.Key}:{group.Count()}"));
+
+            var requestDiagnostics =
+                lastRequests.Count == 0
+                    ? "(no scale-out requests observed)"
+                    : string.Join(
+                        Environment.NewLine,
+                        lastRequests
+                            .OrderBy(request => request.CreatedAtUtc)
+                            .ThenBy(request => request.RequestId, StringComparer.Ordinal)
+                            .Select(
+                                (request, index) =>
+                                    FormatScaleOutRequestDiagnostic(
+                                        request,
+                                        index + 1,
+                                        completedAtUtc)));
+
             Assert.Fail(
                 $"No fulfilled scale-out request was observed within '{timeout}'. " +
-                $"ControlPlaneId='{controlPlaneId}', TenantId='{tenant.TenantId}', PipelineKey='{pipelineName}', " +
-                $"ObservedRequests='{lastRequests.Count}'.");
+                $"ControlPlaneId='{controlPlaneId}', " +
+                $"TenantId='{tenant.TenantId}', " +
+                $"TenantGroupId='{tenant.TenantGroupId}', " +
+                $"PipelineKey='{pipelineName}', " +
+                $"StartedAtUtc='{startedAtUtc:O}', " +
+                $"CompletedAtUtc='{completedAtUtc:O}', " +
+                $"Elapsed='{completedAtUtc - startedAtUtc}', " +
+                $"ObservedRequests='{lastRequests.Count}', " +
+                $"StatusBreakdown='{statusBreakdown}'." +
+                Environment.NewLine +
+                requestDiagnostics);
         }
 
         /// <summary>
@@ -306,6 +381,123 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
                     sharedRunId,
                     dispatchTimeout)
                 .ConfigureAwait(false);
+        }
+
+        /// <summary>
+        /// Lists scale-out requests belonging to one tenant pipeline within one logical
+        /// control plane.
+        /// </summary>
+        /// <param name="store">The runtime scale-out request store.</param>
+        /// <param name="controlPlaneId">The logical control-plane identifier.</param>
+        /// <param name="tenantId">The tenant identifier.</param>
+        /// <param name="pipelineName">The pipeline name.</param>
+        /// <returns>The matching durable scale-out request records.</returns>
+        private static Task<IReadOnlyCollection<AiRuntimeScaleOutRequestRecord>>
+            ListTenantScaleOutRequestsAsync(
+                IAiRuntimeScaleOutRequestStore store,
+                string controlPlaneId,
+                string tenantId,
+                string pipelineName)
+        {
+            ArgumentNullException.ThrowIfNull(store);
+            ArgumentException.ThrowIfNullOrWhiteSpace(controlPlaneId);
+            ArgumentException.ThrowIfNullOrWhiteSpace(tenantId);
+            ArgumentException.ThrowIfNullOrWhiteSpace(pipelineName);
+
+            return store.ListAsync(
+                new AiRuntimeScaleOutRequestQuery
+                {
+                    ControlPlaneId = controlPlaneId,
+                    TenantId = tenantId,
+                    PipelineKey = pipelineName,
+                    MaxResults = 100
+                });
+        }
+
+        /// <summary>
+        /// Determines whether the observed durable scale-out requests contain a
+        /// fulfilled request associated with a concrete runtime instance.
+        /// </summary>
+        /// <param name="requests">The observed scale-out requests.</param>
+        /// <returns>
+        /// <see langword="true"/> when a fulfilled runtime instance is present;
+        /// otherwise, <see langword="false"/>.
+        /// </returns>
+        private static bool HasFulfilledScaleOutRequest(
+            IReadOnlyCollection<AiRuntimeScaleOutRequestRecord> requests)
+        {
+            ArgumentNullException.ThrowIfNull(requests);
+
+            return requests.Any(request =>
+                request.Status == AiRuntimeScaleOutRequestStatus.Fulfilled &&
+                !string.IsNullOrWhiteSpace(request.FulfilledRuntimeInstanceId));
+        }
+
+        /// <summary>
+        /// Formats one durable scale-out request for timeout diagnostics.
+        /// </summary>
+        /// <param name="request">The scale-out request.</param>
+        /// <param name="position">The one-based diagnostic position.</param>
+        /// <param name="observedAtUtc">The timestamp of the diagnostic snapshot.</param>
+        /// <returns>A detailed single-line diagnostic description.</returns>
+        private static string FormatScaleOutRequestDiagnostic(
+            AiRuntimeScaleOutRequestRecord request,
+            int position,
+            DateTimeOffset observedAtUtc)
+        {
+            ArgumentNullException.ThrowIfNull(request);
+
+            var age =
+                observedAtUtc >= request.CreatedAtUtc
+                    ? observedAtUtc - request.CreatedAtUtc
+                    : TimeSpan.Zero;
+
+            var metadata =
+                request.Metadata.Count == 0
+                    ? "(none)"
+                    : string.Join(
+                        ",",
+                        request.Metadata
+                            .OrderBy(pair => pair.Key, StringComparer.OrdinalIgnoreCase)
+                            .Select(pair => $"{pair.Key}={pair.Value}"));
+
+            return
+                $"{position:00}. " +
+                $"RequestId='{request.RequestId}', " +
+                $"Status='{request.Status}', " +
+                $"ProviderHint='{request.ProviderHint ?? string.Empty}', " +
+                $"SharedRunId='{request.SharedRunId}', " +
+                $"ControlPlaneId='{request.ControlPlaneId}', " +
+                $"TenantId='{request.TenantId ?? string.Empty}', " +
+                $"TenantGroupId='{request.TenantGroupId ?? string.Empty}', " +
+                $"PipelineKey='{request.PipelineKey ?? string.Empty}', " +
+                $"IsolationMode='{request.IsolationMode}', " +
+                $"PreferDedicatedCapacity='{request.PreferDedicatedCapacity}', " +
+                $"AllowSharedFallback='{request.AllowSharedFallback}', " +
+                $"VisibleInstanceCount='{request.VisibleInstanceCount}', " +
+                $"AvailableInstanceCount='{request.AvailableInstanceCount}', " +
+                $"CurrentInstanceCount='{request.CurrentInstanceCount}', " +
+                $"MaxInstanceCount='{request.MaxInstanceCount?.ToString() ?? string.Empty}', " +
+                $"RequestedTargetInstanceCount='{request.RequestedTargetInstanceCount}', " +
+                $"RuntimeInstanceIdPrefix='{request.RuntimeInstanceIdPrefix ?? string.Empty}', " +
+                $"FulfilledRuntimeInstanceId='{request.FulfilledRuntimeInstanceId ?? string.Empty}', " +
+                $"Reason='{request.Reason}', " +
+                $"RejectionReason='{request.RejectionReason ?? string.Empty}', " +
+                $"RequestedBy='{request.RequestedBy ?? string.Empty}', " +
+                $"Source='{request.Source ?? string.Empty}', " +
+                $"ObservedBy='{request.ObservedBy ?? string.Empty}', " +
+                $"FulfilledBy='{request.FulfilledBy ?? string.Empty}', " +
+                $"RejectedBy='{request.RejectedBy ?? string.Empty}', " +
+                $"CreatedAtUtc='{request.CreatedAtUtc:O}', " +
+                $"Age='{age}', " +
+                $"ObservedAtUtc='{request.ObservedAtUtc?.ToString("O") ?? string.Empty}', " +
+                $"FulfilledAtUtc='{request.FulfilledAtUtc?.ToString("O") ?? string.Empty}', " +
+                $"RejectedAtUtc='{request.RejectedAtUtc?.ToString("O") ?? string.Empty}', " +
+                $"ExpiredAtUtc='{request.ExpiredAtUtc?.ToString("O") ?? string.Empty}', " +
+                $"CancelledAtUtc='{request.CancelledAtUtc?.ToString("O") ?? string.Empty}', " +
+                $"ExpiresAtUtc='{request.ExpiresAtUtc?.ToString("O") ?? string.Empty}', " +
+                $"CorrelationId='{request.CorrelationId ?? string.Empty}', " +
+                $"Metadata='{metadata}'.";
         }
 
         /// <summary>

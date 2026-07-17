@@ -1044,13 +1044,35 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Readiness
             string? transportName,
             Uri endpointUri)
         {
-            if (string.Equals(transportName, HttpTransportName, StringComparison.OrdinalIgnoreCase))
+            ArgumentNullException.ThrowIfNull(endpointUri);
+
+            /*
+             * An explicit transport name is authoritative.
+             *
+             * gRPC endpoints legitimately use http:// and https:// because gRPC
+             * runs over HTTP/2. They must not be classified as the HTTP command
+             * transport solely from the URI scheme.
+             */
+            if (!string.IsNullOrWhiteSpace(transportName))
             {
-                return true;
+                return string.Equals(
+                    transportName,
+                    HttpTransportName,
+                    StringComparison.OrdinalIgnoreCase);
             }
 
-            return string.Equals(endpointUri.Scheme, Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase) ||
-                   string.Equals(endpointUri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase);
+            /*
+             * Scheme inference is only a fallback when no transport name was supplied.
+             */
+            return
+                string.Equals(
+                    endpointUri.Scheme,
+                    Uri.UriSchemeHttp,
+                    StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(
+                    endpointUri.Scheme,
+                    Uri.UriSchemeHttps,
+                    StringComparison.OrdinalIgnoreCase);
         }
 
         /// <summary>
