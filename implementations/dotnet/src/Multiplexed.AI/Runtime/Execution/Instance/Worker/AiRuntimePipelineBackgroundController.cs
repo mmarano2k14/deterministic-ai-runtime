@@ -1,4 +1,4 @@
-﻿using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.ControlPlane.ExecutionAssistance;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Forensics;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
@@ -471,35 +471,48 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
             _logger.Engine.LogInformation(
                 $"[AI PIPELINE CONTROLLER] Run queued. RunId='{runId}', Pipeline='{request.PipelineName}', ResumeExecutionId='{resumeExecutionId ?? string.Empty}', RecoveryOwnerId='{recoveryResume?.RecoveryOwnerId ?? string.Empty}'.");
 
-            await RecordRunLedgerAsync(
-                    runId,
-                    request.PipelineName,
-                    AiDecisionLedgerEvents.Run.Queued,
-                    AiDecisionLedgerOutcome.Persisted,
-                    reason: recoveryResume is null
-                        ? "Pipeline run queued."
-                        : "Pipeline run queued for existing execution recovery resume.",
-                    metadata: new Dictionary<string, string>
-                    {
-                        ["run.id"] =
-                            runId,
+            /*
+             * The Channel write above is the local runtime acceptance boundary.
+             * From this point onward, transport cancellation or an auxiliary ledger
+             * failure must not convert an accepted run into a failed dispatch result.
+             */
+            try
+            {
+                await RecordRunLedgerAsync(
+                        runId,
+                        request.PipelineName,
+                        AiDecisionLedgerEvents.Run.Queued,
+                        AiDecisionLedgerOutcome.Persisted,
+                        reason: recoveryResume is null
+                            ? "Pipeline run queued."
+                            : "Pipeline run queued for existing execution recovery resume.",
+                        metadata: new Dictionary<string, string>
+                        {
+                            ["run.id"] =
+                                runId,
 
-                        ["pipeline.name"] =
-                            request.PipelineName,
+                            ["pipeline.name"] =
+                                request.PipelineName,
 
-                        ["recovery.resume"] =
-                            (recoveryResume is not null).ToString(),
+                            ["recovery.resume"] =
+                                (recoveryResume is not null).ToString(),
 
-                        ["recovery.execution.id"] =
-                            recoveryResume?.ExecutionId ??
-                            string.Empty,
+                            ["recovery.execution.id"] =
+                                recoveryResume?.ExecutionId ??
+                                string.Empty,
 
-                        ["recovery.owner.id"] =
-                            recoveryResume?.RecoveryOwnerId ??
-                            string.Empty
-                    },
-                    cancellationToken: cancellationToken)
-                .ConfigureAwait(false);
+                            ["recovery.owner.id"] =
+                                recoveryResume?.RecoveryOwnerId ??
+                                string.Empty
+                        },
+                        cancellationToken: CancellationToken.None)
+                    .ConfigureAwait(false);
+            }
+            catch (Exception exception)
+            {
+                _logger.Engine.LogWarning(
+                    $"[AI PIPELINE CONTROLLER] Accepted run ledger recording failed without reverting enqueue acknowledgement. RunId='{runId}', Pipeline='{request.PipelineName}', ResumeExecutionId='{resumeExecutionId ?? string.Empty}', ExceptionType='{exception.GetType().FullName}', Message='{exception.Message}'.");
+            }
 
             return handle;
         }

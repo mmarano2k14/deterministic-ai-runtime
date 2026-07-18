@@ -1,4 +1,4 @@
-﻿using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.SharedInstance;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue;
 using Multiplexed.Abstractions.AI.Execution.Instance.Worker;
@@ -184,54 +184,54 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.SharedInstance
                     };
                 }
 
-                var visibilityCheck = await _runtimeQueue
-                    .GetRunStatusAsync(
-                        new AiRuntimeQueueControlPlaneRequest
-                        {
-                            Operation = AiRuntimeQueueControlPlaneOperation.GetRunStatus,
-                            RunId = localRunId,
-                            CorrelationId = request.CorrelationId ?? request.SharedRun.CorrelationId,
-                            RequestedBy = request.RequestedBy,
-                            Source = "local-shared-runtime-instance-visibility-check",
-                            Reason = "Verify that the local run id returned by enqueue is visible from the same runtime queue control-plane.",
-                            Metadata = new Dictionary<string, string>
-                            {
-                                ["runtime.instance.id"] = RuntimeInstanceId,
-                                ["shared.run.id"] = request.SharedRun.SharedRunId,
-                                ["local.run.id"] = localRunId,
-                                [AiRuntimeInstanceIsolationMetadataKeys.TenantId] = request.SharedRun.ExecutionContextSnapshot.TenantId,
-                                [AiRuntimeInstanceIsolationMetadataKeys.TenantGroupId] = request.SharedRun.ExecutionContextSnapshot.TenantGroupId,
-                                ["context.key"] = request.SharedRun.ExecutionContextSnapshot.ContextKey
-                            }
-                        },
-                        cancellationToken)
-                    .ConfigureAwait(false);
+                AiRuntimeQueueControlPlaneResult? visibilityCheck =
+                    null;
 
-                if (visibilityCheck.RunState is null)
+                string? visibilityWarning =
+                    null;
+
+                try
                 {
-                    var visibilityFailedAtUtc = DateTimeOffset.UtcNow;
+                    visibilityCheck =
+                        await _runtimeQueue
+                            .GetRunStatusAsync(
+                                new AiRuntimeQueueControlPlaneRequest
+                                {
+                                    Operation = AiRuntimeQueueControlPlaneOperation.GetRunStatus,
+                                    RunId = localRunId,
+                                    CorrelationId = request.CorrelationId ?? request.SharedRun.CorrelationId,
+                                    RequestedBy = request.RequestedBy,
+                                    Source = "local-shared-runtime-instance-visibility-check",
+                                    Reason = "Diagnose immediate local run visibility after an accepted enqueue.",
+                                    Metadata = new Dictionary<string, string>
+                                    {
+                                        ["runtime.instance.id"] = RuntimeInstanceId,
+                                        ["shared.run.id"] = request.SharedRun.SharedRunId,
+                                        ["local.run.id"] = localRunId,
+                                        [AiRuntimeInstanceIsolationMetadataKeys.TenantId] = request.SharedRun.ExecutionContextSnapshot.TenantId,
+                                        [AiRuntimeInstanceIsolationMetadataKeys.TenantGroupId] = request.SharedRun.ExecutionContextSnapshot.TenantGroupId,
+                                        ["context.key"] = request.SharedRun.ExecutionContextSnapshot.ContextKey
+                                    }
+                                },
+                                CancellationToken.None)
+                            .ConfigureAwait(false);
 
-                    return new AiSharedRuntimeInstanceDispatchResult
+                    if (visibilityCheck.RunState is null)
                     {
-                        Success = false,
-                        RuntimeInstanceId = RuntimeInstanceId,
-                        SharedRunId = request.SharedRun.SharedRunId,
-                        LocalRunId = localRunId,
-                        ExecutionId = executionId,
-                        ClaimToken = request.ClaimToken,
-                        StartedAtUtc = startedAtUtc,
-                        CompletedAtUtc = visibilityFailedAtUtc,
-                        DurationMs = (long)(visibilityFailedAtUtc - startedAtUtc).TotalMilliseconds,
-                        FailureReason =
-                            $"Local runtime queue dispatch returned LocalRunId='{localRunId}', but GetRunStatusAsync could not find it immediately on runtime instance '{RuntimeInstanceId}'.",
-                        Metadata = CreateDebugMetadata(
-                            request,
-                            result,
-                            RuntimeInstanceId,
-                            localRunId,
-                            executionId,
-                            visibilityCheck)
-                    };
+                        visibilityWarning =
+                            $"Accepted LocalRunId='{localRunId}' was not immediately visible on runtime instance '{RuntimeInstanceId}'.";
+                    }
+                }
+                catch (Exception exception)
+                {
+                    visibilityWarning =
+                        $"Immediate visibility check failed after accepted enqueue. ExceptionType='{exception.GetType().FullName}', Message='{exception.Message}'.";
+                }
+
+                if (!string.IsNullOrWhiteSpace(visibilityWarning))
+                {
+                    Console.WriteLine(
+                        $"[LOCAL SHARED DISPATCH] ACCEPTED VISIBILITY WARNING RuntimeInstanceId='{RuntimeInstanceId}', SharedRunId='{request.SharedRun.SharedRunId}', LocalRunId='{localRunId}', ExecutionId='{executionId}', Warning='{visibilityWarning}'.");
                 }
 
                 var finalCompletedAtUtc = DateTimeOffset.UtcNow;
@@ -254,7 +254,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.SharedInstance
                         RuntimeInstanceId,
                         localRunId,
                         executionId,
-                        visibilityCheck)
+                        visibilityCheck,
+                        visibilityWarning)
                 };
             }
             catch (Exception exception) when (exception is not OperationCanceledException)
@@ -357,7 +358,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.SharedInstance
             string runtimeInstanceId,
             string? localRunId,
             string? executionId,
-            AiRuntimeQueueControlPlaneResult? visibilityCheck = null)
+            AiRuntimeQueueControlPlaneResult? visibilityCheck = null,
+            string? visibilityWarning = null)
         {
             var metadata = new Dictionary<string, string>(
                 StringComparer.Ordinal)
@@ -392,6 +394,13 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.SharedInstance
                 metadata["visibility.execution.id"] = visibilityCheck.ExecutionId ?? string.Empty;
                 metadata["visibility.state.execution.id"] = visibilityCheck.RunState?.ExecutionId ?? string.Empty;
             }
+
+            metadata["visibility.warning"] =
+                (!string.IsNullOrWhiteSpace(visibilityWarning)).ToString();
+
+            metadata["visibility.warning.reason"] =
+                visibilityWarning ??
+                string.Empty;
 
             return metadata;
         }

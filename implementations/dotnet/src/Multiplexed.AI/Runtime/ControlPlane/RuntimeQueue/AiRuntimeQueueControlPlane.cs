@@ -1,4 +1,4 @@
-﻿using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.ControlPlane.Observability;
 using Multiplexed.Abstractions.AI.ControlPlane.Observability.Area;
 using Multiplexed.Abstractions.AI.ControlPlane.Observability.Events;
@@ -193,13 +193,38 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue
                 var completedAtUtc = DateTimeOffset.UtcNow;
                 var durationMs = CalculateDurationMs(startedAtUtc, completedAtUtc);
 
-                await RecordCompletedAsync(
-                    request,
-                    operation,
-                    correlation,
-                    operationResult,
-                    durationMs,
-                    cancellationToken).ConfigureAwait(false);
+                var enqueueAccepted =
+                    operation == AiRuntimeQueueControlPlaneOperation.EnqueueRun &&
+                    operationResult.RunHandle is not null;
+
+                if (enqueueAccepted)
+                {
+                    try
+                    {
+                        await RecordCompletedAsync(
+                            request,
+                            operation,
+                            correlation,
+                            operationResult,
+                            durationMs,
+                            CancellationToken.None).ConfigureAwait(false);
+                    }
+                    catch (Exception exception)
+                    {
+                        Console.WriteLine(
+                            $"[RUNTIME QUEUE ENQUEUE] ACCEPTED COMPLETION OBSERVABILITY FAILED RunId='{operationResult.RunHandle?.RunId}', ExecutionId='{operationResult.RunHandle?.ExecutionId}', ExceptionType='{exception.GetType().FullName}', Message='{exception.Message}'.");
+                    }
+                }
+                else
+                {
+                    await RecordCompletedAsync(
+                        request,
+                        operation,
+                        correlation,
+                        operationResult,
+                        durationMs,
+                        cancellationToken).ConfigureAwait(false);
+                }
 
                 return new AiRuntimeQueueControlPlaneResult
                 {
@@ -327,8 +352,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue
                     request.RunRequest!,
                     request.Metadata);
 
-            Console.WriteLine($"[RUNTIME QUEUE ENQUEUE] BEFORE CONTROLLER ENQUEUE Pipeline='{request.RunRequest?.PipelineName}', RuntimeInstanceId='{request.RuntimeInstanceId}'.");
-
+            Console.WriteLine(
+                $"[RUNTIME QUEUE ENQUEUE] BEFORE CONTROLLER ENQUEUE Pipeline='{request.RunRequest?.PipelineName}', RuntimeInstanceId='{request.RuntimeInstanceId}'.");
 
             var handle = string.IsNullOrWhiteSpace(resumeExecutionId)
                 ? await _controller
@@ -343,59 +368,112 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue
                         cancellationToken)
                     .ConfigureAwait(false);
 
-            Console.WriteLine($"[RUNTIME QUEUE ENQUEUE] AFTER CONTROLLER ENQUEUE RunId='{handle.RunId}', ExecutionId='{handle.ExecutionId}'.");
+            /*
+             * A returned controller handle means the run was accepted into the
+             * controller Channel. All remaining reads, index enrichment, and
+             * observability are post-acceptance work and must not be controlled by
+             * the HTTP/gRPC request cancellation token.
+             */
+            Console.WriteLine(
+                $"[RUNTIME QUEUE ENQUEUE] ACCEPTED RunId='{handle.RunId}', ExecutionId='{handle.ExecutionId}', Resume='{!string.IsNullOrWhiteSpace(resumeExecutionId)}'.");
 
-            Console.WriteLine($"[RUNTIME QUEUE ENQUEUE] BEFORE GET RUN STATE RunId='{handle.RunId}'.");
+            AiRuntimePipelineRunState? runState =
+                null;
 
-            var runState = await _controller
-                .GetRunStateAsync(handle.RunId, cancellationToken)
-                .ConfigureAwait(false);
+            try
+            {
+                runState =
+                    await _controller
+                        .GetRunStateAsync(
+                            handle.RunId,
+                            CancellationToken.None)
+                        .ConfigureAwait(false);
 
-            Console.WriteLine($"[RUNTIME QUEUE ENQUEUE] AFTER GET RUN STATE RunId='{handle.RunId}', StateFound='{runState is not null}', StateExecutionId='{runState?.ExecutionId}', Status='{runState?.Status}'.");
+                Console.WriteLine(
+                    $"[RUNTIME QUEUE ENQUEUE] POST-ACCEPT RUN STATE RunId='{handle.RunId}', StateFound='{runState is not null}', StateExecutionId='{runState?.ExecutionId}', Status='{runState?.Status}'.");
+            }
+            catch (Exception exception)
+            {
+                Console.WriteLine(
+                    $"[RUNTIME QUEUE ENQUEUE] POST-ACCEPT RUN STATE FAILED RunId='{handle.RunId}', ExecutionId='{handle.ExecutionId}', ExceptionType='{exception.GetType().FullName}', Message='{exception.Message}'.");
+            }
 
-            Console.WriteLine("[RUNTIME QUEUE ENQUEUE] BEFORE GET QUEUE STATE.");
+            AiRuntimePipelineQueueState? queueState =
+                null;
 
-            var queueState = await _controller
-                .GetQueueStateAsync(cancellationToken)
-                .ConfigureAwait(false);
+            try
+            {
+                queueState =
+                    await _controller
+                        .GetQueueStateAsync(
+                            CancellationToken.None)
+                        .ConfigureAwait(false);
 
-            Console.WriteLine($"[RUNTIME QUEUE ENQUEUE] AFTER GET QUEUE STATE RuntimeInstanceId='{queueState?.RuntimeInstanceId}', Queued='{queueState?.QueuedRunCount}', Running='{queueState?.RunningRunCount}'.");
-
-            Console.WriteLine($"[RUNTIME QUEUE ENQUEUE] BEFORE REGISTER INDEX RunId='{handle.RunId}'.");
+                Console.WriteLine(
+                    $"[RUNTIME QUEUE ENQUEUE] POST-ACCEPT QUEUE STATE RuntimeInstanceId='{queueState?.RuntimeInstanceId}', Queued='{queueState?.QueuedRunCount}', Running='{queueState?.RunningRunCount}'.");
+            }
+            catch (Exception exception)
+            {
+                Console.WriteLine(
+                    $"[RUNTIME QUEUE ENQUEUE] POST-ACCEPT QUEUE STATE FAILED RunId='{handle.RunId}', ExecutionId='{handle.ExecutionId}', ExceptionType='{exception.GetType().FullName}', Message='{exception.Message}'.");
+            }
 
             var executionContextSnapshot =
                 enrichedRunRequest.ExecutionContextSnapshot;
 
-            await _runExecutionIndex.RegisterQueuedAsync(
-                    new AiRuntimeRunExecutionIndexEntry
-                    {
-                        RunId = handle.RunId,
-                        ExecutionId = handle.ExecutionId ?? runState?.ExecutionId,
-                        RuntimeInstanceId =
-                            runState?.RuntimeInstanceId ??
-                            queueState?.RuntimeInstanceId ??
-                            request.RuntimeInstanceId,
-                        Status = runState?.Status ?? "queued",
-                        CreatedAtUtc = DateTimeOffset.UtcNow,
-                        ExecutionContextSnapshot = executionContextSnapshot,
-                        Metadata = MergeMetadata(
-                            enrichedRunRequest.Metadata,
-                            new Dictionary<string, string>
+            if (string.IsNullOrWhiteSpace(resumeExecutionId))
+            {
+                try
+                {
+                    await _runExecutionIndex.RegisterQueuedAsync(
+                            new AiRuntimeRunExecutionIndexEntry
                             {
-                                ["source"] = request.Source ?? string.Empty,
-                                ["requestedBy"] = request.RequestedBy ?? string.Empty,
-                                ["reason"] = request.Reason ?? string.Empty,
-                                ["correlationId"] = request.CorrelationId ?? string.Empty,
-                                ["recovery.resume"] = (!string.IsNullOrWhiteSpace(resumeExecutionId)).ToString(),
-                                ["recovery.execution.id"] = resumeExecutionId ?? string.Empty,
-                                [AiRuntimeInstanceIsolationMetadataKeys.TenantId] = executionContextSnapshot?.TenantId ?? string.Empty,
-                                [AiRuntimeInstanceIsolationMetadataKeys.TenantGroupId] = executionContextSnapshot?.TenantGroupId ?? string.Empty
-                            })
-                    },
-                    cancellationToken)
-                .ConfigureAwait(false);
+                                RunId = handle.RunId,
+                                ExecutionId = handle.ExecutionId ?? runState?.ExecutionId,
+                                RuntimeInstanceId =
+                                    runState?.RuntimeInstanceId ??
+                                    queueState?.RuntimeInstanceId ??
+                                    request.RuntimeInstanceId,
+                                Status = runState?.Status ?? "queued",
+                                CreatedAtUtc = DateTimeOffset.UtcNow,
+                                ExecutionContextSnapshot = executionContextSnapshot,
+                                Metadata = MergeMetadata(
+                                    enrichedRunRequest.Metadata,
+                                    new Dictionary<string, string>
+                                    {
+                                        ["source"] = request.Source ?? string.Empty,
+                                        ["requestedBy"] = request.RequestedBy ?? string.Empty,
+                                        ["reason"] = request.Reason ?? string.Empty,
+                                        ["correlationId"] = request.CorrelationId ?? string.Empty,
+                                        ["recovery.resume"] = "false",
+                                        ["recovery.execution.id"] = string.Empty,
+                                        [AiRuntimeInstanceIsolationMetadataKeys.TenantId] = executionContextSnapshot?.TenantId ?? string.Empty,
+                                        [AiRuntimeInstanceIsolationMetadataKeys.TenantGroupId] = executionContextSnapshot?.TenantGroupId ?? string.Empty
+                                    })
+                            },
+                            CancellationToken.None)
+                        .ConfigureAwait(false);
 
-            Console.WriteLine($"[RUNTIME QUEUE ENQUEUE] AFTER REGISTER INDEX RunId='{handle.RunId}'.");
+                    Console.WriteLine(
+                        $"[RUNTIME QUEUE ENQUEUE] POST-ACCEPT INDEX REGISTERED RunId='{handle.RunId}', ExecutionId='{handle.ExecutionId}'.");
+                }
+                catch (Exception exception)
+                {
+                    Console.WriteLine(
+                        $"[RUNTIME QUEUE ENQUEUE] POST-ACCEPT INDEX REGISTRATION FAILED RunId='{handle.RunId}', ExecutionId='{handle.ExecutionId}', ExceptionType='{exception.GetType().FullName}', Message='{exception.Message}'.");
+                }
+            }
+            else
+            {
+                /*
+                 * Resume index ownership belongs to
+                 * AiRuntimePipelineBackgroundController.EnqueueResumeAsync.
+                 * Re-registering here can race with MarkStartedAsync and regress a
+                 * started/running entry back to queued.
+                 */
+                Console.WriteLine(
+                    $"[RUNTIME QUEUE ENQUEUE] RESUME INDEX REGISTRATION SKIPPED RunId='{handle.RunId}', ExecutionId='{resumeExecutionId}', Owner='AiRuntimePipelineBackgroundController'.");
+            }
 
             return new RuntimeQueueOperationResult
             {
