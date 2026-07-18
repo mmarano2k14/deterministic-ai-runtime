@@ -1,5 +1,5 @@
+using k8s.Models;
 using Microsoft.Extensions.Logging;
-using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strategy.Kubernetes.Gateway.Resources;
 using System;
 using System.Threading;
 using System.Threading.Tasks;
@@ -74,7 +74,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
             try
             {
                 await this.client
-                    .DeleteNamespacedCustomObjectAsync<AiKubernetesHttpRouteResource>(
+                    .DeleteNamespacedCustomObjectAsync<V1Status>(
                         AiKubernetesGatewayNames.ApiGroup,
                         AiKubernetesGatewayNames.ApiVersion,
                         this.options.Namespace,
@@ -110,7 +110,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
             try
             {
                 await this.client
-                    .DeleteNamespacedCustomObjectAsync<AiKubernetesGrpcRouteResource>(
+                    .DeleteNamespacedCustomObjectAsync<V1Status>(
                         AiKubernetesGatewayNames.ApiGroup,
                         AiKubernetesGatewayNames.ApiVersion,
                         this.options.Namespace,

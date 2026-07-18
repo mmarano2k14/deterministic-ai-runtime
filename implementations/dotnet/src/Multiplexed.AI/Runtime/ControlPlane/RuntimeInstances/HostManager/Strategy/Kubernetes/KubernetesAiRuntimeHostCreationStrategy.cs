@@ -1,13 +1,17 @@
+using Grpc.Core;
+using Grpc.Net.Client;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager.ProcessControl;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers.Transport;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Readiness;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strategy.Kubernetes.Client;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strategy.Kubernetes.Gateway;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strategy.Kubernetes.Gateway.Transport;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strategy.Kubernetes.Publisher;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Grpc;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
@@ -16,6 +20,7 @@ using System.Linq;
 using System.Net;
 using System.Net.Sockets;
 using System.Threading;
+using System.Text.Json;
 using System.Threading.Tasks;
 using DiagnosticsProcess = System.Diagnostics.Process;
 
@@ -34,6 +39,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
     /// </remarks>
     public sealed class KubernetesAiRuntimeHostCreationStrategy : IAiRuntimeHostCreationStrategy, IAiRuntimeHostProcessControl, IDisposable
     {
+        private const string DefaultGatewayRoutingHeaderName = "x-ai-runtime-instance-id";
+        private static readonly JsonSerializerOptions GatewayGrpcProbeJsonOptions = new(JsonSerializerDefaults.Web);
+        private static readonly TimeSpan MaximumGatewayGrpcProbeAttemptTimeout = TimeSpan.FromSeconds(5);
+
         private readonly AiKubernetesRuntimeHostOptions options;
         private readonly AiKubernetesRuntimePodSpecBuilder podSpecBuilder;
         private readonly IAiKubernetesRuntimeHostClient client;
@@ -498,7 +507,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
             }
 
             this.logger.LogWarning(
-                "Deleting Kubernetes runtime host on demand. RuntimeInstanceId={RuntimeInstanceId}, PodName={PodName}, Namespace={Namespace}.",
+                "Force-terminating Kubernetes runtime host on demand and waiting for exact pod UID disappearance. RuntimeInstanceId={RuntimeInstanceId}, PodName={PodName}, Namespace={Namespace}.",
                 runtimeInstanceId,
                 podSpec.PodName,
                 podSpec.Namespace);
@@ -511,7 +520,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
                     .ConfigureAwait(false);
 
             this.logger.LogWarning(
-                "Kubernetes runtime host delete completed. RuntimeInstanceId={RuntimeInstanceId}, PodName={PodName}, Namespace={Namespace}, Success={Success}, FailureReason={FailureReason}.",
+                "Kubernetes runtime host crash termination completed. RuntimeInstanceId={RuntimeInstanceId}, PodName={PodName}, Namespace={Namespace}, Success={Success}, FailureReason={FailureReason}.",
                 runtimeInstanceId,
                 podSpec.PodName,
                 podSpec.Namespace,
@@ -911,12 +920,382 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
                 readinessResult.FailureReason ?? "(none)",
                 readinessResult.TransportEndpoint ?? "(null)");
 
-            if (readinessResult.Success)
+            if (!readinessResult.Success)
+            {
+                return readinessResult.FailureReason ?? "kubernetes-runtime-command-readiness-failed";
+            }
+
+            return await this
+                .WaitForGatewayGrpcTransportReadinessBeforePublicationAsync(
+                    request,
+                    transportEndpoint,
+                    metadata,
+                    cancellationToken)
+                .ConfigureAwait(false);
+        }
+
+        /// <summary>
+        /// Verifies the complete shared-Gateway gRPC route before runtime capacity is published.
+        /// </summary>
+        /// <remarks>
+        /// Kubernetes pod readiness, Service endpoint readiness and Gateway route conditions are
+        /// necessary but do not prove that a command sent through the shared Gateway reaches the
+        /// exact runtime selected by <c>x-ai-runtime-instance-id</c>. This probe invokes the real
+        /// runtime gRPC command service through the resolved shared endpoint and requires a
+        /// successful queue-status response from the expected runtime instance.
+        /// </remarks>
+        /// <param name="request">The runtime host start request.</param>
+        /// <param name="transportEndpoint">The resolved shared Gateway endpoint.</param>
+        /// <param name="metadata">The runtime and Gateway route metadata.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <returns>A failure reason when the route does not become command-routable; otherwise, <see langword="null"/>.</returns>
+        private async Task<string?> WaitForGatewayGrpcTransportReadinessBeforePublicationAsync(
+            AiRuntimeHostStartRequest request,
+            string? transportEndpoint,
+            IReadOnlyDictionary<string, string> metadata,
+            CancellationToken cancellationToken)
+        {
+            if (!this.options.UseGatewayTransportEndpoint ||
+                !IsGrpcRuntimeTransport(request))
             {
                 return null;
             }
 
-            return readinessResult.FailureReason ?? "kubernetes-runtime-command-readiness-failed";
+            if (string.IsNullOrWhiteSpace(transportEndpoint) ||
+                !Uri.TryCreate(transportEndpoint, UriKind.Absolute, out var endpoint))
+            {
+                return $"kubernetes-gateway-grpc-probe-endpoint-invalid:{transportEndpoint ?? "(null)"}";
+            }
+
+            var routingHeaderName =
+                ResolveGatewayGrpcProbeRoutingHeaderName(metadata);
+
+            if (!IsValidGrpcMetadataKey(routingHeaderName))
+            {
+                return $"kubernetes-gateway-grpc-probe-routing-header-invalid:{routingHeaderName}";
+            }
+
+            var timeout =
+                this.options.ReadinessTimeout > TimeSpan.Zero
+                    ? this.options.ReadinessTimeout
+                    : TimeSpan.FromSeconds(60);
+
+            var pollInterval =
+                this.options.GatewayReadinessPollInterval > TimeSpan.Zero
+                    ? this.options.GatewayReadinessPollInterval
+                    : this.options.ReadinessPollInterval > TimeSpan.Zero
+                        ? this.options.ReadinessPollInterval
+                        : TimeSpan.FromMilliseconds(500);
+
+            var correlationId =
+                $"kubernetes-gateway-grpc-probe:{request.RuntimeInstanceId}";
+
+            var probeMetadata =
+                new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["kubernetes.gateway.grpc.probe"] = "true",
+                    ["runtime.instance.id"] = request.RuntimeInstanceId,
+                    ["gateway.routing.header"] = routingHeaderName,
+                    ["gateway.routing.value"] = request.RuntimeInstanceId
+                };
+
+            var commandRequest =
+                new AiRuntimeInstanceCommandRequest
+                {
+                    Operation = AiRuntimeInstanceCommandOperation.GetQueueStatus,
+                    RuntimeInstanceId = request.RuntimeInstanceId,
+                    QueueRequest =
+                        new AiRuntimeQueueControlPlaneRequest
+                        {
+                            Operation = AiRuntimeQueueControlPlaneOperation.GetQueueStatus,
+                            RuntimeInstanceId = request.RuntimeInstanceId,
+                            CorrelationId = correlationId,
+                            RequestedBy = "kubernetes-runtime-host-readiness",
+                            Source = "kubernetes-gateway-grpc-probe",
+                            Reason = "verify-shared-gateway-route-before-publication",
+                            Metadata = probeMetadata
+                        },
+                    CorrelationId = correlationId,
+                    RequestedBy = "kubernetes-runtime-host-readiness",
+                    Source = "kubernetes-gateway-grpc-probe",
+                    Reason = "verify-shared-gateway-route-before-publication",
+                    Metadata = probeMetadata
+                };
+
+            var grpcRequest =
+                new AiRuntimeInstanceGrpcCommandRequest
+                {
+                    RequestJson = JsonSerializer.Serialize(
+                        commandRequest,
+                        GatewayGrpcProbeJsonOptions)
+                };
+
+            var routingHeaders =
+                new Metadata
+                {
+                    { routingHeaderName, request.RuntimeInstanceId }
+                };
+
+            var stopwatch =
+                Stopwatch.StartNew();
+
+            var attempt = 0;
+            var lastFailureReason =
+                "gateway-route-not-yet-command-routable";
+
+            this.logger.LogInformation(
+                "KUBERNETES GATEWAY GRPC PROBE BEGIN RuntimeInstanceId={RuntimeInstanceId} Endpoint={Endpoint} RoutingHeaderName={RoutingHeaderName} Timeout={Timeout} PollInterval={PollInterval}",
+                request.RuntimeInstanceId,
+                endpoint,
+                routingHeaderName,
+                timeout,
+                pollInterval);
+
+            Console.WriteLine(
+                $"[KUBERNETES GATEWAY GRPC PROBE BEGIN] RuntimeInstanceId='{request.RuntimeInstanceId}', Endpoint='{endpoint}', RoutingHeaderName='{routingHeaderName}', Timeout='{timeout}', PollInterval='{pollInterval}'.");
+
+            using var channel =
+                GrpcChannel.ForAddress(endpoint);
+
+            var client =
+                new AiRuntimeInstanceCommandGrpc.AiRuntimeInstanceCommandGrpcClient(channel);
+
+            while (stopwatch.Elapsed < timeout)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                attempt++;
+
+                var remaining =
+                    timeout - stopwatch.Elapsed;
+
+                var attemptTimeout =
+                    remaining < MaximumGatewayGrpcProbeAttemptTimeout
+                        ? remaining
+                        : MaximumGatewayGrpcProbeAttemptTimeout;
+
+                if (attemptTimeout <= TimeSpan.Zero)
+                {
+                    break;
+                }
+
+                using var attemptCancellationTokenSource =
+                    CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+
+                attemptCancellationTokenSource.CancelAfter(attemptTimeout);
+
+                try
+                {
+                    var grpcResponse =
+                        await client
+                            .ExecuteCommandAsync(
+                                grpcRequest,
+                                headers: routingHeaders,
+                                cancellationToken: attemptCancellationTokenSource.Token)
+                            .ResponseAsync
+                            .ConfigureAwait(false);
+
+                    var validationFailure =
+                        ValidateGatewayGrpcProbeResponse(
+                            request.RuntimeInstanceId,
+                            grpcResponse);
+
+                    if (string.IsNullOrWhiteSpace(validationFailure))
+                    {
+                        this.logger.LogInformation(
+                            "KUBERNETES GATEWAY GRPC PROBE COMPLETED RuntimeInstanceId={RuntimeInstanceId} Endpoint={Endpoint} RoutingHeaderName={RoutingHeaderName} Attempts={Attempts} Elapsed={Elapsed}",
+                            request.RuntimeInstanceId,
+                            endpoint,
+                            routingHeaderName,
+                            attempt,
+                            stopwatch.Elapsed);
+
+                        Console.WriteLine(
+                            $"[KUBERNETES GATEWAY GRPC PROBE COMPLETED] RuntimeInstanceId='{request.RuntimeInstanceId}', Endpoint='{endpoint}', RoutingHeaderName='{routingHeaderName}', Attempts='{attempt}', Elapsed='{stopwatch.Elapsed}'.");
+
+                        return null;
+                    }
+
+                    lastFailureReason = validationFailure;
+                }
+                catch (RpcException exception)
+                    when (exception.StatusCode is StatusCode.Unavailable or
+                          StatusCode.DeadlineExceeded or
+                          StatusCode.Cancelled)
+                {
+                    if (cancellationToken.IsCancellationRequested)
+                    {
+                        throw;
+                    }
+
+                    lastFailureReason =
+                        $"grpc-{exception.StatusCode.ToString().ToLowerInvariant()}:{exception.Status.Detail}";
+                }
+                catch (OperationCanceledException)
+                    when (!cancellationToken.IsCancellationRequested)
+                {
+                    lastFailureReason =
+                        $"grpc-probe-attempt-timeout:{attemptTimeout}";
+                }
+                catch (JsonException exception)
+                {
+                    lastFailureReason =
+                        $"grpc-probe-response-json-invalid:{exception.Message}";
+                }
+                catch (Exception exception)
+                    when (exception is not OperationCanceledException)
+                {
+                    lastFailureReason =
+                        $"grpc-probe-failed:{exception.GetType().Name}:{exception.Message}";
+                }
+
+                this.logger.LogInformation(
+                    "KUBERNETES GATEWAY GRPC PROBE ATTEMPT FAILED RuntimeInstanceId={RuntimeInstanceId} Endpoint={Endpoint} Attempt={Attempt} Elapsed={Elapsed} FailureReason={FailureReason}",
+                    request.RuntimeInstanceId,
+                    endpoint,
+                    attempt,
+                    stopwatch.Elapsed,
+                    lastFailureReason);
+
+                Console.WriteLine(
+                    $"[KUBERNETES GATEWAY GRPC PROBE ATTEMPT FAILED] RuntimeInstanceId='{request.RuntimeInstanceId}', Endpoint='{endpoint}', Attempt='{attempt}', Elapsed='{stopwatch.Elapsed}', FailureReason='{lastFailureReason}'.");
+
+                var delay =
+                    timeout - stopwatch.Elapsed < pollInterval
+                        ? timeout - stopwatch.Elapsed
+                        : pollInterval;
+
+                if (delay > TimeSpan.Zero)
+                {
+                    await Task
+                        .Delay(delay, cancellationToken)
+                        .ConfigureAwait(false);
+                }
+            }
+
+            this.logger.LogWarning(
+                "KUBERNETES GATEWAY GRPC PROBE TIMED OUT RuntimeInstanceId={RuntimeInstanceId} Endpoint={Endpoint} RoutingHeaderName={RoutingHeaderName} Attempts={Attempts} Elapsed={Elapsed} LastFailureReason={LastFailureReason}",
+                request.RuntimeInstanceId,
+                endpoint,
+                routingHeaderName,
+                attempt,
+                stopwatch.Elapsed,
+                lastFailureReason);
+
+            Console.WriteLine(
+                $"[KUBERNETES GATEWAY GRPC PROBE TIMED OUT] RuntimeInstanceId='{request.RuntimeInstanceId}', Endpoint='{endpoint}', RoutingHeaderName='{routingHeaderName}', Attempts='{attempt}', Elapsed='{stopwatch.Elapsed}', LastFailureReason='{lastFailureReason}'.");
+
+            return
+                $"kubernetes-gateway-grpc-probe-timeout:{lastFailureReason}";
+        }
+
+        /// <summary>
+        /// Validates the application-level gRPC probe response and target runtime identity.
+        /// </summary>
+        private static string? ValidateGatewayGrpcProbeResponse(
+            string expectedRuntimeInstanceId,
+            AiRuntimeInstanceGrpcCommandResponse? response)
+        {
+            if (response is null ||
+                string.IsNullOrWhiteSpace(response.ResponseJson))
+            {
+                return "grpc-probe-response-empty";
+            }
+
+            var commandResult =
+                JsonSerializer.Deserialize<AiRuntimeInstanceCommandResult>(
+                    response.ResponseJson,
+                    GatewayGrpcProbeJsonOptions);
+
+            if (commandResult is null)
+            {
+                return "grpc-probe-command-result-null";
+            }
+
+            if (!string.Equals(
+                    commandResult.RuntimeInstanceId,
+                    expectedRuntimeInstanceId,
+                    StringComparison.Ordinal))
+            {
+                return
+                    $"grpc-probe-runtime-mismatch:expected={expectedRuntimeInstanceId};actual={commandResult.RuntimeInstanceId ?? "(null)"}";
+            }
+
+            if (!commandResult.Success)
+            {
+                return
+                    $"grpc-probe-command-failed:{commandResult.FailureReason ?? commandResult.Message ?? "unknown"}";
+            }
+
+            if (commandResult.QueueResult is null)
+            {
+                return "grpc-probe-queue-result-missing";
+            }
+
+            if (!string.Equals(
+                    commandResult.QueueResult.RuntimeInstanceId,
+                    expectedRuntimeInstanceId,
+                    StringComparison.Ordinal))
+            {
+                return
+                    $"grpc-probe-queue-runtime-mismatch:expected={expectedRuntimeInstanceId};actual={commandResult.QueueResult.RuntimeInstanceId ?? "(null)"}";
+            }
+
+            if (!commandResult.QueueResult.Success)
+            {
+                return
+                    $"grpc-probe-queue-command-failed:{commandResult.QueueResult.FailureReason ?? commandResult.QueueResult.Message ?? "unknown"}";
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// Resolves the exact gRPC metadata header used by the shared Gateway route.
+        /// </summary>
+        private string ResolveGatewayGrpcProbeRoutingHeaderName(
+            IReadOnlyDictionary<string, string> metadata)
+        {
+            if (TryGetMetadataValue(
+                    metadata,
+                    "gateway.routing.header",
+                    out var metadataHeaderName) &&
+                !string.IsNullOrWhiteSpace(metadataHeaderName))
+            {
+                return metadataHeaderName.Trim().ToLowerInvariant();
+            }
+
+            if (!string.IsNullOrWhiteSpace(this.options.GatewayRouteHeaderName))
+            {
+                return this.options.GatewayRouteHeaderName.Trim().ToLowerInvariant();
+            }
+
+            return DefaultGatewayRoutingHeaderName;
+        }
+
+        /// <summary>
+        /// Determines whether a routing header name can be emitted as gRPC metadata.
+        /// </summary>
+        private static bool IsValidGrpcMetadataKey(
+            string value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return false;
+            }
+
+            foreach (var character in value)
+            {
+                if ((character >= 'a' && character <= 'z') ||
+                    (character >= '0' && character <= '9') ||
+                    character is '-' or '_' or '.')
+                {
+                    continue;
+                }
+
+                return false;
+            }
+
+            return true;
         }
 
         /// <summary>
