@@ -1,4 +1,4 @@
-﻿using Multiplexed.Abstractions.AI.Concurrency;
+using Multiplexed.Abstractions.AI.Concurrency;
 using Multiplexed.Abstractions.AI.ControlPlane.Discovery;
 using Multiplexed.Abstractions.AI.ControlPlane.Signals;
 using Multiplexed.Abstractions.AI.Execution;
@@ -649,14 +649,15 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Distributed
                 }
                 finally
                 {
-                    await ReleaseConcurrencyLeaseAsync(
+                    await TryReleaseConcurrencyLeaseAsync(
                         executionId,
                         pipelineKey,
                         claimed.StepName,
+                        claimed.ClaimToken,
                         workerId,
                         state,
-                        resolvedPipeline,
-                        CancellationToken.None).ConfigureAwait(false);
+                        resolvedPipeline)
+                        .ConfigureAwait(false);
                 }
             }
             finally
@@ -816,10 +817,53 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Distributed
         /// Release is best-effort. If release cannot complete, the Redis ZSET lease model
         /// still recovers capacity after lease expiration.
         /// </remarks>
+        /// <summary>
+        /// Releases a claimed-step concurrency lease without allowing release or ledger
+        /// failures to invalidate an already-persisted step transition.
+        /// </summary>
+        private async Task TryReleaseConcurrencyLeaseAsync(
+            string executionId,
+            string pipelineKey,
+            string stepName,
+            string claimToken,
+            string workerId,
+            AiExecutionState state,
+            ResolvedAiPipeline pipeline)
+        {
+            Console.WriteLine(
+                $"[AI DAG DISTRIBUTED PHASE] Phase='lease-release-started', ExecutionId='{executionId}', StepName='{stepName}', ClaimToken='{claimToken}', WorkerId='{workerId}', PipelineKey='{pipelineKey}'.");
+
+            try
+            {
+                await ReleaseConcurrencyLeaseAsync(
+                        executionId,
+                        pipelineKey,
+                        stepName,
+                        claimToken,
+                        workerId,
+                        state,
+                        pipeline,
+                        CancellationToken.None)
+                    .ConfigureAwait(false);
+
+                Console.WriteLine(
+                    $"[AI DAG DISTRIBUTED PHASE] Phase='lease-release-completed', ExecutionId='{executionId}', StepName='{stepName}', ClaimToken='{claimToken}', WorkerId='{workerId}', PipelineKey='{pipelineKey}'.");
+            }
+            catch (Exception exception)
+            {
+                Console.WriteLine(
+                    $"[AI DAG DISTRIBUTED PHASE] Phase='lease-release-failed', ExecutionId='{executionId}', StepName='{stepName}', ClaimToken='{claimToken}', WorkerId='{workerId}', PipelineKey='{pipelineKey}', ExceptionType='{exception.GetType().FullName}', Message='{exception.Message}'.");
+            }
+        }
+
+        /// <summary>
+        /// Releases the distributed concurrency lease associated with a claimed step.
+        /// </summary>
         private async Task ReleaseConcurrencyLeaseAsync(
             string executionId,
             string pipelineKey,
             string stepName,
+            string claimToken,
             string workerId,
             AiExecutionState state,
             ResolvedAiPipeline pipeline,
@@ -846,15 +890,16 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Distributed
                 DependsOn = stepDefinition.DependsOn ?? Array.Empty<string>()
             };
 
-            var concurrencyAdmission = AiDagExecutionHelpers.CreateConcurrencyAdmission(
-                executionId,
-                pipelineKey,
-                stepName,
-                workerId,
-                stepState,
-                pipeline.Config,
-                pipelineStepDefinition,
-                ConcurrencyDefinitionResolver);
+            var concurrencyAdmission =
+                AiDagExecutionHelpers.CreateConcurrencyAdmission(
+                    executionId,
+                    pipelineKey,
+                    stepName,
+                    workerId,
+                    stepState,
+                    pipeline.Config,
+                    pipelineStepDefinition,
+                    ConcurrencyDefinitionResolver);
 
             if (!concurrencyAdmission.Definition.Enabled)
             {
@@ -862,10 +907,47 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Distributed
             }
 
             await _engineServices.ConcurrencyGate.ReleaseAsync(
-                concurrencyAdmission.Context,
-                concurrencyAdmission.Definition,
-                cancellationToken).ConfigureAwait(false);
+                    concurrencyAdmission.Context,
+                    concurrencyAdmission.Definition,
+                    cancellationToken)
+                .ConfigureAwait(false);
+
+            try
+            {
+                await AiDagExecutionHelpers.RecordDagLedgerEventAsync(
+                        _engineServices,
+                        executionId,
+                        pipelineKey,
+                        stepName,
+                        concurrencyAdmission.Context.StepKey,
+                        workerId,
+                        claimToken,
+                        concurrencyAdmission.Context,
+                        AiDecisionLedgerCategory.Concurrency,
+                        AiDecisionLedgerEvents.Concurrency.LeaseReleased,
+                        AiDecisionLedgerOutcome.Released,
+                        "Concurrency lease released by the claim-owning DAG runner.",
+                        new Dictionary<string, string>
+                        {
+                            ["pipeline.name"] = pipeline.Name ?? string.Empty,
+                            ["pipeline.version"] = pipeline.Version ?? string.Empty,
+                            ["step.name"] = stepName,
+                            ["step.key"] = concurrencyAdmission.Context.StepKey ?? string.Empty,
+                            ["worker.id"] = workerId,
+                            ["claim.token"] = claimToken,
+                            ["lease.id"] = concurrencyAdmission.Context.LeaseId ?? string.Empty
+                        },
+                        CancellationToken.None)
+                    .ConfigureAwait(false);
+            }
+            catch (Exception exception)
+            {
+                Console.WriteLine(
+                    $"[AI DAG DISTRIBUTED PHASE] Phase='lease-ledger-failed', ExecutionId='{executionId}', StepName='{stepName}', ClaimToken='{claimToken}', WorkerId='{workerId}', LeaseId='{concurrencyAdmission.Context.LeaseId}', ExceptionType='{exception.GetType().FullName}', Message='{exception.Message}'.");
+            }
         }
+
+
 
     }
 }

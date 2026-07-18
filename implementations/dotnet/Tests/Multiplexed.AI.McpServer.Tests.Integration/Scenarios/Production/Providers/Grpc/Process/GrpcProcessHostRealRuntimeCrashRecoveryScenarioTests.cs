@@ -240,6 +240,23 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                     _output.WriteLine(
                         exception.ToString());
                 }
+                finally
+                {
+                    if (iteration < iterationCount)
+                    {
+                        var cooldown = TimeSpan.FromSeconds(10);
+
+                        _output.WriteLine(
+                            $"[HTTP PARALLEL STABILITY COOLDOWN] " +
+                            $"CompletedIteration='{iteration}', " +
+                            $"NextIteration='{iteration + 1}', " +
+                            $"Duration='{cooldown}'.");
+
+                        await Task
+                            .Delay(cooldown)
+                            .ConfigureAwait(false);
+                    }
+                }
             }
 
             overallStopwatch.Stop();
