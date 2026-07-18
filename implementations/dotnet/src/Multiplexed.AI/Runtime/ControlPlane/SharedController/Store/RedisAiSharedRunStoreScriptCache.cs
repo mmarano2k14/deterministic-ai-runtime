@@ -1,4 +1,4 @@
-﻿using StackExchange.Redis;
+using StackExchange.Redis;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Store
 {
@@ -22,6 +22,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Store
         private byte[]? _createSha;
         private byte[]? _cancelSha;
         private byte[]? _markDispatchedSha;
+        private byte[]? _markRequeuedAfterScaleOutSha;
 
         /// <summary>
         /// Initializes a new instance of the <see cref="RedisAiSharedRunStoreScriptCache"/> class.
@@ -92,6 +93,26 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Store
                 database,
                 ScriptKind.MarkDispatched,
                 RedisAiSharedRunStoreScripts.MarkDispatched,
+                keys,
+                values);
+        }
+
+        /// <summary>
+        /// Executes the atomic shared run scale-out requeue script.
+        /// </summary>
+        /// <param name="database">The Redis database.</param>
+        /// <param name="keys">The Redis keys.</param>
+        /// <param name="values">The Redis values.</param>
+        /// <returns>The Redis script result.</returns>
+        public Task<RedisResult> ExecuteMarkRequeuedAfterScaleOutAsync(
+            IDatabase database,
+            RedisKey[] keys,
+            RedisValue[] values)
+        {
+            return ExecuteAsync(
+                database,
+                ScriptKind.MarkRequeuedAfterScaleOut,
+                RedisAiSharedRunStoreScripts.MarkRequeuedAfterScaleOut,
                 keys,
                 values);
         }
@@ -254,6 +275,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Store
                 ScriptKind.Create => _createSha,
                 ScriptKind.Cancel => _cancelSha,
                 ScriptKind.MarkDispatched => _markDispatchedSha,
+                ScriptKind.MarkRequeuedAfterScaleOut => _markRequeuedAfterScaleOutSha,
                 _ => null
             };
         }
@@ -280,6 +302,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Store
                 case ScriptKind.MarkDispatched:
                     _markDispatchedSha = sha;
                     break;
+
+                case ScriptKind.MarkRequeuedAfterScaleOut:
+                    _markRequeuedAfterScaleOutSha = sha;
+                    break;
             }
         }
 
@@ -301,7 +327,12 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Store
             /// <summary>
             /// Atomic shared run mark-dispatched script.
             /// </summary>
-            MarkDispatched = 2
+            MarkDispatched = 2,
+
+            /// <summary>
+            /// Atomic shared run scale-out requeue script.
+            /// </summary>
+            MarkRequeuedAfterScaleOut = 3
         }
     }
 }

@@ -1,4 +1,4 @@
-﻿using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Scaling;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Store;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Queue;
@@ -12,6 +12,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
         IAiScaleOutFulfilledRunRequeueService
     {
         private const int MaxBacklogRequeueCount = 100;
+        private const string RecoveryFailedRuntimeInstanceIdMetadataKey = "recovery.failedRuntimeInstanceId";
+        private const string RecoveryFailedLocalRunIdMetadataKey = "recovery.failedLocalRunId";
+        private const string FailedRuntimeInstanceIdMetadataKey = "failed.runtimeInstanceId";
+        private const string FailedLocalRunIdMetadataKey = "failed.localRunId";
         private readonly IAiSharedRunStore sharedRunStore;
         private readonly IAiSharedQueue sharedQueue;
 
@@ -121,8 +125,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
                 if (existingQueueItem is not null)
                 {
                     var markedExisting =
-                        await this.sharedRunStore
-                            .MarkRequeuedAfterScaleOutAsync(
+                        await this
+                            .MarkSharedRunRequeuedAfterScaleOutAsync(
                                 linkedSharedRun.SharedRunId,
                                 "Scale-out fulfilled; linked shared run already had a queue item.",
                                 existingQueueItem.Metadata,
@@ -156,8 +160,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
                 if (existingQueueItem is not null)
                 {
                     var markedExisting =
-                        await this.sharedRunStore
-                            .MarkRequeuedAfterScaleOutAsync(
+                        await this
+                            .MarkSharedRunRequeuedAfterScaleOutAsync(
                                 linkedSharedRun.SharedRunId,
                                 "Scale-out fulfilled; linked assigned shared run already had a queue item.",
                                 existingQueueItem.Metadata,
@@ -387,8 +391,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
                     StringComparison.Ordinal))
                 {
                     var markedExisting =
-                        await this.sharedRunStore
-                            .MarkRequeuedAfterScaleOutAsync(
+                        await this
+                            .MarkSharedRunRequeuedAfterScaleOutAsync(
                                 sharedRun.SharedRunId,
                                 "Scale-out fulfilled; shared run already had a queue item.",
                                 existingQueueItem.Metadata,
@@ -454,8 +458,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
                     $"[SCALEOUT REQUEUE ENQUEUED] SharedRunId='{sharedRun.SharedRunId}', QueueControlPlaneId='{queueControlPlaneId}', RequestControlPlaneId='{request.ControlPlaneId}', OriginalSharedRunControlPlaneId='{sharedRun.ControlPlaneId}', PipelineKey='{sharedRun.PipelineKey}', TenantId='{sharedRun.ExecutionContextSnapshot.TenantId}', TenantGroupId='{sharedRun.ExecutionContextSnapshot.TenantGroupId}'.");
 
                 var markedRequeued =
-                    await this.sharedRunStore
-                        .MarkRequeuedAfterScaleOutAsync(
+                    await this
+                        .MarkSharedRunRequeuedAfterScaleOutAsync(
                             sharedRun.SharedRunId,
                             "Scale-out fulfilled; shared run requeued for dispatch.",
                             metadata,
@@ -476,8 +480,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
                     $"[SCALEOUT REQUEUE DUPLICATE] SharedRunId='{sharedRun.SharedRunId}', QueueControlPlaneId='{queueControlPlaneId}', RequestControlPlaneId='{request.ControlPlaneId}', OriginalSharedRunControlPlaneId='{sharedRun.ControlPlaneId}'.");
 
                 var markedDuplicate =
-                    await this.sharedRunStore
-                        .MarkRequeuedAfterScaleOutAsync(
+                    await this
+                        .MarkSharedRunRequeuedAfterScaleOutAsync(
                             sharedRun.SharedRunId,
                             "Scale-out fulfilled; duplicate queue item treated as already requeued.",
                             metadata,
@@ -489,6 +493,130 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
 
                 return markedDuplicate is not null;
             }
+        }
+
+        /// <summary>
+        /// Marks a shared run requeued using the failed runtime ownership carried by
+        /// recovery metadata when available.
+        /// </summary>
+        /// <param name="sharedRunId">The shared run identifier.</param>
+        /// <param name="reason">The requeue reason.</param>
+        /// <param name="metadata">The queue or recovery metadata.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <returns>The current durable shared run record.</returns>
+        private Task<AiSharedRunRecord?> MarkSharedRunRequeuedAfterScaleOutAsync(
+            string sharedRunId,
+            string? reason,
+            IReadOnlyDictionary<string, string>? metadata,
+            CancellationToken cancellationToken)
+        {
+            var expectedOwnership =
+                ResolveExpectedRecoveryOwnership(
+                    metadata);
+
+            return this.sharedRunStore
+                .MarkRequeuedAfterScaleOutIfCurrentAsync(
+                    sharedRunId,
+                    expectedOwnership.RuntimeInstanceId,
+                    expectedOwnership.LocalRunId,
+                    reason,
+                    metadata,
+                    cancellationToken);
+        }
+
+        /// <summary>
+        /// Resolves the failed runtime and local-run ownership expected by a recovery
+        /// requeue operation.
+        /// </summary>
+        /// <param name="metadata">The queue or recovery metadata.</param>
+        /// <returns>
+        /// The complete expected ownership, or an empty ownership when the metadata
+        /// represents an initial unassigned scale-out transition.
+        /// </returns>
+        private static ExpectedRecoveryOwnership ResolveExpectedRecoveryOwnership(
+            IReadOnlyDictionary<string, string>? metadata)
+        {
+            var runtimeInstanceId =
+                GetMetadataValue(
+                    metadata,
+                    RecoveryFailedRuntimeInstanceIdMetadataKey,
+                    FailedRuntimeInstanceIdMetadataKey);
+
+            var localRunId =
+                GetMetadataValue(
+                    metadata,
+                    RecoveryFailedLocalRunIdMetadataKey,
+                    FailedLocalRunIdMetadataKey);
+
+            if (string.IsNullOrWhiteSpace(runtimeInstanceId) ||
+                string.IsNullOrWhiteSpace(localRunId))
+            {
+                return ExpectedRecoveryOwnership.Empty;
+            }
+
+            return new ExpectedRecoveryOwnership(
+                runtimeInstanceId,
+                localRunId);
+        }
+
+        /// <summary>
+        /// Gets the first non-empty metadata value for the supplied keys.
+        /// </summary>
+        /// <param name="metadata">The metadata dictionary.</param>
+        /// <param name="keys">The candidate metadata keys.</param>
+        /// <returns>The first non-empty value, or <c>null</c>.</returns>
+        private static string? GetMetadataValue(
+            IReadOnlyDictionary<string, string>? metadata,
+            params string[] keys)
+        {
+            if (metadata is null ||
+                metadata.Count == 0)
+            {
+                return null;
+            }
+
+            foreach (var key in keys)
+            {
+                if (metadata.TryGetValue(
+                        key,
+                        out var directValue) &&
+                    !string.IsNullOrWhiteSpace(directValue))
+                {
+                    return directValue;
+                }
+
+                var matchingItem =
+                    metadata.FirstOrDefault(item => string.Equals(
+                        item.Key,
+                        key,
+                        StringComparison.OrdinalIgnoreCase));
+
+                if (!string.IsNullOrWhiteSpace(matchingItem.Value))
+                {
+                    return matchingItem.Value;
+                }
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// Represents the failed assignment that a recovery requeue operation is
+        /// allowed to release.
+        /// </summary>
+        /// <param name="RuntimeInstanceId">The failed runtime instance id.</param>
+        /// <param name="LocalRunId">The failed local run id.</param>
+        private sealed record ExpectedRecoveryOwnership(
+            string? RuntimeInstanceId,
+            string? LocalRunId)
+        {
+            /// <summary>
+            /// Gets an empty ownership for an initial unassigned scale-out transition.
+            /// </summary>
+            public static ExpectedRecoveryOwnership Empty { get; } =
+                new(
+                    RuntimeInstanceId: null,
+                    LocalRunId: null);
         }
 
         /// <summary>

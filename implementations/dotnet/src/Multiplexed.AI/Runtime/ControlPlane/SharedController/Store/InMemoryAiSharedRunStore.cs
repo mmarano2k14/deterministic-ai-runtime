@@ -1,4 +1,4 @@
-﻿using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Store;
+using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Store;
 using Multiplexed.Abstractions.Core.ExecutionContext;
 using System.Collections.Concurrent;
 
@@ -289,9 +289,31 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Store
             IReadOnlyDictionary<string, string>? metadata = null,
             CancellationToken cancellationToken = default)
         {
+            return MarkRequeuedAfterScaleOutIfCurrentAsync(
+                sharedRunId,
+                expectedAssignedRuntimeInstanceId: null,
+                expectedLocalRunId: null,
+                reason,
+                metadata,
+                cancellationToken);
+        }
+
+        /// <inheritdoc />
+        public Task<AiSharedRunRecord?> MarkRequeuedAfterScaleOutIfCurrentAsync(
+            string sharedRunId,
+            string? expectedAssignedRuntimeInstanceId,
+            string? expectedLocalRunId,
+            string? reason = null,
+            IReadOnlyDictionary<string, string>? metadata = null,
+            CancellationToken cancellationToken = default)
+        {
             ArgumentException.ThrowIfNullOrWhiteSpace(sharedRunId);
 
             cancellationToken.ThrowIfCancellationRequested();
+
+            ValidateExpectedOwnership(
+                expectedAssignedRuntimeInstanceId,
+                expectedLocalRunId);
 
             var tenantId =
                 TryResolveTenantId();
@@ -310,7 +332,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Store
                     return Task.FromResult<AiSharedRunRecord?>(null);
                 }
 
-                if (IsTerminal(existing.Status))
+                if (!CanRequeueAfterScaleOut(
+                        existing,
+                        expectedAssignedRuntimeInstanceId,
+                        expectedLocalRunId))
                 {
                     return Task.FromResult<AiSharedRunRecord?>(existing);
                 }
@@ -340,9 +365,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Store
                     ControlPlaneId = existing.ControlPlaneId,
                     Status = AiSharedRunStatus.QueuedGlobally,
                     RunRequest = existing.RunRequest,
-                    LocalRunId = existing.LocalRunId,
+                    LocalRunId = null,
                     ExecutionId = existing.ExecutionId,
-                    AssignedRuntimeInstanceId = existing.AssignedRuntimeInstanceId,
+                    AssignedRuntimeInstanceId = null,
                     AdmissionDecision = existing.AdmissionDecision,
                     ExecutionContextSnapshot = existing.ExecutionContextSnapshot,
                     PipelineKey = existing.PipelineKey,
@@ -363,6 +388,83 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Store
                     return Task.FromResult<AiSharedRunRecord?>(updated);
                 }
             }
+        }
+
+        /// <summary>
+        /// Determines whether the current in-memory record still satisfies the
+        /// scale-out or recovery ownership compare-and-set.
+        /// </summary>
+        /// <param name="existing">The current shared run record.</param>
+        /// <param name="expectedAssignedRuntimeInstanceId">The expected failed runtime id.</param>
+        /// <param name="expectedLocalRunId">The expected failed local run id.</param>
+        /// <returns><c>true</c> when the record may be requeued.</returns>
+        private static bool CanRequeueAfterScaleOut(
+            AiSharedRunRecord existing,
+            string? expectedAssignedRuntimeInstanceId,
+            string? expectedLocalRunId)
+        {
+            if (IsTerminal(existing.Status))
+            {
+                return false;
+            }
+
+            if (HasExpectedOwnership(
+                    expectedAssignedRuntimeInstanceId,
+                    expectedLocalRunId))
+            {
+                return string.Equals(
+                        existing.AssignedRuntimeInstanceId,
+                        expectedAssignedRuntimeInstanceId,
+                        StringComparison.Ordinal) &&
+                    string.Equals(
+                        existing.LocalRunId,
+                        expectedLocalRunId,
+                        StringComparison.Ordinal);
+            }
+
+            return existing.Status == AiSharedRunStatus.ScaleOutRequested &&
+                string.IsNullOrWhiteSpace(existing.AssignedRuntimeInstanceId) &&
+                string.IsNullOrWhiteSpace(existing.LocalRunId);
+        }
+
+        /// <summary>
+        /// Validates that expected failed ownership is supplied as a complete pair.
+        /// </summary>
+        /// <param name="expectedAssignedRuntimeInstanceId">The expected failed runtime id.</param>
+        /// <param name="expectedLocalRunId">The expected failed local run id.</param>
+        private static void ValidateExpectedOwnership(
+            string? expectedAssignedRuntimeInstanceId,
+            string? expectedLocalRunId)
+        {
+            var hasExpectedRuntime =
+                !string.IsNullOrWhiteSpace(
+                    expectedAssignedRuntimeInstanceId);
+
+            var hasExpectedLocalRun =
+                !string.IsNullOrWhiteSpace(
+                    expectedLocalRunId);
+
+            if (hasExpectedRuntime != hasExpectedLocalRun)
+            {
+                throw new ArgumentException(
+                    "Expected failed runtime instance id and local run id must be supplied together.");
+            }
+        }
+
+        /// <summary>
+        /// Determines whether complete expected failed ownership is available.
+        /// </summary>
+        /// <param name="expectedAssignedRuntimeInstanceId">The expected failed runtime id.</param>
+        /// <param name="expectedLocalRunId">The expected failed local run id.</param>
+        /// <returns><c>true</c> when both ownership identifiers are present.</returns>
+        private static bool HasExpectedOwnership(
+            string? expectedAssignedRuntimeInstanceId,
+            string? expectedLocalRunId)
+        {
+            return !string.IsNullOrWhiteSpace(
+                    expectedAssignedRuntimeInstanceId) &&
+                !string.IsNullOrWhiteSpace(
+                    expectedLocalRunId);
         }
 
         /// <summary>

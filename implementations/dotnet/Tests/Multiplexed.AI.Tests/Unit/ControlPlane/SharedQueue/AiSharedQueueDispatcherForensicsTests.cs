@@ -558,6 +558,18 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
 
                 return Task.FromResult(Record);
             }
+
+            public Task<AiSharedRunRecord?> MarkRequeuedAfterScaleOutIfCurrentAsync(string sharedRunId, string? expectedAssignedRuntimeInstanceId, string? expectedLocalRunId, string? reason = null, IReadOnlyDictionary<string, string>? metadata = null, CancellationToken cancellationToken = default)
+            {
+                return this
+                     .MarkRequeuedAfterScaleOutIfCurrentAsync(
+                         sharedRunId,
+                         expectedAssignedRuntimeInstanceId,
+                         expectedLocalRunId,
+                         reason,
+                         metadata,
+                         cancellationToken);
+            }
         }
 
         /// <summary>

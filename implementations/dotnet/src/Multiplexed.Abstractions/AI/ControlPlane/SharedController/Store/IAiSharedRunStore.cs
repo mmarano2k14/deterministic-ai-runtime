@@ -94,14 +94,63 @@
         /// or <c>null</c> when the run is unknown.
         /// </returns>
         /// <remarks>
-        /// This transition is used to make a scale-out fulfilled run visible as queued again
-        /// in the shared run store, so observers and wait helpers do not remain stuck on
-        /// <see cref="AiSharedRunStatus.ScaleOutRequested"/>.
+        /// This compatibility transition is restricted to an unassigned
+        /// <see cref="AiSharedRunStatus.ScaleOutRequested"/> run.
         ///
-        /// Distributed implementations should perform the terminal-state check and update atomically.
+        /// Recovery callers that need to release a run from a failed runtime assignment
+        /// must use <see cref="MarkRequeuedAfterScaleOutIfCurrentAsync"/>.
+        ///
+        /// Distributed implementations should perform the state check and update atomically.
         /// </remarks>
         Task<AiSharedRunRecord?> MarkRequeuedAfterScaleOutAsync(
             string sharedRunId,
+            string? reason = null,
+            IReadOnlyDictionary<string, string>? metadata = null,
+            CancellationToken cancellationToken = default);
+
+        /// <summary>
+        /// Atomically marks a shared run as requeued when its current assignment still
+        /// matches the failed runtime ownership expected by the recovery operation.
+        /// </summary>
+        /// <param name="sharedRunId">The shared controller run identifier.</param>
+        /// <param name="expectedAssignedRuntimeInstanceId">
+        /// The failed runtime instance id that must still own the run.
+        /// Pass <c>null</c> together with <paramref name="expectedLocalRunId"/> for an
+        /// initial unassigned scale-out transition.
+        /// </param>
+        /// <param name="expectedLocalRunId">
+        /// The failed local runtime run id that must still identify the run.
+        /// Pass <c>null</c> together with
+        /// <paramref name="expectedAssignedRuntimeInstanceId"/> for an initial
+        /// unassigned scale-out transition.
+        /// </param>
+        /// <param name="reason">The optional requeue reason.</param>
+        /// <param name="metadata">The optional metadata to merge into the shared run record.</param>
+        /// <param name="cancellationToken">A token used to cancel the operation.</param>
+        /// <returns>
+        /// The requeued record, the current record when the ownership has already changed,
+        /// the existing terminal record, or <c>null</c> when the run is unknown.
+        /// </returns>
+        /// <remarks>
+        /// The transition has two legal compare-and-set paths:
+        ///
+        /// - initial scale-out:
+        ///   status is <see cref="AiSharedRunStatus.ScaleOutRequested"/> and the run
+        ///   has no runtime or local-run assignment
+        /// - crash recovery:
+        ///   the persisted runtime instance id and local run id still exactly match
+        ///   the failed ownership supplied by the caller
+        ///
+        /// A delayed callback must become an idempotent no-op after another dispatcher
+        /// has assigned a replacement runtime or local run id.
+        ///
+        /// Distributed implementations must perform the ownership comparison and update
+        /// atomically.
+        /// </remarks>
+        Task<AiSharedRunRecord?> MarkRequeuedAfterScaleOutIfCurrentAsync(
+            string sharedRunId,
+            string? expectedAssignedRuntimeInstanceId,
+            string? expectedLocalRunId,
             string? reason = null,
             IReadOnlyDictionary<string, string>? metadata = null,
             CancellationToken cancellationToken = default);

@@ -1,4 +1,4 @@
-﻿using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.ControlPlane.Admission;
 using Multiplexed.Abstractions.AI.ControlPlane.Discovery;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Store;
@@ -506,14 +506,36 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Store
         }
 
         /// <inheritdoc />
-        public async Task<AiSharedRunRecord?> MarkRequeuedAfterScaleOutAsync(
+        public Task<AiSharedRunRecord?> MarkRequeuedAfterScaleOutAsync(
             string sharedRunId,
+            string? reason = null,
+            IReadOnlyDictionary<string, string>? metadata = null,
+            CancellationToken cancellationToken = default)
+        {
+            return MarkRequeuedAfterScaleOutIfCurrentAsync(
+                sharedRunId,
+                expectedAssignedRuntimeInstanceId: null,
+                expectedLocalRunId: null,
+                reason,
+                metadata,
+                cancellationToken);
+        }
+
+        /// <inheritdoc />
+        public async Task<AiSharedRunRecord?> MarkRequeuedAfterScaleOutIfCurrentAsync(
+            string sharedRunId,
+            string? expectedAssignedRuntimeInstanceId,
+            string? expectedLocalRunId,
             string? reason = null,
             IReadOnlyDictionary<string, string>? metadata = null,
             CancellationToken cancellationToken = default)
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(sharedRunId);
             cancellationToken.ThrowIfCancellationRequested();
+
+            ValidateExpectedOwnership(
+                expectedAssignedRuntimeInstanceId,
+                expectedLocalRunId);
 
             var controlPlaneId =
                 await ResolveControlPlaneIdAsync(
@@ -534,7 +556,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Store
                 return null;
             }
 
-            if (IsTerminal(existing.Status))
+            if (!CanAttemptScaleOutRequeue(
+                    existing,
+                    expectedAssignedRuntimeInstanceId,
+                    expectedLocalRunId))
             {
                 return existing;
             }
@@ -598,34 +623,146 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Store
                     ? "Scale-out fulfilled; shared run requeued for dispatch."
                     : reason;
 
-            await _database
-                .HashSetAsync(
-                    runKey,
-                    new HashEntry[]
-                    {
-                new("status", AiSharedRunStatus.QueuedGlobally.ToString()),
+            var hasExpectedOwnership =
+                HasExpectedOwnership(
+                    expectedAssignedRuntimeInstanceId,
+                    expectedLocalRunId);
 
-                // Runtime assignment and local run identity are volatile.
-                // They belong to the failed or rejected dispatch attempt and
-                // must never survive a global requeue.
-                new("assignedRuntimeInstanceId", string.Empty),
-                new("localRunId", string.Empty),
-
-                // ExecutionId is intentionally preserved for strict DAG resume.
-                new("reason", requeueReason),
-                new("failureReason", string.Empty),
-                new("updatedAtUtc", updatedAtUtc),
-                new("metadataJson", Serialize(mergedMetadata))
-                    })
-                .ConfigureAwait(false);
+            var result =
+                await _scripts
+                    .ExecuteMarkRequeuedAfterScaleOutAsync(
+                        _database,
+                        new RedisKey[]
+                        {
+                            runKey
+                        },
+                        new RedisValue[]
+                        {
+                            requeueReason,
+                            updatedAtUtc,
+                            Serialize(mergedMetadata),
+                            hasExpectedOwnership ? "1" : "0",
+                            expectedAssignedRuntimeInstanceId ?? string.Empty,
+                            expectedLocalRunId ?? string.Empty
+                        })
+                    .ConfigureAwait(false);
 
             cancellationToken.ThrowIfCancellationRequested();
 
-            return await GetAsync(
-                    controlPlaneId,
-                    sharedRunId,
-                    cancellationToken)
-                .ConfigureAwait(false);
+            var status =
+                result.ToString();
+
+            if (string.Equals(
+                    status,
+                    "missing",
+                    StringComparison.Ordinal))
+            {
+                return null;
+            }
+
+            if (string.Equals(
+                    status,
+                    "requeued",
+                    StringComparison.Ordinal) ||
+                string.Equals(
+                    status,
+                    "terminal",
+                    StringComparison.Ordinal) ||
+                string.Equals(
+                    status,
+                    "stale-ownership",
+                    StringComparison.Ordinal) ||
+                string.Equals(
+                    status,
+                    "not-waiting-for-scaleout",
+                    StringComparison.Ordinal))
+            {
+                return await GetAsync(
+                        controlPlaneId,
+                        sharedRunId,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+            }
+
+            throw new InvalidOperationException(
+                $"Unexpected Redis mark-requeued-after-scaleout result for shared run '{sharedRunId}': '{status}'.");
+        }
+
+        /// <summary>
+        /// Determines whether a scale-out requeue can still be attempted from the
+        /// currently observed record.
+        /// </summary>
+        /// <param name="existing">The current shared run record.</param>
+        /// <param name="expectedAssignedRuntimeInstanceId">The expected failed runtime id.</param>
+        /// <param name="expectedLocalRunId">The expected failed local run id.</param>
+        /// <returns><c>true</c> when the atomic transition may still succeed.</returns>
+        private static bool CanAttemptScaleOutRequeue(
+            AiSharedRunRecord existing,
+            string? expectedAssignedRuntimeInstanceId,
+            string? expectedLocalRunId)
+        {
+            if (IsTerminal(existing.Status))
+            {
+                return false;
+            }
+
+            if (HasExpectedOwnership(
+                    expectedAssignedRuntimeInstanceId,
+                    expectedLocalRunId))
+            {
+                return string.Equals(
+                        existing.AssignedRuntimeInstanceId,
+                        expectedAssignedRuntimeInstanceId,
+                        StringComparison.Ordinal) &&
+                    string.Equals(
+                        existing.LocalRunId,
+                        expectedLocalRunId,
+                        StringComparison.Ordinal);
+            }
+
+            return existing.Status == AiSharedRunStatus.ScaleOutRequested &&
+                string.IsNullOrWhiteSpace(existing.AssignedRuntimeInstanceId) &&
+                string.IsNullOrWhiteSpace(existing.LocalRunId);
+        }
+
+        /// <summary>
+        /// Validates that expected failed ownership is supplied as a complete pair.
+        /// </summary>
+        /// <param name="expectedAssignedRuntimeInstanceId">The expected failed runtime id.</param>
+        /// <param name="expectedLocalRunId">The expected failed local run id.</param>
+        private static void ValidateExpectedOwnership(
+            string? expectedAssignedRuntimeInstanceId,
+            string? expectedLocalRunId)
+        {
+            var hasExpectedRuntime =
+                !string.IsNullOrWhiteSpace(
+                    expectedAssignedRuntimeInstanceId);
+
+            var hasExpectedLocalRun =
+                !string.IsNullOrWhiteSpace(
+                    expectedLocalRunId);
+
+            if (hasExpectedRuntime != hasExpectedLocalRun)
+            {
+                throw new ArgumentException(
+                    "Expected failed runtime instance id and local run id must be supplied together.");
+            }
+        }
+
+        /// <summary>
+        /// Determines whether complete expected failed ownership is available.
+        /// </summary>
+        /// <param name="expectedAssignedRuntimeInstanceId">The expected failed runtime id.</param>
+        /// <param name="expectedLocalRunId">The expected failed local run id.</param>
+        /// <returns><c>true</c> when both ownership identifiers are present.</returns>
+        private static bool HasExpectedOwnership(
+            string? expectedAssignedRuntimeInstanceId,
+            string? expectedLocalRunId)
+        {
+            return !string.IsNullOrWhiteSpace(
+                    expectedAssignedRuntimeInstanceId) &&
+                !string.IsNullOrWhiteSpace(
+                    expectedLocalRunId);
         }
 
         /// <summary>

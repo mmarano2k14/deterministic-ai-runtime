@@ -2,6 +2,7 @@
 using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Capacity;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager.ProcessControl;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers.Transport;
@@ -55,9 +56,28 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http.Sc
         /// </summary>
         private const int DefaultQueueCapacity = 100;
 
+        /// <summary>
+        /// Metadata key carrying the runtime instance id that replacement scale-out must not reuse.
+        /// </summary>
+        private const string ScaleOutExcludedRuntimeInstanceIdMetadataKey =
+            "scaleout.excludedRuntimeInstanceId";
+
+        /// <summary>
+        /// Metadata key carrying the runtime instance id being replaced.
+        /// </summary>
+        private const string ScaleOutReplacementForRuntimeInstanceIdMetadataKey =
+            "scaleout.replacementForRuntimeInstanceId";
+
+        /// <summary>
+        /// Recovery metadata key carrying the failed runtime instance id.
+        /// </summary>
+        private const string RecoveryFailedRuntimeInstanceIdMetadataKey =
+            "recovery.failedRuntimeInstanceId";
+
         private readonly IAiRuntimeInstanceRegistry registry;
         private readonly IAiRuntimeInstanceCapacityStore capacityStore;
         private readonly IAiRuntimeHostManager runtimeHostManager;
+        private readonly IAiRuntimeHostProcessControl? runtimeHostProcessControl;
         private readonly IAiRuntimeInstanceReadinessWaiter readinessWaiter;
         private readonly IAiTenantRuntimeSettingsProvider tenantRuntimeSettingsProvider;
         private readonly AiHttpRuntimeScaleOutOptions options;
@@ -73,6 +93,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http.Sc
         /// <param name="tenantRuntimeSettingsProvider">The tenant runtime settings provider.</param>
         /// <param name="options">The HTTP scale-out technical options.</param>
         /// <param name="logger">The logger.</param>
+        /// <param name="runtimeHostProcessControl">
+        /// Optional process-host lifecycle control used only to clean up a process host
+        /// when provider-level readiness fails. Kubernetes and non-process host creation
+        /// modes are never affected by this dependency.
+        /// </param>
         public AiHttpRuntimeScaleOutProvisioner(
             IAiRuntimeInstanceRegistry registry,
             IAiRuntimeInstanceCapacityStore capacityStore,
@@ -80,11 +105,13 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http.Sc
             IAiRuntimeInstanceReadinessWaiter readinessWaiter,
             IAiTenantRuntimeSettingsProvider tenantRuntimeSettingsProvider,
             IOptions<AiHttpRuntimeScaleOutOptions> options,
-            ILogger<AiHttpRuntimeScaleOutProvisioner> logger)
+            ILogger<AiHttpRuntimeScaleOutProvisioner> logger,
+            IAiRuntimeHostProcessControl? runtimeHostProcessControl = null)
         {
             this.registry = registry ?? throw new ArgumentNullException(nameof(registry));
             this.capacityStore = capacityStore ?? throw new ArgumentNullException(nameof(capacityStore));
             this.runtimeHostManager = runtimeHostManager ?? throw new ArgumentNullException(nameof(runtimeHostManager));
+            this.runtimeHostProcessControl = runtimeHostProcessControl;
             this.readinessWaiter = readinessWaiter ?? throw new ArgumentNullException(nameof(readinessWaiter));
             this.tenantRuntimeSettingsProvider = tenantRuntimeSettingsProvider ?? throw new ArgumentNullException(nameof(tenantRuntimeSettingsProvider));
 
@@ -253,6 +280,17 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http.Sc
                     },
                     cancellationToken).ConfigureAwait(false);
 
+            this.logger.LogInformation(
+                "HTTP SCALE-OUT HOST-MANAGER START RESULT RequestId={RequestId} SharedRunId={SharedRunId} Success={Success} RuntimeInstanceId={RuntimeInstanceId} ProviderName={ProviderName} TransportName={TransportName} TransportEndpoint={TransportEndpoint} FailureReason={FailureReason}",
+                request.RequestId,
+                request.SharedRunId,
+                startResult.Success,
+                startResult.RuntimeInstanceId,
+                startResult.ProviderName,
+                startResult.TransportName,
+                startResult.TransportEndpoint,
+                startResult.FailureReason ?? "(none)");
+
             if (!startResult.Success)
             {
                 this.logger.LogWarning(
@@ -269,8 +307,16 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http.Sc
                     "HTTP runtime scale-out host manager start failed.");
             }
 
+            var excludedRuntimeInstanceId =
+                ResolveExcludedRuntimeInstanceId(
+                    context.Metadata);
+
             var fulfilledRuntimeInstanceId =
-                !string.IsNullOrWhiteSpace(startResult.RuntimeInstanceId)
+                !string.IsNullOrWhiteSpace(startResult.RuntimeInstanceId) &&
+                !string.Equals(
+                    startResult.RuntimeInstanceId,
+                    excludedRuntimeInstanceId,
+                    StringComparison.Ordinal)
                     ? startResult.RuntimeInstanceId
                     : context.RuntimeInstanceId;
 
@@ -295,8 +341,41 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http.Sc
                     "HTTP runtime scale-out host manager returned success without a runtime instance id.");
             }
 
+            if (string.Equals(
+                    fulfilledRuntimeInstanceId,
+                    excludedRuntimeInstanceId,
+                    StringComparison.Ordinal))
+            {
+                this.logger.LogWarning(
+                    "HTTP SCALE-OUT HOST-MANAGER REJECTED EXCLUDED RUNTIME RequestId={RequestId} SharedRunId={SharedRunId} RuntimeInstanceId={RuntimeInstanceId} ExcludedRuntimeInstanceId={ExcludedRuntimeInstanceId} HostCreationMode={HostCreationMode}",
+                    request.RequestId,
+                    request.SharedRunId,
+                    fulfilledRuntimeInstanceId,
+                    excludedRuntimeInstanceId,
+                    this.options.HostCreationMode);
+
+                return CreateRejectedResult(
+                    request,
+                    "runtime-host-started-with-excluded-runtime-instance-id",
+                    "HTTP runtime scale-out host manager returned the excluded failed runtime instance id for a recovery replacement.");
+            }
+
             if (this.options.RequireReadiness)
             {
+                var requireTransportEndpoint =
+                    this.ShouldRequireTransportEndpointForReadiness();
+
+                this.logger.LogInformation(
+                    "HTTP SCALE-OUT HOST-MANAGER READINESS WAIT RequestId={RequestId} SharedRunId={SharedRunId} RuntimeInstanceId={RuntimeInstanceId} HostCreationMode={HostCreationMode} RequireTransportEndpoint={RequireTransportEndpoint} TransportEndpoint={TransportEndpoint} TimeoutSeconds={TimeoutSeconds} PollIntervalMilliseconds={PollIntervalMilliseconds}",
+                    request.RequestId,
+                    request.SharedRunId,
+                    fulfilledRuntimeInstanceId,
+                    this.options.HostCreationMode,
+                    requireTransportEndpoint,
+                    fulfilledTransportEndpoint,
+                    Math.Max(1, this.options.ReadinessTimeoutSeconds),
+                    Math.Max(1, this.options.ReadinessPollIntervalMilliseconds));
+
                 var readinessResult =
                     await this.readinessWaiter.WaitUntilReadyAsync(
                         new AiRuntimeInstanceReadinessRequest
@@ -307,11 +386,22 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http.Sc
                             ProviderName = ProviderName,
                             TransportName = AiRuntimeInstanceCommandTransportMetadataKeys.HttpTransportName,
                             TransportEndpoint = fulfilledTransportEndpoint,
-                            RequireTransportEndpoint = this.options.HostCreationMode != AiRuntimeHostCreationMode.Fixture,
+                            RequireTransportEndpoint = requireTransportEndpoint,
                             Timeout = TimeSpan.FromSeconds(Math.Max(1, this.options.ReadinessTimeoutSeconds)),
                             PollInterval = TimeSpan.FromMilliseconds(Math.Max(1, this.options.ReadinessPollIntervalMilliseconds))
                         },
                         cancellationToken).ConfigureAwait(false);
+
+                this.logger.LogInformation(
+                    "HTTP SCALE-OUT HOST-MANAGER READINESS RESULT RequestId={RequestId} SharedRunId={SharedRunId} RuntimeInstanceId={RuntimeInstanceId} HostCreationMode={HostCreationMode} Success={Success} TimedOut={TimedOut} FailureReason={FailureReason} TransportEndpoint={TransportEndpoint}",
+                    request.RequestId,
+                    request.SharedRunId,
+                    readinessResult.RuntimeInstanceId,
+                    this.options.HostCreationMode,
+                    readinessResult.Success,
+                    readinessResult.TimedOut,
+                    readinessResult.FailureReason ?? "(none)",
+                    readinessResult.TransportEndpoint ?? "(null)");
 
                 if (!readinessResult.Success)
                 {
@@ -324,10 +414,51 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http.Sc
                         readinessResult.FailureReason,
                         readinessResult.TimedOut);
 
+                    await this.TryCleanupFailedProcessHostAsync(
+                            request,
+                            fulfilledRuntimeInstanceId)
+                        .ConfigureAwait(false);
+
                     return CreateRejectedResult(
                         request,
                         readinessResult.FailureReason ?? "runtime-readiness-failed",
                         "HTTP runtime scale-out readiness check failed.");
+                }
+
+                if (!string.IsNullOrWhiteSpace(readinessResult.RuntimeInstanceId))
+                {
+                    fulfilledRuntimeInstanceId =
+                        readinessResult.RuntimeInstanceId;
+                }
+
+                if (!string.IsNullOrWhiteSpace(readinessResult.TransportEndpoint))
+                {
+                    fulfilledTransportEndpoint =
+                        readinessResult.TransportEndpoint;
+                }
+
+                if (string.Equals(
+                        fulfilledRuntimeInstanceId,
+                        excludedRuntimeInstanceId,
+                        StringComparison.Ordinal))
+                {
+                    this.logger.LogWarning(
+                        "HTTP SCALE-OUT HOST-MANAGER READINESS RETURNED EXCLUDED RUNTIME RequestId={RequestId} SharedRunId={SharedRunId} RuntimeInstanceId={RuntimeInstanceId} ExcludedRuntimeInstanceId={ExcludedRuntimeInstanceId} HostCreationMode={HostCreationMode}",
+                        request.RequestId,
+                        request.SharedRunId,
+                        fulfilledRuntimeInstanceId,
+                        excludedRuntimeInstanceId,
+                        this.options.HostCreationMode);
+
+                    await this.TryCleanupFailedProcessHostAsync(
+                            request,
+                            fulfilledRuntimeInstanceId)
+                        .ConfigureAwait(false);
+
+                    return CreateRejectedResult(
+                        request,
+                        "runtime-readiness-returned-excluded-runtime-instance-id",
+                        "HTTP runtime readiness returned the excluded failed runtime instance id for a recovery replacement.");
                 }
             }
 
@@ -354,6 +485,99 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http.Sc
                 $"http-host-manager-scaleout-{request.RequestId}",
                 "HTTP runtime scale-out request was fulfilled by the runtime host manager.",
                 metadata);
+        }
+
+        /// <summary>
+        /// Cleans up a process host that was started successfully but failed
+        /// provider-level readiness.
+        /// </summary>
+        /// <remarks>
+        /// Cleanup is intentionally restricted to process host creation. Kubernetes
+        /// lifecycle remains owned by the Kubernetes host creation strategy.
+        /// Cleanup is best-effort so it cannot hide the original readiness failure.
+        /// </remarks>
+        /// <param name="request">The scale-out provider request.</param>
+        /// <param name="runtimeInstanceId">The process runtime instance id.</param>
+        /// <returns>A task representing the cleanup attempt.</returns>
+        private async Task TryCleanupFailedProcessHostAsync(
+            AiRuntimeScaleOutProviderRequest request,
+            string runtimeInstanceId)
+        {
+            if (this.options.HostCreationMode != AiRuntimeHostCreationMode.Process)
+            {
+                return;
+            }
+
+            if (this.runtimeHostProcessControl is null)
+            {
+                this.logger.LogWarning(
+                    "HTTP SCALE-OUT PROCESS READINESS CLEANUP SKIPPED RequestId={RequestId} SharedRunId={SharedRunId} RuntimeInstanceId={RuntimeInstanceId} Reason={Reason}",
+                    request.RequestId,
+                    request.SharedRunId,
+                    runtimeInstanceId,
+                    "process-control-unavailable");
+
+                return;
+            }
+
+            try
+            {
+                var cleaned =
+                    await this.runtimeHostProcessControl
+                        .KillAsync(
+                            runtimeInstanceId,
+                            CancellationToken.None)
+                        .ConfigureAwait(false);
+
+                if (cleaned)
+                {
+                    this.logger.LogWarning(
+                        "HTTP SCALE-OUT PROCESS READINESS CLEANUP COMPLETED RequestId={RequestId} SharedRunId={SharedRunId} RuntimeInstanceId={RuntimeInstanceId}",
+                        request.RequestId,
+                        request.SharedRunId,
+                        runtimeInstanceId);
+                }
+                else
+                {
+                    this.logger.LogWarning(
+                        "HTTP SCALE-OUT PROCESS READINESS CLEANUP NOT FOUND RequestId={RequestId} SharedRunId={SharedRunId} RuntimeInstanceId={RuntimeInstanceId}",
+                        request.RequestId,
+                        request.SharedRunId,
+                        runtimeInstanceId);
+                }
+            }
+            catch (Exception exception)
+            {
+                this.logger.LogWarning(
+                    exception,
+                    "HTTP SCALE-OUT PROCESS READINESS CLEANUP FAILED RequestId={RequestId} SharedRunId={SharedRunId} RuntimeInstanceId={RuntimeInstanceId}",
+                    request.RequestId,
+                    request.SharedRunId,
+                    runtimeInstanceId);
+            }
+        }
+
+        /// <summary>
+        /// Determines whether readiness must verify direct transport endpoint
+        /// reachability.
+        /// </summary>
+        /// <returns>
+        /// <see langword="true"/> for direct process/attach transports;
+        /// otherwise, <see langword="false"/>.
+        /// </returns>
+        private bool ShouldRequireTransportEndpointForReadiness()
+        {
+            if (this.options.HostCreationMode == AiRuntimeHostCreationMode.Fixture)
+            {
+                return false;
+            }
+
+            if (this.options.HostCreationMode == AiRuntimeHostCreationMode.Kubernetes)
+            {
+                return false;
+            }
+
+            return true;
         }
 
         /// <summary>
@@ -524,12 +748,119 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http.Sc
             AiRuntimeScaleOutProviderRequest request,
             string runtimeInstanceIdPrefix)
         {
-            var target =
-                request.RequestedTargetInstanceCount > 0
-                    ? request.RequestedTargetInstanceCount
-                    : Math.Max(1, request.CurrentInstanceCount + 1);
+            var excludedRuntimeInstanceId =
+                ResolveExcludedRuntimeInstanceId(
+                    request.Metadata);
 
-            return $"{request.ControlPlaneId}:{runtimeInstanceIdPrefix}-{target}";
+            var requestedTargetInstanceCount =
+                Convert.ToInt32(
+                    request.RequestedTargetInstanceCount);
+
+            var currentInstanceCount =
+                Convert.ToInt32(
+                    request.CurrentInstanceCount);
+
+            var maxInstanceCount =
+                Convert.ToInt32(
+                    request.MaxInstanceCount);
+
+            var maxRuntimeInstances =
+                Convert.ToInt32(
+                    request.MaxRuntimeInstances.HasValue
+                        ? request.MaxRuntimeInstances.Value
+                        : 0);
+
+            var effectiveMaxRuntimeInstances =
+                maxInstanceCount > 0
+                    ? maxInstanceCount
+                    : maxRuntimeInstances;
+
+            var firstTarget =
+                requestedTargetInstanceCount > 0
+                    ? requestedTargetInstanceCount
+                    : Math.Max(
+                        1,
+                        currentInstanceCount + 1);
+
+            var upperBound =
+                effectiveMaxRuntimeInstances > 0
+                    ? Math.Max(
+                        firstTarget,
+                        effectiveMaxRuntimeInstances)
+                    : firstTarget + 10;
+
+            for (var target = firstTarget; target <= upperBound; target++)
+            {
+                var candidate =
+                    $"{request.ControlPlaneId}:{runtimeInstanceIdPrefix}-{target}";
+
+                if (!string.Equals(
+                        candidate,
+                        excludedRuntimeInstanceId,
+                        StringComparison.Ordinal))
+                {
+                    return candidate;
+                }
+            }
+
+            return $"{request.ControlPlaneId}:{runtimeInstanceIdPrefix}-recovery-{Guid.NewGuid():N}";
+        }
+
+        /// <summary>
+        /// Resolves the runtime instance id that replacement scale-out must not reuse.
+        /// </summary>
+        /// <param name="metadata">The scale-out metadata.</param>
+        /// <returns>The excluded runtime instance id, or <c>null</c>.</returns>
+        private static string? ResolveExcludedRuntimeInstanceId(
+            IReadOnlyDictionary<string, string>? metadata)
+        {
+            return ResolveMetadataValue(
+                       metadata,
+                       ScaleOutExcludedRuntimeInstanceIdMetadataKey) ??
+                   ResolveMetadataValue(
+                       metadata,
+                       ScaleOutReplacementForRuntimeInstanceIdMetadataKey) ??
+                   ResolveMetadataValue(
+                       metadata,
+                       RecoveryFailedRuntimeInstanceIdMetadataKey);
+        }
+
+        /// <summary>
+        /// Resolves a metadata value using case-insensitive key matching.
+        /// </summary>
+        /// <param name="metadata">The metadata dictionary.</param>
+        /// <param name="key">The metadata key.</param>
+        /// <returns>The metadata value, or <c>null</c>.</returns>
+        private static string? ResolveMetadataValue(
+            IReadOnlyDictionary<string, string>? metadata,
+            string key)
+        {
+            if (metadata is null)
+            {
+                return null;
+            }
+
+            if (metadata.TryGetValue(
+                    key,
+                    out var value) &&
+                !string.IsNullOrWhiteSpace(value))
+            {
+                return value;
+            }
+
+            foreach (var item in metadata)
+            {
+                if (string.Equals(
+                        item.Key,
+                        key,
+                        StringComparison.OrdinalIgnoreCase) &&
+                    !string.IsNullOrWhiteSpace(item.Value))
+                {
+                    return item.Value;
+                }
+            }
+
+            return null;
         }
 
         /// <summary>

@@ -1,4 +1,4 @@
-﻿namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Store
+namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Store
 {
     /// <summary>
     /// Contains Lua scripts used by the Redis shared run store.
@@ -158,5 +158,77 @@
 
             return 'dispatched'
             """;
+        /// <summary>
+        /// Atomically marks a shared run as globally queued when either:
+        /// - it is still an unassigned ScaleOutRequested run, or
+        /// - its assignment still exactly matches the failed runtime ownership.
+        /// </summary>
+        /// <remarks>
+        /// Expected keys:
+        /// - KEYS[1]: Redis hash key for the shared run record.
+        ///
+        /// Expected arguments:
+        /// - ARGV[1]: requeue reason.
+        /// - ARGV[2]: updated-at timestamp.
+        /// - ARGV[3]: merged metadata JSON.
+        /// - ARGV[4]: 1 when failed ownership must be compared; otherwise 0.
+        /// - ARGV[5]: expected failed runtime instance id.
+        /// - ARGV[6]: expected failed local run id.
+        ///
+        /// The runtime/local-run compare-and-set allows a legitimate crash recovery
+        /// transition from Dispatched(old runtime, old local run) to QueuedGlobally,
+        /// while a delayed callback becomes an idempotent no-op after a replacement
+        /// runtime or local run id has already been persisted.
+        /// </remarks>
+        public const string MarkRequeuedAfterScaleOut = """
+            local runKey = KEYS[1]
+
+            local reason = ARGV[1]
+            local updatedAtUtc = ARGV[2]
+            local metadataJson = ARGV[3]
+            local hasExpectedOwnership = ARGV[4] == '1'
+            local expectedRuntimeInstanceId = ARGV[5]
+            local expectedLocalRunId = ARGV[6]
+
+            if redis.call('EXISTS', runKey) == 0 then
+                return 'missing'
+            end
+
+            local status = redis.call('HGET', runKey, 'status')
+
+            if status == 'Completed' or status == 'Failed' or status == 'Cancelled' then
+                return 'terminal'
+            end
+
+            local currentRuntimeInstanceId =
+                redis.call('HGET', runKey, 'assignedRuntimeInstanceId') or ''
+
+            local currentLocalRunId =
+                redis.call('HGET', runKey, 'localRunId') or ''
+
+            if hasExpectedOwnership then
+                if currentRuntimeInstanceId ~= expectedRuntimeInstanceId or
+                   currentLocalRunId ~= expectedLocalRunId then
+                    return 'stale-ownership'
+                end
+            else
+                if status ~= 'ScaleOutRequested' or
+                   currentRuntimeInstanceId ~= '' or
+                   currentLocalRunId ~= '' then
+                    return 'not-waiting-for-scaleout'
+                end
+            end
+
+            redis.call('HSET', runKey, 'status', 'QueuedGlobally')
+            redis.call('HSET', runKey, 'assignedRuntimeInstanceId', '')
+            redis.call('HSET', runKey, 'localRunId', '')
+            redis.call('HSET', runKey, 'reason', reason)
+            redis.call('HSET', runKey, 'failureReason', '')
+            redis.call('HSET', runKey, 'updatedAtUtc', updatedAtUtc)
+            redis.call('HSET', runKey, 'metadataJson', metadataJson)
+
+            return 'requeued'
+            """;
+
     }
 }
