@@ -120,7 +120,8 @@
             """;
 
         /// <summary>
-        /// Atomically marks a runtime run as failed.
+        /// Atomically marks a runtime run as failed unless recovery has already
+        /// taken ownership of the runtime run.
         /// </summary>
         public const string MarkFailed = """
             local itemKey = KEYS[1]
@@ -131,6 +132,13 @@
 
             if redis.call('EXISTS', itemKey) == 0 then
                 return 'missing'
+            end
+
+            local currentStatus =
+                redis.call('HGET', itemKey, 'status') or ''
+
+            if currentStatus == 'requeued-for-recovery' then
+                return 'ignored-requeued-for-recovery'
             end
 
             if executionId ~= nil and executionId ~= '' then

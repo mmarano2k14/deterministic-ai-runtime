@@ -715,6 +715,76 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeQueue
             Assert.NotNull(entry.CompletedAtUtc);
         }
 
+        /// <summary>
+        /// Verifies that a late failure from the killed runtime cannot overwrite
+        /// a runtime run already marked as requeued for recovery.
+        /// </summary>
+        [Fact]
+        public async Task MarkFailedAsync_Should_Not_Overwrite_Requeued_For_Recovery()
+        {
+            var runId =
+                $"run-late-failure-after-recovery-{Guid.NewGuid():N}";
+
+            const string executionId =
+                "execution-1";
+
+            const string recoveryReason =
+                "runtime-execution-recovery-requeue";
+
+            await tenantAStore!
+                .RegisterQueuedAsync(
+                    CreateEntry(
+                        runId,
+                        "tenant-a",
+                        runtimeInstanceId: "runtime-a"))
+                .ConfigureAwait(false);
+
+            await tenantAStore
+                .MarkStartedAsync(
+                    runId,
+                    executionId)
+                .ConfigureAwait(false);
+
+            var requeued =
+                await tenantAStore
+                    .MarkRequeuedForRecoveryAsync(
+                        runId,
+                        executionId,
+                        recoveryReason)
+                    .ConfigureAwait(false);
+
+            var recoveryEntry =
+                await tenantAStore
+                    .GetAsync(runId)
+                    .ConfigureAwait(false);
+
+            Assert.True(requeued);
+            Assert.NotNull(recoveryEntry);
+            Assert.Equal("requeued-for-recovery", recoveryEntry!.Status);
+            Assert.NotNull(recoveryEntry.CompletedAtUtc);
+
+            var recoveryCompletedAtUtc =
+                recoveryEntry.CompletedAtUtc;
+
+            await tenantAStore
+                .MarkFailedAsync(
+                    runId,
+                    executionId,
+                    "late-runtime-failure")
+                .ConfigureAwait(false);
+
+            var entry =
+                await tenantAStore
+                    .GetAsync(runId)
+                    .ConfigureAwait(false);
+
+            Assert.NotNull(entry);
+            Assert.Equal(executionId, entry!.ExecutionId);
+            Assert.Equal("requeued-for-recovery", entry.Status);
+            Assert.Equal(recoveryReason, entry.FailureReason);
+            Assert.Equal(recoveryCompletedAtUtc, entry.CompletedAtUtc);
+        }
+
         private static AiRuntimeRunExecutionIndexEntry CreateEntry(
             string runId,
             string tenantId,

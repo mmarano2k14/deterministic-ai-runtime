@@ -68,7 +68,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue.Redis
             PropertyNameCaseInsensitive = true
         };
 
-        private const string MarkCompletedIgnoredRequeuedForRecovery = "ignored-requeued-for-recovery";
+        private const string MutationIgnoredRequeuedForRecovery = "ignored-requeued-for-recovery";
 
         private readonly IDatabase _database;
         private readonly RedisAiRuntimeRunExecutionIndexOptions _options;
@@ -271,7 +271,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue.Redis
 
             if (string.Equals(
                     status,
-                    MarkCompletedIgnoredRequeuedForRecovery,
+                    MutationIgnoredRequeuedForRecovery,
                     StringComparison.Ordinal))
             {
                 return;
@@ -319,6 +319,17 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue.Redis
                         FormatDate(DateTimeOffset.UtcNow)
                     })
                 .ConfigureAwait(false);
+
+            var status =
+                result.ToString();
+
+            if (string.Equals(
+                    status,
+                    MutationIgnoredRequeuedForRecovery,
+                    StringComparison.Ordinal))
+            {
+                return;
+            }
 
             EnsureMutationResult(
                 result,

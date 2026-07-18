@@ -53,6 +53,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
         private readonly ILogger<KubernetesAiRuntimeHostCreationStrategy> logger;
         private readonly ConcurrentDictionary<string, KubernetesPortForwardRegistration> portForwardProcesses;
         private readonly ConcurrentDictionary<string, SemaphoreSlim> portForwardLifecycleGates;
+        private readonly ConcurrentDictionary<string, SemaphoreSlim> runtimeHostLifecycleGates;
+        private readonly ConcurrentDictionary<string, AiRuntimeHostStartResult> startedRuntimeHosts;
         private readonly ConcurrentDictionary<string, AiKubernetesRuntimePodSpec> podSpecsByRuntimeInstanceId;
 
         /// <summary>
@@ -121,6 +123,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
             this.logger = logger ?? throw new ArgumentNullException(nameof(logger));
             this.portForwardProcesses = new ConcurrentDictionary<string, KubernetesPortForwardRegistration>(StringComparer.OrdinalIgnoreCase);
             this.portForwardLifecycleGates = new ConcurrentDictionary<string, SemaphoreSlim>(StringComparer.OrdinalIgnoreCase);
+            this.runtimeHostLifecycleGates = new ConcurrentDictionary<string, SemaphoreSlim>(StringComparer.OrdinalIgnoreCase);
+            this.startedRuntimeHosts = new ConcurrentDictionary<string, AiRuntimeHostStartResult>(StringComparer.OrdinalIgnoreCase);
             this.podSpecsByRuntimeInstanceId = new ConcurrentDictionary<string, AiKubernetesRuntimePodSpec>(StringComparer.OrdinalIgnoreCase);
         }
 
@@ -166,180 +170,221 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
                 return this.CreateRejectedWithLog(request, "kubernetes-runtime-container-name-missing", false, CreateBaseMetadata());
             }
 
-            AiKubernetesRuntimePodSpec podSpec;
+            /*
+             * Every host lifecycle for one logical runtime id must converge through
+             * the same gate. Gateway and direct port-forward modes are both covered.
+             * This prevents duplicate scale-out requests from running readiness and
+             * failure cleanup concurrently against the same live Kubernetes host.
+             */
+            var runtimeHostLifecycleGate =
+                this.runtimeHostLifecycleGates.GetOrAdd(
+                    request.RuntimeInstanceId,
+                    static _ => new SemaphoreSlim(1, 1));
+
+            await runtimeHostLifecycleGate
+                .WaitAsync(cancellationToken)
+                .ConfigureAwait(false);
 
             try
             {
-                podSpec = this.podSpecBuilder.Build(request);
-                this.podSpecsByRuntimeInstanceId[request.RuntimeInstanceId] = podSpec;
-            }
-            catch (Exception exception)
-            {
-                this.logger.LogWarning(
-                    exception,
-                    "KUBERNETES HOST POD SPEC BUILD FAILED RuntimeInstanceId={RuntimeInstanceId} Reason={Reason}",
-                    request.RuntimeInstanceId,
-                    exception.Message);
-
-                return CreateRejectedResult(request, exception.Message, false, CreateBaseMetadata());
-            }
-
-            this.logger.LogInformation(
-                "KUBERNETES HOST POD SPEC BUILT RuntimeInstanceId={RuntimeInstanceId} PodName={PodName} Namespace={Namespace} ContainerName={ContainerName} ContainerPort={ContainerPort} RuntimeImage={RuntimeImage}",
-                request.RuntimeInstanceId,
-                podSpec.PodName,
-                podSpec.Namespace,
-                podSpec.ContainerName,
-                podSpec.ContainerPort,
-                podSpec.RuntimeImage);
-
-            var createResult =
-                await this.client
-                    .CreateRuntimeHostAsync(podSpec, cancellationToken)
-                    .ConfigureAwait(false);
-
-            this.logger.LogInformation(
-                "KUBERNETES HOST CREATED RuntimeInstanceId={RuntimeInstanceId} Success={Success} PodName={PodName} ServiceName={ServiceName} FailureReason={FailureReason} Retryable={Retryable}",
-                request.RuntimeInstanceId,
-                createResult.Success,
-                createResult.PodName,
-                createResult.ServiceName,
-                createResult.FailureReason ?? "(none)",
-                createResult.Retryable);
-
-            var metadata =
-                MergeMetadata(
-                    podSpec.Annotations,
-                    createResult.Metadata);
-
-            if (!createResult.Success)
-            {
-                return CreateRejectedResult(
-                    request,
-                    createResult.FailureReason ?? "kubernetes-runtime-host-create-failed",
-                    createResult.Retryable,
-                    metadata);
-            }
-
-            this.logger.LogInformation(
-                "KUBERNETES HOST READY WAIT BEGIN RuntimeInstanceId={RuntimeInstanceId} PodName={PodName} Namespace={Namespace} Timeout={Timeout} PollInterval={PollInterval}",
-                request.RuntimeInstanceId,
-                podSpec.PodName,
-                podSpec.Namespace,
-                this.options.ReadinessTimeout,
-                this.options.ReadinessPollInterval);
-
-            var hostReadinessResult =
-                await this.client
-                    .WaitUntilHostReadyAsync(podSpec, cancellationToken)
-                    .ConfigureAwait(false);
-
-            this.logger.LogInformation(
-                "KUBERNETES HOST READY RESULT RuntimeInstanceId={RuntimeInstanceId} Success={Success} PodName={PodName} TimedOut={TimedOut} FailureReason={FailureReason} Retryable={Retryable}",
-                request.RuntimeInstanceId,
-                hostReadinessResult.Success,
-                hostReadinessResult.PodName,
-                hostReadinessResult.TimedOut,
-                hostReadinessResult.FailureReason ?? "(none)",
-                hostReadinessResult.Retryable);
-
-            metadata =
-                MergeMetadata(
-                    metadata,
-                    hostReadinessResult.Metadata);
-
-            if (!hostReadinessResult.Success)
-            {
-                await this.DeleteOnFailureAsync(
+                if (this.startedRuntimeHosts.TryGetValue(
                         request.RuntimeInstanceId,
-                        podSpec,
-                        cancellationToken)
-                    .ConfigureAwait(false);
+                        out var existingStartedResult))
+                {
+                    if (!this.podSpecsByRuntimeInstanceId.TryGetValue(
+                            request.RuntimeInstanceId,
+                            out var existingPodSpec))
+                    {
+                        this.startedRuntimeHosts.TryRemove(
+                            request.RuntimeInstanceId,
+                            out _);
 
-                return CreateRejectedResult(
-                    request,
-                    hostReadinessResult.FailureReason ?? "kubernetes-runtime-host-readiness-failed",
-                    hostReadinessResult.Retryable,
-                    metadata);
-            }
+                        this.logger.LogWarning(
+                            "KUBERNETES HOST START CONVERGENCE CACHE INVALIDATED RuntimeInstanceId={RuntimeInstanceId} Reason=pod-spec-missing",
+                            request.RuntimeInstanceId);
+                    }
+                    else
+                    {
+                        var existingHostReadiness =
+                            await this.client
+                                .WaitUntilHostReadyAsync(
+                                    existingPodSpec,
+                                    cancellationToken)
+                                .ConfigureAwait(false);
 
-            if (this.options.UseGatewayTransportEndpoint)
-            {
+                        string? existingGatewayProbeFailure = null;
+
+                        if (existingHostReadiness.Success)
+                        {
+                            existingGatewayProbeFailure =
+                                await this.WaitForGatewayGrpcTransportReadinessBeforePublicationAsync(
+                                        request,
+                                        existingStartedResult.TransportEndpoint,
+                                        existingStartedResult.Metadata,
+                                        cancellationToken)
+                                    .ConfigureAwait(false);
+                        }
+
+                        if (existingHostReadiness.Success &&
+                            string.IsNullOrWhiteSpace(existingGatewayProbeFailure))
+                        {
+                            var convergedMetadata =
+                                MergeMetadata(
+                                    existingStartedResult.Metadata,
+                                    request.Metadata);
+
+                            convergedMetadata =
+                                MergeMetadata(
+                                    convergedMetadata,
+                                    new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                                    {
+                                        ["kubernetes.creation.converged"] = bool.TrueString,
+                                        ["kubernetes.creation.convergence.source"] = "runtime-host-lifecycle-cache"
+                                    });
+
+                            var convergedResult =
+                                AiRuntimeHostStartResult.Started(
+                                    request.ExecutionContextSnapshot,
+                                    request.RuntimeInstanceId,
+                                    request.ProviderName,
+                                    request.TransportName,
+                                    existingStartedResult.TransportEndpoint,
+                                    convergedMetadata);
+
+                            this.logger.LogInformation(
+                                "KUBERNETES HOST START CONVERGED RuntimeInstanceId={RuntimeInstanceId} ControlPlaneId={ControlPlaneId} ProviderName={ProviderName} TransportName={TransportName} TransportEndpoint={TransportEndpoint} Source={Source}",
+                                request.RuntimeInstanceId,
+                                request.ControlPlaneId,
+                                request.ProviderName,
+                                request.TransportName,
+                                existingStartedResult.TransportEndpoint,
+                                "runtime-host-lifecycle-cache");
+
+                            return convergedResult;
+                        }
+
+                        this.startedRuntimeHosts.TryRemove(
+                            request.RuntimeInstanceId,
+                            out _);
+
+                        this.logger.LogWarning(
+                            "KUBERNETES HOST START CONVERGENCE CACHE INVALIDATED RuntimeInstanceId={RuntimeInstanceId} PodName={PodName} HostReadinessSuccess={HostReadinessSuccess} HostFailureReason={HostFailureReason} GatewayProbeFailure={GatewayProbeFailure}",
+                            request.RuntimeInstanceId,
+                            existingPodSpec.PodName,
+                            existingHostReadiness.Success,
+                            existingHostReadiness.FailureReason ?? "(none)",
+                            existingGatewayProbeFailure ?? "(none)");
+                    }
+                }
+
+                AiKubernetesRuntimePodSpec podSpec;
+
                 try
                 {
-                    var gatewayMetadata =
-                        await this.ResolveGatewayTransportMetadataAsync(
-                                request,
-                                podSpec,
-                                createResult.ServiceName,
-                                metadata,
-                                cancellationToken)
-                            .ConfigureAwait(false);
-
-                    metadata =
-                        MergeMetadata(
-                            metadata,
-                            gatewayMetadata);
+                    podSpec = this.podSpecBuilder.Build(request);
+                    this.podSpecsByRuntimeInstanceId[request.RuntimeInstanceId] = podSpec;
                 }
-                catch (Exception exception) when (exception is not OperationCanceledException)
+                catch (Exception exception)
                 {
                     this.logger.LogWarning(
                         exception,
-                        "KUBERNETES GATEWAY TRANSPORT RESOLUTION FAILED RuntimeInstanceId={RuntimeInstanceId} ServiceName={ServiceName} ProviderName={ProviderName} TransportName={TransportName} Reason={Reason}",
+                        "KUBERNETES HOST POD SPEC BUILD FAILED RuntimeInstanceId={RuntimeInstanceId} Reason={Reason}",
                         request.RuntimeInstanceId,
-                        createResult.ServiceName,
-                        request.ProviderName,
-                        request.TransportName,
                         exception.Message);
 
-                    await this.DeleteOnFailureAsync(
+                    return CreateRejectedResult(request, exception.Message, false, CreateBaseMetadata());
+                }
+
+                this.logger.LogInformation(
+                    "KUBERNETES HOST POD SPEC BUILT RuntimeInstanceId={RuntimeInstanceId} PodName={PodName} Namespace={Namespace} ContainerName={ContainerName} ContainerPort={ContainerPort} RuntimeImage={RuntimeImage}",
+                    request.RuntimeInstanceId,
+                    podSpec.PodName,
+                    podSpec.Namespace,
+                    podSpec.ContainerName,
+                    podSpec.ContainerPort,
+                    podSpec.RuntimeImage);
+
+                var createResult =
+                    await this.client
+                        .CreateRuntimeHostAsync(podSpec, cancellationToken)
+                        .ConfigureAwait(false);
+
+                this.logger.LogInformation(
+                    "KUBERNETES HOST CREATED RuntimeInstanceId={RuntimeInstanceId} Success={Success} PodName={PodName} ServiceName={ServiceName} FailureReason={FailureReason} Retryable={Retryable}",
+                    request.RuntimeInstanceId,
+                    createResult.Success,
+                    createResult.PodName,
+                    createResult.ServiceName,
+                    createResult.FailureReason ?? "(none)",
+                    createResult.Retryable);
+
+                var metadata =
+                    MergeMetadata(
+                        podSpec.Annotations,
+                        createResult.Metadata);
+
+                var ownsRuntimeHostResources =
+                    WasRuntimeHostCreatedByCurrentInvocation(metadata);
+
+                if (!createResult.Success)
+                {
+                    return CreateRejectedResult(
+                        request,
+                        createResult.FailureReason ?? "kubernetes-runtime-host-create-failed",
+                        createResult.Retryable,
+                        metadata);
+                }
+
+                this.logger.LogInformation(
+                    "KUBERNETES HOST READY WAIT BEGIN RuntimeInstanceId={RuntimeInstanceId} PodName={PodName} Namespace={Namespace} Timeout={Timeout} PollInterval={PollInterval}",
+                    request.RuntimeInstanceId,
+                    podSpec.PodName,
+                    podSpec.Namespace,
+                    this.options.ReadinessTimeout,
+                    this.options.ReadinessPollInterval);
+
+                var hostReadinessResult =
+                    await this.client
+                        .WaitUntilHostReadyAsync(podSpec, cancellationToken)
+                        .ConfigureAwait(false);
+
+                this.logger.LogInformation(
+                    "KUBERNETES HOST READY RESULT RuntimeInstanceId={RuntimeInstanceId} Success={Success} PodName={PodName} TimedOut={TimedOut} FailureReason={FailureReason} Retryable={Retryable}",
+                    request.RuntimeInstanceId,
+                    hostReadinessResult.Success,
+                    hostReadinessResult.PodName,
+                    hostReadinessResult.TimedOut,
+                    hostReadinessResult.FailureReason ?? "(none)",
+                    hostReadinessResult.Retryable);
+
+                metadata =
+                    MergeMetadata(
+                        metadata,
+                        hostReadinessResult.Metadata);
+
+                if (!hostReadinessResult.Success)
+                {
+                    await this.DeleteOnFailureIfOwnedAsync(
                             request.RuntimeInstanceId,
                             podSpec,
+                            ownsRuntimeHostResources,
+                            hostReadinessResult.FailureReason ?? "kubernetes-runtime-host-readiness-failed",
                             cancellationToken)
                         .ConfigureAwait(false);
 
                     return CreateRejectedResult(
                         request,
-                        $"kubernetes-gateway-transport-resolution-failed:{exception.Message}",
-                        true,
+                        hostReadinessResult.FailureReason ?? "kubernetes-runtime-host-readiness-failed",
+                        hostReadinessResult.Retryable,
                         metadata);
                 }
-            }
 
-            var usePortForwardTransportEndpoint =
-                !this.options.UseGatewayTransportEndpoint &&
-                this.ShouldUsePortForwardTransportEndpoint(request);
-
-            SemaphoreSlim? portForwardLifecycleGate = null;
-
-            if (usePortForwardTransportEndpoint)
-            {
-                /*
-                 * Several scale-out requests can converge on the same replacement
-                 * runtime instance id. Serialize the port-forward/readiness/publication
-                 * lifecycle only for that runtime id so one request cannot replace a
-                 * tunnel while another request is dispatching through it.
-                 */
-                portForwardLifecycleGate =
-                    this.portForwardLifecycleGates.GetOrAdd(
-                        request.RuntimeInstanceId,
-                        static _ => new SemaphoreSlim(1, 1));
-
-                await portForwardLifecycleGate
-                    .WaitAsync(cancellationToken)
-                    .ConfigureAwait(false);
-            }
-
-            try
-            {
-                KubernetesPortForwardEndpoint? portForwardEndpoint = null;
-
-                if (usePortForwardTransportEndpoint)
+                if (this.options.UseGatewayTransportEndpoint)
                 {
                     try
                     {
-                        portForwardEndpoint =
-                            await this.StartPortForwardAsync(
+                        var gatewayMetadata =
+                            await this.ResolveGatewayTransportMetadataAsync(
                                     request,
                                     podSpec,
                                     createResult.ServiceName,
@@ -350,140 +395,224 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
                         metadata =
                             MergeMetadata(
                                 metadata,
-                                CreatePortForwardTransportEndpointMetadata(
-                                    portForwardEndpoint.Endpoint,
-                                    portForwardEndpoint.LocalPort,
-                                    portForwardEndpoint.ServiceName));
+                                gatewayMetadata);
                     }
                     catch (Exception exception) when (exception is not OperationCanceledException)
                     {
                         this.logger.LogWarning(
                             exception,
-                            "KUBERNETES PORT-FORWARD START FAILED RuntimeInstanceId={RuntimeInstanceId} ServiceName={ServiceName} Reason={Reason}",
+                            "KUBERNETES GATEWAY TRANSPORT RESOLUTION FAILED RuntimeInstanceId={RuntimeInstanceId} ServiceName={ServiceName} ProviderName={ProviderName} TransportName={TransportName} Reason={Reason}",
                             request.RuntimeInstanceId,
                             createResult.ServiceName,
+                            request.ProviderName,
+                            request.TransportName,
                             exception.Message);
 
-                        await this.DeleteOnFailureAsync(
+                        await this.DeleteOnFailureIfOwnedAsync(
                                 request.RuntimeInstanceId,
                                 podSpec,
+                                ownsRuntimeHostResources,
+                                $"kubernetes-gateway-transport-resolution-failed:{exception.Message}",
                                 cancellationToken)
                             .ConfigureAwait(false);
 
                         return CreateRejectedResult(
                             request,
-                            $"kubernetes-port-forward-start-failed:{exception.Message}",
+                            $"kubernetes-gateway-transport-resolution-failed:{exception.Message}",
                             true,
                             metadata);
                     }
                 }
 
-                var transportEndpoint =
-                    ResolveKubernetesTransportEndpoint(
+                var usePortForwardTransportEndpoint =
+                    !this.options.UseGatewayTransportEndpoint &&
+                    this.ShouldUsePortForwardTransportEndpoint(request);
+
+                SemaphoreSlim? portForwardLifecycleGate = null;
+
+                if (usePortForwardTransportEndpoint)
+                {
+                    /*
+                     * Several scale-out requests can converge on the same replacement
+                     * runtime instance id. Serialize the port-forward/readiness/publication
+                     * lifecycle only for that runtime id so one request cannot replace a
+                     * tunnel while another request is dispatching through it.
+                     */
+                    portForwardLifecycleGate =
+                        this.portForwardLifecycleGates.GetOrAdd(
+                            request.RuntimeInstanceId,
+                            static _ => new SemaphoreSlim(1, 1));
+
+                    await portForwardLifecycleGate
+                        .WaitAsync(cancellationToken)
+                        .ConfigureAwait(false);
+                }
+
+                try
+                {
+                    KubernetesPortForwardEndpoint? portForwardEndpoint = null;
+
+                    if (usePortForwardTransportEndpoint)
+                    {
+                        try
+                        {
+                            portForwardEndpoint =
+                                await this.StartPortForwardAsync(
+                                        request,
+                                        podSpec,
+                                        createResult.ServiceName,
+                                        metadata,
+                                        cancellationToken)
+                                    .ConfigureAwait(false);
+
+                            metadata =
+                                MergeMetadata(
+                                    metadata,
+                                    CreatePortForwardTransportEndpointMetadata(
+                                        portForwardEndpoint.Endpoint,
+                                        portForwardEndpoint.LocalPort,
+                                        portForwardEndpoint.ServiceName));
+                        }
+                        catch (Exception exception) when (exception is not OperationCanceledException)
+                        {
+                            this.logger.LogWarning(
+                                exception,
+                                "KUBERNETES PORT-FORWARD START FAILED RuntimeInstanceId={RuntimeInstanceId} ServiceName={ServiceName} Reason={Reason}",
+                                request.RuntimeInstanceId,
+                                createResult.ServiceName,
+                                exception.Message);
+
+                            await this.DeleteOnFailureIfOwnedAsync(
+                                    request.RuntimeInstanceId,
+                                    podSpec,
+                                    ownsRuntimeHostResources,
+                                    $"kubernetes-port-forward-start-failed:{exception.Message}",
+                                    cancellationToken)
+                                .ConfigureAwait(false);
+
+                            return CreateRejectedResult(
+                                request,
+                                $"kubernetes-port-forward-start-failed:{exception.Message}",
+                                true,
+                                metadata);
+                        }
+                    }
+
+                    var transportEndpoint =
+                        ResolveKubernetesTransportEndpoint(
+                            request,
+                            metadata);
+
+                    ValidateResolvedKubernetesTransportEndpoint(
                         request,
-                        metadata);
+                        transportEndpoint);
 
-                ValidateResolvedKubernetesTransportEndpoint(
-                    request,
-                    transportEndpoint);
+                    metadata =
+                        MergeMetadata(
+                            metadata,
+                            CreateTransportEndpointMetadata(transportEndpoint));
 
-                metadata =
-                    MergeMetadata(
-                        metadata,
-                        CreateTransportEndpointMetadata(transportEndpoint));
+                    Console.WriteLine(
+                        $"[KUBERNETES TRANSPORT ENDPOINT RESOLVED] RuntimeInstanceId='{request.RuntimeInstanceId}', RequestTransportEndpoint='{request.TransportEndpoint}', ResolvedTransportEndpoint='{transportEndpoint}', Metadata='{string.Join(";", metadata.Select(item => $"{item.Key}={item.Value}"))}'.");
 
-                Console.WriteLine(
-                    $"[KUBERNETES TRANSPORT ENDPOINT RESOLVED] RuntimeInstanceId='{request.RuntimeInstanceId}', RequestTransportEndpoint='{request.TransportEndpoint}', ResolvedTransportEndpoint='{transportEndpoint}', Metadata='{string.Join(";", metadata.Select(item => $"{item.Key}={item.Value}"))}'.");
-
-                this.logger.LogInformation(
-                    "KUBERNETES HOST STARTED AFTER POD READINESS RuntimeInstanceId={RuntimeInstanceId} ProviderName={ProviderName} TransportName={TransportName} RequestTransportEndpoint={RequestTransportEndpoint} ResolvedTransportEndpoint={ResolvedTransportEndpoint} RequireRuntimeReadiness={RequireRuntimeReadiness}",
-                    request.RuntimeInstanceId,
-                    request.ProviderName,
-                    request.TransportName,
-                    request.TransportEndpoint,
-                    transportEndpoint,
-                    this.options.RequireRuntimeReadiness);
-
-                var startedResult =
-                    AiRuntimeHostStartResult.Started(
-                        request.ExecutionContextSnapshot,
+                    this.logger.LogInformation(
+                        "KUBERNETES HOST STARTED AFTER POD READINESS RuntimeInstanceId={RuntimeInstanceId} ProviderName={ProviderName} TransportName={TransportName} RequestTransportEndpoint={RequestTransportEndpoint} ResolvedTransportEndpoint={ResolvedTransportEndpoint} RequireRuntimeReadiness={RequireRuntimeReadiness}",
                         request.RuntimeInstanceId,
                         request.ProviderName,
                         request.TransportName,
+                        request.TransportEndpoint,
                         transportEndpoint,
-                        metadata);
+                        this.options.RequireRuntimeReadiness);
 
-                this.logger.LogInformation(
-                    "KUBERNETES RUNTIME INSTANCE PUBLICATION BEGIN RuntimeInstanceId={RuntimeInstanceId} ControlPlaneId={ControlPlaneId} ProviderName={ProviderName} TransportName={TransportName} TransportEndpoint={TransportEndpoint}",
-                    request.RuntimeInstanceId,
-                    request.ControlPlaneId,
-                    request.ProviderName,
-                    request.TransportName,
-                    transportEndpoint);
-
-                var runtimeReadinessFailure =
-                    await this.WaitForRuntimeReadinessBeforePublicationAsync(
-                            request,
-                            podSpec,
+                    var startedResult =
+                        AiRuntimeHostStartResult.Started(
+                            request.ExecutionContextSnapshot,
+                            request.RuntimeInstanceId,
+                            request.ProviderName,
+                            request.TransportName,
                             transportEndpoint,
-                            metadata,
+                            metadata);
+
+                    this.logger.LogInformation(
+                        "KUBERNETES RUNTIME INSTANCE PUBLICATION BEGIN RuntimeInstanceId={RuntimeInstanceId} ControlPlaneId={ControlPlaneId} ProviderName={ProviderName} TransportName={TransportName} TransportEndpoint={TransportEndpoint}",
+                        request.RuntimeInstanceId,
+                        request.ControlPlaneId,
+                        request.ProviderName,
+                        request.TransportName,
+                        transportEndpoint);
+
+                    var runtimeReadinessFailure =
+                        await this.WaitForRuntimeReadinessBeforePublicationAsync(
+                                request,
+                                podSpec,
+                                transportEndpoint,
+                                metadata,
+                                cancellationToken)
+                            .ConfigureAwait(false);
+
+                    if (!string.IsNullOrWhiteSpace(runtimeReadinessFailure))
+                    {
+                        /*
+                         * A reused port-forward belongs to a runtime already published by
+                         * another converging request. A duplicate request must never tear
+                         * down that live tunnel or delete the shared Kubernetes host.
+                         */
+                        if (portForwardEndpoint is null ||
+                            !portForwardEndpoint.ReusedExisting)
+                        {
+                            this.StopPortForward(request.RuntimeInstanceId);
+
+                            await this.DeleteOnFailureIfOwnedAsync(
+                                    request.RuntimeInstanceId,
+                                    podSpec,
+                                    ownsRuntimeHostResources,
+                                    runtimeReadinessFailure,
+                                    cancellationToken)
+                                .ConfigureAwait(false);
+                        }
+                        else
+                        {
+                            this.logger.LogWarning(
+                                "KUBERNETES RUNTIME READINESS FAILED FOR REUSED PORT-FORWARD RuntimeInstanceId={RuntimeInstanceId} Endpoint={Endpoint} FailureReason={FailureReason}. Existing tunnel and Kubernetes host are preserved.",
+                                request.RuntimeInstanceId,
+                                portForwardEndpoint.Endpoint,
+                                runtimeReadinessFailure);
+                        }
+
+                        return CreateRejectedResult(
+                            request,
+                            runtimeReadinessFailure,
+                            true,
+                            metadata);
+                    }
+
+                    await this.runtimeInstancePublisher
+                        .PublishAsync(
+                            request,
+                            startedResult,
                             cancellationToken)
                         .ConfigureAwait(false);
 
-                if (!string.IsNullOrWhiteSpace(runtimeReadinessFailure))
-                {
-                    /*
-                     * A reused port-forward belongs to a runtime already published by
-                     * another converging request. A duplicate request must never tear
-                     * down that live tunnel or delete the shared Kubernetes host.
-                     */
-                    if (portForwardEndpoint is null ||
-                        !portForwardEndpoint.ReusedExisting)
-                    {
-                        this.StopPortForward(request.RuntimeInstanceId);
+                    this.logger.LogInformation(
+                        "KUBERNETES RUNTIME INSTANCE PUBLICATION COMPLETED RuntimeInstanceId={RuntimeInstanceId} ControlPlaneId={ControlPlaneId} ProviderName={ProviderName} TransportName={TransportName} TransportEndpoint={TransportEndpoint}",
+                        request.RuntimeInstanceId,
+                        request.ControlPlaneId,
+                        request.ProviderName,
+                        request.TransportName,
+                        transportEndpoint);
 
-                        await this.DeleteOnFailureAsync(
-                                request.RuntimeInstanceId,
-                                podSpec,
-                                cancellationToken)
-                            .ConfigureAwait(false);
-                    }
-                    else
-                    {
-                        this.logger.LogWarning(
-                            "KUBERNETES RUNTIME READINESS FAILED FOR REUSED PORT-FORWARD RuntimeInstanceId={RuntimeInstanceId} Endpoint={Endpoint} FailureReason={FailureReason}. Existing tunnel and Kubernetes host are preserved.",
-                            request.RuntimeInstanceId,
-                            portForwardEndpoint.Endpoint,
-                            runtimeReadinessFailure);
-                    }
+                    this.startedRuntimeHosts[request.RuntimeInstanceId] = startedResult;
 
-                    return CreateRejectedResult(
-                        request,
-                        runtimeReadinessFailure,
-                        true,
-                        metadata);
+                    return startedResult;
                 }
-
-                await this.runtimeInstancePublisher
-                    .PublishAsync(
-                        request,
-                        startedResult,
-                        cancellationToken)
-                    .ConfigureAwait(false);
-
-                this.logger.LogInformation(
-                    "KUBERNETES RUNTIME INSTANCE PUBLICATION COMPLETED RuntimeInstanceId={RuntimeInstanceId} ControlPlaneId={ControlPlaneId} ProviderName={ProviderName} TransportName={TransportName} TransportEndpoint={TransportEndpoint}",
-                    request.RuntimeInstanceId,
-                    request.ControlPlaneId,
-                    request.ProviderName,
-                    request.TransportName,
-                    transportEndpoint);
-
-                return startedResult;
+                finally
+                {
+                    portForwardLifecycleGate?.Release();
+                }
             }
             finally
             {
-                portForwardLifecycleGate?.Release();
+                runtimeHostLifecycleGate.Release();
             }
         }
 
@@ -495,60 +624,81 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
             ArgumentException.ThrowIfNullOrWhiteSpace(runtimeInstanceId);
             cancellationToken.ThrowIfCancellationRequested();
 
-            this.StopPortForward(runtimeInstanceId);
+            var runtimeHostLifecycleGate =
+                this.runtimeHostLifecycleGates.GetOrAdd(
+                    runtimeInstanceId,
+                    static _ => new SemaphoreSlim(1, 1));
 
-            if (!this.podSpecsByRuntimeInstanceId.TryRemove(runtimeInstanceId, out var podSpec))
+            await runtimeHostLifecycleGate
+                .WaitAsync(cancellationToken)
+                .ConfigureAwait(false);
+
+            try
             {
-                this.logger.LogWarning(
-                    "Kubernetes runtime host kill requested but no pod spec was registered. RuntimeInstanceId={RuntimeInstanceId}.",
-                    runtimeInstanceId);
+                /*
+                 * Remove the convergence result before terminating the host so no later
+                 * scale-out request can attach to a runtime that is being killed.
+                 */
+                this.startedRuntimeHosts.TryRemove(runtimeInstanceId, out _);
+                this.StopPortForward(runtimeInstanceId);
 
-                return false;
-            }
+                if (!this.podSpecsByRuntimeInstanceId.TryRemove(runtimeInstanceId, out var podSpec))
+                {
+                    this.logger.LogWarning(
+                        "Kubernetes runtime host kill requested but no pod spec was registered. RuntimeInstanceId={RuntimeInstanceId}.",
+                        runtimeInstanceId);
 
-            this.logger.LogWarning(
-                "Force-terminating Kubernetes runtime host on demand and waiting for exact pod UID disappearance. RuntimeInstanceId={RuntimeInstanceId}, PodName={PodName}, Namespace={Namespace}.",
-                runtimeInstanceId,
-                podSpec.PodName,
-                podSpec.Namespace);
-
-            var result =
-                await this.client
-                    .DeleteRuntimeHostAsync(
-                        podSpec,
-                        cancellationToken)
-                    .ConfigureAwait(false);
-
-            this.logger.LogWarning(
-                "Kubernetes runtime host crash termination completed. RuntimeInstanceId={RuntimeInstanceId}, PodName={PodName}, Namespace={Namespace}, Success={Success}, FailureReason={FailureReason}.",
-                runtimeInstanceId,
-                podSpec.PodName,
-                podSpec.Namespace,
-                result.Success,
-                result.FailureReason ?? "(none)");
-
-            if (result.Success)
-            {
-                await this.DeleteGatewayRuntimeRouteBestEffortAsync(
-                        runtimeInstanceId,
-                        cancellationToken)
-                    .ConfigureAwait(false);
-
-                await this.runtimeInstancePublisher
-                    .UnpublishAsync(
-                        runtimeInstanceId,
-                        "kubernetes-runtime-host-killed",
-                        cancellationToken)
-                    .ConfigureAwait(false);
+                    return false;
+                }
 
                 this.logger.LogWarning(
-                    "Kubernetes runtime instance unpublished after runtime host kill. RuntimeInstanceId={RuntimeInstanceId}, PodName={PodName}, Namespace={Namespace}.",
+                    "Force-terminating Kubernetes runtime host on demand and waiting for exact pod UID disappearance. RuntimeInstanceId={RuntimeInstanceId}, PodName={PodName}, Namespace={Namespace}.",
                     runtimeInstanceId,
                     podSpec.PodName,
                     podSpec.Namespace);
-            }
 
-            return result.Success;
+                var result =
+                    await this.client
+                        .DeleteRuntimeHostAsync(
+                            podSpec,
+                            cancellationToken)
+                        .ConfigureAwait(false);
+
+                this.logger.LogWarning(
+                    "Kubernetes runtime host crash termination completed. RuntimeInstanceId={RuntimeInstanceId}, PodName={PodName}, Namespace={Namespace}, Success={Success}, FailureReason={FailureReason}.",
+                    runtimeInstanceId,
+                    podSpec.PodName,
+                    podSpec.Namespace,
+                    result.Success,
+                    result.FailureReason ?? "(none)");
+
+                if (result.Success)
+                {
+                    await this.DeleteGatewayRuntimeRouteBestEffortAsync(
+                            runtimeInstanceId,
+                            cancellationToken)
+                        .ConfigureAwait(false);
+
+                    await this.runtimeInstancePublisher
+                        .UnpublishAsync(
+                            runtimeInstanceId,
+                            "kubernetes-runtime-host-killed",
+                            cancellationToken)
+                        .ConfigureAwait(false);
+
+                    this.logger.LogWarning(
+                        "Kubernetes runtime instance unpublished after runtime host kill. RuntimeInstanceId={RuntimeInstanceId}, PodName={PodName}, Namespace={Namespace}.",
+                        runtimeInstanceId,
+                        podSpec.PodName,
+                        podSpec.Namespace);
+                }
+
+                return result.Success;
+            }
+            finally
+            {
+                runtimeHostLifecycleGate.Release();
+            }
         }
 
         /// <inheritdoc />
@@ -564,7 +714,14 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
                 gate.Dispose();
             }
 
+            foreach (var gate in this.runtimeHostLifecycleGates.Values)
+            {
+                gate.Dispose();
+            }
+
             this.portForwardLifecycleGates.Clear();
+            this.runtimeHostLifecycleGates.Clear();
+            this.startedRuntimeHosts.Clear();
             this.podSpecsByRuntimeInstanceId.Clear();
         }
 
@@ -1731,6 +1888,99 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
                 failureReason,
                 retryable,
                 metadata);
+        }
+
+        /// <summary>
+        /// Determines whether this invocation created the Kubernetes pod and Service.
+        /// </summary>
+        /// <remarks>
+        /// The SDK client reports whether the deterministic pod or Service already existed.
+        /// A converging invocation that attaches to either existing resource is never allowed
+        /// to delete the shared runtime host when its own readiness observation fails.
+        /// </remarks>
+        /// <param name="metadata">The Kubernetes host creation metadata.</param>
+        /// <returns><see langword="true" /> only when the host resources belong to this invocation.</returns>
+        private static bool WasRuntimeHostCreatedByCurrentInvocation(
+            IReadOnlyDictionary<string, string> metadata)
+        {
+            ArgumentNullException.ThrowIfNull(metadata);
+
+            if (TryGetBooleanMetadataValue(
+                    metadata,
+                    "kubernetes.pod.alreadyExists",
+                    out var podAlreadyExists) &&
+                podAlreadyExists)
+            {
+                return false;
+            }
+
+            if (TryGetBooleanMetadataValue(
+                    metadata,
+                    "kubernetes.service.alreadyExists",
+                    out var serviceAlreadyExists) &&
+                serviceAlreadyExists)
+            {
+                return false;
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// Deletes failed resources only when they were created by the current invocation.
+        /// </summary>
+        /// <param name="runtimeInstanceId">The runtime instance id.</param>
+        /// <param name="podSpec">The Kubernetes runtime pod specification.</param>
+        /// <param name="ownsRuntimeHostResources">Whether this invocation owns the pod and Service.</param>
+        /// <param name="failureReason">The failure that triggered cleanup.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <returns>The asynchronous operation.</returns>
+        private async Task DeleteOnFailureIfOwnedAsync(
+            string runtimeInstanceId,
+            AiKubernetesRuntimePodSpec podSpec,
+            bool ownsRuntimeHostResources,
+            string failureReason,
+            CancellationToken cancellationToken)
+        {
+            if (!ownsRuntimeHostResources)
+            {
+                this.logger.LogWarning(
+                    "KUBERNETES HOST DELETE ON FAILURE SKIPPED RuntimeInstanceId={RuntimeInstanceId} PodName={PodName} Namespace={Namespace} FailureReason={FailureReason} Reason=reused-runtime-host-resources HostPreserved=True",
+                    runtimeInstanceId,
+                    podSpec.PodName,
+                    podSpec.Namespace,
+                    failureReason);
+
+                return;
+            }
+
+            await this.DeleteOnFailureAsync(
+                    runtimeInstanceId,
+                    podSpec,
+                    cancellationToken)
+                .ConfigureAwait(false);
+        }
+
+        /// <summary>
+        /// Gets a Boolean metadata value using case-insensitive key matching.
+        /// </summary>
+        /// <param name="metadata">The metadata dictionary.</param>
+        /// <param name="key">The metadata key.</param>
+        /// <param name="value">The parsed Boolean value.</param>
+        /// <returns><see langword="true" /> when a Boolean value is present and valid.</returns>
+        private static bool TryGetBooleanMetadataValue(
+            IReadOnlyDictionary<string, string> metadata,
+            string key,
+            out bool value)
+        {
+            if (TryGetMetadataValue(metadata, key, out var text) &&
+                bool.TryParse(text, out value))
+            {
+                return true;
+            }
+
+            value = false;
+            return false;
         }
 
         /// <summary>

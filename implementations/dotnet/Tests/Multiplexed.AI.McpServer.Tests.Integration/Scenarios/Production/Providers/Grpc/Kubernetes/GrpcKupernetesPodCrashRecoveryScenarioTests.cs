@@ -134,7 +134,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
         /// A task that completes when every parallel scenario has finished.
         /// </returns>
         [Theory]
-        [InlineData(2)]
+        [InlineData(4)]
         public Task Grpc_KubernetesSdk_Should_Execute_MultiTenant_Pod_Crash_Recovery_Scenarios_In_Parallel(
             int parallelism)
         {
