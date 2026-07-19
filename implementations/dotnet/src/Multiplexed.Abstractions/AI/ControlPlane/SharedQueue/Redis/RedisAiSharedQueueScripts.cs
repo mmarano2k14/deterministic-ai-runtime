@@ -513,6 +513,8 @@
         /// - KEYS[1]: queue item hash key.
         /// - KEYS[2]: global pending sorted-set index key.
         /// - KEYS[3]: optional tenant pending sorted-set index key.
+        /// - KEYS[4]: global all-items sorted-set index key.
+        /// - KEYS[5]: optional tenant all-items sorted-set index key.
         ///
         /// Expected arguments:
         /// - ARGV[1]: shared run id.
@@ -521,6 +523,7 @@
         /// - ARGV[4]: updated UTC timestamp.
         /// - ARGV[5]: reason.
         /// - ARGV[6]: merged metadata JSON.
+        /// - ARGV[7]: effective queue priority.
         ///
         /// Metadata is written before the item is made claimable again, so a queue
         /// pump can never reclaim a recovery item without the recovery metadata.
@@ -529,6 +532,8 @@
             local itemKey = KEYS[1]
             local pendingIndexKey = KEYS[2]
             local tenantPendingIndexKey = KEYS[3]
+            local allIndexKey = KEYS[4]
+            local tenantAllIndexKey = KEYS[5]
 
             local sharedRunId = ARGV[1]
             local expectedClaimToken = ARGV[2]
@@ -536,6 +541,7 @@
             local updatedAtUtc = ARGV[4]
             local reason = ARGV[5]
             local metadataJson = ARGV[6]
+            local priority = ARGV[7]
 
             if redis.call('EXISTS', itemKey) == 0 then
                 return 'missing'
@@ -562,16 +568,22 @@
                 'claimedAtUtc', '',
                 'claimExpiresAtUtc', '',
                 'updatedAtUtc', updatedAtUtc,
-                'reason', reason)
+                'reason', reason,
+                'priority', priority)
 
             if metadataJson ~= nil and metadataJson ~= '' then
                 redis.call('HSET', itemKey, 'metadataJson', metadataJson)
             end
 
             redis.call('ZADD', pendingIndexKey, score, sharedRunId)
+            redis.call('ZADD', allIndexKey, score, sharedRunId)
 
             if tenantPendingIndexKey ~= nil and tenantPendingIndexKey ~= '' then
                 redis.call('ZADD', tenantPendingIndexKey, score, sharedRunId)
+            end
+
+            if tenantAllIndexKey ~= nil and tenantAllIndexKey ~= '' then
+                redis.call('ZADD', tenantAllIndexKey, score, sharedRunId)
             end
 
             return 'requeued-dispatched'

@@ -9,6 +9,7 @@ using Multiplexed.Abstractions.AI.Execution.Control;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery;
 using Multiplexed.AI.Stores;
+using System.Globalization;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery.Transition
 {
@@ -43,6 +44,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery.Transiti
         private const string RecoveryReasonMetadataKey = "recovery.reason";
         private const string FailedRuntimeInstanceIdMetadataKey = "failed.runtimeInstanceId";
         private const string FailedLocalRunIdMetadataKey = "failed.localRunId";
+        private const string QueuePriorityMetadataKey = "queue.priority";
+        private const int InFlightRecoveryQueuePriority = -100;
 
         private readonly IAiSharedQueue sharedQueue;
         private readonly IAiRuntimeRunExecutionIndex runtimeRunExecutionIndex;
@@ -501,7 +504,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery.Transiti
             string? forensicsId,
             bool isLocalQueuedRecovery)
         {
-            return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            var metadata = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
             {
                 [RecoveryForensicsIdMetadataKey] = forensicsId ?? string.Empty,
                 [RecoveryModeMetadataKey] = isLocalQueuedRecovery
@@ -514,6 +517,14 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery.Transiti
                 [FailedRuntimeInstanceIdMetadataKey] = ownership.RuntimeInstanceId ?? string.Empty,
                 [FailedLocalRunIdMetadataKey] = ownership.LocalRunId ?? string.Empty
             };
+
+            if (!isLocalQueuedRecovery)
+            {
+                metadata[QueuePriorityMetadataKey] =
+                    InFlightRecoveryQueuePriority.ToString(CultureInfo.InvariantCulture);
+            }
+
+            return metadata;
         }
 
         /// <summary>

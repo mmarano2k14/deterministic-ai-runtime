@@ -268,7 +268,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery
                         continue;
                     }
 
-                    foreach (var recoverableRun in recoverableRuns)
+                    foreach (var recoverableRun in OrderRecoveryCandidates(recoverableRuns))
                     {
                         cancellationToken.ThrowIfCancellationRequested();
 
@@ -298,7 +298,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery
                 Console.WriteLine(
                     $"[EXECUTION RECOVERY ORPHANED SCAN] RecoverableCount='{orphanedRecoverableRuns.Count}', KnownRuntimeInstanceIds='{string.Join(",", knownRuntimeInstanceIds)}', Runs='{FormatIndexEntries(orphanedRecoverableRuns)}'.");
 
-                foreach (var orphanedRun in orphanedRecoverableRuns)
+                foreach (var orphanedRun in OrderRecoveryCandidates(orphanedRecoverableRuns))
                 {
                     cancellationToken.ThrowIfCancellationRequested();
 
@@ -595,6 +595,43 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery
             return dryRun
                 ? "dry-run-runtime-execution-recovery"
                 : "runtime-execution-recovery-requeue";
+        }
+
+        /// <summary>
+        /// Orders recovery candidates so durable in-flight executions resume before local queued work starts.
+        /// </summary>
+        /// <param name="candidates">The recovery candidates.</param>
+        /// <returns>
+        /// The candidates ordered by recovery priority while preserving their original order within each priority.
+        /// </returns>
+        private static IEnumerable<AiRuntimeRunExecutionIndexEntry> OrderRecoveryCandidates(
+            IEnumerable<AiRuntimeRunExecutionIndexEntry> candidates)
+        {
+            ArgumentNullException.ThrowIfNull(candidates);
+
+            return candidates.OrderBy(GetRecoveryPriority);
+        }
+
+        /// <summary>
+        /// Resolves the deterministic recovery priority for a runtime run.
+        /// </summary>
+        /// <param name="candidate">The recovery candidate.</param>
+        /// <returns>
+        /// Zero for an in-flight execution, one for local queued work, and two for every other recoverable state.
+        /// </returns>
+        private static int GetRecoveryPriority(
+            AiRuntimeRunExecutionIndexEntry candidate)
+        {
+            ArgumentNullException.ThrowIfNull(candidate);
+
+            if (!string.IsNullOrWhiteSpace(candidate.ExecutionId))
+            {
+                return 0;
+            }
+
+            return IsLocalQueuedRecoveryCandidate(candidate)
+                ? 1
+                : 2;
         }
 
         /// <summary>

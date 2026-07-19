@@ -214,6 +214,9 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Recovery.Trans
             Assert.Equal(
                 "execution-1",
                 sharedQueue.LastRequeueMetadata["recovery.failedExecutionId"]);
+            Assert.Equal(
+                "-100",
+                sharedQueue.LastRequeueMetadata["queue.priority"]);
 
             Assert.Equal(1, runExecutionIndex.MarkRequeuedForRecoveryCalls);
             Assert.Equal("run-1", runExecutionIndex.LastRunId);
@@ -277,6 +280,8 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Recovery.Trans
             Assert.Equal(
                 "runtime-recovery:local-queued:shared-run-1:run-1",
                 sharedQueue.LastRequeueMetadata["recovery.forensicsId"]);
+            Assert.False(
+                sharedQueue.LastRequeueMetadata.ContainsKey("queue.priority"));
         }
 
         /// <summary>

@@ -40,6 +40,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
     /// </remarks>
     public sealed class RedisAiSharedQueue : IAiSharedQueue
     {
+        private const string QueuePriorityMetadataKey = "queue.priority";
+
         private const string DefaultKeyPrefix =
             "ai";
 
@@ -789,8 +791,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
 
             var now = DateTimeOffset.UtcNow;
             var score = BuildQueueScoreFromParts(
-                priority: 0,
-                enqueuedAtUtc: now);
+                existing.Priority,
+                existing.EnqueuedAtUtc);
 
             var requeueKeys = string.IsNullOrWhiteSpace(existing.ExecutionContextSnapshot.TenantId)
                 ? new RedisKey[]
@@ -899,13 +901,14 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
 
             var now = DateTimeOffset.UtcNow;
 
-            var score = BuildQueueScoreFromParts(
-                existing.Priority,
-                existing.EnqueuedAtUtc);
-
             var tenantPendingIndexKey = string.IsNullOrWhiteSpace(existing.ExecutionContextSnapshot.TenantId)
                 ? (RedisKey)string.Empty
                 : BuildTenantPendingIndexKey(
+                    controlPlaneId,
+                    existing.ExecutionContextSnapshot.TenantId);
+            var tenantAllIndexKey = string.IsNullOrWhiteSpace(existing.ExecutionContextSnapshot.TenantId)
+                ? (RedisKey)string.Empty
+                : BuildTenantAllIndexKey(
                     controlPlaneId,
                     existing.ExecutionContextSnapshot.TenantId);
 
@@ -932,6 +935,12 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
                     mergedMetadata,
                     controlPlaneMetadata);
 
+            var priority = ResolvePriority(
+                existing.Priority,
+                metadata);
+            var score = BuildQueueScoreFromParts(
+                priority,
+                existing.EnqueuedAtUtc);
             var metadataJson =
                 Serialize(mergedMetadata);
 
@@ -944,7 +953,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
                             controlPlaneId,
                             sharedRunId),
                         BuildPendingIndexKey(controlPlaneId),
-                        tenantPendingIndexKey
+                        tenantPendingIndexKey,
+                        BuildAllIndexKey(controlPlaneId),
+                        tenantAllIndexKey
                     },
                     new RedisValue[]
                     {
@@ -953,7 +964,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
                         score,
                         FormatDate(now),
                         reason ?? string.Empty,
-                        metadataJson
+                        metadataJson,
+                        priority.ToString(CultureInfo.InvariantCulture)
                     })
                 .ConfigureAwait(false);
 
@@ -1347,6 +1359,38 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
                 Reason = GetOptional(fields, "reason"),
                 Metadata = metadata
             };
+        }
+
+        private static int ResolvePriority(
+            int existingPriority,
+            IReadOnlyDictionary<string, string>? metadata)
+        {
+            if (metadata is null ||
+                metadata.Count == 0)
+            {
+                return existingPriority;
+            }
+
+            foreach (var pair in metadata)
+            {
+                if (!string.Equals(
+                        pair.Key,
+                        QueuePriorityMetadataKey,
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                return int.TryParse(
+                    pair.Value,
+                    NumberStyles.Integer,
+                    CultureInfo.InvariantCulture,
+                    out var priority)
+                        ? priority
+                        : existingPriority;
+            }
+
+            return existingPriority;
         }
 
         private static IReadOnlyDictionary<string, string> MergeMetadata(

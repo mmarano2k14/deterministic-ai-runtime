@@ -367,38 +367,9 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                     continue;
                 }
 
-                await AiDagExecutionHelpers.RecordDagLedgerEventAsync(
-                        _services,
-                        executionId,
-                        pipelineKey,
-                        stepDefinition.Name,
-                        stepDefinition.StepKey,
-                        workerId,
-                        concurrencyContext.LeaseId,
-                        concurrencyContext,
-                        AiDecisionLedgerCategory.Concurrency,
-                        AiDecisionLedgerEvents.Concurrency.LeaseAcquired,
-                        AiDecisionLedgerOutcome.Allowed,
-                        "Concurrency lease acquired before step claim.",
-                        new Dictionary<string, string>
-                        {
-                            ["pipeline.key"] = pipelineKey,
-                            ["step.name"] = stepDefinition.Name,
-                            ["step.key"] = stepDefinition.StepKey,
-                            ["worker.id"] = workerId,
-                            ["lease.id"] = concurrencyContext.LeaseId
-                        },
-                        cancellationToken)
-                    .ConfigureAwait(false);
+                var leaseTransferred = false;
 
-                var claimed = await TryClaimStepAsync(
-                        executionId,
-                        readyStep.StepName,
-                        workerId,
-                        cancellationToken)
-                    .ConfigureAwait(false);
-
-                if (claimed is null)
+                try
                 {
                     await AiDagExecutionHelpers.RecordDagLedgerEventAsync(
                             _services,
@@ -409,10 +380,10 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                             workerId,
                             concurrencyContext.LeaseId,
                             concurrencyContext,
-                            AiDecisionLedgerCategory.Claim,
-                            AiDecisionLedgerEvents.Claim.Denied,
-                            AiDecisionLedgerOutcome.Denied,
-                            "Step claim failed after concurrency lease was acquired.",
+                            AiDecisionLedgerCategory.Concurrency,
+                            AiDecisionLedgerEvents.Concurrency.LeaseAcquired,
+                            AiDecisionLedgerOutcome.Allowed,
+                            "Concurrency lease acquired before step claim.",
                             new Dictionary<string, string>
                             {
                                 ["pipeline.key"] = pipelineKey,
@@ -424,11 +395,41 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                             cancellationToken)
                         .ConfigureAwait(false);
 
-                    await _services.ConcurrencyGate.ReleaseAsync(
-                            concurrencyContext,
-                            concurrencyDefinition,
+                    var claimed = await TryClaimStepAsync(
+                            executionId,
+                            readyStep.StepName,
+                            workerId,
                             cancellationToken)
                         .ConfigureAwait(false);
+
+                    if (claimed is null)
+                    {
+                        await AiDagExecutionHelpers.RecordDagLedgerEventAsync(
+                                _services,
+                                executionId,
+                                pipelineKey,
+                                stepDefinition.Name,
+                                stepDefinition.StepKey,
+                                workerId,
+                                concurrencyContext.LeaseId,
+                                concurrencyContext,
+                                AiDecisionLedgerCategory.Claim,
+                                AiDecisionLedgerEvents.Claim.Denied,
+                                AiDecisionLedgerOutcome.Denied,
+                                "Step claim failed after concurrency lease was acquired.",
+                                new Dictionary<string, string>
+                                {
+                                    ["pipeline.key"] = pipelineKey,
+                                    ["step.name"] = stepDefinition.Name,
+                                    ["step.key"] = stepDefinition.StepKey,
+                                    ["worker.id"] = workerId,
+                                    ["lease.id"] = concurrencyContext.LeaseId
+                                },
+                                cancellationToken)
+                            .ConfigureAwait(false);
+
+                        continue;
+                    }
 
                     await AiDagExecutionHelpers.RecordDagLedgerEventAsync(
                             _services,
@@ -437,60 +438,48 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                             stepDefinition.Name,
                             stepDefinition.StepKey,
                             workerId,
-                            concurrencyContext.LeaseId,
+                            claimed.ClaimToken,
                             concurrencyContext,
-                            AiDecisionLedgerCategory.Concurrency,
-                            AiDecisionLedgerEvents.Concurrency.LeaseReleased,
-                            AiDecisionLedgerOutcome.Released,
-                            "Concurrency lease released after failed step claim.",
+                            AiDecisionLedgerCategory.Claim,
+                            AiDecisionLedgerEvents.Claim.Acquired,
+                            AiDecisionLedgerOutcome.Allowed,
+                            "Step claim acquired.",
                             new Dictionary<string, string>
                             {
                                 ["pipeline.key"] = pipelineKey,
                                 ["step.name"] = stepDefinition.Name,
                                 ["step.key"] = stepDefinition.StepKey,
                                 ["worker.id"] = workerId,
-                                ["lease.id"] = concurrencyContext.LeaseId
+                                ["claim.token"] = claimed.ClaimToken
                             },
                             cancellationToken)
                         .ConfigureAwait(false);
 
-                    _services.Logger.Engine.LogInformation(
-                        $"[AI DAG] Concurrency lease released after failed claim. ExecutionId='{executionId}', StepName='{readyStep.StepName}', Worker='{workerId}'.");
-
-                    continue;
-                }
-
-                await AiDagExecutionHelpers.RecordDagLedgerEventAsync(
-                        _services,
+                    _services.Logger.Engine.StepClaimed(
                         executionId,
-                        pipelineKey,
                         stepDefinition.Name,
-                        stepDefinition.StepKey,
                         workerId,
-                        claimed.ClaimToken,
-                        concurrencyContext,
-                        AiDecisionLedgerCategory.Claim,
-                        AiDecisionLedgerEvents.Claim.Acquired,
-                        AiDecisionLedgerOutcome.Allowed,
-                        "Step claim acquired.",
-                        new Dictionary<string, string>
-                        {
-                            ["pipeline.key"] = pipelineKey,
-                            ["step.name"] = stepDefinition.Name,
-                            ["step.key"] = stepDefinition.StepKey,
-                            ["worker.id"] = workerId,
-                            ["claim.token"] = claimed.ClaimToken
-                        },
-                        cancellationToken)
-                    .ConfigureAwait(false);
+                        claimed.ClaimToken);
 
-                _services.Logger.Engine.StepClaimed(
-                    executionId,
-                    stepDefinition.Name,
-                    workerId,
-                    claimed.ClaimToken);
-
-                return claimed;
+                    leaseTransferred = true;
+                    return claimed;
+                }
+                finally
+                {
+                    if (!leaseTransferred)
+                    {
+                        await ReleaseUntransferredLeaseBestEffortAsync(
+                                executionId,
+                                pipelineKey,
+                                stepDefinition,
+                                workerId,
+                                concurrencyContext,
+                                concurrencyDefinition,
+                                "Concurrency lease released because step claim ownership was not transferred.",
+                                claimMode: "single")
+                            .ConfigureAwait(false);
+                    }
+                }
             }
 
             await AiDagExecutionHelpers.RecordDagLedgerEventAsync(
@@ -820,39 +809,9 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                     continue;
                 }
 
-                await AiDagExecutionHelpers.RecordDagLedgerEventAsync(
-                        _services,
-                        executionId,
-                        pipelineKey,
-                        stepDefinition.Name,
-                        stepDefinition.StepKey,
-                        workerId,
-                        concurrencyContext.LeaseId,
-                        concurrencyContext,
-                        AiDecisionLedgerCategory.Concurrency,
-                        AiDecisionLedgerEvents.Concurrency.LeaseAcquired,
-                        AiDecisionLedgerOutcome.Allowed,
-                        "Concurrency lease acquired before batch step claim.",
-                        new Dictionary<string, string>
-                        {
-                            ["pipeline.key"] = pipelineKey,
-                            ["step.name"] = stepDefinition.Name,
-                            ["step.key"] = stepDefinition.StepKey,
-                            ["worker.id"] = workerId,
-                            ["lease.id"] = concurrencyContext.LeaseId,
-                            ["claim.mode"] = "batch"
-                        },
-                        cancellationToken)
-                    .ConfigureAwait(false);
+                var leaseTransferred = false;
 
-                var claimed = await TryClaimStepAsync(
-                        executionId,
-                        readyStep.StepName,
-                        workerId,
-                        cancellationToken)
-                    .ConfigureAwait(false);
-
-                if (claimed is null)
+                try
                 {
                     await AiDagExecutionHelpers.RecordDagLedgerEventAsync(
                             _services,
@@ -863,10 +822,10 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                             workerId,
                             concurrencyContext.LeaseId,
                             concurrencyContext,
-                            AiDecisionLedgerCategory.Claim,
-                            AiDecisionLedgerEvents.Claim.Denied,
-                            AiDecisionLedgerOutcome.Denied,
-                            "Batch step claim failed after concurrency lease was acquired.",
+                            AiDecisionLedgerCategory.Concurrency,
+                            AiDecisionLedgerEvents.Concurrency.LeaseAcquired,
+                            AiDecisionLedgerOutcome.Allowed,
+                            "Concurrency lease acquired before batch step claim.",
                             new Dictionary<string, string>
                             {
                                 ["pipeline.key"] = pipelineKey,
@@ -879,11 +838,48 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                             cancellationToken)
                         .ConfigureAwait(false);
 
-                    await _services.ConcurrencyGate.ReleaseAsync(
-                            concurrencyContext,
-                            concurrencyDefinition,
+                    var claimed = await TryClaimStepAsync(
+                            executionId,
+                            readyStep.StepName,
+                            workerId,
                             cancellationToken)
                         .ConfigureAwait(false);
+
+                    if (claimed is null)
+                    {
+                        await AiDagExecutionHelpers.RecordDagLedgerEventAsync(
+                                _services,
+                                executionId,
+                                pipelineKey,
+                                stepDefinition.Name,
+                                stepDefinition.StepKey,
+                                workerId,
+                                concurrencyContext.LeaseId,
+                                concurrencyContext,
+                                AiDecisionLedgerCategory.Claim,
+                                AiDecisionLedgerEvents.Claim.Denied,
+                                AiDecisionLedgerOutcome.Denied,
+                                "Batch step claim failed after concurrency lease was acquired.",
+                                new Dictionary<string, string>
+                                {
+                                    ["pipeline.key"] = pipelineKey,
+                                    ["step.name"] = stepDefinition.Name,
+                                    ["step.key"] = stepDefinition.StepKey,
+                                    ["worker.id"] = workerId,
+                                    ["lease.id"] = concurrencyContext.LeaseId,
+                                    ["claim.mode"] = "batch"
+                                },
+                                cancellationToken)
+                            .ConfigureAwait(false);
+
+                        continue;
+                    }
+
+                    _services.Logger.Engine.StepClaimed(
+                        executionId,
+                        claimed.StepName,
+                        workerId,
+                        claimed.ClaimToken);
 
                     await AiDagExecutionHelpers.RecordDagLedgerEventAsync(
                             _services,
@@ -892,62 +888,43 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                             stepDefinition.Name,
                             stepDefinition.StepKey,
                             workerId,
-                            concurrencyContext.LeaseId,
+                            claimed.ClaimToken,
                             concurrencyContext,
-                            AiDecisionLedgerCategory.Concurrency,
-                            AiDecisionLedgerEvents.Concurrency.LeaseReleased,
-                            AiDecisionLedgerOutcome.Released,
-                            "Concurrency lease released after failed batch step claim.",
+                            AiDecisionLedgerCategory.Claim,
+                            AiDecisionLedgerEvents.Claim.Acquired,
+                            AiDecisionLedgerOutcome.Allowed,
+                            "Step claim acquired.",
                             new Dictionary<string, string>
                             {
                                 ["pipeline.key"] = pipelineKey,
                                 ["step.name"] = stepDefinition.Name,
                                 ["step.key"] = stepDefinition.StepKey,
                                 ["worker.id"] = workerId,
-                                ["lease.id"] = concurrencyContext.LeaseId,
+                                ["claim.token"] = claimed.ClaimToken,
                                 ["claim.mode"] = "batch"
                             },
                             cancellationToken)
                         .ConfigureAwait(false);
 
-                    _services.Logger.Engine.LogInformation(
-                        $"[AI DAG] Concurrency lease released after failed claim. ExecutionId='{executionId}', StepName='{readyStep.StepName}', Worker='{workerId}'.");
-
-                    continue;
+                    claimedSteps.Add(claimed);
+                    leaseTransferred = true;
                 }
-
-                _services.Logger.Engine.StepClaimed(
-                    executionId,
-                    claimed.StepName,
-                    workerId,
-                    claimed.ClaimToken);
-
-                await AiDagExecutionHelpers.RecordDagLedgerEventAsync(
-                        _services,
-                        executionId,
-                        pipelineKey,
-                        stepDefinition.Name,
-                        stepDefinition.StepKey,
-                        workerId,
-                        claimed.ClaimToken,
-                        concurrencyContext,
-                        AiDecisionLedgerCategory.Claim,
-                        AiDecisionLedgerEvents.Claim.Acquired,
-                        AiDecisionLedgerOutcome.Allowed,
-                        "Step claim acquired.",
-                        new Dictionary<string, string>
-                        {
-                            ["pipeline.key"] = pipelineKey,
-                            ["step.name"] = stepDefinition.Name,
-                            ["step.key"] = stepDefinition.StepKey,
-                            ["worker.id"] = workerId,
-                            ["claim.token"] = claimed.ClaimToken,
-                            ["claim.mode"] = "batch"
-                        },
-                        cancellationToken)
-                    .ConfigureAwait(false);
-
-                claimedSteps.Add(claimed);
+                finally
+                {
+                    if (!leaseTransferred)
+                    {
+                        await ReleaseUntransferredLeaseBestEffortAsync(
+                                executionId,
+                                pipelineKey,
+                                stepDefinition,
+                                workerId,
+                                concurrencyContext,
+                                concurrencyDefinition,
+                                "Concurrency lease released because batch step claim ownership was not transferred.",
+                                claimMode: "batch")
+                            .ConfigureAwait(false);
+                    }
+                }
             }
 
             if (claimedSteps.Count == 0)
@@ -978,6 +955,80 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
             }
 
             return claimedSteps;
+        }
+
+        /// <summary>
+        /// Releases a concurrency lease that was acquired by this claim service but was not
+        /// transferred to a successfully returned claimed step.
+        /// </summary>
+        private async Task ReleaseUntransferredLeaseBestEffortAsync(
+            string executionId,
+            string pipelineKey,
+            AiPipelineStepDefinition stepDefinition,
+            string workerId,
+            AiConcurrencyContext concurrencyContext,
+            AiConcurrencyDefinition concurrencyDefinition,
+            string reason,
+            string claimMode)
+        {
+            try
+            {
+                await _services.ConcurrencyGate.ReleaseAsync(
+                        concurrencyContext,
+                        concurrencyDefinition,
+                        CancellationToken.None)
+                    .ConfigureAwait(false);
+
+                try
+                {
+                    await AiDagExecutionHelpers.RecordDagLedgerEventAsync(
+                            _services,
+                            executionId,
+                            pipelineKey,
+                            stepDefinition.Name,
+                            stepDefinition.StepKey,
+                            workerId,
+                            concurrencyContext.LeaseId,
+                            concurrencyContext,
+                            AiDecisionLedgerCategory.Concurrency,
+                            AiDecisionLedgerEvents.Concurrency.LeaseReleased,
+                            AiDecisionLedgerOutcome.Released,
+                            reason,
+                            new Dictionary<string, string>
+                            {
+                                ["pipeline.key"] = pipelineKey,
+                                ["step.name"] = stepDefinition.Name,
+                                ["step.key"] = stepDefinition.StepKey,
+                                ["worker.id"] = workerId,
+                                ["lease.id"] = concurrencyContext.LeaseId,
+                                ["claim.mode"] = claimMode,
+                                ["release.owner"] = nameof(AiDagStepClaimService)
+                            },
+                            CancellationToken.None)
+                        .ConfigureAwait(false);
+                }
+                catch (Exception ledgerException)
+                {
+                    _services.Logger.Engine.LogWarning(
+                        $"[AI DAG] Concurrency lease was released, but its cleanup ledger event could not be recorded. " +
+                        $"ExecutionId='{executionId}', StepName='{stepDefinition.Name}', Worker='{workerId}', " +
+                        $"LeaseId='{concurrencyContext.LeaseId}', ClaimMode='{claimMode}', " +
+                        $"ExceptionType='{ledgerException.GetType().Name}', ExceptionMessage='{ledgerException.Message}'.");
+                }
+
+                _services.Logger.Engine.LogInformation(
+                    $"[AI DAG] Untransferred concurrency lease released. " +
+                    $"ExecutionId='{executionId}', StepName='{stepDefinition.Name}', Worker='{workerId}', " +
+                    $"LeaseId='{concurrencyContext.LeaseId}', ClaimMode='{claimMode}'.");
+            }
+            catch (Exception releaseException)
+            {
+                _services.Logger.Engine.LogWarning(
+                    $"[AI DAG] Failed to release an untransferred concurrency lease after local claim failure. " +
+                    $"ExecutionId='{executionId}', StepName='{stepDefinition.Name}', Worker='{workerId}', " +
+                    $"LeaseId='{concurrencyContext.LeaseId}', ClaimMode='{claimMode}', " +
+                    $"ExceptionType='{releaseException.GetType().Name}', ExceptionMessage='{releaseException.Message}'.");
+            }
         }
 
         /// <summary>
