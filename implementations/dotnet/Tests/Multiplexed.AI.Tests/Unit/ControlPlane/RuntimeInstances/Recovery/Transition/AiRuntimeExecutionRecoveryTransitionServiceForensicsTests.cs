@@ -14,10 +14,17 @@ using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Ownership;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Claiming;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Queue;
 using Multiplexed.Abstractions.Core.ExecutionContext;
+using Multiplexed.Abstractions.AI.Execution;
+using Multiplexed.Abstractions.AI.Execution.Control;
+using Multiplexed.Abstractions.AI.Execution.Scheduling;
+using Multiplexed.Abstractions.AI.Steps;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery.Transition;
+using Multiplexed.AI.Runtime.Execution.Engine.Models;
+using Multiplexed.AI.Runtime.Execution.Retention.Models;
 using Multiplexed.AI.Tests.Fixtures;
+using Multiplexed.AI.Stores;
 using Xunit;
 
 namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Recovery.Transition
@@ -233,7 +240,9 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Recovery.Trans
                 {
                     EnableDagExecutionResume = true
                 }),
-                recorder);
+                recorder,
+                new RecoveryExecutionControlService(),
+                new RecoveryDagExecutionStore());
         }
 
         /// <summary>
@@ -282,6 +291,388 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Recovery.Trans
             };
         }
 
-        
+
+        private sealed class RecoveryExecutionControlService : IAiExecutionControlService
+        {
+            private AiExecutionControlState? state;
+
+            /// <summary>
+            /// Gets the number of recovery pause requests.
+            /// </summary>
+            public int PauseForRecoveryCallCount { get; private set; }
+
+            /// <summary>
+            /// Gets the number of effective paused transitions.
+            /// </summary>
+            public int MarkPausedCallCount { get; private set; }
+
+            /// <inheritdoc />
+            public Task<AiExecutionControlState> PauseExecutionForRecoveryAsync(
+                string executionId,
+                string recoveryOwnerId,
+                string? reason = null,
+                CancellationToken cancellationToken = default)
+            {
+                ArgumentException.ThrowIfNullOrWhiteSpace(executionId);
+                ArgumentException.ThrowIfNullOrWhiteSpace(recoveryOwnerId);
+                cancellationToken.ThrowIfCancellationRequested();
+
+                this.PauseForRecoveryCallCount++;
+                this.state = CreateState(
+                    executionId,
+                    AiExecutionControlStatus.Pausing,
+                    reason,
+                    recoveryOwnerId);
+
+                return Task.FromResult(this.state);
+            }
+
+            /// <inheritdoc />
+            public Task<AiExecutionControlState> MarkPausedAsync(
+                string executionId,
+                string? requestedBy = null,
+                CancellationToken cancellationToken = default)
+            {
+                ArgumentException.ThrowIfNullOrWhiteSpace(executionId);
+                cancellationToken.ThrowIfCancellationRequested();
+
+                this.MarkPausedCallCount++;
+                this.state = CreateState(
+                    executionId,
+                    AiExecutionControlStatus.Paused,
+                    this.state?.Reason,
+                    requestedBy ?? this.state?.RequestedBy);
+
+                return Task.FromResult(this.state);
+            }
+
+            /// <inheritdoc />
+            public Task<AiExecutionControlState?> GetStateAsync(
+                string executionId,
+                CancellationToken cancellationToken = default)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                return Task.FromResult(this.state);
+            }
+
+            /// <inheritdoc />
+            public Task<AiExecutionControlState> PauseExecutionAsync(
+                string executionId,
+                string? reason = null,
+                string? requestedBy = null,
+                CancellationToken cancellationToken = default)
+            {
+                throw new NotSupportedException();
+            }
+
+            /// <inheritdoc />
+            public Task<AiExecutionControlState> ResumeExecutionAsync(
+                string executionId,
+                string? requestedBy = null,
+                CancellationToken cancellationToken = default)
+            {
+                throw new NotSupportedException();
+            }
+
+            /// <inheritdoc />
+            public Task<AiExecutionControlState> CancelExecutionAsync(
+                string executionId,
+                string? reason = null,
+                string? requestedBy = null,
+                CancellationToken cancellationToken = default)
+            {
+                throw new NotSupportedException();
+            }
+
+            /// <inheritdoc />
+            public Task<AiExecutionControlState> MarkCancelledAsync(
+                string executionId,
+                string? requestedBy = null,
+                CancellationToken cancellationToken = default)
+            {
+                throw new NotSupportedException();
+            }
+
+            /// <inheritdoc />
+            public Task<AiExecutionControlState> MarkWaitingForInputAsync(
+                string executionId,
+                string waitingKey,
+                string? waitingStepName = null,
+                string? reason = null,
+                string? requestedBy = null,
+                CancellationToken cancellationToken = default)
+            {
+                throw new NotSupportedException();
+            }
+
+            /// <inheritdoc />
+            public Task<AiExecutionControlState> SubmitHumanInputAsync(
+                string executionId,
+                string waitingKey,
+                IReadOnlyDictionary<string, object?> input,
+                string? submittedBy = null,
+                CancellationToken cancellationToken = default)
+            {
+                throw new NotSupportedException();
+            }
+
+            /// <inheritdoc />
+            public Task<AiExecutionControlDecision> CheckCanAdvanceAsync(
+                string executionId,
+                CancellationToken cancellationToken = default)
+            {
+                throw new NotSupportedException();
+            }
+
+            /// <inheritdoc />
+            public Task<AiExecutionControlState> MarkRunningAsync(
+                string executionId,
+                string? requestedBy = null,
+                CancellationToken cancellationToken = default)
+            {
+                throw new NotSupportedException();
+            }
+
+            /// <inheritdoc />
+            public Task<AiExecutionControlState> ResumeExecutionFromRecoveryAsync(
+                string executionId,
+                string recoveryOwnerId,
+                CancellationToken cancellationToken = default)
+            {
+                throw new NotSupportedException();
+            }
+
+            private static AiExecutionControlState CreateState(
+                string executionId,
+                AiExecutionControlStatus status,
+                string? reason,
+                string? requestedBy)
+            {
+                return new AiExecutionControlState
+                {
+                    ExecutionId = executionId,
+                    Status = status,
+                    Reason = reason,
+                    RequestedBy = requestedBy,
+                    UpdatedAtUtc = DateTime.UtcNow,
+                    PauseRequestedAtUtc =
+                        status == AiExecutionControlStatus.Pausing
+                            ? DateTime.UtcNow
+                            : null,
+                    PausedAtUtc =
+                        status == AiExecutionControlStatus.Paused
+                            ? DateTime.UtcNow
+                            : null
+                };
+            }
+        }
+
+        /// <summary>
+        /// Provides only the explicit running-step recovery operation required by this test.
+        /// </summary>
+        private sealed class RecoveryDagExecutionStore : IAiDagExecutionStore
+        {
+            /// <summary>
+            /// Gets the number of explicit recovery calls.
+            /// </summary>
+            public int RecoverRunningStepsForRecoveryCallCount { get; private set; }
+
+            /// <summary>
+            /// Gets the last durable execution identifier recovered.
+            /// </summary>
+            public string? LastRecoveredExecutionId { get; private set; }
+
+            /// <inheritdoc />
+            public Task<int> RecoverRunningStepsForRecoveryAsync(
+                string executionId,
+                CancellationToken cancellationToken = default)
+            {
+                ArgumentException.ThrowIfNullOrWhiteSpace(executionId);
+                cancellationToken.ThrowIfCancellationRequested();
+
+                this.RecoverRunningStepsForRecoveryCallCount++;
+                this.LastRecoveredExecutionId = executionId;
+
+                return Task.FromResult(1);
+            }
+
+            /// <inheritdoc />
+            public Task CreateAsync(
+                AiExecutionRecord record,
+                AiExecutionState state,
+                CancellationToken cancellationToken = default)
+            {
+                throw new NotSupportedException();
+            }
+
+            /// <inheritdoc />
+            public Task<AiExecutionRecord?> GetRecordAsync(
+                string executionId,
+                CancellationToken cancellationToken = default)
+            {
+                throw new NotSupportedException();
+            }
+
+            /// <inheritdoc />
+            public Task<AiExecutionState?> GetStateAsync(
+                string executionId,
+                CancellationToken cancellationToken = default)
+            {
+                throw new NotSupportedException();
+            }
+
+            /// <inheritdoc />
+            public Task SaveRecordAsync(
+                AiExecutionRecord record,
+                CancellationToken cancellationToken = default)
+            {
+                throw new NotSupportedException();
+            }
+
+            /// <inheritdoc />
+            public Task SaveStateAsync(
+                string executionId,
+                AiExecutionState state,
+                CancellationToken cancellationToken = default)
+            {
+                throw new NotSupportedException();
+            }
+
+            /// <inheritdoc />
+            public Task DeleteRecordAsync(
+                string executionId,
+                CancellationToken cancellationToken = default)
+            {
+                throw new NotSupportedException();
+            }
+
+            /// <inheritdoc />
+            public Task DeleteStateAsync(
+                string executionId,
+                CancellationToken cancellationToken = default)
+            {
+                throw new NotSupportedException();
+            }
+
+            /// <inheritdoc />
+            public Task DeleteStepsAsync(
+                string executionId,
+                CancellationToken cancellationToken = default)
+            {
+                throw new NotSupportedException();
+            }
+
+            /// <inheritdoc />
+            public Task DeleteExecutionBundleAsync(
+                string executionId,
+                CancellationToken cancellationToken = default)
+            {
+                throw new NotSupportedException();
+            }
+
+            /// <inheritdoc />
+            public Task<AiClaimedStep?> TryClaimNextReadyStepAsync(
+                string executionId,
+                string workerId,
+                CancellationToken cancellationToken = default)
+            {
+                throw new NotSupportedException();
+            }
+
+            /// <inheritdoc />
+            public Task<bool> TryCompleteStepAsync(
+                string executionId,
+                string stepName,
+                string claimToken,
+                AiStepResult result,
+                CancellationToken cancellationToken = default)
+            {
+                throw new NotSupportedException();
+            }
+
+            /// <inheritdoc />
+            public Task<bool> TryFailStepAsync(
+                string executionId,
+                string stepName,
+                string claimToken,
+                string? error,
+                CancellationToken cancellationToken = default)
+            {
+                throw new NotSupportedException();
+            }
+
+            /// <inheritdoc />
+            public Task<int> RecoverTimedOutStepsAsync(
+                string executionId,
+                CancellationToken cancellationToken = default)
+            {
+                throw new NotSupportedException();
+            }
+
+            /// <inheritdoc />
+            public Task<bool> TryFinalizeExecutionAsync(
+                AiDagExecutionFinalizationRequest request,
+                CancellationToken cancellationToken = default)
+            {
+                throw new NotSupportedException();
+            }
+
+            /// <inheritdoc />
+            public Task RestoreAsync(
+                AiExecutionRecord record,
+                AiExecutionState state,
+                CancellationToken cancellationToken = default)
+            {
+                throw new NotSupportedException();
+            }
+
+            /// <inheritdoc />
+            public Task DeleteStepAsync(
+                string executionId,
+                string stepName,
+                CancellationToken cancellationToken = default)
+            {
+                throw new NotSupportedException();
+            }
+
+            /// <inheritdoc />
+            public Task<IReadOnlyList<AiClaimedStep>> TryClaimReadyStepsAsync(
+                string executionId,
+                string workerId,
+                int maxSteps,
+                CancellationToken cancellationToken = default)
+            {
+                throw new NotSupportedException();
+            }
+
+            /// <inheritdoc />
+            public Task<IReadOnlyList<AiClaimedStep>> GetReadyStepsAsync(
+                string executionId,
+                int maxSteps,
+                CancellationToken cancellationToken = default)
+            {
+                throw new NotSupportedException();
+            }
+
+            /// <inheritdoc />
+            public Task<AiClaimedStep?> TryClaimStepAsync(
+                string executionId,
+                string stepName,
+                string workerId,
+                CancellationToken cancellationToken = default)
+            {
+                throw new NotSupportedException();
+            }
+
+            /// <inheritdoc />
+            public Task<AiRetentionPatchResult> TryApplyRetentionPatchAsync(
+                string executionId,
+                IReadOnlyCollection<AiRetentionPatchCandidate> candidates,
+                CancellationToken cancellationToken = default)
+            {
+                throw new NotSupportedException();
+            }
+        }
+
     }
 }

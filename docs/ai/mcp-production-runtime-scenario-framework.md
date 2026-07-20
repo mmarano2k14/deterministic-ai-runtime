@@ -1,6 +1,6 @@
 # MCP Production Runtime Scenario Framework
 
-Status: Implemented / validated for HTTP and gRPC process-host runtime scenarios, including real `RuntimeInstanceOnly` child processes, provider-based scale-out, provider-agnostic crash recovery, replay / ledger / trace proof, runtime recovery forensics, and safe-tenant non-impact validation.
+Status: Implemented / validated for HTTP and gRPC process-host runtime scenarios and gRPC Kubernetes runtime scenarios, including real `RuntimeInstanceOnly` child processes and Pods, provider-based scale-out, Host Manager lifecycle selection, provider-agnostic crash recovery, replay / ledger / trace proof, runtime recovery forensics, and safe-tenant non-impact validation.
 
 ## Purpose
 
@@ -347,22 +347,22 @@ Provider
 
 ### Kubernetes
 
-`Kubernetes` mode is intended for production cluster scale-out.
-
-The host manager or provider-specific implementation can create Kubernetes runtime pods and wait for readiness.
-
-Expected future flow:
+`Kubernetes` mode is implemented for cluster-backed runtime capacity.
 
 ```text
 Provider
 → HostManager
-→ Kubernetes creation strategy
-→ RuntimeInstanceOnly pod
-→ service / endpoint readiness
-→ registration / capacity
+→ KubernetesAiRuntimeHostCreationStrategy
+→ RuntimeInstanceOnly Pod + per-runtime Service
+→ Kubernetes host readiness
+→ direct / port-forward / shared-Gateway endpoint resolution
+→ HTTP or gRPC command readiness
+→ control-plane registry / capacity publication
 ```
 
-This mode remains a production target beyond the local process-host validation.
+The production scenario framework uses the same provider-agnostic host and recovery contracts for process and Kubernetes boundaries. Fake-client tests prove lifecycle composition only; Kubernetes SDK scenarios prove real Pod/Service lifecycle and transport behavior.
+
+See [Kubernetes Runtime Host Provider](kubernetes-runtime-host-provider.md).
 
 ---
 
@@ -1038,6 +1038,7 @@ This document complements:
 
 - `http-runtime-provider.md`;
 - `grpc-runtime-provider.md`;
+- `kubernetes-runtime-host-provider.md`;
 - `runtime-instance-provider-model.md`;
 - `runtime-discovery-registry-capacity.md`;
 - `multi-tenant-runtime-flow.md`;
@@ -1051,4 +1052,4 @@ This document complements:
 
 Those documents describe the general provider, registry, capacity, multi-tenant, and testing architecture.
 
-This document focuses specifically on the MCP production runtime scenario framework and the provider-based process-host validation path, including HTTP and gRPC.
+This document focuses specifically on the MCP production runtime scenario framework across provider-based Process and Kubernetes host boundaries, including HTTP and gRPC command transports.

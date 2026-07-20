@@ -158,8 +158,10 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Development.Http
                 AiSharedRunStatus.QueuedGlobally,
                 run.Status);
 
-            Assert.Equal(
-                RuntimeInstanceHostId,
+            // A failed dispatch is requeued for a future admission attempt.
+            // The shared-run store deliberately clears active runtime ownership so
+            // the failed HTTP runtime is not retained as the current assignment.
+            Assert.Null(
                 run.AssignedRuntimeInstanceId);
 
             Assert.Equal(
@@ -188,7 +190,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Development.Http
                 queueItem.Reason);
 
             output.WriteLine(
-                $"HTTP circuit-open failure persisted. SharedRunId='{run.SharedRunId}', RuntimeInstanceId='{run.AssignedRuntimeInstanceId}', FailureReason='{run.FailureReason}'.");
+                $"HTTP circuit-open failure persisted and run ownership cleared for redispatch. SharedRunId='{run.SharedRunId}', AssignedRuntimeInstanceId='{run.AssignedRuntimeInstanceId}', FailureReason='{run.FailureReason}'.");
         }
 
         /// <summary>

@@ -3805,6 +3805,29 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Development
                     dedicatedTenantSettings.TenantGroupId,
                     "tenant-a-admission-capacity-visibility");
 
+            var tenantAVisibleInstances =
+                await registry
+                    .ListAsync(
+                        includeStopped: false,
+                        CancellationToken.None)
+                    .ConfigureAwait(false);
+
+            Assert.Contains(
+                tenantAVisibleInstances,
+                instance => instance.RuntimeInstanceId == tenantARuntimeInstanceId);
+
+            Assert.DoesNotContain(
+                tenantAVisibleInstances,
+                instance => instance.RuntimeInstanceId == tenantBRuntimeInstanceId);
+
+            Assert.DoesNotContain(
+                tenantAVisibleInstances,
+                instance => instance.RuntimeInstanceId == sharedRuntimeInstanceId);
+
+            var tenantAVisibleRuntimeCount =
+                tenantAVisibleInstances.Count(
+                    instance => instance.Role == AiRuntimeInstanceRole.Runtime);
+
             var tenantADecision =
                 await admissionController
                     .AdmitAsync(
@@ -3832,11 +3855,11 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Development
                 tenantADecision.TenantRuntimeSettings?.IsolationMode);
 
             Assert.Equal(
-                1,
+                tenantAVisibleInstances.Count,
                 tenantADecision.VisibleInstanceCount);
 
             Assert.Equal(
-                1,
+                tenantAVisibleRuntimeCount,
                 tenantADecision.AvailableInstanceCount);
 
             Assert.Equal(
@@ -3848,6 +3871,29 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Development
                     HybridTenantId,
                     hybridTenantSettings.TenantGroupId,
                     "tenant-b-admission-capacity-visibility");
+
+            var tenantBVisibleInstances =
+                await registry
+                    .ListAsync(
+                        includeStopped: false,
+                        CancellationToken.None)
+                    .ConfigureAwait(false);
+
+            Assert.Contains(
+                tenantBVisibleInstances,
+                instance => instance.RuntimeInstanceId == tenantBRuntimeInstanceId);
+
+            Assert.Contains(
+                tenantBVisibleInstances,
+                instance => instance.RuntimeInstanceId == sharedRuntimeInstanceId);
+
+            Assert.DoesNotContain(
+                tenantBVisibleInstances,
+                instance => instance.RuntimeInstanceId == tenantARuntimeInstanceId);
+
+            var tenantBVisibleRuntimeCount =
+                tenantBVisibleInstances.Count(
+                    instance => instance.Role == AiRuntimeInstanceRole.Runtime);
 
             var tenantBDecision =
                 await admissionController
@@ -3876,11 +3922,11 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Development
                 tenantBDecision.TenantRuntimeSettings?.IsolationMode);
 
             Assert.Equal(
-                2,
+                tenantBVisibleInstances.Count,
                 tenantBDecision.VisibleInstanceCount);
 
             Assert.Equal(
-                2,
+                tenantBVisibleRuntimeCount,
                 tenantBDecision.AvailableInstanceCount);
 
             Assert.Equal(
@@ -3892,6 +3938,29 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Development
                     TenantId,
                     sharedTenantSettings.TenantGroupId,
                     "shared-admission-capacity-visibility");
+
+            var sharedVisibleInstances =
+                await registry
+                    .ListAsync(
+                        includeStopped: false,
+                        CancellationToken.None)
+                    .ConfigureAwait(false);
+
+            Assert.Contains(
+                sharedVisibleInstances,
+                instance => instance.RuntimeInstanceId == sharedRuntimeInstanceId);
+
+            Assert.DoesNotContain(
+                sharedVisibleInstances,
+                instance => instance.RuntimeInstanceId == tenantARuntimeInstanceId);
+
+            Assert.DoesNotContain(
+                sharedVisibleInstances,
+                instance => instance.RuntimeInstanceId == tenantBRuntimeInstanceId);
+
+            var sharedVisibleRuntimeCount =
+                sharedVisibleInstances.Count(
+                    instance => instance.Role == AiRuntimeInstanceRole.Runtime);
 
             var sharedDecision =
                 await admissionController
@@ -3920,11 +3989,11 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Development
                 sharedDecision.TenantRuntimeSettings?.IsolationMode);
 
             Assert.Equal(
-                1,
+                sharedVisibleInstances.Count,
                 sharedDecision.VisibleInstanceCount);
 
             Assert.Equal(
-                1,
+                sharedVisibleRuntimeCount,
                 sharedDecision.AvailableInstanceCount);
 
             Assert.Equal(

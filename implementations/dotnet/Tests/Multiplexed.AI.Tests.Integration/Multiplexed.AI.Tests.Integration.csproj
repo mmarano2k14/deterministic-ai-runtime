@@ -61,6 +61,7 @@
 
   <ItemGroup>
     <Folder Include="ControlPlane\" />
+    <Folder Include="Runtime\Execution\Engine\" />
     <Folder Include="Runtime\Execution\Instance\" />
   </ItemGroup>
 

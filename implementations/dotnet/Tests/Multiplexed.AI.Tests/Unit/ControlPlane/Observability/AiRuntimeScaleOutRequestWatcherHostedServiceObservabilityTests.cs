@@ -328,32 +328,70 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.Observability
         /// </summary>
         private sealed class FixedControlPlaneIdResolver : IAiControlPlaneIdResolver
         {
-            private readonly string? controlPlaneId;
+            private readonly string controlPlaneId;
 
             /// <summary>
             /// Initializes a new instance of the <see cref="FixedControlPlaneIdResolver"/> class.
             /// </summary>
             /// <param name="controlPlaneId">The control-plane identifier.</param>
-            public FixedControlPlaneIdResolver(string? controlPlaneId)
+            public FixedControlPlaneIdResolver(
+                string controlPlaneId)
             {
-                this.controlPlaneId = controlPlaneId;
+                ArgumentException.ThrowIfNullOrWhiteSpace(controlPlaneId);
+                this.controlPlaneId = controlPlaneId.Trim();
             }
 
             /// <inheritdoc />
-            public Task<string?> ResolveAsync(
+            public Task<string> ResolveAsync(
                 CancellationToken cancellationToken = default)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 return Task.FromResult(this.controlPlaneId);
             }
 
-            public Task<string> ResolveAsync(AiControlPlaneIdResolutionRequest request, CancellationToken cancellationToken = default)
+            /// <inheritdoc />
+            public Task<string> ResolveAsync(
+                AiControlPlaneIdResolutionRequest request,
+                CancellationToken cancellationToken = default)
             {
+                ArgumentNullException.ThrowIfNull(request);
+                cancellationToken.ThrowIfCancellationRequested();
                 return Task.FromResult(this.controlPlaneId);
             }
 
-            public Task<IReadOnlyDictionary<string, string>> ResolveMetadataAsync(AiControlPlaneIdResolutionRequest request, CancellationToken cancellationToken = default)
+            /// <inheritdoc />
+            public Task<IReadOnlyDictionary<string, string>> ResolveMetadataAsync(
+                AiControlPlaneIdResolutionRequest request,
+                CancellationToken cancellationToken = default)
             {
-                throw new NotImplementedException();
+                ArgumentNullException.ThrowIfNull(request);
+                cancellationToken.ThrowIfCancellationRequested();
+
+                IReadOnlyDictionary<string, string> metadata =
+                    new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                    {
+                        ["controlPlaneId"] = this.controlPlaneId,
+                        ["logicalControlPlaneId"] = this.controlPlaneId,
+                        ["runtime.controlPlaneId"] = this.controlPlaneId,
+                        ["mcp.controlPlaneId"] = this.controlPlaneId,
+                        ["recovery.controlPlaneId"] = this.controlPlaneId,
+                        ["scaleout.controlPlaneId"] = this.controlPlaneId,
+                        ["scenario.controlPlaneId"] = this.controlPlaneId,
+                        ["control-plane.id"] = this.controlPlaneId,
+                        ["controlplane.id"] = this.controlPlaneId,
+                        ["runtime.control-plane.id"] = this.controlPlaneId,
+                        ["runtime.controlplane.id"] = this.controlPlaneId,
+                        ["mcp.control-plane.id"] = this.controlPlaneId,
+                        ["mcp.controlplane.id"] = this.controlPlaneId,
+                        ["recovery.control-plane.id"] = this.controlPlaneId,
+                        ["recovery.controlplane.id"] = this.controlPlaneId,
+                        ["scaleout.control-plane.id"] = this.controlPlaneId,
+                        ["scaleout.controlplane.id"] = this.controlPlaneId,
+                        ["scenario.control-plane.id"] = this.controlPlaneId,
+                        ["scenario.controlplane.id"] = this.controlPlaneId
+                    };
+
+                return Task.FromResult(metadata);
             }
         }
 
@@ -575,19 +613,26 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.Observability
             public List<string> RequeuedRuntimeInstanceIds { get; } = new();
 
             /// <inheritdoc />
-            public Task RequeueAsync(
+            public Task<AiScaleOutFulfilledRunRequeueResult> RequeueAsync(
                 AiRuntimeScaleOutRequestRecord request,
-                string runtimeInstanceId,
+                string? runtimeInstanceId,
                 CancellationToken cancellationToken = default)
             {
-                this.RequeuedRequestIds.Add(request.RequestId);
-                this.RequeuedRuntimeInstanceIds.Add(runtimeInstanceId);
-                return Task.CompletedTask;
-            }
+                ArgumentNullException.ThrowIfNull(request);
+                cancellationToken.ThrowIfCancellationRequested();
 
-            Task<AiScaleOutFulfilledRunRequeueResult> IAiScaleOutFulfilledRunRequeueService.RequeueAsync(AiRuntimeScaleOutRequestRecord request, string? runtimeInstanceId, CancellationToken cancellationToken)
-            {
-                throw new NotImplementedException();
+                this.RequeuedRequestIds.Add(request.RequestId);
+
+                if (!string.IsNullOrWhiteSpace(runtimeInstanceId))
+                {
+                    this.RequeuedRuntimeInstanceIds.Add(runtimeInstanceId);
+                }
+
+                return Task.FromResult(
+                    AiScaleOutFulfilledRunRequeueResult.Succeeded(
+                        request.SharedRunId,
+                        1,
+                        "Scale-out fulfillment requeue captured by the unit-test fixture."));
             }
         }
 

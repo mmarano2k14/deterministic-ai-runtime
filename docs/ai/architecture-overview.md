@@ -1,6 +1,6 @@
 # Architecture Overview
 
-Status: Implemented architecture foundation / validated with shared controller, MCP, Redis coordination, Redis-backed scale-out request persistence, local runtime pools, local runtime scale-out, fulfilled-run requeue, HTTP pooled runtime provider scenarios, HTTP process-host runtime provisioning, gRPC runtime provider, gRPC process-host runtime provisioning, tenant-aware runtime isolation, shared/dedicated/hybrid runtime visibility, end-to-end MCP scale-out execution, real runtime process crash recovery, tenant-isolated recovery reconciliation, runtime recovery forensics, control-plane ledger causal chain evidence, and replay / ledger / trace validation after recovery across HTTP and gRPC providers.
+Status: Implemented architecture foundation / validated with shared controller, MCP, Redis coordination, Redis-backed scale-out request persistence, local runtime pools, local runtime scale-out, fulfilled-run requeue, HTTP pooled and process-host runtime provisioning, gRPC process-host runtime provisioning, Kubernetes Runtime Host Manager provisioning through Fake and Kubernetes SDK clients, Kubernetes Pod/Service readiness, HTTP/gRPC transport preservation, tenant-aware runtime isolation, end-to-end scale-out execution, real process and Kubernetes Pod crash recovery, tenant-isolated recovery reconciliation, runtime recovery forensics, control-plane ledger causal chain evidence, and replay / ledger / trace validation after recovery.
 
 This document provides a high-level overview of the **Deterministic AI Runtime** architecture.
 
@@ -539,7 +539,7 @@ Context-building logic belongs in context helpers.
 
 Runtime instances are the execution participants that own local queues and workers.
 
-A runtime instance may be local, HTTP-backed through a pooled runtime host, gRPC-backed through a process-host runtime, or later connected through Redis command queues or Kubernetes provider transports.
+A runtime instance may be local, HTTP-backed through a pooled runtime host, HTTP/gRPC-backed through a child process, or HTTP/gRPC-backed through a Kubernetes `RuntimeInstanceOnly` Pod. Redis command queues remain a separate future transport option.
 
 Each runtime instance publishes visibility and capacity.
 
@@ -1025,7 +1025,7 @@ AssignedRuntimeInstanceId
     = runtime instance selected by admission for dispatch
 ```
 
-This separation is required for provider-based runtime hosting, MCP manual drain, HTTP runtime instances, and future Kubernetes control-plane/runtime-pod separation.
+This separation is required for provider-based runtime hosting, MCP manual drain, HTTP/gRPC runtime instances, and the implemented Kubernetes control-plane/runtime-Pod separation.
 
 ### RunId-Level Control
 
@@ -1172,6 +1172,9 @@ Current provider-oriented foundations include:
 - HTTP pooled runtime instance hosting
 - gRPC runtime provider foundation
 - gRPC process-host runtime instance hosting
+- Kubernetes runtime host lifecycle through Fake and Kubernetes SDK clients
+- Kubernetes Pod/Service creation, readiness, publication, and termination
+- optional per-runtime port-forward and shared Gateway API transport exposure
 - provider-based scale-out capability
 - gRPC scale-out provider capability
 - tenant-aware scale-out request fields
@@ -1278,13 +1281,34 @@ gRPC dispatch / recovery dispatch
 
 The gRPC process-host path uses `ControlPlaneWithGrpcRuntimeInstances` for the parent control plane and `RuntimeInstanceOnly` for the child process. The child runtime publishes `provider.name = grpc` and `transport.name = grpc`, exposes the gRPC runtime command service, and requires HTTP/2 for the plaintext test process-host endpoint.
 
-The provider remains responsible for transport and provider-scale-out delegation. It does not own runtime execution recovery.
+The Kubernetes host path preserves the same provider boundary:
+
+```text
+MCP Control Plane
+    ↓
+HTTP or gRPC Runtime Provider
+    ↓
+IAiRuntimeHostManager
+    ↓
+KubernetesAiRuntimeHostCreationStrategy
+    ↓
+RuntimeInstanceOnly Pod + per-runtime Service
+    ↓
+Pod readiness + transport endpoint readiness
+    ↓
+KubernetesAiRuntimeInstancePublisher
+    ↓
+registry / capacity visibility
+    ↓
+normal HTTP or gRPC dispatch
+```
+
+Kubernetes owns Pod/Service/Gateway lifecycle. HTTP or gRPC continues to own command dispatch. The provider does not own runtime execution recovery.
 
 Future providers may include:
 
 - Redis command queue provider
-- Kubernetes metadata provider
-- Kubernetes scaling provider
+- external scheduler or remote host-manager providers
 
 Providers must not replace local runtime queues.
 
@@ -1384,14 +1408,15 @@ Plugins remain responsible for domain-specific execution.
 | Multi-tenant crash isolation / safe tenant non-impact | Implemented / validated over HTTP and gRPC process-host providers |
 | Durable decision ledger hardening | Implemented / validated for current recovery/replay scenarios; ongoing for broader audit API |
 | Observability dashboard | Planned |
-| Kubernetes deployment | Planned |
+| Kubernetes runtime host provider | Implemented / validated for Host Manager lifecycle, Kubernetes SDK Pod/Service creation, layered readiness, HTTP/gRPC transport preservation, and Pod crash-recovery scenarios |
+| Full Kubernetes deployment packaging and cluster operations | Ongoing |
 | Public SDK polish | Planned |
 
 ---
 
 ## Current Validated Evidence
 
-The current architecture has been validated through MCP, Redis, local runtime pool, local scale-out, HTTP pooled runtime provider scenarios, HTTP process-host runtime scenarios, gRPC runtime provider scenarios, gRPC process-host runtime scenarios, real runtime process crash recovery, runtime recovery forensics, control-plane ledger causal chain validation, and tenant-isolated recovery proof.
+The current architecture has been validated through MCP, Redis, local runtime pool, local scale-out, HTTP pooled and process-host scenarios, gRPC process-host scenarios, Kubernetes Host Manager scale-out, Kubernetes SDK Pod/Service readiness, real process and Pod crash recovery, runtime recovery forensics, control-plane ledger causal chain validation, and tenant-isolated recovery proof.
 
 Tenant-aware runtime isolation evidence:
 
@@ -1586,6 +1611,7 @@ These validations prove that recovery is not treated as a global panic button. T
 - [Shared Runtime Controller / Shared Queue Usage](shared-controller-usage.md)
 - [Shared Queue Pump and Worker Capacity](shared-queue-pump-and-worker-capacity.md)
 - [Runtime Instance Provider Model](runtime-instance-provider-model.md)
+- [Kubernetes Runtime Host Provider](kubernetes-runtime-host-provider.md)
 - [HTTP Runtime Provider](http-runtime-provider.md)
 - [gRPC Runtime Provider](grpc-runtime-provider.md)
 - [MCP Server as Runtime Control Plane](mcp-server-control-plane.md)

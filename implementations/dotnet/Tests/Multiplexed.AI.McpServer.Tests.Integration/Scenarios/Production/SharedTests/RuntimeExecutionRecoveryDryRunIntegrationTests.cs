@@ -680,7 +680,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Shared
             Assert.Null(secondDecision.ExecutionId);
             Assert.Null(secondDecision.SharedRunId);
             Assert.Equal("none", secondDecision.Action);
-            Assert.Equal("no-unfinished-runtime-runs", secondDecision.Reason);
+            Assert.Equal("no-recoverable-runtime-runs", secondDecision.Reason);
             Assert.False(secondDecision.Changed);
 
             Assert.NotNull(queueItem);

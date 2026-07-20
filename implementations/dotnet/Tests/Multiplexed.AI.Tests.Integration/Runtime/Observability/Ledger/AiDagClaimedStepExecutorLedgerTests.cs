@@ -30,11 +30,11 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Observability.Ledger
     public sealed class AiDagClaimedStepExecutorLedgerTests
     {
         /// <summary>
-        /// Verifies that successful step execution records step start, step completion,
-        /// and concurrency lease release events.
+        /// Verifies that successful claimed-step execution records step start and completion.
+        /// Concurrency lease release remains owned by the calling batch or distributed runner.
         /// </summary>
         [Fact]
-        public async Task ExecuteAsync_WhenStepSucceeds_ShouldRecordStepStartedCompletedAndLeaseReleased()
+        public async Task ExecuteAsync_WhenStepSucceeds_ShouldRecordStepStartedAndCompletedWithoutReleasingLease()
         {
             // Arrange
             var executionId = "exec-step-ledger-success";
@@ -125,7 +125,7 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Observability.Ledger
 
             var entries = await ledger.GetByExecutionAsync(executionId);
 
-            Assert.Equal(3, entries.Count);
+            Assert.Equal(2, entries.Count);
 
             Assert.Contains(entries, entry =>
                 entry.Category == AiDecisionLedgerCategory.Step &&
@@ -137,10 +137,9 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Observability.Ledger
                 entry.EventType == AiDecisionLedgerEvents.Step.Completed &&
                 entry.Outcome == AiDecisionLedgerOutcome.Completed);
 
-            Assert.Contains(entries, entry =>
+            Assert.DoesNotContain(entries, entry =>
                 entry.Category == AiDecisionLedgerCategory.Concurrency &&
-                entry.EventType == AiDecisionLedgerEvents.Concurrency.LeaseReleased &&
-                entry.Outcome == AiDecisionLedgerOutcome.Released);
+                entry.EventType == AiDecisionLedgerEvents.Concurrency.LeaseReleased);
 
             foreach (var entry in entries)
             {
@@ -155,24 +154,18 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Observability.Ledger
                 Assert.Equal("llm.chat", entry.CorrelationContext.Operation);
             }
 
-            await services.ConcurrencyGate.Received(1).ReleaseAsync(
-                Arg.Is<AiConcurrencyContext>(context =>
-                    context.ExecutionId == executionId &&
-                    context.PipelineKey == pipelineKey &&
-                    context.StepId == stepName &&
-                    context.StepKey == stepKey &&
-                    context.RuntimeInstanceId == runtimeInstanceId &&
-                    context.LeaseId == $"{executionId}:{stepName}:{runtimeInstanceId}"),
+            _ = services.ConcurrencyGate.DidNotReceive().ReleaseAsync(
+                Arg.Any<AiConcurrencyContext>(),
                 Arg.Any<AiConcurrencyDefinition>(),
                 Arg.Any<CancellationToken>());
         }
 
         /// <summary>
         /// Verifies that a step exception converted into a failed result records
-        /// step start, step failure, and concurrency lease release events.
+        /// step start and step failure without releasing caller-owned concurrency capacity.
         /// </summary>
         [Fact]
-        public async Task ExecuteAsync_WhenStepThrows_ShouldRecordStepStartedFailedAndLeaseReleased()
+        public async Task ExecuteAsync_WhenStepThrows_ShouldRecordStepStartedAndFailedWithoutReleasingLease()
         {
             // Arrange
             var executionId = "exec-step-ledger-failure";
@@ -256,7 +249,7 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Observability.Ledger
 
             var entries = await ledger.GetByExecutionAsync(executionId);
 
-            Assert.Equal(3, entries.Count);
+            Assert.Equal(2, entries.Count);
 
             Assert.Contains(entries, entry =>
                 entry.Category == AiDecisionLedgerCategory.Step &&
@@ -272,12 +265,11 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Observability.Ledger
             Assert.NotNull(failed.Metadata);
             Assert.Equal("InvalidOperationException", failed.Metadata!["exception.type"]);
 
-            Assert.Contains(entries, entry =>
+            Assert.DoesNotContain(entries, entry =>
                 entry.Category == AiDecisionLedgerCategory.Concurrency &&
-                entry.EventType == AiDecisionLedgerEvents.Concurrency.LeaseReleased &&
-                entry.Outcome == AiDecisionLedgerOutcome.Released);
+                entry.EventType == AiDecisionLedgerEvents.Concurrency.LeaseReleased);
 
-            await services.ConcurrencyGate.Received(1).ReleaseAsync(
+            _ = services.ConcurrencyGate.DidNotReceive().ReleaseAsync(
                 Arg.Any<AiConcurrencyContext>(),
                 Arg.Any<AiConcurrencyDefinition>(),
                 Arg.Any<CancellationToken>());
@@ -295,7 +287,7 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Observability.Ledger
             var concurrencyGate = Substitute.For<IAiConcurrencyGate>();
             var payloadCompactor = Substitute.For<IAiStepResultPayloadCompactor>();
 
-      
+
 
             IAiRuntimeCorrelationAccessor correlationAccessor =
                 new AsyncLocalAiRuntimeCorrelationAccessor(runtimeInstanceIdentity);

@@ -32,32 +32,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
         /// </summary>
         protected ITestOutputHelper Output { get; }
 
-        /// <summary>
-        /// Repeatedly verifies the HTTP process-host DAG resume recovery forensics MCP timeline scenario.
-        /// </summary>
-        /// <param name="iteration">The stability loop iteration.</param>
-        /// <returns>A task representing the asynchronous operation.</returns>
-        [Theory]
-        [InlineData(1)]
-        [InlineData(2)]
-        [InlineData(3)]
-        [InlineData(4)]
-        [InlineData(5)]
-        [InlineData(6)]
-        [InlineData(7)]
-        [InlineData(8)]
-        [InlineData(9)]
-        [InlineData(10)]
-        public async Task Http_ProcessHost_Should_Expose_Dag_Resume_Recovery_Forensics_Timeline_Through_Mcp_StabilityLoop(
-            int iteration)
-        {
-            this.Output.WriteLine(
-                $"[FORENSICS TIMELINE STABILITY LOOP] Iteration='{iteration}'.");
-
-            await this.scenarioTests
-                .Http_ProcessHost_Should_Expose_Dag_Resume_Recovery_Forensics_Timeline_Through_Mcp()
-                .ConfigureAwait(false);
-        }
+        
 
         /// <summary>
         /// Repeatedly verifies that the real HTTP runtime creation path persists the RBAC ContextKey

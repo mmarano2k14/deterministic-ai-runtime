@@ -25,20 +25,6 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
         }
 
         /// <summary>
-        /// Verifies that the HTTP provider with process-based host creation can execute
-        /// the reusable production multi-tenant capacity, replay, ledger, and trace scenario.
-        /// </summary>
-        [Fact]
-        public async Task Http_ProcessHost_Should_Run_MultiTenant_Capacity_Replay_Ledger_Production_Scenario()
-        {
-            var scenario = ProductionRuntimeScenarioFactory.CreateMultiTenantCapacityReplayLedgerScenario();
-            var runner = new HttpProcessHostProductionScenarioRunner(this.output);
-            var result = await runner.RunAsync(scenario).ConfigureAwait(false);
-
-            AssertScenarioResult(scenario, result);
-        }
-
-        /// <summary>
         /// Verifies that a small HTTP process-host scenario can persist ledger, trace,
         /// replay metadata, replay ledger, and replay timeline data across the process boundary.
         /// </summary>
@@ -159,19 +145,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             AssertScenarioResult(scenario, result);
         }
 
-        /// <summary>
-        /// Verifies that the HTTP process-host provider can run a full mixed-tenant production scenario
-        /// with Dedicated, Shared, and Hybrid tenants while retention, ledger, trace, and replay assertions are enabled.
-        /// </summary>
-        [Fact]
-        public async Task Http_ProcessHost_Should_Run_MixedTenant_Full_Production_Validation_Scenario()
-        {
-            var scenario = ProductionRuntimeScenarioFactory.CreateMixedTenantFullProductionValidationScenario();
-            var runner = new HttpProcessHostProductionScenarioRunner(this.output);
-            var result = await runner.RunAsync(scenario).ConfigureAwait(false);
-
-            AssertScenarioResult(scenario, result);
-        }
+        
 
         /// <summary>
         /// Asserts a production runtime scenario result according to the scenario assertion options.

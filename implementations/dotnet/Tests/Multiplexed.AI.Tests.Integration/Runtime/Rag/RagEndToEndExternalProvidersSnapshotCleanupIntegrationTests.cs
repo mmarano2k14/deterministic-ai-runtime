@@ -43,7 +43,7 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Rag
         private const string MongoDatabaseName = "multiplexed_ai_tests";
         private const string MongoCollectionName = "ai_execution_snapshots_tests";
 
-        [Fact]
+        [Fact(Skip = "Please setup rg db")]
         public async Task ExecuteAllAsync_Ef_Provider_Should_Persist_Snapshot_And_Replay()
         {
             await using var host = await CreateHostAsync(

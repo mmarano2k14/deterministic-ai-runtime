@@ -179,7 +179,8 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
                 tenantRuntimeSettingsProvider,
                 new StaticControlPlaneIdResolver("controlPlaneId"),
                 executionContextAccessor,
-                NullLogger<AiSharedQueueDispatcher>.Instance);
+                NullLogger<AiSharedQueueDispatcher>.Instance,
+                forensicsRecorder);
 
             var result = await dispatcher
                 .DispatchNextAsync(
@@ -559,16 +560,38 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
                 return Task.FromResult(Record);
             }
 
-            public Task<AiSharedRunRecord?> MarkRequeuedAfterScaleOutIfCurrentAsync(string sharedRunId, string? expectedAssignedRuntimeInstanceId, string? expectedLocalRunId, string? reason = null, IReadOnlyDictionary<string, string>? metadata = null, CancellationToken cancellationToken = default)
+            public Task<AiSharedRunRecord?> MarkRequeuedAfterScaleOutIfCurrentAsync(
+                string sharedRunId,
+                string? expectedAssignedRuntimeInstanceId,
+                string? expectedLocalRunId,
+                string? reason = null,
+                IReadOnlyDictionary<string, string>? metadata = null,
+                CancellationToken cancellationToken = default)
             {
-                return this
-                     .MarkRequeuedAfterScaleOutIfCurrentAsync(
-                         sharedRunId,
-                         expectedAssignedRuntimeInstanceId,
-                         expectedLocalRunId,
-                         reason,
-                         metadata,
-                         cancellationToken);
+                cancellationToken.ThrowIfCancellationRequested();
+
+                if (Record is null ||
+                    !string.Equals(
+                        Record.SharedRunId,
+                        sharedRunId,
+                        StringComparison.Ordinal) ||
+                    !string.Equals(
+                        Record.AssignedRuntimeInstanceId,
+                        expectedAssignedRuntimeInstanceId,
+                        StringComparison.Ordinal) ||
+                    !string.Equals(
+                        Record.LocalRunId,
+                        expectedLocalRunId,
+                        StringComparison.Ordinal))
+                {
+                    return Task.FromResult<AiSharedRunRecord?>(Record);
+                }
+
+                return this.MarkRequeuedAfterScaleOutAsync(
+                    sharedRunId,
+                    reason,
+                    metadata,
+                    cancellationToken);
             }
         }
 

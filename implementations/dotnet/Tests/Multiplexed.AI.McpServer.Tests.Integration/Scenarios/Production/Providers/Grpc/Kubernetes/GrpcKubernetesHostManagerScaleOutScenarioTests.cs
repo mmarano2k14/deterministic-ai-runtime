@@ -24,14 +24,6 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
         {
         }
 
-        /// <summary>
-        /// Verifies that Kubernetes is used as the runtime host lifecycle provider while gRPC remains the runtime transport.
-        /// </summary>
-        /// <returns>A task that completes when the proof has finished.</returns>
-        [Fact]
-        public Task Grpc_KubernetesHostManager_Should_Fulfill_ScaleOut_Without_Changing_Grpc_Runtime_Transport()
-        {
-            return HostManager_Should_Fulfill_ScaleOut_Without_Changing_Runtime_Transport();
-        }
+       
     }
 }

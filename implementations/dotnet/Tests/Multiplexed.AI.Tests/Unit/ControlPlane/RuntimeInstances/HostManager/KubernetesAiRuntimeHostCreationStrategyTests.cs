@@ -6,6 +6,8 @@ using Multiplexed.Abstractions.Core.ExecutionContext;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strategy.Kubernetes;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strategy.Kubernetes.Client;
 using Multiplexed.AI.Tests.Fixtures;
+using System;
+using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using Xunit;
@@ -50,8 +52,8 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager
             Assert.False(result.Retryable);
             Assert.Equal("kubernetes-runtime-host-creation-disabled", result.FailureReason);
             Assert.Equal("tenant-a-runtime-001", result.RuntimeInstanceId);
-            Assert.Equal("grpc", result.ProviderName);
-            Assert.Equal("grpc", result.TransportName);
+            Assert.Equal("http", result.ProviderName);
+            Assert.Equal("http", result.TransportName);
             Assert.Equal("kubernetes", result.Metadata[AiRuntimeHostMetadataKeys.HostProvider]);
             Assert.Equal("Kubernetes", result.Metadata[AiRuntimeHostMetadataKeys.HostCreationMode]);
             Assert.Equal(nameof(KubernetesAiRuntimeHostCreationStrategy), result.Metadata[AiRuntimeHostMetadataKeys.HostCreationStrategy]);
@@ -76,7 +78,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager
                         ContainerName = "runtime-instance",
                         ContainerPort = 8080,
                         PodNamePrefix = "runtime",
-                        TransportName = "grpc",
+                        TransportName = "http",
                         DeleteResourcesOnFailure = true,
                         ClientMode = AiKubernetesRuntimeHostClientMode.Fake
                     },
@@ -115,8 +117,8 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager
             Assert.False(result.Success);
             Assert.False(result.Retryable);
             Assert.Equal("kubernetes-runtime-image-missing", result.FailureReason);
-            Assert.Equal("grpc", result.ProviderName);
-            Assert.Equal("grpc", result.TransportName);
+            Assert.Equal("http", result.ProviderName);
+            Assert.Equal("http", result.TransportName);
             Assert.NotEqual("kubernetes", result.ProviderName);
         }
 
@@ -136,8 +138,8 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager
             Assert.True(result.Success);
             Assert.False(result.Retryable);
             Assert.Equal("tenant-a-runtime-001", result.RuntimeInstanceId);
-            Assert.Equal("grpc", result.ProviderName);
-            Assert.Equal("grpc", result.TransportName);
+            Assert.Equal("http", result.ProviderName);
+            Assert.Equal("http", result.TransportName);
             Assert.Equal("http://127.0.0.1:5001", result.TransportEndpoint);
             Assert.Equal(1, client.CreateCallCount);
             Assert.Equal(1, client.ReadinessCallCount);
@@ -174,7 +176,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager
             Assert.Equal(0, client.ReadinessCallCount);
             Assert.Equal(0, client.DeleteCallCount);
             Assert.Equal(0, readinessWaiter.CallCount);
-            Assert.Equal("grpc", result.ProviderName);
+            Assert.Equal("http", result.ProviderName);
             Assert.NotEqual("kubernetes", result.ProviderName);
         }
 
@@ -204,7 +206,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager
             Assert.Equal(1, client.ReadinessCallCount);
             Assert.Equal(1, client.DeleteCallCount);
             Assert.Equal(0, readinessWaiter.CallCount);
-            Assert.Equal("grpc", result.ProviderName);
+            Assert.Equal("http", result.ProviderName);
             Assert.NotEqual("kubernetes", result.ProviderName);
         }
 
@@ -235,7 +237,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager
             Assert.Equal(1, client.ReadinessCallCount);
             Assert.Equal(1, client.DeleteCallCount);
             Assert.Equal(1, readinessWaiter.CallCount);
-            Assert.Equal("grpc", result.ProviderName);
+            Assert.Equal("http", result.ProviderName);
             Assert.NotEqual("kubernetes", result.ProviderName);
         }
 
@@ -257,7 +259,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager
                         ContainerName = string.Empty,
                         ContainerPort = 8080,
                         PodNamePrefix = "runtime",
-                        TransportName = "grpc",
+                        TransportName = "http",
                         DeleteResourcesOnFailure = true,
                         ClientMode = AiKubernetesRuntimeHostClientMode.Fake
                     },
@@ -295,7 +297,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager
                        ContainerName = "runtime-instance",
                        ContainerPort = 8080,
                        PodNamePrefix = "runtime",
-                       TransportName = "grpc",
+                       TransportName = "http",
                        DeleteResourcesOnFailure = true,
                        ClientMode = AiKubernetesRuntimeHostClientMode.Fake,
                        RequireRuntimeReadiness = false
@@ -339,7 +341,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager
                     ContainerName = "runtime-instance",
                     ContainerPort = 8080,
                     PodNamePrefix = "runtime",
-                    TransportName = "grpc",
+                    TransportName = "http",
                     DeleteResourcesOnFailure = true,
                     ClientMode = AiKubernetesRuntimeHostClientMode.Fake
                 };
@@ -357,12 +359,14 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager
 
         private static AiRuntimeHostStartRequest CreateStartRequest()
         {
+            // Keep this lifecycle unit test transport-local. A gRPC Kubernetes request
+            // intentionally starts a real kubectl port-forward before publication.
             return new AiRuntimeHostStartRequest
             {
                 ControlPlaneId = "test-control-plane",
                 RuntimeInstanceId = "test-runtime-instance-1",
-                ProviderName = "grpc",
-                TransportName = "grpc",
+                ProviderName = "http",
+                TransportName = "http",
                 TransportEndpoint = "http://127.0.0.1:50051",
                 ExecutionContextSnapshot = new ExecutionContextSnapshot
                 {
@@ -379,8 +383,8 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager
                 },
                 Metadata = new Dictionary<string, string>
                 {
-                    ["provider.name"] = "grpc",
-                    ["transport.name"] = "grpc",
+                    ["provider.name"] = "http",
+                    ["transport.name"] = "http",
                     ["host.provider"] = AiRuntimeHostProviderNames.Kubernetes,
                     ["host.creation.mode"] = AiRuntimeHostCreationMode.Kubernetes.ToString()
                 }
@@ -393,6 +397,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager
         /// <returns>The runtime host start request.</returns>
         private static AiRuntimeHostStartRequest CreateRequest()
         {
+            // HTTP avoids exercising the real gRPC port-forward lifecycle in this unit suite.
             return new AiRuntimeHostStartRequest
             {
                 ControlPlaneId = "control-plane-a",
@@ -401,8 +406,8 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager
                         tenantId: "tenant-a",
                         tenantGroupId: "tenant-group-a"),
                 RuntimeInstanceId = "tenant-a-runtime-001",
-                ProviderName = "grpc",
-                TransportName = "grpc",
+                ProviderName = "http",
+                TransportName = "http",
                 TransportEndpoint = "http://127.0.0.1:5001",
                 HostCreationMode = AiRuntimeHostCreationMode.Kubernetes
             };

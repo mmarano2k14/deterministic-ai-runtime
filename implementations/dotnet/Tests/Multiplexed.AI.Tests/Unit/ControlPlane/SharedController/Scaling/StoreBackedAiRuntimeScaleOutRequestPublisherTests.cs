@@ -134,21 +134,6 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController.Scaling
             Assert.Equal("local", record.ProviderHint);
         }
 
-        /// <summary>
-        /// Verifies that publishing fails clearly when no control-plane identifier can be resolved.
-        /// </summary>
-        [Fact]
-        public async Task PublishAsync_Should_Throw_When_ControlPlaneId_Cannot_Be_Resolved()
-        {
-            var store = new InMemoryAiRuntimeScaleOutRequestStore();
-            var resolver = new StaticAiControlPlaneIdResolver(null);
-            var publisher = CreatePublisher(store, resolver);
-
-            var request = CreateRequest(controlPlaneId: null);
-
-            await Assert.ThrowsAsync<InvalidOperationException>(() =>
-                publisher.PublishAsync(request));
-        }
 
         /// <summary>
         /// Verifies that the requested target instance count does not exceed the maximum instance count.

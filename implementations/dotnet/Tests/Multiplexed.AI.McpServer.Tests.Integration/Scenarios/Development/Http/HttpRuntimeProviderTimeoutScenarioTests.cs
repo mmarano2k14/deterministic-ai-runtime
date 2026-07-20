@@ -153,8 +153,10 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Development.Http
                 AiSharedRunStatus.QueuedGlobally,
                 run.Status);
 
-            Assert.Equal(
-                RuntimeInstanceHostId,
+            // A timed-out dispatch is requeued for a future admission attempt.
+            // Active runtime ownership must therefore be cleared after the timeout
+            // failure is persisted.
+            Assert.Null(
                 run.AssignedRuntimeInstanceId);
 
             Assert.Equal(
@@ -183,7 +185,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Development.Http
                 queueItem.Reason);
 
             output.WriteLine(
-                $"HTTP dispatch-timeout failure persisted. SharedRunId='{run.SharedRunId}', RuntimeInstanceId='{run.AssignedRuntimeInstanceId}', FailureReason='{run.FailureReason}'.");
+                $"HTTP dispatch-timeout failure persisted and run ownership cleared for redispatch. SharedRunId='{run.SharedRunId}', AssignedRuntimeInstanceId='{run.AssignedRuntimeInstanceId}', FailureReason='{run.FailureReason}'.");
         }
 
         /// <summary>

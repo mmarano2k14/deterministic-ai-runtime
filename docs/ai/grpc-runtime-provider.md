@@ -1,6 +1,6 @@
 # gRPC Runtime Provider
 
-Status: Implemented / validated for gRPC runtime dispatch, gRPC scale-out provider selection, Runtime Host Manager process-host provisioning, real `RuntimeInstanceOnly` process launch, HTTP/2 gRPC command transport, tenant-aware runtime registration, and real process-host runtime crash recovery with strict DAG resume, replay, ledger, trace, and forensics proof.
+Status: Implemented / validated for gRPC runtime dispatch, gRPC scale-out provider selection, Runtime Host Manager process-host and Kubernetes provisioning, real `RuntimeInstanceOnly` process and Pod launch, HTTP/2 gRPC command transport, tenant-aware runtime registration/capacity publication, and provider-agnostic process/Pod crash recovery with strict DAG resume, replay, ledger, trace, and forensics proof.
 
 This document describes the gRPC runtime provider used by the Deterministic AI Runtime control plane.
 
@@ -10,6 +10,7 @@ Related documents:
 
 - [Architecture Overview](architecture-overview.md)
 - [Runtime Instance Provider Model](runtime-instance-provider-model.md)
+- [Kubernetes Runtime Host Provider](kubernetes-runtime-host-provider.md)
 - [HTTP Runtime Provider](http-runtime-provider.md)
 - [Runtime Discovery, Registry, and Capacity](runtime-discovery-registry-capacity.md)
 - [Shared Runtime Controller / Shared Queue Usage](shared-controller-usage.md)
@@ -299,9 +300,13 @@ The provider owns transport and provider-specific scale-out behavior.
 
 The Runtime Host Manager owns host creation or attachment mechanics.
 
-The runtime process owns registration, heartbeat, capacity, local queue, workers, and DAG execution.
+In process mode, the runtime process owns registration and heartbeat. In Kubernetes mode, the strategy creates the `RuntimeInstanceOnly` Pod and Service, resolves a direct or shared-Gateway endpoint, waits for Kubernetes and gRPC command readiness, and then publishes registry/capacity metadata from the control plane. Both modes preserve `provider.name = grpc` and `transport.name = grpc`.
 
-This keeps gRPC aligned with the HTTP process-host architecture.
+The runtime host still owns its local queue, workers, and DAG execution.
+
+See [Kubernetes Runtime Host Provider](kubernetes-runtime-host-provider.md) for lifecycle, readiness, Gateway, publication, and termination details.
+
+This keeps gRPC aligned with the HTTP provider while allowing Process and Kubernetes host lifecycles.
 
 ---
 
@@ -580,7 +585,7 @@ The same control-plane model works with:
 local provider
 HTTP provider
 gRPC provider
-future Kubernetes provider
+Kubernetes runtime host provider
 future Redis command queue provider
 ```
 
@@ -630,7 +635,7 @@ Transport can change without rewriting the engine.
 | gRPC replay / ledger / trace / forensics proof | Implemented / validated |
 | Provider-agnostic HTTP/gRPC crash recovery base | Implemented / validated |
 | gRPC provider-aware readiness probe | Planned / hardening |
-| gRPC Kubernetes pod deployment | Planned |
+| gRPC Kubernetes `RuntimeInstanceOnly` Pod hosting | Implemented / validated through Host Manager, Kubernetes SDK lifecycle/readiness, transport preservation, and Pod crash-recovery scenarios |
 | gRPC production multi-control-plane leadership | Planned |
 
 ---
@@ -645,8 +650,8 @@ The current process-host scenario can rely on registration/capacity visibility i
 ```
 
 ```text
-Kubernetes gRPC pod creation is not validated yet.
-The validated gRPC host creation mode is Process.
+Kubernetes gRPC Pod creation and Host Manager integration are implemented and validated.
+Gateway API and cluster-specific ingress behavior still depend on installed CRDs, a compatible controller, and environment-specific networking.
 ```
 
 ```text
@@ -706,6 +711,6 @@ Still-planned gRPC work should remain explicit:
 
 ```text
 gRPC provider-aware readiness hardening
-gRPC Kubernetes pod deployment
+gRPC Kubernetes Gateway/controller interoperability hardening
 gRPC production multi-control-plane leadership hardening
 ```

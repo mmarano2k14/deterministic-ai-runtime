@@ -1,10 +1,12 @@
 # Deterministic AI Runtime
 
-A deterministic AI execution runtime for advanced AI workflow execution.
+A deterministic, multi-tenant .NET runtime for durable AI workflow execution across local workers, real child processes, and Kubernetes-hosted runtime instances.
 
-This repository provides a reference implementation of a distributed, state-driven runtime for executing AI workflows with deterministic DAG orchestration, context resolution, Redis Lua coordination, retry/recovery, retention/compaction, distributed concurrency control, execution control state, replay validation, correlated metrics and tracing, execution-correlated decision ledger, shared runtime control-plane orchestration, Redis-backed shared queue coordination, queue-first submission, shared queue pumping/manual drain, dispatch-time admission, runtime instance provider hosting, Redis control-plane discovery, runtime instance registry and capacity stores, admission reservations, HTTP pooled runtime dispatch, HTTP runtime provider hardening, HTTP and gRPC provider scale-out foundations, Runtime Host Manager process-host provisioning, real `RuntimeInstanceOnly` host process launch, validated runtime process crash recovery, multi-tenant crash isolation, recovery forensics, recovery replay / ledger / trace proof, safe tenant non-impact validation, runtime worker-capacity visibility, RBAC execution-context propagation, tenant-aware control-plane isolation, end-to-end multi-tenant runtime flow documentation, Shared/Dedicated/Hybrid runtime visibility, Redis-backed scale-out request lifecycle, local, HTTP, and gRPC runtime scale-out foundations, fulfilled-run requeue, MCP production runtime scenario validation, durable replay / ledger / trace validation across process boundaries, and executable enterprise demo scenarios.
+Deterministic AI Runtime treats AI orchestration as a distributed systems problem. It combines DAG execution, Redis-backed coordination, durable execution state, provider-based dispatch, crash recovery, replay, audit, observability, execution control, and tenant isolation behind a shared control plane.
 
-The current runtime foundations are intentionally designed as the base for a broader product platform for deterministic AI execution, runtime control, replay, audit, governance, observability, dashboarding, pipeline building, managed hosting, multi-tenant execution isolation, and enterprise-oriented AI operations.
+The current Kubernetes milestone adds SDK-driven `RuntimeInstanceOnly` Pod and Service provisioning, layered readiness, Service/NodePort/port-forward/Gateway exposure, tenant-aware registry and capacity publication, and Pod crash recovery while preserving the same HTTP or gRPC runtime transport and durable execution protocol used by process-host scenarios.
+
+The runtime foundations are intentionally designed as the base for a broader product platform for deterministic AI execution, runtime control, replay, governance, observability, dashboarding, pipeline building, managed hosting, and enterprise-oriented AI operations.
 
 [![Version](https://img.shields.io/badge/Version-1.0.7.1-blue)](./CHANGELOG.md)
 [![Changelog](https://img.shields.io/badge/Changelog-view-lightgrey)](./CHANGELOG.md)
@@ -14,14 +16,27 @@ The current runtime foundations are intentionally designed as the base for a bro
 ![MongoDB](https://img.shields.io/badge/MongoDB-required-green?logo=mongodb)
 ![Status](https://img.shields.io/badge/Status-active%20development-orange)
 
+### Start Here
+
+- [Architecture overview](docs/ai/architecture-overview.md)
+- [Kubernetes Runtime Host Provider](docs/ai/kubernetes-runtime-host-provider.md)
+- [Provider-agnostic process-host recovery](docs/ai/provider-agnostic-process-host-recovery.md)
+- [Multi-tenant crash isolation](docs/ai/multi-tenant-runtime-crash-isolation.md)
+- [Complete documentation index](docs/index.md)
+
 ---
 
 ## Latest Updates
 
-The latest major updates focused on the gRPC runtime provider, provider-agnostic HTTP/gRPC process-host recovery, Runtime Host Manager process-host provisioning, runtime process crash recovery as a main runtime feature, HTTP runtime provider hardening, tenant-aware HTTP/gRPC scale-out validation, MCP production runtime scenario validation, tenant-aware control-plane isolation, RBAC execution-context propagation, end-to-end runtime flow documentation, Redis-backed scale-out lifecycle, and provider-hosting validation.
+The latest milestone moves the same runtime execution and recovery protocol from child processes into Kubernetes Pods. Kubernetes now owns host lifecycle, networking, and readiness; HTTP and gRPC providers remain responsible for runtime commands; the shared control plane remains responsible for admission, scale-out, dispatch, registry/capacity visibility, and recovery.
 
 | Area | Summary |
 |---|---|
+| Kubernetes Runtime Host Provider | Added `KubernetesAiRuntimeHostCreationStrategy` as a Runtime Host Manager lifecycle strategy that creates and converges `RuntimeInstanceOnly` Pods and Services through the Kubernetes .NET SDK. |
+| Kubernetes transport preservation | Kubernetes changes where a runtime is hosted, not how commands are dispatched: HTTP remains HTTP and gRPC remains gRPC through the existing runtime providers. |
+| Layered Kubernetes readiness | Host startup distinguishes Kubernetes resource readiness, runtime registration/capacity readiness, and transport endpoint readiness instead of treating `Pod Running` as executable capacity. |
+| Kubernetes networking | Supports direct Service DNS, NodePort, per-runtime `kubectl port-forward`, and shared Gateway API routing through `HTTPRoute` or `GRPCRoute`. |
+| Kubernetes crash recovery | Targeted Kubernetes SDK scenarios validate Pod deletion/crash detection, unsafe-capacity suppression, replacement runtime provisioning, in-flight resume, local-queued redispatch, and safe-tenant non-impact. |
 | Runtime process crash recovery | Validated recovery after real `RuntimeInstanceOnly` process crashes, including in-flight DAG resume, local queued work redispatch, replacement runtime selection, and completion through normal dispatch paths. |
 | Multi-tenant crash isolation | Validated a three-tenant crash scenario where two tenant runtimes are killed while a safe tenant continues without recovery contamination or cross-tenant ledger/forensics leakage. |
 | Runtime recovery forensics | Added recovery forensics records and timelines that explain why work was recovered, which runtime failed, which durable identities were used, and how replacement dispatch/resume proceeded. |
@@ -46,13 +61,13 @@ The latest major updates focused on the gRPC runtime provider, provider-agnostic
 | Enterprise runtime demo validation | Fixed and validated direct demo execution context propagation so the demo runner persists `ExecutionContextSnapshot` before the local background controller restores tenant/user/project context. |
 | HTTP runtime provider hardening | Added timeout, retry, circuit-breaker behavior, structured HTTP dispatch failure reasons, and shared-run dispatch failure persistence for the HTTP runtime provider. |
 | HTTP runtime scale-out foundation | Added HTTP provider scale-out capability through `IAiRuntimeScaleOutProvider` and `IAiHttpRuntimeScaleOutProvisioner`, with Redis-backed scale-out request fulfillment into runtime registry and capacity metadata. |
-| Runtime Host Manager process-host provisioning | Added Runtime Host Manager support for host creation modes such as `Fixture`, `Process`, `Attach`, and Kubernetes-oriented provisioning, with HTTP process-host scale-out launching real `RuntimeInstanceOnly` processes. |
+| Runtime Host Manager host lifecycle | Runtime Host Manager now separates command transport from lifecycle across `Fixture`, `Process`, `Attach`, and `Kubernetes` creation modes. |
 | HTTP process-host production validation | Validated the full HTTP process-host lifecycle: submit with no runtime capacity, Redis scale-out request, watcher, HTTP provider, Host Manager, process launch, runtime registration/capacity readiness, HTTP dispatch, DAG execution, and completion. |
 | Tenant-aware HTTP scale-out validation | Validated HTTP scale-out for Shared, Dedicated, and Hybrid runtime modes, including Dedicated no shared fallback, Hybrid visibility behavior, and tenant runtime settings precedence during provisioning. |
 | Durable process-boundary observability | Validated ledger, trace, replay report, replay ledger, replay trace, and retention across real runtime process boundaries. |
 | MCP production scenario framework | Added `docs/ai/mcp-production-runtime-scenario-framework.md`, documenting the Host Manager, HTTP process-host flow, tenant runtime modes, final mixed-tenant production validation, and remaining boundaries. |
 
-For detailed changes, see [`CHANGELOG.md`](./CHANGELOG.md), [`docs/index.md`](docs/index.md), [`docs/ai/multi-tenant-control-plane-isolation.md`](docs/ai/multi-tenant-control-plane-isolation.md), [`docs/ai/multi-tenant-runtime-flow.md`](docs/ai/multi-tenant-runtime-flow.md), [`docs/ai/http-runtime-provider.md`](docs/ai/http-runtime-provider.md), [`docs/ai/grpc-runtime-provider.md`](docs/ai/grpc-runtime-provider.md), [`docs/ai/provider-agnostic-process-host-recovery.md`](docs/ai/provider-agnostic-process-host-recovery.md), [`docs/ai/mcp-production-runtime-scenario-framework.md`](docs/ai/mcp-production-runtime-scenario-framework.md), [`docs/ai/runtime-process-crash-recovery.md`](docs/ai/runtime-process-crash-recovery.md), [`docs/ai/runtime-recovery-forensics.md`](docs/ai/runtime-recovery-forensics.md), [`docs/ai/multi-tenant-runtime-crash-isolation.md`](docs/ai/multi-tenant-runtime-crash-isolation.md), [`docs/ai/control-plane-ledger-causal-chain.md`](docs/ai/control-plane-ledger-causal-chain.md), [`docs/ai/recovery-replay-ledger-trace-proof.md`](docs/ai/recovery-replay-ledger-trace-proof.md), and the product roadmap documentation under [`docs/product-roadmap/index.md`](docs/product-roadmap/index.md).
+For detailed changes, see [`CHANGELOG.md`](./CHANGELOG.md), [`docs/index.md`](docs/index.md), [`docs/ai/multi-tenant-control-plane-isolation.md`](docs/ai/multi-tenant-control-plane-isolation.md), [`docs/ai/multi-tenant-runtime-flow.md`](docs/ai/multi-tenant-runtime-flow.md), [`docs/ai/http-runtime-provider.md`](docs/ai/http-runtime-provider.md), [`docs/ai/grpc-runtime-provider.md`](docs/ai/grpc-runtime-provider.md), [`docs/ai/kubernetes-runtime-host-provider.md`](docs/ai/kubernetes-runtime-host-provider.md), [`docs/ai/provider-agnostic-process-host-recovery.md`](docs/ai/provider-agnostic-process-host-recovery.md), [`docs/ai/mcp-production-runtime-scenario-framework.md`](docs/ai/mcp-production-runtime-scenario-framework.md), [`docs/ai/runtime-process-crash-recovery.md`](docs/ai/runtime-process-crash-recovery.md), [`docs/ai/runtime-recovery-forensics.md`](docs/ai/runtime-recovery-forensics.md), [`docs/ai/multi-tenant-runtime-crash-isolation.md`](docs/ai/multi-tenant-runtime-crash-isolation.md), [`docs/ai/control-plane-ledger-causal-chain.md`](docs/ai/control-plane-ledger-causal-chain.md), [`docs/ai/recovery-replay-ledger-trace-proof.md`](docs/ai/recovery-replay-ledger-trace-proof.md), and the product roadmap documentation under [`docs/product-roadmap/index.md`](docs/product-roadmap/index.md).
 
 ---
 
@@ -70,7 +85,7 @@ It is designed for workloads such as:
 - multi-step distributed execution
 - shared control-plane orchestration
 - multi-tenant AI runtime hosting
-- Kubernetes-oriented runtime instance pools
+- Kubernetes-hosted runtime instance pools
 - process crash recovery workflows
 - recovery forensics and incident investigation
 - operational replay and audit workflows
@@ -99,12 +114,17 @@ It provides a state-driven execution layer where:
 - runtime instances expose run capacity, worker capacity, queue pressure, and worker-aware `CanAcceptRun`
 - MCP/control-plane discovery allows runtime-only hosts to resolve the logical control-plane identity before registration
 - Redis registry, capacity, and admission reservation stores validate shared runtime coordination
-- local and HTTP pooled provider hosting foundations validate the path toward Kubernetes-style runtime instances
+- local, process-host, and Kubernetes-hosted runtime instances use the same shared run, dispatch, and execution contracts
 - HTTP runtime provider hardening validates timeout, retry, circuit-breaker behavior, structured failure reasons, and persisted dispatch failure handling
 - HTTP runtime scale-out foundations validate Redis-backed provider selection, provisioner execution, tenant-aware registry/capacity metadata, and Shared/Dedicated/Hybrid policy behavior
 - gRPC runtime provider foundations validate `ControlPlaneWithGrpcRuntimeInstances`, gRPC dispatch, provider metadata, HTTP/2 runtime transport, gRPC scale-out, and real `RuntimeInstanceOnly` process-host execution
+- Kubernetes Runtime Host Provider creates deterministic Pods and Services through the Kubernetes .NET SDK without moving command transport into Kubernetes-specific code
+- Kubernetes client modes separate fast in-memory lifecycle proofs from real cluster interaction through the Kubernetes SDK
+- Kubernetes networking supports direct Service DNS, NodePort, per-runtime port-forward, and shared Gateway API routing
+- layered readiness prevents registry/capacity publication until the configured Kubernetes, runtime, and transport boundaries have converged
+- Kubernetes crash scenarios validate that Pod loss is handled by the existing health and recovery reconcilers rather than by transport providers
 - provider-agnostic process-host recovery validates the same runtime crash recovery contract across HTTP and gRPC providers
-- Runtime Host Manager process-host provisioning validates `Fixture`, `Process`, `Attach`, and Kubernetes-oriented host creation boundaries, with the `Process` mode launching real HTTP and gRPC `RuntimeInstanceOnly` hosts
+- Runtime Host Manager validates `Fixture`, `Process`, `Attach`, and `Kubernetes` host creation boundaries; process and Pod hosts both run the same `RuntimeInstanceOnly` application
 - MCP production runtime scenarios validate full process-boundary execution, durable ledger/trace/replay visibility, retention, mixed-tenant behavior, and HTTP/gRPC process-host recovery
 - runtime process crash recovery validates that killed runtime processes do not imply lost work when durable shared state, execution indexes, DAG state, registry/capacity, ledger, trace, replay, and forensics are available
 - in-flight recovered executions resume with the same durable `ExecutionId`, while local queued work that had not started yet is redispatched through its durable `SharedRunId`
@@ -138,6 +158,9 @@ Once AI moves to production, the hard problem becomes execution:
 - How do you preserve RBAC and tenant identity after the original request leaves the MCP/API context?
 - How do you prevent one tenant from seeing or consuming another tenant's dedicated runtime capacity?
 - How do you scale out runtime instances without losing tenant-specific settings?
+- How do you create runtime Pods without coupling Kubernetes lifecycle to HTTP or gRPC dispatch?
+- How do you distinguish a `Running` Pod from a registered, capacity-published, routable runtime?
+- How do you recover assigned work after a Pod is deleted or crashes?
 - How do you prove deterministic convergence?
 
 This runtime exists to address those production execution concerns.
@@ -174,16 +197,17 @@ This runtime is designed to fix the operational problems that appear when AI wor
 | Distributed runtime instances are hard to observe | Runtime instance registration, heartbeat, Redis-backed registry, Redis-backed capacity descriptors, queue pressure, available run slots, worker identity propagation, active worker count, available worker count, tenant ownership metadata, and worker-aware `CanAcceptRun`. |
 | Queued global work needs controlled dispatch | Queue-first submit mode, shared queue pump, readiness gate, manual drain, dispatch-time admission, tenant-aware capacity visibility, admission reservations, and no-double-dispatch shared queue coordination. |
 | One execution can consume too many local workers | `MaxLocalWorkersPerExecution`, effective worker reservation, active/free worker visibility, and worker-aware runtime capacity snapshots. |
-| Control-plane operations become coupled to internals | Adapter-neutral control-plane facades for MCP, HTTP API, CLI, dashboards, and Kubernetes-oriented orchestration. |
-| Dispatch and scaling can become transport-specific | Provider-based runtime instance model and foundations for local, HTTP, and gRPC runtime providers, with future Redis command queue and Kubernetes providers. |
-| Kubernetes scaling needs runtime visibility | Runtime roles, runtime capacity descriptors, shared queue coordination, scale-out request publication, provider-based administration direction, and tenant-scoped runtime settings. |
+| Control-plane operations become coupled to internals | Adapter-neutral control-plane facades for MCP, HTTP API, CLI, dashboards, and Kubernetes runtime-host orchestration. |
+| Dispatch and host lifecycle can become coupled | Local, HTTP, and gRPC providers own command dispatch while Runtime Host Manager strategies independently own `Fixture`, `Process`, `Attach`, or `Kubernetes` host lifecycle. |
+| Kubernetes must not publish false-ready capacity | Kubernetes startup uses separate resource, runtime registration/capacity, and transport readiness gates before scale-out is fulfilled and normal dispatch begins. |
 | Runtime-only hosts can register under the wrong control-plane id | Redis control-plane discovery store and `ControlPlaneIdResolver` allow runtime-only hosts to resolve the MCP-published logical control-plane identity before registration. |
 | Shutdown cleanup can race with disposed discovery/logging/Redis dependencies | Registry unregister and capacity descriptor cleanup reuse the known resolved control-plane id and are best-effort during shutdown. |
 | HTTP dispatch can accidentally target the parent transport host | HTTP pooled runtime model treats `runtime-http-*` child runtime instances as dispatch targets and the HTTP host as transport infrastructure. |
 | HTTP provider failures can become opaque under pressure | HTTP provider hardening adds timeout, retry, circuit breaker, structured failure reasons, and persisted dispatch failure visibility. |
 | HTTP runtime capacity needs tenant-aware scale-out before real remote provisioning | HTTP scale-out now participates in the same Redis-backed request lifecycle, watcher, selector, provider, registry, capacity, and tenant visibility model as local scale-out. |
-| Runtime host lifecycle must not be owned directly by the HTTP command provider | Runtime Host Manager separates provider scale-out from host creation and supports `Fixture`, `Process`, `Attach`, and Kubernetes-oriented modes. |
+| Runtime host lifecycle must not be owned directly by command providers | Runtime Host Manager separates provider scale-out from host creation and supports `Fixture`, `Process`, `Attach`, and `Kubernetes` modes without changing HTTP/gRPC transport semantics. |
 | Production tests need to prove real process boundaries | MCP production scenarios launch real `RuntimeInstanceOnly` processes, wait for registration/capacity readiness, dispatch over HTTP, execute DAG workloads, and validate ledger/trace/replay across process boundaries. |
+| Kubernetes networking differs between local development and clusters | The host strategy can publish direct Service DNS, NodePort, per-runtime port-forward, or shared Gateway API endpoints while preserving runtime identity and provider metadata. |
 
 The main goal is to make production AI execution controllable, observable, recoverable after worker and runtime process failures, auditable, replayable, tenant-isolated, and eventually scalable across runtime instances without turning the runtime core into a transport-specific scheduler.
 
@@ -290,8 +314,11 @@ This project explores what an AI execution runtime should look like when reliabi
 | HTTP runtime scale-out foundation | Implemented / validated | `HttpAiRuntimeInstanceProvider` participates as an `IAiRuntimeScaleOutProvider` and delegates capacity materialization to `IAiHttpRuntimeScaleOutProvisioner`. |
 | gRPC runtime provider | Implemented / validated | `ControlPlaneWithGrpcRuntimeInstances` dispatches to gRPC runtime instances using provider metadata, HTTP/2 transport, and `RuntimeInstanceOnly` gRPC host processes. |
 | gRPC runtime scale-out foundation | Implemented / validated | The gRPC provider participates in Redis-backed scale-out through provider selection, Runtime Host Manager process-host provisioning, runtime self-registration, capacity visibility, and shared queue dispatch. |
+| Kubernetes Runtime Host Provider | Implemented / validated foundation | Runtime Host Manager can create and delete `RuntimeInstanceOnly` Pods and Services through fake or Kubernetes SDK clients while preserving HTTP/gRPC command transports. |
+| Kubernetes readiness and networking | Implemented / validated foundation | Supports resource readiness, runtime registration/capacity readiness, transport readiness, Service DNS, NodePort, per-runtime port-forward, and shared Gateway API routing. |
+| Kubernetes crash recovery | Implemented / targeted validation | Pod deletion/crash scenarios reuse the provider-agnostic health and execution recovery model for unsafe-capacity suppression, replacement capacity, strict resume, redispatch, and safe-tenant non-impact; higher-parallelism stability hardening remains active. |
 | Provider-agnostic process-host recovery | Implemented / validated | Real process-host crash recovery is shared by HTTP and gRPC scenarios through a provider-neutral recovery test framework and profile model. |
-| Runtime Host Manager process-host provisioning | Implemented / validated | Host creation modes separate provider scale-out from host lifecycle; process mode launches real `RuntimeInstanceOnly` runtime hosts through `ProcessAiRuntimeHostCreationStrategy`. |
+| Runtime Host Manager lifecycle strategies | Implemented / validated | Host creation modes separate provider scale-out from lifecycle; process mode launches child hosts and Kubernetes mode creates Pod/Service resources through `KubernetesAiRuntimeHostCreationStrategy`. |
 | MCP production runtime scenario framework | Implemented / validated | Production scenarios validate HTTP process-host scale-out, runtime registration/capacity readiness, Dedicated/Shared/Hybrid tenants, retention, ledger, trace, replay report, replay ledger, and replay trace across process boundaries. |
 | Tenant-aware HTTP scale-out | Implemented / validated | HTTP scale-out preserves tenant runtime settings and validates Shared, Dedicated, Hybrid, Dedicated no shared fallback, Hybrid visibility behavior, and tenant runtime settings precedence through Redis-backed scale-out requests. |
 | Run admission / slot decisions | Implemented | Admission can assign runs to a tenant-visible runtime instance, request scale-out, queue globally, or reject according to policy. Direct-dispatch mode preserves `RequestScaleOut`; queue-first mode intentionally queues globally first. |
@@ -302,7 +329,7 @@ This project explores what an AI execution runtime should look like when reliabi
 | Redis runtime capacity descriptors | Implemented / validated | Runtime instances publish Redis-backed capacity descriptors for worker count, active/free workers, max workers per execution, run slots, queue pressure, heartbeat, provider metadata, tenant metadata, and capacity-aware admission. |
 | Runtime worker capacity visibility | Implemented / validated | Runtime snapshots expose `WorkerCount`, `ActiveWorkerCount`, `AvailableWorkerCount`, `MaxLocalWorkersPerExecution`, and worker-aware `CanAcceptRun`. |
 | MCP server control-plane adapter | Foundation available / validated | MCP tools expose shared run, shared queue, manual drain, background pump, runtime instance, runtime queue, replay, execution control, observability, worker-capacity visibility operations, and RBAC-backed tenant-aware control-plane operations. |
-| Runtime instance provider model | Implemented foundations / validated local, HTTP, and gRPC scenarios | Provider-based runtime administration has local, HTTP pooled/process-host, and gRPC process-host foundations, with future Redis command queue and Kubernetes providers. |
+| Runtime instance provider model | Implemented foundations / validated local, HTTP, gRPC, and Kubernetes scenarios | Providers own command dispatch and scale-out capabilities; Runtime Host Manager strategies own process or Kubernetes lifecycle. Redis command queue remains future direction. |
 | RunId vs ExecutionId separation | Implemented | Controller lifecycle identity is separated from durable DAG execution identity. |
 | Snapshot and Replay API foundations | Implemented | Terminal snapshots, replay metadata, deterministic fingerprint validation, audit-only replay, restore replay, ledger loading, and timeline loading are available. |
 | Execution-correlated decision ledger | Implemented | Durable correlated ledger events exist for execution lifecycle, run lifecycle, queue control, claims, steps, retry, recovery, policy evaluation, concurrency, execution control, human input, snapshots, storage failures, replay lifecycle, retention, compaction, tenant context, and finalization. |
@@ -355,7 +382,26 @@ Redis Discovery / Registry / Capacity / Reservation / Scale-Out Request Layer
         +--> Scale-out requests
         |
         v
-Runtime Instance Provider / Scale-Out / HTTP Provider / gRPC Provider / Local Queue Layer
+Runtime Instance Provider / Command Transport Layer
+        |
+        +--> Local provider
+        +--> HTTP provider
+        +--> gRPC provider
+        +--> Scale-out provider selection
+        |
+        v
+Runtime Host Manager / Host Lifecycle Layer
+        |
+        +--> Fixture strategy
+        +--> Process strategy
+        +--> Attach strategy
+        +--> Kubernetes strategy
+                |
+                +--> RuntimeInstanceOnly Pod
+                +--> Service / NodePort
+                +--> Per-runtime port-forward
+                +--> Shared Gateway API route
+                +--> Resource / runtime / transport readiness
         |
         +--> Runtime health signals / unsafe capacity suppression
         +--> Execution recovery reconciliation
@@ -435,9 +481,79 @@ The runtime is intentionally split into layers:
 - runtime instance providers route selected runs to local, HTTP, or gRPC runtime instances while preserving local queues
 - HTTP runtime provider hardening protects remote dispatch with timeout, retry, circuit-breaker, and structured failure reporting
 - HTTP and gRPC scale-out validate the control-plane capacity lifecycle through provider selection, registry/capacity publication, tenant visibility, Redis-backed scale-out fulfillment, Runtime Host Manager process launch, registration/capacity readiness, and provider dispatch
+- Kubernetes scale-out reuses that same lifecycle, replacing child-process creation with deterministic Pod/Service creation while keeping the selected HTTP/gRPC provider unchanged
+- Kubernetes readiness is layered: a Pod may exist or report `Running` before the runtime has registered, published safe capacity, and exposed a reachable transport endpoint
+- host cleanup deletes only resources owned by the failed startup invocation, preserving convergence and avoiding destructive cleanup of pre-existing runtime resources
 - runtime process crash recovery keeps responsibility boundaries explicit: health reconciliation suppresses unsafe capacity, execution recovery reconciles already assigned work, and HTTP/gRPC providers report transport signals without owning recovery
 - runtime capacity snapshots expose run slots, worker pressure, provider metadata, tenant visibility, and worker-aware `CanAcceptRun`
 - correlated observability records runtime behavior across ledger, metrics, traces, workers, tenants, and executions
+
+---
+
+## Kubernetes Runtime Hosting
+
+Kubernetes is implemented as a **Runtime Host Manager lifecycle strategy**, not as a replacement runtime provider.
+
+That distinction preserves the execution architecture:
+
+```text
+Shared run admission
+    ↓
+Scale-out request
+    ↓
+HTTP or gRPC scale-out provider
+    ↓
+Runtime Host Manager
+    ↓
+KubernetesAiRuntimeHostCreationStrategy
+    ↓
+RuntimeInstanceOnly Pod + Service
+    ↓
+Kubernetes resource readiness
+    ↓
+Runtime registration and capacity readiness
+    ↓
+HTTP/gRPC transport readiness
+    ↓
+Scale-out fulfilled
+    ↓
+Normal shared queue dispatch
+```
+
+### What Kubernetes Owns
+
+- deterministic Pod and Service creation from `AiRuntimeHostStartRequest`
+- runtime identity, labels, annotations, environment variables, ports, and tenant metadata
+- fake-client lifecycle proofs and real Kubernetes SDK interaction
+- Service DNS, NodePort, per-runtime port-forward, and shared Gateway API exposure
+- layered readiness and startup timeout handling
+- ownership-safe cleanup after partial creation failure
+- explicit runtime host deletion
+
+### What Kubernetes Does Not Own
+
+- shared run admission
+- provider selection
+- HTTP or gRPC command semantics
+- shared queue claim and dispatch
+- durable DAG state
+- retry, replay, ledger, trace, or forensics semantics
+- health suppression or execution recovery policy
+
+A Pod can be `Running` while the runtime is still unusable. The host strategy therefore treats readiness as separate boundaries:
+
+```text
+Kubernetes resource ready
+    ≠ runtime registered
+    ≠ capacity safely published
+    ≠ HTTP/gRPC endpoint reachable
+```
+
+When a Pod disappears, Kubernetes terminates the host boundary. The existing health reconciler removes unsafe capacity, the execution recovery reconciler classifies assigned work, in-flight DAGs resume with the same `ExecutionId`, and local queued work is redispatched through its durable `SharedRunId`.
+
+Targeted SDK-backed scenarios validate Kubernetes scale-out, readiness, transport preservation, Pod deletion/crash recovery, and tenant-safe non-impact. Higher-parallelism stability on local Minikube/Docker Desktop environments remains an active hardening area rather than a claimed production guarantee.
+
+For the complete component map, lifecycle, networking modes, readiness model, configuration, tests, and source map, see [`docs/ai/kubernetes-runtime-host-provider.md`](docs/ai/kubernetes-runtime-host-provider.md).
 
 ---
 
@@ -696,6 +812,10 @@ The project is designed around production questions that enterprise AI systems m
 | How do you harden HTTP runtime dispatch under failure? | HTTP provider dispatch now has timeout, retry, circuit-breaker behavior, structured failure reasons, and persisted shared-run dispatch failure visibility. |
 | How do you validate HTTP runtime scale-out with a real runtime process? | HTTP process-host scenarios use Redis-backed scale-out requests, watcher, HTTP provider, Runtime Host Manager, `ProcessAiRuntimeHostCreationStrategy`, real `RuntimeInstanceOnly` process launch, registration/capacity readiness, and normal HTTP dispatch. |
 | How do you validate gRPC runtime scale-out with a real runtime process? | gRPC process-host scenarios use Redis-backed scale-out requests, watcher, gRPC provider, Runtime Host Manager, `ProcessAiRuntimeHostCreationStrategy`, real `RuntimeInstanceOnly` gRPC process launch, HTTP/2 transport, registration/capacity visibility, and normal gRPC dispatch. |
+| How do you scale out the same runtime into Kubernetes? | The selected HTTP/gRPC scale-out provider delegates lifecycle to Runtime Host Manager, which invokes `KubernetesAiRuntimeHostCreationStrategy` to create a `RuntimeInstanceOnly` Pod and Service before normal provider dispatch resumes. |
+| How do you avoid treating `Pod Running` as ready capacity? | Kubernetes resource readiness, runtime registration/capacity readiness, and transport endpoint readiness are evaluated separately before fulfillment. |
+| How do you preserve transport semantics in Kubernetes? | Kubernetes owns host lifecycle and endpoint exposure; the existing HTTP or gRPC provider still owns command serialization, dispatch, failures, retries, and provider metadata. |
+| How do you recover after a Pod crash? | Pod loss is detected through the normal runtime health boundary; unsafe capacity is suppressed, assigned work is reconciled, replacement capacity is created, in-flight DAGs resume by `ExecutionId`, and local queued work is redispatched by `SharedRunId`. |
 | How do you avoid duplicating recovery logic per provider? | Provider-agnostic process-host recovery reuses the same recovery contract for HTTP and gRPC through provider profiles, while provider-specific code remains limited to transport, scale-out, metadata, and host settings. |
 | How do you prove process-boundary observability? | MCP production scenarios validate ledger, trace, replay report, replay ledger, replay trace, and retention from the parent MCP process after execution occurs in a child runtime process. |
 | How do you prove deterministic convergence? | Integration tests and enterprise demo scenarios validate completion, replay fingerprints, distributed execution, throttling, recovery behavior, atomic retention, compaction consistency, ledger visibility, and trace timeline visibility. |
@@ -750,7 +870,19 @@ The control plane currently exposes foundations for:
 - HTTP runtime provider structured dispatch failure persistence
 - HTTP runtime scale-out provider and provisioner foundation
 - gRPC runtime provider dispatch and scale-out foundation
+- Kubernetes Runtime Host Provider lifecycle strategy
+- Kubernetes fake and SDK clients
+- deterministic `RuntimeInstanceOnly` Pod and Service creation
+- Service/NodePort/port-forward/Gateway transport exposure
+- layered Kubernetes, runtime, and transport readiness
+- Kubernetes Pod crash recovery through the shared recovery contract
 - Runtime Host Manager process-host provisioning
+- Kubernetes Runtime Host Manager strategy
+- Kubernetes fake and SDK client modes
+- deterministic Pod and Service construction
+- Service, NodePort, per-runtime port-forward, and Gateway API exposure
+- Kubernetes resource, runtime, and transport readiness
+- ownership-safe Kubernetes startup cleanup and explicit host deletion
 - runtime process crash recovery reconciliation
 - runtime recovery forensics and incident evidence
 - tenant-aware HTTP scale-out for Shared, Dedicated, and Hybrid runtime modes
@@ -759,7 +891,7 @@ The control plane currently exposes foundations for:
 - scale-out watcher/provider selector lifecycle
 - fulfilled scale-out shared-run requeue
 - Redis discovery/registry/capacity foundations
-- future API, MCP, CLI, dashboard, and Kubernetes adapters
+- future HTTP API, CLI, dashboard, and managed Kubernetes operational adapters
 
 The control plane separates three identity levels.
 
@@ -859,7 +991,7 @@ Implemented runtime instance capabilities include:
 - mark runtime instance as draining
 - unregister runtime instance
 
-These foundations prepare the runtime for Kubernetes pod visibility, shared admission, dashboards, multi-tenant scheduling, and future autoscaling.
+These foundations now support Kubernetes Pod visibility and lifecycle convergence while continuing to prepare dashboards, multi-tenant scheduling policy, pooled host reuse, and production autoscaling hardening.
 
 ### Runtime Discovery, Registry, and Capacity
 
@@ -1175,6 +1307,14 @@ The strongest areas today are:
 - gRPC runtime provider dispatch and scale-out foundation
 - Runtime Host Manager process-host provisioning
 - real `RuntimeInstanceOnly` process launch from HTTP and gRPC scale-out
+- Kubernetes Runtime Host Manager scale-out
+- fake and Kubernetes SDK lifecycle clients
+- deterministic `RuntimeInstanceOnly` Pod and Service creation
+- direct Service, NodePort, per-runtime port-forward, and Gateway API endpoint construction
+- Kubernetes resource, runtime registration/capacity, and transport readiness boundaries
+- gRPC transport preservation across Kubernetes host creation
+- Kubernetes Pod deletion/crash boundary validation
+- replacement runtime creation and strict recovery through existing reconcilers
 - tenant-aware HTTP Shared/Dedicated/Hybrid scale-out validation
 - MCP production runtime scenario validation
 - provider-agnostic HTTP/gRPC process-host recovery validation
@@ -1192,22 +1332,22 @@ The strongest areas today are:
 - integration-test-driven validation
 - enterprise runtime demo execution context snapshot propagation
 - end-to-end multi-tenant runtime flow documentation
-- 1036 green tests on the current multi-tenant control-plane isolation branch
+- large unit and integration suite covering local, process-host, and targeted Kubernetes scenarios
 
 Areas still evolving include:
 
 - public API/SDK polish
 - remote runtime instance dispatch hardening beyond the validated HTTP timeout/retry/circuit-breaker and gRPC process-host foundations
 - provider-based runtime instance administration beyond local/HTTP/gRPC foundations
-- automatic Kubernetes scaling adapter
+- higher-parallelism Kubernetes stability hardening for local Minikube/Docker Desktop environments
 - tenant settings persistence through configuration or database-backed provider
 - final shared runtime pooling semantics and Hybrid shared fallback process-host validation
-- Kubernetes tenant propagation hardening and broader provider capability negotiation
+- production-cluster Kubernetes RBAC, Gateway, ingress, and provider capability hardening
 - Mongo persistence partitioning and indexes for tenant-aware ledger/replay/correlation
 - HTTP replay/control-plane APIs and controller abstractions
 - OpenTelemetry/exporter polish for tracing and metrics
 - operational dashboarding
-- Kubernetes deployment assets
+- Kubernetes demo UI, deployment experience, and operational packaging
 - real enterprise sample workflows
 - product-roadmap platform capabilities
 - dashboard and pipeline builder product layers
@@ -1283,7 +1423,7 @@ The `throttling-100` scenario demonstrates:
 
 The demo validates the controller execution path, distributed worker participation, runtime controls, realtime logging, correlated observability, tenant/context propagation, and terminal completion behavior. It is intended to show distributed AI execution infrastructure, not only a simple batch or in-memory execution path.
 
-Future demo work will expand further into human-in-the-loop, advanced replay workflows, Kubernetes deployment assets, real enterprise sample workflows, dashboard visibility, pipeline builder direction, MCP control scenarios, tenant-aware operations, memory/context lifecycle diagnostics, and broader product-platform capabilities.
+Future demo work will expand into human-in-the-loop, advanced replay workflows, a Kubernetes control-plane/runtime visualization UI, production-oriented deployment packaging, real enterprise sample workflows, dashboard visibility, pipeline builder direction, MCP control scenarios, tenant-aware operations, memory/context lifecycle diagnostics, and broader product-platform capabilities.
 
 ---
 
@@ -1299,7 +1439,7 @@ The roadmap is organized into phases.
 | Phase 1.5 | Runtime process crash recovery | Completed / validated - real process kill recovery, in-flight resume, local queued redispatch, safe tenant non-impact, forensics, and replay/ledger/trace proof validated |
 | Phase 2 | Real enterprise sample | Planned |
 | Phase 3 | Correlated observability, tracing, and metrics | Foundations available / active polish |
-| Phase 4 | Kubernetes deployment demo | Planned - shared controller V1, Redis shared queue, Redis discovery/registry/capacity, Redis/local scale-out lifecycle, fulfilled-run requeue, HTTP pooled runtime provider foundations, HTTP provider hardening, HTTP scale-out foundation, and multi-tenant isolation foundations completed |
+| Phase 4 | Kubernetes runtime hosting and deployment demo | Implemented foundation / active hardening - SDK-driven Pod/Service lifecycle, HTTP/gRPC transport preservation, layered readiness, scale-out, Gateway/port-forward exposure, Pod crash recovery, and tenant-aware scenarios are implemented; demo UI, pooled host reuse, and production-cluster hardening remain active |
 | Phase 5 | Public API / SDK polish | Planned |
 | Phase 6 | Deterministic Replay Engine and Audit Foundations | Completed (V1) |
 | Phase 7 | Replay Controller, HTTP APIs, Dashboard, and Operational Tooling | Planned |
@@ -1366,10 +1506,11 @@ The full documentation map is available here:
 - [`docs/ai/multi-tenant-runtime-flow.md`](docs/ai/multi-tenant-runtime-flow.md) — End-to-end ASCII runtime flow from MCP/RBAC entry to durable snapshot, shared run store, tenant-aware admission, scale-out, shared queue dispatch, local runtime queue, DAG execution, worker loop, finalization, and observability.
 - [`docs/ai/runtime-control-plane.md`](docs/ai/runtime-control-plane.md) — Runtime control-plane foundation for replay, execution control, runtime queue control, runtime instance visibility/control, discovery, capacity, run admission, Shared Runtime Controller V1, Redis shared queue coordination, queue pump/background service, Redis-backed scale-out lifecycle, fulfilled-run requeue, and tenant-aware control-plane operations.
 - [`docs/ai/runtime-discovery-registry-capacity.md`](docs/ai/runtime-discovery-registry-capacity.md) — Runtime discovery, Redis registry, Redis capacity descriptors, ControlPlaneIdResolver, pump readiness, local scale-out capacity visibility, cleanup lifecycle, HTTP pooled runtime identity model, and tenant-aware visibility filtering.
-- [`docs/ai/mcp-server-control-plane.md`](docs/ai/mcp-server-control-plane.md) — MCP server as a runtime control-plane adapter, including host modes, tool groups, RBAC integration, runtime role separation, local runtime pool behavior, Redis/local scale-out execution, shared queue dispatch flow, and Kubernetes direction.
+- [`docs/ai/mcp-server-control-plane.md`](docs/ai/mcp-server-control-plane.md) — MCP server as a runtime control-plane adapter, including host modes, tool groups, RBAC integration, runtime role separation, shared queue dispatch, provider scale-out, and process/Kubernetes host lifecycle integration.
 - [`docs/ai/runtime-instance-provider-model.md`](docs/ai/runtime-instance-provider-model.md) — Provider-based runtime instance administration, dispatch, status/control, and scale-out model for local, Redis command queue, HTTP, gRPC, and Kubernetes providers, including tenant-scoped provider dispatch and scale-out.
 - [`docs/ai/http-runtime-provider.md`](docs/ai/http-runtime-provider.md) — HTTP runtime provider reference covering dispatch hardening, retry, timeout, circuit breaker behavior, structured failure reasons, HTTP scale-out provider capability, Runtime Host Manager process-host provisioning, tenant-aware Shared/Dedicated/Hybrid scale-out validation, and process-boundary readiness.
 - [`docs/ai/grpc-runtime-provider.md`](docs/ai/grpc-runtime-provider.md) — gRPC runtime provider reference covering `ControlPlaneWithGrpcRuntimeInstances`, gRPC dispatch, HTTP/2 runtime transport, provider metadata, gRPC scale-out, Runtime Host Manager process-host provisioning, readiness boundary, and validated crash recovery.
+- [`docs/ai/kubernetes-runtime-host-provider.md`](docs/ai/kubernetes-runtime-host-provider.md) — Kubernetes Runtime Host Provider reference covering Host Manager lifecycle, fake and SDK clients, Pod/Service construction, Service/NodePort/port-forward/Gateway exposure, layered readiness, registry/capacity publication, cleanup ownership, multi-tenant metadata, and Pod crash recovery boundaries.
 - [`docs/ai/provider-agnostic-process-host-recovery.md`](docs/ai/provider-agnostic-process-host-recovery.md) — Provider-neutral process-host recovery reference explaining how HTTP and gRPC share the same real process crash recovery contract, recovery profiles, and proof model.
 - [`docs/ai/mcp-production-runtime-scenario-framework.md`](docs/ai/mcp-production-runtime-scenario-framework.md) — MCP production runtime scenario framework covering Runtime Host Manager modes, HTTP process-host scale-out, real `RuntimeInstanceOnly` child processes, Dedicated/Shared/Hybrid tenant scenarios, retention, ledger, trace, and replay validation across process boundaries.
 - [`docs/ai/runtime-process-crash-recovery.md`](docs/ai/runtime-process-crash-recovery.md) — Runtime process crash recovery reference covering in-flight DAG resume, local queued redispatch, durable identity semantics, health/recovery/provider boundaries, and validated process kill behavior.
@@ -1400,6 +1541,7 @@ Focused AI runtime documentation:
 - [`docs/ai/runtime-instance-provider-model.md`](docs/ai/runtime-instance-provider-model.md)
 - [`docs/ai/http-runtime-provider.md`](docs/ai/http-runtime-provider.md)
 - [`docs/ai/grpc-runtime-provider.md`](docs/ai/grpc-runtime-provider.md)
+- [`docs/ai/kubernetes-runtime-host-provider.md`](docs/ai/kubernetes-runtime-host-provider.md)
 - [`docs/ai/provider-agnostic-process-host-recovery.md`](docs/ai/provider-agnostic-process-host-recovery.md)
 - [`docs/ai/mcp-production-runtime-scenario-framework.md`](docs/ai/mcp-production-runtime-scenario-framework.md)
 - [`docs/ai/runtime-process-crash-recovery.md`](docs/ai/runtime-process-crash-recovery.md)
@@ -1437,7 +1579,8 @@ Current validated evidence includes:
 ```text
 large green test suite
 enterprise runtime demo passing
-HTTP process-host mixed-tenant production validation passing
+HTTP/gRPC process-host recovery validation passing
+targeted Kubernetes SDK scale-out, readiness, and Pod crash recovery scenarios passing
 ```
 
 Validated areas include:
@@ -1578,6 +1721,27 @@ default/test-tenant
     Shared
     uses shared runtime-instance-* capacity
 ```
+
+---
+
+Example Kubernetes runtime-host evidence:
+
+```text
+HostCreationMode = Kubernetes
+Runtime host = RuntimeInstanceOnly Pod
+Pod + Service lifecycle = Kubernetes SDK
+Command transport = existing HTTP or gRPC provider
+Resource readiness = validated
+Runtime registration/capacity readiness = validated
+Transport endpoint readiness = validated where required
+Scale-out request = fulfilled after convergence
+Pod UID disappearance after kill = validated
+In-flight recovery preserves ExecutionId
+Local queued recovery preserves SharedRunId
+Safe-tenant recovery contamination = false in targeted recovery scenarios
+```
+
+The Kubernetes proof is intentionally scoped: targeted readiness, scale-out, transport, and crash-recovery scenarios are implemented, while higher-parallelism stability in resource-constrained local clusters remains under hardening.
 
 ---
 

@@ -38,8 +38,11 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
         {
             var queue = new InMemoryAiSharedQueue();
             var store = new InMemoryAiSharedRunStore();
-            var controller = new CapturingRuntimePipelineBackgroundController();
             var runExecutionIndex = new InMemoryAiRuntimeRunExecutionIndex();
+            var controller =
+                new CapturingRuntimePipelineBackgroundController(
+                    runExecutionIndex,
+                    "runtime-1");
 
             var runtimeQueueControlPlane = new AiRuntimeQueueControlPlane(
                 controller,
@@ -61,6 +64,8 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
                     metadata: new Dictionary<string, string>
                     {
                         ["recovery.mode"] = "resume-existing-execution",
+                        ["recovery.forensicsId"] =
+                            "runtime-recovery:execution-existing-1:shared-run-1:run-failed-1",
                         ["recovery.failedExecutionId"] = "execution-existing-1",
                         ["recovery.failedRuntimeInstanceId"] = "runtime-failed-1",
                         ["recovery.failedLocalRunId"] = "run-failed-1",
@@ -93,11 +98,15 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
                 Reason = "dispatch recovery resume"
             });
 
-            var indexed = await runExecutionIndex.GetAsync(
-                result.DispatchResult!.LocalRunId!);
-
-            Assert.True(result.Success);
+            Assert.True(result.Success, result.FailureReason ?? result.Message);
             Assert.NotNull(result.DispatchResult);
+            Assert.False(
+                string.IsNullOrWhiteSpace(result.DispatchResult!.LocalRunId));
+
+            var indexed = await runExecutionIndex
+                .GetAsync(result.DispatchResult.LocalRunId!)
+                .ConfigureAwait(false);
+
             Assert.True(controller.EnqueueResumeCalled);
             Assert.False(controller.EnqueueCalled);
             Assert.Equal("execution-existing-1", controller.LastExecutionId);
@@ -106,9 +115,12 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
             Assert.Equal("local-run-1", result.DispatchResult.LocalRunId);
             Assert.NotNull(indexed);
             Assert.Equal("execution-existing-1", indexed!.ExecutionId);
-            Assert.Equal("True", indexed.Metadata["recovery.resume"]);
+            Assert.Equal("true", indexed.Metadata["recovery.resume"]);
             Assert.Equal("execution-existing-1", indexed.Metadata["recovery.execution.id"]);
             Assert.Equal("resume-existing-execution", indexed.Metadata["recovery.mode"]);
+            Assert.Equal(
+                "runtime-recovery:execution-existing-1:shared-run-1:run-failed-1",
+                indexed.Metadata["recovery.forensicsId"]);
             Assert.Equal("runtime-failed-1", indexed.Metadata["recovery.failedRuntimeInstanceId"]);
             Assert.Equal("run-failed-1", indexed.Metadata["recovery.failedLocalRunId"]);
 
@@ -292,6 +304,21 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
 
         private sealed class CapturingRuntimePipelineBackgroundController : IAiRuntimePipelineBackgroundController
         {
+            private readonly IAiRuntimeRunExecutionIndex runExecutionIndex;
+            private readonly string runtimeInstanceId;
+
+            public CapturingRuntimePipelineBackgroundController(
+                IAiRuntimeRunExecutionIndex runExecutionIndex,
+                string runtimeInstanceId)
+            {
+                this.runExecutionIndex =
+                    runExecutionIndex ??
+                    throw new ArgumentNullException(nameof(runExecutionIndex));
+
+                ArgumentException.ThrowIfNullOrWhiteSpace(runtimeInstanceId);
+                this.runtimeInstanceId = runtimeInstanceId;
+            }
+
             public bool EnqueueCalled { get; private set; }
 
             public bool EnqueueResumeCalled { get; private set; }
@@ -328,7 +355,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
                     CreateHandle("execution-new-1"));
             }
 
-            public ValueTask<AiRuntimeWorkerRunHandle> EnqueueResumeAsync(
+            public async ValueTask<AiRuntimeWorkerRunHandle> EnqueueResumeAsync(
                 AiRuntimePipelineRunRequest request,
                 string executionId,
                 CancellationToken cancellationToken = default)
@@ -341,8 +368,62 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
                 LastRunRequest = request;
                 LastExecutionId = executionId;
 
-                return ValueTask.FromResult(
-                    CreateHandle(executionId));
+                var handle = CreateHandle(executionId);
+
+                await this.runExecutionIndex
+                    .RegisterQueuedAsync(
+                        new AiRuntimeRunExecutionIndexEntry
+                        {
+                            RunId = handle.RunId,
+                            ExecutionId = executionId,
+                            RuntimeInstanceId = this.runtimeInstanceId,
+                            Status = "queued",
+                            CreatedAtUtc = DateTimeOffset.UtcNow,
+                            ExecutionContextSnapshot = request.ExecutionContextSnapshot,
+                            Metadata = CreateResumeIndexMetadata(
+                                request,
+                                executionId,
+                                this.runtimeInstanceId)
+                        },
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+                return handle;
+            }
+
+
+            private static IReadOnlyDictionary<string, string> CreateResumeIndexMetadata(
+                AiRuntimePipelineRunRequest request,
+                string executionId,
+                string runtimeInstanceId)
+            {
+                var metadata =
+                    new Dictionary<string, string>(StringComparer.Ordinal)
+                    {
+                        ["pipeline.name"] = request.PipelineName,
+                        ["runtime.instance.id"] = runtimeInstanceId,
+                        ["recovery.resume"] = "true",
+                        ["recovery.execution.id"] = executionId,
+                        ["context.key"] =
+                            request.ExecutionContextSnapshot?.ContextKey ??
+                            string.Empty,
+                        ["tenant.id"] =
+                            request.ExecutionContextSnapshot?.TenantId ??
+                            string.Empty,
+                        ["tenant.group.id"] =
+                            request.ExecutionContextSnapshot?.TenantGroupId ??
+                            string.Empty
+                    };
+
+                if (request.Metadata is not null)
+                {
+                    foreach (var item in request.Metadata)
+                    {
+                        metadata[item.Key] = item.Value;
+                    }
+                }
+
+                return metadata;
             }
 
             public Task PauseQueueAsync(

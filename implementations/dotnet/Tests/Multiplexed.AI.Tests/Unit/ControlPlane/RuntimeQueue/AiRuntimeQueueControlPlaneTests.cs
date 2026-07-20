@@ -293,8 +293,11 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeQueue
         [Fact]
         public async Task EnqueueRunAsync_Should_Call_Controller_Resume_When_Recovery_Metadata_Is_Present()
         {
-            var controller = new FakeRuntimePipelineBackgroundController();
             var runExecutionIndex = new InMemoryAiRuntimeRunExecutionIndex();
+            var controller =
+                new RecoveryIndexingRuntimePipelineBackgroundController(
+                    runExecutionIndex,
+                    "runtime-instance-1");
 
             var controlPlane = CreateControlPlane(
                 controller,
@@ -311,6 +314,8 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeQueue
                 Metadata = new Dictionary<string, string>
                 {
                     ["recovery.mode"] = "resume-existing-execution",
+                    ["recovery.forensicsId"] =
+                        "runtime-recovery:execution-existing-1:shared-run-1:run-failed-1",
                     ["recovery.failedExecutionId"] = "execution-existing-1",
                     ["recovery.failedRuntimeInstanceId"] = "runtime-instance-failed-1",
                     ["recovery.failedLocalRunId"] = "run-failed-1",
@@ -323,11 +328,14 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeQueue
                 RuntimeInstanceId = "runtime-instance-1"
             });
 
-            var indexed = await runExecutionIndex.GetAsync(
-                result.RunId!);
-
-            Assert.True(result.Success);
+            Assert.True(result.Success, result.FailureReason);
+            Assert.False(string.IsNullOrWhiteSpace(result.RunId));
             Assert.NotNull(result.RunHandle);
+
+            var indexed = await runExecutionIndex
+                .GetAsync(result.RunId!)
+                .ConfigureAwait(false);
+
             Assert.Equal("execution-existing-1", result.ExecutionId);
             Assert.True(controller.EnqueueResumeCalled);
             Assert.False(controller.EnqueueCalled);
@@ -336,9 +344,12 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeQueue
             Assert.NotNull(indexed);
             Assert.Equal(result.RunId, indexed!.RunId);
             Assert.Equal("execution-existing-1", indexed.ExecutionId);
-            Assert.Equal("True", indexed.Metadata["recovery.resume"]);
+            Assert.Equal("true", indexed.Metadata["recovery.resume"]);
             Assert.Equal("execution-existing-1", indexed.Metadata["recovery.execution.id"]);
             Assert.Equal("resume-existing-execution", indexed.Metadata["recovery.mode"]);
+            Assert.Equal(
+                "runtime-recovery:execution-existing-1:shared-run-1:run-failed-1",
+                indexed.Metadata["recovery.forensicsId"]);
             Assert.Equal("runtime-instance-failed-1", indexed.Metadata["recovery.failedRuntimeInstanceId"]);
             Assert.Equal("run-failed-1", indexed.Metadata["recovery.failedLocalRunId"]);
         }
@@ -408,6 +419,225 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeQueue
                 InFlightCount = 0,
                 TtlSeconds = 300
             };
+        }
+
+
+        /// <summary>
+        /// Wraps the shared runtime pipeline fake while reproducing the production ownership
+        /// of resume run execution-index registration.
+        /// </summary>
+        private sealed class RecoveryIndexingRuntimePipelineBackgroundController
+            : IAiRuntimePipelineBackgroundController
+        {
+            private readonly FakeRuntimePipelineBackgroundController inner = new();
+            private readonly IAiRuntimeRunExecutionIndex runExecutionIndex;
+            private readonly string runtimeInstanceId;
+
+            /// <summary>
+            /// Initializes a new instance of the
+            /// <see cref="RecoveryIndexingRuntimePipelineBackgroundController"/> class.
+            /// </summary>
+            /// <param name="runExecutionIndex">The local runtime run execution index.</param>
+            /// <param name="runtimeInstanceId">The replacement runtime instance identifier.</param>
+            public RecoveryIndexingRuntimePipelineBackgroundController(
+                IAiRuntimeRunExecutionIndex runExecutionIndex,
+                string runtimeInstanceId)
+            {
+                this.runExecutionIndex =
+                    runExecutionIndex ??
+                    throw new ArgumentNullException(nameof(runExecutionIndex));
+
+                ArgumentException.ThrowIfNullOrWhiteSpace(runtimeInstanceId);
+                this.runtimeInstanceId = runtimeInstanceId;
+            }
+
+            /// <summary>
+            /// Gets a value indicating whether normal enqueue was called.
+            /// </summary>
+            public bool EnqueueCalled => this.inner.EnqueueCalled;
+
+            /// <summary>
+            /// Gets a value indicating whether resume enqueue was called.
+            /// </summary>
+            public bool EnqueueResumeCalled => this.inner.EnqueueResumeCalled;
+
+            /// <summary>
+            /// Gets the last durable execution identifier passed to resume.
+            /// </summary>
+            public string? LastExecutionId => this.inner.LastExecutionId;
+
+            /// <summary>
+            /// Gets the last runtime pipeline request.
+            /// </summary>
+            public AiRuntimePipelineRunRequest? LastRunRequest => this.inner.LastRunRequest;
+
+            /// <inheritdoc />
+            public Task StartAsync(
+                CancellationToken cancellationToken = default)
+            {
+                return this.inner.StartAsync(cancellationToken);
+            }
+
+            /// <inheritdoc />
+            public Task StopAsync(
+                CancellationToken cancellationToken = default)
+            {
+                return this.inner.StopAsync(cancellationToken);
+            }
+
+            /// <inheritdoc />
+            public ValueTask<AiRuntimeWorkerRunHandle> EnqueueAsync(
+                AiRuntimePipelineRunRequest request,
+                CancellationToken cancellationToken = default)
+            {
+                return this.inner.EnqueueAsync(
+                    request,
+                    cancellationToken);
+            }
+
+            /// <inheritdoc />
+            public async ValueTask<AiRuntimeWorkerRunHandle> EnqueueResumeAsync(
+                AiRuntimePipelineRunRequest request,
+                string executionId,
+                CancellationToken cancellationToken = default)
+            {
+                ArgumentNullException.ThrowIfNull(request);
+                ArgumentException.ThrowIfNullOrWhiteSpace(executionId);
+                cancellationToken.ThrowIfCancellationRequested();
+
+                var handle =
+                    await this.inner
+                        .EnqueueResumeAsync(
+                            request,
+                            executionId,
+                            cancellationToken)
+                        .ConfigureAwait(false);
+
+                await this.runExecutionIndex
+                    .RegisterQueuedAsync(
+                        new AiRuntimeRunExecutionIndexEntry
+                        {
+                            RunId = handle.RunId,
+                            ExecutionId = executionId,
+                            RuntimeInstanceId = this.runtimeInstanceId,
+                            Status = "queued",
+                            CreatedAtUtc = DateTimeOffset.UtcNow,
+                            ExecutionContextSnapshot = request.ExecutionContextSnapshot,
+                            Metadata = CreateResumeIndexMetadata(
+                                request,
+                                executionId,
+                                this.runtimeInstanceId)
+                        },
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+                return handle;
+            }
+
+            /// <inheritdoc />
+            public Task PauseQueueAsync(
+                string? reason = null,
+                string? requestedBy = null,
+                CancellationToken cancellationToken = default)
+            {
+                return this.inner.PauseQueueAsync(
+                    reason,
+                    requestedBy,
+                    cancellationToken);
+            }
+
+            /// <inheritdoc />
+            public Task ResumeQueueAsync(
+                string? requestedBy = null,
+                CancellationToken cancellationToken = default)
+            {
+                return this.inner.ResumeQueueAsync(
+                    requestedBy,
+                    cancellationToken);
+            }
+
+            /// <inheritdoc />
+            public Task<bool> CancelQueuedRunAsync(
+                string runId,
+                string? reason = null,
+                string? requestedBy = null,
+                CancellationToken cancellationToken = default)
+            {
+                return this.inner.CancelQueuedRunAsync(
+                    runId,
+                    reason,
+                    requestedBy,
+                    cancellationToken);
+            }
+
+            /// <inheritdoc />
+            public Task<bool> CancelRunAsync(
+                string runId,
+                string? reason = null,
+                string? requestedBy = null,
+                CancellationToken cancellationToken = default)
+            {
+                return this.inner.CancelRunAsync(
+                    runId,
+                    reason,
+                    requestedBy,
+                    cancellationToken);
+            }
+
+            /// <inheritdoc />
+            public Task<AiRuntimePipelineRunState?> GetRunStateAsync(
+                string runId,
+                CancellationToken cancellationToken = default)
+            {
+                return this.inner.GetRunStateAsync(
+                    runId,
+                    cancellationToken);
+            }
+
+            /// <inheritdoc />
+            public Task<AiRuntimePipelineQueueState> GetQueueStateAsync(
+                CancellationToken cancellationToken = default)
+            {
+                return this.inner.GetQueueStateAsync(cancellationToken);
+            }
+
+            /// <summary>
+            /// Creates the exact resume metadata currently persisted by the production
+            /// runtime pipeline background controller.
+            /// </summary>
+            private static IReadOnlyDictionary<string, string> CreateResumeIndexMetadata(
+                AiRuntimePipelineRunRequest request,
+                string executionId,
+                string runtimeInstanceId)
+            {
+                var metadata =
+                    new Dictionary<string, string>(StringComparer.Ordinal)
+                    {
+                        ["pipeline.name"] = request.PipelineName,
+                        ["runtime.instance.id"] = runtimeInstanceId,
+                        ["recovery.resume"] = "true",
+                        ["recovery.execution.id"] = executionId,
+                        ["context.key"] =
+                            request.ExecutionContextSnapshot?.ContextKey ??
+                            string.Empty,
+                        ["tenant.id"] =
+                            request.ExecutionContextSnapshot?.TenantId ??
+                            string.Empty,
+                        ["tenant.group.id"] =
+                            request.ExecutionContextSnapshot?.TenantGroupId ??
+                            string.Empty
+                    };
+
+                if (request.Metadata is not null)
+                {
+                    foreach (var item in request.Metadata)
+                    {
+                        metadata[item.Key] = item.Value;
+                    }
+                }
+
+                return metadata;
+            }
         }
 
         private sealed class CapturingControlPlaneObserver : IAiControlPlaneObserver

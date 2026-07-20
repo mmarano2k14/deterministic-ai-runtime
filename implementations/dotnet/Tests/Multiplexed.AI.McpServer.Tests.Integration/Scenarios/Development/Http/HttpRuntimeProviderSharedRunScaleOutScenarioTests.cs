@@ -1677,18 +1677,24 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Development.Http
             Assert.Equal(3, hybridRunAfterSubmit.AdmissionDecision.TenantRuntimeSettings?.MaxConcurrentRunsPerInstance);
             Assert.Equal(250, hybridRunAfterSubmit.AdmissionDecision.TenantRuntimeSettings?.LocalQueueCapacity);
 
+            // The admission decision is the durable proof that the hybrid tenant
+            // selected shared capacity. The top-level assignment is transient and may
+            // already be cleared when the background HTTP dispatch fails and requeues.
+            var admittedRuntimeInstanceId =
+                hybridRunAfterSubmit.AdmissionDecision.AssignedRuntimeInstanceId;
+
             Assert.Equal(
                 sharedRuntimeInstanceId,
-                hybridRunAfterSubmit.AssignedRuntimeInstanceId);
+                admittedRuntimeInstanceId);
 
             Assert.DoesNotContain(
                 $":{HybridRuntimeInstanceIdPrefix}-1",
-                hybridRunAfterSubmit.AssignedRuntimeInstanceId,
+                admittedRuntimeInstanceId,
                 StringComparison.Ordinal);
 
             Assert.Contains(
                 $":{SharedRuntimeInstanceIdPrefix}-1",
-                hybridRunAfterSubmit.AssignedRuntimeInstanceId,
+                admittedRuntimeInstanceId,
                 StringComparison.Ordinal);
 
             var hybridScaleOutRequestId =
@@ -1794,7 +1800,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Development.Http
             output.WriteLine(
                 $"FINAL HTTP TENANT-B HYBRID SHARED FALLBACK STATUS: " +
                 $"SharedRunId='{hybridSharedRunId}', TenantId='{hybridRunAfterSubmit.ExecutionContextSnapshot.TenantId}', " +
-                $"AssignedRuntimeInstanceId='{hybridRunAfterSubmit.AssignedRuntimeInstanceId}', " +
+                $"AdmissionAssignedRuntimeInstanceId='{admittedRuntimeInstanceId}', " +
+                $"CurrentAssignedRuntimeInstanceId='{hybridRunAfterSubmit.AssignedRuntimeInstanceId}', " +
                 $"SharedHttpRuntimeInstanceId='{sharedRuntimeInstanceId}', " +
                 $"UnexpectedHybridScaleOutRequest='{unexpectedHybridScaleOutRequest is not null}', " +
                 $"VisibleRegistryIds='{string.Join(" | ", visibleRegistryIds)}', " +
@@ -1809,7 +1816,14 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Development.Http
             var controlPlaneSettings = GenericMcpServerTestSettings.CreateHttpScaleOutOnlyControlPlaneSettings(
                 controlPlaneId,
                 useHostManagerMode: true,
-                useRegisteringTestRuntimeHostManager: false);
+                useRegisteringTestRuntimeHostManager: false,
+                overrides: new Dictionary<string, string?>
+                {
+                    // Fixture mode registers deterministic registry and capacity records,
+                    // but it does not expose a real routable HTTP runtime endpoint.
+                    // Transport readiness is covered by the real Process host scenario.
+                    ["AiHttpRuntimeScaleOut:RequireReadiness"] = "false"
+                });
 
             await using var host = new GenericMcpServerTestHost(controlPlaneSettings);
 

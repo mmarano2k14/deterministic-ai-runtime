@@ -6,6 +6,7 @@ using Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Controller;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Store;
+using Multiplexed.Abstractions.AI.ControlPlane.Signals;
 using Multiplexed.Abstractions.AI.Execution;
 using Multiplexed.Abstractions.AI.Execution.Instance.Worker;
 using Multiplexed.Abstractions.AI.Execution.Persistence.Replay;
@@ -23,6 +24,7 @@ using Multiplexed.AI.DI.Engine;
 using Multiplexed.AI.Observability.Ledger;
 using Multiplexed.AI.Runtime;
 using Multiplexed.AI.Runtime.ControlPlane.DI;
+using Multiplexed.AI.Runtime.ControlPlane.Signals;
 using Multiplexed.AI.Runtime.Execution.Instance.Worker;
 using Multiplexed.AI.Runtime.Observability.Ledger.DI;
 using Multiplexed.AI.Stores;
@@ -583,6 +585,10 @@ namespace Multiplexed.AI.Tests.Integration.ControlPlane.SharedController
                     services.AddSingleton<IAiRunAdmissionController>(
                         new SharedControllerExecutionAdmissionController(
                             controlPlaneId));
+
+                    services.AddSingleton<
+                        IAiRuntimeSignalPublisher,
+                        RedisAiRuntimeSignalPublisher>();
 
                     services.AddAiStepsFromAssemblies(
                         typeof(AiRuntimeAssemblyMarker).Assembly,

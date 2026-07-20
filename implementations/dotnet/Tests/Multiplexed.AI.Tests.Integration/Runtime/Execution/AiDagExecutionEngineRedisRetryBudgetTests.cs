@@ -13,6 +13,8 @@ using Multiplexed.AI.DI.Engine;
 using Multiplexed.AI.DI.Persistence;
 using Multiplexed.AI.Runtime;
 using Multiplexed.AI.Runtime.Configuration;
+using Multiplexed.AI.Runtime.ControlPlane.DI;
+using Multiplexed.AI.Runtime.ControlPlane.Discovery;
 using Multiplexed.AI.Runtime.Execution.Convergence;
 using Multiplexed.AI.Runtime.Execution.Engine.Core;
 using Multiplexed.AI.Runtime.Execution.State;
@@ -557,6 +559,8 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution
 
             var services = new ServiceCollection();
 
+            services.AddSingleton<IConfiguration>(configuration);
+
             services.AddMemoryCache();
             services.AddOptions();
 
@@ -610,6 +614,10 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution
                         "http://localhost:3000"
                     ];
                 });
+
+            // Registers the control-plane identity resolver before signal services.
+            services.AddAiControlPlaneDiscoveryCore();
+            services.AddAiRuntimeSignals();
 
             services.AddAiStepsFromAssemblies(
                 typeof(AiRuntimeAssemblyMarker).Assembly,
