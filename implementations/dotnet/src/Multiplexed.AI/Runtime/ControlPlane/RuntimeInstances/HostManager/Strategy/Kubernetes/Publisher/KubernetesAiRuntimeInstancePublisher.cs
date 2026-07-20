@@ -109,17 +109,12 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
                     Metadata = metadata
                 };
 
-            await this.runtimeInstanceRegistry
-                .RegisterAsync(
-                    registration,
-                    cancellationToken)
-                .ConfigureAwait(false);
-
-            await LogRegistryAfterRegisterAsync(
-                    this.runtimeInstanceRegistry,
-                    request.RuntimeInstanceId,
-                    cancellationToken)
-                .ConfigureAwait(false);
+            var previousCapacity =
+                await this.runtimeInstanceCapacityStore
+                    .GetAsync(
+                        request.RuntimeInstanceId,
+                        cancellationToken)
+                    .ConfigureAwait(false);
 
             await this.runtimeInstanceCapacityStore
                 .PublishAsync(
@@ -132,6 +127,37 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
                     request.RuntimeInstanceId,
                     cancellationToken)
                 .ConfigureAwait(false);
+
+            try
+            {
+                await this.runtimeInstanceRegistry
+                    .RegisterAsync(
+                        registration,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+                await LogRegistryAfterRegisterAsync(
+                        this.runtimeInstanceRegistry,
+                        request.RuntimeInstanceId,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            catch (Exception exception)
+            {
+                await RollbackCapacityPublicationAsync(
+                        this.runtimeInstanceCapacityStore,
+                        request.RuntimeInstanceId,
+                        previousCapacity)
+                    .ConfigureAwait(false);
+
+                Console.WriteLine(
+                    $"[KUBERNETES RUNTIME INSTANCE REGISTRY PUBLISH FAILED] " +
+                    $"RuntimeInstanceId='{request.RuntimeInstanceId}', " +
+                    $"ExceptionType='{exception.GetType().FullName}', " +
+                    $"Reason='{exception.Message}'.");
+
+                throw;
+            }
 
             Console.WriteLine(
                 $"[KUBERNETES RUNTIME INSTANCE PUBLISHED] RuntimeInstanceId='{request.RuntimeInstanceId}', ControlPlaneId='{request.ControlPlaneId}', TenantId='{tenantId}', TenantGroupId='{tenantGroupId}', HostId='{hostId}', WorkerCount='{workerCount}', MaxConcurrentRuns='{maxConcurrentRuns}', AvailableRunSlots='{maxConcurrentRuns}', CanAcceptRun='True'.");
@@ -150,14 +176,14 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
             Console.WriteLine(
                 $"[KUBERNETES RUNTIME INSTANCE UNPUBLISH BEGIN] RuntimeInstanceId='{runtimeInstanceId}', Reason='{reason}', RegistryType='{this.runtimeInstanceRegistry.GetType().FullName}', RegistryHash='{this.runtimeInstanceRegistry.GetHashCode()}', CapacityStoreType='{this.runtimeInstanceCapacityStore.GetType().FullName}', CapacityStoreHash='{this.runtimeInstanceCapacityStore.GetHashCode()}'.");
 
-            await this.runtimeInstanceCapacityStore
-                .RemoveAsync(
+            await this.runtimeInstanceRegistry
+                .UnregisterAsync(
                     runtimeInstanceId,
                     cancellationToken)
                 .ConfigureAwait(false);
 
-            await this.runtimeInstanceRegistry
-                .UnregisterAsync(
+            await this.runtimeInstanceCapacityStore
+                .RemoveAsync(
                     runtimeInstanceId,
                     cancellationToken)
                 .ConfigureAwait(false);
@@ -176,6 +202,50 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
 
             Console.WriteLine(
                 $"[KUBERNETES RUNTIME INSTANCE UNPUBLISHED] RuntimeInstanceId='{runtimeInstanceId}', Reason='{reason}'.");
+        }
+
+        /// <summary>
+        /// Rolls back a capacity publication when registry publication fails.
+        /// </summary>
+        /// <param name="capacityStore">The capacity store.</param>
+        /// <param name="runtimeInstanceId">The runtime instance identifier.</param>
+        /// <param name="previousCapacity">The descriptor that existed before publication, when any.</param>
+        /// <returns>The asynchronous rollback operation.</returns>
+        private static async Task RollbackCapacityPublicationAsync(
+            IAiRuntimeInstanceCapacityStore capacityStore,
+            string runtimeInstanceId,
+            AiRuntimeInstanceCapacityDescriptor? previousCapacity)
+        {
+            try
+            {
+                if (previousCapacity is null)
+                {
+                    await capacityStore
+                        .RemoveAsync(
+                            runtimeInstanceId,
+                            CancellationToken.None)
+                        .ConfigureAwait(false);
+                }
+                else
+                {
+                    await capacityStore
+                        .PublishAsync(
+                            previousCapacity,
+                            CancellationToken.None)
+                        .ConfigureAwait(false);
+                }
+
+                Console.WriteLine(
+                    $"[KUBERNETES CAPACITY PUBLISH ROLLED BACK] RuntimeInstanceId='{runtimeInstanceId}', PreviousCapacityRestored='{previousCapacity is not null}'.");
+            }
+            catch (Exception rollbackException)
+            {
+                Console.WriteLine(
+                    $"[KUBERNETES CAPACITY PUBLISH ROLLBACK FAILED] " +
+                    $"RuntimeInstanceId='{runtimeInstanceId}', " +
+                    $"ExceptionType='{rollbackException.GetType().FullName}', " +
+                    $"Reason='{rollbackException.Message}'.");
+            }
         }
 
         /// <summary>
