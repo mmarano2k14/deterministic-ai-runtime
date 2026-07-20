@@ -22,8 +22,8 @@
         /// - ARGV[3]: expiration in seconds, or 0 when expiration is disabled.
         /// - ARGV[4..n]: Redis hash field/value pairs.
         ///
-        /// The script is field-agnostic. The C# store layer provides fields such as
-        /// executionContextSnapshotJson.
+        /// Every item is added to the all-items indexes.
+        /// Only items whose initial status is Pending are added to the pending indexes.
         /// </remarks>
         public const string Enqueue = """
             local itemKey = KEYS[1]
@@ -52,23 +52,77 @@
                 return 'invalid-field-pairs'
             end
 
+            local itemStatus = 'Pending'
+
             for i = 4, #ARGV, 2 do
-                redis.call('HSET', itemKey, ARGV[i], ARGV[i + 1])
+                local fieldName = ARGV[i]
+                local fieldValue = ARGV[i + 1]
+
+                redis.call(
+                    'HSET',
+                    itemKey,
+                    fieldName,
+                    fieldValue)
+
+                if fieldName == 'status' then
+                    itemStatus = fieldValue
+                end
             end
 
-            redis.call('ZADD', pendingIndexKey, score, sharedRunId)
-            redis.call('ZADD', allIndexKey, score, sharedRunId)
+            -- Every queue item belongs to the all-items indexes.
+            redis.call(
+                'ZADD',
+                allIndexKey,
+                score,
+                sharedRunId)
 
-            if tenantPendingIndexKey ~= nil and tenantPendingIndexKey ~= '' then
-                redis.call('ZADD', tenantPendingIndexKey, score, sharedRunId)
+            if tenantAllIndexKey ~= nil and
+               tenantAllIndexKey ~= '' then
+                redis.call(
+                    'ZADD',
+                    tenantAllIndexKey,
+                    score,
+                    sharedRunId)
             end
 
-            if tenantAllIndexKey ~= nil and tenantAllIndexKey ~= '' then
-                redis.call('ZADD', tenantAllIndexKey, score, sharedRunId)
+            -- Only Pending items may be claimed by the shared queue pump.
+            if itemStatus == 'Pending' then
+                redis.call(
+                    'ZADD',
+                    pendingIndexKey,
+                    score,
+                    sharedRunId)
+
+                if tenantPendingIndexKey ~= nil and
+                   tenantPendingIndexKey ~= '' then
+                    redis.call(
+                        'ZADD',
+                        tenantPendingIndexKey,
+                        score,
+                        sharedRunId)
+                end
+            else
+                -- Defensive cleanup for non-pending ownership records.
+                redis.call(
+                    'ZREM',
+                    pendingIndexKey,
+                    sharedRunId)
+
+                if tenantPendingIndexKey ~= nil and
+                   tenantPendingIndexKey ~= '' then
+                    redis.call(
+                        'ZREM',
+                        tenantPendingIndexKey,
+                        sharedRunId)
+                end
             end
 
-            if expireSeconds ~= nil and expireSeconds > 0 then
-                redis.call('EXPIRE', itemKey, expireSeconds)
+            if expireSeconds ~= nil and
+               expireSeconds > 0 then
+                redis.call(
+                    'EXPIRE',
+                    itemKey,
+                    expireSeconds)
             end
 
             return 'enqueued'
@@ -320,7 +374,7 @@
             """;
 
         /// <summary>
-        /// Atomically requeues a dispatched shared queue item during execution recovery.
+        /// Atomically claims one specific pending shared queue item.
         /// </summary>
         /// <remarks>
         /// Expected keys:
@@ -329,12 +383,147 @@
         /// - KEYS[3]: optional tenant pending sorted-set index key.
         ///
         /// Expected arguments:
+        /// - ARGV[1]: expected shared run id.
+        /// - ARGV[2]: runtime instance id.
+        /// - ARGV[3]: worker id.
+        /// - ARGV[4]: claim token.
+        /// - ARGV[5]: claim UTC timestamp.
+        /// - ARGV[6]: claim expiration UTC timestamp.
+        /// - ARGV[7]: requested tenant id.
+        /// - ARGV[8]: requested pipeline key.
+        /// - ARGV[9]: reason.
+        /// </remarks>
+        public const string Claim = """
+            local itemKey = KEYS[1]
+            local globalPendingIndexKey = KEYS[2]
+            local tenantPendingIndexKey = nil
+
+            if #KEYS >= 3 then
+                tenantPendingIndexKey = KEYS[3]
+            end
+
+            local expectedSharedRunId = ARGV[1]
+            local runtimeInstanceId = ARGV[2]
+            local workerId = ARGV[3]
+            local claimToken = ARGV[4]
+            local nowUtc = ARGV[5]
+            local claimExpiresAtUtc = ARGV[6]
+            local requestedTenantId = ARGV[7]
+            local requestedPipelineKey = ARGV[8]
+            local reason = ARGV[9]
+
+            if redis.call('EXISTS', itemKey) == 0 then
+                return 'missing'
+            end
+
+            local storedSharedRunId =
+                redis.call('HGET', itemKey, 'sharedRunId') or ''
+
+            if storedSharedRunId ~= expectedSharedRunId then
+                return 'shared-run-mismatch'
+            end
+
+            local status =
+                redis.call('HGET', itemKey, 'status')
+
+            if status ~= 'Pending' then
+                return 'not-pending'
+            end
+
+            local itemPipelineKey =
+                redis.call('HGET', itemKey, 'pipelineKey') or ''
+
+            if requestedPipelineKey ~= '' and
+               itemPipelineKey ~= requestedPipelineKey then
+                return 'pipeline-mismatch'
+            end
+
+            local snapshotJson =
+                redis.call(
+                    'HGET',
+                    itemKey,
+                    'executionContextSnapshotJson')
+
+            if snapshotJson == false or
+               snapshotJson == nil or
+               snapshotJson == '' then
+                return 'invalid-snapshot'
+            end
+
+            local ok, snapshot =
+                pcall(
+                    cjson.decode,
+                    snapshotJson)
+
+            if not ok or snapshot == nil then
+                return 'invalid-snapshot'
+            end
+
+            local itemTenantId =
+                snapshot['TenantId'] or
+                snapshot['tenantId'] or
+                ''
+
+            if requestedTenantId ~= '' and
+               itemTenantId ~= requestedTenantId then
+                return 'tenant-mismatch'
+            end
+
+            redis.call(
+                'ZREM',
+                globalPendingIndexKey,
+                expectedSharedRunId)
+
+            if tenantPendingIndexKey ~= nil and
+               tenantPendingIndexKey ~= '' then
+                redis.call(
+                    'ZREM',
+                    tenantPendingIndexKey,
+                    expectedSharedRunId)
+            end
+
+            redis.call(
+                'HSET',
+                itemKey,
+                'status',
+                'Claimed',
+                'claimedByRuntimeInstanceId',
+                runtimeInstanceId,
+                'claimedByWorkerId',
+                workerId,
+                'claimToken',
+                claimToken,
+                'claimedAtUtc',
+                nowUtc,
+                'claimExpiresAtUtc',
+                claimExpiresAtUtc,
+                'updatedAtUtc',
+                nowUtc,
+                'reason',
+                reason)
+
+            return 'claimed'
+            """;
+
+        /// <summary>
+        /// Atomically requeues a dispatched shared queue item during execution recovery.
+        /// </summary>
+        /// <remarks>
+        /// Expected keys:
+        /// - KEYS[1]: queue item hash key.
+        /// - KEYS[2]: global pending sorted-set index key.
+        /// - KEYS[3]: optional tenant pending sorted-set index key.
+        /// - KEYS[4]: global all-items sorted-set index key.
+        /// - KEYS[5]: optional tenant all-items sorted-set index key.
+        ///
+        /// Expected arguments:
         /// - ARGV[1]: shared run id.
         /// - ARGV[2]: expected claim token.
         /// - ARGV[3]: queue score.
         /// - ARGV[4]: updated UTC timestamp.
         /// - ARGV[5]: reason.
         /// - ARGV[6]: merged metadata JSON.
+        /// - ARGV[7]: effective queue priority.
         ///
         /// Metadata is written before the item is made claimable again, so a queue
         /// pump can never reclaim a recovery item without the recovery metadata.
@@ -343,6 +532,8 @@
             local itemKey = KEYS[1]
             local pendingIndexKey = KEYS[2]
             local tenantPendingIndexKey = KEYS[3]
+            local allIndexKey = KEYS[4]
+            local tenantAllIndexKey = KEYS[5]
 
             local sharedRunId = ARGV[1]
             local expectedClaimToken = ARGV[2]
@@ -350,6 +541,7 @@
             local updatedAtUtc = ARGV[4]
             local reason = ARGV[5]
             local metadataJson = ARGV[6]
+            local priority = ARGV[7]
 
             if redis.call('EXISTS', itemKey) == 0 then
                 return 'missing'
@@ -376,16 +568,22 @@
                 'claimedAtUtc', '',
                 'claimExpiresAtUtc', '',
                 'updatedAtUtc', updatedAtUtc,
-                'reason', reason)
+                'reason', reason,
+                'priority', priority)
 
             if metadataJson ~= nil and metadataJson ~= '' then
                 redis.call('HSET', itemKey, 'metadataJson', metadataJson)
             end
 
             redis.call('ZADD', pendingIndexKey, score, sharedRunId)
+            redis.call('ZADD', allIndexKey, score, sharedRunId)
 
             if tenantPendingIndexKey ~= nil and tenantPendingIndexKey ~= '' then
                 redis.call('ZADD', tenantPendingIndexKey, score, sharedRunId)
+            end
+
+            if tenantAllIndexKey ~= nil and tenantAllIndexKey ~= '' then
+                redis.call('ZADD', tenantAllIndexKey, score, sharedRunId)
             end
 
             return 'requeued-dispatched'

@@ -1,6 +1,6 @@
 # HTTP Runtime Provider
 
-Status: Implemented and validated for hardened HTTP dispatch, provider-based HTTP scale-out, Runtime Host Manager process-host provisioning, Redis-backed scale-out request fulfillment, tenant-aware Shared / Dedicated / Hybrid runtime policies, and real process-host crash recovery with ledger, trace, replay, and runtime recovery forensics evidence.
+Status: Implemented and validated for hardened HTTP dispatch, provider-based HTTP scale-out, Runtime Host Manager process-host provisioning, Kubernetes host lifecycle integration, Redis-backed scale-out request fulfillment, tenant-aware Shared / Dedicated / Hybrid runtime policies, and provider-agnostic recovery boundaries with ledger, trace, replay, and runtime recovery forensics evidence.
 
 This document describes the **HTTP runtime provider** for the Deterministic AI Runtime control plane.
 
@@ -10,6 +10,7 @@ The general provider model is described in:
 
 - [Runtime Instance Provider Model](runtime-instance-provider-model.md)
 - [gRPC Runtime Provider](grpc-runtime-provider.md)
+- [Kubernetes Runtime Host Provider](kubernetes-runtime-host-provider.md)
 - [Runtime Discovery, Registry, and Capacity](runtime-discovery-registry-capacity.md)
 - [Multi-Tenant Control Plane Isolation](multi-tenant-control-plane-isolation.md)
 - [MCP Server as Runtime Control Plane](mcp-server-control-plane.md)
@@ -537,21 +538,29 @@ The host manager does not create the process. It attaches to an existing endpoin
 
 ### Kubernetes
 
-Kubernetes mode is intended for future cluster-based runtime capacity creation.
-
-Expected future flow:
+Kubernetes mode is implemented as a Host Manager lifecycle strategy.
 
 ```text
-HTTP or Kubernetes provider
+HTTP Runtime Provider
     ↓
-Host manager / Kubernetes creation strategy
+HTTP scale-out provisioner
     ↓
-RuntimeInstanceOnly pod
+IAiRuntimeHostManager
     ↓
-service endpoint readiness
+KubernetesAiRuntimeHostCreationStrategy
     ↓
-runtime registration and capacity heartbeat
+RuntimeInstanceOnly Pod + Service
+    ↓
+Pod readiness + HTTP endpoint readiness
+    ↓
+control-plane registry/capacity publication
+    ↓
+normal HTTP dispatch
 ```
+
+Kubernetes remains the host provider; HTTP remains the command provider. Optional exposure uses a per-runtime endpoint or a shared Gateway API `HTTPRoute` selected by runtime instance id.
+
+See [Kubernetes Runtime Host Provider](kubernetes-runtime-host-provider.md).
 
 ---
 
@@ -977,8 +986,8 @@ Current limitations:
 - Hybrid fallback to a shared process-host pool should be tested after shared pooling semantics are finalized;
 - provider endpoint health signals remain separate from runtime instance health reconciliation;
 - circuit-open is still a transport-level signal and does not by itself own runtime recovery;
-- Kubernetes host creation remains a future provider/host-manager mode;
-- crash recovery is validated for process-host runtime instances, not yet for Kubernetes pods or attached external hosts.
+- Kubernetes Host Manager creation is implemented; production HTTP-specific Pod crash validation remains a separate transport scenario from the already validated provider-neutral Kubernetes lifecycle;
+- attached external-host crash recovery remains a separate future validation target.
 
 These limitations are intentional boundaries.
 
@@ -991,8 +1000,8 @@ Recommended next steps:
 ```text
 1. Finalize shared runtime pooling semantics.
 2. Add Hybrid shared fallback process-host validation after shared pooling is explicit.
-3. Reuse the Host Manager readiness model for gRPC and Kubernetes.
-4. Add Kubernetes process-equivalent crash recovery validation.
+3. Continue hardening provider-specific readiness over Kubernetes Gateway implementations.
+4. Extend HTTP-specific Kubernetes Pod crash recovery matrices alongside the validated gRPC Kubernetes proof.
 5. Add Attach-mode crash / disconnect recovery validation.
 6. Expand dashboards over control-plane ledger causal-chain and runtime recovery forensics records.
 ```

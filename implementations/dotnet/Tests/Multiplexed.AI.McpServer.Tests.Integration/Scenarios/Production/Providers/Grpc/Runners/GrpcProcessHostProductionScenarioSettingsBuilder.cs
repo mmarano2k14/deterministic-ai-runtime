@@ -105,7 +105,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             settings["AiGrpcRuntimeScaleOut:Enabled"] = "true";
             settings["AiGrpcRuntimeScaleOut:Mode"] = "HostManager";
             settings["AiGrpcRuntimeScaleOut:HostCreationMode"] = "Process";
-            settings["AiGrpcRuntimeScaleOut:RequireReadiness"] = "false";
+            settings["AiGrpcRuntimeScaleOut:RequireReadiness"] = "true";
             settings["AiGrpcRuntimeScaleOut:ReadinessTimeoutSeconds"] = "30";
             settings["AiGrpcRuntimeScaleOut:ReadinessPollIntervalMilliseconds"] = "100";
             settings["AiGrpcRuntimeScaleOut:DefaultRuntimeInstanceIdPrefix"] = "grpc-runtime";

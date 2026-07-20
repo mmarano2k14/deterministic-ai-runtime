@@ -18,21 +18,21 @@
 // app.UseMiddleware<NamespaceGuardMiddleware>();
 // ============================================================================
 
+using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Caching.Memory;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
-using StackExchange.Redis;
-
-using Multiplexed.Rbac.Core.ExecutionContext;
-using Multiplexed.Rbac.Core.Runtime;
 using Multiplexed.Rbac.Core.Authorization.Engine;
 using Multiplexed.Rbac.Core.Authorization.Registration;
 using Multiplexed.Rbac.Core.Authorization.Scope;
+using Multiplexed.Rbac.Core.Authorization.Trn;
+using Multiplexed.Rbac.Core.ExecutionContext;
+using Multiplexed.Rbac.Core.Runtime;
+using Multiplexed.Rbac.Core.Stores;
 using Multiplexed.Rbac.Core.Stores.Cache;
 using Multiplexed.Rbac.Core.Stores.Memory;
-using Multiplexed.Rbac.Core.Stores;
-using Multiplexed.Rbac.Core.Authorization.Trn;
+using StackExchange.Redis;
 
 // NOTE: adjust namespaces/types below to match your real locations:
 // - AuthorizationScope
@@ -97,18 +97,27 @@ namespace Multiplexed.Rbac.Core.Runtime.DI
             // ------------------------------------------------------------
             services.AddMemoryCache();
 
-            services.AddSingleton<IConnectionMultiplexer>(_ =>
+            services.TryAddSingleton<IConnectionMultiplexer>(_ =>
             {
-                // NEED FIX LATER
-                var cs = configuration.GetConnectionString("Redis")
-                         ?? "localhost:6379";
-                return ConnectionMultiplexer.Connect(cs);
+                var redisConnectionString =
+                    configuration.GetConnectionString("Redis")
+                    ?? "localhost:6379";
+
+                var redisConfiguration =
+                    ConfigurationOptions.Parse(
+                        redisConnectionString);
+
+                redisConfiguration.SyncTimeout = 10_000;
+                redisConfiguration.AsyncTimeout = 10_000;
+
+                return ConnectionMultiplexer.Connect(
+                    redisConfiguration);
             });
 
             // ------------------------------------------------------------
             // 4) Stores
             // ------------------------------------------------------------
-           
+
             services.AddSingleton<RedisContextStore>();
 
             services.AddSingleton(sp =>

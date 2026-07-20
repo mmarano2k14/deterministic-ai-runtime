@@ -351,7 +351,15 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Observability.Ledger
             Assert.Equal(stepName, leaseReleased.CorrelationContext.StepId);
             Assert.Equal(workerId, leaseReleased.CorrelationContext.WorkerId);
             Assert.Equal(leaseId, leaseReleased.CorrelationContext.ClaimToken);
-            Assert.Contains("lease released after failed step claim", leaseReleased.Reason);
+            Assert.Contains(
+                "Concurrency lease released",
+                leaseReleased.Reason);
+
+            Assert.True(
+                leaseReleased.Reason?.Contains(
+                    "step claim",
+                    StringComparison.OrdinalIgnoreCase) == true,
+                $"Expected the lease-release reason to describe the failed step claim. Actual='{leaseReleased.Reason}'.");
 
             await concurrencyGate.Received(1).ReleaseAsync(
                 Arg.Is<AiConcurrencyContext>(context =>

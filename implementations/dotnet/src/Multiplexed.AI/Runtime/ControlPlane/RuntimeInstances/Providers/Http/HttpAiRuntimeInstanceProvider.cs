@@ -55,6 +55,16 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http
         private const string DefaultCommandEndpointPath = "/runtime-instance/commands";
 
         /// <summary>
+        /// The default routing header understood by Kubernetes HTTPRoute resources.
+        /// </summary>
+        private const string DefaultGatewayRoutingHeaderName = "x-ai-runtime-instance-id";
+
+        /// <summary>
+        /// The runtime descriptor metadata key that can override the Gateway routing header name.
+        /// </summary>
+        private const string GatewayRoutingHeaderNameMetadataKey = "gateway.routing.header";
+
+        /// <summary>
         /// The HTTP client used to send runtime instance commands.
         /// </summary>
         private readonly HttpClient httpClient;
@@ -706,11 +716,39 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http
 
             try
             {
+                var routingHeaderName =
+                    ResolveGatewayRoutingHeaderName(
+                        request);
+
+                using var message =
+                    new HttpRequestMessage(
+                        HttpMethod.Post,
+                        endpoint)
+                    {
+                        Content = JsonContent.Create(
+                            request)
+                    };
+
+                if (!message.Headers.TryAddWithoutValidation(
+                        routingHeaderName,
+                        request.RuntimeInstanceId))
+                {
+                    throw new InvalidOperationException(
+                        $"The HTTP runtime routing header '{routingHeaderName}' could not be added for runtime instance '{request.RuntimeInstanceId}'.");
+                }
+
+                logger.LogInformation(
+                    "HTTP RUNTIME COMMAND ROUTING HEADER RuntimeInstanceId={RuntimeInstanceId} Operation={Operation} Endpoint={Endpoint} RoutingHeaderName={RoutingHeaderName}",
+                    request.RuntimeInstanceId,
+                    request.Operation,
+                    endpoint,
+                    routingHeaderName);
+
                 using var response =
                     await httpClient
-                        .PostAsJsonAsync(
-                            endpoint,
-                            request,
+                        .SendAsync(
+                            message,
+                            HttpCompletionOption.ResponseHeadersRead,
                             timeoutCancellationTokenSource.Token)
                         .ConfigureAwait(false);
 
@@ -930,6 +968,29 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http
                     }
                 };
             }
+        }
+
+        /// <summary>
+        /// Resolves the routing header used by a shared Kubernetes Gateway.
+        /// </summary>
+        /// <param name="request">The runtime command request.</param>
+        /// <returns>The configured routing header name, or the stable default header name.</returns>
+        private static string ResolveGatewayRoutingHeaderName(
+            AiRuntimeInstanceCommandRequest request)
+        {
+            ArgumentNullException.ThrowIfNull(request);
+
+            var configuredHeaderName =
+                GetMetadataValue(
+                    request.Descriptor?.Metadata,
+                    GatewayRoutingHeaderNameMetadataKey) ??
+                GetMetadataValue(
+                    request.Metadata,
+                    GatewayRoutingHeaderNameMetadataKey);
+
+            return string.IsNullOrWhiteSpace(configuredHeaderName)
+                ? DefaultGatewayRoutingHeaderName
+                : configuredHeaderName.Trim();
         }
 
         /// <summary>

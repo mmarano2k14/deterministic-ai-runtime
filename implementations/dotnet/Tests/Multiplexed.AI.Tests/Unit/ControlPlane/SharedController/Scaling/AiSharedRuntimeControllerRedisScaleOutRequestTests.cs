@@ -84,7 +84,7 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedController
         [Fact]
         public async Task SubmitRunAsync_Should_Create_Redis_ScaleOut_Request_When_Admission_Requests_ScaleOut()
         {
-            var controlPlaneIdResolver = new TestControlPlaneIdResolver("cp-test");
+            var controlPlaneIdResolver = new StaticAiControlPlaneIdResolver("cp-test");
             var store = new InMemoryAiSharedRunStore();
             var sharedQueue = new InMemoryAiSharedQueue();
             var scaleOutPublisher = new StoreBackedAiRuntimeScaleOutRequestPublisher(
@@ -186,34 +186,6 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.ControlPlane.SharedController
         {
             return Environment.GetEnvironmentVariable("REDIS_CONNECTION_STRING")
                 ?? "localhost:6379";
-        }
-
-        /// <summary>
-        /// Provides a fixed control-plane id resolver for tests.
-        /// </summary>
-        private sealed class TestControlPlaneIdResolver : IAiControlPlaneIdResolver
-        {
-            /// <summary>
-            /// The control-plane identifier returned by the resolver.
-            /// </summary>
-            private readonly string controlPlaneId;
-
-            /// <summary>
-            /// Initializes a new instance of the <see cref="TestControlPlaneIdResolver" /> class.
-            /// </summary>
-            /// <param name="controlPlaneId">The control-plane identifier to return.</param>
-            public TestControlPlaneIdResolver(string controlPlaneId)
-            {
-                this.controlPlaneId = controlPlaneId;
-            }
-
-            /// <inheritdoc />
-            public Task<string?> ResolveAsync(CancellationToken cancellationToken = default)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-
-                return Task.FromResult<string?>(this.controlPlaneId);
-            }
         }
 
         /// <summary>

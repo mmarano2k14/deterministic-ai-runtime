@@ -310,30 +310,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Capacity
             }
         }
 
-        /// <summary>
-        /// Static control-plane identifier resolver used by Redis capacity visibility tests.
-        /// </summary>
-        private sealed class TestControlPlaneIdResolver : IAiControlPlaneIdResolver
-        {
-            private readonly string controlPlaneId;
-
-            /// <summary>
-            /// Initializes a new instance of the <see cref="TestControlPlaneIdResolver"/> class.
-            /// </summary>
-            /// <param name="controlPlaneId">The control-plane identifier.</param>
-            public TestControlPlaneIdResolver(
-                string controlPlaneId)
-            {
-                this.controlPlaneId = controlPlaneId;
-            }
-
-            /// <inheritdoc />
-            public Task<string> ResolveAsync(
-                CancellationToken cancellationToken = default)
-            {
-                return Task.FromResult(controlPlaneId);
-            }
-        }
+       
 
         /// <summary>
         /// Redis fixture that isolates test keys by control-plane id and cleans them up.
@@ -348,7 +325,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Capacity
             {
                 Redis = redis;
                 this.controlPlaneId = controlPlaneId;
-                ControlPlaneIdResolver = new TestControlPlaneIdResolver(controlPlaneId);
+                ControlPlaneIdResolver = new StaticAiControlPlaneIdResolver(controlPlaneId);
             }
 
             /// <summary>

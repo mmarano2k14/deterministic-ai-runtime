@@ -83,7 +83,8 @@
             """;
 
         /// <summary>
-        /// Atomically marks a runtime run as completed.
+        /// Atomically marks a runtime run as completed unless recovery has already
+        /// taken ownership of the runtime run.
         /// </summary>
         public const string MarkCompleted = """
             local itemKey = KEYS[1]
@@ -95,19 +96,32 @@
                 return 'missing'
             end
 
-            local existingStartedAtUtc = redis.call('HGET', itemKey, 'startedAtUtc') or ''
+            local currentStatus =
+                redis.call('HGET', itemKey, 'status') or ''
+
+            if currentStatus == 'requeued-for-recovery' then
+                return 'ignored-requeued-for-recovery'
+            end
+
+            local existingStartedAtUtc =
+                redis.call('HGET', itemKey, 'startedAtUtc') or ''
 
             redis.call('HSET', itemKey, 'executionId', executionId)
             redis.call('HSET', itemKey, 'status', 'completed')
             redis.call('HSET', itemKey, 'failureReason', '')
-            redis.call('HSET', itemKey, 'startedAtUtc', existingStartedAtUtc ~= '' and existingStartedAtUtc or nowUtc)
+            redis.call(
+                'HSET',
+                itemKey,
+                'startedAtUtc',
+                existingStartedAtUtc ~= '' and existingStartedAtUtc or nowUtc)
             redis.call('HSET', itemKey, 'completedAtUtc', nowUtc)
 
             return 'completed'
             """;
 
         /// <summary>
-        /// Atomically marks a runtime run as failed.
+        /// Atomically marks a runtime run as failed unless recovery has already
+        /// taken ownership of the runtime run.
         /// </summary>
         public const string MarkFailed = """
             local itemKey = KEYS[1]
@@ -118,6 +132,13 @@
 
             if redis.call('EXISTS', itemKey) == 0 then
                 return 'missing'
+            end
+
+            local currentStatus =
+                redis.call('HGET', itemKey, 'status') or ''
+
+            if currentStatus == 'requeued-for-recovery' then
+                return 'ignored-requeued-for-recovery'
             end
 
             if executionId ~= nil and executionId ~= '' then

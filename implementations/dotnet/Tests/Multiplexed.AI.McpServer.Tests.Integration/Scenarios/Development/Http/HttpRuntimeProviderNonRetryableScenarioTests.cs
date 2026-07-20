@@ -159,8 +159,10 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Development.Http
                 AiSharedRunStatus.QueuedGlobally,
                 run.Status);
 
-            Assert.Equal(
-                RuntimeInstanceHostId,
+            // A failed dispatch is requeued for a future admission attempt.
+            // Active runtime ownership must therefore be cleared after the
+            // non-retryable HTTP command failure is persisted.
+            Assert.Null(
                 run.AssignedRuntimeInstanceId);
 
             Assert.Equal(
@@ -193,7 +195,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Development.Http
                 handler.CallCount);
 
             output.WriteLine(
-                $"HTTP non-retryable failure persisted. SharedRunId='{run.SharedRunId}', RuntimeInstanceId='{run.AssignedRuntimeInstanceId}', FailureReason='{run.FailureReason}', HttpCallCount='{handler.CallCount}'.");
+                $"HTTP non-retryable failure persisted and run ownership cleared for redispatch. SharedRunId='{run.SharedRunId}', AssignedRuntimeInstanceId='{run.AssignedRuntimeInstanceId}', FailureReason='{run.FailureReason}', HttpCallCount='{handler.CallCount}'.");
         }
 
         /// <summary>

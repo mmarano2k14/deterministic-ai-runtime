@@ -177,6 +177,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
                 registry,
                 scaleOutPublisher,
                 tenantRuntimeSettingsProvider,
+                new StaticControlPlaneIdResolver("controlPlaneId"),
                 executionContextAccessor,
                 NullLogger<AiSharedQueueDispatcher>.Instance,
                 forensicsRecorder);
@@ -347,6 +348,19 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
                 return Task.FromResult<AiSharedQueueItem?>(ClaimedItem);
             }
 
+            public Task<AiSharedQueueItem?> ClaimAsync(
+               string sharedRunId,
+               AiSharedQueueClaimRequest request,
+               CancellationToken cancellationToken = default)
+            {
+                ArgumentException.ThrowIfNullOrWhiteSpace(sharedRunId);
+                ArgumentNullException.ThrowIfNull(request);
+                cancellationToken.ThrowIfCancellationRequested();
+
+                return Task.FromResult<AiSharedQueueItem?>(
+                    null);
+            }
+
             /// <inheritdoc />
             public Task<AiSharedQueueItem?> CancelAsync(
                 string sharedRunId,
@@ -484,6 +498,100 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
                 CancellationToken cancellationToken = default)
             {
                 return Task.FromResult(Record);
+            }
+
+            /// <inheritdoc />
+            public Task<AiSharedRunRecord?> MarkRequeuedAfterScaleOutAsync(
+                string sharedRunId,
+                string? reason = null,
+                IReadOnlyDictionary<string, string>? metadata = null,
+                CancellationToken cancellationToken = default)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                if (Record is not null &&
+                    string.Equals(Record.SharedRunId, sharedRunId, StringComparison.Ordinal))
+                {
+                    var mergedMetadata =
+                        new Dictionary<string, string>(
+                            Record.Metadata,
+                            StringComparer.OrdinalIgnoreCase);
+
+                    if (metadata is not null)
+                    {
+                        foreach (var item in metadata)
+                        {
+                            mergedMetadata[item.Key] =
+                                item.Value;
+                        }
+                    }
+
+                    mergedMetadata["scaleOutRequeued"] =
+                        "true";
+
+                    mergedMetadata["scaleOutRequeuedAtUtc"] =
+                        DateTimeOffset.UtcNow.ToString("O");
+
+                    Record = new AiSharedRunRecord
+                    {
+                        SharedRunId = Record.SharedRunId,
+                        Status = AiSharedRunStatus.QueuedGlobally,
+                        RunRequest = Record.RunRequest,
+                        ExecutionContextSnapshot = Record.ExecutionContextSnapshot,
+                        LocalRunId = Record.LocalRunId,
+                        ExecutionId = Record.ExecutionId,
+                        AssignedRuntimeInstanceId = Record.AssignedRuntimeInstanceId,
+                        AdmissionDecision = Record.AdmissionDecision,
+                        PipelineKey = Record.PipelineKey,
+                        CorrelationId = Record.CorrelationId,
+                        RequestedBy = Record.RequestedBy,
+                        Source = Record.Source,
+                        Reason = string.IsNullOrWhiteSpace(reason)
+                            ? "Scale-out fulfilled; shared run requeued for dispatch."
+                            : reason,
+                        FailureReason = string.Empty,
+                        SubmittedAtUtc = Record.SubmittedAtUtc,
+                        UpdatedAtUtc = DateTimeOffset.UtcNow,
+                        Metadata = mergedMetadata,
+                        ControlPlaneId = Record.ControlPlaneId
+                    };
+                }
+
+                return Task.FromResult(Record);
+            }
+
+            public Task<AiSharedRunRecord?> MarkRequeuedAfterScaleOutIfCurrentAsync(
+                string sharedRunId,
+                string? expectedAssignedRuntimeInstanceId,
+                string? expectedLocalRunId,
+                string? reason = null,
+                IReadOnlyDictionary<string, string>? metadata = null,
+                CancellationToken cancellationToken = default)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                if (Record is null ||
+                    !string.Equals(
+                        Record.SharedRunId,
+                        sharedRunId,
+                        StringComparison.Ordinal) ||
+                    !string.Equals(
+                        Record.AssignedRuntimeInstanceId,
+                        expectedAssignedRuntimeInstanceId,
+                        StringComparison.Ordinal) ||
+                    !string.Equals(
+                        Record.LocalRunId,
+                        expectedLocalRunId,
+                        StringComparison.Ordinal))
+                {
+                    return Task.FromResult<AiSharedRunRecord?>(Record);
+                }
+
+                return this.MarkRequeuedAfterScaleOutAsync(
+                    sharedRunId,
+                    reason,
+                    metadata,
+                    cancellationToken);
             }
         }
 

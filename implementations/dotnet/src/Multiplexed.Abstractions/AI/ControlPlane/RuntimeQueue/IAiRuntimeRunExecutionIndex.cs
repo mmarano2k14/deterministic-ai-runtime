@@ -107,7 +107,11 @@ namespace Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue
         /// instance has been safely returned to the shared queue.
         ///
         /// Implementations should reject missing entries and terminal entries such as
-        /// completed, failed, cancelled, or already requeued-for-recovery entries.
+        /// completed, cancelled, or already requeued-for-recovery entries.
+        ///
+        /// Failed entries may be accepted when the failure is part of runtime crash recovery.
+        /// This allows an execution that was marked failed because its runtime instance died
+        /// to transition into requeued-for-recovery.
         /// </remarks>
         Task<bool> MarkRequeuedForRecoveryAsync(
             string runId,
@@ -159,14 +163,59 @@ namespace Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue
         /// This method is used by control-plane recovery reconciliation to detect orphaned
         /// in-flight executions assigned to runtime instances that are no longer present
         /// in the runtime instance registry.
-        /// 
+        ///
         /// Terminal entries such as completed, failed, cancelled, and requeued-for-recovery runs
         /// must not be returned.
-        /// 
+        ///
         /// Implementations must preserve tenant isolation when a tenant-scoped execution context
         /// is active.
         /// </remarks>
         Task<IReadOnlyList<AiRuntimeRunExecutionIndexEntry>> ListUnfinishedAsync(
+            CancellationToken cancellationToken = default);
+
+        /// <summary>
+        /// Lists recoverable runtime run execution index entries assigned to the specified runtime instance.
+        /// </summary>
+        /// <param name="runtimeInstanceId">The runtime instance identifier.</param>
+        /// <param name="cancellationToken">A token used to cancel the operation.</param>
+        /// <returns>
+        /// The recoverable index entries assigned to the specified runtime instance and visible
+        /// to the current tenant context.
+        /// </returns>
+        /// <remarks>
+        /// This method is intended for runtime crash recovery.
+        ///
+        /// Recoverable entries include unfinished entries and entries already marked as failed
+        /// when they are still assigned to an unavailable runtime instance.
+        ///
+        /// Completed, cancelled, and already requeued-for-recovery entries must not be returned.
+        ///
+        /// Implementations must preserve tenant isolation when a tenant-scoped execution context
+        /// is active.
+        /// </remarks>
+        Task<IReadOnlyList<AiRuntimeRunExecutionIndexEntry>> ListRecoverableByRuntimeInstanceAsync(
+            string runtimeInstanceId,
+            CancellationToken cancellationToken = default);
+
+        /// <summary>
+        /// Lists all recoverable runtime run execution index entries.
+        /// </summary>
+        /// <param name="cancellationToken">A token used to cancel the operation.</param>
+        /// <returns>
+        /// The recoverable index entries visible to the current tenant context.
+        /// </returns>
+        /// <remarks>
+        /// This method is intended for runtime crash recovery orphan detection.
+        ///
+        /// Recoverable entries include unfinished entries and entries already marked as failed
+        /// when their runtime instance is no longer present in the runtime instance registry.
+        ///
+        /// Completed, cancelled, and already requeued-for-recovery entries must not be returned.
+        ///
+        /// Implementations must preserve tenant isolation when a tenant-scoped execution context
+        /// is active.
+        /// </remarks>
+        Task<IReadOnlyList<AiRuntimeRunExecutionIndexEntry>> ListRecoverableAsync(
             CancellationToken cancellationToken = default);
     }
 }

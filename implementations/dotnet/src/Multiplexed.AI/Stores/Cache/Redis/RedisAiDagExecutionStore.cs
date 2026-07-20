@@ -352,5 +352,27 @@ namespace Multiplexed.AI.Stores.Cache.Redis
                     cancellationToken)
                 .ConfigureAwait(false);
         }
+
+        /// <summary>
+        /// Recovers all currently running steps as part of an explicit runtime
+        /// execution recovery transition.
+        /// </summary>
+        /// <remarks>
+        /// This operation bypasses lease expiration and must be called only after
+        /// durable recovery pause ownership has been acquired.
+        /// </remarks>
+        /// <param name="executionId">The execution identifier.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <returns>The number of running steps recovered.</returns>
+        public async Task<int> RecoverRunningStepsForRecoveryAsync(
+            string executionId,
+            CancellationToken cancellationToken = default)
+        {
+            return await _services.RecoveryService
+                .RecoverRunningStepsForRecoveryAsync(
+                    executionId,
+                    cancellationToken)
+                .ConfigureAwait(false);
+        }
     }
 }

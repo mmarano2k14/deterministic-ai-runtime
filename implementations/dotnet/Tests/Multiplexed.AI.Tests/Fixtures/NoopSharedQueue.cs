@@ -1,8 +1,5 @@
 ﻿using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Claiming;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Queue;
-using System;
-using System.Collections.Generic;
-using System.Text;
 
 namespace Multiplexed.AI.Tests.Fixtures
 {
@@ -22,10 +19,9 @@ namespace Multiplexed.AI.Tests.Fixtures
             CancellationToken cancellationToken = default)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            ArgumentNullException.ThrowIfNull(item);
 
-            this.LastItem =
-                item
-                ?? throw new ArgumentNullException(nameof(item));
+            this.LastItem = item;
 
             return Task.FromResult(item);
         }
@@ -35,18 +31,17 @@ namespace Multiplexed.AI.Tests.Fixtures
             string sharedRunId,
             CancellationToken cancellationToken = default)
         {
+            ArgumentException.ThrowIfNullOrWhiteSpace(sharedRunId);
             cancellationToken.ThrowIfCancellationRequested();
 
-            if (this.LastItem is not null &&
-                string.Equals(
-                    this.LastItem.SharedRunId,
-                    sharedRunId,
-                    StringComparison.OrdinalIgnoreCase))
+            if (this.IsLastItem(sharedRunId))
             {
-                return Task.FromResult<AiSharedQueueItem?>(this.LastItem);
+                return Task.FromResult<AiSharedQueueItem?>(
+                    this.LastItem);
             }
 
-            return Task.FromResult<AiSharedQueueItem?>(null);
+            return Task.FromResult<AiSharedQueueItem?>(
+                null);
         }
 
         /// <inheritdoc />
@@ -65,7 +60,7 @@ namespace Multiplexed.AI.Tests.Fixtures
             return Task.FromResult<IReadOnlyList<AiSharedQueueItem>>(
                 new[]
                 {
-                this.LastItem
+                    this.LastItem
                 });
         }
 
@@ -75,10 +70,30 @@ namespace Multiplexed.AI.Tests.Fixtures
             CancellationToken cancellationToken = default)
         {
             ArgumentNullException.ThrowIfNull(request);
-
             cancellationToken.ThrowIfCancellationRequested();
 
-            return Task.FromResult<AiSharedQueueItem?>(null);
+            return Task.FromResult<AiSharedQueueItem?>(
+                null);
+        }
+
+        /// <inheritdoc />
+        public Task<AiSharedQueueItem?> ClaimAsync(
+            string sharedRunId,
+            AiSharedQueueClaimRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(sharedRunId);
+            ArgumentNullException.ThrowIfNull(request);
+            cancellationToken.ThrowIfCancellationRequested();
+
+            if (this.IsLastItem(sharedRunId))
+            {
+                return Task.FromResult<AiSharedQueueItem?>(
+                    this.LastItem);
+            }
+
+            return Task.FromResult<AiSharedQueueItem?>(
+                null);
         }
 
         /// <inheritdoc />
@@ -88,18 +103,18 @@ namespace Multiplexed.AI.Tests.Fixtures
             string? reason = null,
             CancellationToken cancellationToken = default)
         {
+            ArgumentException.ThrowIfNullOrWhiteSpace(sharedRunId);
+            ArgumentException.ThrowIfNullOrWhiteSpace(claimToken);
             cancellationToken.ThrowIfCancellationRequested();
 
-            if (this.LastItem is not null &&
-                string.Equals(
-                    this.LastItem.SharedRunId,
-                    sharedRunId,
-                    StringComparison.OrdinalIgnoreCase))
+            if (this.IsLastItem(sharedRunId))
             {
-                return Task.FromResult<AiSharedQueueItem?>(this.LastItem);
+                return Task.FromResult<AiSharedQueueItem?>(
+                    this.LastItem);
             }
 
-            return Task.FromResult<AiSharedQueueItem?>(null);
+            return Task.FromResult<AiSharedQueueItem?>(
+                null);
         }
 
         /// <inheritdoc />
@@ -109,18 +124,18 @@ namespace Multiplexed.AI.Tests.Fixtures
             string? reason = null,
             CancellationToken cancellationToken = default)
         {
+            ArgumentException.ThrowIfNullOrWhiteSpace(sharedRunId);
+            ArgumentException.ThrowIfNullOrWhiteSpace(claimToken);
             cancellationToken.ThrowIfCancellationRequested();
 
-            if (this.LastItem is not null &&
-                string.Equals(
-                    this.LastItem.SharedRunId,
-                    sharedRunId,
-                    StringComparison.OrdinalIgnoreCase))
+            if (this.IsLastItem(sharedRunId))
             {
-                return Task.FromResult<AiSharedQueueItem?>(this.LastItem);
+                return Task.FromResult<AiSharedQueueItem?>(
+                    this.LastItem);
             }
 
-            return Task.FromResult<AiSharedQueueItem?>(null);
+            return Task.FromResult<AiSharedQueueItem?>(
+                null);
         }
 
         /// <inheritdoc />
@@ -129,18 +144,17 @@ namespace Multiplexed.AI.Tests.Fixtures
             string? reason = null,
             CancellationToken cancellationToken = default)
         {
+            ArgumentException.ThrowIfNullOrWhiteSpace(sharedRunId);
             cancellationToken.ThrowIfCancellationRequested();
 
-            if (this.LastItem is not null &&
-                string.Equals(
-                    this.LastItem.SharedRunId,
-                    sharedRunId,
-                    StringComparison.OrdinalIgnoreCase))
+            if (this.IsLastItem(sharedRunId))
             {
-                return Task.FromResult<AiSharedQueueItem?>(this.LastItem);
+                return Task.FromResult<AiSharedQueueItem?>(
+                    this.LastItem);
             }
 
-            return Task.FromResult<AiSharedQueueItem?>(null);
+            return Task.FromResult<AiSharedQueueItem?>(
+                null);
         }
 
         /// <inheritdoc />
@@ -159,7 +173,6 @@ namespace Multiplexed.AI.Tests.Fixtures
         }
 
         /// <inheritdoc />
-        /// <inheritdoc />
         public Task<AiSharedQueueItem?> RequeueDispatchedAsync(
             string sharedRunId,
             string claimToken,
@@ -167,39 +180,85 @@ namespace Multiplexed.AI.Tests.Fixtures
             IReadOnlyDictionary<string, string>? metadata,
             CancellationToken cancellationToken = default)
         {
+            ArgumentException.ThrowIfNullOrWhiteSpace(sharedRunId);
+            ArgumentException.ThrowIfNullOrWhiteSpace(claimToken);
             cancellationToken.ThrowIfCancellationRequested();
 
-            if (this.LastItem is not null &&
-                string.Equals(
-                    this.LastItem.SharedRunId,
-                    sharedRunId,
-                    StringComparison.OrdinalIgnoreCase))
+            if (!this.IsLastItem(sharedRunId))
             {
-                this.LastItem = new AiSharedQueueItem
-                {
-                    SharedRunId = this.LastItem.SharedRunId,
-                    ControlPlaneId = this.LastItem.ControlPlaneId,
-                    Status = this.LastItem.Status,
-                    ExecutionContextSnapshot = this.LastItem.ExecutionContextSnapshot,
-                    PipelineKey = this.LastItem.PipelineKey,
-                    Priority = this.LastItem.Priority,
-                    ClaimedByRuntimeInstanceId = this.LastItem.ClaimedByRuntimeInstanceId,
-                    ClaimedByWorkerId = this.LastItem.ClaimedByWorkerId,
-                    ClaimToken = this.LastItem.ClaimToken,
-                    EnqueuedAtUtc = this.LastItem.EnqueuedAtUtc,
-                    UpdatedAtUtc = DateTimeOffset.UtcNow,
-                    ClaimedAtUtc = this.LastItem.ClaimedAtUtc,
-                    ClaimExpiresAtUtc = this.LastItem.ClaimExpiresAtUtc,
-                    Reason = reason,
-                    Metadata = metadata is not null && metadata.Count > 0
-                        ? MergeMetadata(this.LastItem.Metadata, metadata)
-                        : this.LastItem.Metadata
-                };
-
-                return Task.FromResult<AiSharedQueueItem?>(this.LastItem);
+                return Task.FromResult<AiSharedQueueItem?>(
+                    null);
             }
 
-            return Task.FromResult<AiSharedQueueItem?>(null);
+            var existingItem =
+                this.LastItem!;
+
+            this.LastItem =
+                new AiSharedQueueItem
+                {
+                    SharedRunId =
+                        existingItem.SharedRunId,
+
+                    ControlPlaneId =
+                        existingItem.ControlPlaneId,
+
+                    Status =
+                        existingItem.Status,
+
+                    ExecutionContextSnapshot =
+                        existingItem.ExecutionContextSnapshot,
+
+                    PipelineKey =
+                        existingItem.PipelineKey,
+
+                    Priority =
+                        existingItem.Priority,
+
+                    ClaimedByRuntimeInstanceId =
+                        existingItem.ClaimedByRuntimeInstanceId,
+
+                    ClaimedByWorkerId =
+                        existingItem.ClaimedByWorkerId,
+
+                    ClaimToken =
+                        existingItem.ClaimToken,
+
+                    EnqueuedAtUtc =
+                        existingItem.EnqueuedAtUtc,
+
+                    UpdatedAtUtc =
+                        DateTimeOffset.UtcNow,
+
+                    ClaimedAtUtc =
+                        existingItem.ClaimedAtUtc,
+
+                    ClaimExpiresAtUtc =
+                        existingItem.ClaimExpiresAtUtc,
+
+                    Reason =
+                        reason,
+
+                    Metadata =
+                        metadata is not null &&
+                        metadata.Count > 0
+                            ? MergeMetadata(
+                                existingItem.Metadata,
+                                metadata)
+                            : existingItem.Metadata
+                };
+
+            return Task.FromResult<AiSharedQueueItem?>(
+                this.LastItem);
+        }
+
+        private bool IsLastItem(
+            string sharedRunId)
+        {
+            return this.LastItem is not null &&
+                   string.Equals(
+                       this.LastItem.SharedRunId,
+                       sharedRunId,
+                       StringComparison.OrdinalIgnoreCase);
         }
 
         private static IReadOnlyDictionary<string, string> MergeMetadata(
@@ -218,7 +277,9 @@ namespace Multiplexed.AI.Tests.Fixtures
                     continue;
                 }
 
-                merged[pair.Key] = pair.Value ?? string.Empty;
+                merged[pair.Key] =
+                    pair.Value ??
+                    string.Empty;
             }
 
             return merged;

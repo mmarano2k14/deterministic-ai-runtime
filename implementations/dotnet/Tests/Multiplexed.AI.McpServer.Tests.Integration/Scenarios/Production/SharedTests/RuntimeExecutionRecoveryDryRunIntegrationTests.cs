@@ -12,6 +12,7 @@ using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Queue;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Redis;
 using Multiplexed.Abstractions.AI.Execution.Instance.Worker;
 using Multiplexed.Abstractions.Core.ExecutionContext;
+using Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Fake;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Health;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery;
@@ -679,7 +680,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Shared
             Assert.Null(secondDecision.ExecutionId);
             Assert.Null(secondDecision.SharedRunId);
             Assert.Equal("none", secondDecision.Action);
-            Assert.Equal("no-unfinished-runtime-runs", secondDecision.Reason);
+            Assert.Equal("no-recoverable-runtime-runs", secondDecision.Reason);
             Assert.False(secondDecision.Changed);
 
             Assert.NotNull(queueItem);
@@ -731,7 +732,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Shared
                         KeyPrefix = keyPrefix,
                         ListScanLimit = 100
                     }),
-                    new StaticAiControlPlaneIdResolver("test-control-plane"));
+                    new StaticControlPlaneIdResolver("test-control-plane"));
 
                 const string runtimeInstanceId = "runtime-tenant-a-redis-1";
                 const string sharedRunId = "shared-run-recovery-redis-mutation-1";
@@ -1028,34 +1029,6 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Shared
                     ["scenario"] = "runtime-recovery-dry-run"
                 }
             };
-        }
-
-        /// <summary>
-        /// Static control plane identifier resolver for Redis integration tests.
-        /// </summary>
-        private sealed class StaticAiControlPlaneIdResolver : IAiControlPlaneIdResolver
-        {
-            private readonly string controlPlaneId;
-
-            /// <summary>
-            /// Initializes a new instance of the <see cref="StaticAiControlPlaneIdResolver"/> class.
-            /// </summary>
-            /// <param name="controlPlaneId">The control plane identifier.</param>
-            public StaticAiControlPlaneIdResolver(string controlPlaneId)
-            {
-                ArgumentException.ThrowIfNullOrWhiteSpace(controlPlaneId);
-
-                this.controlPlaneId = controlPlaneId;
-            }
-
-            /// <inheritdoc />
-            public Task<string> ResolveAsync(
-                CancellationToken cancellationToken = default)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-
-                return Task.FromResult(controlPlaneId);
-            }
         }
     }
 }

@@ -1,4 +1,4 @@
-﻿using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.ControlPlane.Observability;
 using Multiplexed.Abstractions.AI.ControlPlane.Observability.Area;
 using Multiplexed.Abstractions.AI.ControlPlane.Observability.Events;
@@ -26,8 +26,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue
     /// </remarks>
     public sealed class AiRuntimeQueueControlPlane : IAiRuntimeQueueControlPlane
     {
+        private const string RecoveryForensicsIdMetadataKey = "recovery.forensicsId";
         private const string RecoveryModeMetadataKey = "recovery.mode";
         private const string RecoveryModeResumeExistingExecution = "resume-existing-execution";
+        private const string RecoveryModeRequeueLocalQueuedRun = "requeue-local-queued-run";
         private const string RecoveryFailedExecutionIdMetadataKey = "recovery.failedExecutionId";
 
         private readonly IAiRuntimePipelineBackgroundController _controller;
@@ -191,13 +193,38 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue
                 var completedAtUtc = DateTimeOffset.UtcNow;
                 var durationMs = CalculateDurationMs(startedAtUtc, completedAtUtc);
 
-                await RecordCompletedAsync(
-                    request,
-                    operation,
-                    correlation,
-                    operationResult,
-                    durationMs,
-                    cancellationToken).ConfigureAwait(false);
+                var enqueueAccepted =
+                    operation == AiRuntimeQueueControlPlaneOperation.EnqueueRun &&
+                    operationResult.RunHandle is not null;
+
+                if (enqueueAccepted)
+                {
+                    try
+                    {
+                        await RecordCompletedAsync(
+                            request,
+                            operation,
+                            correlation,
+                            operationResult,
+                            durationMs,
+                            CancellationToken.None).ConfigureAwait(false);
+                    }
+                    catch (Exception exception)
+                    {
+                        Console.WriteLine(
+                            $"[RUNTIME QUEUE ENQUEUE] ACCEPTED COMPLETION OBSERVABILITY FAILED RunId='{operationResult.RunHandle?.RunId}', ExecutionId='{operationResult.RunHandle?.ExecutionId}', ExceptionType='{exception.GetType().FullName}', Message='{exception.Message}'.");
+                    }
+                }
+                else
+                {
+                    await RecordCompletedAsync(
+                        request,
+                        operation,
+                        correlation,
+                        operationResult,
+                        durationMs,
+                        cancellationToken).ConfigureAwait(false);
+                }
 
                 return new AiRuntimeQueueControlPlaneResult
                 {
@@ -310,17 +337,23 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue
             AiRuntimeQueueControlPlaneRequest request,
             CancellationToken cancellationToken)
         {
-            var resumeExecutionId =
-                TryResolveResumeExecutionId(
+            var recoveryResume =
+                ResolveRecoveryResume(
                     request.Metadata);
 
+            var resumeExecutionId =
+                recoveryResume?.ExecutionId;
+
             Console.WriteLine(
-                $"[RUNTIME QUEUE RECOVERY RESUME] ResumeExecutionId='{resumeExecutionId ?? string.Empty}', HasMetadata='{request.Metadata is not null}', Metadata='{string.Join(";", request.Metadata?.Select(pair => $"{pair.Key}={pair.Value}") ?? Array.Empty<string>())}'");
+                $"[RUNTIME QUEUE RECOVERY RESUME] ResumeExecutionId='{resumeExecutionId ?? string.Empty}', RecoveryOwnerId='{recoveryResume?.RecoveryOwnerId ?? string.Empty}', HasMetadata='{request.Metadata is not null}', Metadata='{string.Join(";", request.Metadata?.Select(pair => $"{pair.Key}={pair.Value}") ?? Array.Empty<string>())}'");
 
             var enrichedRunRequest =
                 CreateMetadataEnrichedRunRequest(
                     request.RunRequest!,
                     request.Metadata);
+
+            Console.WriteLine(
+                $"[RUNTIME QUEUE ENQUEUE] BEFORE CONTROLLER ENQUEUE Pipeline='{request.RunRequest?.PipelineName}', RuntimeInstanceId='{request.RuntimeInstanceId}'.");
 
             var handle = string.IsNullOrWhiteSpace(resumeExecutionId)
                 ? await _controller
@@ -335,45 +368,112 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue
                         cancellationToken)
                     .ConfigureAwait(false);
 
-            var runState = await _controller
-                .GetRunStateAsync(handle.RunId, cancellationToken)
-                .ConfigureAwait(false);
+            /*
+             * A returned controller handle means the run was accepted into the
+             * controller Channel. All remaining reads, index enrichment, and
+             * observability are post-acceptance work and must not be controlled by
+             * the HTTP/gRPC request cancellation token.
+             */
+            Console.WriteLine(
+                $"[RUNTIME QUEUE ENQUEUE] ACCEPTED RunId='{handle.RunId}', ExecutionId='{handle.ExecutionId}', Resume='{!string.IsNullOrWhiteSpace(resumeExecutionId)}'.");
 
-            var queueState = await _controller
-                .GetQueueStateAsync(cancellationToken)
-                .ConfigureAwait(false);
+            AiRuntimePipelineRunState? runState =
+                null;
+
+            try
+            {
+                runState =
+                    await _controller
+                        .GetRunStateAsync(
+                            handle.RunId,
+                            CancellationToken.None)
+                        .ConfigureAwait(false);
+
+                Console.WriteLine(
+                    $"[RUNTIME QUEUE ENQUEUE] POST-ACCEPT RUN STATE RunId='{handle.RunId}', StateFound='{runState is not null}', StateExecutionId='{runState?.ExecutionId}', Status='{runState?.Status}'.");
+            }
+            catch (Exception exception)
+            {
+                Console.WriteLine(
+                    $"[RUNTIME QUEUE ENQUEUE] POST-ACCEPT RUN STATE FAILED RunId='{handle.RunId}', ExecutionId='{handle.ExecutionId}', ExceptionType='{exception.GetType().FullName}', Message='{exception.Message}'.");
+            }
+
+            AiRuntimePipelineQueueState? queueState =
+                null;
+
+            try
+            {
+                queueState =
+                    await _controller
+                        .GetQueueStateAsync(
+                            CancellationToken.None)
+                        .ConfigureAwait(false);
+
+                Console.WriteLine(
+                    $"[RUNTIME QUEUE ENQUEUE] POST-ACCEPT QUEUE STATE RuntimeInstanceId='{queueState?.RuntimeInstanceId}', Queued='{queueState?.QueuedRunCount}', Running='{queueState?.RunningRunCount}'.");
+            }
+            catch (Exception exception)
+            {
+                Console.WriteLine(
+                    $"[RUNTIME QUEUE ENQUEUE] POST-ACCEPT QUEUE STATE FAILED RunId='{handle.RunId}', ExecutionId='{handle.ExecutionId}', ExceptionType='{exception.GetType().FullName}', Message='{exception.Message}'.");
+            }
 
             var executionContextSnapshot =
                 enrichedRunRequest.ExecutionContextSnapshot;
 
-            await _runExecutionIndex.RegisterQueuedAsync(
-                    new AiRuntimeRunExecutionIndexEntry
-                    {
-                        RunId = handle.RunId,
-                        ExecutionId = handle.ExecutionId ?? runState?.ExecutionId,
-                        RuntimeInstanceId =
-                            runState?.RuntimeInstanceId ??
-                            queueState?.RuntimeInstanceId ??
-                            request.RuntimeInstanceId,
-                        Status = runState?.Status ?? "queued",
-                        CreatedAtUtc = DateTimeOffset.UtcNow,
-                        ExecutionContextSnapshot = executionContextSnapshot,
-                        Metadata = MergeMetadata(
-                            enrichedRunRequest.Metadata,
-                            new Dictionary<string, string>
+            if (string.IsNullOrWhiteSpace(resumeExecutionId))
+            {
+                try
+                {
+                    await _runExecutionIndex.RegisterQueuedAsync(
+                            new AiRuntimeRunExecutionIndexEntry
                             {
-                                ["source"] = request.Source ?? string.Empty,
-                                ["requestedBy"] = request.RequestedBy ?? string.Empty,
-                                ["reason"] = request.Reason ?? string.Empty,
-                                ["correlationId"] = request.CorrelationId ?? string.Empty,
-                                ["recovery.resume"] = (!string.IsNullOrWhiteSpace(resumeExecutionId)).ToString(),
-                                ["recovery.execution.id"] = resumeExecutionId ?? string.Empty,
-                                [AiRuntimeInstanceIsolationMetadataKeys.TenantId] = executionContextSnapshot?.TenantId ?? string.Empty,
-                                [AiRuntimeInstanceIsolationMetadataKeys.TenantGroupId] = executionContextSnapshot?.TenantGroupId ?? string.Empty
-                            })
-                    },
-                    cancellationToken)
-                .ConfigureAwait(false);
+                                RunId = handle.RunId,
+                                ExecutionId = handle.ExecutionId ?? runState?.ExecutionId,
+                                RuntimeInstanceId =
+                                    runState?.RuntimeInstanceId ??
+                                    queueState?.RuntimeInstanceId ??
+                                    request.RuntimeInstanceId,
+                                Status = runState?.Status ?? "queued",
+                                CreatedAtUtc = DateTimeOffset.UtcNow,
+                                ExecutionContextSnapshot = executionContextSnapshot,
+                                Metadata = MergeMetadata(
+                                    enrichedRunRequest.Metadata,
+                                    new Dictionary<string, string>
+                                    {
+                                        ["source"] = request.Source ?? string.Empty,
+                                        ["requestedBy"] = request.RequestedBy ?? string.Empty,
+                                        ["reason"] = request.Reason ?? string.Empty,
+                                        ["correlationId"] = request.CorrelationId ?? string.Empty,
+                                        ["recovery.resume"] = "false",
+                                        ["recovery.execution.id"] = string.Empty,
+                                        [AiRuntimeInstanceIsolationMetadataKeys.TenantId] = executionContextSnapshot?.TenantId ?? string.Empty,
+                                        [AiRuntimeInstanceIsolationMetadataKeys.TenantGroupId] = executionContextSnapshot?.TenantGroupId ?? string.Empty
+                                    })
+                            },
+                            CancellationToken.None)
+                        .ConfigureAwait(false);
+
+                    Console.WriteLine(
+                        $"[RUNTIME QUEUE ENQUEUE] POST-ACCEPT INDEX REGISTERED RunId='{handle.RunId}', ExecutionId='{handle.ExecutionId}'.");
+                }
+                catch (Exception exception)
+                {
+                    Console.WriteLine(
+                        $"[RUNTIME QUEUE ENQUEUE] POST-ACCEPT INDEX REGISTRATION FAILED RunId='{handle.RunId}', ExecutionId='{handle.ExecutionId}', ExceptionType='{exception.GetType().FullName}', Message='{exception.Message}'.");
+                }
+            }
+            else
+            {
+                /*
+                 * Resume index ownership belongs to
+                 * AiRuntimePipelineBackgroundController.EnqueueResumeAsync.
+                 * Re-registering here can race with MarkStartedAsync and regress a
+                 * started/running entry back to queued.
+                 */
+                Console.WriteLine(
+                    $"[RUNTIME QUEUE ENQUEUE] RESUME INDEX REGISTRATION SKIPPED RunId='{handle.RunId}', ExecutionId='{resumeExecutionId}', Owner='AiRuntimePipelineBackgroundController'.");
+            }
 
             return new RuntimeQueueOperationResult
             {
@@ -893,7 +993,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue
         /// </summary>
         /// <param name="metadata">The enqueue metadata.</param>
         /// <returns>The execution identifier to resume, or <c>null</c>.</returns>
-        private static string? TryResolveResumeExecutionId(
+        private static RecoveryResumeRequest? ResolveRecoveryResume(
             IReadOnlyDictionary<string, string>? metadata)
         {
             if (metadata is null ||
@@ -906,12 +1006,26 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue
                     metadata,
                     RecoveryModeMetadataKey,
                     out var mode) ||
-                !string.Equals(
+                string.IsNullOrWhiteSpace(mode))
+            {
+                return null;
+            }
+
+            if (string.Equals(
+                    mode,
+                    RecoveryModeRequeueLocalQueuedRun,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return null;
+            }
+
+            if (!string.Equals(
                     mode,
                     RecoveryModeResumeExistingExecution,
                     StringComparison.OrdinalIgnoreCase))
             {
-                return null;
+                throw new InvalidOperationException(
+                    $"Unsupported runtime recovery mode '{mode}'.");
             }
 
             if (!TryGetMetadataValue(
@@ -920,10 +1034,31 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue
                     out var executionId) ||
                 string.IsNullOrWhiteSpace(executionId))
             {
-                return null;
+                throw new InvalidOperationException(
+                    $"Recovery metadata '{RecoveryFailedExecutionIdMetadataKey}' is required when '{RecoveryModeMetadataKey}' is '{RecoveryModeResumeExistingExecution}'.");
             }
 
-            return executionId;
+            if (!TryGetMetadataValue(
+                    metadata,
+                    RecoveryForensicsIdMetadataKey,
+                    out var recoveryOwnerId) ||
+                string.IsNullOrWhiteSpace(recoveryOwnerId))
+            {
+                throw new InvalidOperationException(
+                    $"Recovery metadata '{RecoveryForensicsIdMetadataKey}' is required when '{RecoveryModeMetadataKey}' is '{RecoveryModeResumeExistingExecution}'.");
+            }
+
+            if (!recoveryOwnerId.StartsWith(
+                    "runtime-recovery:",
+                    StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    $"Recovery owner id '{recoveryOwnerId}' is not a valid runtime recovery owner.");
+            }
+
+            return new RecoveryResumeRequest(
+                executionId,
+                recoveryOwnerId);
         }
 
         /// <summary>
@@ -1007,6 +1142,15 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue
                 CompletedAtUtc = entry.CompletedAtUtc
             };
         }
+
+        /// <summary>
+        /// Represents a validated existing-execution recovery resume request.
+        /// </summary>
+        /// <param name="ExecutionId">The durable execution identifier to resume.</param>
+        /// <param name="RecoveryOwnerId">The deterministic recovery owner identifier.</param>
+        private sealed record RecoveryResumeRequest(
+            string ExecutionId,
+            string RecoveryOwnerId);
 
         /// <summary>
         /// Represents the raw result of an inner runtime queue operation before it is converted

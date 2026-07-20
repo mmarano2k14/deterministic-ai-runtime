@@ -1,6 +1,7 @@
 ﻿using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Multiplexed.Abstractions.AI.ControlPlane.Signals;
 using Multiplexed.Abstractions.AI.Execution;
 using Multiplexed.Abstractions.AI.Execution.Payloads.Models;
 using Multiplexed.Abstractions.AI.Execution.Payloads.Mongo;
@@ -14,10 +15,13 @@ using Multiplexed.AI.DI.AI;
 using Multiplexed.AI.DI.Cleanup;
 using Multiplexed.AI.DI.Engine;
 using Multiplexed.AI.DI.Persistence;
+using Multiplexed.AI.DI.Persistence.Mongo;
 using Multiplexed.AI.Runtime;
 using Multiplexed.AI.Runtime.AI.Providers.Llm.OpenAI.DI;
 using Multiplexed.AI.Runtime.Configuration;
-using Multiplexed.AI.Runtime.DependencyInjection;
+using Multiplexed.AI.Runtime.ControlPlane.DI;
+using Multiplexed.AI.Runtime.ControlPlane.Discovery;
+using Multiplexed.AI.Runtime.ControlPlane.Signals;
 using Multiplexed.AI.Runtime.Execution.Engine.Core;
 using Multiplexed.AI.Runtime.Execution.Retention.Policies;
 using Multiplexed.AI.Runtime.Pipeline.Steps.Prompt;
@@ -270,6 +274,11 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution.Fixtures
             services.AddLogging();
             services.AddMemoryCache();
 
+            var configuration = new ConfigurationManager();
+
+            services.TryAddSingleton<IConfiguration>(
+                configuration);
+
             var resolvedRedisConnectionString =
                 redisConnectionString ??
                 "localhost:6379";
@@ -294,6 +303,9 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution.Fixtures
 
             services.AddMultiplexAI(options);
 
+            services.AddAiControlPlaneDiscoveryCore();
+            services.AddAiRuntimeSignals();
+
             services.AddAiPoliciesFromAssemblies(
                 typeof(AiRuntimeAssemblyMarker).Assembly,
                 typeof(CompactAiRetentionPolicy).Assembly);
@@ -305,8 +317,6 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution.Fixtures
                 cleanup.SuppressSnapshotIfExist = options.Cleanup.SuppressSnapshotIfExist;
                 cleanup.SuppressCleanupExceptions = options.Cleanup.SuppressCleanupExceptions;
             });
-
-            var configuration = new ConfigurationManager();
 
             services.AddMultiplexedRbacRuntime(
                     configuration,
@@ -351,7 +361,7 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution.Fixtures
                 options.Snapshots.Mongo.DatabaseName = databaseName;
 
                 services.AddAiExecutionSnapshots(options);
-                
+
                 services.AddAiStepsFromAssemblies(typeof(AiRuntimeAssemblyMarker).Assembly);
             }
 

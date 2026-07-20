@@ -5,92 +5,305 @@ using StackExchange.Redis;
 namespace Multiplexed.AI.Stores.Cache.Redis.Dag
 {
     /// <summary>
-    /// Handles Redis DAG timed-out step recovery operations.
+    /// Handles Redis DAG step recovery operations.
     /// </summary>
     public sealed class RedisDagStoreRecoveryService
     {
         private readonly IRedisDagStoreServices _services;
-        private LoadedLuaScript _recoverLoadedScript;
-        public RedisDagStoreRecoveryService(IRedisDagStoreServices services)
+
+        private LoadedLuaScript _recoverTimedOutLoadedScript;
+
+        private LoadedLuaScript _recoverRunningForRecoveryLoadedScript;
+
+        /// <summary>
+        /// Initializes a new instance of the
+        /// <see cref="RedisDagStoreRecoveryService"/> class.
+        /// </summary>
+        /// <param name="services">The shared Redis DAG store services.</param>
+        public RedisDagStoreRecoveryService(
+            IRedisDagStoreServices services)
         {
             ArgumentNullException.ThrowIfNull(services);
-            _services = services;
 
-            _recoverLoadedScript = _services.Helper.LoadScript(RedisDagLuaScripts.RecoverPreparedScript);
+            _services =
+                services;
+
+            _recoverTimedOutLoadedScript =
+                _services.Helper.LoadScript(
+                    RedisDagLuaScripts.RecoverPreparedScript);
+
+            _recoverRunningForRecoveryLoadedScript =
+                _services.Helper.LoadScript(
+                    RedisDagLuaScripts
+                        .RecoverRunningForRecoveryPreparedScript);
         }
 
         /// <summary>
         /// Recovers timed-out running steps.
-        ///
-        /// RECOVERY RULES:
-        /// - only Running steps are considered
-        /// - LeaseExpiresAtUtc must be in the past
-        /// - recovered steps transition back to Ready
-        /// - claim ownership is cleared
-        /// - RecoveryCount is incremented
-        ///
-        /// IMPORTANT:
-        /// - nowUnix is expressed in milliseconds
-        /// - LeaseExpiresAtUtc is expressed in milliseconds
-        /// - this recovery path uses persisted lease expiration only
         /// </summary>
+        /// <remarks>
+        /// Only running steps whose persisted lease has expired are recovered.
+        /// Infrastructure recovery increments <c>RecoveryCount</c> without
+        /// consuming business retry attempts.
+        /// </remarks>
+        /// <param name="executionId">The execution identifier.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <returns>The number of recovered steps.</returns>
         public async Task<int> RecoverTimedOutStepsAsync(
             string executionId,
             CancellationToken cancellationToken = default)
         {
-            if (string.IsNullOrWhiteSpace(executionId))
-                throw new ArgumentException("Execution id cannot be null or empty.", nameof(executionId));
+            ValidateExecutionId(
+                executionId);
 
-            var nowUnix = RedisDagStoreHelper.NowMs();
-            var stepIndexKey = _services.KeyBuilder.GetDagStepIdsKey(executionId);
-            var stepKeyPrefix = _services.KeyBuilder.GetDagStepKeyPrefix(executionId);
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var nowUnix =
+                RedisDagStoreHelper.NowMs();
+
+            var stepIndexKey =
+                _services.KeyBuilder
+                    .GetDagStepIdsKey(
+                        executionId);
+
+            var stepKeyPrefix =
+                _services.KeyBuilder
+                    .GetDagStepKeyPrefix(
+                        executionId);
 
             try
             {
-                var recovered = await ExecuteRecoverAsync(stepIndexKey, stepKeyPrefix, nowUnix);
+                var recovered =
+                    await ExecuteRecoverTimedOutAsync(
+                            stepIndexKey,
+                            stepKeyPrefix,
+                            nowUnix,
+                            cancellationToken)
+                        .ConfigureAwait(false);
 
-                if (recovered > 0)
-                {
-                    _services.Metrics.Execution.RecordStepsRecovered(executionId, recovered);
-
-                    _services.Logger.Engine.LogInformation(
-                        $"[AI DAG STORE] Timed-out steps recovered. ExecutionId='{executionId}', RecoveredCount='{recovered}'.");
-                }
+                RecordTimedOutRecovery(
+                    executionId,
+                    recovered,
+                    reloadedAfterNoScript: false);
 
                 return recovered;
             }
-            catch (RedisServerException ex) when (ex.Message.Contains("NOSCRIPT", StringComparison.OrdinalIgnoreCase))
+            catch (RedisServerException exception)
+                when (IsNoScriptException(exception))
             {
-                _recoverLoadedScript = _services.Helper.LoadScript(RedisDagLuaScripts.RecoverPreparedScript);
+                _recoverTimedOutLoadedScript =
+                    _services.Helper.LoadScript(
+                        RedisDagLuaScripts.RecoverPreparedScript);
 
-                var recovered = await ExecuteRecoverAsync(stepIndexKey, stepKeyPrefix, nowUnix);
+                var recovered =
+                    await ExecuteRecoverTimedOutAsync(
+                            stepIndexKey,
+                            stepKeyPrefix,
+                            nowUnix,
+                            cancellationToken)
+                        .ConfigureAwait(false);
 
-                if (recovered > 0)
-                {
-                    _services.Metrics.Execution.RecordStepsRecovered(executionId, recovered);
-                    _services.Logger.Engine.LogInformation(
-                        $"[AI DAG STORE] Timed-out steps recovered after NOSCRIPT reload. ExecutionId='{executionId}', RecoveredCount='{recovered}'.");
-                }
+                RecordTimedOutRecovery(
+                    executionId,
+                    recovered,
+                    reloadedAfterNoScript: true);
 
                 return recovered;
             }
         }
 
-        private async Task<int> ExecuteRecoverAsync(
+        /// <summary>
+        /// Recovers all currently running steps for an explicit runtime
+        /// execution recovery transition.
+        /// </summary>
+        /// <remarks>
+        /// This operation does not wait for claim leases to expire. It must be
+        /// called only after durable recovery pause ownership has been acquired
+        /// for the execution.
+        /// </remarks>
+        /// <param name="executionId">The execution identifier.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <returns>The number of running steps recovered.</returns>
+        public async Task<int> RecoverRunningStepsForRecoveryAsync(
+            string executionId,
+            CancellationToken cancellationToken = default)
+        {
+            ValidateExecutionId(
+                executionId);
+
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var nowUnix =
+                RedisDagStoreHelper.NowMs();
+
+            var stepIndexKey =
+                _services.KeyBuilder
+                    .GetDagStepIdsKey(
+                        executionId);
+
+            var stepKeyPrefix =
+                _services.KeyBuilder
+                    .GetDagStepKeyPrefix(
+                        executionId);
+
+            try
+            {
+                var recovered =
+                    await ExecuteRecoverRunningForRecoveryAsync(
+                            stepIndexKey,
+                            stepKeyPrefix,
+                            nowUnix,
+                            cancellationToken)
+                        .ConfigureAwait(false);
+
+                RecordExplicitRecovery(
+                    executionId,
+                    recovered,
+                    reloadedAfterNoScript: false);
+
+                return recovered;
+            }
+            catch (RedisServerException exception)
+                when (IsNoScriptException(exception))
+            {
+                _recoverRunningForRecoveryLoadedScript =
+                    _services.Helper.LoadScript(
+                        RedisDagLuaScripts
+                            .RecoverRunningForRecoveryPreparedScript);
+
+                var recovered =
+                    await ExecuteRecoverRunningForRecoveryAsync(
+                            stepIndexKey,
+                            stepKeyPrefix,
+                            nowUnix,
+                            cancellationToken)
+                        .ConfigureAwait(false);
+
+                RecordExplicitRecovery(
+                    executionId,
+                    recovered,
+                    reloadedAfterNoScript: true);
+
+                return recovered;
+            }
+        }
+
+        private async Task<int> ExecuteRecoverTimedOutAsync(
             string stepIndexKey,
             string stepKeyPrefix,
-            long nowUnix)
+            long nowUnix,
+            CancellationToken cancellationToken)
         {
-            var result = await _recoverLoadedScript.EvaluateAsync(
-                _services.Database,
-                new
-                {
-                    stepIndexKey = (RedisKey)stepIndexKey,
-                    stepKeyPrefix = (RedisValue)stepKeyPrefix,
-                    nowUnix = (RedisValue)nowUnix
-                });
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var result =
+                await _recoverTimedOutLoadedScript
+                    .EvaluateAsync(
+                        _services.Database,
+                        new
+                        {
+                            stepIndexKey =
+                                (RedisKey)stepIndexKey,
+
+                            stepKeyPrefix =
+                                (RedisValue)stepKeyPrefix,
+
+                            nowUnix =
+                                (RedisValue)nowUnix
+                        })
+                    .ConfigureAwait(false);
 
             return (int)result!;
+        }
+
+        private async Task<int> ExecuteRecoverRunningForRecoveryAsync(
+            string stepIndexKey,
+            string stepKeyPrefix,
+            long nowUnix,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var result =
+                await _recoverRunningForRecoveryLoadedScript
+                    .EvaluateAsync(
+                        _services.Database,
+                        new
+                        {
+                            stepIndexKey =
+                                (RedisKey)stepIndexKey,
+
+                            stepKeyPrefix =
+                                (RedisValue)stepKeyPrefix,
+
+                            nowUnix =
+                                (RedisValue)nowUnix
+                        })
+                    .ConfigureAwait(false);
+
+            return (int)result!;
+        }
+
+        private void RecordTimedOutRecovery(
+            string executionId,
+            int recovered,
+            bool reloadedAfterNoScript)
+        {
+            if (recovered <= 0)
+            {
+                return;
+            }
+
+            _services.Metrics.Execution
+                .RecordStepsRecovered(
+                    executionId,
+                    recovered);
+
+            _services.Logger.Engine.LogInformation(
+                reloadedAfterNoScript
+                    ? $"[AI DAG STORE] Timed-out steps recovered after NOSCRIPT reload. ExecutionId='{executionId}', RecoveredCount='{recovered}'."
+                    : $"[AI DAG STORE] Timed-out steps recovered. ExecutionId='{executionId}', RecoveredCount='{recovered}'.");
+        }
+
+        private void RecordExplicitRecovery(
+            string executionId,
+            int recovered,
+            bool reloadedAfterNoScript)
+        {
+            if (recovered <= 0)
+            {
+                return;
+            }
+
+            _services.Metrics.Execution
+                .RecordStepsRecovered(
+                    executionId,
+                    recovered);
+
+            _services.Logger.Engine.LogWarning(
+                 reloadedAfterNoScript
+                     ? $"[AI DAG STORE] Running steps recovered explicitly after NOSCRIPT reload. ExecutionId='{executionId}', RecoveredCount='{recovered}'."
+                     : $"[AI DAG STORE] Running steps recovered explicitly for runtime recovery. ExecutionId='{executionId}', RecoveredCount='{recovered}'.");
+        
+        }
+
+        private static bool IsNoScriptException(
+            RedisServerException exception)
+        {
+            return exception.Message.Contains(
+                "NOSCRIPT",
+                StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static void ValidateExecutionId(
+            string executionId)
+        {
+            if (string.IsNullOrWhiteSpace(executionId))
+            {
+                throw new ArgumentException(
+                    "Execution id cannot be null, empty, or whitespace.",
+                    nameof(executionId));
+            }
         }
     }
 }

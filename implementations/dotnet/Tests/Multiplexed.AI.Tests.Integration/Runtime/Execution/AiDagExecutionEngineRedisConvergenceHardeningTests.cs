@@ -3,6 +3,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Multiplexed.Abstractions.AI.ControlPlane.Signals;
 using Multiplexed.Abstractions.AI.Execution;
 using Multiplexed.Abstractions.AI.Execution.State;
 using Multiplexed.Abstractions.AI.Steps;
@@ -12,6 +13,9 @@ using Multiplexed.AI.DI.Engine;
 using Multiplexed.AI.DI.Persistence;
 using Multiplexed.AI.Runtime;
 using Multiplexed.AI.Runtime.Configuration;
+using Multiplexed.AI.Runtime.ControlPlane.DI;
+using Multiplexed.AI.Runtime.ControlPlane.Discovery;
+using Multiplexed.AI.Runtime.ControlPlane.Signals;
 using Multiplexed.AI.Runtime.Execution.Engine.Core;
 using Multiplexed.AI.Runtime.Pipeline.Steps.Test;
 using Multiplexed.AI.Stores;
@@ -349,30 +353,37 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution
         /// <summary>
         /// Creates a test service provider using real runtime DI and the Redis fixture.
         /// </summary>
-        private ServiceProvider CreateTestServiceProvider(string pipelineFileName)
+        private ServiceProvider CreateTestServiceProvider(
+            string pipelineFileName)
         {
             var configuration = new ConfigurationBuilder()
                 .AddInMemoryCollection(new Dictionary<string, string?>
                 {
                     ["AiEngine:DefaultPipelineDefinitionSource"] = "Json",
-                    ["AiEngine:JsonPipelineDefinitionFilePath"] = $"config/{pipelineFileName}",
+                    ["AiEngine:JsonPipelineDefinitionFilePath"] =
+                        $"config/{pipelineFileName}",
 
-                    // 🔥 FIX PAYLOAD STORE (CRITICAL)
+                    // Payload store
                     ["AiEngine:PayloadStore:Enabled"] = "true",
                     ["AiEngine:PayloadStore:Provider"] = "mongo-redis",
                     ["AiEngine:PayloadStore:MaxInlineSizeBytes"] = "512",
 
                     ["AiEngine:PayloadStore:Mongo:Enabled"] = "true",
-                    ["AiEngine:PayloadStore:Mongo:ConnectionString"] = "mongodb://localhost:27017",
-                    ["AiEngine:PayloadStore:Mongo:DatabaseName"] = "multiplexed_ai_tests",
-                    ["AiEngine:PayloadStore:Mongo:CollectionName"] = "payloads_redis_convergence_tests",
+                    ["AiEngine:PayloadStore:Mongo:ConnectionString"] =
+                        "mongodb://localhost:27017",
+                    ["AiEngine:PayloadStore:Mongo:DatabaseName"] =
+                        "multiplexed_ai_tests",
+                    ["AiEngine:PayloadStore:Mongo:CollectionName"] =
+                        "payloads_redis_convergence_tests",
 
                     ["AiEngine:PayloadStore:RedisCache:Enabled"] = "true",
-                    ["AiEngine:PayloadStore:RedisCache:KeyPrefix"] = "test:ai:payload:redis",
+                    ["AiEngine:PayloadStore:RedisCache:KeyPrefix"] =
+                        "test:ai:payload:redis",
                     ["AiEngine:PayloadStore:RedisCache:ExpirationSeconds"] = "120",
 
                     ["AiEngine:PayloadStore:StepIndexCache:Enabled"] = "true",
-                    ["AiEngine:PayloadStore:StepIndexCache:KeyPrefix"] = "test:ai:step-index:redis",
+                    ["AiEngine:PayloadStore:StepIndexCache:KeyPrefix"] =
+                        "test:ai:step-index:redis",
                     ["AiEngine:PayloadStore:StepIndexCache:ExpirationSeconds"] = "120",
 
                     // Cleanup
@@ -384,47 +395,65 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution
 
             var services = new ServiceCollection();
 
+            // Required by DefaultAiControlPlaneIdResolver and other runtime services.
+            services.AddSingleton<IConfiguration>(
+                configuration);
+
             services.AddMemoryCache();
             services.AddOptions();
-            
 
             services.AddLogging(builder =>
             {
                 builder.ClearProviders();
             });
 
-            services.AddSingleton<IConnectionMultiplexer>(_connection);
+            services.AddSingleton<IConnectionMultiplexer>(
+                _connection);
+
             services.AddSingleton<TestStepAttemptTracker>();
 
             services.AddSingleton<ExecutionContextAccessor>();
-            services.AddSingleton<IExecutionContextAccessor>(
-                sp => sp.GetRequiredService<ExecutionContextAccessor>());
-            services.AddSingleton<IExecutionContextFactory, ExecutionContextFactory>();
 
-            var contextOptions = Options.Create(new ContextRuntimeOptions
-            {
-                UseRedisLuaScriptShaCaching = true
-            });
+            services.AddSingleton<IExecutionContextAccessor>(
+                serviceProvider =>
+                    serviceProvider.GetRequiredService<ExecutionContextAccessor>());
+
+            services.AddSingleton<
+                IExecutionContextFactory,
+                ExecutionContextFactory>();
+
+            var contextOptions = Options.Create(
+                new ContextRuntimeOptions
+                {
+                    UseRedisLuaScriptShaCaching = true
+                });
 
             services.AddSingleton(contextOptions);
 
-            services.AddSingleton<IContextStore>(sp =>
-            {
-                var redisContextStore = new RedisContextStore(
-                    sp.GetRequiredService<IConnectionMultiplexer>(),
-                    contextOptions);
+            services.AddSingleton<IContextStore>(
+                serviceProvider =>
+                {
+                    var redisContextStore = new RedisContextStore(
+                        serviceProvider.GetRequiredService<IConnectionMultiplexer>(),
+                        contextOptions);
 
-                var memoryContextStore = new MemoryContextStore(
-                    new MemoryCache(new MemoryCacheOptions()),
-                    TimeSpan.FromMinutes(5));
+                    var memoryContextStore = new MemoryContextStore(
+                        new MemoryCache(
+                            new MemoryCacheOptions()),
+                        TimeSpan.FromMinutes(5));
 
-                return new CompositeContextStore(redisContextStore, memoryContextStore);
-            });
+                    return new CompositeContextStore(
+                        redisContextStore,
+                        memoryContextStore);
+                });
 
-            services.AddMultiplexAI(configuration);
+            services.AddMultiplexAI(
+                configuration);
+
             services.AddAiExecutionReplay();
 
-            services.AddMultiplexRealtime()
+            services
+                .AddMultiplexRealtime()
                 .AddSignalRRealtimeTransport(options =>
                 {
                     options.CorsPolicy = "SignalRCors";
@@ -433,6 +462,10 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution
                         "http://localhost:3000"
                     ];
                 });
+
+            // Registers the control-plane identity resolver before signal services.
+            services.AddAiControlPlaneDiscoveryCore();
+            services.AddAiRuntimeSignals();
 
             services.AddAiStepsFromAssemblies(
                 typeof(AiRuntimeAssemblyMarker).Assembly,

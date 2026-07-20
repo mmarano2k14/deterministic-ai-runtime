@@ -1,4 +1,4 @@
-﻿using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.ControlPlane.ExecutionAssistance;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Forensics;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
@@ -354,10 +354,13 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
             ArgumentNullException.ThrowIfNull(request);
             ArgumentException.ThrowIfNullOrWhiteSpace(request.PipelineName);
 
+            cancellationToken.ThrowIfCancellationRequested();
+
             Console.WriteLine(
                 $"[AI PIPELINE CONTROLLER] ENQUEUE CALLED ControllerHash='{GetHashCode()}' RuntimeInstanceId='{_runtimeInstanceIdentity.RuntimeInstanceId}' ResumeExecutionId='{resumeExecutionId ?? string.Empty}'");
 
-            if (_options.RejectEnqueueWhenStopped && !_started)
+            if (_options.RejectEnqueueWhenStopped &&
+                !_started)
             {
                 throw new InvalidOperationException(
                     "The runtime pipeline background controller has not been started.");
@@ -369,46 +372,71 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
                     "The runtime pipeline background controller has been stopped and cannot accept new work.");
             }
 
-            var runId = Guid.NewGuid().ToString("N");
+            var runId =
+                Guid.NewGuid().ToString("N");
 
-            var correlation = new AiRuntimeExecutionCorrelationContext
-            {
-                CorrelationId = runId,
-                RunId = runId,
-                ExecutionId = resumeExecutionId,
-                PipelineName = request.PipelineName,
-                RuntimeInstanceId = _runtimeInstanceIdentity.RuntimeInstanceId,
-                WorkerId = PipelineBackgroundControllerWorkerId
-            };
+            var correlation =
+                new AiRuntimeExecutionCorrelationContext
+                {
+                    CorrelationId = runId,
+                    RunId = runId,
+                    ExecutionId = resumeExecutionId,
+                    PipelineName = request.PipelineName,
+                    RuntimeInstanceId =
+                        _runtimeInstanceIdentity.RuntimeInstanceId,
+                    WorkerId =
+                        PipelineBackgroundControllerWorkerId
+                };
 
-            var completionSource = new TaskCompletionSource<AiExecutionRecord>(
-                TaskCreationOptions.RunContinuationsAsynchronously);
+            var completionSource =
+                new TaskCompletionSource<AiExecutionRecord>(
+                    TaskCreationOptions.RunContinuationsAsynchronously);
 
-            var handle = string.IsNullOrWhiteSpace(resumeExecutionId)
-                ? new AiRuntimeWorkerRunHandle(
-                    runId,
-                    completionSource.Task)
-                : new AiRuntimeWorkerRunHandle(
-                    runId,
-                    completionSource.Task,
+            var handle =
+                string.IsNullOrWhiteSpace(resumeExecutionId)
+                    ? new AiRuntimeWorkerRunHandle(
+                        runId,
+                        completionSource.Task)
+                    : new AiRuntimeWorkerRunHandle(
+                        runId,
+                        completionSource.Task,
+                        resumeExecutionId);
+
+            var queuedRun =
+                new AiRuntimeQueuedPipelineRun(
+                    request,
+                    handle,
+                    completionSource,
+                    correlation,
                     resumeExecutionId);
 
-            var queuedRun = new AiRuntimeQueuedPipelineRun(
-                request,
-                handle,
-                completionSource,
-                correlation,
-                resumeExecutionId);
+            RecoveryResumeContext? recoveryResume =
+                null;
 
-            _queuedRuns[runId] = queuedRun;
+            if (queuedRun.IsResume)
+            {
+                /*
+                 * Validate the complete recovery contract before mutating:
+                 * - the local run index,
+                 * - the local pending-run dictionary,
+                 * - the queue channel,
+                 * - or recovery forensics.
+                 */
+                recoveryResume =
+                    ResolveRecoveryResume(
+                        queuedRun);
+            }
+
+            _queuedRuns[runId] =
+                queuedRun;
 
             try
             {
-                if (!string.IsNullOrWhiteSpace(resumeExecutionId))
+                if (recoveryResume is not null)
                 {
                     await RegisterResumeRunExecutionIndexAsync(
                             queuedRun,
-                            resumeExecutionId,
+                            recoveryResume.ExecutionId,
                             cancellationToken)
                         .ConfigureAwait(false);
 
@@ -417,17 +445,19 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
                             AiRuntimeRecoveryForensicsEventType.ReplacementLocalRunRegistered,
                             "registered",
                             "replacement-local-run-registered-on-runtime-instance",
-                            resumeExecutionId,
+                            recoveryResume.ExecutionId,
                             cancellationToken)
                         .ConfigureAwait(false);
                 }
 
-                await _queue.Writer.WriteAsync(
-                    queuedRun,
-                    cancellationToken).ConfigureAwait(false);
+                await _queue.Writer
+                    .WriteAsync(
+                        queuedRun,
+                        cancellationToken)
+                    .ConfigureAwait(false);
 
                 Console.WriteLine(
-                     $"[AI PIPELINE CONTROLLER] ENQUEUED RuntimeInstanceId='{_runtimeInstanceIdentity.RuntimeInstanceId}' RunId='{runId}' ResumeExecutionId='{resumeExecutionId ?? string.Empty}'");
+                    $"[AI PIPELINE CONTROLLER] ENQUEUED RuntimeInstanceId='{_runtimeInstanceIdentity.RuntimeInstanceId}' RunId='{runId}' ResumeExecutionId='{resumeExecutionId ?? string.Empty}'");
             }
             catch
             {
@@ -439,25 +469,50 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
             }
 
             _logger.Engine.LogInformation(
-                $"[AI PIPELINE CONTROLLER] Run queued. RunId='{runId}', Pipeline='{request.PipelineName}', ResumeExecutionId='{resumeExecutionId ?? string.Empty}'.");
+                $"[AI PIPELINE CONTROLLER] Run queued. RunId='{runId}', Pipeline='{request.PipelineName}', ResumeExecutionId='{resumeExecutionId ?? string.Empty}', RecoveryOwnerId='{recoveryResume?.RecoveryOwnerId ?? string.Empty}'.");
 
-            await RecordRunLedgerAsync(
-                    runId,
-                    request.PipelineName,
-                    AiDecisionLedgerEvents.Run.Queued,
-                    AiDecisionLedgerOutcome.Persisted,
-                    reason: string.IsNullOrWhiteSpace(resumeExecutionId)
-                        ? "Pipeline run queued."
-                        : "Pipeline run queued for existing execution resume.",
-                    metadata: new Dictionary<string, string>
-                    {
-                        ["run.id"] = runId,
-                        ["pipeline.name"] = request.PipelineName,
-                        ["recovery.resume"] = (!string.IsNullOrWhiteSpace(resumeExecutionId)).ToString(),
-                        ["recovery.execution.id"] = resumeExecutionId ?? string.Empty
-                    },
-                    cancellationToken: cancellationToken)
-                .ConfigureAwait(false);
+            /*
+             * The Channel write above is the local runtime acceptance boundary.
+             * From this point onward, transport cancellation or an auxiliary ledger
+             * failure must not convert an accepted run into a failed dispatch result.
+             */
+            try
+            {
+                await RecordRunLedgerAsync(
+                        runId,
+                        request.PipelineName,
+                        AiDecisionLedgerEvents.Run.Queued,
+                        AiDecisionLedgerOutcome.Persisted,
+                        reason: recoveryResume is null
+                            ? "Pipeline run queued."
+                            : "Pipeline run queued for existing execution recovery resume.",
+                        metadata: new Dictionary<string, string>
+                        {
+                            ["run.id"] =
+                                runId,
+
+                            ["pipeline.name"] =
+                                request.PipelineName,
+
+                            ["recovery.resume"] =
+                                (recoveryResume is not null).ToString(),
+
+                            ["recovery.execution.id"] =
+                                recoveryResume?.ExecutionId ??
+                                string.Empty,
+
+                            ["recovery.owner.id"] =
+                                recoveryResume?.RecoveryOwnerId ??
+                                string.Empty
+                        },
+                        cancellationToken: CancellationToken.None)
+                    .ConfigureAwait(false);
+            }
+            catch (Exception exception)
+            {
+                _logger.Engine.LogWarning(
+                    $"[AI PIPELINE CONTROLLER] Accepted run ledger recording failed without reverting enqueue acknowledgement. RunId='{runId}', Pipeline='{request.PipelineName}', ResumeExecutionId='{resumeExecutionId ?? string.Empty}', ExceptionType='{exception.GetType().FullName}', Message='{exception.Message}'.");
+            }
 
             return handle;
         }
@@ -1064,7 +1119,7 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
 
         /// <summary>
         /// Executes the core pipeline run flow: resolve definition, publish definition,
-        /// create execution, and advance execution through the runtime worker.
+        /// create or resume an execution, and advance it through the runtime worker.
         /// </summary>
         /// <param name="queuedRun">The queued pipeline run.</param>
         /// <param name="cancellationToken">The controller cancellation token.</param>
@@ -1074,43 +1129,27 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
         {
             ArgumentNullException.ThrowIfNull(queuedRun);
 
-            var handle =
-                queuedRun.Handle;
+            var handle = queuedRun.Handle;
+            var request = queuedRun.Request;
+            var diagnosticPhase = "initializing";
 
-            var request =
-                queuedRun.Request;
+            AiExecutionRecord? created = null;
+            AiPipelineDefinition? definition = null;
+            RecoveryResumeContext? recoveryResume = null;
 
-            var diagnosticPhase =
-                "initializing";
-
-            AiExecutionRecord? created =
-                null;
-
-            AiPipelineDefinition? definition =
-                null;
-
-            var previousExecutionContext =
-                _executionContextAccessor.Current;
-
-            var executionContextRestored =
-                false;
+            var previousExecutionContext = _executionContextAccessor.Current;
+            var executionContextRestored = false;
 
             try
             {
-                diagnosticPhase =
-                    "restore-execution-context";
+                diagnosticPhase = "restore-execution-context";
 
-                var restoredExecutionContext =
-                    RestoreExecutionContextFromSnapshot(
-                        queuedRun);
-
-                executionContextRestored =
-                    true;
+                var restoredExecutionContext = RestoreExecutionContextFromSnapshot(queuedRun);
+                executionContextRestored = true;
 
                 if (queuedRun.IsResume)
                 {
-                    diagnosticPhase =
-                        "seed-resume-execution-context";
+                    diagnosticPhase = "seed-resume-execution-context";
 
                     await SeedResumeExecutionContextAsync(
                             queuedRun,
@@ -1119,9 +1158,7 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
                         .ConfigureAwait(false);
                 }
 
-                diagnosticPhase =
-                    "mark-creating-execution";
-
+                diagnosticPhase = "mark-creating-execution";
                 handle.MarkCreatingExecution();
 
                 _logger.Engine.LogInformation(
@@ -1129,42 +1166,62 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
                         ? $"[AI PIPELINE CONTROLLER] Preparing existing execution resume. RunId='{handle.RunId}', ExecutionId='{queuedRun.ResumeExecutionId}', Pipeline='{request.PipelineName}', RuntimeInstanceId='{_runtimeInstanceIdentity.RuntimeInstanceId}', TenantId='{request.ExecutionContextSnapshot?.TenantId ?? string.Empty}', ContextKey='{request.ExecutionContextSnapshot?.ContextKey ?? string.Empty}', InputType='{ResolveInputTypeName(request.Input)}'."
                         : $"[AI PIPELINE CONTROLLER] Creating execution. RunId='{handle.RunId}', Pipeline='{request.PipelineName}', RuntimeInstanceId='{_runtimeInstanceIdentity.RuntimeInstanceId}', TenantId='{request.ExecutionContextSnapshot?.TenantId ?? string.Empty}', ContextKey='{request.ExecutionContextSnapshot?.ContextKey ?? string.Empty}', InputType='{ResolveInputTypeName(request.Input)}'.");
 
-                diagnosticPhase =
-                    "resolve-definition";
+                diagnosticPhase = "resolve-definition";
 
-                definition = await _definitionResolver.ResolveAsync(
-                    request,
-                    cancellationToken).ConfigureAwait(false);
+                definition = await _definitionResolver
+                    .ResolveAsync(request, cancellationToken)
+                    .ConfigureAwait(false);
 
                 _logger.Engine.LogInformation(
                     $"[AI PIPELINE CONTROLLER] Definition resolved. RunId='{handle.RunId}', Pipeline='{request.PipelineName}', StepCount='{definition.Steps.Count}'.");
 
-                diagnosticPhase =
-                    "publish-definition";
+                diagnosticPhase = "publish-definition";
 
-                await _definitionPublisher.PublishAsync(
-                    definition,
-                    cancellationToken).ConfigureAwait(false);
+                await _definitionPublisher
+                    .PublishAsync(definition, cancellationToken)
+                    .ConfigureAwait(false);
 
                 _logger.Engine.LogInformation(
                     $"[AI PIPELINE CONTROLLER] Definition published. RunId='{handle.RunId}', Pipeline='{request.PipelineName}'.");
 
-                diagnosticPhase =
-                    queuedRun.IsResume
-                        ? "resume-existing-execution"
-                        : "create-execution";
+                diagnosticPhase = queuedRun.IsResume
+                    ? "validate-recovery-resume"
+                    : "create-execution";
 
                 if (queuedRun.IsResume)
                 {
+                    recoveryResume = ResolveRecoveryResume(queuedRun);
+
+                    diagnosticPhase = "resume-execution-from-recovery";
+
+                    var resumingState = await _executionControlService
+                        .ResumeExecutionFromRecoveryAsync(
+                            recoveryResume.ExecutionId,
+                            recoveryResume.RecoveryOwnerId,
+                            cancellationToken)
+                        .ConfigureAwait(false);
+
+                    if (!IsRecoveryResumeStateOwnedBy(
+                            resumingState,
+                            recoveryResume.RecoveryOwnerId,
+                            AiExecutionControlStatus.Resuming,
+                            AiExecutionControlAction.Resume))
+                    {
+                        throw new InvalidOperationException(
+                            $"Execution '{recoveryResume.ExecutionId}' could not enter the recovery-owned resuming state for owner '{recoveryResume.RecoveryOwnerId}'. CurrentStatus='{resumingState.Status}', PendingAction='{resumingState.PendingAction}', RequestedBy='{resumingState.RequestedBy ?? string.Empty}'.");
+                    }
+
                     created = new AiExecutionRecord
                     {
-                        ExecutionId = queuedRun.ResumeExecutionId!,
+                        ExecutionId = recoveryResume.ExecutionId,
                         PipelineName = request.PipelineName,
                         Status = AiExecutionStatus.Running
                     };
 
                     _logger.Engine.LogInformation(
-                        $"[AI PIPELINE CONTROLLER] Existing execution resume selected. RunId='{handle.RunId}', ExecutionId='{created.ExecutionId}', Pipeline='{request.PipelineName}', RuntimeInstanceId='{_runtimeInstanceIdentity.RuntimeInstanceId}'.");
+                        $"[AI PIPELINE CONTROLLER] Existing execution recovery resume accepted. RunId='{handle.RunId}', ExecutionId='{created.ExecutionId}', RecoveryOwnerId='{recoveryResume.RecoveryOwnerId}', Pipeline='{request.PipelineName}', RuntimeInstanceId='{_runtimeInstanceIdentity.RuntimeInstanceId}'.");
+
+                    diagnosticPhase = "record-recovery-resume-started";
 
                     await RecordRecoveryForensicsEventAsync(
                             queuedRun,
@@ -1177,31 +1234,21 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
                 }
                 else
                 {
-                    created = await CreateExecutionAsync(
-                        request,
-                        cancellationToken).ConfigureAwait(false);
+                    created = await CreateExecutionAsync(request, cancellationToken)
+                        .ConfigureAwait(false);
 
                     _logger.Engine.LogInformation(
                         $"[AI PIPELINE CONTROLLER] Execution created. RunId='{handle.RunId}', ExecutionId='{created.ExecutionId}', Pipeline='{created.PipelineName}'.");
                 }
 
-                queuedRun.Correlation.ExecutionId =
-                    created.ExecutionId;
+                queuedRun.Correlation.ExecutionId = created.ExecutionId;
+                queuedRun.Correlation.PipelineKey = created.PipelineName;
+                queuedRun.Correlation.RunId = handle.RunId;
 
-                queuedRun.Correlation.PipelineKey =
-                    created.PipelineName;
+                diagnosticPhase = "mark-running";
+                handle.MarkRunning(created.ExecutionId);
 
-                queuedRun.Correlation.RunId =
-                    handle.RunId;
-
-                diagnosticPhase =
-                    "mark-running";
-
-                handle.MarkRunning(
-                    created.ExecutionId);
-
-                diagnosticPhase =
-                    "mark-run-execution-index-started";
+                diagnosticPhase = "mark-run-execution-index-started";
 
                 await _runExecutionIndex
                     .MarkStartedAsync(
@@ -1210,8 +1257,7 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
                         cancellationToken)
                     .ConfigureAwait(false);
 
-                diagnosticPhase =
-                    "register-execution-assistance-candidate";
+                diagnosticPhase = "register-execution-assistance-candidate";
 
                 await RegisterExecutionAssistanceCandidateAsync(
                         handle.RunId,
@@ -1221,8 +1267,7 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
                         cancellationToken)
                     .ConfigureAwait(false);
 
-                diagnosticPhase =
-                    "record-run-started-ledger";
+                diagnosticPhase = "record-run-started-ledger";
 
                 await RecordRunLedgerAsync(
                         handle.RunId,
@@ -1244,22 +1289,44 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
                             ["max.local.workers.per.execution"] = _options.MaxLocalWorkersPerExecution.ToString(),
                             ["effective.worker.count.per.execution"] = ResolveMaxWorkerCountForExecution().ToString(),
                             ["recovery.resume"] = queuedRun.IsResume.ToString(),
-                            ["recovery.execution.id"] = queuedRun.ResumeExecutionId ?? string.Empty
+                            ["recovery.execution.id"] = queuedRun.ResumeExecutionId ?? string.Empty,
+                            ["recovery.owner.id"] = recoveryResume?.RecoveryOwnerId ?? string.Empty
                         },
                         cancellationToken)
                     .ConfigureAwait(false);
 
-                AiExecutionRecord? final =
-                    null;
+                AiExecutionRecord? final = null;
 
                 try
                 {
-                    diagnosticPhase =
-                        "run-created-execution";
+                    if (recoveryResume is not null)
+                    {
+                        diagnosticPhase = "mark-execution-running-from-recovery";
+
+                        var runningState = await _executionControlService
+                            .MarkRunningAsync(
+                                recoveryResume.ExecutionId,
+                                recoveryResume.RecoveryOwnerId,
+                                cancellationToken)
+                            .ConfigureAwait(false);
+
+                        if (!IsRecoveryResumeStateOwnedBy(
+                                runningState,
+                                recoveryResume.RecoveryOwnerId,
+                                AiExecutionControlStatus.Running,
+                                AiExecutionControlAction.None))
+                        {
+                            throw new InvalidOperationException(
+                                $"Execution '{recoveryResume.ExecutionId}' could not enter the recovery-owned running state for owner '{recoveryResume.RecoveryOwnerId}'. CurrentStatus='{runningState.Status}', PendingAction='{runningState.PendingAction}', RequestedBy='{runningState.RequestedBy ?? string.Empty}'.");
+                        }
+                    }
+
+                    diagnosticPhase = "run-created-execution";
 
                     final = await RunCreatedExecutionAsync(
-                        created.ExecutionId,
-                        cancellationToken).ConfigureAwait(false);
+                            created.ExecutionId,
+                            cancellationToken)
+                        .ConfigureAwait(false);
 
                     if (queuedRun.IsResume)
                     {
@@ -1296,8 +1363,7 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
                         }
                     }
 
-                    diagnosticPhase =
-                        "apply-terminal-status";
+                    diagnosticPhase = "apply-terminal-status";
 
                     if (final.Status == AiExecutionStatus.Completed)
                     {
@@ -1335,8 +1401,7 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
                             .ConfigureAwait(false);
                     }
 
-                    diagnosticPhase =
-                        "record-terminal-ledger";
+                    diagnosticPhase = "record-terminal-ledger";
 
                     await RecordRunTerminalLedgerAsync(
                             handle.RunId,
@@ -1346,13 +1411,13 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
                             cancellationToken)
                         .ConfigureAwait(false);
 
-                    diagnosticPhase =
-                        "invoke-run-finalized-hook";
+                    diagnosticPhase = "invoke-run-finalized-hook";
 
                     await InvokeRunFinalizedAsync(
-                        queuedRun,
-                        final,
-                        cancellationToken).ConfigureAwait(false);
+                            queuedRun,
+                            final,
+                            cancellationToken)
+                        .ConfigureAwait(false);
 
                     queuedRun.CompletionSource.TrySetResult(final);
 
@@ -1383,8 +1448,7 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
                 }
                 finally
                 {
-                    diagnosticPhase =
-                        "mark-execution-assistance-candidate-completed";
+                    diagnosticPhase = "mark-execution-assistance-candidate-completed";
 
                     await MarkExecutionAssistanceCandidateCompletedAsync(
                             created.ExecutionId,
@@ -1410,6 +1474,143 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
                     previousExecutionContext,
                     executionContextRestored);
             }
+        }
+
+        /// <summary>
+        /// Resolves and validates controlled recovery metadata for an existing execution resume.
+        /// </summary>
+        /// <param name="queuedRun">The queued recovery run.</param>
+        /// <returns>The validated recovery resume context.</returns>
+        private static RecoveryResumeContext ResolveRecoveryResume(
+            AiRuntimeQueuedPipelineRun queuedRun)
+        {
+            ArgumentNullException.ThrowIfNull(queuedRun);
+
+            if (!queuedRun.IsResume ||
+                string.IsNullOrWhiteSpace(queuedRun.ResumeExecutionId))
+            {
+                throw new InvalidOperationException(
+                    "A recovery resume requires an existing execution identifier.");
+            }
+
+            var metadata =
+                queuedRun.Request.Metadata;
+
+            if (metadata is null ||
+                metadata.Count == 0)
+            {
+                throw new InvalidOperationException(
+                    "Recovery resume metadata is required.");
+            }
+
+            if (!TryGetRecoveryMetadataValue(
+                    metadata,
+                    "recovery.mode",
+                    out var recoveryMode) ||
+                !string.Equals(
+                    recoveryMode,
+                    "resume-existing-execution",
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException(
+                    "Recovery metadata must declare mode 'resume-existing-execution'.");
+            }
+
+            if (!TryGetRecoveryMetadataValue(
+                    metadata,
+                    "recovery.failedExecutionId",
+                    out var metadataExecutionId) ||
+                string.IsNullOrWhiteSpace(metadataExecutionId))
+            {
+                throw new InvalidOperationException(
+                    "Recovery metadata 'recovery.failedExecutionId' is required.");
+            }
+
+            if (!string.Equals(
+                    queuedRun.ResumeExecutionId,
+                    metadataExecutionId,
+                    StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    $"Recovery execution id mismatch. QueuedExecutionId='{queuedRun.ResumeExecutionId}', MetadataExecutionId='{metadataExecutionId}'.");
+            }
+
+            if (!TryGetRecoveryMetadataValue(
+                    metadata,
+                    "recovery.forensicsId",
+                    out var recoveryOwnerId) ||
+                string.IsNullOrWhiteSpace(recoveryOwnerId))
+            {
+                throw new InvalidOperationException(
+                    "Recovery metadata 'recovery.forensicsId' is required.");
+            }
+
+            var expectedOwnerPrefix =
+                $"runtime-recovery:{metadataExecutionId}:";
+
+            if (!recoveryOwnerId.StartsWith(
+                    expectedOwnerPrefix,
+                    StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    $"Recovery owner id '{recoveryOwnerId}' does not belong to execution '{metadataExecutionId}'.");
+            }
+
+            return new RecoveryResumeContext(
+                metadataExecutionId,
+                recoveryOwnerId);
+        }
+
+        /// <summary>
+        /// Determines whether execution control reached the expected recovery-owned state.
+        /// </summary>
+        /// <param name="state">The resulting execution control state.</param>
+        /// <param name="recoveryOwnerId">The expected recovery owner identifier.</param>
+        /// <param name="expectedStatus">The expected control status.</param>
+        /// <param name="expectedPendingAction">The expected pending action.</param>
+        /// <returns><c>true</c> when ownership and state match; otherwise, <c>false</c>.</returns>
+        private static bool IsRecoveryResumeStateOwnedBy(
+            AiExecutionControlState state,
+            string recoveryOwnerId,
+            AiExecutionControlStatus expectedStatus,
+            AiExecutionControlAction expectedPendingAction)
+        {
+            ArgumentNullException.ThrowIfNull(state);
+
+            return string.Equals(
+                       state.RequestedBy,
+                       recoveryOwnerId,
+                       StringComparison.Ordinal) &&
+                   state.Status == expectedStatus &&
+                   state.PendingAction == expectedPendingAction;
+        }
+
+        /// <summary>
+        /// Resolves one recovery metadata value using case-insensitive key matching.
+        /// </summary>
+        /// <param name="metadata">The recovery metadata.</param>
+        /// <param name="key">The metadata key.</param>
+        /// <param name="value">The resolved value.</param>
+        /// <returns><c>true</c> when the key exists; otherwise, <c>false</c>.</returns>
+        private static bool TryGetRecoveryMetadataValue(
+            IReadOnlyDictionary<string, string> metadata,
+            string key,
+            out string? value)
+        {
+            foreach (var pair in metadata)
+            {
+                if (string.Equals(
+                        pair.Key,
+                        key,
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    value = pair.Value;
+                    return true;
+                }
+            }
+
+            value = null;
+            return false;
         }
 
         /// <summary>
@@ -2718,6 +2919,16 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
 
             return value[..maxLength] + "...[truncated]";
         }
+
+        /// <summary>
+        /// Represents validated metadata for a recovery-owned existing execution resume.
+        /// </summary>
+        /// <param name="ExecutionId">The durable execution identifier.</param>
+        /// <param name="RecoveryOwnerId">The deterministic recovery owner identifier.</param>
+        private sealed record RecoveryResumeContext(
+            string ExecutionId,
+            string RecoveryOwnerId);
+
 
         /// <summary>
         /// Resolves the best available ledger correlation target for a queue-level operation.

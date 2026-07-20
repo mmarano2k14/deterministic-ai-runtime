@@ -1,6 +1,6 @@
 # Runtime Instance Provider Model
 
-Status: Implemented foundation / validated for local dispatch, HTTP pooled runtime scenarios, HTTP dispatch hardening, gRPC dispatch, provider-based scale-out, Redis-backed scale-out request persistence, local runtime scale-out, HTTP runtime scale-out, gRPC runtime scale-out, Runtime Host Manager process-host provisioning, fulfilled-run requeue, end-to-end MCP scale-out execution, durable replay / ledger / trace validation, provider-agnostic process-host crash recovery, and tenant-aware runtime isolation across shared, dedicated, and hybrid runtime modes.
+Status: Implemented foundation / validated for local dispatch, HTTP/gRPC dispatch, provider-based scale-out, Redis-backed request persistence, local scale-out, Runtime Host Manager process and Kubernetes provisioning, fulfilled-run requeue, end-to-end MCP scale-out execution, durable replay / ledger / trace validation, provider-agnostic process/Pod crash recovery, and tenant-aware runtime isolation across Shared, Dedicated, and Hybrid runtime modes.
 
 This document describes the **runtime instance provider model** for the Deterministic AI Runtime control plane.
 
@@ -17,6 +17,7 @@ The complete technical reference is currently preserved in:
 - [Multi-Tenant Control Plane Isolation](multi-tenant-control-plane-isolation.md)
 - [HTTP Runtime Provider](http-runtime-provider.md)
 - [gRPC Runtime Provider](grpc-runtime-provider.md)
+- [Kubernetes Runtime Host Provider](kubernetes-runtime-host-provider.md)
 - [Provider-Agnostic Process-Host Recovery](provider-agnostic-process-host-recovery.md)
 - [MCP Production Runtime Scenario Framework](mcp-production-runtime-scenario-framework.md)
 
@@ -669,7 +670,7 @@ scale-out
 
 A local provider may support dispatch, status, control, and scale-out.
 
-A Kubernetes provider may support discovery and scaling before it becomes a direct dispatch provider.
+The Kubernetes Host Manager strategy creates and exposes capacity while HTTP or gRPC remain the direct dispatch providers.
 
 A Redis command queue provider may support dispatch and control through commands.
 
@@ -838,6 +839,8 @@ AiRuntimeScaleOutProviderRequest.ProviderHint
     -> local
 ```
 
+For Kubernetes hosting, the provider hint remains `http` or `grpc`; the provisioner selects `HostCreationMode = Kubernetes`. Kubernetes is therefore a host lifecycle choice, not a replacement provider name for command dispatch.
+
 Current validated local scale-out capability:
 
 ```text
@@ -852,9 +855,7 @@ AiLocalRuntimeInstanceScaler
 new local runtime instance created/registered/started
 ```
 
-Kubernetes is most likely a scale-out provider before it is a direct dispatch provider.
-
-Scale-out should remain separate from dispatch, but it should reuse the same provider model.
+Kubernetes host creation remains separate from dispatch and reuses the same provider-scale-out model through the Runtime Host Manager.
 
 ---
 
@@ -1303,16 +1304,16 @@ LocalRunId / ExecutionId
 runtime run completed
 ```
 
-This validates the control loop required by Kubernetes scale-out before introducing Kubernetes pod creation.
+This control loop is now reused by the implemented Kubernetes Pod creation path.
 
-Future Kubernetes provider flow should preserve the same boundary:
+The implemented Kubernetes host lifecycle preserves the same boundary:
 
 ```text
 RequestScaleOut
     ↓
-Kubernetes provider creates or expands tenant-scoped runtime capacity
+Kubernetes Host Manager creates tenant-scoped runtime capacity
     ↓
-runtime pod registers/publishes tenant-aware capacity
+control-plane publisher registers tenant-aware capacity after readiness
     ↓
 scale-out request fulfilled
     ↓
@@ -1724,31 +1725,39 @@ provider-neutral registry/capacity readiness for non-HTTP transports
 
 ---
 
-## Kubernetes Provider
+## Kubernetes Host Provider
 
-The Kubernetes provider should primarily focus on environment and scaling concerns.
+Kubernetes is implemented as a Runtime Host Manager lifecycle provider rather than as a direct command provider.
 
-It should be responsible for:
+Its responsibilities include:
 
-- listing runtime pods
-- reading pod labels
-- reading pod readiness
-- mapping pod metadata to runtime descriptors
-- requesting scale-out
-- requesting scale-in
-- creating or expanding runtime capacity when handling scale-out requests
-- applying tenant-aware runtime settings to pod/deployment selection
-- attaching Kubernetes metadata to descriptors
+- creating and deleting `RuntimeInstanceOnly` Pods;
+- creating per-runtime Services;
+- validating Pod/Service identity during convergence;
+- waiting for Kubernetes host readiness;
+- resolving direct, port-forward, NodePort, or shared-Gateway transport endpoints;
+- publishing Kubernetes-backed runtime registry/capacity metadata only after required readiness;
+- removing registry/capacity visibility on successful host termination.
 
-Kubernetes should not be required to dispatch a run directly.
+The normal flow remains:
 
-Dispatch can still happen through:
+```text
+HTTP or gRPC scale-out provider
+    ↓
+Runtime Host Manager
+    ↓
+Kubernetes creates and readies capacity
+    ↓
+control plane publishes registry/capacity
+    ↓
+provider router resolves HTTP or gRPC provider
+    ↓
+provider dispatches into runtime local queue
+```
 
-- Redis command queues
-- HTTP
-- gRPC
+Kubernetes does not dispatch the run directly and does not own assigned-work recovery. Redis command queues remain a separate future transport.
 
-This keeps Kubernetes responsibilities clean.
+See [Kubernetes Runtime Host Provider](kubernetes-runtime-host-provider.md).
 
 ---
 
@@ -2170,9 +2179,9 @@ After the local, HTTP pooled, HTTP process-host, HTTP scale-out, and tenant-awar
 9. Add Redis command queue provider.
 10. Add command consumer in runtime-only host.
 11. Continue gRPC runtime provider hardening with native gRPC readiness and richer transport diagnostics.
-12. Add Kubernetes metadata provider.
-13. Add Kubernetes scaling provider using the existing IAiRuntimeScaleOutProvider capability model.
-14. Add Kubernetes scale-out request handling that creates/expands runtime pods and waits for registration/capacity.
+12. Harden Gateway API controller interoperability and production ingress policies.
+13. Add cluster autoscaling/HPA integration beyond runtime Pod creation.
+14. Harden production multi-control-plane leadership for shared Kubernetes provisioning.
 15. Refine Redis/Lua slot reservation paths where stronger atomic coordination is required.
 16. Add registry and capacity TTL self-healing.
 17. Continue hardening admission to use capacity descriptors and reservations as primary scheduling inputs.
@@ -2194,8 +2203,8 @@ Current limitations include:
 - Redis command queue provider is not implemented yet
 - gRPC process-host readiness currently bypasses the inherited HTTP readiness probe and should be replaced with gRPC-native or registry/capacity readiness
 - Provider-neutral process-host scenario identifiers still need cleanup where some names retain `http-process-host-*`
-- Kubernetes provider is not implemented yet
-- Kubernetes pod/deployment scale-out is not implemented yet
+- Kubernetes runtime Pod lifecycle is implemented; cluster autoscaling/HPA and broader deployment packaging remain separate work
+- Gateway API behavior depends on installed CRDs, a compatible controller, and environment-specific networking
 - capability negotiation is not complete yet
 - Lua-based slot reservation refinement is not implemented yet
 - registry/capacity TTL self-healing is not complete yet
@@ -2301,6 +2310,7 @@ Validated behavior includes:
 - [Shared Queue Pump and Worker Capacity](shared-queue-pump-and-worker-capacity.md)
 - [HTTP Runtime Provider](http-runtime-provider.md)
 - [gRPC Runtime Provider](grpc-runtime-provider.md)
+- [Kubernetes Runtime Host Provider](kubernetes-runtime-host-provider.md)
 - [Provider-Agnostic Process-Host Recovery](provider-agnostic-process-host-recovery.md)
 - [MCP Production Runtime Scenario Framework](mcp-production-runtime-scenario-framework.md)
 
@@ -2310,7 +2320,7 @@ Validated behavior includes:
 
 This document describes the runtime instance provider model.
 
-Do not present Redis command queue dispatch, Kubernetes pod scaling, global shared runtime pooling, RuntimeInstanceHealthReconciler behavior, native gRPC readiness, or production dashboard features as completed capabilities until they are implemented and validated.
+Do not present Redis command queue dispatch, cluster autoscaling/HPA, global shared runtime pooling, production multi-control-plane leadership, or production dashboard features as completed capabilities until they are implemented and validated. Kubernetes runtime Pod lifecycle itself is implemented on the Kubernetes branch.
 
 Provider dispatch and provider scale-out must continue to preserve the runtime boundaries:
 
@@ -2318,8 +2328,8 @@ Provider dispatch and provider scale-out must continue to preserve the runtime b
 Admission decides.
 Providers transport or scale.
 Runtime Host Manager creates or attaches runtime hosts.
-Runtime instances self-register.
-Registry/capacity stores expose readiness.
+Runtime instances self-register in process-host mode, or the Kubernetes lifecycle publisher registers them only after readiness.
+Registry/capacity stores expose safe executable visibility.
 Shared queue owns queued shared run dispatch.
 Local runtime queues own RunId.
 DAG engine owns ExecutionId.

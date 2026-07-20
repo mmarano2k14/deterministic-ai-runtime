@@ -14,10 +14,17 @@ using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Ownership;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Claiming;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Queue;
 using Multiplexed.Abstractions.Core.ExecutionContext;
+using Multiplexed.Abstractions.AI.Execution;
+using Multiplexed.Abstractions.AI.Execution.Control;
+using Multiplexed.Abstractions.AI.Execution.Scheduling;
+using Multiplexed.Abstractions.AI.Steps;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery.Transition;
+using Multiplexed.AI.Runtime.Execution.Engine.Models;
+using Multiplexed.AI.Runtime.Execution.Retention.Models;
 using Multiplexed.AI.Tests.Fixtures;
+using Multiplexed.AI.Stores;
 using Xunit;
 
 namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Recovery.Transition
@@ -233,7 +240,9 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Recovery.Trans
                 {
                     EnableDagExecutionResume = true
                 }),
-                recorder);
+                recorder,
+                new RecoveryExecutionControlService(),
+                new RecoveryDagExecutionStore());
         }
 
         /// <summary>
@@ -282,324 +291,388 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Recovery.Trans
             };
         }
 
-        /// <summary>
-        /// Creates an execution context snapshot for fake queue items.
-        /// </summary>
-        /// <returns>The execution context snapshot.</returns>
-        private static ExecutionContextSnapshot CreateSnapshot()
+
+        private sealed class RecoveryExecutionControlService : IAiExecutionControlService
         {
-            return new ExecutionContextSnapshot
-            {
-                ContextKey = "ctx-test",
-                Project = "project-test",
-                UserId = "user-test",
-                TenantId = "tenant-a",
-                TenantGroupId = "tenant-group-a",
-                CurrentNamespace = "default",
-                Namespaces = new List<NamespaceEntry>(),
-                InFlightCount = 0,
-                TtlSeconds = 300,
-                CreatedAtUtc = DateTime.UtcNow
-            };
-        }
-
-        /// <summary>
-        /// Creates a shared queue item.
-        /// </summary>
-        /// <param name="sharedRunId">The shared run identifier.</param>
-        /// <param name="status">The shared queue item status.</param>
-        /// <param name="claimToken">The claim token.</param>
-        /// <param name="metadata">The optional metadata.</param>
-        /// <returns>The shared queue item.</returns>
-        private static AiSharedQueueItem CreateQueueItem(
-            string sharedRunId,
-            AiSharedQueueItemStatus status,
-            string? claimToken = null,
-            IReadOnlyDictionary<string, string>? metadata = null)
-        {
-            return new AiSharedQueueItem
-            {
-                SharedRunId = sharedRunId,
-                ControlPlaneId = "control-plane-test",
-                Status = status,
-                ExecutionContextSnapshot = CreateSnapshot(),
-                PipelineKey = "pipeline-test",
-                ClaimedByRuntimeInstanceId = "runtime-1",
-                ClaimedByWorkerId = "worker-1",
-                ClaimToken = claimToken,
-                EnqueuedAtUtc = DateTimeOffset.UtcNow.AddSeconds(-10),
-                UpdatedAtUtc = DateTimeOffset.UtcNow,
-                ClaimedAtUtc = DateTimeOffset.UtcNow.AddSeconds(-5),
-                ClaimExpiresAtUtc = DateTimeOffset.UtcNow.AddMinutes(5),
-                Reason = "test",
-                Metadata = metadata ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
-            };
-        }
-
-        /// <summary>
-        /// Fake shared queue used by transition service tests.
-        /// </summary>
-        private sealed class FakeSharedQueue : IAiSharedQueue
-        {
-            /// <summary>
-            /// Gets or sets a value indicating whether recovery requeue should be rejected.
-            /// </summary>
-            public bool RejectRequeueDispatched { get; set; }
+            private AiExecutionControlState? state;
 
             /// <summary>
-            /// Gets the number of recovery requeue calls.
+            /// Gets the number of recovery pause requests.
             /// </summary>
-            public int RequeueDispatchedCalls { get; private set; }
+            public int PauseForRecoveryCallCount { get; private set; }
 
             /// <summary>
-            /// Gets the last requeued shared run identifier.
+            /// Gets the number of effective paused transitions.
             /// </summary>
-            public string? LastRequeueSharedRunId { get; private set; }
-
-            /// <summary>
-            /// Gets the last requeue claim token.
-            /// </summary>
-            public string? LastRequeueClaimToken { get; private set; }
-
-            /// <summary>
-            /// Gets the last requeue reason.
-            /// </summary>
-            public string? LastRequeueReason { get; private set; }
-
-            /// <summary>
-            /// Gets the last recovery metadata.
-            /// </summary>
-            public IReadOnlyDictionary<string, string>? LastRequeueMetadata { get; private set; }
+            public int MarkPausedCallCount { get; private set; }
 
             /// <inheritdoc />
-            public Task<AiSharedQueueItem> EnqueueAsync(
-                AiSharedQueueItem item,
-                CancellationToken cancellationToken = default)
-            {
-                return Task.FromResult(item);
-            }
-
-            /// <inheritdoc />
-            public Task<AiSharedQueueItem?> GetAsync(
-                string sharedRunId,
-                CancellationToken cancellationToken = default)
-            {
-                return Task.FromResult<AiSharedQueueItem?>(null);
-            }
-
-            /// <inheritdoc />
-            public Task<IReadOnlyList<AiSharedQueueItem>> ListAsync(
-                bool includeTerminal = false,
-                CancellationToken cancellationToken = default)
-            {
-                return Task.FromResult<IReadOnlyList<AiSharedQueueItem>>([]);
-            }
-
-            /// <inheritdoc />
-            public Task<AiSharedQueueItem?> ClaimNextAsync(
-                AiSharedQueueClaimRequest request,
-                CancellationToken cancellationToken = default)
-            {
-                return Task.FromResult<AiSharedQueueItem?>(null);
-            }
-
-            /// <inheritdoc />
-            public Task<AiSharedQueueItem?> MarkDispatchedAsync(
-                string sharedRunId,
-                string claimToken,
+            public Task<AiExecutionControlState> PauseExecutionForRecoveryAsync(
+                string executionId,
+                string recoveryOwnerId,
                 string? reason = null,
                 CancellationToken cancellationToken = default)
             {
-                return Task.FromResult<AiSharedQueueItem?>(CreateQueueItem(
-                    sharedRunId,
-                    AiSharedQueueItemStatus.Dispatched,
-                    claimToken));
-            }
+                ArgumentException.ThrowIfNullOrWhiteSpace(executionId);
+                ArgumentException.ThrowIfNullOrWhiteSpace(recoveryOwnerId);
+                cancellationToken.ThrowIfCancellationRequested();
 
-            /// <inheritdoc />
-            public Task<AiSharedQueueItem?> RequeueAsync(
-                string sharedRunId,
-                string claimToken,
-                string? reason = null,
-                CancellationToken cancellationToken = default)
-            {
-                return Task.FromResult<AiSharedQueueItem?>(CreateQueueItem(
-                    sharedRunId,
-                    AiSharedQueueItemStatus.Pending,
-                    claimToken));
-            }
-
-            /// <inheritdoc />
-            public Task<AiSharedQueueItem?> CancelAsync(
-                string sharedRunId,
-                string? reason = null,
-                CancellationToken cancellationToken = default)
-            {
-                return Task.FromResult<AiSharedQueueItem?>(CreateQueueItem(
-                    sharedRunId,
-                    AiSharedQueueItemStatus.Cancelled));
-            }
-
-            /// <inheritdoc />
-            public Task<AiSharedQueueItem?> RequeueDispatchedAsync(
-                string sharedRunId,
-                string claimToken,
-                string? reason = null,
-                CancellationToken cancellationToken = default)
-            {
-                return RequeueDispatchedAsync(
-                    sharedRunId,
-                    claimToken,
+                this.PauseForRecoveryCallCount++;
+                this.state = CreateState(
+                    executionId,
+                    AiExecutionControlStatus.Pausing,
                     reason,
-                    null,
-                    cancellationToken);
+                    recoveryOwnerId);
+
+                return Task.FromResult(this.state);
             }
 
             /// <inheritdoc />
-            public Task<AiSharedQueueItem?> RequeueDispatchedAsync(
-                string sharedRunId,
-                string claimToken,
-                string? reason,
-                IReadOnlyDictionary<string, string>? metadata,
+            public Task<AiExecutionControlState> MarkPausedAsync(
+                string executionId,
+                string? requestedBy = null,
                 CancellationToken cancellationToken = default)
             {
-                RequeueDispatchedCalls++;
-                LastRequeueSharedRunId = sharedRunId;
-                LastRequeueClaimToken = claimToken;
-                LastRequeueReason = reason;
-                LastRequeueMetadata = metadata;
+                ArgumentException.ThrowIfNullOrWhiteSpace(executionId);
+                cancellationToken.ThrowIfCancellationRequested();
 
-                if (RejectRequeueDispatched)
+                this.MarkPausedCallCount++;
+                this.state = CreateState(
+                    executionId,
+                    AiExecutionControlStatus.Paused,
+                    this.state?.Reason,
+                    requestedBy ?? this.state?.RequestedBy);
+
+                return Task.FromResult(this.state);
+            }
+
+            /// <inheritdoc />
+            public Task<AiExecutionControlState?> GetStateAsync(
+                string executionId,
+                CancellationToken cancellationToken = default)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                return Task.FromResult(this.state);
+            }
+
+            /// <inheritdoc />
+            public Task<AiExecutionControlState> PauseExecutionAsync(
+                string executionId,
+                string? reason = null,
+                string? requestedBy = null,
+                CancellationToken cancellationToken = default)
+            {
+                throw new NotSupportedException();
+            }
+
+            /// <inheritdoc />
+            public Task<AiExecutionControlState> ResumeExecutionAsync(
+                string executionId,
+                string? requestedBy = null,
+                CancellationToken cancellationToken = default)
+            {
+                throw new NotSupportedException();
+            }
+
+            /// <inheritdoc />
+            public Task<AiExecutionControlState> CancelExecutionAsync(
+                string executionId,
+                string? reason = null,
+                string? requestedBy = null,
+                CancellationToken cancellationToken = default)
+            {
+                throw new NotSupportedException();
+            }
+
+            /// <inheritdoc />
+            public Task<AiExecutionControlState> MarkCancelledAsync(
+                string executionId,
+                string? requestedBy = null,
+                CancellationToken cancellationToken = default)
+            {
+                throw new NotSupportedException();
+            }
+
+            /// <inheritdoc />
+            public Task<AiExecutionControlState> MarkWaitingForInputAsync(
+                string executionId,
+                string waitingKey,
+                string? waitingStepName = null,
+                string? reason = null,
+                string? requestedBy = null,
+                CancellationToken cancellationToken = default)
+            {
+                throw new NotSupportedException();
+            }
+
+            /// <inheritdoc />
+            public Task<AiExecutionControlState> SubmitHumanInputAsync(
+                string executionId,
+                string waitingKey,
+                IReadOnlyDictionary<string, object?> input,
+                string? submittedBy = null,
+                CancellationToken cancellationToken = default)
+            {
+                throw new NotSupportedException();
+            }
+
+            /// <inheritdoc />
+            public Task<AiExecutionControlDecision> CheckCanAdvanceAsync(
+                string executionId,
+                CancellationToken cancellationToken = default)
+            {
+                throw new NotSupportedException();
+            }
+
+            /// <inheritdoc />
+            public Task<AiExecutionControlState> MarkRunningAsync(
+                string executionId,
+                string? requestedBy = null,
+                CancellationToken cancellationToken = default)
+            {
+                throw new NotSupportedException();
+            }
+
+            /// <inheritdoc />
+            public Task<AiExecutionControlState> ResumeExecutionFromRecoveryAsync(
+                string executionId,
+                string recoveryOwnerId,
+                CancellationToken cancellationToken = default)
+            {
+                throw new NotSupportedException();
+            }
+
+            private static AiExecutionControlState CreateState(
+                string executionId,
+                AiExecutionControlStatus status,
+                string? reason,
+                string? requestedBy)
+            {
+                return new AiExecutionControlState
                 {
-                    return Task.FromResult<AiSharedQueueItem?>(null);
-                }
-
-                return Task.FromResult<AiSharedQueueItem?>(CreateQueueItem(
-                    sharedRunId,
-                    AiSharedQueueItemStatus.Pending,
-                    claimToken,
-                    metadata));
+                    ExecutionId = executionId,
+                    Status = status,
+                    Reason = reason,
+                    RequestedBy = requestedBy,
+                    UpdatedAtUtc = DateTime.UtcNow,
+                    PauseRequestedAtUtc =
+                        status == AiExecutionControlStatus.Pausing
+                            ? DateTime.UtcNow
+                            : null,
+                    PausedAtUtc =
+                        status == AiExecutionControlStatus.Paused
+                            ? DateTime.UtcNow
+                            : null
+                };
             }
         }
 
         /// <summary>
-        /// Fake runtime run execution index used by transition service tests.
+        /// Provides only the explicit running-step recovery operation required by this test.
         /// </summary>
-        private sealed class FakeRuntimeRunExecutionIndex : IAiRuntimeRunExecutionIndex
+        private sealed class RecoveryDagExecutionStore : IAiDagExecutionStore
         {
             /// <summary>
-            /// Gets or sets a value indicating whether requeue-for-recovery should be accepted.
+            /// Gets the number of explicit recovery calls.
             /// </summary>
-            public bool MarkRequeuedForRecoveryResult { get; set; } = true;
+            public int RecoverRunningStepsForRecoveryCallCount { get; private set; }
 
             /// <summary>
-            /// Gets the number of recovery requeue index transitions.
+            /// Gets the last durable execution identifier recovered.
             /// </summary>
-            public int MarkRequeuedForRecoveryCalls { get; private set; }
-
-            /// <summary>
-            /// Gets the last requeued local run identifier.
-            /// </summary>
-            public string? LastRequeuedRunId { get; private set; }
-
-            /// <summary>
-            /// Gets the last requeued durable execution identifier.
-            /// </summary>
-            public string? LastRequeuedExecutionId { get; private set; }
-
-            /// <summary>
-            /// Gets the last requeue recovery reason.
-            /// </summary>
-            public string? LastRequeuedReason { get; private set; }
-
-            /// <summary>
-            /// Gets the registered queued entries.
-            /// </summary>
-            public List<AiRuntimeRunExecutionIndexEntry> RegisteredEntries { get; } = [];
+            public string? LastRecoveredExecutionId { get; private set; }
 
             /// <inheritdoc />
-            public Task RegisterQueuedAsync(
-                AiRuntimeRunExecutionIndexEntry entry,
-                CancellationToken cancellationToken = default)
-            {
-                RegisteredEntries.Add(entry);
-
-                return Task.CompletedTask;
-            }
-
-            /// <inheritdoc />
-            public Task MarkStartedAsync(
-                string runId,
+            public Task<int> RecoverRunningStepsForRecoveryAsync(
                 string executionId,
                 CancellationToken cancellationToken = default)
             {
-                return Task.CompletedTask;
+                ArgumentException.ThrowIfNullOrWhiteSpace(executionId);
+                cancellationToken.ThrowIfCancellationRequested();
+
+                this.RecoverRunningStepsForRecoveryCallCount++;
+                this.LastRecoveredExecutionId = executionId;
+
+                return Task.FromResult(1);
             }
 
             /// <inheritdoc />
-            public Task MarkCompletedAsync(
-                string runId,
+            public Task CreateAsync(
+                AiExecutionRecord record,
+                AiExecutionState state,
+                CancellationToken cancellationToken = default)
+            {
+                throw new NotSupportedException();
+            }
+
+            /// <inheritdoc />
+            public Task<AiExecutionRecord?> GetRecordAsync(
                 string executionId,
                 CancellationToken cancellationToken = default)
             {
-                return Task.CompletedTask;
+                throw new NotSupportedException();
             }
 
             /// <inheritdoc />
-            public Task MarkFailedAsync(
-                string runId,
-                string? executionId,
-                string failureReason,
-                CancellationToken cancellationToken = default)
-            {
-                return Task.CompletedTask;
-            }
-
-            /// <inheritdoc />
-            public Task MarkCancelledAsync(
-                string runId,
-                string? executionId,
-                string? reason,
-                CancellationToken cancellationToken = default)
-            {
-                return Task.CompletedTask;
-            }
-
-            /// <inheritdoc />
-            public Task<bool> MarkRequeuedForRecoveryAsync(
-                string runId,
+            public Task<AiExecutionState?> GetStateAsync(
                 string executionId,
-                string reason,
                 CancellationToken cancellationToken = default)
             {
-                MarkRequeuedForRecoveryCalls++;
-                LastRequeuedRunId = runId;
-                LastRequeuedExecutionId = executionId;
-                LastRequeuedReason = reason;
-
-                return Task.FromResult(MarkRequeuedForRecoveryResult);
+                throw new NotSupportedException();
             }
 
             /// <inheritdoc />
-            public Task<AiRuntimeRunExecutionIndexEntry?> GetAsync(
-                string runId,
+            public Task SaveRecordAsync(
+                AiExecutionRecord record,
                 CancellationToken cancellationToken = default)
             {
-                return Task.FromResult<AiRuntimeRunExecutionIndexEntry?>(null);
+                throw new NotSupportedException();
             }
 
             /// <inheritdoc />
-            public Task<IReadOnlyList<AiRuntimeRunExecutionIndexEntry>> ListUnfinishedByRuntimeInstanceAsync(
-                string runtimeInstanceId,
+            public Task SaveStateAsync(
+                string executionId,
+                AiExecutionState state,
                 CancellationToken cancellationToken = default)
             {
-                return Task.FromResult<IReadOnlyList<AiRuntimeRunExecutionIndexEntry>>([]);
+                throw new NotSupportedException();
             }
 
-            public Task<IReadOnlyList<AiRuntimeRunExecutionIndexEntry>> ListUnfinishedAsync(CancellationToken cancellationToken = default)
+            /// <inheritdoc />
+            public Task DeleteRecordAsync(
+                string executionId,
+                CancellationToken cancellationToken = default)
             {
-                return Task.FromResult<IReadOnlyList<AiRuntimeRunExecutionIndexEntry>>([]);
+                throw new NotSupportedException();
+            }
+
+            /// <inheritdoc />
+            public Task DeleteStateAsync(
+                string executionId,
+                CancellationToken cancellationToken = default)
+            {
+                throw new NotSupportedException();
+            }
+
+            /// <inheritdoc />
+            public Task DeleteStepsAsync(
+                string executionId,
+                CancellationToken cancellationToken = default)
+            {
+                throw new NotSupportedException();
+            }
+
+            /// <inheritdoc />
+            public Task DeleteExecutionBundleAsync(
+                string executionId,
+                CancellationToken cancellationToken = default)
+            {
+                throw new NotSupportedException();
+            }
+
+            /// <inheritdoc />
+            public Task<AiClaimedStep?> TryClaimNextReadyStepAsync(
+                string executionId,
+                string workerId,
+                CancellationToken cancellationToken = default)
+            {
+                throw new NotSupportedException();
+            }
+
+            /// <inheritdoc />
+            public Task<bool> TryCompleteStepAsync(
+                string executionId,
+                string stepName,
+                string claimToken,
+                AiStepResult result,
+                CancellationToken cancellationToken = default)
+            {
+                throw new NotSupportedException();
+            }
+
+            /// <inheritdoc />
+            public Task<bool> TryFailStepAsync(
+                string executionId,
+                string stepName,
+                string claimToken,
+                string? error,
+                CancellationToken cancellationToken = default)
+            {
+                throw new NotSupportedException();
+            }
+
+            /// <inheritdoc />
+            public Task<int> RecoverTimedOutStepsAsync(
+                string executionId,
+                CancellationToken cancellationToken = default)
+            {
+                throw new NotSupportedException();
+            }
+
+            /// <inheritdoc />
+            public Task<bool> TryFinalizeExecutionAsync(
+                AiDagExecutionFinalizationRequest request,
+                CancellationToken cancellationToken = default)
+            {
+                throw new NotSupportedException();
+            }
+
+            /// <inheritdoc />
+            public Task RestoreAsync(
+                AiExecutionRecord record,
+                AiExecutionState state,
+                CancellationToken cancellationToken = default)
+            {
+                throw new NotSupportedException();
+            }
+
+            /// <inheritdoc />
+            public Task DeleteStepAsync(
+                string executionId,
+                string stepName,
+                CancellationToken cancellationToken = default)
+            {
+                throw new NotSupportedException();
+            }
+
+            /// <inheritdoc />
+            public Task<IReadOnlyList<AiClaimedStep>> TryClaimReadyStepsAsync(
+                string executionId,
+                string workerId,
+                int maxSteps,
+                CancellationToken cancellationToken = default)
+            {
+                throw new NotSupportedException();
+            }
+
+            /// <inheritdoc />
+            public Task<IReadOnlyList<AiClaimedStep>> GetReadyStepsAsync(
+                string executionId,
+                int maxSteps,
+                CancellationToken cancellationToken = default)
+            {
+                throw new NotSupportedException();
+            }
+
+            /// <inheritdoc />
+            public Task<AiClaimedStep?> TryClaimStepAsync(
+                string executionId,
+                string stepName,
+                string workerId,
+                CancellationToken cancellationToken = default)
+            {
+                throw new NotSupportedException();
+            }
+
+            /// <inheritdoc />
+            public Task<AiRetentionPatchResult> TryApplyRetentionPatchAsync(
+                string executionId,
+                IReadOnlyCollection<AiRetentionPatchCandidate> candidates,
+                CancellationToken cancellationToken = default)
+            {
+                throw new NotSupportedException();
             }
         }
+
     }
 }

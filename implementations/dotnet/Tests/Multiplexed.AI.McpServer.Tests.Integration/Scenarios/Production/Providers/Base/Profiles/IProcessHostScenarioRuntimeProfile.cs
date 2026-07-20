@@ -1,12 +1,19 @@
-﻿using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Definitions;
+﻿using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager;
+using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Definitions;
+using System.Collections.Generic;
 
 namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Providers.Base.Profiles
 {
     /// <summary>
-    /// Defines the runtime-provider-specific configuration for process-host production scenarios.
+    /// Defines the runtime-provider-specific configuration for runtime-host production scenarios.
     /// </summary>
     public interface IProcessHostScenarioRuntimeProfile
     {
+        /// <summary>
+        /// Gets the runtime host creation mode used by the scenario.
+        /// </summary>
+        AiRuntimeHostCreationMode HostCreationMode { get; }
+
         /// <summary>
         /// Gets the provider name.
         /// </summary>
@@ -33,7 +40,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
         string Source { get; }
 
         /// <summary>
-        /// Builds provider-specific MCP host settings for a process-host production scenario.
+        /// Builds provider-specific MCP host settings for a runtime-host production scenario.
         /// </summary>
         /// <param name="scenario">The production scenario definition.</param>
         /// <param name="controlPlaneId">The control-plane identifier.</param>

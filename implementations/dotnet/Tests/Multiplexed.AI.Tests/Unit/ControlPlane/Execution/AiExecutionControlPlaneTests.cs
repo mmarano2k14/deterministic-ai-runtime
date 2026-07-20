@@ -8,6 +8,7 @@ using Multiplexed.Abstractions.AI.Execution.Control;
 using Multiplexed.AI.Runtime.ControlPlane.DI;
 using Multiplexed.AI.Runtime.ControlPlane.Execution;
 using Multiplexed.AI.Runtime.ControlPlane.Observability;
+using Multiplexed.AI.Tests.Fixtures;
 
 namespace Multiplexed.AI.Tests.Unit.ControlPlane.Execution
 {
@@ -240,20 +241,9 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.Execution
                 new NoopAiControlPlaneObserver());
         }
 
-        private sealed class CapturingControlPlaneObserver : IAiControlPlaneObserver
-        {
-            public List<AiControlPlaneEvent> Events { get; } = new();
-
-            public Task RecordAsync(
-                AiControlPlaneEvent controlPlaneEvent,
-                CancellationToken cancellationToken = default)
-            {
-                Events.Add(controlPlaneEvent);
-
-                return Task.CompletedTask;
-            }
-        }
-
+        /// <summary>
+        /// Fake execution control service used by execution control-plane tests.
+        /// </summary>
         private sealed class FakeExecutionControlService : IAiExecutionControlService
         {
             public string? LastExecutionId { get; private set; }
@@ -262,18 +252,29 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.Execution
 
             public string? LastRequestedBy { get; private set; }
 
+            public string? LastRecoveryOwnerId { get; private set; }
+
             public string? LastWaitingKey { get; private set; }
+
+            public string? LastWaitingStepName { get; private set; }
 
             public IReadOnlyDictionary<string, object?>? LastInput { get; private set; }
 
             public bool GetStateCalled { get; private set; }
 
+            public bool PauseForRecoveryCalled { get; private set; }
+
+            public bool ResumeFromRecoveryCalled { get; private set; }
+
+            /// <inheritdoc />
             public Task<AiExecutionControlState> PauseExecutionAsync(
                 string executionId,
                 string? reason = null,
                 string? requestedBy = null,
                 CancellationToken cancellationToken = default)
             {
+                cancellationToken.ThrowIfCancellationRequested();
+
                 LastExecutionId = executionId;
                 LastReason = reason;
                 LastRequestedBy = requestedBy;
@@ -286,11 +287,14 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.Execution
                     reason));
             }
 
+            /// <inheritdoc />
             public Task<AiExecutionControlState> ResumeExecutionAsync(
                 string executionId,
                 string? requestedBy = null,
                 CancellationToken cancellationToken = default)
             {
+                cancellationToken.ThrowIfCancellationRequested();
+
                 LastExecutionId = executionId;
                 LastRequestedBy = requestedBy;
 
@@ -299,15 +303,62 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.Execution
                     AiExecutionControlStatus.Resuming,
                     AiExecutionControlAction.Resume,
                     requestedBy,
-                    null));
+                    reason: null));
             }
 
+            /// <inheritdoc />
+            public Task<AiExecutionControlState> PauseExecutionForRecoveryAsync(
+                string executionId,
+                string recoveryOwnerId,
+                string? reason = null,
+                CancellationToken cancellationToken = default)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                LastExecutionId = executionId;
+                LastReason = reason;
+                LastRequestedBy = recoveryOwnerId;
+                LastRecoveryOwnerId = recoveryOwnerId;
+                PauseForRecoveryCalled = true;
+
+                return Task.FromResult(CreateState(
+                    executionId,
+                    AiExecutionControlStatus.Pausing,
+                    AiExecutionControlAction.Pause,
+                    recoveryOwnerId,
+                    reason));
+            }
+
+            /// <inheritdoc />
+            public Task<AiExecutionControlState> ResumeExecutionFromRecoveryAsync(
+                string executionId,
+                string recoveryOwnerId,
+                CancellationToken cancellationToken = default)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                LastExecutionId = executionId;
+                LastRequestedBy = recoveryOwnerId;
+                LastRecoveryOwnerId = recoveryOwnerId;
+                ResumeFromRecoveryCalled = true;
+
+                return Task.FromResult(CreateState(
+                    executionId,
+                    AiExecutionControlStatus.Resuming,
+                    AiExecutionControlAction.Resume,
+                    recoveryOwnerId,
+                    reason: null));
+            }
+
+            /// <inheritdoc />
             public Task<AiExecutionControlState> CancelExecutionAsync(
                 string executionId,
                 string? reason = null,
                 string? requestedBy = null,
                 CancellationToken cancellationToken = default)
             {
+                cancellationToken.ThrowIfCancellationRequested();
+
                 LastExecutionId = executionId;
                 LastReason = reason;
                 LastRequestedBy = requestedBy;
@@ -320,109 +371,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.Execution
                     reason));
             }
 
-            public Task<AiExecutionControlState> RequestHumanInputAsync(
-                string executionId,
-                string waitingKey,
-                string? waitingStepName = null,
-                string? reason = null,
-                string? requestedBy = null,
-                CancellationToken cancellationToken = default)
-            {
-                LastExecutionId = executionId;
-                LastWaitingKey = waitingKey;
-                LastRequestedBy = requestedBy;
-
-                return Task.FromResult(CreateState(
-                    executionId,
-                    AiExecutionControlStatus.WaitingForInput,
-                    AiExecutionControlAction.None,
-                    requestedBy,
-                    reason));
-            }
-
-            public Task<AiExecutionControlState> SubmitHumanInputAsync(
-                string executionId,
-                string waitingKey,
-                IReadOnlyDictionary<string, object?> input,
-                string? requestedBy = null,
-                CancellationToken cancellationToken = default)
-            {
-                LastExecutionId = executionId;
-                LastWaitingKey = waitingKey;
-                LastInput = input;
-                LastRequestedBy = requestedBy;
-
-                return Task.FromResult(CreateState(
-                    executionId,
-                    AiExecutionControlStatus.Resuming,
-                    AiExecutionControlAction.Resume,
-                    requestedBy,
-                    null));
-            }
-
-            public Task<AiExecutionControlState> MarkPausedAsync(
-                string executionId,
-                CancellationToken cancellationToken = default)
-            {
-                return Task.FromResult(CreateState(
-                    executionId,
-                    AiExecutionControlStatus.Paused,
-                    AiExecutionControlAction.None,
-                    null,
-                    null));
-            }
-
-            public Task<AiExecutionControlState> MarkRunningAsync(
-                string executionId,
-                CancellationToken cancellationToken = default)
-            {
-                return Task.FromResult(CreateState(
-                    executionId,
-                    AiExecutionControlStatus.Running,
-                    AiExecutionControlAction.None,
-                    null,
-                    null));
-            }
-
-            public Task<AiExecutionControlState> MarkCancelledAsync(
-                string executionId,
-                string? requestedBy = null,
-                CancellationToken cancellationToken = default)
-            {
-                return Task.FromResult(CreateState(
-                    executionId,
-                    AiExecutionControlStatus.Cancelled,
-                    AiExecutionControlAction.None,
-                    requestedBy,
-                    null));
-            }
-
-            public Task<AiExecutionControlState?> GetStateAsync(
-                string executionId,
-                CancellationToken cancellationToken = default)
-            {
-                GetStateCalled = true;
-
-                return Task.FromResult<AiExecutionControlState?>(
-                    CreateState(
-                        executionId,
-                        AiExecutionControlStatus.Running,
-                        AiExecutionControlAction.None,
-                        null,
-                        null));
-            }
-
-            public Task<AiExecutionControlDecision> CheckCanAdvanceAsync(
-                string executionId,
-                CancellationToken cancellationToken = default)
-            {
-                return Task.FromResult(new AiExecutionControlDecision
-                {
-                    CanContinue = true,
-                    Status = AiExecutionControlStatus.Running
-                });
-            }
-
+            /// <inheritdoc />
             public Task<AiExecutionControlState> MarkWaitingForInputAsync(
                 string executionId,
                 string waitingKey,
@@ -431,43 +380,147 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.Execution
                 string? requestedBy = null,
                 CancellationToken cancellationToken = default)
             {
+                cancellationToken.ThrowIfCancellationRequested();
+
                 LastExecutionId = executionId;
                 LastWaitingKey = waitingKey;
-                LastRequestedBy = requestedBy;
+                LastWaitingStepName = waitingStepName;
                 LastReason = reason;
+                LastRequestedBy = requestedBy;
 
-                return Task.FromResult(CreateState(
+                var state = CreateState(
                     executionId,
                     AiExecutionControlStatus.WaitingForInput,
-                    AiExecutionControlAction.None,
+                    AiExecutionControlAction.WaitForInput,
                     requestedBy,
-                    reason));
+                    reason);
+
+                state.WaitingKey = waitingKey;
+                state.WaitingStepName = waitingStepName;
+
+                return Task.FromResult(state);
             }
 
+            /// <inheritdoc />
+            public Task<AiExecutionControlState> SubmitHumanInputAsync(
+                string executionId,
+                string waitingKey,
+                IReadOnlyDictionary<string, object?> input,
+                string? submittedBy = null,
+                CancellationToken cancellationToken = default)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                ArgumentNullException.ThrowIfNull(input);
+
+                LastExecutionId = executionId;
+                LastWaitingKey = waitingKey;
+                LastInput = input;
+                LastRequestedBy = submittedBy;
+
+                var state = CreateState(
+                    executionId,
+                    AiExecutionControlStatus.Resuming,
+                    AiExecutionControlAction.SubmitInput,
+                    submittedBy,
+                    reason: null);
+
+                state.WaitingKey = waitingKey;
+                state.Input = new Dictionary<string, object?>(
+                    input,
+                    StringComparer.Ordinal);
+
+                return Task.FromResult(state);
+            }
+
+            /// <inheritdoc />
+            public Task<AiExecutionControlDecision> CheckCanAdvanceAsync(
+                string executionId,
+                CancellationToken cancellationToken = default)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                LastExecutionId = executionId;
+
+                return Task.FromResult(new AiExecutionControlDecision
+                {
+                    CanContinue = true,
+                    Status = AiExecutionControlStatus.Running
+                });
+            }
+
+            /// <inheritdoc />
             public Task<AiExecutionControlState> MarkPausedAsync(
                 string executionId,
                 string? requestedBy = null,
                 CancellationToken cancellationToken = default)
             {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                LastExecutionId = executionId;
+                LastRequestedBy = requestedBy;
+
                 return Task.FromResult(CreateState(
                     executionId,
                     AiExecutionControlStatus.Paused,
                     AiExecutionControlAction.None,
                     requestedBy,
-                    null));
+                    reason: null));
             }
 
+            /// <inheritdoc />
             public Task<AiExecutionControlState> MarkRunningAsync(
                 string executionId,
                 string? requestedBy = null,
                 CancellationToken cancellationToken = default)
             {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                LastExecutionId = executionId;
+                LastRequestedBy = requestedBy;
+
                 return Task.FromResult(CreateState(
                     executionId,
                     AiExecutionControlStatus.Running,
                     AiExecutionControlAction.None,
                     requestedBy,
-                    null));
+                    reason: null));
+            }
+
+            /// <inheritdoc />
+            public Task<AiExecutionControlState> MarkCancelledAsync(
+                string executionId,
+                string? requestedBy = null,
+                CancellationToken cancellationToken = default)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                LastExecutionId = executionId;
+                LastRequestedBy = requestedBy;
+
+                return Task.FromResult(CreateState(
+                    executionId,
+                    AiExecutionControlStatus.Cancelled,
+                    AiExecutionControlAction.None,
+                    requestedBy,
+                    reason: null));
+            }
+
+            /// <inheritdoc />
+            public Task<AiExecutionControlState?> GetStateAsync(
+                string executionId,
+                CancellationToken cancellationToken = default)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                LastExecutionId = executionId;
+                GetStateCalled = true;
+
+                return Task.FromResult<AiExecutionControlState?>(CreateState(
+                    executionId,
+                    AiExecutionControlStatus.Running,
+                    AiExecutionControlAction.None,
+                    requestedBy: null,
+                    reason: null));
             }
 
             private static AiExecutionControlState CreateState(
@@ -489,5 +542,21 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.Execution
                 };
             }
         }
+
+        private sealed class CapturingControlPlaneObserver : IAiControlPlaneObserver
+        {
+            public List<AiControlPlaneEvent> Events { get; } = new();
+
+            public Task RecordAsync(
+                AiControlPlaneEvent controlPlaneEvent,
+                CancellationToken cancellationToken = default)
+            {
+                Events.Add(controlPlaneEvent);
+
+                return Task.CompletedTask;
+            }
+        }
+
+
     }
 }

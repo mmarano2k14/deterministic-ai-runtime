@@ -34,25 +34,49 @@ namespace Multiplexed.AI.Tests.Unit.Execution.Instance.Worker
         {
             const string existingExecutionId = "execution-existing-1";
 
+            const string recoveryOwnerId =
+                "runtime-recovery:execution-existing-1:shared-run-1:local-run-failed-1";
+
             var worker = new CapturingRuntimeInstanceWorker();
             var runExecutionIndex = new InMemoryAiRuntimeRunExecutionIndex();
             var lifecycleHook = new CapturingRunLifecycleHook();
+            var executionControlService = new RecoveryExecutionControlService();
 
             var controller = CreateController(
                 worker,
                 runExecutionIndex,
-                lifecycleHook);
+                lifecycleHook,
+                executionControlService);
 
-            await controller.StartAsync();
+            await controller
+                .StartAsync()
+                .ConfigureAwait(false);
 
-            var handle = await controller.EnqueueResumeAsync(
-                new AiRuntimePipelineRunRequest
-                {
-                    PipelineName = "pipeline-1",
-                    ExecutionContextSnapshot = CreateExecutionContextSnapshot(),
-                    PipelineDefinition = CreatePipelineDefinition()
-                },
-                existingExecutionId);
+            await controller
+                .PauseQueueAsync(
+                    reason: "hold resume queued for deterministic index assertion",
+                    requestedBy: "unit-test")
+                .ConfigureAwait(false);
+
+            var handle = await controller
+                .EnqueueResumeAsync(
+                    new AiRuntimePipelineRunRequest
+                    {
+                        PipelineName = "pipeline-1",
+                        ExecutionContextSnapshot = CreateExecutionContextSnapshot(),
+                        PipelineDefinition = CreatePipelineDefinition(),
+                        Metadata = new Dictionary<string, string>
+                        {
+                            ["recovery.mode"] = "resume-existing-execution",
+                            ["recovery.forensicsId"] = recoveryOwnerId,
+                            ["recovery.failedExecutionId"] = existingExecutionId,
+                            ["recovery.failedRuntimeInstanceId"] = "runtime-instance-failed-1",
+                            ["recovery.failedLocalRunId"] = "local-run-failed-1",
+                            ["shared.run.id"] = "shared-run-1"
+                        }
+                    },
+                    existingExecutionId)
+                .ConfigureAwait(false);
 
             var queuedIndex =
                 await runExecutionIndex
@@ -62,13 +86,25 @@ namespace Multiplexed.AI.Tests.Unit.Execution.Instance.Worker
             Assert.NotNull(queuedIndex);
             Assert.Equal(existingExecutionId, queuedIndex!.ExecutionId);
             Assert.Equal("queued", queuedIndex.Status);
+            Assert.Equal("true", queuedIndex.Metadata["recovery.resume"]);
+            Assert.Equal(existingExecutionId, queuedIndex.Metadata["recovery.execution.id"]);
+            Assert.Equal(recoveryOwnerId, queuedIndex.Metadata["recovery.forensicsId"]);
+
+            await controller
+                .ResumeQueueAsync(requestedBy: "unit-test")
+                .ConfigureAwait(false);
 
             var final = await handle.Completion.WaitAsync(
                 TimeSpan.FromSeconds(10));
 
-            await controller.StopAsync();
+            await controller
+                .StopAsync()
+                .ConfigureAwait(false);
 
-            var indexed = await runExecutionIndex.GetAsync(handle.RunId);
+            var indexed =
+                await runExecutionIndex
+                    .GetAsync(handle.RunId)
+                    .ConfigureAwait(false);
 
             Assert.Equal(existingExecutionId, handle.ExecutionId);
             Assert.Equal(existingExecutionId, worker.LastExecutionId);
@@ -77,6 +113,9 @@ namespace Multiplexed.AI.Tests.Unit.Execution.Instance.Worker
             Assert.NotNull(indexed);
             Assert.Equal(existingExecutionId, indexed!.ExecutionId);
             Assert.Equal("completed", indexed.Status);
+            Assert.Equal(1, executionControlService.ResumeFromRecoveryCallCount);
+            Assert.Equal(1, executionControlService.MarkRunningCallCount);
+            Assert.Equal(recoveryOwnerId, executionControlService.LastRecoveryOwnerId);
             Assert.True(lifecycleHook.FinalizedCalled);
             Assert.Equal(existingExecutionId, lifecycleHook.LastExecutionId);
         }
@@ -87,7 +126,8 @@ namespace Multiplexed.AI.Tests.Unit.Execution.Instance.Worker
         private static AiRuntimePipelineBackgroundController CreateController(
             CapturingRuntimeInstanceWorker worker,
             IAiRuntimeRunExecutionIndex runExecutionIndex,
-            IAiRuntimePipelineRunLifecycleHook lifecycleHook)
+            IAiRuntimePipelineRunLifecycleHook lifecycleHook,
+            IAiExecutionControlService executionControlService)
         {
             var engine = new AiDagExecutionEngine(
                 NullProxy.Create<IAiDagExecutionEngineServices>(),
@@ -101,7 +141,7 @@ namespace Multiplexed.AI.Tests.Unit.Execution.Instance.Worker
                 new StaticPipelineRunDefinitionResolver(),
                 new NoopPipelineRunDefinitionPublisher(),
                 lifecycleHook,
-                NullProxy.Create<IAiExecutionControlService>(),
+                executionControlService,
                 new TestRuntimeInstanceIdentity(),
                 NullProxy.Create<IAiRuntimeLogger>(),
                 NullProxy.Create<IAiRuntimeObservability>(),
@@ -168,6 +208,178 @@ namespace Multiplexed.AI.Tests.Unit.Execution.Instance.Worker
                 InFlightCount = 0,
                 TtlSeconds = 300
             };
+        }
+
+
+        /// <summary>
+        /// Provides the recovery-owned execution-control transitions required by resume.
+        /// </summary>
+        private sealed class RecoveryExecutionControlService : IAiExecutionControlService
+        {
+            private AiExecutionControlState? state;
+
+            /// <summary>
+            /// Gets the number of recovery resume requests.
+            /// </summary>
+            public int ResumeFromRecoveryCallCount { get; private set; }
+
+            /// <summary>
+            /// Gets the number of transitions to effective running state.
+            /// </summary>
+            public int MarkRunningCallCount { get; private set; }
+
+            /// <summary>
+            /// Gets the last deterministic recovery owner identifier.
+            /// </summary>
+            public string? LastRecoveryOwnerId { get; private set; }
+
+            /// <inheritdoc />
+            public Task<AiExecutionControlState> ResumeExecutionFromRecoveryAsync(
+                string executionId,
+                string recoveryOwnerId,
+                CancellationToken cancellationToken = default)
+            {
+                ArgumentException.ThrowIfNullOrWhiteSpace(executionId);
+                ArgumentException.ThrowIfNullOrWhiteSpace(recoveryOwnerId);
+                cancellationToken.ThrowIfCancellationRequested();
+
+                this.ResumeFromRecoveryCallCount++;
+                this.LastRecoveryOwnerId = recoveryOwnerId;
+                this.state = new AiExecutionControlState
+                {
+                    ExecutionId = executionId,
+                    Status = AiExecutionControlStatus.Resuming,
+                    PendingAction = AiExecutionControlAction.Resume,
+                    RequestedBy = recoveryOwnerId,
+                    Reason = "unit-test recovery resume",
+                    ResumeRequestedAtUtc = DateTime.UtcNow,
+                    UpdatedAtUtc = DateTime.UtcNow
+                };
+
+                return Task.FromResult(this.state);
+            }
+
+            /// <inheritdoc />
+            public Task<AiExecutionControlState> MarkRunningAsync(
+                string executionId,
+                string? requestedBy = null,
+                CancellationToken cancellationToken = default)
+            {
+                ArgumentException.ThrowIfNullOrWhiteSpace(executionId);
+                cancellationToken.ThrowIfCancellationRequested();
+
+                this.MarkRunningCallCount++;
+                this.state = new AiExecutionControlState
+                {
+                    ExecutionId = executionId,
+                    Status = AiExecutionControlStatus.Running,
+                    PendingAction = AiExecutionControlAction.None,
+                    RequestedBy = requestedBy ?? this.LastRecoveryOwnerId,
+                    Reason = "unit-test recovery running",
+                    UpdatedAtUtc = DateTime.UtcNow
+                };
+
+                return Task.FromResult(this.state);
+            }
+
+            /// <inheritdoc />
+            public Task<AiExecutionControlState?> GetStateAsync(
+                string executionId,
+                CancellationToken cancellationToken = default)
+            {
+                ArgumentException.ThrowIfNullOrWhiteSpace(executionId);
+                cancellationToken.ThrowIfCancellationRequested();
+
+                return Task.FromResult(this.state);
+            }
+
+            /// <inheritdoc />
+            public Task<AiExecutionControlState> PauseExecutionAsync(
+                string executionId,
+                string? reason = null,
+                string? requestedBy = null,
+                CancellationToken cancellationToken = default)
+            {
+                throw new NotSupportedException();
+            }
+
+            /// <inheritdoc />
+            public Task<AiExecutionControlState> ResumeExecutionAsync(
+                string executionId,
+                string? requestedBy = null,
+                CancellationToken cancellationToken = default)
+            {
+                throw new NotSupportedException();
+            }
+
+            /// <inheritdoc />
+            public Task<AiExecutionControlState> CancelExecutionAsync(
+                string executionId,
+                string? reason = null,
+                string? requestedBy = null,
+                CancellationToken cancellationToken = default)
+            {
+                throw new NotSupportedException();
+            }
+
+            /// <inheritdoc />
+            public Task<AiExecutionControlState> MarkCancelledAsync(
+                string executionId,
+                string? requestedBy = null,
+                CancellationToken cancellationToken = default)
+            {
+                throw new NotSupportedException();
+            }
+
+            /// <inheritdoc />
+            public Task<AiExecutionControlState> MarkWaitingForInputAsync(
+                string executionId,
+                string waitingKey,
+                string? waitingStepName = null,
+                string? reason = null,
+                string? requestedBy = null,
+                CancellationToken cancellationToken = default)
+            {
+                throw new NotSupportedException();
+            }
+
+            /// <inheritdoc />
+            public Task<AiExecutionControlState> SubmitHumanInputAsync(
+                string executionId,
+                string waitingKey,
+                IReadOnlyDictionary<string, object?> input,
+                string? submittedBy = null,
+                CancellationToken cancellationToken = default)
+            {
+                throw new NotSupportedException();
+            }
+
+            /// <inheritdoc />
+            public Task<AiExecutionControlDecision> CheckCanAdvanceAsync(
+                string executionId,
+                CancellationToken cancellationToken = default)
+            {
+                throw new NotSupportedException();
+            }
+
+            /// <inheritdoc />
+            public Task<AiExecutionControlState> MarkPausedAsync(
+                string executionId,
+                string? requestedBy = null,
+                CancellationToken cancellationToken = default)
+            {
+                throw new NotSupportedException();
+            }
+
+            /// <inheritdoc />
+            public Task<AiExecutionControlState> PauseExecutionForRecoveryAsync(
+                string executionId,
+                string recoveryOwnerId,
+                string? reason = null,
+                CancellationToken cancellationToken = default)
+            {
+                throw new NotSupportedException();
+            }
         }
 
         /// <summary>

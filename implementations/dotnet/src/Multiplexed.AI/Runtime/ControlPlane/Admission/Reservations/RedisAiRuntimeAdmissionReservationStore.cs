@@ -592,8 +592,14 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission.Reservations
             cancellationToken.ThrowIfCancellationRequested();
 
             var resolvedControlPlaneId =
-                await controlPlaneIdResolver
-                    .ResolveAsync(cancellationToken)
+                await this.controlPlaneIdResolver
+                    .ResolveAsync(
+                        new AiControlPlaneIdResolutionRequest
+                        {
+                            Source = "redis-runtime-admission-reservation-store",
+                            AllowGeneratedFallback = false
+                        },
+                        cancellationToken)
                     .ConfigureAwait(false);
 
             if (string.IsNullOrWhiteSpace(resolvedControlPlaneId))

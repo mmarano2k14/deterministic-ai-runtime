@@ -4,21 +4,10 @@ using Multiplexed.AI.Configuration;
 using Multiplexed.AI.DI.Persistence.Mongo;
 using System;
 
-namespace Multiplexed.AI.Runtime.DependencyInjection
+namespace Multiplexed.AI.DI.Persistence
 {
     /// <summary>
     /// Registers AI execution snapshot persistence based on the configured engine options.
-    ///
-    /// DESIGN:
-    /// - Snapshot persistence remains optional
-    /// - Provider selection is driven by <see cref="AiEngineOptions"/>
-    /// - The execution engine stays decoupled from provider-specific wiring
-    ///
-    /// CURRENT PROVIDERS:
-    /// - MongoDB
-    ///
-    /// FUTURE EXTENSIBILITY:
-    /// Additional providers can be added here later without changing engine code.
     /// </summary>
     public static class AiExecutionSnapshotServiceCollectionExtensions
     {
@@ -42,6 +31,24 @@ namespace Multiplexed.AI.Runtime.DependencyInjection
 
             if (options.Snapshots.Mongo.Enabled)
             {
+                if (string.IsNullOrWhiteSpace(options.Snapshots.Mongo.ConnectionString))
+                {
+                    throw new InvalidOperationException(
+                        "Execution snapshots Mongo provider is enabled, but Snapshots:Mongo:ConnectionString is null or empty.");
+                }
+
+                if (string.IsNullOrWhiteSpace(options.Snapshots.Mongo.DatabaseName))
+                {
+                    throw new InvalidOperationException(
+                        "Execution snapshots Mongo provider is enabled, but Snapshots:Mongo:DatabaseName is null or empty.");
+                }
+
+                if (string.IsNullOrWhiteSpace(options.Snapshots.Mongo.CollectionName))
+                {
+                    throw new InvalidOperationException(
+                        "Execution snapshots Mongo provider is enabled, but Snapshots:Mongo:CollectionName is null or empty.");
+                }
+
                 services.AddMongoAiExecutionSnapshots<ExecutionContextSnapshot>(mongo =>
                 {
                     mongo.ConnectionString = options.Snapshots.Mongo.ConnectionString;

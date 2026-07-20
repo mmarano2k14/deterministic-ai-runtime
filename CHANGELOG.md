@@ -6,6 +6,3797 @@ This project follows a deterministic runtime and observability model designed fo
 
 ---
 
+## [Unreleased] - 2026-07-20 - Kubernetes Runtime Host Provider Completion, Recovery Hardening, and Documentation
+
+## Summary
+
+Completed and hardened the Kubernetes runtime-hosting foundation on the `feature/kubernetes-runtime-host-provider` branch.
+
+This milestone keeps the runtime execution protocol provider-neutral while allowing the Runtime Host Manager to create, expose, observe, and remove real `RuntimeInstanceOnly` Kubernetes Pods.
+
+The central architecture remains:
+
+```text
+Shared runtime admission
+    ↓
+HTTP or gRPC runtime provider
+    ↓
+Runtime Host Manager
+    ↓
+Process or Kubernetes host creation strategy
+    ↓
+Runtime registration and capacity readiness
+    ↓
+Normal HTTP or gRPC dispatch
+```
+
+Kubernetes owns host lifecycle, networking, and infrastructure readiness.
+
+HTTP and gRPC providers continue to own runtime command transport.
+
+Crash recovery remains owned by the runtime health and execution recovery reconcilers rather than by Kubernetes or the command provider.
+
+## Added
+
+### Kubernetes Runtime Host Manager strategy
+
+Added a Kubernetes implementation of the Runtime Host Manager lifecycle boundary.
+
+The Kubernetes strategy now supports:
+
+- deterministic runtime host creation by `RuntimeInstanceId`
+- `RuntimeInstanceOnly` Pod creation
+- Kubernetes Service creation
+- runtime environment and provider metadata propagation
+- tenant and tenant-group metadata propagation
+- Shared, Dedicated, and Hybrid isolation metadata
+- runtime worker-count, queue-capacity, and run-slot configuration
+- idempotent host convergence
+- explicit host deletion
+- ownership-safe cleanup after partial startup failure
+- runtime registration and capacity publication after convergence
+
+The implementation keeps host creation separate from runtime transport.
+
+A Kubernetes-hosted runtime can therefore continue to use:
+
+- HTTP command transport
+- gRPC command transport
+
+without changing the shared runtime controller, admission model, recovery model, replay model, ledger model, or DAG execution semantics.
+
+### Kubernetes client modes
+
+Added and documented two Kubernetes client modes:
+
+```text
+Fake
+KubernetesSdk
+```
+
+`Fake` mode provides deterministic in-memory lifecycle simulation for focused Host Manager and scale-out tests.
+
+`KubernetesSdk` mode creates and manages real Kubernetes resources through the .NET Kubernetes SDK.
+
+### Deterministic Pod and Service construction
+
+Added builders and lifecycle components for deterministic Kubernetes resources.
+
+The runtime host request is translated into Kubernetes resources that preserve:
+
+- runtime instance identity
+- control-plane identity
+- provider name
+- transport name
+- transport endpoint
+- tenant identity
+- tenant-group identity
+- runtime isolation mode
+- runtime instance prefix
+- worker count
+- max concurrent runs
+- queue capacity
+- runtime image
+- image pull policy
+- namespace and labels
+
+This allows the Kubernetes runtime instance to self-register under the same logical identities used by process-host runtimes.
+
+### Kubernetes network exposure modes
+
+Added and documented multiple runtime exposure strategies:
+
+```text
+Cluster Service DNS
+NodePort
+per-runtime kubectl port-forward
+shared Kubernetes Gateway API
+```
+
+The shared Gateway API path supports:
+
+- `HTTPRoute` for HTTP runtime transport
+- `GRPCRoute` for gRPC runtime transport
+- shared Gateway listener lifecycle
+- runtime selection through deterministic routing metadata
+- shared local Gateway port-forwarding for local development and integration tests
+
+The network exposure mechanism does not change the runtime provider selected for dispatch.
+
+### Layered readiness model
+
+Added a layered readiness model for Kubernetes-hosted runtime instances.
+
+Readiness is treated as separate signals:
+
+1. Kubernetes resource readiness.
+2. Runtime registration visibility.
+3. Runtime capacity visibility.
+4. HTTP or gRPC transport readiness.
+5. Optional Gateway or port-forward reachability.
+
+A Pod reporting `Running` is not considered sufficient proof that the runtime is usable.
+
+Scale-out fulfillment waits for the readiness level required by the active scenario and configuration.
+
+### Kubernetes host deletion and crash boundary
+
+Added explicit Kubernetes host deletion support through the host creation strategy.
+
+The deletion boundary removes the runtime Pod and associated resources while preserving the durable control-plane state required for recovery.
+
+The recovery ownership remains:
+
+```text
+Kubernetes host strategy
+    terminates the runtime host
+
+Runtime instance health reconciler
+    marks the runtime unsafe
+    suppresses unsafe capacity
+
+Runtime execution recovery reconciler
+    enumerates assigned work
+    resumes or redispatches durable work
+
+Runtime provider and Host Manager
+    create or select replacement capacity
+```
+
+### Kubernetes scenario profiles and settings
+
+Added Kubernetes-specific production scenario profiles and settings builders while reusing the existing provider-agnostic recovery scenario base.
+
+The shared test architecture avoids duplicating the large HTTP/gRPC recovery contract.
+
+Kubernetes-specific configuration is supplied through profiles for:
+
+- host creation mode
+- Kubernetes client mode
+- runtime image
+- image pull policy
+- readiness requirements
+- namespace
+- network exposure
+- provider transport
+- runtime termination behavior
+
+## Fixed
+
+### Fake Kubernetes client incorrectly starting kubectl port-forward
+
+Fixed the Kubernetes Host Manager path attempting to start `kubectl port-forward` while using `ClientMode = Fake`.
+
+The fake client does not create a real Pod or Service, so a real port-forward can never become reachable.
+
+The strategy now keeps fake lifecycle tests deterministic and Redis/Kubernetes independent while real SDK-backed gRPC Kubernetes scenarios continue to use the actual port-forward path when required.
+
+### Runtime tenant identity propagation
+
+Preserved tenant identity as first-class runtime registration data rather than only diagnostic metadata.
+
+Fixed propagation of:
+
+- `TenantId`
+- `TenantGroupId`
+- runtime isolation metadata
+- control-plane identity
+- runtime instance prefix
+
+This restored tenant-aware runtime visibility across:
+
+- registry
+- capacity
+- readiness
+- admission
+- dispatch
+- crash recovery
+- replay
+- ledger
+- trace
+- forensics
+
+### Runtime registration and capacity ordering
+
+Hardened startup ordering so runtime registration becomes visible before executable capacity is published.
+
+This prevents capacity from appearing schedulable before the runtime registry snapshot is tenant-routable and fully correlated.
+
+### Kubernetes gRPC control-plane identity
+
+Fixed control-plane identity propagation for Kubernetes-hosted gRPC runtimes.
+
+The runtime now registers, publishes capacity, dispatches, and recovers under the same logical `ControlPlaneId` carried by the scale-out request.
+
+### Kubernetes readiness and routability
+
+Hardened Kubernetes SDK readiness for real gRPC runtime Pods.
+
+Validated that scale-out fulfillment can wait for:
+
+- Pod readiness
+- runtime registry visibility
+- runtime capacity visibility
+- routable transport endpoint
+
+without changing `provider.name = grpc` or `transport.name = grpc`.
+
+### HTTP dispatch failure ownership semantics
+
+Aligned HTTP provider integration tests with the production requeue contract.
+
+After a failed dispatch caused by:
+
+- provider unavailable
+- dispatch timeout
+- retry exhaustion
+- non-retryable response
+- circuit open
+
+the shared run is requeued for a future admission attempt.
+
+The production store therefore:
+
+- persists the structured failure reason
+- returns the queue item to `Pending`
+- clears active `AssignedRuntimeInstanceId`
+- clears `LocalRunId`
+- clears `ExecutionId` when execution never started
+
+The tests now validate the durable failure and requeue semantics instead of expecting stale runtime ownership to remain attached.
+
+### HTTP fixture readiness contradiction
+
+Fixed the fixture-based HTTP Host Manager scale-out scenario requiring transport readiness against a synthetic endpoint.
+
+Fixture mode creates deterministic registry and capacity records but does not expose a real HTTP runtime endpoint.
+
+Transport readiness remains covered by real `Process` host scenarios.
+
+### Hybrid HTTP fallback proof
+
+Updated the Hybrid tenant HTTP fallback scenario to validate the durable admission decision rather than transient top-level runtime ownership.
+
+The admission record remains the authoritative proof that the Hybrid tenant selected Shared capacity when fallback was allowed.
+
+### Local DAG retry test composition
+
+Fixed local DAG retry integration-test composition after `AiDagExecutionEngineRuntimeServicesFixture` began requiring runtime signal and control-plane services.
+
+Added test-local wiring for:
+
+- `IConfiguration`
+- `IAiControlPlaneIdResolver`
+- `IAiRuntimeSignalPublisher`
+
+The local retry tests use a no-op signal publisher and remain Redis-free.
+
+### Concurrency provider/model/operation scope regression
+
+Fixed provider, model, and operation concurrency scopes being incorrectly partitioned by `ExecutionId`.
+
+The corrected Redis scope keys are stable across executions:
+
+```text
+ai:concurrency:scope:provider:{provider}
+ai:concurrency:scope:model:{provider}:{model}
+ai:concurrency:scope:operation:{operation}
+```
+
+Execution-local throttling remains available through:
+
+```text
+ai:concurrency:scope:execution:{executionId}
+```
+
+This restores the intended behavior:
+
+- provider capacity is shared across executions
+- model capacity is shared across executions for the same provider/model pair
+- operation capacity is shared across executions
+- execution limits remain local to one durable execution
+
+### Concurrency ledger assertion hardening
+
+Updated concurrency ledger tests to validate semantic lease-release evidence rather than one exact reason-string wording.
+
+The tests still prove:
+
+- concurrency lease acquisition
+- DAG claim race
+- immediate lease release
+- claim denial
+- ledger correlation
+
+without coupling to incidental prose.
+
+### Runtime service registration consistency
+
+Centralized and corrected test composition around runtime signals and control-plane discovery.
+
+Added `IConfiguration` before control-plane discovery registration where required.
+
+Ensured local/manual service providers expose the same runtime services required by the production engine composition.
+
+## Recovery Hardening
+
+### Provider-agnostic recovery contract preserved
+
+Kept the same crash recovery contract across:
+
+- HTTP process-host
+- gRPC process-host
+- gRPC Kubernetes SDK host
+
+The provider and host mode change transport and lifecycle behavior only.
+
+They do not change the durable recovery semantics.
+
+### In-flight execution recovery
+
+Validated that in-flight DAG work resumes using the same durable:
+
+```text
+ExecutionId
+```
+
+Recovery does not create a second logical execution for the same in-flight DAG.
+
+### Local queued work recovery
+
+Validated that work assigned to the failed runtime but not yet started is recovered through its durable:
+
+```text
+SharedRunId
+```
+
+The dead runtime local queue is treated as volatile and is not used as durable recovery truth.
+
+### Unsafe runtime boundary
+
+Validated the strict crash boundary:
+
+- the failed Pod is removed
+- the old Pod UID disappears
+- unsafe runtime capacity is suppressed
+- no post-termination writes are accepted as coming from the old host
+- replacement capacity is selected or created
+- recovery proceeds from durable state
+
+### Multi-tenant safe non-impact
+
+Preserved the multi-tenant recovery proof:
+
+- impacted tenant runtimes recover assigned work
+- safe tenant work is not recovered
+- safe tenant forensics remain empty
+- safe tenant ledger remains uncontaminated
+- no cross-tenant recovery leak is accepted
+
+### Recovery forensics
+
+Kept recovery forensics correlated by:
+
+- `ForensicsId`
+- `RuntimeFailureIncidentId`
+- failed runtime instance
+- failed local run
+- shared run
+- execution
+- replacement runtime
+- recovery classification
+- recovery timeline
+
+### Replay, ledger, and trace proof
+
+Kept recovery validation tied to agreement between:
+
+- final run completion
+- DAG completion
+- replay report
+- strict replay validation
+- replay ledger
+- replay trace
+- execution ledger
+- execution trace
+- recovery forensics
+- safe-tenant isolation evidence
+
+Recovery is not considered proven by completion alone.
+
+## Validated
+
+### Kubernetes gRPC Host Manager scale-out
+
+Validated Host Manager scale-out with:
+
+```text
+Provider = grpc
+HostProvider = kubernetes
+HostCreationMode = Kubernetes
+```
+
+The runtime provider and transport remain gRPC while the host lifecycle is Kubernetes-backed.
+
+### Kubernetes SDK readiness
+
+Validated Kubernetes SDK runtime readiness with real Pods and Services.
+
+Proof includes:
+
+- runtime Pod creation
+- Service creation
+- runtime self-registration
+- capacity publication
+- routable gRPC endpoint
+- fulfilled scale-out request
+- unchanged gRPC provider metadata
+
+### Kubernetes SDK real work dispatch
+
+Validated real shared-run dispatch to a Kubernetes-backed gRPC runtime.
+
+Proof includes:
+
+- tenant-aware runtime selection
+- provider dispatch
+- local run creation
+- durable `ExecutionId`
+- DAG execution
+- terminal completion
+- provider metadata preservation
+- host-provider metadata preservation
+
+### Kubernetes Pod crash recovery
+
+Validated targeted Kubernetes gRPC Pod crash recovery scenarios through the shared recovery framework.
+
+The scenario proves:
+
+- real runtime work started in the Pod
+- durable progress reached before termination
+- Pod deleted during in-flight execution
+- runtime marked unsafe
+- assigned work reconciled
+- replacement runtime selected or created
+- in-flight execution resumed
+- local queued work redispatched
+- completion converged through the normal provider path
+
+### Controlled parallel recovery scenarios
+
+Added controlled parallel execution inside the scenario harness rather than relying on unrestricted xUnit fact parallelization.
+
+Validated low-to-moderate parallelism with unique:
+
+- control-plane ids
+- tenant ids
+- tenant-group ids
+- pipeline prefixes
+- runtime instance prefixes
+- Pod labels
+- Redis/Mongo identities
+- scale-out request ids
+
+### HTTP and gRPC process-host regression coverage
+
+Revalidated process-host behavior after Kubernetes changes.
+
+The Kubernetes host strategy remains isolated behind the Runtime Host Manager and does not replace or alter the process strategy.
+
+### HTTP structured failure scenarios
+
+Validated the HTTP provider scenarios for:
+
+- provider unavailable
+- timeout
+- retry exhausted
+- non-retryable response
+- circuit open
+- shared-run requeue
+- durable failure persistence
+- cleared transient ownership
+
+### Distributed concurrency tests
+
+Validated stable provider, model, operation, pipeline, pipeline-step, execution, and global scope behavior using Redis-backed leases.
+
+## Documentation
+
+### New canonical Kubernetes runtime host document
+
+Added:
+
+```text
+docs/ai/kubernetes-runtime-host-provider.md
+```
+
+The document covers:
+
+- architecture and responsibility boundaries
+- Runtime Host Manager integration
+- Kubernetes strategy lifecycle
+- fake and SDK client modes
+- Pod and Service builders
+- runtime environment and metadata
+- network exposure modes
+- NodePort
+- per-runtime port-forward
+- shared Gateway API
+- HTTPRoute and GRPCRoute
+- layered readiness
+- registry and capacity publication
+- cleanup ownership
+- explicit deletion
+- crash and recovery boundaries
+- multi-tenant isolation
+- configuration options
+- test architecture
+- troubleshooting
+- source-file map
+
+### Updated focused runtime documentation
+
+Updated the following documents to link and align with the Kubernetes host lifecycle:
+
+```text
+docs/ai/architecture-overview.md
+docs/ai/grpc-runtime-provider.md
+docs/ai/http-runtime-provider.md
+docs/ai/mcp-production-runtime-scenario-framework.md
+docs/ai/runtime-control-plane.md
+docs/ai/runtime-discovery-registry-capacity.md
+docs/ai/runtime-instance-provider-model.md
+docs/ai/testing-strategy.md
+```
+
+### Documentation index
+
+Updated:
+
+```text
+docs/index.md
+```
+
+Added the Kubernetes document to:
+
+- Start Here
+- Architects reading path
+- Contributors reading path
+- Core Documentation
+- Runtime Architecture and Execution
+- Reliability, State, and Recovery
+- Runtime Control Plane and Orchestration
+- Documentation Status
+- Documentation Rules
+
+Also corrected duplicated gRPC entries and broken reading-path numbering.
+
+### Repository README
+
+Updated:
+
+```text
+README.md
+```
+
+The README now:
+
+- presents Kubernetes runtime hosting as an implemented foundation rather than only future direction
+- explains the provider/transport versus host-lifecycle separation
+- adds Kubernetes to Latest Updates
+- adds a focused Kubernetes Runtime Hosting section
+- updates the architecture diagram
+- updates Core Capabilities
+- updates Enterprise Readiness
+- updates Current Status
+- updates the roadmap
+- links the canonical Kubernetes document
+- removes a stale fixed test-count statement
+- documents remaining high-parallel Minikube/Docker Desktop hardening honestly
+
+## Architecture Invariants Preserved
+
+The Kubernetes milestone preserves the following invariants:
+
+1. Kubernetes is a host creation strategy, not a replacement runtime transport.
+2. HTTP and gRPC providers remain responsible for command dispatch.
+3. Runtime identity is stable across registry, capacity, dispatch, recovery, replay, ledger, trace, and forensics.
+4. Tenant identity is first-class durable runtime data.
+5. Pod readiness is not equivalent to runtime readiness.
+6. Registry and capacity publication occur only after the required host convergence.
+7. The dead local queue is never durable recovery truth.
+8. In-flight work preserves `ExecutionId`.
+9. Not-yet-started local queued work is recovered by `SharedRunId`.
+10. Health reconciliation suppresses unsafe capacity.
+11. Execution recovery reconciliation owns assigned-work recovery.
+12. Providers and host strategies do not directly own durable recovery.
+13. Shared, Dedicated, and Hybrid visibility remain tenant-aware.
+14. Safe tenants remain outside the recovery surface.
+15. Replay, ledger, trace, completion, and forensics must agree before recovery is considered proven.
+
+## Remaining Hardening
+
+The following work remains intentionally visible:
+
+- higher-parallelism Kubernetes stability under local Minikube/Docker Desktop resource pressure
+- broader Kubernetes HTTP crash recovery validation
+- production-grade Gateway API deployment and RBAC manifests
+- hardened port-forward process supervision and diagnostics
+- multi-cluster runtime catalog and routing
+- persistent tenant settings provider
+- MongoDB tenant partitioning and index hardening
+- runtime host pooling and reuse
+- concurrency stress validation at larger tenant/run scale
+- dashboard and Kubernetes demo UI
+- public API and SDK polish
+
+These items do not change the implemented Kubernetes Runtime Host Provider architecture or the validated provider-neutral recovery contract.
+
+---
+
+## [1.0.7.1] - 2026-07-09 - gRPC Kubernetes SDK Pod Crash Recovery Investigation
+
+## Context
+
+Added and executed a stability loop around the gRPC Kubernetes SDK pod crash recovery scenario to validate the recovery pipeline after the recent control-plane id / runtime readiness fixes.
+
+Scenario under validation:
+
+- Provider: `grpc`
+- Runtime host mode: Kubernetes SDK pod runtime
+- Failure mode: runtime pod/process killed while a DAG execution is already in-flight
+- Expected behavior: the failed runtime execution should be automatically requeued for recovery
+- Observed behavior after the latest fixes: the runtime instance is now consistently detected and marked unsafe, but the runtime execution index still remains in `failed` status instead of transitioning to `requeued-for-recovery`
+
+## Fixed / Stabilized
+
+### Runtime unsafe detection after pod crash
+
+The previous blocking issue around runtime discovery, readiness, and control-plane scoping is no longer the main failure.
+
+The stability loop proves that, across all iterations, the crashed Kubernetes SDK runtime is now consistently detected as unsafe.
+
+This means the following part of the production crash recovery pipeline is now stable:
+
+- real gRPC Kubernetes runtime dispatch
+- DAG execution start
+- durable DAG progress
+- runtime pod/process kill
+- runtime instance health degradation detection
+- runtime instance unsafe marking
+
+The important proof signal is repeated in every iteration:
+
+```text
+Runtime instance automatically marked unsafe.
+```
+
+This confirms that the first major bug in the crash recovery flow has been resolved or stabilized enough to move forward.
+
+## Added
+
+### gRPC Kubernetes pod crash recovery stability loop
+
+Added a repeated stability test that runs the real crash recovery scenario 10 times:
+
+```csharp
+Grpc_KubernetesSdk_Should_Requeue_Real_InFlight_Dag_After_Runtime_Pod_Kill_Stability_10x
+```
+
+The loop catches each iteration failure, logs it, continues executing the remaining iterations, and reports all failures at the end.
+
+This allows the scenario to distinguish between:
+
+- a flaky race condition
+- a deterministic recovery bug
+- a timeout sensitivity issue
+- a fixed upstream failure with a remaining downstream recovery issue
+
+## Stability Result
+
+The stability loop executed all 10 iterations.
+
+Result:
+
+```text
+FailedIterations=10/10
+```
+
+At first sight this is still a failed test, but the result is useful because the failure is now consistent and occurs later in the recovery pipeline.
+
+Every iteration successfully reached this point:
+
+```text
+Runtime instance automatically marked unsafe.
+```
+
+Then every iteration failed with the same remaining symptom:
+
+```text
+Runtime execution was not automatically requeued for recovery within the timeout.
+LastIndexStatus='failed'
+```
+
+## Important Finding
+
+The test now proves two things:
+
+1. The first crash recovery issue has been cleared: the crashed runtime is consistently marked unsafe.
+2. A second deterministic bug remains after unsafe marking: the runtime execution index is not transitioned from `failed` to `requeued-for-recovery`.
+
+The failing transition is now isolated to:
+
+```text
+runtime execution index: failed -> requeued-for-recovery
+```
+
+## Suspicious Signal
+
+The logs repeatedly show:
+
+```text
+SharedStoreExecutionId=''
+```
+
+at dispatch time.
+
+This may indicate that the shared run store is not carrying or persisting the execution id expected by the recovery path.
+
+This should be investigated together with the runtime execution recovery flow.
+
+## Suspected Root Cause Area
+
+The remaining failure is likely not in Kubernetes, gRPC transport, readiness, dispatch, or health reconciliation anymore.
+
+Those stages are now proven to work consistently enough because the runtime reaches unsafe marking in all 10 iterations.
+
+The next area to inspect is the runtime execution recovery path, especially:
+
+- the service that scans executions assigned to unsafe runtime instances
+- the lookup by `RuntimeInstanceId`
+- the lookup scope by `ControlPlaneId`
+- the status transition rules from `failed` to `requeued-for-recovery`
+- the method responsible for marking runtime executions as requeued for recovery
+- the shared run / local run / execution id correlation
+
+Likely candidates:
+
+```text
+AiRuntimeExecutionRecoveryService
+RedisAiRuntimeRunExecutionIndex
+MarkRuntimeExecutionRequeuedForRecoveryAsync
+```
+
+## Current Failure Pattern
+
+Across all iterations:
+
+```text
+Runtime instance automatically marked unsafe.
+LastIndexStatus='failed'
+```
+
+This proves that the recovery process either:
+
+1. does not find the failed runtime execution after unsafe marking,
+2. finds it but ignores it because the status is already `failed`,
+3. requeues the shared run but does not update the runtime execution index,
+4. updates the index under the wrong logical `ControlPlaneId`,
+5. cannot correlate the local runtime run with the shared run because the shared store execution id is empty.
+
+## Next Step
+
+Add diagnostic logging in the runtime execution recovery service around:
+
+- control-plane id resolution
+- unsafe runtime instance scan
+- execution index lookup result count
+- execution statuses found for the failed runtime
+- requeue eligibility decision
+- mark requeued result
+- shared run id / local run id / execution id correlation
+
+The stability loop should be kept as an investigation and regression tool.
+
+It now proves that the upstream crash detection / unsafe marking path is stable, while the remaining bug is isolated in the downstream execution requeue recovery path.
+
+---
+
+## [1.0.7.1] - 2026-07-07 - Runtime Provider Recovery Restoration and Kubernetes gRPC Validation
+
+## Summary
+
+Restored and validated production-grade runtime provider behavior across HTTP process-host, gRPC process-host, and Kubernetes-backed gRPC runtime hosting.
+
+The main fix was to preserve tenant identity as first-class runtime registration data, not only as metadata. This restored tenant-scoped runtime visibility for registry, readiness, dispatch, recovery, replay, ledger, and trace workflows.
+
+## Fixed
+
+### Runtime tenant identity propagation
+
+- Propagated `TenantId` and `TenantGroupId` from runtime isolation metadata into `AiRuntimeInstanceRegistration` first-class fields.
+- Fixed registry snapshots exposing empty tenant fields even when runtime metadata contained the correct tenant identity.
+- Restored tenant-scoped readiness and runtime visibility after Kubernetes/gRPC readiness hardening.
+- Prevented runtime visibility mismatches across process-host and Kubernetes-backed providers.
+
+### Runtime registration ordering
+
+- Ensured runtime instance registration is visible before runtime capacity is published.
+- Reduced startup race conditions where capacity could become visible before the registry snapshot was tenant-routable.
+- Stabilized readiness checks that depend on both registry visibility and capacity visibility.
+
+## Validated HTTP process-host recovery
+
+### Single-tenant real runtime crash recovery
+
+Validated that an HTTP process-host runtime can be killed during a real in-flight DAG execution and recovered safely.
+
+Proofs validated:
+
+- Real external runtime process used.
+- Runtime process killed during DAG execution.
+- Runtime marked unsafe.
+- Assigned in-flight work requeued for recovery.
+- Replacement runtime selected.
+- Durable `ExecutionId` preserved across recovery.
+- DAG resumed strictly.
+- DAG completed all configured steps.
+
+### Multi-tenant crash recovery with safe tenant
+
+Validated the full HTTP multi-tenant crash recovery scenario:
+
+- Tenant A runtime killed.
+- Tenant B runtime killed.
+- Tenant C remained safe.
+- 3 runs per tenant.
+- 9 total submitted runs.
+- 6 recovered work items.
+- 0 safe-tenant recovered work.
+- 0 safe-tenant recovery forensics.
+- 0 cross-tenant leak.
+- 0 duplicate recovery.
+- Replay, ledger, and trace validated for all replay-ready executions.
+
+## Validated gRPC process-host recovery
+
+### Single-tenant real runtime crash recovery
+
+Validated the same production crash recovery contract over gRPC process-host:
+
+- Real gRPC runtime process used.
+- Runtime killed during in-flight DAG execution.
+- Runtime marked unsafe.
+- Shared run requeued for recovery.
+- Replacement gRPC runtime selected.
+- Durable `ExecutionId` preserved.
+- Strict DAG resume validated.
+- DAG completed all configured steps.
+
+### Multi-tenant crash recovery with safe tenant
+
+Validated the full gRPC equivalent of the HTTP multi-tenant recovery scenario.
+
+Scenario validated:
+
+- Provider: `grpc`
+- Host creation mode: `Process`
+- 3 tenants.
+- 9 submitted runs.
+- 2 impacted tenants.
+- 1 safe tenant.
+- 6 recovered work items.
+- 0 safe-tenant recovery.
+- 9 replay-validated executions.
+- 15 total validated execution flows.
+
+Recovery proofs:
+
+- Tenant A and Tenant B each lost one real runtime instance.
+- Each impacted tenant recovered:
+  - 1 in-flight execution.
+  - 2 local queued runs.
+- In-flight executions preserved their durable `ExecutionId`.
+- Local queued work was recovered through durable shared-run redispatch.
+- Safe tenant completed normally without crash recovery.
+
+Replay / ledger / trace proofs:
+
+- Execution ledger evidence: 9/9.
+- Execution trace evidence: 9/9.
+- Completion evidence in ledger: 9/9.
+- Step completion evidence in ledger: 9/9.
+- Strict replay validation: 9/9.
+- Replay reports readable: 9/9.
+- Replay ledger readable: 9/9.
+- Replay trace readable: 9/9.
+
+Tenant isolation proofs:
+
+- Tenant A entries visible from Tenant B: 0.
+- Tenant B entries visible from Tenant A: 0.
+- Safe tenant recovery entries visible from impacted queries: 0.
+- Cross-tenant ledger leak detected: false.
+- Control-plane causal chain validated: true.
+
+## Validated Kubernetes gRPC SDK readiness
+
+Added and validated Kubernetes-backed gRPC runtime readiness scenarios using the Kubernetes SDK host manager.
+
+### Scale-out fulfillment after runtime readiness
+
+Validated that a Kubernetes-backed gRPC runtime scale-out request is fulfilled only after runtime readiness is satisfied.
+
+Proofs validated:
+
+- Provider: `grpc`.
+- Host provider: `kubernetes`.
+- Host creation mode: `Kubernetes`.
+- Client mode: `KubernetesSdk`.
+- Runtime readiness required.
+- Kubernetes runtime readiness required.
+- Runtime image: `multiplexed-ai-runtime:k8s-debug-026`.
+- Image pull policy: `Never`.
+- Scale-out request fulfilled by `mcp-scaleout-watcher`.
+- Runtime provider remained `grpc`.
+- Runtime transport remained `grpc`.
+
+### Routable runtime after scale-out
+
+Validated that Kubernetes-backed gRPC runtime scale-out exposes a routable runtime without changing the gRPC runtime transport.
+
+Proofs validated:
+
+- Runtime instance became visible and routable.
+- Host provider remained `kubernetes`.
+- Host creation mode remained `Kubernetes`.
+- Runtime provider remained `grpc`.
+- Transport remained `grpc`.
+- Readiness exposed a routable endpoint.
+- Runtime identity remained tenant-scoped.
+
+### Real work dispatch after Kubernetes scale-out
+
+Validated that real work can be dispatched to a Kubernetes-backed gRPC runtime after scale-out.
+
+Proofs validated:
+
+- Real shared run dispatched.
+- Runtime instance selected.
+- Local run created on the scaled-out Kubernetes runtime.
+- Durable DAG execution resolved.
+- Real DAG completed on the Kubernetes runtime.
+- Provider remained `grpc`.
+- Transport remained `grpc`.
+- Host provider remained `kubernetes`.
+- Host creation mode remained `Kubernetes`.
+
+## Architecture validated
+
+The following runtime provider matrix is now validated:
+
+- HTTP process-host single crash recovery.
+- HTTP process-host multi-tenant recovery with safe tenant.
+- gRPC process-host single crash recovery.
+- gRPC process-host multi-tenant recovery with safe tenant.
+- gRPC Kubernetes SDK scale-out readiness fulfillment.
+- gRPC Kubernetes SDK routable runtime readiness.
+- gRPC Kubernetes SDK real work dispatch.
+
+## Test architecture direction
+
+Confirmed that the existing shared process-host recovery `TestBase` is the correct foundation for Kubernetes recovery tests.
+
+Decision:
+
+- Do not duplicate the large HTTP/gRPC process-host recovery tests.
+- Reuse the existing shared recovery test base.
+- Add Kubernetes-specific profiles only.
+- Add settings builders only if needed for clean Kubernetes option assembly.
+- Keep the recovery scenario contract centralized in the shared test base.
+
+Expected Kubernetes extensions:
+
+- `GrpcKubernetesSdk` crash recovery profile.
+- `HttpKubernetesSdk` crash recovery profile.
+- Optional Kubernetes-specific settings builders.
+- Provider/host-specific runtime kill behavior exposed through profile/settings rather than duplicating scenario logic.
+
+## Planned next tests
+
+### Kubernetes gRPC recovery
+
+Next target tests:
+
+- `Grpc_KubernetesSdk_Should_Requeue_Real_InFlight_Dag_After_Runtime_Pod_Kill`
+- `Grpc_KubernetesSdk_Should_Recover_Two_Tenants_After_Runtime_Pod_Kills_Without_Impacting_Safe_Tenant_With_Strict_Dag_Resume_Replay_Ledger_And_Trace`
+
+Expected contract:
+
+- Runtime pod killed.
+- Runtime marked unsafe.
+- In-flight DAG requeued.
+- Replacement Kubernetes runtime selected.
+- Durable `ExecutionId` preserved.
+- Local queued work redispatched.
+- Safe tenant remains unaffected.
+- Replay, ledger, trace, and tenant-scoped ledger isolation validated.
+
+### Kubernetes HTTP recovery
+
+After gRPC Kubernetes recovery is green, repeat the same profile-based approach for HTTP Kubernetes runtime hosting.
+
+Expected target tests:
+
+- `Http_KubernetesSdk_Should_Requeue_Real_InFlight_Dag_After_Runtime_Pod_Kill`
+- `Http_KubernetesSdk_Should_Recover_Two_Tenants_After_Runtime_Pod_Kills_Without_Impacting_Safe_Tenant_With_Strict_Dag_Resume_Replay_Ledger_And_Trace`
+
+## Planned concurrency and stability tests
+
+After Kubernetes recovery scenarios pass individually, add controlled concurrency tests.
+
+Recommended approach:
+
+- Use `[Fact]` with internal `Task.WhenAll`.
+- Disable xUnit parallelization for the Kubernetes recovery test collection.
+- Keep concurrency controlled inside the test instead of relying on xUnit parallel facts.
+- Use unique IDs per concurrent scenario:
+  - `ControlPlaneId`
+  - `TenantId`
+  - `TenantGroupId`
+  - `PipelinePrefix`
+  - `RuntimeInstanceIdPrefix`
+  - Kubernetes pod labels
+  - Redis/Mongo keys
+  - Scale-out request IDs
+
+Initial stability settings:
+
+- Iterations: 3.
+- Concurrent scenarios: 2 or 3 max.
+- Tenants: 3.
+- Runs per tenant: 2 or 3.
+- Step count: 40.
+- Kill after completed steps: 20.
+
+Final production stability settings:
+
+- Iterations: 5.
+- Tenants: 3.
+- Runs per tenant: 3.
+- Step count: 100.
+- Kill after completed steps: 50.
+
+## Remaining cleanup
+
+- Rename remaining gRPC test prefixes that still contain `http-process-host...`.
+- Clean temporary debug output.
+- Keep useful diagnostics behind structured logger debug/trace output.
+- Optionally reduce duplicate runtime host creation attempts that currently appear as benign `process-runtime-instance-already-started` denied entries.
+- Keep the Kubernetes recovery scenarios profile-driven and avoid scenario duplication.
+
+## Milestone
+
+This milestone proves that the runtime recovery architecture is no longer tied to a single transport or host mode.
+
+The same production recovery contract is now validated across:
+
+- HTTP process-host.
+- gRPC process-host.
+- Kubernetes-backed gRPC runtime readiness.
+- Kubernetes-backed gRPC real dispatch.
+
+The next milestone is to prove the same crash recovery contract under Kubernetes pod failure for both gRPC and HTTP.
+
+---
+
+## [1.0.7.1] - 2026-07-09 - gRPC Kubernetes SDK Pod Crash Recovery Investigation
+
+## Context
+
+Added and executed a stability loop around the gRPC Kubernetes SDK pod crash recovery scenario to validate the recovery pipeline after the recent control-plane id / runtime readiness fixes.
+
+Scenario under validation:
+
+- Provider: `grpc`
+- Runtime host mode: Kubernetes SDK pod runtime
+- Failure mode: runtime pod/process killed while a DAG execution is already in-flight
+- Expected behavior: the failed runtime execution should be automatically requeued for recovery
+- Observed behavior after the latest fixes: the runtime instance is now consistently detected and marked unsafe, but the runtime execution index still remains in `failed` status instead of transitioning to `requeued-for-recovery`
+
+## Fixed / Stabilized
+
+### Runtime unsafe detection after pod crash
+
+The previous blocking issue around runtime discovery, readiness, and control-plane scoping is no longer the main failure.
+
+The stability loop proves that, across all iterations, the crashed Kubernetes SDK runtime is now consistently detected as unsafe.
+
+This means the following part of the production crash recovery pipeline is now stable:
+
+- real gRPC Kubernetes runtime dispatch
+- DAG execution start
+- durable DAG progress
+- runtime pod/process kill
+- runtime instance health degradation detection
+- runtime instance unsafe marking
+
+The important proof signal is repeated in every iteration:
+
+```text
+Runtime instance automatically marked unsafe.
+```
+
+This confirms that the first major bug in the crash recovery flow has been resolved or stabilized enough to move forward.
+
+## Added
+
+### gRPC Kubernetes pod crash recovery stability loop
+
+Added a repeated stability test that runs the real crash recovery scenario 10 times:
+
+```csharp
+Grpc_KubernetesSdk_Should_Requeue_Real_InFlight_Dag_After_Runtime_Pod_Kill_Stability_10x
+```
+
+The loop catches each iteration failure, logs it, continues executing the remaining iterations, and reports all failures at the end.
+
+This allows the scenario to distinguish between:
+
+- a flaky race condition
+- a deterministic recovery bug
+- a timeout sensitivity issue
+- a fixed upstream failure with a remaining downstream recovery issue
+
+## Stability Result
+
+The stability loop executed all 10 iterations.
+
+Result:
+
+```text
+FailedIterations=10/10
+```
+
+At first sight this is still a failed test, but the result is useful because the failure is now consistent and occurs later in the recovery pipeline.
+
+Every iteration successfully reached this point:
+
+```text
+Runtime instance automatically marked unsafe.
+```
+
+Then every iteration failed with the same remaining symptom:
+
+```text
+Runtime execution was not automatically requeued for recovery within the timeout.
+LastIndexStatus='failed'
+```
+
+## Important Finding
+
+The test now proves two things:
+
+1. The first crash recovery issue has been cleared: the crashed runtime is consistently marked unsafe.
+2. A second deterministic bug remains after unsafe marking: the runtime execution index is not transitioned from `failed` to `requeued-for-recovery`.
+
+The failing transition is now isolated to:
+
+```text
+runtime execution index: failed -> requeued-for-recovery
+```
+
+## Suspicious Signal
+
+The logs repeatedly show:
+
+```text
+SharedStoreExecutionId=''
+```
+
+at dispatch time.
+
+This may indicate that the shared run store is not carrying or persisting the execution id expected by the recovery path.
+
+This should be investigated together with the runtime execution recovery flow.
+
+## Suspected Root Cause Area
+
+The remaining failure is likely not in Kubernetes, gRPC transport, readiness, dispatch, or health reconciliation anymore.
+
+Those stages are now proven to work consistently enough because the runtime reaches unsafe marking in all 10 iterations.
+
+The next area to inspect is the runtime execution recovery path, especially:
+
+- the service that scans executions assigned to unsafe runtime instances
+- the lookup by `RuntimeInstanceId`
+- the lookup scope by `ControlPlaneId`
+- the status transition rules from `failed` to `requeued-for-recovery`
+- the method responsible for marking runtime executions as requeued for recovery
+- the shared run / local run / execution id correlation
+
+Likely candidates:
+
+```text
+AiRuntimeExecutionRecoveryService
+RedisAiRuntimeRunExecutionIndex
+MarkRuntimeExecutionRequeuedForRecoveryAsync
+```
+
+## Current Failure Pattern
+
+Across all iterations:
+
+```text
+Runtime instance automatically marked unsafe.
+LastIndexStatus='failed'
+```
+
+This proves that the recovery process either:
+
+1. does not find the failed runtime execution after unsafe marking,
+2. finds it but ignores it because the status is already `failed`,
+3. requeues the shared run but does not update the runtime execution index,
+4. updates the index under the wrong logical `ControlPlaneId`,
+5. cannot correlate the local runtime run with the shared run because the shared store execution id is empty.
+
+## Next Step
+
+Add diagnostic logging in the runtime execution recovery service around:
+
+- control-plane id resolution
+- unsafe runtime instance scan
+- execution index lookup result count
+- execution statuses found for the failed runtime
+- requeue eligibility decision
+- mark requeued result
+- shared run id / local run id / execution id correlation
+
+The stability loop should be kept as an investigation and regression tool.
+
+It now proves that the upstream crash detection / unsafe marking path is stable, while the remaining bug is isolated in the downstream execution requeue recovery path.
+
+---
+
+## [1.0.7.1] - 2026-07-07 - Runtime Provider Recovery Restoration and Kubernetes gRPC Validation
+
+## Summary
+
+Restored and validated production-grade runtime provider behavior across HTTP process-host, gRPC process-host, and Kubernetes-backed gRPC runtime hosting.
+
+The main fix was to preserve tenant identity as first-class runtime registration data, not only as metadata. This restored tenant-scoped runtime visibility for registry, readiness, dispatch, recovery, replay, ledger, and trace workflows.
+
+## Fixed
+
+### Runtime tenant identity propagation
+
+- Propagated `TenantId` and `TenantGroupId` from runtime isolation metadata into `AiRuntimeInstanceRegistration` first-class fields.
+- Fixed registry snapshots exposing empty tenant fields even when runtime metadata contained the correct tenant identity.
+- Restored tenant-scoped readiness and runtime visibility after Kubernetes/gRPC readiness hardening.
+- Prevented runtime visibility mismatches across process-host and Kubernetes-backed providers.
+
+### Runtime registration ordering
+
+- Ensured runtime instance registration is visible before runtime capacity is published.
+- Reduced startup race conditions where capacity could become visible before the registry snapshot was tenant-routable.
+- Stabilized readiness checks that depend on both registry visibility and capacity visibility.
+
+## Validated HTTP process-host recovery
+
+### Single-tenant real runtime crash recovery
+
+Validated that an HTTP process-host runtime can be killed during a real in-flight DAG execution and recovered safely.
+
+Proofs validated:
+
+- Real external runtime process used.
+- Runtime process killed during DAG execution.
+- Runtime marked unsafe.
+- Assigned in-flight work requeued for recovery.
+- Replacement runtime selected.
+- Durable `ExecutionId` preserved across recovery.
+- DAG resumed strictly.
+- DAG completed all configured steps.
+
+### Multi-tenant crash recovery with safe tenant
+
+Validated the full HTTP multi-tenant crash recovery scenario:
+
+- Tenant A runtime killed.
+- Tenant B runtime killed.
+- Tenant C remained safe.
+- 3 runs per tenant.
+- 9 total submitted runs.
+- 6 recovered work items.
+- 0 safe-tenant recovered work.
+- 0 safe-tenant recovery forensics.
+- 0 cross-tenant leak.
+- 0 duplicate recovery.
+- Replay, ledger, and trace validated for all replay-ready executions.
+
+## Validated gRPC process-host recovery
+
+### Single-tenant real runtime crash recovery
+
+Validated the same production crash recovery contract over gRPC process-host:
+
+- Real gRPC runtime process used.
+- Runtime killed during in-flight DAG execution.
+- Runtime marked unsafe.
+- Shared run requeued for recovery.
+- Replacement gRPC runtime selected.
+- Durable `ExecutionId` preserved.
+- Strict DAG resume validated.
+- DAG completed all configured steps.
+
+### Multi-tenant crash recovery with safe tenant
+
+Validated the full gRPC equivalent of the HTTP multi-tenant recovery scenario.
+
+Scenario validated:
+
+- Provider: `grpc`
+- Host creation mode: `Process`
+- 3 tenants.
+- 9 submitted runs.
+- 2 impacted tenants.
+- 1 safe tenant.
+- 6 recovered work items.
+- 0 safe-tenant recovery.
+- 9 replay-validated executions.
+- 15 total validated execution flows.
+
+Recovery proofs:
+
+- Tenant A and Tenant B each lost one real runtime instance.
+- Each impacted tenant recovered:
+  - 1 in-flight execution.
+  - 2 local queued runs.
+- In-flight executions preserved their durable `ExecutionId`.
+- Local queued work was recovered through durable shared-run redispatch.
+- Safe tenant completed normally without crash recovery.
+
+Replay / ledger / trace proofs:
+
+- Execution ledger evidence: 9/9.
+- Execution trace evidence: 9/9.
+- Completion evidence in ledger: 9/9.
+- Step completion evidence in ledger: 9/9.
+- Strict replay validation: 9/9.
+- Replay reports readable: 9/9.
+- Replay ledger readable: 9/9.
+- Replay trace readable: 9/9.
+
+Tenant isolation proofs:
+
+- Tenant A entries visible from Tenant B: 0.
+- Tenant B entries visible from Tenant A: 0.
+- Safe tenant recovery entries visible from impacted queries: 0.
+- Cross-tenant ledger leak detected: false.
+- Control-plane causal chain validated: true.
+
+## Validated Kubernetes gRPC SDK readiness
+
+Added and validated Kubernetes-backed gRPC runtime readiness scenarios using the Kubernetes SDK host manager.
+
+### Scale-out fulfillment after runtime readiness
+
+Validated that a Kubernetes-backed gRPC runtime scale-out request is fulfilled only after runtime readiness is satisfied.
+
+Proofs validated:
+
+- Provider: `grpc`.
+- Host provider: `kubernetes`.
+- Host creation mode: `Kubernetes`.
+- Client mode: `KubernetesSdk`.
+- Runtime readiness required.
+- Kubernetes runtime readiness required.
+- Runtime image: `multiplexed-ai-runtime:k8s-debug-026`.
+- Image pull policy: `Never`.
+- Scale-out request fulfilled by `mcp-scaleout-watcher`.
+- Runtime provider remained `grpc`.
+- Runtime transport remained `grpc`.
+
+### Routable runtime after scale-out
+
+Validated that Kubernetes-backed gRPC runtime scale-out exposes a routable runtime without changing the gRPC runtime transport.
+
+Proofs validated:
+
+- Runtime instance became visible and routable.
+- Host provider remained `kubernetes`.
+- Host creation mode remained `Kubernetes`.
+- Runtime provider remained `grpc`.
+- Transport remained `grpc`.
+- Readiness exposed a routable endpoint.
+- Runtime identity remained tenant-scoped.
+
+### Real work dispatch after Kubernetes scale-out
+
+Validated that real work can be dispatched to a Kubernetes-backed gRPC runtime after scale-out.
+
+Proofs validated:
+
+- Real shared run dispatched.
+- Runtime instance selected.
+- Local run created on the scaled-out Kubernetes runtime.
+- Durable DAG execution resolved.
+- Real DAG completed on the Kubernetes runtime.
+- Provider remained `grpc`.
+- Transport remained `grpc`.
+- Host provider remained `kubernetes`.
+- Host creation mode remained `Kubernetes`.
+
+## Architecture validated
+
+The following runtime provider matrix is now validated:
+
+- HTTP process-host single crash recovery.
+- HTTP process-host multi-tenant recovery with safe tenant.
+- gRPC process-host single crash recovery.
+- gRPC process-host multi-tenant recovery with safe tenant.
+- gRPC Kubernetes SDK scale-out readiness fulfillment.
+- gRPC Kubernetes SDK routable runtime readiness.
+- gRPC Kubernetes SDK real work dispatch.
+
+## Test architecture direction
+
+Confirmed that the existing shared process-host recovery `TestBase` is the correct foundation for Kubernetes recovery tests.
+
+Decision:
+
+- Do not duplicate the large HTTP/gRPC process-host recovery tests.
+- Reuse the existing shared recovery test base.
+- Add Kubernetes-specific profiles only.
+- Add settings builders only if needed for clean Kubernetes option assembly.
+- Keep the recovery scenario contract centralized in the shared test base.
+
+Expected Kubernetes extensions:
+
+- `GrpcKubernetesSdk` crash recovery profile.
+- `HttpKubernetesSdk` crash recovery profile.
+- Optional Kubernetes-specific settings builders.
+- Provider/host-specific runtime kill behavior exposed through profile/settings rather than duplicating scenario logic.
+
+## Planned next tests
+
+### Kubernetes gRPC recovery
+
+Next target tests:
+
+- `Grpc_KubernetesSdk_Should_Requeue_Real_InFlight_Dag_After_Runtime_Pod_Kill`
+- `Grpc_KubernetesSdk_Should_Recover_Two_Tenants_After_Runtime_Pod_Kills_Without_Impacting_Safe_Tenant_With_Strict_Dag_Resume_Replay_Ledger_And_Trace`
+
+Expected contract:
+
+- Runtime pod killed.
+- Runtime marked unsafe.
+- In-flight DAG requeued.
+- Replacement Kubernetes runtime selected.
+- Durable `ExecutionId` preserved.
+- Local queued work redispatched.
+- Safe tenant remains unaffected.
+- Replay, ledger, trace, and tenant-scoped ledger isolation validated.
+
+### Kubernetes HTTP recovery
+
+After gRPC Kubernetes recovery is green, repeat the same profile-based approach for HTTP Kubernetes runtime hosting.
+
+Expected target tests:
+
+- `Http_KubernetesSdk_Should_Requeue_Real_InFlight_Dag_After_Runtime_Pod_Kill`
+- `Http_KubernetesSdk_Should_Recover_Two_Tenants_After_Runtime_Pod_Kills_Without_Impacting_Safe_Tenant_With_Strict_Dag_Resume_Replay_Ledger_And_Trace`
+
+## Planned concurrency and stability tests
+
+After Kubernetes recovery scenarios pass individually, add controlled concurrency tests.
+
+Recommended approach:
+
+- Use `[Fact]` with internal `Task.WhenAll`.
+- Disable xUnit parallelization for the Kubernetes recovery test collection.
+- Keep concurrency controlled inside the test instead of relying on xUnit parallel facts.
+- Use unique IDs per concurrent scenario:
+  - `ControlPlaneId`
+  - `TenantId`
+  - `TenantGroupId`
+  - `PipelinePrefix`
+  - `RuntimeInstanceIdPrefix`
+  - Kubernetes pod labels
+  - Redis/Mongo keys
+  - Scale-out request IDs
+
+Initial stability settings:
+
+- Iterations: 3.
+- Concurrent scenarios: 2 or 3 max.
+- Tenants: 3.
+- Runs per tenant: 2 or 3.
+- Step count: 40.
+- Kill after completed steps: 20.
+
+Final production stability settings:
+
+- Iterations: 5.
+- Tenants: 3.
+- Runs per tenant: 3.
+- Step count: 100.
+- Kill after completed steps: 50.
+
+## Remaining cleanup
+
+- Rename remaining gRPC test prefixes that still contain `http-process-host...`.
+- Clean temporary debug output.
+- Keep useful diagnostics behind structured logger debug/trace output.
+- Optionally reduce duplicate runtime host creation attempts that currently appear as benign `process-runtime-instance-already-started` denied entries.
+- Keep the Kubernetes recovery scenarios profile-driven and avoid scenario duplication.
+
+## Milestone
+
+This milestone proves that the runtime recovery architecture is no longer tied to a single transport or host mode.
+
+The same production recovery contract is now validated across:
+
+- HTTP process-host.
+- gRPC process-host.
+- Kubernetes-backed gRPC runtime readiness.
+- Kubernetes-backed gRPC real dispatch.
+
+The next milestone is to prove the same crash recovery contract under Kubernetes pod failure for both gRPC and HTTP.
+
+---
+
+## [1.0.7.1] - 2026-07-07 —  Kubernetes Runtime Host Provider
+
+## Added
+
+### Kubernetes-backed runtime instance publication
+
+Added the missing bridge between Kubernetes host lifecycle and runtime routing visibility.
+
+Before:
+
+```text
+Kubernetes pod created
+Kubernetes pod ready
+Runtime registry/capacity empty
+Readiness waiter stuck with SnapshotCount=0
+```
+
+Now:
+
+```text
+Kubernetes pod created
+Kubernetes pod ready
+Kubernetes-backed RuntimeInstance published
+Runtime capacity published
+Readiness waiter succeeds
+Scale-out fulfilled
+```
+
+This closes the architecture gap where a Kubernetes pod existed physically but was not visible as a routable runtime instance by the control plane.
+
+### New Kubernetes runtime instance publisher
+
+Added a dedicated publisher responsible for converting a successfully started Kubernetes runtime host into a visible runtime instance.
+
+Namespace:
+
+```csharp
+Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strategy.Kubernetes.Publisher
+```
+
+Added:
+
+```csharp
+IAiKubernetesRuntimeInstancePublisher
+KubernetesAiRuntimeInstancePublisher
+```
+
+Responsibilities:
+
+```text
+AiRuntimeHostStartRequest + AiRuntimeHostStartResult
+ -> AiRuntimeInstanceRegistration
+ -> AiRuntimeInstanceCapacityDescriptor
+ -> Redis registry/capacity publication
+```
+
+The publisher writes:
+
+```text
+RuntimeInstanceId
+ControlPlaneId
+ControlPlaneHostId
+TenantId
+TenantGroupId
+Role=Runtime
+Status=Ready
+WorkerCount
+MaxConcurrentRuns
+AvailableRunSlots
+CanAcceptRun=True
+provider.name
+transport.name
+host.provider=kubernetes
+kubernetes pod/service metadata
+```
+
+## Changed
+
+### Kubernetes host creation strategy now publishes runtime visibility
+
+`KubernetesAiRuntimeHostCreationStrategy` now remains the owner of Kubernetes lifecycle and also performs the Kubernetes-specific publication step after pod readiness.
+
+Flow now:
+
+```text
+Create pod/service
+Wait Kubernetes pod readiness
+Publish Kubernetes-backed RuntimeInstance + Capacity
+Return AiRuntimeHostStartResult.Started
+```
+
+This keeps the architecture clean because gRPC and HTTP providers do not need to know anything about Kubernetes.
+
+### Provider neutrality preserved
+
+`AiGrpcRuntimeScaleOutProvisioner` was not coupled to Kubernetes.
+
+It still only does:
+
+```text
+Create provisioning context
+Call runtimeHostManager.StartRuntimeAsync(...)
+Wait runtime readiness
+Fulfill scale-out
+```
+
+No Kubernetes-specific publisher, pod metadata, or Kubernetes registration logic was added inside the gRPC provider.
+
+This preserves the boundary:
+
+```text
+gRPC provider = runtime provider / transport ownership
+Kubernetes strategy = host lifecycle + Kubernetes-backed runtime publication
+Registry/capacity = routable source of truth
+Readiness waiter = post-publication validation
+```
+
+### Metadata merge hardened
+
+The Kubernetes runtime publisher now preserves both request metadata and host result metadata while keeping routing-critical fields authoritative.
+
+Metadata flow:
+
+```text
+request.Metadata
++ result.Metadata
++ authoritative runtime/provider/tenant/control-plane keys
+```
+
+Critical keys are written after merge so they cannot be accidentally overwritten:
+
+```text
+provider.name
+provider
+transport.name
+runtimeInstanceId
+controlPlaneId
+control-plane.id
+controlplane.id
+runtime.controlPlaneId
+tenant.id
+tenantId
+tenant.group.id
+tenant.groupId
+tenantGroupId
+host.provider
+host.id
+host.runtimeInstanceId
+transport.endpoint
+```
+
+## Fixed
+
+### Fixed Kubernetes pod not being visible as runtime capacity
+
+The previous failure mode was:
+
+```text
+KUBERNETES HOST READY RESULT Success=True
+GRPC SCALE-OUT HOST-MANAGER READINESS WAIT
+SnapshotCount=0
+runtime-readiness-failed
+```
+
+Root cause:
+
+```text
+The Kubernetes pod was created and ready, but no runtime instance/capacity was published into the control-plane registry.
+```
+
+Fix:
+
+```text
+Publish runtime registration and capacity immediately after Kubernetes pod readiness.
+```
+
+Verified successful sequence:
+
+```text
+KUBERNETES HOST READY RESULT Success=True
+KUBERNETES HOST STARTED AFTER POD READINESS
+KUBERNETES RUNTIME INSTANCE PUBLICATION BEGIN
+[KUBERNETES RUNTIME INSTANCE PUBLISHED]
+KUBERNETES RUNTIME INSTANCE PUBLICATION COMPLETED
+GRPC SCALE-OUT HOST-MANAGER READINESS WAIT
+GRPC SCALE-OUT HOST-MANAGER READINESS RESULT Success=True
+GRPC SCALE-OUT HOST-MANAGER FULFILLED
+```
+
+### Fixed architectural gap between host lifecycle and runtime lifecycle
+
+The design now explicitly separates:
+
+```text
+RuntimeHost
+  = Kubernetes pod/service/process/container lifecycle
+
+RuntimeInstance
+  = routable logical runtime capacity visible to the control plane
+```
+
+And connects them with a dedicated publication step.
+
+## Dependency Injection
+
+Registered the Kubernetes runtime instance publisher inside Kubernetes host provider DI:
+
+```csharp
+services.TryAddSingleton<IAiKubernetesRuntimeInstancePublisher, KubernetesAiRuntimeInstancePublisher>();
+```
+
+This keeps the dependency scoped to Kubernetes host lifecycle registration and avoids leaking Kubernetes concepts into gRPC or HTTP provider registration.
+
+## Tests
+
+### Passed
+
+Validated:
+
+```text
+GrpcKubernetesSdkRuntimeReadyScenarioTests
+```
+
+Test:
+
+```text
+Grpc_KubernetesSdkHostManager_Should_Fulfill_ScaleOut_After_Runtime_Readiness_Without_Changing_Grpc_Runtime_Transport
+```
+
+Result:
+
+```text
+1 Passed, 0 Failed, 0 Skipped
+```
+
+Duration:
+
+```text
+17.8 sec
+```
+
+Validated proof output:
+
+```text
+Provider='grpc'
+HostProvider='kubernetes'
+RuntimeProvider='grpc'
+Transport='grpc'
+TenantId='tenant-dedicated-single'
+RuntimeInstanceId='gk8s-ready-scaleout-...:tenant-dedicated-single-runtime-1'
+FulfilledBy='mcp-scaleout-watcher'
+```
+
+## Architecture impact
+
+This milestone confirms the intended production model:
+
+```text
+1 scale-out request
+= 1 Kubernetes pod
+= 1 Kubernetes-backed runtime instance
+= 1 tenant-scoped routable capacity entry
+```
+
+The control plane can now safely scale out through Kubernetes without global fallback, without fake readiness, and without making runtime transport providers aware of Kubernetes internals.
+
+---
+
+## [1.0.7.1] - 2026-07-06 — Kubernetes Runtime Host Provider
+
+This changelog covers the incremental work completed after the previous Kubernetes runtime host provider changelog. It focuses on validating the real Kubernetes SDK lifecycle path with minikube, fixing production-grade runtime host boot issues, and preserving identical runtime behavior between Process-hosted and Kubernetes-hosted runtimes.
+
+## Key Outcome
+
+The Kubernetes SDK host-manager scenario now validates the intended architecture:
+
+```text
+Runtime provider: grpc
+Runtime command transport: grpc
+Host lifecycle provider: kubernetes
+Kubernetes client mode: KubernetesSdk
+Runtime host mode inside pod: RuntimeInstanceOnly
+Local runtime pool inside pod: preserved
+Redis/Mongo connectivity from pod: validated
+Runtime pod crash after delayed startup: fixed
+```
+
+The important architectural conclusion is that Kubernetes must not change runtime behavior. It only materializes the runtime host lifecycle as a pod/service, equivalent to Process mode materializing the same host as a process.
+
+---
+
+## 1. Real Kubernetes SDK lifecycle validation
+
+### Added / validated
+
+A real minikube-backed scenario was executed using:
+
+```text
+GrpcKubernetesSdkHostManagerScaleOutScenarioTests
+```
+
+The test validated:
+
+```text
+scale-out request
+→ mcp-scaleout-watcher
+→ gRPC scale-out provider
+→ HostManager
+→ Kubernetes host creation strategy
+→ Kubernetes SDK client
+→ real pod/service in minikube
+→ scale-out request fulfilled
+```
+
+### Confirmed proof output
+
+The successful test output confirmed:
+
+```text
+RuntimeProvider='grpc'
+Transport='grpc'
+HostProvider='kubernetes'
+FulfilledBy='mcp-scaleout-watcher'
+```
+
+This proves Kubernetes is acting only as the lifecycle host provider and does not replace the gRPC runtime provider or gRPC command transport.
+
+---
+
+## 2. Kubernetes DNS resource-name hardening
+
+### Problem
+
+The first real SDK run failed because generated Kubernetes Service names exceeded the Kubernetes DNS label limit of 63 characters.
+
+Examples of rejected service names:
+
+```text
+grpc-kubernetes-sdk-runtime-grpc-kubernetes-sdk-host-scaleout-d-svc
+rt-gk8s-scaleout-4ca830c980ce42b99035e0907ea22d3b-tenant-dedica-svc
+```
+
+Kubernetes returned:
+
+```text
+metadata.name: Invalid value ... must be no more than 63 characters
+```
+
+### Fix
+
+`AiKubernetesSdkResourceFactory` was hardened to normalize and shorten Kubernetes resource names.
+
+The service name generation now creates DNS-safe resource names with:
+
+```text
+lowercase normalization
+invalid character replacement
+repeated dash cleanup
+63-character max length
+stable hash suffix when truncation is required
+```
+
+### Result
+
+Kubernetes Service creation now succeeds even when runtime instance IDs are long and tenant-scoped.
+
+---
+
+## 3. Real pod boot dependency validation
+
+### Problem: OPENAI_API_KEY missing
+
+The first pod started but crashed immediately with:
+
+```text
+Unhandled exception. System.InvalidOperationException: OPENAI_API_KEY is required.
+```
+
+### Fix
+
+The Kubernetes runtime pod environment was extended through:
+
+```text
+AiKubernetesRuntimeHost:EnvironmentVariables:OPENAI_API_KEY
+```
+
+For the SDK lifecycle test, a dummy value is sufficient because this scenario validates host lifecycle, not real LLM execution:
+
+```text
+demo-local-kubernetes-not-used
+```
+
+### Result
+
+The pod passed OpenAI provider registration and continued startup.
+
+---
+
+## 4. Redis connectivity from Kubernetes pod
+
+### Problem
+
+After the OpenAI key issue was fixed, the pod failed on Redis:
+
+```text
+StackExchange.Redis.RedisConnectionException
+It was not possible to connect to the redis server(s).
+```
+
+### Cause
+
+Inside Kubernetes:
+
+```text
+localhost = the pod itself
+```
+
+So the runtime pod could not use the same `localhost:6379` assumptions as the Windows-hosted test process.
+
+### Validation
+
+Connectivity from minikube to host Redis was validated with:
+
+```powershell
+kubectl run redis-test -n ai-runtime --rm -it --image=redis:7-alpine --restart=Never -- redis-cli -h host.minikube.internal -p 6379 ping
+```
+
+Expected result:
+
+```text
+PONG
+```
+
+### Fix
+
+The SDK scenario injects Redis connection strings into the runtime pod:
+
+```text
+Redis__ConnectionString=host.minikube.internal:6379,abortConnect=false
+ConnectionStrings__Redis=host.minikube.internal:6379,abortConnect=false
+MultiplexedRbac__Redis__ConnectionString=host.minikube.internal:6379,abortConnect=false
+```
+
+### Result
+
+Redis connectivity from the Kubernetes pod was validated.
+
+---
+
+## 5. MongoDB connectivity from Kubernetes pod
+
+### Problem
+
+After Redis was fixed, MongoDB also needed explicit host connectivity from the pod.
+
+### Validation
+
+MongoDB connectivity from minikube to host MongoDB was validated with:
+
+```powershell
+kubectl run mongo-test -n ai-runtime --rm -it --image=mongo:7 --restart=Never -- mongosh "mongodb://host.minikube.internal:27017" --eval "db.runCommand({ ping: 1 })"
+```
+
+Expected result:
+
+```text
+ok: 1
+```
+
+### Fix
+
+The SDK scenario injects MongoDB connection strings into the runtime pod:
+
+```text
+Mongo__ConnectionString=mongodb://host.minikube.internal:27017/?directConnection=true
+MongoDb__ConnectionString=mongodb://host.minikube.internal:27017/?directConnection=true
+ConnectionStrings__Mongo=mongodb://host.minikube.internal:27017/?directConnection=true
+ConnectionStrings__MongoDb=mongodb://host.minikube.internal:27017/?directConnection=true
+```
+
+### Result
+
+MongoDB connectivity from the Kubernetes pod was validated.
+
+---
+
+## 6. Runtime service registration configuration hardening
+
+### Problem
+
+`AiRuntimeServiceRegistration` still had several implicit defaults and inconsistent resolution paths:
+
+```text
+Redis fallback: localhost:6379
+Mongo fallback: mongodb://localhost:27017
+OpenAI API key only from environment variable
+```
+
+These defaults work in local process mode but are fragile in real containers.
+
+### Fix
+
+`AiRuntimeServiceRegistration` was patched without changing functional behavior:
+
+```text
+Redis resolution supports ConnectionStrings:Redis, Redis:ConnectionString, MultiplexedRbac:Redis:ConnectionString
+Mongo resolution supports ConnectionStrings:Mongo, ConnectionStrings:MongoDb, Mongo:ConnectionString, MongoDb:ConnectionString
+OpenAI key supports environment variable and configuration keys
+Redis connection string is normalized with abortConnect=false when missing
+Mongo database name resolution is centralized
+```
+
+### Result
+
+The host can now be configured cleanly through Kubernetes environment variables while preserving the same defaults for local/process scenarios.
+
+---
+
+## 7. Preserved local runtime pool behavior inside Kubernetes pods
+
+### Important correction
+
+A temporary idea was considered to disable the local runtime pool inside the Kubernetes pod:
+
+```text
+AiLocalRuntimeInstancePool__Enabled=false
+```
+
+This was rejected as architecturally wrong.
+
+### Correct behavior
+
+The local runtime pool must remain enabled inside the pod:
+
+```text
+Kubernetes pod = runtime host
+Local runtime pool = runtime instances inside that host
+```
+
+This matches Process mode:
+
+```text
+Process host = runtime host process
+Local runtime pool = runtime instances inside that host
+```
+
+### Result
+
+The Kubernetes pod preserves the same runtime behavior as Process mode. Kubernetes only changes host lifecycle materialization.
+
+---
+
+## 8. Control-plane id propagation through local runtime pool
+
+### Problem
+
+The pod booted successfully and stayed running initially, but later crashed after the local runtime pool tried to start its internal runtime instances.
+
+The failing path was:
+
+```text
+AiLocalRuntimeInstancePoolHostedService
+→ AiLocalRuntimeInstanceScaler
+→ AiLocalRuntimeInstanceHost
+→ AiRuntimeInstanceRegistrationHostedService
+→ DefaultAiControlPlaneIdResolver
+→ Redis discovery key multiplexed-ai:default-control-plane
+→ timeout after 1 minute
+```
+
+Error:
+
+```text
+Unable to resolve the control-plane identifier from Redis discovery key 'multiplexed-ai:default-control-plane' within '00:01:00'.
+```
+
+### Root cause
+
+The parent Kubernetes runtime host had the correct control-plane id, but child runtimes created by the local runtime pool did not inherit it strongly enough for registration.
+
+Metadata was propagated to the child runtime host, but `AiRuntimeInstanceRegistrationHostedService` was resolving the control-plane id before reading environment/provider metadata.
+
+### Fixes
+
+#### AiLocalRuntimeInstanceScaler
+
+The scaler was patched to include the parent control-plane id in metadata passed to child runtime hosts:
+
+```text
+controlPlaneId
+control-plane.id
+controlplane.id
+runtime.controlPlaneId
+```
+
+The value is resolved from:
+
+```text
+request.ControlPlaneId
+AiRuntimeInstanceRegistration:ControlPlaneId
+AiMcpHost:ControlPlaneId
+```
+
+#### AiRuntimeInstanceRegistrationHostedService
+
+The registration service was patched so explicit metadata/environment values are respected before fallback discovery.
+
+New resolution order:
+
+```text
+options.Metadata
+options.ProviderMetadata
+environment.ProviderMetadata
+IAiControlPlaneIdResolver fallback
+```
+
+This preserves existing behavior because Redis discovery remains the fallback when no explicit control-plane id is available.
+
+### Result
+
+The local runtime pool can now start child runtimes inside the Kubernetes pod without falling back to the default discovery key.
+
+---
+
+## 9. Docker/minikube image update issue diagnosed
+
+### Problem
+
+After code patches, pods still showed the old behavior:
+
+```text
+DefaultAiControlPlaneIdResolver.ResolveAsync(...)
+AiRuntimeInstanceRegistrationHostedService.RegisterRuntimeInstanceAsync(...) line 236
+```
+
+This indicated that Kubernetes was still running an older `Multiplexed.AI.dll` inside the Host image.
+
+### Diagnosis
+
+The runtime host image tag was reused repeatedly:
+
+```text
+multiplexed-ai-runtime:test
+```
+
+Kubernetes/minikube was likely using a stale local image or stale published DLL layer.
+
+### Fix
+
+A unique debug image tag was used:
+
+```text
+multiplexed-ai-runtime:k8s-debug-002
+```
+
+The Kubernetes scenario was updated to force:
+
+```text
+AiKubernetesRuntimeHost:RuntimeImage=multiplexed-ai-runtime:k8s-debug-002
+AiKubernetesRuntimeHost:ImagePullPolicy=Never
+```
+
+### Result
+
+After ensuring the updated DLL was actually inside the image, the pod no longer crashed.
+
+---
+
+## 10. Kubernetes SDK scenario settings reviewed
+
+### Current scenario settings
+
+The scenario intentionally keeps readiness disabled for the lifecycle proof:
+
+```text
+AiGrpcRuntimeScaleOut:RequireReadiness=false
+AiKubernetesRuntimeHost:RequireRuntimeReadiness=false
+```
+
+This validates real Kubernetes pod/service lifecycle without requiring full runtime dispatch readiness yet.
+
+### Recommended explicit pod environment
+
+The SDK scenario now explicitly configures:
+
+```text
+OPENAI_API_KEY
+Redis connection strings
+Mongo connection strings
+AiRuntimeInstanceRegistration__ProviderName=grpc
+AiRuntimeInstanceRegistration__TransportName=grpc
+AiRuntimeInstanceRegistration__Role=Runtime
+AiRuntimeInstanceRegistration__HeartbeatInterval=00:00:05
+```
+
+### Important distinction
+
+This line applies only to the test/control-plane host:
+
+```text
+AiLocalRuntimeInstancePool:Enabled=false
+```
+
+It does not disable the local runtime pool inside the Kubernetes pod because it is not injected under:
+
+```text
+AiKubernetesRuntimeHost:EnvironmentVariables:...
+```
+
+---
+
+## 11. Current validated state
+
+### Confirmed working
+
+```text
+Kubernetes SDK client creates real pod/service in minikube
+Kubernetes service names are DNS-safe
+Runtime image starts in RuntimeInstanceOnly mode
+OpenAI config is present
+Redis is reachable from the pod
+MongoDB is reachable from the pod
+Local runtime pool remains enabled inside the pod
+Child runtime registration no longer crashes after 1 minute
+gRPC remains runtime provider and transport
+Kubernetes remains lifecycle provider only
+```
+
+### Current test proof level
+
+This is currently a Kubernetes SDK lifecycle proof:
+
+```text
+RequireRuntimeReadiness=false
+```
+
+It proves host creation and stable runtime boot, not yet full end-to-end DAG dispatch through the Kubernetes runtime.
+
+---
+
+## Next Steps
+
+### 1. Re-run SDK lifecycle test with updated settings only
+
+No image rebuild is required if only the test settings changed.
+
+```powershell
+kubectl delete pods -n ai-runtime --all
+kubectl delete svc -n ai-runtime --all
+kubectl get pods -n ai-runtime -w
+```
+
+Then run:
+
+```powershell
+dotnet test implementations/dotnet/Tests/Multiplexed.AI.McpServer.Tests.Integration --filter "FullyQualifiedName~GrpcKubernetesSdkHostManagerScaleOutScenarioTests"
+```
+
+### 2. Verify logs
+
+Expected logs:
+
+```text
+Runtime instance id resolved
+ControlPlaneId=gk8s-scaleout-...
+Runtime instance registered
+Runtime instance heartbeat succeeded
+```
+
+Must not appear:
+
+```text
+multiplexed-ai:default-control-plane
+Unable to resolve the control-plane identifier
+```
+
+### 3. Move to runtime readiness
+
+Once lifecycle stays stable, enable:
+
+```text
+AiGrpcRuntimeScaleOut:RequireReadiness=true
+AiKubernetesRuntimeHost:RequireRuntimeReadiness=true
+```
+
+This will validate that the control plane waits for the runtime pod registration/capacity before considering the runtime usable.
+
+### 4. Move to full DAG dispatch through Kubernetes runtime
+
+Final production proof:
+
+```text
+submit DAG
+→ no capacity
+→ scale-out request
+→ Kubernetes pod created
+→ pod registers runtime capacity
+→ gRPC command dispatch to runtime
+→ DAG completes
+```
+
+---
+
+## Summary
+
+This incremental phase moved the Kubernetes provider from fake lifecycle proof to real minikube lifecycle execution and uncovered several production-hardening issues that Process mode masked:
+
+```text
+Kubernetes resource naming limits
+container environment dependency gaps
+localhost assumptions for Redis/Mongo
+control-plane id propagation through local runtime pool
+stale runtime DLL/image usage
+```
+
+The important result is that Kubernetes did not require a different runtime behavior model. The correct fix was to make the shared runtime host path more explicit and production-safe while preserving parity between Process and Kubernetes host modes.
+
+---
+
+## [1.0.7.1] - 2026-07-05 — Kubernetes Runtime Host Provider Integration
+
+This changelog summarizes the work completed after the previous changelog, focused on integrating Kubernetes as a runtime host lifecycle provider for the deterministic AI runtime.
+
+The main architectural rule validated in this milestone is:
+
+```text
+Kubernetes = runtime host lifecycle provider
+HTTP/gRPC   = runtime command provider and transport
+```
+
+Kubernetes must not replace the runtime transport provider. It creates or manages the runtime host capacity. The runtime provider remains `grpc` or `http` depending on the selected control-plane mode.
+
+---
+
+## 1. Kubernetes host provider branch and direction
+
+Work continued on the Kubernetes runtime host provider path with the goal of proving that a control plane can request runtime scale-out through the existing watcher/provider infrastructure and delegate host creation to Kubernetes.
+
+The validated target model is:
+
+```text
+Scale-out request
+→ scale-out watcher
+→ gRPC scale-out provider
+→ Runtime Host Manager
+→ Kubernetes host creation strategy
+→ Kubernetes runtime host client
+→ scale-out request fulfilled
+```
+
+Important design decision:
+
+```text
+ProviderHint       = grpc
+provider.name      = grpc
+transport.name     = grpc
+host.provider      = kubernetes
+HostCreationMode   = Kubernetes
+```
+
+This prevents a conceptual bug where Kubernetes would be treated as a scale-out provider or command transport. Kubernetes remains only the host lifecycle provider.
+
+---
+
+## 2. Added Kubernetes host-manager integration profile
+
+A new integration runtime profile was added under the shared/base provider profile area instead of placing it under a gRPC-only profile namespace.
+
+Chosen location:
+
+```text
+Scenarios/Production/Providers/Base/Profiles/GrpcKubernetesHostScenarioRuntimeProfile.cs
+```
+
+Reason:
+
+The profile represents a reusable scenario shape: gRPC runtime transport with Kubernetes host lifecycle. The profile is not itself a Kubernetes command provider and should remain reusable at the scenario/profile layer.
+
+Profile behavior:
+
+```text
+ProviderName  = grpc
+ProviderLabel = grpc-kubernetes-host
+LogPrefix     = GRPC KUBERNETES HOST
+RequestedBy   = grpc-kubernetes-host-manager-scaleout-test
+Source        = integration-test
+```
+
+It delegates settings construction to the Kubernetes-specific gRPC settings builder.
+
+---
+
+## 3. Added gRPC Kubernetes host production settings builder
+
+A new settings builder was introduced for the integration test scenario.
+
+Chosen location:
+
+```text
+Scenarios/Production/Providers/Grpc/Runners/GrpcKubernetesHostProductionScenarioSettingsBuilder.cs
+```
+
+Purpose:
+
+Reuse the existing gRPC process-host production settings baseline, then override only what is necessary for Kubernetes host-manager lifecycle mode.
+
+Key settings applied:
+
+```text
+AiRuntimeScaleOutRequestWatcher:Enabled = true
+AiHttpRuntimeScaleOut:Enabled = false
+AiGrpcRuntimeScaleOut:Enabled = true
+AiGrpcRuntimeScaleOut:Mode = HostManager
+AiGrpcRuntimeScaleOut:HostCreationMode = Kubernetes
+AiGrpcRuntimeScaleOut:RequireReadiness = false
+AiKubernetesRuntimeHost:Enabled = true
+AiKubernetesRuntimeHost:ClientMode = Fake
+AiKubernetesRuntimeHost:TransportName = grpc
+AiKubernetesRuntimeHost:RequireRuntimeReadiness = false
+```
+
+Important correction:
+
+`AiGrpcRuntimeScaleOut:RequireReadiness=false` is required for this fake Kubernetes lifecycle test because no real runtime process or pod is started.
+
+`AiKubernetesRuntimeHost:RequireRuntimeReadiness=false` was also required because the Kubernetes strategy itself originally waited for runtime registry readiness.
+
+---
+
+## 4. Added dedicated HostManager scale-out integration base
+
+A new integration base was created instead of reusing the process-host crash recovery base.
+
+Reason:
+
+The existing process-host base is tightly coupled to real process lifecycle and crash recovery behavior:
+
+```text
+IAiRuntimeHostProcessControl
+KillAsync(...)
+unsafe runtime detection
+requeue
+redispatch
+DAG resume
+forensics
+replay
+ledger recovery proof
+```
+
+That base is correct for process-host crash recovery, but wrong for Kubernetes fake host lifecycle tests.
+
+New base:
+
+```text
+Scenarios/Production/Providers/Base/Scenarios/HostManagerScaleOutScenarioTestsBase.cs
+```
+
+Initial approach:
+
+The first version tried to submit and dispatch a real run via `SubmitAndDispatchOneRunAsync`. This failed because fake Kubernetes does not create a real runtime instance that can register capacity and execute DAG work.
+
+Final approach:
+
+The base now creates a direct `AiRuntimeScaleOutRequestRecord`, stores it, and waits for the watcher/provider/host-manager path to mark it as fulfilled.
+
+This validates the host lifecycle path without requiring a real runtime process.
+
+---
+
+## 5. Added gRPC Kubernetes HostManager scale-out integration test
+
+New test class:
+
+```text
+Scenarios/Production/Providers/Grpc/GrpcKubernetesHostManagerScaleOutScenarioTests.cs
+```
+
+Test:
+
+```text
+Grpc_KubernetesHostManager_Should_Fulfill_ScaleOut_Without_Changing_Grpc_Runtime_Transport
+```
+
+Final validated output:
+
+```text
+[GRPC KUBERNETES HOST SCALE-OUT PROOF] Fulfilled.
+RequestId='scaleout-...'
+SharedRunId='shared-run-...'
+RuntimeInstanceId='grpc-kubernetes-host-scaleout-...:tenant-dedicated-single-runtime-1'
+FulfilledBy='mcp-scaleout-watcher'
+RuntimeProvider='grpc'
+Transport='grpc'
+HostProvider='kubernetes'
+TenantId='tenant-dedicated-single'
+```
+
+This proves:
+
+```text
+watcher selected the gRPC scale-out provider
+HostManager selected Kubernetes host creation mode
+Kubernetes fake lifecycle completed
+scale-out request was fulfilled
+runtime provider remained grpc
+runtime transport remained grpc
+host provider was kubernetes
+```
+
+---
+
+## 6. Wired Kubernetes host provider into real ServiceRegistration
+
+The integration test initially timed out with:
+
+```text
+No fulfilled scale-out request was observed
+ObservedRequests='1'
+```
+
+Root cause:
+
+`AddAiKubernetesRuntimeHostProvider(configuration)` existed but was not called by the real MCP host service registration path.
+
+Fix:
+
+In `ServiceRegistration.ConfigureControlPlaneWithRemoteRuntimeInstances(...)`, Kubernetes host provider registration was added to remote runtime control-plane modes, especially gRPC:
+
+```csharp
+services.AddAiGrpcRuntimeInstanceScaleOutProvider();
+services.AddAiKubernetesRuntimeHostProvider(configuration);
+```
+
+Optionally the same registration was also applied to HTTP remote mode so that Kubernetes host lifecycle can later be used with HTTP transport as well.
+
+This ensures the runtime host manager can resolve:
+
+```text
+IAiRuntimeHostCreationStrategy -> KubernetesAiRuntimeHostCreationStrategy
+IAiKubernetesRuntimeHostClient -> FakeAiKubernetesRuntimeHostClient or SDK client depending on options
+```
+
+---
+
+## 7. Fixed wrong provider hint in scale-out request
+
+After wiring Kubernetes DI, the test failed with:
+
+```text
+Reason='scale-out-provider-not-found'
+```
+
+Root cause:
+
+The manually created scale-out request used:
+
+```text
+ProviderHint = kubernetes
+```
+
+That was wrong. The watcher uses `ProviderHint` to select a scale-out provider. In this scenario, the scale-out provider is gRPC.
+
+Fix:
+
+```text
+ProviderHint = grpc
+```
+
+Kubernetes remains represented through metadata and host creation mode:
+
+```text
+provider.name = grpc
+transport.name = grpc
+host.provider = kubernetes
+host.creation.mode = Kubernetes
+```
+
+---
+
+## 8. Added `RequireRuntimeReadiness` option to Kubernetes host options
+
+After fixing the provider hint, the test failed with:
+
+```text
+Reason='runtime-readiness-registry-missing'
+```
+
+Root cause:
+
+`KubernetesAiRuntimeHostCreationStrategy` always waited for runtime registry readiness via `IAiRuntimeInstanceReadinessWaiter` after Kubernetes host readiness.
+
+That is correct for real pods, but wrong for fake lifecycle tests because the fake Kubernetes client does not boot a real runtime process and therefore no runtime registers into the registry.
+
+Fix added to `AiKubernetesRuntimeHostOptions`:
+
+```csharp
+/// <summary>
+/// Gets or sets a value indicating whether Kubernetes host creation should wait for runtime registry readiness.
+/// </summary>
+/// <remarks>
+/// Keep this enabled for real Kubernetes pods. Disable it for fake Kubernetes lifecycle tests
+/// where no real runtime process registers capacity.
+/// </remarks>
+public bool RequireRuntimeReadiness { get; set; } = true;
+```
+
+Default remains `true` for production safety.
+
+Integration fake Kubernetes builder sets:
+
+```text
+AiKubernetesRuntimeHost:RequireRuntimeReadiness = false
+```
+
+---
+
+## 9. Updated Kubernetes host creation strategy
+
+`KubernetesAiRuntimeHostCreationStrategy` was updated so that runtime registry readiness is optional.
+
+New behavior:
+
+```text
+Create Kubernetes host resources
+→ wait Kubernetes host readiness
+→ if RequireRuntimeReadiness=false: return Started
+→ else wait runtime registry readiness
+```
+
+This keeps real Kubernetes production behavior strict while allowing fake lifecycle integration tests to validate the host manager flow.
+
+Important correction during implementation:
+
+`AiRuntimeInstanceReadinessResult` does not expose `Metadata`, so this invalid merge was removed:
+
+```csharp
+metadata = MergeMetadata(metadata, runtimeReadinessResult.Metadata);
+```
+
+Metadata now comes from:
+
+```text
+base Kubernetes lifecycle metadata
+pod annotations
+Kubernetes create result metadata
+Kubernetes host readiness result metadata
+```
+
+---
+
+## 10. Added unit coverage for skipping runtime readiness
+
+A unit test was added to `KubernetesAiRuntimeHostCreationStrategyTests` to lock the new behavior.
+
+Test intent:
+
+```text
+RequireRuntimeReadiness=false
+→ Kubernetes host readiness is enough
+→ IAiRuntimeInstanceReadinessWaiter is not called
+→ result succeeds
+→ host.provider metadata is kubernetes
+```
+
+The helper `CreateStrategy(...)` already accepted:
+
+```csharp
+AiKubernetesRuntimeHostOptions? options = null,
+IAiKubernetesRuntimeHostClient? client = null,
+IAiRuntimeInstanceReadinessWaiter? readinessWaiter = null
+```
+
+So the test was written by constructing an `AiKubernetesRuntimeHostOptions` instance directly instead of passing a lambda.
+
+A `RecordingRuntimeInstanceReadinessWaiter` was added for the assertion:
+
+```text
+Assert.False(readinessWaiter.WasCalled)
+```
+
+The unit test is green.
+
+---
+
+## 11. Debugging timeline and resolved failures
+
+### Failure 1 — stub test still throwing
+
+Error:
+
+```text
+System.NotImplementedException
+```
+
+Cause:
+
+The initial skeleton test still contained `throw new NotImplementedException()`.
+
+Fix:
+
+`GrpcKubernetesHostManagerScaleOutScenarioTests` now inherits from `HostManagerScaleOutScenarioTestsBase` and calls:
+
+```csharp
+return HostManager_Should_Fulfill_ScaleOut_Without_Changing_Runtime_Transport();
+```
+
+---
+
+### Failure 2 — no fulfilled request after submit/dispatch
+
+Error:
+
+```text
+No fulfilled scale-out request was observed
+ObservedRequests='1'
+```
+
+Cause:
+
+The test tried to submit and dispatch a real run, but fake Kubernetes does not create runtime capacity that can execute work.
+
+Fix:
+
+The integration base now directly creates a scale-out request and waits for it to become fulfilled.
+
+---
+
+### Failure 3 — provider not found
+
+Error:
+
+```text
+Reason='scale-out-provider-not-found'
+```
+
+Cause:
+
+`ProviderHint` was incorrectly set to `kubernetes`.
+
+Fix:
+
+```text
+ProviderHint = grpc
+```
+
+---
+
+### Failure 4 — runtime readiness registry missing
+
+Error:
+
+```text
+Reason='runtime-readiness-registry-missing'
+```
+
+Cause:
+
+Kubernetes strategy always waited for runtime registry readiness even in fake lifecycle mode.
+
+Fix:
+
+Added:
+
+```text
+AiKubernetesRuntimeHost:RequireRuntimeReadiness=false
+```
+
+and updated strategy logic to skip `IAiRuntimeInstanceReadinessWaiter` when configured.
+
+---
+
+### Failure 5 — invalid readiness metadata access
+
+Error:
+
+```text
+runtimeReadinessResult.Metadata does not exist
+```
+
+Cause:
+
+`AiRuntimeInstanceReadinessResult` has no `Metadata` property.
+
+Fix:
+
+Removed the metadata merge from runtime readiness result.
+
+---
+
+### Failure 6 — read-only request metadata in unit helper
+
+Error:
+
+```text
+Property or indexer IReadOnlyDictionary<string,string>.this[string] cannot be assigned to -- it is read only
+```
+
+Cause:
+
+The test attempted to mutate `AiRuntimeHostStartRequest.Metadata` using collection initializer syntax.
+
+Fix:
+
+Removed the metadata mutation from `CreateStartRequest()`. The strategy itself is responsible for producing Kubernetes host metadata.
+
+---
+
+### Failure 7 — wrong helper call style
+
+Issue:
+
+The test tried to call `CreateStrategy(options => { ... })`, but the existing helper accepts an `AiKubernetesRuntimeHostOptions?` object, not a lambda.
+
+Fix:
+
+Created the options object directly:
+
+```csharp
+CreateStrategy(
+    options: new AiKubernetesRuntimeHostOptions
+    {
+        Enabled = true,
+        Namespace = "ai-runtime",
+        RuntimeImage = "multiplexed-ai-runtime:test",
+        ContainerName = "runtime-instance",
+        ContainerPort = 8080,
+        PodNamePrefix = "runtime",
+        TransportName = "grpc",
+        DeleteResourcesOnFailure = true,
+        ClientMode = AiKubernetesRuntimeHostClientMode.Fake,
+        RequireRuntimeReadiness = false
+    },
+    readinessWaiter: readinessWaiter);
+```
+
+---
+
+## 12. Final green proof
+
+Final integration proof output:
+
+```text
+[GRPC KUBERNETES HOST SCALE-OUT PROOF] Fulfilled.
+RuntimeProvider='grpc'
+Transport='grpc'
+HostProvider='kubernetes'
+FulfilledBy='mcp-scaleout-watcher'
+```
+
+This is the first real integration proof that the runtime can use Kubernetes as a host lifecycle provider while preserving gRPC as the runtime command transport.
+
+---
+
+## 13. Current status
+
+Green:
+
+```text
+GrpcKubernetesHostManagerScaleOutScenarioTests
+KubernetesAiRuntimeHostCreationStrategyTests RequireRuntimeReadiness=false coverage
+```
+
+Validated:
+
+```text
+gRPC scale-out provider selection
+Runtime Host Manager selection
+Kubernetes host creation strategy selection
+Fake Kubernetes lifecycle client
+Scale-out request fulfillment
+Transport/provider metadata separation
+Optional runtime readiness for fake lifecycle tests
+```
+
+Not yet implemented:
+
+```text
+Real Kubernetes pod integration test
+Real pod runtime registration proof
+Real gRPC command dispatch to Kubernetes-hosted runtime
+DAG execution proof inside Kubernetes pod
+Crash/recovery proof for Kubernetes-hosted runtime
+```
+
+---
+
+## 14. Recommended next steps
+
+1. Add a small unit test proving `RequireRuntimeReadiness=true` still calls the readiness waiter and fails when runtime registry readiness fails.
+2. Add metadata assertions on `AiRuntimeHostStartResult` for:
+   ```text
+   host.provider = kubernetes
+   host.creation.mode = Kubernetes
+   host.creation.strategy = KubernetesAiRuntimeHostCreationStrategy
+   provider.name = grpc
+   transport.name = grpc
+   ```
+3. Add a real Kubernetes SDK integration test later using `ClientMode=KubernetesSdk`.
+4. Only after real pod registration works, add a dispatch/DAG test against a Kubernetes-hosted runtime.
+
+---
+
+## Final summary
+
+This milestone turned Kubernetes from a unit-tested host creation strategy into an integration-validated host lifecycle provider behind the existing gRPC scale-out flow.
+
+The key architectural proof is now green:
+
+```text
+Kubernetes owns host lifecycle.
+gRPC owns runtime command transport.
+The watcher/provider/host-manager path fulfils scale-out without confusing those responsibilities.
+```
+
+
+---
+
+## [1.0.7.1] - 2026-07-05 — Kubernetes Runtime Host Provider 
+
+## Added
+
+### Kubernetes SDK resource factory
+
+Added `AiKubernetesSdkResourceFactory` to isolate Kubernetes SDK resource construction from the lifecycle client.
+
+It now owns creation of:
+
+- Kubernetes `V1Pod` resources
+- Kubernetes `V1Service` resources
+- Deterministic per-runtime service names
+- Kubernetes lifecycle metadata returned by host operations
+
+This makes Kubernetes resource generation independently testable without a real cluster.
+
+### Narrow Kubernetes SDK operation boundary
+
+Added `IAiKubernetesSdkClient` as a small testable boundary over the Kubernetes SDK.
+
+The interface exposes only the operations required by the runtime host lifecycle client:
+
+- Create pod
+- Create service
+- Read pod status
+- Delete service
+- Delete pod
+
+This avoids coupling unit tests directly to the full Kubernetes SDK surface.
+
+### Kubernetes SDK client wrapper
+
+Added `AiKubernetesSdkClient`, a thin wrapper around the Kubernetes .NET SDK client.
+
+It adapts Kubernetes SDK calls into the narrow `IAiKubernetesSdkClient` interface used by the runtime host lifecycle client.
+
+### Fake Kubernetes SDK client fixtures
+
+Added reusable test fixtures:
+
+- `FakeAiKubernetesSdkClient`
+- `FakeKubernetesClientFactory`
+
+These allow lifecycle tests to simulate Kubernetes behavior without requiring a Kubernetes cluster.
+
+## Changed
+
+### Kubernetes client factory now returns testable SDK boundary
+
+Changed `IKubernetesClientFactory` to return `IAiKubernetesSdkClient` instead of the raw Kubernetes SDK client.
+
+`DefaultKubernetesClientFactory` now:
+
+- Loads in-cluster configuration when running inside Kubernetes
+- Falls back to kubeconfig when running locally
+- Wraps the raw Kubernetes SDK client inside `AiKubernetesSdkClient`
+
+### Kubernetes lifecycle client now uses the narrow SDK boundary
+
+Updated `KubernetesSdkAiKubernetesRuntimeHostClient` to use `IAiKubernetesSdkClient` instead of directly calling `client.CoreV1`.
+
+This keeps the lifecycle implementation focused on orchestration logic rather than raw SDK calls.
+
+### Kubernetes resource creation extracted from lifecycle client
+
+Moved pod, service, service-name, and metadata construction out of `KubernetesSdkAiKubernetesRuntimeHostClient` and into `AiKubernetesSdkResourceFactory`.
+
+The lifecycle client now delegates Kubernetes object construction to the resource factory.
+
+### DI registration extended
+
+Updated Kubernetes runtime host DI registration to include:
+
+- `AiKubernetesSdkResourceFactory`
+- `IKubernetesClientFactory`
+- `DefaultKubernetesClientFactory`
+- `KubernetesSdkAiKubernetesRuntimeHostClient`
+
+The DI tests now validate that the resource factory is registered and that `KubernetesSdk` client mode resolves the SDK-backed lifecycle client.
+
+## Hardened
+
+### Idempotent Kubernetes cleanup
+
+Updated runtime host deletion so that missing Kubernetes resources do not fail cleanup.
+
+If the pod or service is already deleted and Kubernetes returns `NotFound`, the delete operation is treated as successful.
+
+This is important for:
+
+- Retry-safe cleanup
+- Partial failure handling
+- Future reconciliation flows
+- Crash/recovery scenarios
+- Avoiding false negatives during cleanup after failed host creation
+
+## Tested
+
+### Resource factory tests
+
+Added unit tests for `AiKubernetesSdkResourceFactory` covering:
+
+- Pod creation from runtime pod spec
+- Service creation from runtime pod spec
+- Deterministic service-name generation
+- Lifecycle metadata creation
+
+### Kubernetes SDK lifecycle client tests
+
+Added unit tests for `KubernetesSdkAiKubernetesRuntimeHostClient` without requiring a Kubernetes cluster.
+
+Covered scenarios:
+
+- Create pod and service when service-per-runtime is enabled
+- Create only pod when service-per-runtime is disabled
+- Return rejected result when pod creation fails
+- Return ready result when pod status is ready
+- Return failed readiness result when status read fails
+- Return timeout when pod never becomes ready
+- Delete service and pod
+- Delete only pod when service-per-runtime is disabled
+- Return failed result when pod delete fails
+
+### DI tests
+
+Updated DI tests to validate:
+
+- Kubernetes SDK resource factory registration
+- Kubernetes SDK client factory registration
+- SDK-backed lifecycle client registration
+- Fake mode remains the safe default
+- KubernetesSdk mode resolves the real SDK-backed lifecycle client
+- Existing host creation strategies are not replaced
+
+## Architecture Notes
+
+Kubernetes remains a host lifecycle provider only.
+
+It is responsible for creating, checking, and deleting runtime host capacity, but it does not become a runtime command transport.
+
+Runtime command transport remains explicit through:
+
+- HTTP
+- gRPC
+
+Runtime readiness remains separate from Kubernetes pod readiness.
+
+Kubernetes pod readiness proves that the host process is alive from Kubernetes' point of view. Runtime readiness still needs to prove that the runtime instance registered correctly, exposed capacity, and became visible to the control plane under the correct execution and tenant context.
+
+## Validation Status
+
+Validated locally with targeted unit tests for:
+
+- Kubernetes SDK resource factory
+- Kubernetes SDK lifecycle client
+- Kubernetes host DI registration
+
+---
+
+## [1.0.7.1] - 2026-07-05 — Kubernetes Runtime Host Provider
+
+## Changes
+
+### Kubernetes client mode
+
+Added an explicit Kubernetes runtime host client mode:
+
+- `AiKubernetesRuntimeHostClientMode.Fake`
+- `AiKubernetesRuntimeHostClientMode.KubernetesSdk`
+
+Added `ClientMode` to `AiKubernetesRuntimeHostOptions`, defaulting to `Fake`.
+
+This keeps tests and local validation safe by default while allowing the real Kubernetes SDK adapter to be selected explicitly.
+
+### Dependency injection registration
+
+Updated `AiKubernetesRuntimeHostServiceCollectionExtensions` to register Kubernetes host lifecycle services explicitly:
+
+- `AiKubernetesRuntimePodMetadataBuilder`
+- `AiKubernetesRuntimePodSpecBuilder`
+- `IKubernetesClientFactory`
+- `DefaultKubernetesClientFactory`
+- `KubernetesSdkAiKubernetesRuntimeHostClient`
+- `IAiKubernetesRuntimeHostClient`
+- `KubernetesAiRuntimeHostCreationStrategy`
+
+The `IAiKubernetesRuntimeHostClient` registration now selects the implementation from `AiKubernetesRuntimeHostOptions.ClientMode`:
+
+- `Fake` resolves `FakeAiKubernetesRuntimeHostClient`
+- `KubernetesSdk` resolves `KubernetesSdkAiKubernetesRuntimeHostClient`
+
+The registration remains additive and does not replace existing host creation strategies.
+
+### Kubernetes .NET SDK dependency
+
+Added the Kubernetes .NET SDK package dependency to the main `Multiplexed.AI` project.
+
+This prepares the runtime host lifecycle provider for real Kubernetes pod/service creation.
+
+### Kubernetes SDK client factory
+
+Added a Kubernetes SDK client factory boundary:
+
+- `IKubernetesClientFactory`
+- `DefaultKubernetesClientFactory`
+
+The default factory loads configuration from:
+
+1. in-cluster Kubernetes configuration when running inside a cluster;
+2. local kubeconfig when running outside a cluster.
+
+This keeps Kubernetes configuration loading outside the host creation strategy.
+
+### Kubernetes SDK-backed lifecycle client
+
+Added `KubernetesSdkAiKubernetesRuntimeHostClient`.
+
+The client supports:
+
+- creating a Kubernetes pod for a runtime instance;
+- creating an optional per-runtime ClusterIP service;
+- polling Kubernetes pod readiness;
+- deleting service and pod resources during cleanup;
+- returning structured lifecycle results using the existing Kubernetes host client result models.
+
+The SDK client only proves Kubernetes host readiness. Runtime transport readiness remains handled separately through `IAiRuntimeInstanceReadinessWaiter`.
+
+### DI tests
+
+Updated Kubernetes DI tests to validate:
+
+- Kubernetes host lifecycle services are registered explicitly;
+- options bind from configuration, including `ClientMode`;
+- Kubernetes registration adds a strategy without replacing existing strategies;
+- `ClientMode = Fake` resolves `FakeAiKubernetesRuntimeHostClient`;
+- `ClientMode = KubernetesSdk` resolves `KubernetesSdkAiKubernetesRuntimeHostClient`;
+- the default Kubernetes SDK client factory is registered.
+
+### Test fixtures
+
+Moved reusable fake/additive strategy helpers into `Multiplexed.AI.Tests.Fixtures` to avoid private nested helper duplication in test classes.
+
+## Verified
+
+Validated with targeted Kubernetes DI tests:
+
+```powershell
+dotnet test implementations/dotnet --filter "FullyQualifiedName~AiKubernetesRuntimeHostServiceCollectionExtensionsTests"
+```
+
+Validated build after adding the Kubernetes SDK-backed client and model syntax fixes.
+
+## Important architecture guardrails preserved
+
+- Kubernetes is lifecycle/host capacity only.
+- HTTP and gRPC remain runtime command transports.
+- Runtime readiness remains separate from Kubernetes pod readiness.
+- Shared queue, shared run store, registry, capacity store, execution index, ledger, replay, and forensics remain the source of truth.
+- No YAML-first design was introduced.
+- No HTTP/gRPC provider replacement was introduced.
+- No recovery ownership was moved into Kubernetes.
+
+## Next step
+
+Add focused unit tests for `KubernetesSdkAiKubernetesRuntimeHostClient` using a fake `IKubernetes` boundary or a thin wrapper around Kubernetes SDK operations, so pod/service creation and cleanup can be validated without a real cluster.
+
+---
+
+## [1.0.7.1] - 2026-07-05 — Kubernetes Runtime Host Provider / SDK Foundation
+
+Prepare Kubernetes as a runtime host / lifecycle provider, without replacing HTTP or gRPC as runtime transport providers.
+
+This phase intentionally avoids:
+
+- direct YAML-first implementation
+- Kubernetes client dependency too early
+- replacing `ProviderName` with `kubernetes`
+- bypassing shared queue / local runtime queue
+- moving recovery responsibility into Kubernetes
+
+Core principle:
+
+```text
+Kubernetes creates capacity.
+HTTP/gRPC dispatches work.
+Readiness proves runtime dispatchability.
+Recovery remains owned by the recovery reconciler.
+```
+
+---
+
+## 1. Runtime readiness namespace cleanup
+
+### Problem
+
+Readiness abstractions were physically already under runtime instance concepts, but their namespace still implied HostManager ownership:
+
+```text
+Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager.Readiness
+```
+
+That was misleading because runtime readiness is not only a HostManager concern.
+
+### Change
+
+Namespace moved to:
+
+```text
+Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Readiness
+```
+
+### Why
+
+Readiness is a runtime instance concern:
+
+- registry visibility
+- capacity visibility
+- tenant context
+- optional transport reachability
+- dispatchability
+
+It must remain provider-neutral and usable by process, gRPC, HTTP, and future Kubernetes runtime hosts.
+
+## 2. gRPC readiness debt fixed
+
+### Problem
+
+gRPC scale-out scenarios previously used:
+
+```text
+AiGrpcRuntimeScaleOut:RequireReadiness=false
+```
+
+The reason was not that gRPC was not ready. The readiness waiter treated a gRPC endpoint like:
+
+```text
+http://127.0.0.1:port
+```
+
+as an HTTP endpoint because of the `http://` scheme, then attempted to probe:
+
+```text
+/runtime-instance/commands
+```
+
+That endpoint exists for HTTP command transport, but not for gRPC, causing `404` readiness failures.
+
+### Change
+
+`AiRuntimeInstanceReadinessWaiter` now prioritizes explicit gRPC transport detection before HTTP scheme detection.
+
+Correct order:
+
+```text
+TransportName == grpc
+    -> TCP transport probe
+
+TransportName == http or endpoint is HTTP-like
+    -> HTTP command endpoint probe
+```
+
+### Result
+
+gRPC readiness is now active again.
+
+```text
+gRPC readiness active
+RequireReadiness=true
+No fake HTTP command endpoint probe
+No readiness bypass
+```
+
+## 3. Architecture decision: Kubernetes is not a runtime command provider
+
+### Decision
+
+Kubernetes must not replace HTTP or gRPC as the runtime command provider.
+
+Wrong model:
+
+```text
+ProviderName = kubernetes
+```
+
+Correct model:
+
+```text
+ProviderName = grpc
+TransportName = grpc
+host.provider = kubernetes
+```
+
+### Separation of responsibilities
+
+```text
+HTTP/gRPC
+    = runtime transport / dispatch providers
+
+Kubernetes
+    = host lifecycle provider
+
+Scale-out provider
+    = capacity orchestration
+
+Readiness waiter
+    = registry + capacity + tenant visibility + optional transport reachability
+
+Recovery reconciler
+    = assigned work recovery
+```
+
+### Why
+
+Kubernetes creates or hosts runtime capacity. It does not dispatch DAG runs and must not become durable runtime truth.
+
+Runtime truth remains:
+
+- Redis runtime registry
+- Redis runtime capacity store
+- SharedRunStore
+- SharedQueue
+- RuntimeRunExecutionIndex
+- DAG execution store
+- Ledger / Trace / Forensics / Replay
+
+---
+
+## 4. Kubernetes host creation mode added
+
+### Change
+
+Added a new value to:
+
+```text
+AiRuntimeHostCreationMode
+```
+
+New value:
+
+```text
+Kubernetes
+```
+
+### Purpose
+
+This allows `AiRuntimeHostCreationManager` to select a Kubernetes host creation strategy using the same mechanism already used for:
+
+```text
+Fixture
+Process
+Kubernetes
+```
+
+Kubernetes enters the existing host lifecycle pipeline instead of creating a new runtime dispatch pipeline.
+
+---
+
+## 5. Host lifecycle metadata added
+
+### Added host metadata keys
+
+```text
+host.provider
+host.creation.mode
+host.creation.strategy
+host.id
+host.name
+```
+
+### Added host provider names
+
+```text
+fixture
+process
+kubernetes
+attach
+```
+
+### Added Kubernetes metadata keys
+
+```text
+kubernetes.namespace
+kubernetes.pod.name
+kubernetes.node.name
+kubernetes.service.name
+kubernetes.container.name
+```
+
+### Purpose
+
+Separate lifecycle/hosting metadata from transport metadata.
+
+Transport metadata stays:
+
+```text
+provider.name = grpc | http
+transport.name = grpc | http
+transport.endpoint = ...
+```
+
+Host metadata becomes:
+
+```text
+host.provider = kubernetes
+host.creation.mode = Kubernetes
+```
+
+This avoids polluting `ProviderName` with Kubernetes and keeps the provider router unchanged.
+
+---
+
+## 6. Kubernetes host creation strategy skeleton added
+
+### Added
+
+```text
+KubernetesAiRuntimeHostCreationStrategy
+```
+
+### Current behavior
+
+The strategy exposes:
+
+```text
+Mode = Kubernetes
+```
+
+and currently rejects host creation with:
+
+```text
+kubernetes-runtime-host-creation-not-implemented
+```
+
+### Important invariant
+
+Even rejection is tenant-aware and traceable because the result carries:
+
+- `ExecutionContextSnapshot`
+- `RuntimeInstanceId`
+- `ProviderName`
+- `TransportName`
+- `TransportEndpoint`
+- host lifecycle metadata
+
+### Metadata emitted
+
+```text
+host.provider = kubernetes
+host.creation.mode = Kubernetes
+host.creation.strategy = KubernetesAiRuntimeHostCreationStrategy
+```
+
+### Test coverage
+
+Tests validate that:
+
+- strategy mode is Kubernetes
+- rejection reason is structured
+- provider remains `grpc` or `http`
+- provider is not changed to `kubernetes`
+- host metadata is emitted correctly
+
+---
+
+## 7. Kubernetes runtime host options added
+
+### Added
+
+```text
+AiKubernetesRuntimeHostOptions
+```
+
+### Options
+
+```text
+Enabled
+Namespace
+RuntimeImage
+ContainerName
+ServiceAccountName
+PodNamePrefix
+TransportName
+ContainerPort
+UseServicePerRuntime
+StartupTimeout
+ReadinessTimeout
+DeleteResourcesOnFailure
+Labels
+Annotations
+```
+
+### Important default
+
+```text
+TransportName = grpc
+```
+
+But there is intentionally no:
+
+```text
+ProviderName = kubernetes
+```
+
+Kubernetes is host lifecycle. gRPC or HTTP remains transport.
+
+---
+
+## 8. Kubernetes pod metadata builder added
+
+### Added
+
+```text
+AiKubernetesRuntimePodMetadata
+AiKubernetesRuntimePodMetadataBuilder
+```
+
+### Purpose
+
+Generate Kubernetes labels and annotations from `AiRuntimeHostStartRequest` without:
+
+- YAML
+- Kubernetes client SDK
+- real pod creation
+- dispatch behavior
+
+### Generated concepts
+
+Labels include runtime-safe Kubernetes values:
+
+```text
+app.kubernetes.io/name = multiplexed-ai-runtime
+app.kubernetes.io/component = runtime-instance
+multiplexed.ai/control-plane-id = ...
+multiplexed.ai/runtime-instance-id = ...
+multiplexed.ai/provider = grpc
+multiplexed.ai/transport = grpc
+multiplexed.ai/host-provider = kubernetes
+multiplexed.ai/tenant-id = ...
+multiplexed.ai/tenant-group-id = ...
+```
+
+Annotations preserve richer diagnostic values:
+
+```text
+host.provider = kubernetes
+host.creation.mode = Kubernetes
+host.creation.strategy = KubernetesAiRuntimeHostCreationStrategy
+kubernetes.namespace = ...
+kubernetes.pod.name = ...
+kubernetes.container.name = ...
+provider.name = grpc
+transport.name = grpc
+transport.endpoint = ...
+tenant.id = ...
+tenant.groupId = ...
+```
+
+### Test coverage
+
+```text
+AiKubernetesRuntimePodMetadataBuilderTests
+```
+
+Validated:
+
+- Kubernetes stays host provider
+- gRPC stays runtime transport provider
+- provider name is not changed to Kubernetes
+- tenant context is preserved
+- label values are sanitized
+- annotations preserve diagnostic values
+- custom annotations are applied
+
+---
+
+## 9. Kubernetes pod spec builder added
+
+### Added
+
+```text
+AiKubernetesRuntimePodSpec
+AiKubernetesRuntimePodSpecBuilder
+```
+
+### Purpose
+
+Build a runtime-owned .NET pod specification model before introducing any Kubernetes SDK dependency.
+
+This model describes what the runtime host layer wants to create, without using `V1Pod`, YAML, or a Kubernetes client.
+
+### Spec fields
+
+```text
+Namespace
+PodName
+RuntimeImage
+ContainerName
+ContainerPort
+ServiceAccountName
+Labels
+Annotations
+EnvironmentVariables
+```
+
+### Runtime environment variables injected
+
+```text
+AiMcpHost__Mode = RuntimeInstanceOnly
+AiRuntimeInstanceRegistration__RuntimeInstanceId = ...
+AiRuntimeInstanceRegistration__ProviderName = grpc
+AiRuntimeInstanceRegistration__TransportName = grpc
+AiRuntimeInstanceRegistration__ControlPlaneId = ...
+AiRuntimeInstanceRegistration__TenantId = ...
+AiRuntimeInstanceRegistration__TenantGroupId = ...
+AiRuntimeInstanceRegistration__Metadata__host.provider = kubernetes
+AiRuntimeInstanceRegistration__Metadata__host.creation.mode = Kubernetes
+AiRuntimeInstanceRegistration__Metadata__provider.name = grpc
+AiRuntimeInstanceRegistration__Metadata__transport.name = grpc
+AiRuntimeInstanceRegistration__Metadata__transport.endpoint = ...
+AiRuntimeInstanceRegistration__Metadata__tenant.id = ...
+AiRuntimeInstanceRegistration__Metadata__tenant.groupId = ...
+```
+
+### Important invariant
+
+The pod spec prepares a `RuntimeInstanceOnly` pod, but it does not make Kubernetes the command transport provider.
+
+Correct invariant:
+
+```text
+host.provider = kubernetes
+ProviderName = grpc
+TransportName = grpc
+```
+
+### Test coverage
+
+```text
+AiKubernetesRuntimePodSpecBuilderTests
+```
+
+Validated:
+
+- pod spec is created from host start request
+- namespace, pod name, image, container, port, and service account are mapped
+- gRPC remains transport provider
+- Kubernetes host metadata is injected
+- tenant context is propagated
+- runtime identity and control-plane identity are injected
+- generated Kubernetes annotations are carried
+
+---
+
+## Current state
+
+The branch now has a clean Kubernetes SDK/runtime foundation:
+
+```text
+Kubernetes host creation mode
+Kubernetes host metadata keys
+Kubernetes host provider names
+Kubernetes host strategy skeleton
+Kubernetes host options
+Kubernetes pod metadata builder
+Kubernetes pod spec builder
+Unit tests green
+gRPC readiness active
+No YAML
+No Kubernetes client dependency yet
+No HTTP/gRPC dispatch regression
+```
+
+---
+
+## Next step
+
+The next logical step is the Kubernetes client boundary, still without a real cluster dependency.
+
+Add an abstraction first:
+
+```text
+IAiKubernetesRuntimeHostClient
+```
+
+Future operations:
+
+```text
+CreatePodAsync
+CreateServiceAsync
+WaitForPodReadyAsync
+DeletePodAsync
+```
+
+Then add an in-memory/fake implementation for tests:
+
+```text
+InMemoryAiKubernetesRuntimeHostClient
+```
+
+Only after that should `KubernetesAiRuntimeHostCreationStrategy` be wired to:
+
+```text
+AiKubernetesRuntimePodSpecBuilder
+IAiKubernetesRuntimeHostClient
+IAiRuntimeInstanceReadinessWaiter
+```
+
+This keeps the architecture testable and avoids YAML-first Kubernetes integration.
+
+
+---
+
 ## [1.0.7.1] - 2026-07-02 - gRPC provider integration, shared crash recovery refactor, and full gRPC process-host validation
 
 ### Summary

@@ -47,6 +47,50 @@ namespace Multiplexed.AI.Stores.Cache.Redis.Lua
                 return value
             end
 
+            local function resolve_claim_timeout_seconds(step)
+                local timeoutSeconds = tonumber(step.ClaimTimeoutSeconds)
+
+                if timeoutSeconds ~= nil and timeoutSeconds > 0 then
+                    return timeoutSeconds
+                end
+
+                if step.Config ~= nil and step.Config ~= cjson.null then
+                    timeoutSeconds =
+                        tonumber(step.Config.ClaimTimeoutSeconds)
+                        or tonumber(step.Config.claimTimeoutSeconds)
+                        or tonumber(step.Config.ClaimTimeout)
+                        or tonumber(step.Config.claimTimeout)
+
+                    if timeoutSeconds ~= nil and timeoutSeconds > 0 then
+                        return timeoutSeconds
+                    end
+                end
+
+                return 60
+            end
+
+            local function resolve_claim_timeout_seconds(step)
+                local timeoutSeconds = tonumber(step.ClaimTimeoutSeconds)
+
+                if timeoutSeconds ~= nil and timeoutSeconds > 0 then
+                    return timeoutSeconds
+                end
+
+                if step.Config ~= nil and step.Config ~= cjson.null then
+                    timeoutSeconds =
+                        tonumber(step.Config.ClaimTimeoutSeconds)
+                        or tonumber(step.Config.claimTimeoutSeconds)
+                        or tonumber(step.Config.ClaimTimeout)
+                        or tonumber(step.Config.claimTimeout)
+
+                    if timeoutSeconds ~= nil and timeoutSeconds > 0 then
+                        return timeoutSeconds
+                    end
+                end
+
+                return 60
+            end
+
             local stepNames = redis.call('SMEMBERS', @stepIndexKey)
 
             local workerId = @workerId
@@ -117,12 +161,9 @@ namespace Multiplexed.AI.Stores.Cache.Redis.Lua
                             step.RetryState.NextRetryAtUtc = cjson.null
                         end
 
-                        local timeoutSeconds = tonumber(step.ClaimTimeoutSeconds)
-                        if timeoutSeconds ~= nil and timeoutSeconds > 0 then
-                            step.LeaseExpiresAtUtc = nowUnix + (timeoutSeconds * 1000)
-                        else
-                            step.LeaseExpiresAtUtc = cjson.null
-                        end
+                        local timeoutSeconds = resolve_claim_timeout_seconds(step)
+                        step.ClaimTimeoutSeconds = timeoutSeconds
+                        step.LeaseExpiresAtUtc = nowUnix + (timeoutSeconds * 1000)
 
                         if step.StartedAtUtc == nil or step.StartedAtUtc == cjson.null then
                             step.StartedAtUtc = nowUnix
@@ -416,22 +457,36 @@ namespace Multiplexed.AI.Stores.Cache.Redis.Lua
 
                     if step.Status == "Running" or step.Status == 2 then
                         local leaseExpiresAt = step.LeaseExpiresAtUtc
+                        local shouldRecover = false
 
                         if leaseExpiresAt ~= nil and leaseExpiresAt ~= cjson.null then
-                            if tonumber(leaseExpiresAt) <= nowUnix then
-                                step.Status = "Ready"
-                                step.ClaimedBy = cjson.null
-                                step.ClaimToken = cjson.null
-                                step.ClaimedAtUtc = cjson.null
-                                step.LeaseExpiresAtUtc = cjson.null
-                                step.UpdatedAtUtc = nowUnix
-                                step.RecoveryCount = (step.RecoveryCount or 0) + 1
-                                step.Version = (step.Version or 0) + 1
-                                step.DependsOn = normalize_array(step.DependsOn)
+                            shouldRecover = tonumber(leaseExpiresAt) <= nowUnix
+                        else
+                            local claimedAt = tonumber(step.ClaimedAtUtc)
+                            local timeoutSeconds = tonumber(step.ClaimTimeoutSeconds)
 
-                                redis.call('SET', stepKey, cjson.encode(step))
-                                recovered = recovered + 1
+                            if timeoutSeconds == nil or timeoutSeconds <= 0 then
+                                timeoutSeconds = 60
                             end
+
+                            if claimedAt ~= nil and claimedAt + (timeoutSeconds * 1000) <= nowUnix then
+                                shouldRecover = true
+                            end
+                        end
+
+                        if shouldRecover then
+                            step.Status = "Ready"
+                            step.ClaimedBy = cjson.null
+                            step.ClaimToken = cjson.null
+                            step.ClaimedAtUtc = cjson.null
+                            step.LeaseExpiresAtUtc = cjson.null
+                            step.UpdatedAtUtc = nowUnix
+                            step.RecoveryCount = (step.RecoveryCount or 0) + 1
+                            step.Version = (step.Version or 0) + 1
+                            step.DependsOn = normalize_array(step.DependsOn)
+
+                            redis.call('SET', stepKey, cjson.encode(step))
+                            recovered = recovered + 1
                         end
                     end
                 end
@@ -439,6 +494,115 @@ namespace Multiplexed.AI.Stores.Cache.Redis.Lua
 
             return recovered
             """);
+
+        /// <summary>
+        /// Recovers all currently running steps for an explicit runtime recovery.
+        ///
+        /// RULES:
+        /// - only Running steps are considered
+        /// - lease expiration is deliberately ignored
+        /// - recovered steps transition back to Ready
+        /// - claim ownership is cleared
+        /// - RecoveryCount is incremented
+        ///
+        /// IMPORTANT:
+        /// - this operation must run only after recovery pause ownership has
+        ///   been acquired for the execution
+        /// - infrastructure recovery does not consume business RetryCount
+        /// - repeated execution is idempotent
+        /// </summary>
+        public static readonly LuaScript RecoverRunningForRecoveryPreparedScript =
+            LuaScript.Prepare(
+                """
+                local function normalize_array(value)
+                    if value == nil or value == cjson.null then
+                        return cjson.decode('[]')
+                    end
+
+                    local count = 0
+
+                    for _, _ in ipairs(value) do
+                        count = count + 1
+                    end
+
+                    if count == 0 then
+                        return cjson.decode('[]')
+                    end
+
+                    return value
+                end
+
+                local stepNames =
+                    redis.call(
+                        'SMEMBERS',
+                        @stepIndexKey)
+
+                local nowUnix =
+                    tonumber(@nowUnix)
+
+                local stepKeyPrefix =
+                    @stepKeyPrefix
+
+                local recovered =
+                    0
+
+                table.sort(stepNames)
+
+                for _, stepName in ipairs(stepNames) do
+                    local stepKey =
+                        stepKeyPrefix .. stepName
+
+                    local raw =
+                        redis.call(
+                            'GET',
+                            stepKey)
+
+                    if raw then
+                        local step =
+                            cjson.decode(raw)
+
+                        if step and
+                           (step.Status == 'Running' or step.Status == 2) then
+                            step.Status =
+                                'Ready'
+
+                            step.ClaimedBy =
+                                cjson.null
+
+                            step.ClaimToken =
+                                cjson.null
+
+                            step.ClaimedAtUtc =
+                                cjson.null
+
+                            step.LeaseExpiresAtUtc =
+                                cjson.null
+
+                            step.UpdatedAtUtc =
+                                nowUnix
+
+                            step.RecoveryCount =
+                                (tonumber(step.RecoveryCount) or 0) + 1
+
+                            step.Version =
+                                (tonumber(step.Version) or 0) + 1
+
+                            step.DependsOn =
+                                normalize_array(step.DependsOn)
+
+                            redis.call(
+                                'SET',
+                                stepKey,
+                                cjson.encode(step))
+
+                            recovered =
+                                recovered + 1
+                        end
+                    end
+                end
+
+                return recovered
+                """);
 
         /// <summary>
         /// Atomically finalizes the global execution record.
@@ -599,12 +763,9 @@ namespace Multiplexed.AI.Stores.Cache.Redis.Lua
                             step.RetryState.NextRetryAtUtc = cjson.null
                         end
 
-                        local timeoutSeconds = tonumber(step.ClaimTimeoutSeconds)
-                        if timeoutSeconds ~= nil and timeoutSeconds > 0 then
-                            step.LeaseExpiresAtUtc = nowUnix + (timeoutSeconds * 1000)
-                        else
-                            step.LeaseExpiresAtUtc = cjson.null
-                        end
+                        local timeoutSeconds = resolve_claim_timeout_seconds(step)
+                        step.ClaimTimeoutSeconds = timeoutSeconds
+                        step.LeaseExpiresAtUtc = nowUnix + (timeoutSeconds * 1000)
 
                         if step.StartedAtUtc == nil or step.StartedAtUtc == cjson.null then
                             step.StartedAtUtc = nowUnix
@@ -664,6 +825,28 @@ namespace Multiplexed.AI.Stores.Cache.Redis.Lua
                 end
 
                 return value
+            end
+
+            local function resolve_claim_timeout_seconds(step)
+                local timeoutSeconds = tonumber(step.ClaimTimeoutSeconds)
+
+                if timeoutSeconds ~= nil and timeoutSeconds > 0 then
+                    return timeoutSeconds
+                end
+
+                if step.Config ~= nil and step.Config ~= cjson.null then
+                    timeoutSeconds =
+                        tonumber(step.Config.ClaimTimeoutSeconds)
+                        or tonumber(step.Config.claimTimeoutSeconds)
+                        or tonumber(step.Config.ClaimTimeout)
+                        or tonumber(step.Config.claimTimeout)
+
+                    if timeoutSeconds ~= nil and timeoutSeconds > 0 then
+                        return timeoutSeconds
+                    end
+                end
+
+                return 60
             end
 
             local stepKey = @stepKey
@@ -734,12 +917,9 @@ namespace Multiplexed.AI.Stores.Cache.Redis.Lua
                 step.RetryState.NextRetryAtUtc = cjson.null
             end
 
-            local timeoutSeconds = tonumber(step.ClaimTimeoutSeconds)
-            if timeoutSeconds ~= nil and timeoutSeconds > 0 then
-                step.LeaseExpiresAtUtc = nowUnix + (timeoutSeconds * 1000)
-            else
-                step.LeaseExpiresAtUtc = cjson.null
-            end
+            local timeoutSeconds = resolve_claim_timeout_seconds(step)
+            step.ClaimTimeoutSeconds = timeoutSeconds
+            step.LeaseExpiresAtUtc = nowUnix + (timeoutSeconds * 1000)
 
             if step.StartedAtUtc == nil or step.StartedAtUtc == cjson.null then
                 step.StartedAtUtc = nowUnix

@@ -421,30 +421,6 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Isolation
         }
 
         /// <summary>
-        /// Static control-plane id resolver used by tests.
-        /// </summary>
-        private sealed class TestControlPlaneIdResolver : IAiControlPlaneIdResolver
-        {
-            private readonly string controlPlaneId;
-
-            /// <summary>
-            /// Initializes a new instance of the <see cref="TestControlPlaneIdResolver"/> class.
-            /// </summary>
-            public TestControlPlaneIdResolver(
-                string controlPlaneId)
-            {
-                this.controlPlaneId = controlPlaneId;
-            }
-
-            /// <inheritdoc />
-            public Task<string> ResolveAsync(
-                CancellationToken cancellationToken = default)
-            {
-                return Task.FromResult(controlPlaneId);
-            }
-        }
-
-        /// <summary>
         /// Redis fixture that isolates registry keys per control-plane identifier.
         /// </summary>
         private sealed class RedisFixture : IAsyncDisposable
@@ -457,7 +433,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Isolation
             {
                 Redis = redis;
                 this.controlPlaneId = controlPlaneId;
-                ControlPlaneIdResolver = new TestControlPlaneIdResolver(controlPlaneId);
+                ControlPlaneIdResolver = new StaticAiControlPlaneIdResolver(controlPlaneId);
             }
 
             /// <summary>

@@ -1,6 +1,6 @@
 # Runtime Control Plane
 
-Status: Implemented foundation / validated with shared controller, MCP, Redis stores, Redis scale-out request persistence, local runtime pools, local runtime scale-out, fulfilled-run requeue, HTTP process-host runtime scenarios, tenant-aware runtime isolation, Shared/Dedicated/Hybrid runtime visibility, real runtime process crash recovery, runtime recovery forensics, tenant-scoped ledger/trace/replay proof, and end-to-end MCP scale-out execution.
+Status: Implemented foundation / validated with shared controller, MCP, Redis stores, Redis scale-out request persistence, local runtime pools, local runtime scale-out, fulfilled-run requeue, HTTP/gRPC process-host scenarios, Kubernetes Runtime Host Manager scenarios, tenant-aware Shared/Dedicated/Hybrid visibility, real process and Pod crash recovery, runtime recovery forensics, tenant-scoped ledger/trace/replay proof, and end-to-end MCP scale-out execution.
 
 This document describes the **Runtime Control Plane foundation** used by the Deterministic AI Runtime, including replay, execution control, runtime queues, runtime instance registry/capacity, runtime health visibility, Redis discovery, shared queue orchestration, provider-based dispatch, tenant-aware runtime isolation, scale-out coordination, runtime process crash recovery, recovery forensics, control-plane ledger/tracing, and MCP integration.
 
@@ -176,7 +176,7 @@ This includes:
 - provider-based runtime dispatch
 - local runtime queue execution
 - direct runtime integration tests
-- future HTTP, gRPC, Redis command queue, and Kubernetes provider paths
+- HTTP, gRPC, and Kubernetes provider/host paths, plus future Redis command queue paths
 
 The tenant-aware control-plane flow is:
 
@@ -1287,7 +1287,7 @@ Run admission supports policy options such as:
 - prefer requested runtime instance
 - duration measurement
 
-This prepares the future shared runtime controller and Kubernetes scaler integration.
+This is the admission boundary now reused by the shared runtime controller and Kubernetes Host Manager scale-out integration.
 
 ---
 
@@ -1448,37 +1448,26 @@ The runtime can now expose or support:
 
 ---
 
-## Kubernetes Preparation
+## Kubernetes Host Lifecycle Integration
 
-This work prepares Kubernetes support by introducing:
+Kubernetes support now reuses the existing control-plane boundaries instead of introducing a Kubernetes-specific execution path.
 
-- runtime instance identity
-- runtime instance registration
-- runtime instance heartbeat
-- local queue visibility
-- run capacity visibility
-- admission decisions
-- Redis-backed scale-out request persistence
-- scale-out request watcher
-- provider-based scale-out selection
-- local runtime scale-out through the existing provider model
-- fulfilled scale-out run requeue
-- local queue control
-- instance draining
-- stopped/unregistered instances
-- observability hooks
-- structured event model
+Implemented integration points include:
 
-The next Kubernetes-related pieces can now be built on top the validated control-plane shape:
+- tenant-aware admission and durable `ExecutionContextSnapshot` propagation;
+- Redis-backed scale-out request persistence and watcher ownership;
+- HTTP/gRPC provider selection before host creation;
+- `IAiRuntimeHostManager` mode selection;
+- `KubernetesAiRuntimeHostCreationStrategy` Pod/Service lifecycle;
+- Kubernetes host readiness and provider transport readiness;
+- control-plane registry/capacity publication after readiness;
+- fulfilled scale-out run requeue through the normal shared queue;
+- runtime health suppression and assigned-work recovery after Pod loss;
+- replay, ledger, trace, forensics, and safe-tenant non-impact evidence.
 
-- Kubernetes deployment scaler adapter
-- Kubernetes pod / deployment scale-out implementation
-- Kubernetes metadata provider
-- Kubernetes readiness integration
-- MCP/API control-plane endpoint polish
-- Live observability export to Kibana / Grafana / OpenSearch
+The control-plane facade still does not create Pods directly. It coordinates admission, provider selection, lifecycle delegation, visibility, and recovery through focused abstractions.
 
-The shared controller, shared queue, Redis registry/capacity stores, control-plane discovery, admission reservation foundation, scale-out request lifecycle, provider-based scale-out selection, local/process-host scale-out flow, runtime health boundary, and execution recovery boundary are already validated foundations.
+Remaining Kubernetes hardening includes cluster autoscaling/HPA, production multi-control-plane leadership, Gateway controller interoperability, deployment packaging, and external observability export.
 
 ---
 
@@ -1506,17 +1495,15 @@ The shared controller, shared queue, Redis registry/capacity stores, control-pla
 
 The current foundation does not yet provide:
 
-- Kubernetes pod scaling adapter
-- actual Kubernetes scale-out execution
-- Redis command queue dispatch
-- gRPC runtime dispatch
-- distributed shared controller election
-- production dashboard UI
-- production security model for external adapters
-- database-backed tenant runtime settings management UI
-- production tenant settings administration workflow
+- cluster autoscaling/HPA beyond runtime Pod creation;
+- Redis command queue dispatch;
+- production multi-control-plane/shared-controller leadership;
+- production dashboard UI;
+- production security hardening for external adapters;
+- database-backed tenant runtime settings administration;
+- complete deployment packaging for every Kubernetes environment.
 
-These are intentionally left for the next phases.
+These remain separate from the implemented Kubernetes Runtime Host Manager lifecycle.
 
 ---
 
@@ -1524,7 +1511,7 @@ These are intentionally left for the next phases.
 
 The Shared Runtime Controller, Redis/local scale-out lifecycle, tenant-aware runtime isolation foundation, HTTP process-host scale-out path, runtime health boundary, execution recovery boundary, and real process-host crash recovery proof are now implemented and validated.
 
-The next step is to continue hardening provider-based runtime instance administration, production multi-process coordination, Kubernetes provider integration, and moving tenant settings from hardcoded provider-backed configuration toward a durable/configurable source.
+The next step is to continue hardening provider-based runtime instance administration, production multi-process coordination, Kubernetes lifecycle operations, and moving tenant settings from hardcoded provider-backed configuration toward a durable/configurable source.
 
 Expected next work:
 
@@ -1534,8 +1521,8 @@ Status provider capability
 Control provider capability
 Redis command queue provider
 gRPC runtime provider
-Kubernetes metadata provider
-Kubernetes scaling provider
+Kubernetes Gateway/controller interoperability
+Kubernetes cluster autoscaling and scheduling integration
 Production multi-control-plane reservation hardening
 Tenant settings configuration/persistence
 Dashboard/API/MCP operational polish
@@ -2120,9 +2107,9 @@ The implementation is now validated by unit and integration tests covering:
 
 ---
 
-## Updated Kubernetes Preparation
+## Kubernetes Scale-Out Control Loop
 
-This work extends Kubernetes preparation by introducing:
+The Kubernetes Host Manager path consumes the following already-implemented control-plane components:
 
 - shared runtime controller
 - shared run persistence
@@ -2147,60 +2134,56 @@ This work extends Kubernetes preparation by introducing:
 
 The local scale-out lifecycle is now validated end-to-end.
 
-This is not Kubernetes pod scaling yet, but it proves the full control-plane shape required by a future Kubernetes scaler:
+The same control-plane shape is now used by the Kubernetes Host Manager path:
 
 ```text
 0 visible runtime capacity
   -> RequestScaleOut
   -> persisted scale-out request
-  -> watcher fulfills capacity
+  -> watcher selects HTTP or gRPC provider
+  -> provider delegates to IAiRuntimeHostManager
+  -> Kubernetes strategy creates and readies a RuntimeInstanceOnly Pod
+  -> registry/capacity publication
+  -> scale-out fulfilled
   -> shared run requeued
-  -> pump dispatches
+  -> normal pump dispatch
   -> runtime executes
   -> completed
 ```
 
-The next Kubernetes-related pieces can now be built on top:
+Remaining Kubernetes-related hardening builds on this implemented boundary:
 
-- runtime instance heartbeat TTL / expiration
-- runtime instance health visibility
-- remote runtime dispatcher
-- HTTP runtime dispatch adapter hardening
-- gRPC runtime dispatch adapter
-- Kubernetes scale-out adapter
-- Kubernetes pod / deployment scaler
-- dashboard / API / MCP control-plane endpoints
-- real-time logs and observability export
+- registry/capacity TTL self-healing;
+- production multi-control-plane leadership;
+- cluster autoscaling/HPA beyond runtime Pod creation;
+- Gateway controller interoperability and production ingress policies;
+- dashboard/API polish and real-time observability export.
 
 ---
 
-## Updated What This Does Not Do Yet
+## Remaining Platform Work
 
-The current foundation still does not yet provide:
+The current foundation still does not provide:
 
-- Kubernetes pod creation
-- Redis command queue runtime dispatch
-- gRPC runtime dispatch
-- Kubernetes pod/deployment scaling
-- dashboard UI
-- HTTP API controller implementation
-- distributed shared controller election
-- production multi-control-plane leader election
-
-These remain intentionally left for the next phases.
+- Redis command queue runtime dispatch;
+- cluster autoscaling/HPA policy integration;
+- dashboard UI and full public HTTP API polish;
+- distributed shared-controller election;
+- production multi-control-plane leader election;
+- universal Kubernetes deployment packaging and controller-specific Gateway certification.
 
 ---
 
 ## Updated Next Step
 
-The Shared Runtime Controller V1, Redis/local scale-out execution flow, HTTP process-host scale-out path, runtime health boundary, execution recovery reconciliation, runtime recovery forensics, control-plane ledger proof, and multi-tenant crash isolation proof are now complete.
+The Shared Runtime Controller V1, Redis/local scale-out execution flow, HTTP/gRPC process-host paths, Kubernetes Host Manager lifecycle, runtime health boundary, execution recovery reconciliation, runtime recovery forensics, control-plane ledger proof, and multi-tenant crash isolation proof are now implemented.
 
 The distributed runtime instance layer now has a validated foundation for:
 
 - shared admission
 - Redis-backed queue coordination
 - provider-based dispatch
-- provider-based local/process-host scale-out
+- provider-based local/process/Kubernetes host scale-out
 - fulfilled scale-out run requeue
 - end-to-end execution after dynamic capacity creation
 - unsafe runtime capacity suppression
@@ -2215,14 +2198,13 @@ Expected next work:
 - heartbeat TTL / expiration hardening
 - registry/capacity self-healing cleanup
 - Redis command queue provider
-- gRPC dispatch adapter
-- provider status/control capabilities
-- Kubernetes scaler adapter
-- Kubernetes pod/deployment scaler
+- provider status/control capability hardening
+- cluster autoscaling/HPA integration
+- Gateway controller interoperability and ingress policy hardening
 - control-plane API endpoints
 - recovery incident dashboarding
 - Kibana / Grafana / OpenSearch observability export
-- Kubernetes production demo
+- Kubernetes production demo packaging and operational runbook
 
 
 ## Current Validated Evidence
@@ -2342,6 +2324,7 @@ Recovered work redispatched
 - [Multi-Tenant Control Plane Isolation](multi-tenant-control-plane-isolation.md)
 - [Runtime Queue Control](runtime-queue-control.md)
 - [Runtime Instance Provider Model](runtime-instance-provider-model.md)
+- [Kubernetes Runtime Host Provider](kubernetes-runtime-host-provider.md)
 - [Shared Queue Pump and Worker Capacity](shared-queue-pump-and-worker-capacity.md)
 - [MCP Server as Runtime Control Plane](mcp-server-control-plane.md)
 - [Execution Control State](execution-control-state.md)

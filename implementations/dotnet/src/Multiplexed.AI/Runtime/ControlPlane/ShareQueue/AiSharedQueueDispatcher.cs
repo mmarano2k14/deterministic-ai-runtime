@@ -1,5 +1,7 @@
 ﻿using Microsoft.Extensions.Logging;
 using Multiplexed.Abstractions.AI.ControlPlane.Admission;
+using Multiplexed.Abstractions.AI.ControlPlane.Discovery;
+using Multiplexed.Abstractions.AI.ControlPlane.Signals;
 using Multiplexed.Abstractions.AI.ControlPlane.Admission.Reservations;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Forensics;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
@@ -58,8 +60,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
         private readonly IAiRuntimeInstanceRegistry _runtimeInstanceRegistry;
         private readonly IAiRuntimeScaleOutRequestPublisher _scaleOutPublisher;
         private readonly IAiTenantRuntimeSettingsProvider _tenantRuntimeSettingsProvider;
+        private readonly IAiControlPlaneIdResolver _controlPlaneIdResolver;
         private readonly IExecutionContextAccessor _executionContextAccessor;
         private readonly IAiRuntimeRecoveryForensicsRecorder _forensicsRecorder;
+        private readonly IAiRuntimeSignalPublisher? _runtimeSignalPublisher;
         private readonly ILogger<AiSharedQueueDispatcher> _logger;
 
         /// <summary>
@@ -74,6 +78,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
             IAiRuntimeInstanceRegistry runtimeInstanceRegistry,
             IAiRuntimeScaleOutRequestPublisher scaleOutPublisher,
             IAiTenantRuntimeSettingsProvider tenantRuntimeSettingsProvider,
+            IAiControlPlaneIdResolver controlPlaneIdResolver,
             IExecutionContextAccessor executionContextAccessor,
             ILogger<AiSharedQueueDispatcher> logger)
             : this(
@@ -85,6 +90,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                 runtimeInstanceRegistry,
                 scaleOutPublisher,
                 tenantRuntimeSettingsProvider,
+                controlPlaneIdResolver,
                 executionContextAccessor,
                 logger,
                 new NoopAiRuntimeRecoveryForensicsRecorder())
@@ -103,9 +109,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
             IAiRuntimeInstanceRegistry runtimeInstanceRegistry,
             IAiRuntimeScaleOutRequestPublisher scaleOutPublisher,
             IAiTenantRuntimeSettingsProvider tenantRuntimeSettingsProvider,
+            IAiControlPlaneIdResolver controlPlaneIdResolver,
             IExecutionContextAccessor executionContextAccessor,
             ILogger<AiSharedQueueDispatcher> logger,
-            IAiRuntimeRecoveryForensicsRecorder forensicsRecorder)
+            IAiRuntimeRecoveryForensicsRecorder forensicsRecorder,
+            IAiRuntimeSignalPublisher? runtimeSignalPublisher = null)
         {
             _sharedQueue = sharedQueue ?? throw new ArgumentNullException(nameof(sharedQueue));
             _sharedRunStore = sharedRunStore ?? throw new ArgumentNullException(nameof(sharedRunStore));
@@ -115,12 +123,13 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
             _runtimeInstanceRegistry = runtimeInstanceRegistry ?? throw new ArgumentNullException(nameof(runtimeInstanceRegistry));
             _scaleOutPublisher = scaleOutPublisher ?? throw new ArgumentNullException(nameof(scaleOutPublisher));
             _tenantRuntimeSettingsProvider = tenantRuntimeSettingsProvider ?? throw new ArgumentNullException(nameof(tenantRuntimeSettingsProvider));
+            _controlPlaneIdResolver = controlPlaneIdResolver ?? throw new ArgumentNullException(nameof(controlPlaneIdResolver));
             _executionContextAccessor = executionContextAccessor ?? throw new ArgumentNullException(nameof(executionContextAccessor));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _forensicsRecorder = forensicsRecorder ?? throw new ArgumentNullException(nameof(forensicsRecorder));
+            _runtimeSignalPublisher = runtimeSignalPublisher;
         }
 
-        /// <inheritdoc />
         public async Task<AiSharedQueueDispatchResult> DispatchNextAsync(
             AiSharedQueueDispatchRequest request,
             CancellationToken cancellationToken = default)
@@ -131,6 +140,26 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
             var startedAtUtc = DateTimeOffset.UtcNow;
             string? reservedRuntimeInstanceId = null;
             string? reservedSharedRunId = null;
+            AiSharedQueueItem? ownedQueueItem = null;
+
+            static bool MatchesDispatchOwnership(
+                AiSharedRunRecord? candidate,
+                string runtimeInstanceId,
+                string localRunId,
+                string? executionId)
+            {
+                if (candidate is null ||
+                    candidate.Status != AiSharedRunStatus.Dispatched ||
+                    !string.Equals(candidate.AssignedRuntimeInstanceId, runtimeInstanceId, StringComparison.Ordinal) ||
+                    !string.Equals(candidate.LocalRunId, localRunId, StringComparison.Ordinal))
+                {
+                    return false;
+                }
+
+                return string.IsNullOrWhiteSpace(executionId)
+                    ? string.IsNullOrWhiteSpace(candidate.ExecutionId)
+                    : string.Equals(candidate.ExecutionId, executionId, StringComparison.Ordinal);
+            }
 
             _logger.LogDebug(
                 "Shared queue dispatch started. PumpRuntimeInstanceId={PumpRuntimeInstanceId}, WorkerId={WorkerId}, TenantId={TenantId}, PipelineKey={PipelineKey}, ClaimTtlMs={ClaimTtlMs}, CorrelationId={CorrelationId}",
@@ -143,20 +172,32 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
 
             try
             {
-                var queueItem = await _sharedQueue
+                var requestControlPlaneId =
+                    await ResolveControlPlaneIdAsync(
+                            requestedControlPlaneId: null,
+                            metadata: request.Metadata,
+                            source: "shared-queue-dispatcher-claim",
+                            cancellationToken)
+                        .ConfigureAwait(false);
+
+                ownedQueueItem = await _sharedQueue
                     .ClaimNextAsync(
                         new AiSharedQueueClaimRequest
                         {
+                            ControlPlaneId = requestControlPlaneId,
                             RuntimeInstanceId = request.RuntimeInstanceId,
                             WorkerId = request.WorkerId,
                             TenantId = request.TenantId,
                             PipelineKey = request.PipelineKey,
                             ClaimTtl = request.ClaimTtl,
                             CorrelationId = request.CorrelationId,
-                            Reason = request.Reason ?? "Claimed for shared queue dispatch."
+                            Reason = request.Reason ?? "Claimed for shared queue dispatch.",
+                            Metadata = request.Metadata
                         },
                         cancellationToken)
                     .ConfigureAwait(false);
+
+                var queueItem = ownedQueueItem;
 
                 if (queueItem is null)
                 {
@@ -229,20 +270,39 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                     };
                 }
 
-                var controlPlaneId =
-                    ResolveControlPlaneId(
-                        queueItem,
-                        sharedRun);
-
-                var operationMetadata =
+                var baseOperationMetadata =
                     MergeMetadata(
                         sharedRun.Metadata,
                         queueItem.Metadata,
-                        request.Metadata,
-                        new Dictionary<string, string>
-                        {
-                            ["controlPlaneId"] = controlPlaneId
-                        });
+                        request.Metadata);
+
+                var controlPlaneId =
+                    await ResolveControlPlaneIdAsync(
+                            requestedControlPlaneId: FirstNonEmpty(
+                                queueItem.ControlPlaneId,
+                                sharedRun.ControlPlaneId),
+                            metadata: baseOperationMetadata,
+                            source: "shared-queue-dispatcher-operation",
+                            cancellationToken)
+                        .ConfigureAwait(false);
+
+                var controlPlaneMetadata =
+                    await _controlPlaneIdResolver
+                        .ResolveMetadataAsync(
+                            new AiControlPlaneIdResolutionRequest
+                            {
+                                RequestedControlPlaneId = controlPlaneId,
+                                Metadata = baseOperationMetadata,
+                                Source = "shared-queue-dispatcher-operation-metadata",
+                                AllowGeneratedFallback = false
+                            },
+                            cancellationToken)
+                        .ConfigureAwait(false);
+
+                var operationMetadata =
+                    MergeMetadata(
+                        baseOperationMetadata,
+                        controlPlaneMetadata);
 
                 _logger.LogDebug(
                     "Shared run record loaded. SharedRunId={SharedRunId}, ControlPlaneId={ControlPlaneId}, TenantId={TenantId}, PipelineKey={PipelineKey}, AssignedRuntimeInstanceId={AssignedRuntimeInstanceId}, Status={Status}",
@@ -269,6 +329,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                         sharedRun.ExecutionContextSnapshot.TenantId,
                         sharedRun.ExecutionContextSnapshot.TenantGroupId,
                         sharedRun.ExecutionContextSnapshot.ContextKey);
+
 
                     var safePreferredRuntimeInstanceId =
                         await ResolveSafePreferredRuntimeInstanceIdAsync(
@@ -336,8 +397,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                             DurationMs = CalculateDurationMs(startedAtUtc, completedAtUtc),
                             Diagnostics = new[]
                             {
-                        admissionDecision.Reason ?? SharedQueueRedispatchReplacementReason
-                    }
+                                 admissionDecision.Reason ?? SharedQueueRedispatchReplacementReason
+                            }
                         };
                     }
 
@@ -373,8 +434,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                             DurationMs = CalculateDurationMs(startedAtUtc, completedAtUtc),
                             Diagnostics = new[]
                             {
-                        admissionDecision.Reason ?? "Admission did not assign a runtime instance."
-                    }
+                                admissionDecision.Reason ?? "Admission did not assign a runtime instance."
+                            }
                         };
                     }
 
@@ -420,8 +481,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                             DurationMs = CalculateDurationMs(startedAtUtc, completedAtUtc),
                             Diagnostics = new[]
                             {
-                                "Selected runtime instance is the failed runtime for this recovery redispatch.",
-                                "Replacement scale-out request was published."
+                                 "Selected runtime instance is the failed runtime for this recovery redispatch.",
+                                 "Replacement scale-out request was published."
                             }
                         };
                     }
@@ -456,8 +517,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                             DurationMs = CalculateDurationMs(startedAtUtc, completedAtUtc),
                             Diagnostics = new[]
                             {
-                        "Selected runtime instance is not routable."
-                    }
+                                 "Selected runtime instance is not routable."
+                            }
                         };
                     }
 
@@ -496,6 +557,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                             cancellationToken)
                         .ConfigureAwait(false);
 
+                    var dispatchMetadata =
+                        CreateRuntimeDispatchMetadata(
+                            operationMetadata,
+                            targetRuntimeInstanceId);
+
                     try
                     {
                         _logger.LogInformation(
@@ -521,7 +587,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                                         RequestedBy = request.RequestedBy,
                                         Source = request.Source,
                                         Reason = request.Reason ?? "Dispatching claimed shared queue item.",
-                                        Metadata = operationMetadata
+                                        Metadata = dispatchMetadata
                                     },
                                     cancellationToken)
                                 .ConfigureAwait(false);
@@ -622,32 +688,173 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                             };
                         }
 
-                        var dispatchedQueueItem = await _sharedQueue
-                            .MarkDispatchedAsync(
-                                queueItem.SharedRunId,
-                                queueItem.ClaimToken!,
-                                dispatchResult.Message,
-                                cancellationToken)
-                            .ConfigureAwait(false);
-
-                        if (dispatchedQueueItem is null)
+                        if (string.IsNullOrWhiteSpace(dispatchResult.LocalRunId))
                         {
+                            const string missingLocalRunIdReason =
+                                "Runtime dispatch reported success without returning a local run id.";
+
                             _logger.LogWarning(
-                                "Shared queue item could not be marked as dispatched before marking the shared run as dispatched. SharedRunId={SharedRunId}, ControlPlaneId={ControlPlaneId}, RuntimeInstanceId={RuntimeInstanceId}, ClaimToken={ClaimToken}, LocalRunId={LocalRunId}, ExecutionId={ExecutionId}",
-                                queueItem.SharedRunId,
+                                "Shared run dispatch returned success without a local run id. Persisting failure metadata and requeuing shared queue item. SharedRunId={SharedRunId}, ControlPlaneId={ControlPlaneId}, RuntimeInstanceId={RuntimeInstanceId}, ExecutionId={ExecutionId}",
+                                sharedRun.SharedRunId,
                                 controlPlaneId,
                                 targetRuntimeInstanceId,
-                                queueItem.ClaimToken,
-                                dispatchResult.LocalRunId,
                                 dispatchResult.ExecutionId);
 
-                            var failedSharedRun = await _sharedRunStore
-                                .MarkDispatchFailedAsync(
-                                    sharedRun.SharedRunId,
-                                    targetRuntimeInstanceId,
-                                    "Shared queue item could not be marked as dispatched.",
-                                    "Shared queue item could not be marked as dispatched before shared run dispatch persistence.",
+                            var failedSharedRun =
+                                await _sharedRunStore
+                                    .MarkDispatchFailedAsync(
+                                        sharedRun.SharedRunId,
+                                        targetRuntimeInstanceId,
+                                        "dispatch-local-run-id-missing",
+                                        missingLocalRunIdReason,
+                                        cancellationToken)
+                                    .ConfigureAwait(false);
+
+                            await RequeueBestEffortAsync(
+                                    queueItem,
+                                    missingLocalRunIdReason,
                                     cancellationToken)
+                                .ConfigureAwait(false);
+
+                            var completedAtUtc =
+                                DateTimeOffset.UtcNow;
+
+                            return new AiSharedQueueDispatchResult
+                            {
+                                Success = false,
+                                SharedRunId = queueItem.SharedRunId,
+                                RuntimeInstanceId = targetRuntimeInstanceId,
+                                QueueItem = queueItem,
+                                SharedRun = failedSharedRun ?? sharedRun,
+                                DispatchResult = dispatchResult,
+                                Message = "Shared queue item was requeued because runtime dispatch did not return a local run id.",
+                                FailureReason = "dispatch-local-run-id-missing",
+                                StartedAtUtc = startedAtUtc,
+                                CompletedAtUtc = completedAtUtc,
+                                DurationMs = CalculateDurationMs(
+                                    startedAtUtc,
+                                    completedAtUtc),
+                                Diagnostics = new[]
+                                    {
+                                         missingLocalRunIdReason,
+                                         $"SharedRunId='{sharedRun.SharedRunId}'",
+                                         $"RuntimeInstanceId='{targetRuntimeInstanceId}'",
+                                         $"ExecutionId='{dispatchResult.ExecutionId}'"
+                                    }
+                            };
+                        }
+
+                        var dispatchedLocalRunId =
+                            dispatchResult.LocalRunId!;
+
+                        /*
+                         * Runtime acceptance has already happened. From this point forward,
+                         * persistence must not reuse the caller cancellation token.
+                         *
+                         * Durable shared-run ownership is committed and verified before the
+                         * queue item is allowed to become terminally Dispatched.
+                         */
+                        AiSharedRunRecord? dispatchedRun = null;
+                        Exception? lastSharedRunPersistenceException = null;
+
+                        for (var attempt = 1;
+                             attempt <= 2 &&
+                             !MatchesDispatchOwnership(
+                                 dispatchedRun,
+                                 targetRuntimeInstanceId,
+                                 dispatchedLocalRunId,
+                                 dispatchResult.ExecutionId);
+                             attempt++)
+                        {
+                            try
+                            {
+                                dispatchedRun = await _sharedRunStore
+                                    .MarkDispatchedAsync(
+                                        sharedRun.SharedRunId,
+                                        targetRuntimeInstanceId,
+                                        dispatchedLocalRunId,
+                                        dispatchResult.ExecutionId,
+                                        dispatchResult.Message,
+                                        CancellationToken.None)
+                                    .ConfigureAwait(false);
+                            }
+                            catch (Exception exception)
+                            {
+                                lastSharedRunPersistenceException = exception;
+
+                                _logger.LogWarning(
+                                    exception,
+                                    "Shared-run dispatch ownership persistence attempt failed after runtime acceptance. The store will be read back before the attempt is classified. SharedRunId={SharedRunId}, ControlPlaneId={ControlPlaneId}, RuntimeInstanceId={RuntimeInstanceId}, LocalRunId={LocalRunId}, ExecutionId={ExecutionId}, Attempt={Attempt}",
+                                    sharedRun.SharedRunId,
+                                    controlPlaneId,
+                                    targetRuntimeInstanceId,
+                                    dispatchedLocalRunId,
+                                    dispatchResult.ExecutionId,
+                                    attempt);
+                            }
+
+                            if (MatchesDispatchOwnership(
+                                    dispatchedRun,
+                                    targetRuntimeInstanceId,
+                                    dispatchedLocalRunId,
+                                    dispatchResult.ExecutionId))
+                            {
+                                break;
+                            }
+
+                            try
+                            {
+                                var persistedRun = await _sharedRunStore
+                                    .GetAsync(
+                                        sharedRun.SharedRunId,
+                                        CancellationToken.None)
+                                    .ConfigureAwait(false);
+
+                                if (MatchesDispatchOwnership(
+                                        persistedRun,
+                                        targetRuntimeInstanceId,
+                                        dispatchedLocalRunId,
+                                        dispatchResult.ExecutionId))
+                                {
+                                    dispatchedRun = persistedRun;
+                                    break;
+                                }
+                            }
+                            catch (Exception exception)
+                            {
+                                lastSharedRunPersistenceException = exception;
+
+                                _logger.LogWarning(
+                                    exception,
+                                    "Shared-run dispatch ownership read-back failed after runtime acceptance. SharedRunId={SharedRunId}, ControlPlaneId={ControlPlaneId}, RuntimeInstanceId={RuntimeInstanceId}, LocalRunId={LocalRunId}, ExecutionId={ExecutionId}, Attempt={Attempt}",
+                                    sharedRun.SharedRunId,
+                                    controlPlaneId,
+                                    targetRuntimeInstanceId,
+                                    dispatchedLocalRunId,
+                                    dispatchResult.ExecutionId,
+                                    attempt);
+                            }
+                        }
+
+                        if (!MatchesDispatchOwnership(
+                                dispatchedRun,
+                                targetRuntimeInstanceId,
+                                dispatchedLocalRunId,
+                                dispatchResult.ExecutionId))
+                        {
+                            _logger.LogWarning(
+                                "Shared-run dispatch ownership could not be confirmed after runtime acceptance. The claimed queue item will be requeued and must not become Dispatched. SharedRunId={SharedRunId}, ControlPlaneId={ControlPlaneId}, RuntimeInstanceId={RuntimeInstanceId}, LocalRunId={LocalRunId}, ExecutionId={ExecutionId}, LastException={LastException}",
+                                sharedRun.SharedRunId,
+                                controlPlaneId,
+                                targetRuntimeInstanceId,
+                                dispatchedLocalRunId,
+                                dispatchResult.ExecutionId,
+                                lastSharedRunPersistenceException?.Message);
+
+                            await RequeueBestEffortAsync(
+                                    queueItem,
+                                    "Runtime accepted the run but durable shared-run ownership was not confirmed.",
+                                    CancellationToken.None)
                                 .ConfigureAwait(false);
 
                             var completedAtUtc = DateTimeOffset.UtcNow;
@@ -658,116 +865,119 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                                 SharedRunId = queueItem.SharedRunId,
                                 RuntimeInstanceId = targetRuntimeInstanceId,
                                 QueueItem = queueItem,
-                                SharedRun = failedSharedRun ?? sharedRun,
+                                SharedRun = dispatchedRun ?? sharedRun,
                                 DispatchResult = dispatchResult,
-                                Message = "Shared queue item could not be marked as dispatched, so the shared run record was not marked as dispatched.",
-                                FailureReason = "shared-queue-mark-dispatched-rejected",
+                                Message = "Shared queue item was requeued because durable dispatch ownership was not confirmed.",
+                                FailureReason = "shared-run-dispatch-ownership-not-confirmed",
                                 StartedAtUtc = startedAtUtc,
                                 CompletedAtUtc = completedAtUtc,
                                 DurationMs = CalculateDurationMs(startedAtUtc, completedAtUtc),
                                 Diagnostics = new[]
                                 {
-                                    "Shared queue item could not be marked as dispatched.",
-                                    $"SharedRunId='{queueItem.SharedRunId}'",
-                                    $"RuntimeInstanceId='{targetRuntimeInstanceId}'",
-                                    $"ClaimTokenPresent='{!string.IsNullOrWhiteSpace(queueItem.ClaimToken)}'",
-                                    $"LocalRunId='{dispatchResult.LocalRunId}'",
-                                    $"ExecutionId='{dispatchResult.ExecutionId}'"
-                                }
-                            };
-                        }
-
-                        _logger.LogDebug(
-                            "Shared queue item marked as dispatched before shared run persistence. SharedRunId={SharedRunId}, ControlPlaneId={ControlPlaneId}, RuntimeInstanceId={RuntimeInstanceId}, ClaimToken={ClaimToken}",
-                            queueItem.SharedRunId,
-                            controlPlaneId,
-                            targetRuntimeInstanceId,
-                            queueItem.ClaimToken);
-
-                        var dispatchedRun = await _sharedRunStore
-                            .MarkDispatchedAsync(
-                                sharedRun.SharedRunId,
-                                targetRuntimeInstanceId,
-                                dispatchResult.LocalRunId,
-                                dispatchResult.ExecutionId,
-                                dispatchResult.Message,
-                                cancellationToken)
-                            .ConfigureAwait(false);
-
-                        if (dispatchedRun is null)
-                        {
-                            _logger.LogWarning(
-                                "Shared run record could not be marked as dispatched after the shared queue item was marked as dispatched. Requeueing dispatched queue item for safety. SharedRunId={SharedRunId}, ControlPlaneId={ControlPlaneId}, RuntimeInstanceId={RuntimeInstanceId}, LocalRunId={LocalRunId}, ExecutionId={ExecutionId}",
-                                sharedRun.SharedRunId,
-                                controlPlaneId,
-                                targetRuntimeInstanceId,
-                                dispatchResult.LocalRunId,
-                                dispatchResult.ExecutionId);
-
-                            await RequeueDispatchedBestEffortAsync(
-                                    dispatchedQueueItem,
-                                    "Shared run record could not be marked as dispatched after queue dispatch persistence.",
-                                    operationMetadata,
-                                    cancellationToken)
-                                .ConfigureAwait(false);
-
-                            var completedAtUtc = DateTimeOffset.UtcNow;
-
-                            return new AiSharedQueueDispatchResult
-                            {
-                                Success = false,
-                                SharedRunId = queueItem.SharedRunId,
-                                RuntimeInstanceId = targetRuntimeInstanceId,
-                                QueueItem = dispatchedQueueItem,
-                                SharedRun = sharedRun,
-                                DispatchResult = dispatchResult,
-                                Message = "Shared queue item was requeued because the shared run record could not be marked as dispatched.",
-                                FailureReason = "shared-run-mark-dispatched-rejected",
-                                StartedAtUtc = startedAtUtc,
-                                CompletedAtUtc = completedAtUtc,
-                                DurationMs = CalculateDurationMs(startedAtUtc, completedAtUtc),
-                                Diagnostics = new[]
-                                {
-                                    "Shared run record could not be marked as dispatched."
+                                    $"ExpectedRuntimeInstanceId='{targetRuntimeInstanceId}'",
+                                    $"ExpectedLocalRunId='{dispatchedLocalRunId}'",
+                                    $"ExpectedExecutionId='{dispatchResult.ExecutionId}'",
+                                    $"ActualRuntimeInstanceId='{dispatchedRun?.AssignedRuntimeInstanceId}'",
+                                    $"ActualLocalRunId='{dispatchedRun?.LocalRunId}'",
+                                    $"ActualExecutionId='{dispatchedRun?.ExecutionId}'",
+                                    $"LastPersistenceException='{lastSharedRunPersistenceException?.Message}'"
                                 }
                             };
                         }
 
                         _logger.LogInformation(
-                            "Shared run record marked as dispatched. SharedRunId={SharedRunId}, ControlPlaneId={ControlPlaneId}, RuntimeInstanceId={RuntimeInstanceId}, LocalRunId={LocalRunId}, ExecutionId={ExecutionId}",
-                            sharedRun.SharedRunId,
+                            "Shared-run dispatch ownership durably persisted before queue finalization. SharedRunId={SharedRunId}, ControlPlaneId={ControlPlaneId}, RuntimeInstanceId={RuntimeInstanceId}, LocalRunId={LocalRunId}, ExecutionId={ExecutionId}",
+                            dispatchedRun!.SharedRunId,
                             controlPlaneId,
-                            targetRuntimeInstanceId,
-                            dispatchResult.LocalRunId,
-                            dispatchResult.ExecutionId);
+                            dispatchedRun.AssignedRuntimeInstanceId,
+                            dispatchedRun.LocalRunId,
+                            dispatchedRun.ExecutionId);
 
-                        var verifyDispatchedRun = await _sharedRunStore
-                            .GetAsync(
-                                sharedRun.SharedRunId,
-                                cancellationToken)
-                            .ConfigureAwait(false);
+                        /*
+                         * Finalize the queue only after exact durable ownership is confirmed.
+                         * A timeout can be ambiguous, so retry the idempotent claim-token
+                         * transition and read the queue item back before declaring failure.
+                         */
+                        AiSharedQueueItem? dispatchedQueueItem = null;
+                        Exception? lastQueueFinalizationException = null;
 
-                        if (verifyDispatchedRun is null ||
-                            !string.Equals(
-                                verifyDispatchedRun.AssignedRuntimeInstanceId,
-                                targetRuntimeInstanceId,
-                                StringComparison.Ordinal))
+                        for (var attempt = 1; attempt <= 3 && dispatchedQueueItem is null; attempt++)
                         {
-                            _logger.LogWarning(
-                                "Shared run dispatch assignment verification failed after queue dispatch persistence. Requeueing dispatched queue item for safety. SharedRunId={SharedRunId}, ControlPlaneId={ControlPlaneId}, ExpectedRuntimeInstanceId={ExpectedRuntimeInstanceId}, ActualRuntimeInstanceId={ActualRuntimeInstanceId}, LocalRunId={LocalRunId}, ExecutionId={ExecutionId}",
-                                sharedRun.SharedRunId,
-                                controlPlaneId,
-                                targetRuntimeInstanceId,
-                                verifyDispatchedRun?.AssignedRuntimeInstanceId,
-                                dispatchResult.LocalRunId,
-                                dispatchResult.ExecutionId);
+                            try
+                            {
+                                dispatchedQueueItem = await _sharedQueue
+                                    .MarkDispatchedAsync(
+                                        queueItem.SharedRunId,
+                                        queueItem.ClaimToken!,
+                                        dispatchResult.Message,
+                                        CancellationToken.None)
+                                    .ConfigureAwait(false);
+                            }
+                            catch (Exception exception)
+                            {
+                                lastQueueFinalizationException = exception;
 
-                            await RequeueDispatchedBestEffortAsync(
-                                    dispatchedQueueItem,
-                                    "Shared run dispatch assignment verification failed after queue dispatch persistence.",
-                                    operationMetadata,
-                                    cancellationToken)
-                                .ConfigureAwait(false);
+                                _logger.LogWarning(
+                                    exception,
+                                    "Shared queue finalization attempt failed after durable shared-run ownership was confirmed. The queue item will be read back before the attempt is classified. SharedRunId={SharedRunId}, ControlPlaneId={ControlPlaneId}, ClaimToken={ClaimToken}, RuntimeInstanceId={RuntimeInstanceId}, LocalRunId={LocalRunId}, Attempt={Attempt}",
+                                    queueItem.SharedRunId,
+                                    controlPlaneId,
+                                    queueItem.ClaimToken,
+                                    targetRuntimeInstanceId,
+                                    dispatchedLocalRunId,
+                                    attempt);
+                            }
+
+                            if (dispatchedQueueItem is not null)
+                            {
+                                break;
+                            }
+
+                            try
+                            {
+                                var currentQueueItem = await _sharedQueue
+                                    .GetAsync(
+                                        queueItem.SharedRunId,
+                                        CancellationToken.None)
+                                    .ConfigureAwait(false);
+
+                                if (currentQueueItem?.Status == AiSharedQueueItemStatus.Dispatched &&
+                                    string.Equals(
+                                        currentQueueItem.ClaimToken,
+                                        queueItem.ClaimToken,
+                                        StringComparison.Ordinal))
+                                {
+                                    dispatchedQueueItem = currentQueueItem;
+                                    break;
+                                }
+                            }
+                            catch (Exception exception)
+                            {
+                                lastQueueFinalizationException = exception;
+
+                                _logger.LogWarning(
+                                    exception,
+                                    "Shared queue finalization read-back failed after durable shared-run ownership was confirmed. SharedRunId={SharedRunId}, ControlPlaneId={ControlPlaneId}, ClaimToken={ClaimToken}, RuntimeInstanceId={RuntimeInstanceId}, LocalRunId={LocalRunId}, Attempt={Attempt}",
+                                    queueItem.SharedRunId,
+                                    controlPlaneId,
+                                    queueItem.ClaimToken,
+                                    targetRuntimeInstanceId,
+                                    dispatchedLocalRunId,
+                                    attempt);
+                            }
+                        }
+
+                        if (dispatchedQueueItem is null)
+                        {
+                            _logger.LogError(
+                                "Shared-run ownership is durable, but shared queue finalization could not be confirmed. The queue item is intentionally not requeued because redispatching would duplicate an already accepted runtime run. SharedRunId={SharedRunId}, ControlPlaneId={ControlPlaneId}, ClaimToken={ClaimToken}, RuntimeInstanceId={RuntimeInstanceId}, LocalRunId={LocalRunId}, ExecutionId={ExecutionId}, LastException={LastException}",
+                                queueItem.SharedRunId,
+                                controlPlaneId,
+                                queueItem.ClaimToken,
+                                targetRuntimeInstanceId,
+                                dispatchedLocalRunId,
+                                dispatchResult.ExecutionId,
+                                lastQueueFinalizationException?.Message);
 
                             var completedAtUtc = DateTimeOffset.UtcNow;
 
@@ -776,20 +986,42 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                                 Success = false,
                                 SharedRunId = queueItem.SharedRunId,
                                 RuntimeInstanceId = targetRuntimeInstanceId,
-                                QueueItem = dispatchedQueueItem,
-                                SharedRun = verifyDispatchedRun ?? sharedRun,
+                                QueueItem = queueItem,
+                                SharedRun = dispatchedRun,
                                 DispatchResult = dispatchResult,
-                                Message = "Shared queue item was requeued because shared run dispatch assignment verification failed.",
-                                FailureReason = "shared-run-dispatch-assignment-verification-failed",
+                                Message = "Durable dispatch ownership exists, but shared queue finalization could not be confirmed.",
+                                FailureReason = "shared-queue-dispatch-finalization-not-confirmed",
                                 StartedAtUtc = startedAtUtc,
                                 CompletedAtUtc = completedAtUtc,
                                 DurationMs = CalculateDurationMs(startedAtUtc, completedAtUtc),
                                 Diagnostics = new[]
                                 {
-                                    $"ExpectedRuntimeInstanceId='{targetRuntimeInstanceId}', ActualRuntimeInstanceId='{verifyDispatchedRun?.AssignedRuntimeInstanceId}'"
+                                    "The queue item was not requeued because the runtime already accepted the run.",
+                                    $"ClaimToken='{queueItem.ClaimToken}'",
+                                    $"RuntimeInstanceId='{targetRuntimeInstanceId}'",
+                                    $"LocalRunId='{dispatchedLocalRunId}'",
+                                    $"ExecutionId='{dispatchResult.ExecutionId}'",
+                                    $"LastFinalizationException='{lastQueueFinalizationException?.Message}'"
                                 }
                             };
                         }
+
+                        ownedQueueItem =
+                            dispatchedQueueItem;
+
+                        _logger.LogInformation(
+                            "Shared queue item finalized after durable shared-run ownership persistence. SharedRunId={SharedRunId}, ControlPlaneId={ControlPlaneId}, RuntimeInstanceId={RuntimeInstanceId}, LocalRunId={LocalRunId}, ExecutionId={ExecutionId}, ClaimToken={ClaimToken}",
+                            sharedRun.SharedRunId,
+                            controlPlaneId,
+                            targetRuntimeInstanceId,
+                            dispatchedLocalRunId,
+                            dispatchResult.ExecutionId,
+                            queueItem.ClaimToken);
+
+                        await PublishSharedRunDispatchedSignalBestEffortAsync(
+                                controlPlaneId,
+                                dispatchedRun!)
+                            .ConfigureAwait(false);
 
                         var completedAtUtcSuccess =
                             DateTimeOffset.UtcNow;
@@ -831,11 +1063,53 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
             {
                 _logger.LogError(
                     exception,
-                    "Shared queue dispatch failed with exception. PumpRuntimeInstanceId={PumpRuntimeInstanceId}, WorkerId={WorkerId}, ReservedSharedRunId={ReservedSharedRunId}, ReservedRuntimeInstanceId={ReservedRuntimeInstanceId}",
+                    "Shared queue dispatch failed with exception. " +
+                    "PumpRuntimeInstanceId={PumpRuntimeInstanceId}, " +
+                    "WorkerId={WorkerId}, " +
+                    "OwnedSharedRunId={OwnedSharedRunId}, " +
+                    "OwnedQueueStatus={OwnedQueueStatus}, " +
+                    "OwnedClaimToken={OwnedClaimToken}, " +
+                    "ReservedSharedRunId={ReservedSharedRunId}, " +
+                    "ReservedRuntimeInstanceId={ReservedRuntimeInstanceId}",
                     request.RuntimeInstanceId,
                     request.WorkerId,
+                    ownedQueueItem?.SharedRunId,
+                    ownedQueueItem?.Status,
+                    ownedQueueItem?.ClaimToken,
                     reservedSharedRunId,
                     reservedRuntimeInstanceId);
+
+                /*
+                 * Cleanup must not reuse the failing operation cancellation token.
+                 * Once ownership has been acquired, an unhandled exception must not
+                 * leave the queue item permanently Claimed or Dispatched.
+                 */
+                if (ownedQueueItem is not null)
+                {
+                    var requeueReason =
+                        "Unhandled shared queue dispatch exception: " +
+                        $"{exception.GetType().Name}: {exception.Message}";
+
+                    if (ownedQueueItem.Status ==
+                        AiSharedQueueItemStatus.Dispatched)
+                    {
+                        await RequeueDispatchedBestEffortAsync(
+                                ownedQueueItem,
+                                requeueReason,
+                                ownedQueueItem.Metadata,
+                                CancellationToken.None)
+                            .ConfigureAwait(false);
+                    }
+                    else if (ownedQueueItem.Status ==
+                             AiSharedQueueItemStatus.Claimed)
+                    {
+                        await RequeueBestEffortAsync(
+                                ownedQueueItem,
+                                requeueReason,
+                                CancellationToken.None)
+                            .ConfigureAwait(false);
+                    }
+                }
 
                 await ReleaseReservationBestEffortAsync(
                         reservedSharedRunId,
@@ -849,14 +1123,79 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                 return new AiSharedQueueDispatchResult
                 {
                     Success = false,
+                    SharedRunId = ownedQueueItem?.SharedRunId,
                     RuntimeInstanceId = request.RuntimeInstanceId,
+                    QueueItem = ownedQueueItem,
                     Message = "Shared queue dispatch failed.",
                     FailureReason = exception.Message,
                     StartedAtUtc = startedAtUtc,
                     CompletedAtUtc = completedAtUtc,
-                    DurationMs = CalculateDurationMs(startedAtUtc, completedAtUtc),
-                    Diagnostics = new[] { exception.Message }
+                    DurationMs = CalculateDurationMs(
+                        startedAtUtc,
+                        completedAtUtc),
+                    Diagnostics = new[]
+                    {
+                         exception.Message,
+                         $"ExceptionType='{exception.GetType().FullName}'",
+                         $"OwnedSharedRunId='{ownedQueueItem?.SharedRunId}'",
+                         $"OwnedQueueStatus='{ownedQueueItem?.Status}'",
+                         $"OwnedClaimTokenPresent='{!string.IsNullOrWhiteSpace(ownedQueueItem?.ClaimToken)}'"
+                    }
                 };
+            }
+        }
+
+        /// <summary>
+        /// Publishes a best-effort signal after durable shared-run ownership and queue finalization
+        /// have both been confirmed.
+        /// </summary>
+        /// <param name="controlPlaneId">The logical control-plane identifier.</param>
+        /// <param name="dispatchedRun">The durably dispatched shared run.</param>
+        /// <returns>A task representing the publication attempt.</returns>
+        private async Task PublishSharedRunDispatchedSignalBestEffortAsync(
+            string controlPlaneId,
+            AiSharedRunRecord dispatchedRun)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(controlPlaneId);
+            ArgumentNullException.ThrowIfNull(dispatchedRun);
+
+            if (_runtimeSignalPublisher is null)
+            {
+                return;
+            }
+
+            try
+            {
+                await _runtimeSignalPublisher
+                    .PublishAsync(
+                        new AiRuntimeSignal
+                        {
+                            Type = AiRuntimeSignalType.SharedRunDispatched,
+                            ControlPlaneId = controlPlaneId,
+                            TenantId = dispatchedRun.ExecutionContextSnapshot.TenantId,
+                            SharedRunId = dispatchedRun.SharedRunId,
+                            RuntimeInstanceId = dispatchedRun.AssignedRuntimeInstanceId!,
+                            LocalRunId = dispatchedRun.LocalRunId!,
+                            ExecutionId = dispatchedRun.ExecutionId
+                        },
+                        CancellationToken.None)
+                    .ConfigureAwait(false);
+            }
+            catch (Exception exception)
+            {
+                /*
+                 * Runtime signals are wake-up notifications only. Publication must
+                 * never invalidate the already confirmed durable dispatch or trigger
+                 * the outer dispatcher cleanup path.
+                 */
+                _logger.LogWarning(
+                    exception,
+                    "Shared-run dispatched signal publication failed after durable dispatch confirmation. SharedRunId={SharedRunId}, ControlPlaneId={ControlPlaneId}, RuntimeInstanceId={RuntimeInstanceId}, LocalRunId={LocalRunId}, ExecutionId={ExecutionId}",
+                    dispatchedRun.SharedRunId,
+                    controlPlaneId,
+                    dispatchedRun.AssignedRuntimeInstanceId,
+                    dispatchedRun.LocalRunId,
+                    dispatchedRun.ExecutionId);
             }
         }
 
@@ -1085,17 +1424,15 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
         {
             var metadata =
                 new Dictionary<string, string>(
-                    sharedRun.Metadata,
                     StringComparer.OrdinalIgnoreCase);
 
-            foreach (var item in operationMetadata)
-            {
-                if (!string.IsNullOrWhiteSpace(item.Key))
-                {
-                    metadata[item.Key] =
-                        item.Value ?? string.Empty;
-                }
-            }
+            CopyScaleOutRedispatchMetadata(
+                metadata,
+                sharedRun.Metadata);
+
+            CopyScaleOutRedispatchMetadata(
+                metadata,
+                operationMetadata);
 
             metadata[ScaleOutIntentMetadataKey] =
                 ScaleOutIntentSharedQueueRedispatchReplacement;
@@ -1103,7 +1440,114 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
             metadata[ScaleOutRequestIdMetadataKey] =
                 $"scale-out-redispatch-{sharedRun.SharedRunId}-{Guid.NewGuid():N}";
 
+            if (TryGetMetadataValue(
+                    operationMetadata,
+                    RecoveryFailedRuntimeInstanceIdMetadataKey,
+                    out var failedRuntimeInstanceId))
+            {
+                metadata["scaleout.excludedRuntimeInstanceId"] =
+                    failedRuntimeInstanceId;
+
+                metadata["scaleout.replacementForRuntimeInstanceId"] =
+                    failedRuntimeInstanceId;
+
+                metadata["recovery.replacement"] =
+                    "true";
+            }
+
             return metadata;
+        }
+
+        /// <summary>
+        /// Creates metadata for the actual runtime dispatch by removing stale runtime assignment
+        /// and transport values before stamping the selected runtime instance.
+        /// </summary>
+        /// <param name="operationMetadata">The merged operation metadata.</param>
+        /// <param name="targetRuntimeInstanceId">The selected runtime instance id.</param>
+        /// <returns>The sanitized runtime dispatch metadata.</returns>
+        private static IReadOnlyDictionary<string, string> CreateRuntimeDispatchMetadata(
+            IReadOnlyDictionary<string, string> operationMetadata,
+            string targetRuntimeInstanceId)
+        {
+            var metadata =
+                new Dictionary<string, string>(
+                    StringComparer.OrdinalIgnoreCase);
+
+            foreach (var item in operationMetadata)
+            {
+                if (string.IsNullOrWhiteSpace(item.Key) ||
+                    IsStaleRuntimeAssignmentMetadataKey(item.Key) ||
+                    IsStaleRuntimeTransportMetadataKey(item.Key))
+                {
+                    continue;
+                }
+
+                metadata[item.Key] =
+                    item.Value ?? string.Empty;
+            }
+
+            metadata["runtimeInstanceId"] =
+                targetRuntimeInstanceId;
+
+            metadata["runtime.instance.id"] =
+                targetRuntimeInstanceId;
+
+            return metadata;
+        }
+
+        /// <summary>
+        /// Copies metadata into the replacement scale-out metadata while removing stale runtime assignment keys.
+        /// </summary>
+        /// <param name="target">The target metadata dictionary.</param>
+        /// <param name="source">The source metadata dictionary.</param>
+        private static void CopyScaleOutRedispatchMetadata(
+            IDictionary<string, string> target,
+            IReadOnlyDictionary<string, string> source)
+        {
+            foreach (var item in source)
+            {
+                if (string.IsNullOrWhiteSpace(item.Key) ||
+                    IsStaleRuntimeAssignmentMetadataKey(item.Key))
+                {
+                    continue;
+                }
+
+                target[item.Key] =
+                    item.Value ?? string.Empty;
+            }
+        }
+
+        /// <summary>
+        /// Determines whether a metadata key carries a stale runtime assignment that must not be propagated to replacement scale-out.
+        /// </summary>
+        /// <param name="key">The metadata key.</param>
+        /// <returns><c>true</c> when the key must be removed from replacement scale-out metadata; otherwise, <c>false</c>.</returns>
+        private static bool IsStaleRuntimeAssignmentMetadataKey(
+            string key)
+        {
+            return string.Equals(key, "scaleOutRuntimeInstanceId", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(key, "scaleout.runtimeInstanceId", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(key, "scaleout.runtime.instance.id", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(key, "runtimeInstanceId", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(key, "runtime.instance.id", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(key, "runtime.instanceId", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(key, "host.runtimeInstanceId", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(key, "transport.runtimeInstanceId", StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>
+        /// Determines whether a metadata key carries stale runtime transport information
+        /// that must not be propagated to replacement runtime dispatch.
+        /// </summary>
+        /// <param name="key">The metadata key.</param>
+        /// <returns><c>true</c> when the key must be removed; otherwise, <c>false</c>.</returns>
+        private static bool IsStaleRuntimeTransportMetadataKey(
+            string key)
+        {
+            return string.Equals(key, "transport.endpoint", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(key, "transportEndpoint", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(key, "grpc.endpoint", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(key, "runtime.command.endpoint", StringComparison.OrdinalIgnoreCase);
         }
 
         /// <summary>
@@ -1323,50 +1767,127 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
         }
 
         /// <summary>
-        /// Attempts to requeue a claimed queue item without masking the original failure.
+        /// Attempts to requeue a claimed queue item without masking the original
+        /// dispatch failure.
         /// </summary>
-        private async Task RequeueBestEffortAsync(
+        /// <param name="queueItem">The claimed queue item.</param>
+        /// <param name="reason">The requeue reason.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <returns>
+        /// <c>true</c> when the item is pending after the operation; otherwise,
+        /// <c>false</c>.
+        /// </returns>
+        private async Task<bool> RequeueBestEffortAsync(
             AiSharedQueueItem queueItem,
             string reason,
             CancellationToken cancellationToken)
         {
-            if (string.IsNullOrWhiteSpace(queueItem.ClaimToken))
+            ArgumentNullException.ThrowIfNull(queueItem);
+
+            if (string.IsNullOrWhiteSpace(
+                    queueItem.ClaimToken))
             {
                 _logger.LogWarning(
-                    "Shared queue item could not be requeued because claim token is missing. SharedRunId={SharedRunId}, ControlPlaneId={ControlPlaneId}, Reason={Reason}",
+                    "Shared queue item could not be requeued because claim token is missing. " +
+                    "SharedRunId={SharedRunId}, ControlPlaneId={ControlPlaneId}, " +
+                    "Status={Status}, Reason={Reason}",
                     queueItem.SharedRunId,
                     queueItem.ControlPlaneId,
+                    queueItem.Status,
                     reason);
 
-                return;
+                return false;
             }
 
             try
             {
-                await _sharedQueue
-                    .RequeueAsync(
-                        queueItem.SharedRunId,
-                        queueItem.ClaimToken,
-                        reason,
-                        cancellationToken)
-                    .ConfigureAwait(false);
+                var requeued =
+                    await _sharedQueue
+                        .RequeueAsync(
+                            queueItem.SharedRunId,
+                            queueItem.ClaimToken,
+                            reason,
+                            cancellationToken)
+                        .ConfigureAwait(false);
 
-                _logger.LogDebug(
-                    "Shared queue item requeued. SharedRunId={SharedRunId}, ControlPlaneId={ControlPlaneId}, ClaimToken={ClaimToken}, Reason={Reason}",
+                if (requeued is not null)
+                {
+                    _logger.LogDebug(
+                        "Shared queue item requeued. " +
+                        "SharedRunId={SharedRunId}, ControlPlaneId={ControlPlaneId}, " +
+                        "ClaimToken={ClaimToken}, Status={Status}, Reason={Reason}",
+                        queueItem.SharedRunId,
+                        queueItem.ControlPlaneId,
+                        queueItem.ClaimToken,
+                        requeued.Status,
+                        reason);
+
+                    return true;
+                }
+
+                /*
+                 * Re-read the item to distinguish an idempotent already-pending
+                 * transition from a rejected claim ownership transition.
+                 */
+                var current =
+                    await _sharedQueue
+                        .GetAsync(
+                            queueItem.SharedRunId,
+                            cancellationToken)
+                        .ConfigureAwait(false);
+
+                if (current is
+                    {
+                        Status: AiSharedQueueItemStatus.Pending
+                    })
+                {
+                    _logger.LogDebug(
+                        "Shared queue item was already pending after requeue returned null. " +
+                        "SharedRunId={SharedRunId}, ControlPlaneId={ControlPlaneId}, " +
+                        "OriginalClaimToken={OriginalClaimToken}, CurrentReason={CurrentReason}",
+                        queueItem.SharedRunId,
+                        queueItem.ControlPlaneId,
+                        queueItem.ClaimToken,
+                        current.Reason);
+
+                    return true;
+                }
+
+                _logger.LogWarning(
+                    "Shared queue item requeue was rejected and the item is not pending. " +
+                    "SharedRunId={SharedRunId}, ControlPlaneId={ControlPlaneId}, " +
+                    "OriginalStatus={OriginalStatus}, CurrentStatus={CurrentStatus}, " +
+                    "OriginalClaimToken={OriginalClaimToken}, CurrentClaimToken={CurrentClaimToken}, " +
+                    "CurrentClaimedByRuntimeInstanceId={CurrentClaimedByRuntimeInstanceId}, " +
+                    "CurrentClaimedByWorkerId={CurrentClaimedByWorkerId}, " +
+                    "CurrentClaimExpiresAtUtc={CurrentClaimExpiresAtUtc}, Reason={Reason}",
                     queueItem.SharedRunId,
                     queueItem.ControlPlaneId,
+                    queueItem.Status,
+                    current?.Status,
                     queueItem.ClaimToken,
+                    current?.ClaimToken,
+                    current?.ClaimedByRuntimeInstanceId,
+                    current?.ClaimedByWorkerId,
+                    current?.ClaimExpiresAtUtc,
                     reason);
+
+                return false;
             }
             catch (Exception exception)
             {
                 _logger.LogWarning(
                     exception,
-                    "Shared queue item requeue failed. SharedRunId={SharedRunId}, ControlPlaneId={ControlPlaneId}, ClaimToken={ClaimToken}, Reason={Reason}",
+                    "Shared queue item requeue failed. " +
+                    "SharedRunId={SharedRunId}, ControlPlaneId={ControlPlaneId}, " +
+                    "ClaimToken={ClaimToken}, Status={Status}, Reason={Reason}",
                     queueItem.SharedRunId,
                     queueItem.ControlPlaneId,
                     queueItem.ClaimToken,
+                    queueItem.Status,
                     reason);
+
+                return false;
             }
         }
 
@@ -1420,38 +1941,60 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
         }
 
         /// <summary>
-        /// Resolves the logical control-plane identifier from a queue item and its shared run.
+        /// Resolves the logical control-plane identifier used by shared queue dispatch operations.
         /// </summary>
-        /// <param name="queueItem">The claimed shared queue item.</param>
-        /// <param name="sharedRun">The loaded shared run record.</param>
+        /// <param name="requestedControlPlaneId">The preferred control-plane identifier when already known.</param>
+        /// <param name="metadata">The metadata that may contain a logical control-plane identifier.</param>
+        /// <param name="source">The diagnostic source of the resolution request.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
         /// <returns>The resolved logical control-plane identifier.</returns>
-        private static string ResolveControlPlaneId(
-            AiSharedQueueItem queueItem,
-            AiSharedRunRecord sharedRun)
+        private async Task<string> ResolveControlPlaneIdAsync(
+            string? requestedControlPlaneId,
+            IReadOnlyDictionary<string, string>? metadata,
+            string source,
+            CancellationToken cancellationToken)
         {
-            if (!string.IsNullOrWhiteSpace(queueItem.ControlPlaneId))
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var controlPlaneId =
+                await _controlPlaneIdResolver
+                    .ResolveAsync(
+                        new AiControlPlaneIdResolutionRequest
+                        {
+                            RequestedControlPlaneId = requestedControlPlaneId,
+                            Metadata = metadata,
+                            Source = source,
+                            AllowGeneratedFallback = false
+                        },
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+            if (string.IsNullOrWhiteSpace(controlPlaneId))
             {
-                return queueItem.ControlPlaneId;
+                throw new InvalidOperationException(
+                    "The resolved control-plane identifier cannot be null or empty.");
             }
 
-            if (!string.IsNullOrWhiteSpace(sharedRun.ControlPlaneId))
+            return controlPlaneId;
+        }
+
+        /// <summary>
+        /// Returns the first non-empty value.
+        /// </summary>
+        /// <param name="values">The candidate values.</param>
+        /// <returns>The first non-empty value, or null when none is available.</returns>
+        private static string? FirstNonEmpty(
+            params string?[] values)
+        {
+            foreach (var value in values)
             {
-                return sharedRun.ControlPlaneId;
+                if (!string.IsNullOrWhiteSpace(value))
+                {
+                    return value;
+                }
             }
 
-            if (queueItem.Metadata.TryGetValue("controlPlaneId", out var queueControlPlaneId) &&
-                !string.IsNullOrWhiteSpace(queueControlPlaneId))
-            {
-                return queueControlPlaneId;
-            }
-
-            if (sharedRun.Metadata.TryGetValue("controlPlaneId", out var sharedRunControlPlaneId) &&
-                !string.IsNullOrWhiteSpace(sharedRunControlPlaneId))
-            {
-                return sharedRunControlPlaneId;
-            }
-
-            return string.Empty;
+            return null;
         }
 
         /// <summary>
@@ -1463,7 +2006,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
             params IReadOnlyDictionary<string, string>[] sources)
         {
             var merged = new Dictionary<string, string>(
-                StringComparer.Ordinal);
+                StringComparer.OrdinalIgnoreCase);
 
             foreach (var source in sources)
             {
@@ -1556,5 +2099,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                     })
                 .ToList();
         }
+
     }
 }

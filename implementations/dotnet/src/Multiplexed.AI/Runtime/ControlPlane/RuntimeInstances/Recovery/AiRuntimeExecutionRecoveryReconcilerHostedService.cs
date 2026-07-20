@@ -62,17 +62,14 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery
                                 .ReconcileAsync(stoppingToken)
                                 .ConfigureAwait(false);
 
-                        if (result.RecoveredRunCount > 0 ||
-                            result.DiscoveredUnfinishedRunCount > 0)
-                        {
-                            this.logger.LogInformation(
-                                "Runtime execution recovery reconciliation completed. ScannedRuntimeInstances={ScannedRuntimeInstanceCount}, IgnoredRuntimeInstances={IgnoredRuntimeInstanceCount}, DiscoveredUnfinishedRuns={DiscoveredUnfinishedRunCount}, RecoveredRuns={RecoveredRunCount}, Decisions={DecisionCount}.",
-                                result.ScannedRuntimeInstanceCount,
-                                result.IgnoredRuntimeInstanceCount,
-                                result.DiscoveredUnfinishedRunCount,
-                                result.RecoveredRunCount,
-                                result.Decisions.Count);
-                        }
+                        this.logger.LogInformation(
+                            "Runtime execution recovery reconciliation iteration completed. Enabled={Enabled}, ScannedRuntimeInstances={ScannedRuntimeInstanceCount}, IgnoredRuntimeInstances={IgnoredRuntimeInstanceCount}, DiscoveredUnfinishedRuns={DiscoveredUnfinishedRunCount}, RecoveredRuns={RecoveredRunCount}, Decisions={DecisionCount}.",
+                            currentOptions.Enabled,
+                            result.ScannedRuntimeInstanceCount,
+                            result.IgnoredRuntimeInstanceCount,
+                            result.DiscoveredUnfinishedRunCount,
+                            result.RecoveredRunCount,
+                            result.Decisions.Count);
                     }
                 }
                 catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)

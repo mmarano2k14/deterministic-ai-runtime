@@ -58,7 +58,7 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Rag
         // EF DIRECT (internal execution)
         // ============================================================
 
-        [Fact]
+        [Fact(Skip = "Please setup rg db")]
         public async Task ExecuteAllAsync_Ef_Direct_Should_Succeed()
         {
             await using var host = await CreateHostAsync(services =>
@@ -75,7 +75,7 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Rag
         // EF PROVIDER
         // ============================================================
 
-        [Fact]
+        [Fact(Skip = "Please setup rg db")]
         public async Task ExecuteAllAsync_Ef_Provider_Should_Succeed()
         {
             await using var host = await CreateHostAsync(services =>

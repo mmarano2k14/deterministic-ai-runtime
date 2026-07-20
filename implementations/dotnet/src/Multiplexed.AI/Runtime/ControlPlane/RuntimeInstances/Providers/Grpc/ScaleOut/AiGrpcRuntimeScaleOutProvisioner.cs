@@ -2,12 +2,14 @@
 using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Capacity;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager;
-using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager.Readiness;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager.ProcessControl;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers.Transport;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Readiness;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Scaling;
+using System.Collections.Concurrent;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Grpc.ScaleOut
 {
@@ -16,16 +18,24 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Grpc.Sc
     /// </summary>
     public sealed class AiGrpcRuntimeScaleOutProvisioner : IAiGrpcRuntimeScaleOutProvisioner
     {
+
         private const string ProviderName = AiGrpcRuntimeProviderConstants.ProviderName;
         private const string DefaultRuntimeInstanceIdPrefix = "grpc-runtime";
         private const string DefaultEndpointTemplate = "http://localhost";
         private const int DefaultWorkerCountPerInstance = 1;
         private const int DefaultMaxConcurrentRunsPerInstance = 1;
         private const int DefaultQueueCapacity = 100;
+        private const string ScaleOutExcludedRuntimeInstanceIdMetadataKey = "scaleout.excludedRuntimeInstanceId";
+        private const string ScaleOutReplacementForRuntimeInstanceIdMetadataKey = "scaleout.replacementForRuntimeInstanceId";
+        private const string RecoveryFailedRuntimeInstanceIdMetadataKey = "recovery.failedRuntimeInstanceId";
+
+        private static readonly ConcurrentDictionary<string, byte> RuntimeInstanceIdReservations =
+            new(StringComparer.OrdinalIgnoreCase);
 
         private readonly IAiRuntimeInstanceRegistry registry;
         private readonly IAiRuntimeInstanceCapacityStore capacityStore;
         private readonly IAiRuntimeHostManager runtimeHostManager;
+        private readonly IAiRuntimeHostProcessControl? runtimeHostProcessControl;
         private readonly IAiRuntimeInstanceReadinessWaiter readinessWaiter;
         private readonly IAiTenantRuntimeSettingsProvider tenantRuntimeSettingsProvider;
         private readonly AiGrpcRuntimeScaleOutOptions options;
@@ -41,6 +51,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Grpc.Sc
         /// <param name="tenantRuntimeSettingsProvider">The tenant runtime settings provider.</param>
         /// <param name="options">The gRPC scale-out technical options.</param>
         /// <param name="logger">The logger.</param>
+        /// <param name="runtimeHostProcessControl">
+        /// Optional process-host lifecycle control used only to clean up a process host when provider-level readiness fails.
+        /// Kubernetes and all non-process host creation modes are never affected by this dependency.
+        /// </param>
         public AiGrpcRuntimeScaleOutProvisioner(
             IAiRuntimeInstanceRegistry registry,
             IAiRuntimeInstanceCapacityStore capacityStore,
@@ -48,11 +62,13 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Grpc.Sc
             IAiRuntimeInstanceReadinessWaiter readinessWaiter,
             IAiTenantRuntimeSettingsProvider tenantRuntimeSettingsProvider,
             IOptions<AiGrpcRuntimeScaleOutOptions> options,
-            ILogger<AiGrpcRuntimeScaleOutProvisioner> logger)
+            ILogger<AiGrpcRuntimeScaleOutProvisioner> logger,
+            IAiRuntimeHostProcessControl? runtimeHostProcessControl = null)
         {
             this.registry = registry ?? throw new ArgumentNullException(nameof(registry));
             this.capacityStore = capacityStore ?? throw new ArgumentNullException(nameof(capacityStore));
             this.runtimeHostManager = runtimeHostManager ?? throw new ArgumentNullException(nameof(runtimeHostManager));
+            this.runtimeHostProcessControl = runtimeHostProcessControl;
             this.readinessWaiter = readinessWaiter ?? throw new ArgumentNullException(nameof(readinessWaiter));
             this.tenantRuntimeSettingsProvider = tenantRuntimeSettingsProvider ?? throw new ArgumentNullException(nameof(tenantRuntimeSettingsProvider));
             ArgumentNullException.ThrowIfNull(options);
@@ -85,83 +101,94 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Grpc.Sc
                 return CreateRejectedResult(request, "grpc-runtime-scaleout-control-plane-id-missing", "gRPC runtime scale-out control-plane id is missing.");
             }
 
-            var context = CreateProvisioningContext(request);
+            var context =
+                await CreateProvisioningContextAsync(
+                        request,
+                        cancellationToken)
+                    .ConfigureAwait(false);
 
-            if (IsHostManagerMode(options.Mode))
+            try
             {
-                return await ProvisionWithHostManagerAsync(request, context, startedAtUtc, cancellationToken).ConfigureAwait(false);
+                if (IsHostManagerMode(options.Mode))
+                {
+                    return await ProvisionWithHostManagerAsync(request, context, startedAtUtc, cancellationToken).ConfigureAwait(false);
+                }
+
+                logger.LogInformation(
+                    "GRPC SCALE-OUT PROVISION START RequestId={RequestId} SharedRunId={SharedRunId} RuntimeInstanceId={RuntimeInstanceId} Endpoint={Endpoint} TenantId={TenantId} TenantGroupId={TenantGroupId} IsolationMode={IsolationMode} WorkerCount={WorkerCount} MaxConcurrentRuns={MaxConcurrentRuns} QueueCapacity={QueueCapacity}",
+                    request.RequestId,
+                    request.SharedRunId,
+                    context.RuntimeInstanceId,
+                    context.Endpoint,
+                    context.TenantId,
+                    context.TenantGroupId,
+                    context.IsolationMode,
+                    context.WorkerCount,
+                    context.MaxConcurrentRuns,
+                    context.QueueCapacity);
+
+                await registry.RegisterAsync(
+                    new AiRuntimeInstanceRegistration
+                    {
+                        RuntimeInstanceId = context.RuntimeInstanceId,
+                        ControlPlaneId = request.ControlPlaneId,
+                        ControlPlaneHostId = $"grpc-scaleout-{request.ControlPlaneId}",
+                        HostId = $"grpc-host-{context.RuntimeInstanceId}",
+                        RuntimeId = context.RuntimeInstanceId,
+                        TenantId = context.TenantId,
+                        TenantGroupId = context.TenantGroupId,
+                        Role = AiRuntimeInstanceRole.Runtime,
+                        WorkerCount = context.WorkerCount,
+                        MaxConcurrentRuns = context.MaxConcurrentRuns,
+                        QueueCapacity = context.QueueCapacity,
+                        RegisteredAtUtc = startedAtUtc,
+                        Metadata = context.Metadata
+                    },
+                    cancellationToken).ConfigureAwait(false);
+
+                await capacityStore.PublishAsync(
+                    new AiRuntimeInstanceCapacityDescriptor
+                    {
+                        RuntimeInstanceId = context.RuntimeInstanceId,
+                        ControlPlaneId = request.ControlPlaneId,
+                        ControlPlaneHostId = $"grpc-scaleout-{request.ControlPlaneId}",
+                        TenantId = context.TenantId,
+                        TenantGroupId = context.TenantGroupId,
+                        Role = AiRuntimeInstanceRole.Runtime,
+                        Status = AiRuntimeInstanceStatus.Ready,
+                        WorkerCount = context.WorkerCount,
+                        ActiveWorkerCount = 0,
+                        AvailableWorkerCount = context.WorkerCount,
+                        MaxWorkersPerRun = context.WorkerCount,
+                        MinWorkersRequiredPerRun = 1,
+                        QueuedRunCount = 0,
+                        RunningRunCount = 0,
+                        ActiveRunCount = 0,
+                        MaxConcurrentRuns = context.MaxConcurrentRuns,
+                        MaxRunSlots = context.MaxConcurrentRuns,
+                        AvailableRunSlots = context.MaxConcurrentRuns,
+                        ReservedRunSlots = 0,
+                        EffectiveAvailableRunSlots = context.MaxConcurrentRuns,
+                        IsQueuePaused = false,
+                        CanAcceptRun = true,
+                        LastHeartbeatAtUtc = startedAtUtc,
+                        Metadata = context.Metadata
+                    },
+                    cancellationToken).ConfigureAwait(false);
+
+                logger.LogInformation(
+                    "GRPC SCALE-OUT PROVISION FULFILLED RequestId={RequestId} SharedRunId={SharedRunId} RuntimeInstanceId={RuntimeInstanceId} Endpoint={Endpoint}",
+                    request.RequestId,
+                    request.SharedRunId,
+                    context.RuntimeInstanceId,
+                    context.Endpoint);
+
+                return CreateFulfilledResult(request, context.RuntimeInstanceId, $"grpc-scaleout-{request.RequestId}", "gRPC runtime scale-out request was fulfilled.", context.Metadata);
             }
-
-            logger.LogInformation(
-                "GRPC SCALE-OUT PROVISION START RequestId={RequestId} SharedRunId={SharedRunId} RuntimeInstanceId={RuntimeInstanceId} Endpoint={Endpoint} TenantId={TenantId} TenantGroupId={TenantGroupId} IsolationMode={IsolationMode} WorkerCount={WorkerCount} MaxConcurrentRuns={MaxConcurrentRuns} QueueCapacity={QueueCapacity}",
-                request.RequestId,
-                request.SharedRunId,
-                context.RuntimeInstanceId,
-                context.Endpoint,
-                context.TenantId,
-                context.TenantGroupId,
-                context.IsolationMode,
-                context.WorkerCount,
-                context.MaxConcurrentRuns,
-                context.QueueCapacity);
-
-            await registry.RegisterAsync(
-                new AiRuntimeInstanceRegistration
-                {
-                    RuntimeInstanceId = context.RuntimeInstanceId,
-                    ControlPlaneId = request.ControlPlaneId,
-                    ControlPlaneHostId = $"grpc-scaleout-{request.ControlPlaneId}",
-                    HostId = $"grpc-host-{context.RuntimeInstanceId}",
-                    RuntimeId = context.RuntimeInstanceId,
-                    TenantId = context.TenantId,
-                    TenantGroupId = context.TenantGroupId,
-                    Role = AiRuntimeInstanceRole.Runtime,
-                    WorkerCount = context.WorkerCount,
-                    MaxConcurrentRuns = context.MaxConcurrentRuns,
-                    QueueCapacity = context.QueueCapacity,
-                    RegisteredAtUtc = startedAtUtc,
-                    Metadata = context.Metadata
-                },
-                cancellationToken).ConfigureAwait(false);
-
-            await capacityStore.PublishAsync(
-                new AiRuntimeInstanceCapacityDescriptor
-                {
-                    RuntimeInstanceId = context.RuntimeInstanceId,
-                    ControlPlaneId = request.ControlPlaneId,
-                    ControlPlaneHostId = $"grpc-scaleout-{request.ControlPlaneId}",
-                    TenantId = context.TenantId,
-                    TenantGroupId = context.TenantGroupId,
-                    Role = AiRuntimeInstanceRole.Runtime,
-                    Status = AiRuntimeInstanceStatus.Ready,
-                    WorkerCount = context.WorkerCount,
-                    ActiveWorkerCount = 0,
-                    AvailableWorkerCount = context.WorkerCount,
-                    MaxWorkersPerRun = context.WorkerCount,
-                    MinWorkersRequiredPerRun = 1,
-                    QueuedRunCount = 0,
-                    RunningRunCount = 0,
-                    ActiveRunCount = 0,
-                    MaxConcurrentRuns = context.MaxConcurrentRuns,
-                    MaxRunSlots = context.MaxConcurrentRuns,
-                    AvailableRunSlots = context.MaxConcurrentRuns,
-                    ReservedRunSlots = 0,
-                    EffectiveAvailableRunSlots = context.MaxConcurrentRuns,
-                    IsQueuePaused = false,
-                    CanAcceptRun = true,
-                    LastHeartbeatAtUtc = startedAtUtc,
-                    Metadata = context.Metadata
-                },
-                cancellationToken).ConfigureAwait(false);
-
-            logger.LogInformation(
-                "GRPC SCALE-OUT PROVISION FULFILLED RequestId={RequestId} SharedRunId={SharedRunId} RuntimeInstanceId={RuntimeInstanceId} Endpoint={Endpoint}",
-                request.RequestId,
-                request.SharedRunId,
-                context.RuntimeInstanceId,
-                context.Endpoint);
-
-            return CreateFulfilledResult(request, context.RuntimeInstanceId, $"grpc-scaleout-{request.RequestId}", "gRPC runtime scale-out request was fulfilled.", context.Metadata);
+            finally
+            {
+                ReleaseRuntimeInstanceIdReservation(context.RuntimeInstanceId);
+            }
         }
 
         /// <summary>
@@ -218,6 +245,17 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Grpc.Sc
                     },
                     cancellationToken).ConfigureAwait(false);
 
+            logger.LogInformation(
+                "GRPC SCALE-OUT HOST-MANAGER START RESULT RequestId={RequestId} SharedRunId={SharedRunId} Success={Success} RuntimeInstanceId={RuntimeInstanceId} ProviderName={ProviderName} TransportName={TransportName} TransportEndpoint={TransportEndpoint} FailureReason={FailureReason}",
+                request.RequestId,
+                request.SharedRunId,
+                startResult.Success,
+                startResult.RuntimeInstanceId,
+                startResult.ProviderName,
+                startResult.TransportName,
+                startResult.TransportEndpoint,
+                startResult.FailureReason ?? "(none)");
+
             if (!startResult.Success)
             {
                 logger.LogWarning(
@@ -231,16 +269,56 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Grpc.Sc
                 return CreateRejectedResult(request, startResult.FailureReason ?? "runtime-host-start-failed", "gRPC runtime scale-out host manager start failed.");
             }
 
-            var fulfilledRuntimeInstanceId = !string.IsNullOrWhiteSpace(startResult.RuntimeInstanceId) ? startResult.RuntimeInstanceId : context.RuntimeInstanceId;
-            var fulfilledTransportEndpoint = !string.IsNullOrWhiteSpace(startResult.TransportEndpoint) ? startResult.TransportEndpoint : context.Endpoint;
+            var excludedRuntimeInstanceId =
+                ResolveExcludedRuntimeInstanceId(
+                    context.Metadata);
+
+            var fulfilledRuntimeInstanceId =
+                !string.IsNullOrWhiteSpace(startResult.RuntimeInstanceId) &&
+                !string.Equals(
+                    startResult.RuntimeInstanceId,
+                    excludedRuntimeInstanceId,
+                    StringComparison.Ordinal)
+                    ? startResult.RuntimeInstanceId
+                    : context.RuntimeInstanceId;
+
+            var fulfilledTransportEndpoint =
+                !string.IsNullOrWhiteSpace(startResult.TransportEndpoint)
+                    ? startResult.TransportEndpoint
+                    : context.Endpoint;
 
             if (string.IsNullOrWhiteSpace(fulfilledRuntimeInstanceId))
             {
                 return CreateRejectedResult(request, "runtime-host-started-without-runtime-instance-id", "gRPC runtime scale-out host manager returned success without a runtime instance id.");
             }
 
+            if (string.Equals(
+                    fulfilledRuntimeInstanceId,
+                    excludedRuntimeInstanceId,
+                    StringComparison.Ordinal))
+            {
+                return CreateRejectedResult(
+                    request,
+                    "runtime-host-started-with-excluded-runtime-instance-id",
+                    "gRPC runtime scale-out host manager returned the excluded failed runtime instance id for a recovery replacement.");
+            }
+
             if (options.RequireReadiness)
             {
+                var requireTransportEndpoint =
+                    ShouldRequireTransportEndpointForReadiness();
+
+                logger.LogInformation(
+                    "GRPC SCALE-OUT HOST-MANAGER READINESS WAIT RequestId={RequestId} SharedRunId={SharedRunId} RuntimeInstanceId={RuntimeInstanceId} HostCreationMode={HostCreationMode} RequireTransportEndpoint={RequireTransportEndpoint} TransportEndpoint={TransportEndpoint} TimeoutSeconds={TimeoutSeconds} PollIntervalMilliseconds={PollIntervalMilliseconds}",
+                    request.RequestId,
+                    request.SharedRunId,
+                    fulfilledRuntimeInstanceId,
+                    options.HostCreationMode,
+                    requireTransportEndpoint,
+                    fulfilledTransportEndpoint,
+                    Math.Max(1, options.ReadinessTimeoutSeconds),
+                    Math.Max(1, options.ReadinessPollIntervalMilliseconds));
+
                 var readinessResult =
                     await readinessWaiter.WaitUntilReadyAsync(
                         new AiRuntimeInstanceReadinessRequest
@@ -251,11 +329,22 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Grpc.Sc
                             ProviderName = ProviderName,
                             TransportName = AiGrpcRuntimeProviderConstants.TransportName,
                             TransportEndpoint = fulfilledTransportEndpoint,
-                            RequireTransportEndpoint = options.HostCreationMode != AiRuntimeHostCreationMode.Fixture,
+                            RequireTransportEndpoint = requireTransportEndpoint,
                             Timeout = TimeSpan.FromSeconds(Math.Max(1, options.ReadinessTimeoutSeconds)),
                             PollInterval = TimeSpan.FromMilliseconds(Math.Max(1, options.ReadinessPollIntervalMilliseconds))
                         },
                         cancellationToken).ConfigureAwait(false);
+
+                logger.LogInformation(
+                    "GRPC SCALE-OUT HOST-MANAGER READINESS RESULT RequestId={RequestId} SharedRunId={SharedRunId} RuntimeInstanceId={RuntimeInstanceId} HostCreationMode={HostCreationMode} Success={Success} TimedOut={TimedOut} FailureReason={FailureReason} TransportEndpoint={TransportEndpoint}",
+                    request.RequestId,
+                    request.SharedRunId,
+                    readinessResult.RuntimeInstanceId,
+                    options.HostCreationMode,
+                    readinessResult.Success,
+                    readinessResult.TimedOut,
+                    readinessResult.FailureReason ?? "(none)",
+                    readinessResult.TransportEndpoint ?? "(null)");
 
                 if (!readinessResult.Success)
                 {
@@ -268,11 +357,32 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Grpc.Sc
                         readinessResult.FailureReason,
                         readinessResult.TimedOut);
 
+                    await TryCleanupFailedProcessHostAsync(
+                            request,
+                            fulfilledRuntimeInstanceId)
+                        .ConfigureAwait(false);
+
                     return CreateRejectedResult(request, readinessResult.FailureReason ?? "runtime-readiness-failed", "gRPC runtime scale-out readiness check failed.");
+                }
+
+                if (!string.IsNullOrWhiteSpace(readinessResult.RuntimeInstanceId))
+                {
+                    fulfilledRuntimeInstanceId = readinessResult.RuntimeInstanceId;
+                }
+
+                if (!string.IsNullOrWhiteSpace(readinessResult.TransportEndpoint))
+                {
+                    fulfilledTransportEndpoint = readinessResult.TransportEndpoint;
                 }
             }
 
-            var metadata = CreateFulfilledHostManagerMetadata(request, context, startResult, fulfilledRuntimeInstanceId, fulfilledTransportEndpoint);
+            var metadata =
+                CreateFulfilledHostManagerMetadata(
+                    request,
+                    context,
+                    startResult,
+                    fulfilledRuntimeInstanceId,
+                    fulfilledTransportEndpoint);
 
             logger.LogInformation(
                 "GRPC SCALE-OUT HOST-MANAGER FULFILLED RequestId={RequestId} SharedRunId={SharedRunId} RuntimeInstanceId={RuntimeInstanceId} Endpoint={Endpoint} HostCreationMode={HostCreationMode} DurationMs={DurationMs}",
@@ -287,12 +397,102 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Grpc.Sc
         }
 
         /// <summary>
+        /// Cleans up a process host that was started successfully but failed provider-level readiness.
+        /// </summary>
+        /// <remarks>
+        /// This cleanup is intentionally restricted to <see cref="AiRuntimeHostCreationMode.Process" />.
+        /// Kubernetes lifecycle remains owned by the Kubernetes host creation strategy and is never touched here.
+        /// Cleanup is best-effort so that a cleanup failure cannot hide the original readiness failure.
+        /// </remarks>
+        /// <param name="request">The scale-out provider request.</param>
+        /// <param name="runtimeInstanceId">The process runtime instance identifier.</param>
+        /// <returns>A task representing the cleanup attempt.</returns>
+        private async Task TryCleanupFailedProcessHostAsync(
+            AiRuntimeScaleOutProviderRequest request,
+            string runtimeInstanceId)
+        {
+            if (options.HostCreationMode != AiRuntimeHostCreationMode.Process)
+            {
+                return;
+            }
+
+            if (runtimeHostProcessControl is null)
+            {
+                logger.LogWarning(
+                    "GRPC SCALE-OUT PROCESS READINESS CLEANUP SKIPPED RequestId={RequestId} SharedRunId={SharedRunId} RuntimeInstanceId={RuntimeInstanceId} Reason={Reason}",
+                    request.RequestId,
+                    request.SharedRunId,
+                    runtimeInstanceId,
+                    "process-control-unavailable");
+
+                return;
+            }
+
+            try
+            {
+                var cleaned =
+                    await runtimeHostProcessControl
+                        .KillAsync(
+                            runtimeInstanceId,
+                            CancellationToken.None)
+                        .ConfigureAwait(false);
+
+                if (cleaned)
+                {
+                    logger.LogWarning(
+                        "GRPC SCALE-OUT PROCESS READINESS CLEANUP COMPLETED RequestId={RequestId} SharedRunId={SharedRunId} RuntimeInstanceId={RuntimeInstanceId}",
+                        request.RequestId,
+                        request.SharedRunId,
+                        runtimeInstanceId);
+                }
+                else
+                {
+                    logger.LogWarning(
+                        "GRPC SCALE-OUT PROCESS READINESS CLEANUP NOT FOUND RequestId={RequestId} SharedRunId={SharedRunId} RuntimeInstanceId={RuntimeInstanceId}",
+                        request.RequestId,
+                        request.SharedRunId,
+                        runtimeInstanceId);
+                }
+            }
+            catch (Exception exception)
+            {
+                logger.LogWarning(
+                    exception,
+                    "GRPC SCALE-OUT PROCESS READINESS CLEANUP FAILED RequestId={RequestId} SharedRunId={SharedRunId} RuntimeInstanceId={RuntimeInstanceId}",
+                    request.RequestId,
+                    request.SharedRunId,
+                    runtimeInstanceId);
+            }
+        }
+
+        /// <summary>
+        /// Determines whether runtime readiness should verify direct transport endpoint reachability.
+        /// </summary>
+        /// <returns><see langword="true"/> when direct transport endpoint readiness is required; otherwise, <see langword="false"/>.</returns>
+        private bool ShouldRequireTransportEndpointForReadiness()
+        {
+            if (options.HostCreationMode == AiRuntimeHostCreationMode.Fixture)
+            {
+                return false;
+            }
+
+            if (options.HostCreationMode == AiRuntimeHostCreationMode.Kubernetes)
+            {
+                return false;
+            }
+
+            return true;
+        }
+
+        /// <summary>
         /// Creates the tenant-aware provisioning context for the scale-out request.
         /// </summary>
         /// <param name="request">The scale-out provider request.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
         /// <returns>The resolved provisioning context.</returns>
-        private AiRuntimeScaleOutProvisioningContext CreateProvisioningContext(
-            AiRuntimeScaleOutProviderRequest request)
+        private async Task<AiRuntimeScaleOutProvisioningContext> CreateProvisioningContextAsync(
+            AiRuntimeScaleOutProviderRequest request,
+            CancellationToken cancellationToken)
         {
             var tenantSettings = tenantRuntimeSettingsProvider.GetSettings(request.TenantId, request.TenantGroupId);
             var tenantId = ResolveText(request.TenantId, tenantSettings.TenantId, "shared");
@@ -301,31 +501,61 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Grpc.Sc
             var preferDedicatedCapacity = ResolveBoolean(request.PreferDedicatedCapacity, tenantSettings.PreferDedicatedCapacity);
             var allowSharedFallback = ResolveBoolean(request.AllowSharedFallback, tenantSettings.AllowSharedFallback);
             var runtimeInstanceIdPrefix = ResolveRuntimeInstanceIdPrefix(request, tenantSettings);
-            var runtimeInstanceId = ResolveRuntimeInstanceId(request, runtimeInstanceIdPrefix);
-            var endpoint = ResolveEndpoint(request, runtimeInstanceId, runtimeInstanceIdPrefix);
             var workerCount = ResolvePositiveOrDefault(tenantSettings.WorkerCountPerInstance, request.WorkerCountPerInstance, DefaultWorkerCountPerInstance);
             var maxConcurrentRuns = ResolvePositiveOrDefault(tenantSettings.MaxConcurrentRunsPerInstance, request.MaxConcurrentRunsPerInstance, DefaultMaxConcurrentRunsPerInstance);
             var queueCapacity = ResolvePositiveOrDefault(tenantSettings.LocalQueueCapacity, request.LocalQueueCapacity, DefaultQueueCapacity);
             var maxRuntimeInstances = ResolvePositiveOrNullableDefault(tenantSettings.MaxRuntimeInstances, request.MaxRuntimeInstances);
 
-            var metadata = CreateMetadata(request, tenantSettings, tenantId, tenantGroupId, isolationMode, preferDedicatedCapacity, allowSharedFallback, runtimeInstanceId, runtimeInstanceIdPrefix, endpoint, workerCount, maxConcurrentRuns, queueCapacity, maxRuntimeInstances);
+            var runtimeInstanceId =
+                await ReserveRuntimeInstanceIdAsync(
+                        request,
+                        runtimeInstanceIdPrefix,
+                        cancellationToken)
+                    .ConfigureAwait(false);
 
-            return new AiRuntimeScaleOutProvisioningContext
+            try
             {
-                TenantId = tenantId,
-                TenantGroupId = tenantGroupId,
-                IsolationMode = isolationMode,
-                PreferDedicatedCapacity = preferDedicatedCapacity,
-                AllowSharedFallback = allowSharedFallback,
-                RuntimeInstanceId = runtimeInstanceId,
-                RuntimeInstanceIdPrefix = runtimeInstanceIdPrefix,
-                Endpoint = endpoint,
-                WorkerCount = workerCount,
-                MaxConcurrentRuns = maxConcurrentRuns,
-                QueueCapacity = queueCapacity,
-                MaxRuntimeInstances = maxRuntimeInstances,
-                Metadata = metadata
-            };
+                var endpoint = ResolveEndpoint(request, runtimeInstanceId, runtimeInstanceIdPrefix);
+
+                var metadata =
+                    CreateMetadata(
+                        request,
+                        tenantSettings,
+                        tenantId,
+                        tenantGroupId,
+                        isolationMode,
+                        preferDedicatedCapacity,
+                        allowSharedFallback,
+                        runtimeInstanceId,
+                        runtimeInstanceIdPrefix,
+                        endpoint,
+                        workerCount,
+                        maxConcurrentRuns,
+                        queueCapacity,
+                        maxRuntimeInstances);
+
+                return new AiRuntimeScaleOutProvisioningContext
+                {
+                    TenantId = tenantId,
+                    TenantGroupId = tenantGroupId,
+                    IsolationMode = isolationMode,
+                    PreferDedicatedCapacity = preferDedicatedCapacity,
+                    AllowSharedFallback = allowSharedFallback,
+                    RuntimeInstanceId = runtimeInstanceId,
+                    RuntimeInstanceIdPrefix = runtimeInstanceIdPrefix,
+                    Endpoint = endpoint,
+                    WorkerCount = workerCount,
+                    MaxConcurrentRuns = maxConcurrentRuns,
+                    QueueCapacity = queueCapacity,
+                    MaxRuntimeInstances = maxRuntimeInstances,
+                    Metadata = metadata
+                };
+            }
+            catch
+            {
+                ReleaseRuntimeInstanceIdReservation(runtimeInstanceId);
+                throw;
+            }
         }
 
         /// <summary>
@@ -357,17 +587,189 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Grpc.Sc
         }
 
         /// <summary>
-        /// Resolves the runtime instance id for the scale-out request.
+        /// Reserves the next free runtime instance id for the scale-out request.
         /// </summary>
+        /// <remarks>
+        /// Requested target instance count is a desired capacity count, not an identity suffix.
+        /// Existing registry snapshots, capacity descriptors, and in-process reservations are all
+        /// excluded so concurrent recovery requests cannot converge on the same runtime id.
+        /// </remarks>
         /// <param name="request">The scale-out provider request.</param>
         /// <param name="runtimeInstanceIdPrefix">The runtime instance id prefix.</param>
-        /// <returns>The runtime instance id.</returns>
-        private static string ResolveRuntimeInstanceId(
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <returns>The reserved runtime instance id.</returns>
+        private async Task<string> ReserveRuntimeInstanceIdAsync(
             AiRuntimeScaleOutProviderRequest request,
-            string runtimeInstanceIdPrefix)
+            string runtimeInstanceIdPrefix,
+            CancellationToken cancellationToken)
         {
-            var target = request.RequestedTargetInstanceCount > 0 ? request.RequestedTargetInstanceCount : Math.Max(1, request.CurrentInstanceCount + 1);
-            return $"{request.ControlPlaneId}:{runtimeInstanceIdPrefix}-{target}";
+            var excludedRuntimeInstanceId =
+                ResolveExcludedRuntimeInstanceId(
+                    request.Metadata);
+
+            var registrySnapshots =
+                await registry
+                    .ListAsync(
+                        includeStopped: true,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+            var capacityDescriptors =
+                await capacityStore
+                    .ListAsync(cancellationToken)
+                    .ConfigureAwait(false);
+
+            var existingRuntimeInstanceIds =
+                new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            existingRuntimeInstanceIds.UnionWith(
+                registrySnapshots.Select(snapshot => snapshot.RuntimeInstanceId));
+
+            existingRuntimeInstanceIds.UnionWith(
+                capacityDescriptors.Select(descriptor => descriptor.RuntimeInstanceId));
+
+            var currentInstanceCount =
+                Math.Max(
+                    0,
+                    Convert.ToInt32(request.CurrentInstanceCount));
+
+            var requestedTargetInstanceCount =
+                Math.Max(
+                    0,
+                    Convert.ToInt32(request.RequestedTargetInstanceCount));
+
+            var target = Math.Max(1, currentInstanceCount + 1);
+
+            while (target > 0)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                var candidate =
+                    $"{request.ControlPlaneId}:{runtimeInstanceIdPrefix}-{target}";
+
+                var isExcluded =
+                    string.Equals(
+                        candidate,
+                        excludedRuntimeInstanceId,
+                        StringComparison.OrdinalIgnoreCase);
+
+                if (!isExcluded &&
+                    !existingRuntimeInstanceIds.Contains(candidate) &&
+                    RuntimeInstanceIdReservations.TryAdd(candidate, 0))
+                {
+                    logger.LogInformation(
+                        "GRPC SCALE-OUT RUNTIME ID RESERVED RequestId={RequestId} SharedRunId={SharedRunId} RuntimeInstanceId={RuntimeInstanceId} CurrentInstanceCount={CurrentInstanceCount} RequestedTargetInstanceCount={RequestedTargetInstanceCount} ExistingRuntimeInstanceCount={ExistingRuntimeInstanceCount} ExcludedRuntimeInstanceId={ExcludedRuntimeInstanceId}",
+                        request.RequestId,
+                        request.SharedRunId,
+                        candidate,
+                        currentInstanceCount,
+                        requestedTargetInstanceCount,
+                        existingRuntimeInstanceIds.Count,
+                        excludedRuntimeInstanceId ?? "(none)");
+
+                    return candidate;
+                }
+
+                if (target == int.MaxValue)
+                {
+                    break;
+                }
+
+                target++;
+            }
+
+            for (var attempt = 0; attempt < 32; attempt++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                var candidate =
+                    $"{request.ControlPlaneId}:{runtimeInstanceIdPrefix}-recovery-{Guid.NewGuid():N}";
+
+                if (!string.Equals(
+                        candidate,
+                        excludedRuntimeInstanceId,
+                        StringComparison.OrdinalIgnoreCase) &&
+                    !existingRuntimeInstanceIds.Contains(candidate) &&
+                    RuntimeInstanceIdReservations.TryAdd(candidate, 0))
+                {
+                    return candidate;
+                }
+            }
+
+            throw new InvalidOperationException(
+                $"No free runtime instance id could be reserved for control plane '{request.ControlPlaneId}' and prefix '{runtimeInstanceIdPrefix}'.");
+        }
+
+        /// <summary>
+        /// Releases an in-process runtime instance id reservation.
+        /// </summary>
+        /// <param name="runtimeInstanceId">The reserved runtime instance id.</param>
+        private static void ReleaseRuntimeInstanceIdReservation(
+            string runtimeInstanceId)
+        {
+            if (string.IsNullOrWhiteSpace(runtimeInstanceId))
+            {
+                return;
+            }
+
+            RuntimeInstanceIdReservations.TryRemove(runtimeInstanceId, out _);
+        }
+
+        /// <summary>
+        /// Resolves the runtime instance id that must not be reused by replacement scale-out.
+        /// </summary>
+        /// <param name="metadata">The scale-out metadata.</param>
+        /// <returns>The excluded runtime instance id, or null.</returns>
+        private static string? ResolveExcludedRuntimeInstanceId(
+            IReadOnlyDictionary<string, string>? metadata)
+        {
+            return ResolveMetadataValue(
+                       metadata,
+                       ScaleOutExcludedRuntimeInstanceIdMetadataKey) ??
+                   ResolveMetadataValue(
+                       metadata,
+                       ScaleOutReplacementForRuntimeInstanceIdMetadataKey) ??
+                   ResolveMetadataValue(
+                       metadata,
+                       RecoveryFailedRuntimeInstanceIdMetadataKey);
+        }
+
+        /// <summary>
+        /// Resolves a metadata value using case-insensitive key matching.
+        /// </summary>
+        /// <param name="metadata">The metadata dictionary.</param>
+        /// <param name="key">The metadata key.</param>
+        /// <returns>The metadata value, or null.</returns>
+        private static string? ResolveMetadataValue(
+            IReadOnlyDictionary<string, string>? metadata,
+            string key)
+        {
+            if (metadata is null)
+            {
+                return null;
+            }
+
+            if (metadata.TryGetValue(
+                    key,
+                    out var value) &&
+                !string.IsNullOrWhiteSpace(value))
+            {
+                return value;
+            }
+
+            foreach (var item in metadata)
+            {
+                if (string.Equals(
+                        item.Key,
+                        key,
+                        StringComparison.OrdinalIgnoreCase) &&
+                    !string.IsNullOrWhiteSpace(item.Value))
+                {
+                    return item.Value;
+                }
+            }
+
+            return null;
         }
 
         /// <summary>
@@ -382,7 +784,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Grpc.Sc
             string runtimeInstanceId,
             string runtimeInstanceIdPrefix)
         {
-            var endpointTemplate = string.IsNullOrWhiteSpace(options.EndpointTemplate) ? DefaultEndpointTemplate : options.EndpointTemplate.Trim();
+            var endpointTemplate =
+                string.IsNullOrWhiteSpace(options.EndpointTemplate)
+                    ? DefaultEndpointTemplate
+                    : options.EndpointTemplate.Trim();
 
             return endpointTemplate
                 .Replace("{runtimeInstanceId}", runtimeInstanceId, StringComparison.OrdinalIgnoreCase)
@@ -522,7 +927,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Grpc.Sc
             int queueCapacity,
             int? maxRuntimeInstances)
         {
-            var metadata = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            var metadata =
+                new Dictionary<string, string>(
+                    StringComparer.OrdinalIgnoreCase);
 
             CopyMetadata(metadata, request.Metadata);
             CopyMetadata(metadata, tenantSettings.Metadata);
@@ -567,7 +974,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Grpc.Sc
             string fulfilledRuntimeInstanceId,
             string fulfilledTransportEndpoint)
         {
-            var metadata = new Dictionary<string, string>(startResult.Metadata ?? new Dictionary<string, string>(), StringComparer.OrdinalIgnoreCase);
+            var metadata =
+                new Dictionary<string, string>(
+                    startResult.Metadata ?? new Dictionary<string, string>(),
+                    StringComparer.OrdinalIgnoreCase);
 
             CopyMetadata(metadata, context.Metadata);
 
@@ -577,10 +987,18 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Grpc.Sc
             metadata[AiRuntimeInstanceCommandTransportMetadataKeys.TransportName] = AiGrpcRuntimeProviderConstants.TransportName;
             metadata[AiRuntimeInstanceCommandTransportMetadataKeys.RuntimeInstanceId] = fulfilledRuntimeInstanceId;
             metadata[AiRuntimeInstanceCommandTransportMetadataKeys.TransportEndpoint] = fulfilledTransportEndpoint;
+            metadata["runtimeInstanceId"] = fulfilledRuntimeInstanceId;
+            metadata["runtime.instance.id"] = fulfilledRuntimeInstanceId;
+            metadata["scaleOutRuntimeInstanceId"] = fulfilledRuntimeInstanceId;
+            metadata["scaleout.runtimeInstanceId"] = fulfilledRuntimeInstanceId;
+            metadata["transport.endpoint"] = fulfilledTransportEndpoint;
             metadata["scaleOutRequestId"] = request.RequestId;
             metadata["sharedRunId"] = request.SharedRunId;
             metadata["controlPlaneId"] = request.ControlPlaneId;
-            metadata["hostCreation.mode"] = metadata.TryGetValue("hostCreation.mode", out var hostCreationMode) ? hostCreationMode : "HostManager";
+            metadata["hostCreation.mode"] =
+                metadata.TryGetValue("hostCreation.mode", out var hostCreationMode)
+                    ? hostCreationMode
+                    : "HostManager";
 
             return metadata;
         }

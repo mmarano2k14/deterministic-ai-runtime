@@ -15,9 +15,9 @@ using Multiplexed.AI.Observability.Ledger;
 using Multiplexed.AI.Runtime;
 using Multiplexed.AI.Runtime.AI.Providers.Llm.OpenAI.DI;
 using Multiplexed.AI.Runtime.AI.Rag.DI;
+using Multiplexed.AI.Runtime.ControlPlane.DI;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Isolation;
-using Multiplexed.AI.Runtime.DependencyInjection;
 using Multiplexed.AI.Runtime.Execution.Persistence.Replay.Metadata;
 using Multiplexed.AI.Runtime.Execution.Retention.Policies;
 using Multiplexed.AI.Runtime.Observability.Ledger.DI;
@@ -59,8 +59,17 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
                 configuration.GetConnectionString("Redis")
                 ?? "localhost:6379";
 
+            var redisConfiguration =
+                ConfigurationOptions.Parse(
+                    redisConnectionString);
+
+            redisConfiguration.SyncTimeout = 10_000;
+            redisConfiguration.AsyncTimeout = 10_000;
+
             services.AddSingleton<IConnectionMultiplexer>(_ =>
-                ConnectionMultiplexer.Connect(redisConnectionString));
+                ConnectionMultiplexer.Connect(redisConfiguration));
+
+            services.AddAiRuntimeSignals();
 
             services.AddMultiplexRealtime()
                 .AddSignalRRealtimeTransport(realtimeOptions =>
@@ -249,11 +258,14 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
                 ?? "mongodb://localhost:27017";
 
             var databaseName =
-                configuration["Mongo:DatabaseName"]
+                configuration["AiExecutionReplay:MetadataStore:Mongo:DatabaseName"]
+                ?? configuration["AiReplay:MetadataStore:Mongo:DatabaseName"]
+                ?? configuration["Mongo:DatabaseName"]
                 ?? "multiplexed-ai";
 
             var collectionName =
                 configuration["AiExecutionReplay:MetadataStore:Mongo:CollectionName"]
+                ?? configuration["AiReplay:MetadataStore:Mongo:CollectionName"]
                 ?? "ai_execution_replay_metadata";
 
             services.RemoveAll<IAiExecutionReplayMetadataStore>();

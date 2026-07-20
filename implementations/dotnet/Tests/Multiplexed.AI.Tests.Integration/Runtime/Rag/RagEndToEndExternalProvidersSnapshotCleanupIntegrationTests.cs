@@ -43,7 +43,7 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Rag
         private const string MongoDatabaseName = "multiplexed_ai_tests";
         private const string MongoCollectionName = "ai_execution_snapshots_tests";
 
-        [Fact]
+        [Fact(Skip = "Please setup rg db")]
         public async Task ExecuteAllAsync_Ef_Provider_Should_Persist_Snapshot_And_Replay()
         {
             await using var host = await CreateHostAsync(
@@ -117,8 +117,32 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Rag
             var final = await engine.ExecuteAllAsync(created.ExecutionId);
 
             Assert.NotNull(final);
-            Assert.True(final!.IsTerminal);
-            Assert.Equal(AiExecutionStatus.Completed, final.Status);
+
+            var dagStore =
+                host.ServiceProvider.GetRequiredService<IAiDagExecutionStore>();
+
+            var state =
+                await dagStore.GetStateAsync(created.ExecutionId);
+
+            var stepSummary = state is null
+                ? "state-not-found"
+                : string.Join(
+                    ", ",
+                    state.Steps.Values
+                        .GroupBy(step => step.Status)
+                        .OrderBy(group => group.Key)
+                        .Select(group => $"{group.Key}={group.Count()}"));
+
+            Assert.True(
+                final!.IsTerminal,
+                $"Execution '{final.ExecutionId}' did not reach a terminal state. " +
+                $"Status='{final.Status}', " +
+                $"IsTerminal='{final.IsTerminal}', " +
+                $"StepSummary='{stepSummary}'.");
+
+            Assert.Equal(
+                AiExecutionStatus.Completed,
+                final.Status);
 
             var snapshotStore =
                 host.ServiceProvider.GetRequiredService<IAiExecutionSnapshotStore<ExecutionContextSnapshot>>();

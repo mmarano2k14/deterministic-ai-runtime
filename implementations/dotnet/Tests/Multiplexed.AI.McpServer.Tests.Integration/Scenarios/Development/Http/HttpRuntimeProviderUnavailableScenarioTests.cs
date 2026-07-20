@@ -156,8 +156,10 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Development.Http
                 AiSharedRunStatus.QueuedGlobally,
                 run.Status);
 
-            Assert.Equal(
-                RuntimeInstanceHostId,
+            // An unavailable-provider dispatch is requeued for a future admission attempt.
+            // Active runtime ownership must therefore be cleared after the failure
+            // is persisted.
+            Assert.Null(
                 run.AssignedRuntimeInstanceId);
 
             Assert.Equal(
@@ -190,7 +192,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Development.Http
                 queueItem.Reason);
 
             output.WriteLine(
-                $"HTTP provider-unavailable failure persisted. SharedRunId='{run.SharedRunId}', RuntimeInstanceId='{run.AssignedRuntimeInstanceId}', FailureReason='{run.FailureReason}'.");
+                $"HTTP provider-unavailable failure persisted and run ownership cleared for redispatch. SharedRunId='{run.SharedRunId}', AssignedRuntimeInstanceId='{run.AssignedRuntimeInstanceId}', FailureReason='{run.FailureReason}'.");
         }
 
         /// <summary>

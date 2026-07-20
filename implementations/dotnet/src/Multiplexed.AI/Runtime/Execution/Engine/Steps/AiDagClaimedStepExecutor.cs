@@ -1,11 +1,10 @@
-﻿using Multiplexed.Abstractions.AI.Concurrency;
+using Multiplexed.Abstractions.AI.Concurrency;
 using Multiplexed.Abstractions.AI.Execution;
 using Multiplexed.Abstractions.AI.Execution.Scheduling;
 using Multiplexed.Abstractions.AI.Observability.Ledger;
 using Multiplexed.Abstractions.AI.Observability.Tracing;
 using Multiplexed.Abstractions.AI.Pipeline;
 using Multiplexed.Abstractions.AI.Steps;
-using Multiplexed.AI.Runtime.AI.Concurrency;
 using Multiplexed.AI.Runtime.Execution.Context;
 using Multiplexed.AI.Runtime.Execution.Engine.Core;
 using Multiplexed.AI.Runtime.Execution.Engine.Helpers;
@@ -24,7 +23,8 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
     /// IMPORTANT:
     /// - This class does not claim steps.
     /// - This class does not finalize steps.
-    /// - This class releases distributed concurrency capacity after execution.
+    /// - This class does not release distributed concurrency capacity.
+    /// - The batch/distributed runner that owns the claim owns the matching lease release.
     /// - This class records execution-correlated ledger events without changing runtime behavior.
     ///
     /// DISTRIBUTED OWNERSHIP:
@@ -34,9 +34,6 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
     /// </remarks>
     public sealed class AiDagClaimedStepExecutor
     {
-        private static readonly IAiConcurrencyDefinitionResolver ConcurrencyDefinitionResolver =
-            new DefaultAiConcurrencyDefinitionResolver();
-
         private readonly IAiDagExecutionEngineServices _services;
 
         /// <summary>
@@ -51,8 +48,12 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
         }
 
         /// <summary>
-        /// Executes an already-claimed DAG step and releases its concurrency slot afterwards.
+        /// Executes an already-claimed DAG step.
         /// </summary>
+        /// <remarks>
+        /// Claim and concurrency lease ownership remain with the calling runner. The runner
+        /// releases the lease only after the step result has been persisted durably.
+        /// </remarks>
         public async Task<AiStepResult> ExecuteAsync(
             AiExecutionRecord record,
             AiExecutionState state,
@@ -91,14 +92,16 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                 ? existingStepState
                 : null;
 
-            var concurrencyDefinition = stepState is not null
-                ? ConcurrencyDefinitionResolver.Resolve(stepState)
-                : new AiConcurrencyDefinition
-                {
-                    Enabled = false
-                };
+            var pipelineName =
+                !string.IsNullOrWhiteSpace(resolvedPipeline.Name)
+                    ? resolvedPipeline.Name
+                    : throw new InvalidOperationException(
+                        "Resolved pipeline name is required to build the execution correlation pipeline key.");
 
-            var pipelineKey = $"{resolvedPipeline.Name}:{resolvedPipeline.Version}";
+            var pipelineKey =
+                string.IsNullOrWhiteSpace(resolvedPipeline.Version)
+                    ? pipelineName
+                    : $"{pipelineName}:{resolvedPipeline.Version}";
             var runtimeInstanceId = _services.RuntimeInstanceIdentity.RuntimeInstanceId;
 
             var concurrencyContext = new AiConcurrencyContext
@@ -145,8 +148,6 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
 
             try
             {
-                try
-                {
                     var result = await _services.ObservabilityService.Tracer.TraceStepAsync(
                         new AiStepTraceContext
                         {
@@ -243,39 +244,6 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                         .ConfigureAwait(false);
 
                     return AiStepResult.Fail(ex.Message);
-                }
-            }
-            finally
-            {
-                await _services.ConcurrencyGate.ReleaseAsync(
-                    concurrencyContext,
-                    concurrencyDefinition,
-                    cancellationToken).ConfigureAwait(false);
-
-                await AiDagExecutionHelpers.RecordDagLedgerEventAsync(
-                        _services,
-                        record.ExecutionId,
-                        pipelineKey,
-                        resolvedStep.Name,
-                        resolvedStep.StepKey,
-                        runtimeInstanceId,
-                        claimedStep.ClaimToken,
-                        concurrencyContext,
-                        AiDecisionLedgerCategory.Concurrency,
-                        AiDecisionLedgerEvents.Concurrency.LeaseReleased,
-                        AiDecisionLedgerOutcome.Released,
-                        "Concurrency lease released after step execution.",
-                        new Dictionary<string, string>
-                        {
-                            ["pipeline.name"] = resolvedPipeline.Name ?? string.Empty,
-                            ["pipeline.version"] = resolvedPipeline.Version ?? string.Empty,
-                            ["step.name"] = resolvedStep.Name ?? string.Empty,
-                            ["step.key"] = resolvedStep.StepKey ?? string.Empty,
-                            ["worker.id"] = runtimeInstanceId ?? string.Empty,
-                            ["lease.id"] = concurrencyContext.LeaseId ?? string.Empty
-                        },
-                        cancellationToken)
-                    .ConfigureAwait(false);
             }
         }
     }

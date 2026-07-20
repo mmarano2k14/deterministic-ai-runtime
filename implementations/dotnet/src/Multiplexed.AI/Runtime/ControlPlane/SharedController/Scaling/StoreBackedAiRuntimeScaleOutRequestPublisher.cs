@@ -3,11 +3,11 @@ using Multiplexed.Abstractions.AI.ControlPlane.Discovery;
 using Multiplexed.Abstractions.AI.ControlPlane.Observability;
 using Multiplexed.Abstractions.AI.ControlPlane.Observability.Area;
 using Multiplexed.Abstractions.AI.ControlPlane.Observability.Events;
-using Multiplexed.Abstractions.AI.Observability.Context;
-using Multiplexed.AI.Runtime.ControlPlane.Observability;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Scaling;
+using Multiplexed.Abstractions.AI.Observability.Context;
+using Multiplexed.AI.Runtime.ControlPlane.Observability;
 using System.Globalization;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
@@ -151,19 +151,15 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
                     GetRequestedTargetInstanceCount(
                         request);
 
-                Console.WriteLine($"[SCALEOUT PUBLISH INPUT METADATA] SharedRunId='{request.SharedRunId}', RequestId='{scaleOutRequestId}', Metadata='{string.Join(";", request.Metadata.Select(pair => $"{pair.Key}={pair.Value}"))}'");
-
                 var record = new AiRuntimeScaleOutRequestRecord
                 {
                     RequestId = scaleOutRequestId,
                     ControlPlaneId = controlPlaneId,
                     SharedRunId = request.SharedRunId,
                     ExecutionContextSnapshot = request.ExecutionContextSnapshot,
-
                     TenantId = request.TenantId,
                     TenantGroupId = request.TenantGroupId,
                     PipelineKey = request.PipelineKey,
-
                     IsolationMode = request.IsolationMode,
                     PreferDedicatedCapacity = request.PreferDedicatedCapacity,
                     AllowSharedFallback = request.AllowSharedFallback,
@@ -172,29 +168,25 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
                     WorkerCountPerInstance = request.WorkerCountPerInstance,
                     MaxConcurrentRunsPerInstance = request.MaxConcurrentRunsPerInstance,
                     LocalQueueCapacity = request.LocalQueueCapacity,
-
                     Status = AiRuntimeScaleOutRequestStatus.Pending,
                     Reason = GetReason(request),
-
                     VisibleInstanceCount = request.VisibleInstanceCount,
                     AvailableInstanceCount = request.AvailableInstanceCount,
                     CurrentInstanceCount = request.CurrentInstanceCount,
                     MaxInstanceCount = request.MaxInstanceCount,
                     RequestedTargetInstanceCount = targetInstanceCount,
-
                     ProviderHint = providerHint,
                     RequestedBy = request.RequestedBy,
                     Source = request.Source,
                     CorrelationId = request.CorrelationId,
                     CreatedAtUtc = DateTimeOffset.UtcNow,
-
-                    Metadata = CreateMetadata(
-                        request,
-                        controlPlaneId,
-                        providerHint)
+                    Metadata = await this.CreateMetadataAsync(
+                            request,
+                            controlPlaneId,
+                            providerHint,
+                            cancellationToken)
+                        .ConfigureAwait(false)
                 };
-
-                Console.WriteLine($"[SCALEOUT RECORD METADATA] SharedRunId='{record.SharedRunId}', RequestId='{record.RequestId}', Metadata='{string.Join(";", record.Metadata.Select(pair => $"{pair.Key}={pair.Value}"))}'");
 
                 var created =
                     await this.store
@@ -438,31 +430,30 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
         /// <param name="request">The scale-out request.</param>
         /// <param name="cancellationToken">The cancellation token.</param>
         /// <returns>The resolved logical control-plane identifier.</returns>
-        /// <exception cref="InvalidOperationException">
-        /// Thrown when no logical control-plane identifier can be resolved.
-        /// </exception>
         private async Task<string> ResolveControlPlaneIdAsync(
             AiRuntimeScaleOutRequest request,
             CancellationToken cancellationToken)
         {
-            if (!string.IsNullOrWhiteSpace(request.SharedRun.ControlPlaneId))
-            {
-                return request.SharedRun.ControlPlaneId;
-            }
-
-            var resolved =
+            var controlPlaneId =
                 await this.controlPlaneIdResolver
                     .ResolveAsync(
+                        new AiControlPlaneIdResolutionRequest
+                        {
+                            RequestedControlPlaneId = request.SharedRun.ControlPlaneId,
+                            Metadata = request.Metadata,
+                            Source = "store-backed-runtime-scale-out-request-publisher",
+                            AllowGeneratedFallback = false
+                        },
                         cancellationToken)
                     .ConfigureAwait(false);
 
-            if (!string.IsNullOrWhiteSpace(resolved))
+            if (string.IsNullOrWhiteSpace(controlPlaneId))
             {
-                return resolved;
+                throw new InvalidOperationException(
+                    "Scale-out request control-plane id could not be resolved to a logical control-plane id.");
             }
 
-            throw new InvalidOperationException(
-                "Scale-out request control-plane id could not be resolved.");
+            return controlPlaneId;
         }
 
         /// <summary>
@@ -548,11 +539,13 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
         /// <param name="request">The scale-out request.</param>
         /// <param name="controlPlaneId">The resolved logical control-plane identifier.</param>
         /// <param name="providerHint">The resolved provider hint.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
         /// <returns>The metadata dictionary.</returns>
-        private static IDictionary<string, string> CreateMetadata(
+        private async Task<IDictionary<string, string>> CreateMetadataAsync(
             AiRuntimeScaleOutRequest request,
             string controlPlaneId,
-            string providerHint)
+            string providerHint,
+            CancellationToken cancellationToken)
         {
             var metadata =
                 new Dictionary<string, string>(
@@ -566,7 +559,24 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
                 }
             }
 
-            metadata["controlPlaneId"] = controlPlaneId;
+            var controlPlaneMetadata =
+                await this.controlPlaneIdResolver
+                    .ResolveMetadataAsync(
+                        new AiControlPlaneIdResolutionRequest
+                        {
+                            RequestedControlPlaneId = controlPlaneId,
+                            Metadata = metadata,
+                            Source = "store-backed-runtime-scale-out-request-publisher-metadata",
+                            AllowGeneratedFallback = false
+                        },
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+            foreach (var pair in controlPlaneMetadata)
+            {
+                metadata[pair.Key] = pair.Value;
+            }
+
             metadata["sharedRunId"] = request.SharedRunId;
             metadata["providerHint"] = providerHint;
 

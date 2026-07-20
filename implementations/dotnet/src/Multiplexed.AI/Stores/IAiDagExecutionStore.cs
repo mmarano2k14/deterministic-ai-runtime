@@ -115,6 +115,28 @@ namespace Multiplexed.AI.Stores
             CancellationToken cancellationToken = default);
 
         /// <summary>
+        /// Recovers all currently running DAG steps as part of an explicit
+        /// runtime execution recovery transition.
+        /// </summary>
+        /// <remarks>
+        /// This operation must be called only after durable recovery pause
+        /// ownership has been acquired for the execution.
+        ///
+        /// Unlike timed-out recovery, this operation does not wait for claim
+        /// lease expiration. Every running step is returned to the ready state,
+        /// claim ownership is cleared, and infrastructure recovery count is
+        /// incremented.
+        ///
+        /// The operation must be atomic and idempotent.
+        /// </remarks>
+        /// <param name="executionId">The durable execution identifier.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <returns>The number of running steps recovered.</returns>
+        Task<int> RecoverRunningStepsForRecoveryAsync(
+            string executionId,
+            CancellationToken cancellationToken = default);
+
+        /// <summary>
         /// Attempts to atomically finalize the global execution record after convergence evaluation.
         ///
         /// This operation is terminal-only and must never be used to project non-terminal states

@@ -1,4 +1,6 @@
-﻿using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Capacity;
+﻿using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Capacity;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers;
 using Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Providers.Testing;
@@ -104,10 +106,12 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Providers
                     TestRuntimeInstanceProviders.CreateFullLocalProvider()
                 });
 
+            
+
             var resolver =
                 new AiRuntimeInstanceProviderCapabilityResolver(
                     capacityStore,
-                    router);
+                    router, NullLogger<AiRuntimeInstanceProviderCapabilityResolver>.Instance);
 
             var resolution =
                 await resolver.ResolveAsync<IAiRuntimeInstanceDispatchProvider>(
@@ -180,7 +184,8 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Providers
             var resolver =
                 new AiRuntimeInstanceProviderCapabilityResolver(
                     capacityStore,
-                    router);
+                    router,
+                    NullLogger<AiRuntimeInstanceProviderCapabilityResolver>.Instance);
 
             var resolution =
                 await resolver.ResolveAsync<IAiRuntimeInstanceDispatchProvider>(
@@ -228,7 +233,8 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Providers
 
             return new AiRuntimeInstanceProviderCapabilityResolver(
                 capacityStore,
-                router);
+                router,
+                NullLogger<AiRuntimeInstanceProviderCapabilityResolver>.Instance);
         }
     }
 }

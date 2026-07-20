@@ -48,6 +48,28 @@ namespace Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Queue
             CancellationToken cancellationToken = default);
 
         /// <summary>
+        /// Atomically claims one specific pending shared queue item.
+        /// </summary>
+        /// <param name="sharedRunId">
+        /// The exact shared run identifier of the queue item to claim.
+        /// </param>
+        /// <param name="request">The claim request.</param>
+        /// <param name="cancellationToken">A token used to cancel the operation.</param>
+        /// <returns>
+        /// The claimed queue item, or <c>null</c> when the item does not exist,
+        /// is no longer pending, or does not match the requested tenant or pipeline.
+        /// </returns>
+        /// <remarks>
+        /// Unlike <see cref="ClaimNextAsync"/>, this operation never claims another
+        /// compatible queue item. It is intended for direct dispatch paths that already
+        /// know the exact shared run identifier.
+        /// </remarks>
+        Task<AiSharedQueueItem?> ClaimAsync(
+            string sharedRunId,
+            AiSharedQueueClaimRequest request,
+            CancellationToken cancellationToken = default);
+
+        /// <summary>
         /// Atomically claims one pending shared queue item.
         /// </summary>
         /// <param name="request">The claim request.</param>

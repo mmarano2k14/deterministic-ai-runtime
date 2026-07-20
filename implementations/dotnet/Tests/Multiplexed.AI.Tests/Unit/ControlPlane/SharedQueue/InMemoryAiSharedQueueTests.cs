@@ -271,6 +271,128 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
             Assert.Null(requeued);
         }
 
+
+        /// <summary>
+        /// Verifies that durable recovery priority makes an in-flight resume claimable
+        /// before local queued recovery work, regardless of requeue order.
+        /// </summary>
+        [Fact]
+        public async Task RequeueDispatchedAsync_Should_Claim_InFlight_Recovery_Before_Local_Queued_Work()
+        {
+            var queue = new InMemoryAiSharedQueue();
+            var now = DateTimeOffset.UtcNow;
+
+            await queue.EnqueueAsync(
+                CreateItem(
+                    "local-queued-recovery",
+                    enqueuedAtUtc: now));
+            await queue.EnqueueAsync(
+                CreateItem(
+                    "in-flight-recovery",
+                    enqueuedAtUtc: now.AddSeconds(1)));
+
+            var localQueuedClaim = await queue.ClaimNextAsync(
+                new AiSharedQueueClaimRequest
+                {
+                    RuntimeInstanceId = "runtime-1",
+                    WorkerId = "worker-1"
+                });
+            Assert.NotNull(localQueuedClaim);
+            Assert.Equal("local-queued-recovery", localQueuedClaim!.SharedRunId);
+            await queue.MarkDispatchedAsync(
+                localQueuedClaim.SharedRunId,
+                localQueuedClaim.ClaimToken!);
+
+            var inFlightClaim = await queue.ClaimNextAsync(
+                new AiSharedQueueClaimRequest
+                {
+                    RuntimeInstanceId = "runtime-1",
+                    WorkerId = "worker-1"
+                });
+            Assert.NotNull(inFlightClaim);
+            Assert.Equal("in-flight-recovery", inFlightClaim!.SharedRunId);
+            await queue.MarkDispatchedAsync(
+                inFlightClaim.SharedRunId,
+                inFlightClaim.ClaimToken!);
+
+            await queue.RequeueDispatchedAsync(
+                localQueuedClaim.SharedRunId,
+                localQueuedClaim.ClaimToken!,
+                reason: "local-queued-recovery");
+            var prioritizedResume = await queue.RequeueDispatchedAsync(
+                inFlightClaim.SharedRunId,
+                inFlightClaim.ClaimToken!,
+                reason: "in-flight-recovery",
+                metadata: new Dictionary<string, string>
+                {
+                    ["queue.priority"] = "-100"
+                });
+
+            Assert.NotNull(prioritizedResume);
+            Assert.Equal(-100, prioritizedResume!.Priority);
+
+            var next = await queue.ClaimNextAsync(
+                new AiSharedQueueClaimRequest
+                {
+                    RuntimeInstanceId = "runtime-2",
+                    WorkerId = "worker-2"
+                });
+
+            Assert.NotNull(next);
+            Assert.Equal("in-flight-recovery", next!.SharedRunId);
+            Assert.Equal(-100, next.Priority);
+        }
+
+        /// <summary>
+        /// Verifies that a dispatch retry preserves the original priority ordering.
+        /// </summary>
+        [Fact]
+        public async Task RequeueAsync_Should_Preserve_Priority_Across_Dispatch_Retry()
+        {
+            var queue = new InMemoryAiSharedQueue();
+            var now = DateTimeOffset.UtcNow;
+
+            await queue.EnqueueAsync(
+                CreateItem(
+                    "normal-run",
+                    priority: 0,
+                    enqueuedAtUtc: now));
+            await queue.EnqueueAsync(
+                CreateItem(
+                    "priority-run",
+                    priority: -100,
+                    enqueuedAtUtc: now.AddSeconds(1)));
+
+            var claimed = await queue.ClaimNextAsync(
+                new AiSharedQueueClaimRequest
+                {
+                    RuntimeInstanceId = "runtime-1",
+                    WorkerId = "worker-1"
+                });
+
+            Assert.NotNull(claimed);
+            Assert.Equal("priority-run", claimed!.SharedRunId);
+
+            var requeued = await queue.RequeueAsync(
+                claimed.SharedRunId,
+                claimed.ClaimToken!,
+                reason: "dispatch-retry");
+
+            Assert.NotNull(requeued);
+            Assert.Equal(-100, requeued!.Priority);
+
+            var claimedAgain = await queue.ClaimNextAsync(
+                new AiSharedQueueClaimRequest
+                {
+                    RuntimeInstanceId = "runtime-2",
+                    WorkerId = "worker-2"
+                });
+
+            Assert.NotNull(claimedAgain);
+            Assert.Equal("priority-run", claimedAgain!.SharedRunId);
+            Assert.Equal(-100, claimedAgain.Priority);
+        }
+
         [Fact]
         public async Task CancelAsync_Should_Cancel_NonTerminal_Item()
         {

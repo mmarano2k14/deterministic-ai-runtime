@@ -1,6 +1,6 @@
 # Testing Strategy
 
-Status: Actively validated by a large unit and integration test suite, including MCP, Redis, local runtime pools, Redis-backed scale-out request lifecycle, local runtime scale-out, fulfilled-run requeue, HTTP pooled runtime provider scenarios, HTTP runtime provider hardening, HTTP scale-out provider/provisioner behavior, gRPC runtime provider and gRPC scale-out provider behavior, Runtime Host Manager process-host provisioning, MCP production runtime scenario framework, durable replay / ledger / trace validation across process boundaries, and tenant-aware HTTP/gRPC Shared/Dedicated/Hybrid runtime scenarios, real HTTP and gRPC process-host runtime crash recovery, multi-tenant crash isolation, safe-tenant non-impact validation, runtime recovery forensics, and recovery replay / ledger / trace proof.
+Status: Actively validated by a large unit and integration test suite, including MCP, Redis, local runtime pools, provider-based scale-out, HTTP/gRPC process-host provisioning, Kubernetes Runtime Host Manager Fake and SDK scenarios, real Pod/Service readiness, gRPC Kubernetes transport preservation, process and Pod crash recovery, multi-tenant crash isolation, safe-tenant non-impact validation, runtime recovery forensics, and replay / ledger / trace proof across host boundaries.
 
 This document describes the testing strategy used to validate the Deterministic AI Runtime.
 
@@ -42,6 +42,7 @@ The runtime must prove that it behaves correctly under:
 - gRPC runtime scale-out provider/provisioner behavior
 - gRPC process-host `RuntimeInstanceOnly` scale-out behavior
 - Runtime Host Manager host creation behavior
+- Kubernetes Pod/Service lifecycle, layered readiness, endpoint exposure, and termination behavior
 - process-host `RuntimeInstanceOnly` scale-out behavior
 - real HTTP and gRPC process-host runtime crash recovery behavior
 - in-flight DAG resume with preserved `ExecutionId`
@@ -400,7 +401,7 @@ They should check:
 - one `ExecutionId` can be advanced safely by distributed workers when configured for distributed execution
 - isolated executions remain isolated when each run has a unique `ExecutionId`
 
-This area is important for future Kubernetes and enterprise demo scenarios.
+This area is used directly by Kubernetes multi-Pod and enterprise demo scenarios.
 
 ---
 
@@ -590,7 +591,7 @@ Primary MCP integration scenario:
 ControlPlaneWithLocalRuntimeInstances_With_No_Runtime_Capacity_Should_ScaleOut_Requeue_Dispatch_And_Execute_Run
 ```
 
-This scenario proves that the local scale-out control loop works before replacing the local scaler with a Kubernetes scaler.
+This scenario proved the reusable scale-out control loop that is now also consumed by the Kubernetes Host Manager path.
 
 Validated HTTP scale-out evidence:
 
@@ -792,7 +793,7 @@ These tests prove that HTTP provider dispatch failure is a controlled runtime ou
 
 ## HTTP Runtime Scale-Out Provider Tests
 
-HTTP runtime scale-out provider tests validate that the HTTP provider participates in the same scale-out capability model as local and future Kubernetes providers.
+HTTP runtime scale-out provider tests validate that the HTTP provider participates in the same scale-out capability model used when the Host Manager selects Process or Kubernetes lifecycle.
 
 They should cover:
 
@@ -911,7 +912,7 @@ They should cover:
 - Fixture host creation mode;
 - Process host creation mode;
 - Attach host creation mode preparation;
-- Kubernetes host creation mode preparation;
+- Kubernetes host creation mode with Fake and Kubernetes SDK clients;
 - HTTP provider delegating scale-out to `IAiRuntimeHostManager`;
 - `ProcessAiRuntimeHostCreationStrategy` launching a real host process;
 - `RuntimeInstanceOnly` host startup;
@@ -943,6 +944,35 @@ The runtime process should self-register instead of being treated as fake capaci
 Tenant runtime settings should be preserved from scale-out request to host start request.
 ```
 
+
+## Kubernetes Runtime Host Provider Tests
+
+Kubernetes tests are separated by the boundary they prove.
+
+### Builder and metadata tests
+
+Validate deterministic Pod names, Kubernetes-safe labels, tenant/isolation propagation, RuntimeInstanceOnly environment, gRPC HTTP/2 Kestrel settings, and protection against configured environment variables overriding request identity.
+
+### Fake client lifecycle tests
+
+Validate dependency injection selection, Host Manager mode routing, convergence, structured failure behavior, ownership-aware cleanup, and publication composition without requiring a cluster.
+
+A Fake-client scenario must not be treated as live HTTP/gRPC endpoint evidence.
+
+### Kubernetes SDK lifecycle tests
+
+Validate real Pod and Service creation, Pod readiness, AlreadyExists identity convergence, exact Pod UID deletion, and registry/capacity publication/removal.
+
+### Transport and Gateway tests
+
+Validate direct/per-runtime endpoint resolution, kubectl port-forward reachability, gRPC HTTP/2 command readiness, GatewayClass/Gateway/route readiness, runtime-header routing, and exact runtime selection through HTTPRoute or GRPCRoute.
+
+### Kubernetes crash recovery tests
+
+Validate that a real Pod executes work, reaches the intended pre-crash boundary, disappears by exact UID after kill, loses executable capacity, is replaced, and recovers assigned work through the same health/recovery split used by process hosts. In-flight recovery must preserve `ExecutionId`; local-queued recovery must preserve `SharedRunId`; safe tenants must remain unaffected.
+
+See [Kubernetes Runtime Host Provider](kubernetes-runtime-host-provider.md).
+
 ## MCP Production Runtime Scenario Framework Tests
 
 MCP production runtime scenario framework tests validate the full production-like path.
@@ -956,8 +986,8 @@ They should cover:
 - Redis-backed scale-out request store;
 - HTTP provider scale-out;
 - gRPC provider scale-out;
-- Runtime Host Manager process launch;
-- real `RuntimeInstanceOnly` child process;
+- Runtime Host Manager process or Kubernetes lifecycle selection;
+- real `RuntimeInstanceOnly` child process or Pod;
 - runtime registration / heartbeat / capacity;
 - HTTP or gRPC dispatch to the created runtime;
 - DAG execution;
@@ -1678,7 +1708,7 @@ mcp-runtime-3
     MaxRunSlots = 5
 ```
 
-These tests prepare the runtime for future Kubernetes deployments where the MCP server can act as a control-plane pod and runtime instances can run as separate pods.
+These tests also support the implemented Kubernetes topology where the MCP server acts as control plane and runtime instances run as separate `RuntimeInstanceOnly` Pods.
 
 ---
 
@@ -1967,7 +1997,7 @@ This is especially important for:
 - official replay API
 - durable decision ledger
 - observability dashboard
-- Kubernetes deployment
+- cluster autoscaling/HPA and production deployment packaging
 - public SDK polish
 - cost governance
 
@@ -2072,6 +2102,14 @@ Hybrid HTTP tenants can fall back to shared HTTP capacity when fallback is enabl
 
 Runtime Host Manager process mode launches a real RuntimeInstanceOnly process.
 
+Kubernetes SDK mode creates a real RuntimeInstanceOnly Pod and per-runtime Service.
+
+Pod Running does not publish capacity before required command readiness succeeds.
+
+A Kubernetes kill waits for exact old Pod UID disappearance before recovery continues.
+
+Kubernetes hosting preserves provider.name and transport.name as HTTP or gRPC.
+
 The mixed-tenant full production scenario validates Dedicated, Shared, and Hybrid tenants with retention, ledger, trace, and replay enabled.
 
 A killed real RuntimeInstanceOnly process should cause unsafe capacity suppression and assigned-work recovery.
@@ -2139,7 +2177,10 @@ Recovery validation should include replay report, replay ledger, replay trace, e
 | gRPC runtime provider tests | Implemented / validated |
 | gRPC runtime scale-out provider tests | Implemented / validated |
 | gRPC process-host crash recovery scenario tests | Implemented / validated |
-| Kubernetes scenario tests | Planned |
+| Kubernetes builder/Fake lifecycle tests | Implemented / validated |
+| Kubernetes SDK Pod/Service/readiness tests | Implemented / validated |
+| gRPC Kubernetes Host Manager and Pod crash-recovery scenarios | Implemented / validated |
+| Kubernetes Gateway/controller production interoperability matrix | Ongoing |
 | Full enterprise demo scenario | Planned |
 | Durable decision ledger tests | Implemented / validated through replay and recovery ledger scenarios |
 | Production runtime crash recovery scenario tests | Implemented / validated |
@@ -2224,6 +2265,7 @@ The goal is to prove runtime guarantees.
 - [Runtime Instance Provider Model](runtime-instance-provider-model.md)
 - [HTTP Runtime Provider](http-runtime-provider.md)
 - [gRPC Runtime Provider](grpc-runtime-provider.md)
+- [Kubernetes Runtime Host Provider](kubernetes-runtime-host-provider.md)
 - [MCP Production Runtime Scenario Framework](mcp-production-runtime-scenario-framework.md)
 - [Runtime Process Crash Recovery](runtime-process-crash-recovery.md)
 - [Runtime Recovery Forensics](runtime-recovery-forensics.md)

@@ -148,5 +148,10 @@ namespace Multiplexed.AI.Tests.Fakes
                     .ToArray()
             });
         }
+
+        public Task<int> RecoverRunningStepsForRecoveryAsync(string executionId, CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult<int>(1);
+        }
     }
 }

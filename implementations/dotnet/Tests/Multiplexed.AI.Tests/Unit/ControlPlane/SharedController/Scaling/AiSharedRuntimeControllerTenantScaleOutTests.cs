@@ -322,6 +322,73 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController
             }
 
             /// <inheritdoc />
+            public Task<AiSharedRunRecord?> MarkRequeuedAfterScaleOutAsync(
+                string sharedRunId,
+                string? reason = null,
+                IReadOnlyDictionary<string, string>? metadata = null,
+                CancellationToken cancellationToken = default)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                if (!this.Records.TryGetValue(
+                        sharedRunId,
+                        out var existing))
+                {
+                    return Task.FromResult<AiSharedRunRecord?>(null);
+                }
+
+                var mergedMetadata =
+                    new Dictionary<string, string>(
+                        existing.Metadata,
+                        StringComparer.OrdinalIgnoreCase);
+
+                if (metadata is not null)
+                {
+                    foreach (var item in metadata)
+                    {
+                        mergedMetadata[item.Key] =
+                            item.Value;
+                    }
+                }
+
+                mergedMetadata["scaleOutRequeued"] =
+                    "true";
+
+                mergedMetadata["scaleOutRequeuedAtUtc"] =
+                    DateTimeOffset.UtcNow.ToString("O");
+
+                var updated =
+                    new AiSharedRunRecord
+                    {
+                        SharedRunId = existing.SharedRunId,
+                        ControlPlaneId = existing.ControlPlaneId,
+                        Status = AiSharedRunStatus.QueuedGlobally,
+                        RunRequest = existing.RunRequest,
+                        LocalRunId = existing.LocalRunId,
+                        ExecutionId = existing.ExecutionId,
+                        AssignedRuntimeInstanceId = existing.AssignedRuntimeInstanceId,
+                        AdmissionDecision = existing.AdmissionDecision,
+                        ExecutionContextSnapshot = existing.ExecutionContextSnapshot,
+                        PipelineKey = existing.PipelineKey,
+                        CorrelationId = existing.CorrelationId,
+                        RequestedBy = existing.RequestedBy,
+                        Source = existing.Source,
+                        Reason = string.IsNullOrWhiteSpace(reason)
+                            ? "Scale-out fulfilled; shared run requeued for dispatch."
+                            : reason,
+                        FailureReason = string.Empty,
+                        SubmittedAtUtc = existing.SubmittedAtUtc,
+                        UpdatedAtUtc = DateTimeOffset.UtcNow,
+                        Metadata = mergedMetadata
+                    };
+
+                this.Records[sharedRunId] =
+                    updated;
+
+                return Task.FromResult<AiSharedRunRecord?>(updated);
+            }
+
+            /// <inheritdoc />
             public Task<AiSharedRunRecord?> CancelAsync(
                 string sharedRunId,
                 string? reason,
@@ -336,6 +403,25 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController
                     out var record);
 
                 return Task.FromResult(record);
+            }
+
+            /// <inheritdoc />
+            public Task<AiSharedRunRecord?> MarkRequeuedAfterScaleOutIfCurrentAsync(
+                string sharedRunId,
+                string? expectedAssignedRuntimeInstanceId,
+                string? expectedLocalRunId,
+                string? reason = null,
+                IReadOnlyDictionary<string, string>? metadata = null,
+                CancellationToken cancellationToken = default)
+            {
+                return this
+                    .MarkRequeuedAfterScaleOutIfCurrentAsync(
+                        sharedRunId,
+                        expectedAssignedRuntimeInstanceId,
+                        expectedLocalRunId,
+                        reason,
+                        metadata,
+                        cancellationToken);
             }
         }
 
@@ -393,34 +479,6 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController
                         Message = "captured",
                         PublishedAtUtc = DateTimeOffset.UtcNow
                     });
-            }
-        }
-
-        /// <summary>
-        /// Static control-plane id resolver used by the controller test.
-        /// </summary>
-        private sealed class StaticControlPlaneIdResolver : IAiControlPlaneIdResolver
-        {
-            private readonly string controlPlaneId;
-
-            /// <summary>
-            /// Initializes a new instance of the <see cref="StaticControlPlaneIdResolver" /> class.
-            /// </summary>
-            /// <param name="controlPlaneId">The control-plane id to return.</param>
-            public StaticControlPlaneIdResolver(
-                string controlPlaneId)
-            {
-                this.controlPlaneId =
-                    controlPlaneId;
-            }
-
-            /// <inheritdoc />
-            public Task<string> ResolveAsync(
-                CancellationToken cancellationToken = default)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-
-                return Task.FromResult(this.controlPlaneId);
             }
         }
 

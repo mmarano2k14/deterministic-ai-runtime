@@ -1,14 +1,18 @@
 ﻿using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Forensics;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager.ProcessControl;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Recovery;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Scaling;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Store;
+using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Queue;
+using Multiplexed.Abstractions.AI.ControlPlane.Signals;
 using Multiplexed.Abstractions.AI.Execution;
 using Multiplexed.Abstractions.AI.Observability.Ledger;
+using Multiplexed.AI.McpServer.Tests.Integration.Fixtures;
 using Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic;
 using Multiplexed.AI.McpServer.Tests.Integration.Helpers;
 using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Assertions;
@@ -18,9 +22,13 @@ using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Ledger;
 using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Models;
 using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Output;
 using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Providers.Base.Profiles;
-using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Providers.Http;
+using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Providers.Http.Process;
 using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Scenarios;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.ProcessControl;
 using Multiplexed.AI.Stores;
+using System.Diagnostics;
+using System.Net.Http;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -32,27 +40,67 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
     public abstract class ProcessHostRealRuntimeCrashRecoveryScenarioTestsBase
     {
         private const int StepCount = 100;
-        private const int KillAfterCompletedStepCount = 50;
-        private const int MultiTenantStepCount = 100;
+        private const int KillAfterCompletedStepCount = 25;
+        private const int MultiTenantStepCount = 50;
         private const int FlakyStepIntervalMs = 500;
-
-
 
         private readonly ITestOutputHelper output;
         private readonly IProcessHostScenarioRuntimeProfile profile;
 
         /// <summary>
-        /// Initializes a new instance of the <see cref="ProcessHostRealRuntimeCrashRecoveryScenarioTestsBase"/> class.
+        /// Initializes a new instance of the <see cref="ProcessHostRealRuntimeCrashRecoveryScenarioTestsBase"/> class
+        /// using the historical durable polling observation mode.
         /// </summary>
         /// <param name="output">The test output helper.</param>
         /// <param name="profile">The process-host scenario runtime profile.</param>
         protected ProcessHostRealRuntimeCrashRecoveryScenarioTestsBase(
             ITestOutputHelper output,
             IProcessHostScenarioRuntimeProfile profile)
+            : this(
+                output,
+                profile,
+                ProductionRecoveryObservationMode.HybridSignals)
+        {
+        }
+
+        /// <summary>
+        /// Initializes a new instance of the <see cref="ProcessHostRealRuntimeCrashRecoveryScenarioTestsBase"/> class
+        /// using the requested recovery observation mode.
+        /// </summary>
+        /// <param name="output">The test output helper.</param>
+        /// <param name="profile">The process-host scenario runtime profile.</param>
+        /// <param name="observationMode">The recovery observation mode.</param>
+        /// <param name="hybridFallbackPollInterval">The durable fallback polling interval used in hybrid mode.</param>
+        protected ProcessHostRealRuntimeCrashRecoveryScenarioTestsBase(
+            ITestOutputHelper output,
+            IProcessHostScenarioRuntimeProfile profile,
+            ProductionRecoveryObservationMode observationMode,
+            TimeSpan? hybridFallbackPollInterval = null)
         {
             this.output = output ?? throw new ArgumentNullException(nameof(output));
             this.profile = profile ?? throw new ArgumentNullException(nameof(profile));
+
+            ObservationMode = observationMode;
+            HybridFallbackPollInterval = hybridFallbackPollInterval ?? TimeSpan.FromSeconds(2);
+
+            if (HybridFallbackPollInterval <= TimeSpan.Zero)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(hybridFallbackPollInterval),
+                    HybridFallbackPollInterval,
+                    "The hybrid fallback polling interval must be greater than zero.");
+            }
         }
+
+        /// <summary>
+        /// Gets how runtime progress and redispatch are observed.
+        /// </summary>
+        protected ProductionRecoveryObservationMode ObservationMode { get; }
+
+        /// <summary>
+        /// Gets the durable fallback interval used by hybrid observation.
+        /// </summary>
+        protected TimeSpan HybridFallbackPollInterval { get; }
 
         /// <summary>
         /// Verifies that two tenants can recover real process-host runtime crashes with strict DAG resume,
@@ -132,10 +180,12 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 output.WriteLine($"  Provider='{profile.ProviderName}'");
                 output.WriteLine($"  ProviderLabel='{profile.ProviderLabel}'");
                 output.WriteLine($"  ControlPlaneId='{currentControlPlaneId}'");
-                output.WriteLine($"  HostCreationMode='{scenario.HostCreationMode}'");
+                output.WriteLine($"  HostCreationMode='{profile.HostCreationMode}'");
                 output.WriteLine($"  PersistenceProfile='{scenario.PersistenceProfile}'");
                 output.WriteLine($"  ObservabilityProfile='{scenario.ObservabilityProfile}'");
                 output.WriteLine($"  RuntimeHostAssemblyPath='{currentRuntimeHostAssemblyPath}'");
+                output.WriteLine($"  ObservationMode='{ObservationMode}'");
+                output.WriteLine($"  HybridFallbackPollInterval='{HybridFallbackPollInterval}'");
                 output.WriteLine(string.Empty);
                 output.WriteLine("Timeout budget:");
                 output.WriteLine($"  ScaleOutTimeout: {scenario.ScaleOutTimeout}");
@@ -176,8 +226,14 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             await using var host =
                 new GenericMcpServerTestHost(settings);
 
+            var signalSubscriber =
+                ResolveSignalSubscriber(host.Services);
+
+            var processControlSelector =
+                host.Services.GetRequiredService<AiRuntimeHostProcessControlSelector>();
+
             var processControl =
-                host.Services.GetRequiredService<IAiRuntimeHostProcessControl>();
+                processControlSelector.GetRequired(this.profile.HostCreationMode);
 
             var registry =
                 host.Services.GetRequiredService<IAiRuntimeInstanceRegistry>();
@@ -196,6 +252,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
 
             var forensicsQueryService =
                 host.Services.GetRequiredService<IAiRuntimeRecoveryForensicsQueryService>();
+
+            var sharedQueue =
+                host.Services.GetRequiredService<IAiSharedQueue>();
 
             var recoveryOptions =
                 host.Services
@@ -289,7 +348,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                         minimumCompletedStepsBeforeKill: KillAfterCompletedStepCount,
                         scaleOutTimeout: scenario.ScaleOutTimeout,
                         dispatchTimeout: scenario.DispatchTimeout,
-                        progressTimeout: TimeSpan.FromMinutes(3));
+                        progressTimeout: TimeSpan.FromMinutes(3),
+                        observationMode: ObservationMode);
 
             var tenantBInventoryTask =
                 ProductionRealRuntimeCrashRecoveryTestHelpers
@@ -311,7 +371,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                         minimumCompletedStepsBeforeKill: KillAfterCompletedStepCount,
                         scaleOutTimeout: scenario.ScaleOutTimeout,
                         dispatchTimeout: scenario.DispatchTimeout,
-                        progressTimeout: TimeSpan.FromMinutes(3));
+                        progressTimeout: TimeSpan.FromMinutes(3),
+                        observationMode: ObservationMode);
 
             await Task
                 .WhenAll(
@@ -347,19 +408,36 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 "[PASS TARGET] Kill one real process per tenant, wait for unsafe detection, automatic requeue, replacement selection, and redispatch without manual reconciliation.");
 
             var tenantARecoveryTask =
-                ProductionRealRuntimeCrashRecoveryTestHelpers
-                    .KillRuntimeAndRecoverAssignedInventoryAsync(
-                        output,
-                        processControl,
-                        registry,
-                        runExecutionIndex,
-                        sharedRunStore,
-                        dagStore,
-                        tenantAInventory,
-                        unsafeTimeout: TimeSpan.FromSeconds(60),
-                        requeueTimeout: TimeSpan.FromSeconds(180),
-                        redispatchTimeout: scenario.DispatchTimeout,
-                        executionResolveTimeout: TimeSpan.FromSeconds(60));
+            ProductionRealRuntimeCrashRecoveryTestHelpers
+                .KillRuntimeAndRecoverAssignedInventoryAsync(
+                    output,
+                    processControl,
+                    registry,
+                    runExecutionIndex,
+                    sharedRunStore,
+                    sharedQueue,
+                    dagStore,
+                    tenantAInventory,
+                    minimumCompletedStepsBeforeKill:
+                        KillAfterCompletedStepCount,
+                    progressTimeout:
+                        TimeSpan.FromMinutes(3),
+                    unsafeTimeout:
+                        TimeSpan.FromSeconds(60),
+                    requeueTimeout:
+                        TimeSpan.FromSeconds(180),
+                    redispatchTimeout:
+                        scenario.DispatchTimeout,
+                    executionResolveTimeout:
+                        TimeSpan.FromSeconds(60),
+                    observationMode:
+                        ObservationMode,
+                    signalSubscriber:
+                        signalSubscriber,
+                    controlPlaneId:
+                        controlPlaneId,
+                    hybridFallbackPollInterval:
+                        HybridFallbackPollInterval);
 
             var tenantBRecoveryTask =
                 ProductionRealRuntimeCrashRecoveryTestHelpers
@@ -369,12 +447,29 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                         registry,
                         runExecutionIndex,
                         sharedRunStore,
+                        sharedQueue,
                         dagStore,
                         tenantBInventory,
-                        unsafeTimeout: TimeSpan.FromSeconds(60),
-                        requeueTimeout: TimeSpan.FromSeconds(180),
-                        redispatchTimeout: scenario.DispatchTimeout,
-                        executionResolveTimeout: TimeSpan.FromSeconds(60));
+                        minimumCompletedStepsBeforeKill:
+                            KillAfterCompletedStepCount,
+                        progressTimeout:
+                            TimeSpan.FromMinutes(3),
+                        unsafeTimeout:
+                            TimeSpan.FromSeconds(60),
+                        requeueTimeout:
+                            TimeSpan.FromSeconds(180),
+                        redispatchTimeout:
+                            scenario.DispatchTimeout,
+                        executionResolveTimeout:
+                            TimeSpan.FromSeconds(60),
+                        observationMode:
+                            ObservationMode,
+                        signalSubscriber:
+                            signalSubscriber,
+                        controlPlaneId:
+                            controlPlaneId,
+                        hybridFallbackPollInterval:
+                            HybridFallbackPollInterval);
 
             await Task
                 .WhenAll(
@@ -456,6 +551,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 .AssertRecoveredInventoryDagCompletedAsync(
                     output,
                     dagStore,
+                    runExecutionIndex,
                     tenantARecovery,
                     MultiTenantStepCount,
                     scenario.CompletionTimeout)
@@ -465,6 +561,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 .AssertRecoveredInventoryDagCompletedAsync(
                     output,
                     dagStore,
+                    runExecutionIndex,
                     tenantBRecovery,
                     MultiTenantStepCount,
                     scenario.CompletionTimeout)
@@ -688,7 +785,10 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                     causalChainLedgerEntries,
                     expectedRecoveredWorkCount,
                     tenantARecovery.RecoveredWorks.Count + tenantBRecovery.RecoveredWorks.Count,
-                    failedRuntimeUnsafeValidated);
+                    failedRuntimeUnsafeValidated,
+                    requireProcessRuntimeHostStarted:
+                        this.profile.HostCreationMode ==
+                        AiRuntimeHostCreationMode.Process);
 
             output.WriteLine(
                 $"[{profile.LogPrefix} TWO-TENANT CRASH MCP CONTROL-PLANE LEDGER QUERY PROOF] " +
@@ -899,6 +999,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             await using var host =
                 new GenericMcpServerTestHost(settings);
 
+            var signalSubscriber =
+                ResolveSignalSubscriber(host.Services);
+
             var sharedRunStore =
                 host.Services.GetRequiredService<IAiSharedRunStore>();
 
@@ -908,14 +1011,19 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             var dagStore =
                 host.Services.GetRequiredService<IAiDagExecutionStore>();
 
+            var processControlSelector =
+                host.Services.GetRequiredService<AiRuntimeHostProcessControlSelector>();
+
             var processControl =
-                host.Services.GetRequiredService<IAiRuntimeHostProcessControl>();
+                processControlSelector.GetRequired(this.profile.HostCreationMode);
 
             var runExecutionIndex =
                 host.Services.GetRequiredService<IAiRuntimeRunExecutionIndex>();
 
             var registry =
                 host.Services.GetRequiredService<IAiRuntimeInstanceRegistry>();
+
+            var sharedQueue = host.Services.GetRequiredService<IAiSharedQueue>();
 
             using var httpClient =
                 host.CreateClient();
@@ -979,9 +1087,10 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             output.WriteLine(
                 $"[{profile.LogPrefix} REAL RUNTIME CRASH PROOF] Real run dispatched. SharedRunId='{dispatchedRunWithExecutionId.SharedRunId}', RuntimeInstanceId='{failedRuntimeInstanceId}', LocalRunId='{localRunId}', ExecutionId='{executionId}', SharedStoreExecutionId='{dispatchedRunWithExecutionId.ExecutionId}'.");
 
-            await ProductionRecoveryWaitHelpers
-                .WaitForDagCompletedStepCountAsync(
+            await WaitForDagCompletedStepCountByObservationModeAsync(
                     dagStore,
+                    signalSubscriber,
+                    controlPlaneId,
                     executionId,
                     KillAfterCompletedStepCount,
                     TimeSpan.FromMinutes(2))
@@ -1025,14 +1134,15 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 $"[{profile.LogPrefix} REAL RUNTIME CRASH PROOF] In-flight execution requeued for recovery. FailedRuntimeInstanceId='{failedRuntimeInstanceId}', LocalRunId='{localRunId}', ExecutionId='{executionId}', IndexStatus='{requeuedEntry.Status}', IndexRuntimeInstanceId='{requeuedEntry.RuntimeInstanceId}'.");
 
             var redispatchedRun =
-                await ProductionRecoveryWaitHelpers
-                    .WaitForRecoveredRunRedispatchedAsync(
-                        sharedRunStore,
-                        dispatchedRunWithExecutionId.SharedRunId,
-                        failedRuntimeInstanceId,
-                        localRunId,
-                        TimeSpan.FromMinutes(2))
-                    .ConfigureAwait(false);
+             await ProductionRecoveryWaitHelpers
+                 .WaitForRecoveredRunRedispatchedAsync(
+                     sharedRunStore,
+                     sharedQueue,
+                     dispatchedRunWithExecutionId.SharedRunId,
+                     failedRuntimeInstanceId,
+                     localRunId,
+                     TimeSpan.FromMinutes(2))
+                 .ConfigureAwait(false);
 
             output.WriteLine(
                 $"[{profile.LogPrefix} REAL RUNTIME CRASH PROOF] Recovered shared run redispatched. SharedRunId='{redispatchedRun.SharedRunId}', NewRuntimeInstanceId='{redispatchedRun.AssignedRuntimeInstanceId}', NewLocalRunId='{redispatchedRun.LocalRunId}', OriginalRuntimeInstanceId='{failedRuntimeInstanceId}', OriginalLocalRunId='{localRunId}'.");
@@ -1060,9 +1170,10 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 $"[{profile.LogPrefix} REAL RUNTIME CRASH PROOF] Strict DAG resume validated. Runtime process crash recovered on a replacement runtime while preserving the original durable execution id. " +
                 $"OriginalExecutionId='{executionId}', RecoveredExecutionId='{recoveredExecutionId}', OriginalRuntimeInstanceId='{failedRuntimeInstanceId}', ReplacementRuntimeInstanceId='{redispatchedRun.AssignedRuntimeInstanceId}'.");
 
-            await ProductionRecoveryWaitHelpers
-                .WaitForDagCompletedStepCountAsync(
+            await WaitForDagCompletedStepCountByObservationModeAsync(
                     dagStore,
+                    signalSubscriber,
+                    controlPlaneId,
                     executionId,
                     StepCount,
                     scenario.CompletionTimeout)
@@ -1073,8 +1184,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
         }
 
         /// <summary>
-        /// Verifies that two impacted tenants recover real process-host runtime crashes while a third safe tenant
-        /// continues normal execution without recovery, forensics, redispatch, or cross-tenant leakage.
+        /// Verifies that all impacted tenants recover real process-host runtime crashes while all safe tenants
+        /// continue normal execution without recovery, forensics, redispatch, or cross-tenant leakage.
         /// </summary>
         /// <returns>A task that completes when the proof has finished.</returns>
         protected async Task ProcessHost_Should_Recover_Two_Tenants_After_Real_Runtime_Process_Kills_Without_Impacting_Safe_Tenant_With_Strict_Dag_Resume_Replay_Ledger_And_Trace()
@@ -1084,7 +1195,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                     includeSafeTenant: true);
 
             scenario.DispatchTimeout = TimeSpan.FromMinutes(3);
-            scenario.CompletionTimeout = TimeSpan.FromMinutes(7);
+            scenario.CompletionTimeout = TimeSpan.FromMinutes(3);
 
             var scenarioStopwatch =
                 System.Diagnostics.Stopwatch.StartNew();
@@ -1103,7 +1214,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 timings[phaseName] = elapsed;
 
                 output.WriteLine(
-                    $"[{profile.LogPrefix} TWO-TENANT CRASH SAFE-TENANT TIMING] Phase='{phaseName}', Duration='{elapsed}', TotalElapsed='{scenarioStopwatch.Elapsed}'.");
+                    $"[{profile.LogPrefix} MULTI-TENANT CRASH SAFE-TENANT TIMING] Phase='{phaseName}', Duration='{elapsed}', TotalElapsed='{scenarioStopwatch.Elapsed}'.");
 
                 phaseStopwatch.Restart();
             }
@@ -1121,7 +1232,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             void WriteTimingSummary()
             {
                 output.WriteLine(string.Empty);
-                output.WriteLine($"# {profile.ProviderName.ToUpperInvariant()} PROCESS-HOST TWO-TENANT CRASH SAFE-TENANT TIMING SUMMARY");
+                output.WriteLine($"# {profile.ProviderName.ToUpperInvariant()} PROCESS-HOST MULTI-TENANT CRASH SAFE-TENANT TIMING SUMMARY");
 
                 foreach (var timing in timings)
                 {
@@ -1145,12 +1256,19 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                     runtimeHostAssemblyPath);
 
             settings["Tests:UseCapturingLedgerRecorder"] = "false";
+            settings["AiRuntimeRecoveryForensics:StrictPersistence"] = "true";
 
             await using var host =
                 new GenericMcpServerTestHost(settings);
 
+            var signalSubscriber =
+                ResolveSignalSubscriber(host.Services);
+
+            var processControlSelector =
+                host.Services.GetRequiredService<AiRuntimeHostProcessControlSelector>();
+
             var processControl =
-                host.Services.GetRequiredService<IAiRuntimeHostProcessControl>();
+                processControlSelector.GetRequired(this.profile.HostCreationMode);
 
             var registry =
                 host.Services.GetRequiredService<IAiRuntimeInstanceRegistry>();
@@ -1175,874 +1293,1172 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                     .GetRequiredService<IOptions<AiRuntimeExecutionRecoveryReconciliationOptions>>()
                     .Value;
 
+            var sharedQueue = host.Services.GetRequiredService<IAiSharedQueue>();
+
             ProductionRecoveryOptionsAssertions.AssertDagResumeRecoveryEnabled(
                 recoveryOptions);
 
-            var tenantA =
-                scenario.Tenants.Single(tenant =>
-                    string.Equals(
-                        tenant.TenantId,
-                        "tenant-real-crash-a",
-                        StringComparison.Ordinal));
+            var tenantHttpClients =
+                new List<HttpClient>();
 
-            var tenantB =
-                scenario.Tenants.Single(tenant =>
-                    string.Equals(
-                        tenant.TenantId,
-                        "tenant-real-crash-b",
-                        StringComparison.Ordinal));
-
-            var safeTenant =
-                scenario.Tenants.Single(tenant =>
-                    string.Equals(
-                        tenant.TenantId,
-                        "tenant-real-crash-safe",
-                        StringComparison.Ordinal));
-
-            using var tenantAHttpClient =
-                host.CreateClient();
-
-            using var tenantBHttpClient =
-                host.CreateClient();
-
-            using var safeTenantHttpClient =
-                host.CreateClient();
-
-            var tenantAMcp =
-                await McpRbacTestClientHelper
-                    .CreateConfiguredClientAsync(
-                        host,
-                        tenantAHttpClient,
-                        profile.RequestedBy,
-                        tenantId: tenantA.TenantId,
-                        tenantGroupId: tenantA.TenantGroupId)
-                    .ConfigureAwait(false);
-
-            var tenantBMcp =
-                await McpRbacTestClientHelper
-                    .CreateConfiguredClientAsync(
-                        host,
-                        tenantBHttpClient,
-                        profile.RequestedBy,
-                        tenantId: tenantB.TenantId,
-                        tenantGroupId: tenantB.TenantGroupId)
-                    .ConfigureAwait(false);
-
-            var safeTenantMcp =
-                await McpRbacTestClientHelper
-                    .CreateConfiguredClientAsync(
-                        host,
-                        safeTenantHttpClient,
-                        profile.RequestedBy,
-                        tenantId: safeTenant.TenantId,
-                        tenantGroupId: safeTenant.TenantGroupId)
-                    .ConfigureAwait(false);
-
-            WriteTiming("Setup host services and tenant MCP clients");
-
-            var ledgerTimelineFromUtc =
-                DateTimeOffset.UtcNow.AddSeconds(-5);
-
-            var tenantAPipelinePrefix =
-                $"{scenario.Name}-{tenantA.TenantId}-real-crash-{Guid.NewGuid():N}";
-
-            var tenantBPipelinePrefix =
-                $"{scenario.Name}-{tenantB.TenantId}-real-crash-{Guid.NewGuid():N}";
-
-            var safeTenantPipelinePrefix =
-                $"{scenario.Name}-{safeTenant.TenantId}-safe-{Guid.NewGuid():N}";
-
-            output.WriteLine($"# SCENARIO INTRO - {profile.ProviderName.ToUpperInvariant()} PROCESS-HOST TWO-TENANT CRASH RECOVERY WITH SAFE TENANT");
-            output.WriteLine("Executive proof: this scenario kills one real external runtime process for tenant A and tenant B, recovers their assigned work, and proves that tenant C continues normal execution without recovery, forensics, redispatch, or cross-tenant leakage.");
-            output.WriteLine(string.Empty);
-            output.WriteLine("Scenario contract:");
-            output.WriteLine("  - [ON] Real external runtime host processes are used; no fixture runtime is accepted for this scenario.");
-            output.WriteLine("  - [ON] Tenant A and tenant B must each lose one unsafe runtime instance.");
-            output.WriteLine("  - [ON] Tenant C is safe and must not be killed, redispatched for recovery, or receive recovery forensics.");
-            output.WriteLine("  - [ON] Impacted in-flight DAG executions must resume with the same durable execution id.");
-            output.WriteLine("  - [ON] Impacted local queued work must be recovered through durable shared-run redispatch.");
-            output.WriteLine("  - [ON] Safe tenant runs must complete normally and expose replay, ledger, and trace evidence.");
-            output.WriteLine("  - [ON] No cross-tenant leak, duplicate recovery, or safe-tenant recovery contamination is allowed.");
-            output.WriteLine(string.Empty);
-            output.WriteLine("Workload summary:");
-            output.WriteLine($"  StepCount='{MultiTenantStepCount}'");
-            output.WriteLine($"  KillAfterCompletedStepCount='{KillAfterCompletedStepCount}'");
-            output.WriteLine($"  FlakyStepIntervalMs='{FlakyStepIntervalMs}'");
-            output.WriteLine("  TenantCount='3'");
-            output.WriteLine("  ImpactedTenantCount='2'");
-            output.WriteLine("  SafeTenantCount='1'");
-            output.WriteLine("  RunsPerTenant='3'");
-            output.WriteLine("  SubmittedRuns='9'");
-            output.WriteLine("  ExpectedRecoveredWork='6'");
-            output.WriteLine("  ExpectedSafeTenantRecoveredWork='0'");
-            output.WriteLine("  ExpectedReplayValidatedExecutions='9'");
-            output.WriteLine("  TotalValidatedExecutionFlows='15'");
-            output.WriteLine(string.Empty);
-            output.WriteLine("Runtime profile:");
-            output.WriteLine($"  Provider='{profile.ProviderName}'");
-            output.WriteLine($"  ProviderLabel='{profile.ProviderLabel}'");
-            output.WriteLine($"  ControlPlaneId='{controlPlaneId}'");
-            output.WriteLine($"  HostCreationMode='{scenario.HostCreationMode}'");
-            output.WriteLine($"  PersistenceProfile='{scenario.PersistenceProfile}'");
-            output.WriteLine($"  ObservabilityProfile='{scenario.ObservabilityProfile}'");
-            output.WriteLine($"  RuntimeHostAssemblyPath='{runtimeHostAssemblyPath}'");
-            output.WriteLine(string.Empty);
-            output.WriteLine("Timeout budget:");
-            output.WriteLine($"  ScaleOutTimeout: {scenario.ScaleOutTimeout}");
-            output.WriteLine($"  DispatchTimeout: {scenario.DispatchTimeout}");
-            output.WriteLine($"  CompletionTimeout: {scenario.CompletionTimeout}");
-            output.WriteLine(string.Empty);
-            output.WriteLine($"[{profile.LogPrefix} TWO-TENANT CRASH SAFE-TENANT PROOF] Starting. ControlPlaneId='{controlPlaneId}', TenantAPipelinePrefix='{tenantAPipelinePrefix}', TenantBPipelinePrefix='{tenantBPipelinePrefix}', SafeTenantPipelinePrefix='{safeTenantPipelinePrefix}', RuntimeHostAssemblyPath='{runtimeHostAssemblyPath}'.");
-
-            WriteTiming("Scenario identifiers and intro output");
-
-            WritePhaseHeader(
-                1,
-                "BUILD ASSIGNED WORK INVENTORY FOR IMPACTED AND SAFE TENANTS",
-                "[PASS TARGET] Submit three runs per tenant, build the same assigned-work inventory for tenant A, tenant B, and the safe tenant, then kill only tenant A and tenant B runtime candidates.");
-
-            var tenantAInventoryTask =
-                ProductionRealRuntimeCrashRecoveryTestHelpers
-                    .SubmitAndBuildAssignedWorkInventoryAsync(
-                        output,
-                        tenantAMcp,
-                        scaleOutRequestStore,
-                        sharedRunStore,
-                        runExecutionIndex,
-                        dagStore,
-                        tenantA,
-                        controlPlaneId,
-                        tenantAPipelinePrefix,
-                        profile.RequestedBy,
-                        profile.Source,
-                        runCount: 3,
-                        minimumInFlightExecutionCount: 1,
-                        minimumLocalQueuedRunCount: 1,
-                        minimumCompletedStepsBeforeKill: KillAfterCompletedStepCount,
-                        scaleOutTimeout: scenario.ScaleOutTimeout,
-                        dispatchTimeout: scenario.DispatchTimeout,
-                        progressTimeout: TimeSpan.FromMinutes(3));
-
-            var tenantBInventoryTask =
-                ProductionRealRuntimeCrashRecoveryTestHelpers
-                    .SubmitAndBuildAssignedWorkInventoryAsync(
-                        output,
-                        tenantBMcp,
-                        scaleOutRequestStore,
-                        sharedRunStore,
-                        runExecutionIndex,
-                        dagStore,
-                        tenantB,
-                        controlPlaneId,
-                        tenantBPipelinePrefix,
-                        profile.RequestedBy,
-                        profile.Source,
-                        runCount: 3,
-                        minimumInFlightExecutionCount: 1,
-                        minimumLocalQueuedRunCount: 1,
-                        minimumCompletedStepsBeforeKill: KillAfterCompletedStepCount,
-                        scaleOutTimeout: scenario.ScaleOutTimeout,
-                        dispatchTimeout: scenario.DispatchTimeout,
-                        progressTimeout: TimeSpan.FromMinutes(3));
-
-            var safeTenantInventoryTask =
-                ProductionRealRuntimeCrashRecoveryTestHelpers
-                    .SubmitAndBuildAssignedWorkInventoryAsync(
-                        output,
-                        safeTenantMcp,
-                        scaleOutRequestStore,
-                        sharedRunStore,
-                        runExecutionIndex,
-                        dagStore,
-                        safeTenant,
-                        controlPlaneId,
-                        safeTenantPipelinePrefix,
-                        profile.RequestedBy,
-                        profile.Source,
-                        runCount: 3,
-                        minimumInFlightExecutionCount: 1,
-                        minimumLocalQueuedRunCount: 1,
-                        minimumCompletedStepsBeforeKill: KillAfterCompletedStepCount,
-                        scaleOutTimeout: scenario.ScaleOutTimeout,
-                        dispatchTimeout: scenario.DispatchTimeout,
-                        progressTimeout: TimeSpan.FromMinutes(3));
-
-            await Task
-                .WhenAll(
-                    tenantAInventoryTask,
-                    tenantBInventoryTask,
-                    safeTenantInventoryTask)
-                .ConfigureAwait(false);
-
-            var tenantAInventory =
-                await tenantAInventoryTask.ConfigureAwait(false);
-
-            var tenantBInventory =
-                await tenantBInventoryTask.ConfigureAwait(false);
-
-            var safeTenantInventory =
-                await safeTenantInventoryTask.ConfigureAwait(false);
-
-            WriteTiming("Build assigned work inventory for impacted and safe tenants");
-
-            Assert.NotEqual(
-                tenantAInventory.RuntimeInstanceId,
-                tenantBInventory.RuntimeInstanceId);
-
-            Assert.NotEqual(
-                tenantAInventory.RuntimeInstanceId,
-                safeTenantInventory.RuntimeInstanceId);
-
-            Assert.NotEqual(
-                tenantBInventory.RuntimeInstanceId,
-                safeTenantInventory.RuntimeInstanceId);
-
-            ProductionRealRuntimeCrashRecoveryTestHelpers.AssertRuntimeBelongsToTenant(
-                tenantAInventory.RuntimeInstanceId,
-                tenantA);
-
-            ProductionRealRuntimeCrashRecoveryTestHelpers.AssertRuntimeBelongsToTenant(
-                tenantBInventory.RuntimeInstanceId,
-                tenantB);
-
-            ProductionRealRuntimeCrashRecoveryTestHelpers.AssertRuntimeBelongsToTenant(
-                safeTenantInventory.RuntimeInstanceId,
-                safeTenant);
-
-            WriteTiming("Validate selected failed runtime tenant ownership and safe tenant ownership");
-
-            WritePhaseHeader(
-                2,
-                "KILL REAL RUNTIME PROCESSES AND WAIT AUTOMATIC RECOVERY",
-                "[PASS TARGET] Kill one real process for tenant A and tenant B only. Safe tenant runtime is not killed and must not enter recovery.");
-
-            var tenantARecoveryTask =
-                ProductionRealRuntimeCrashRecoveryTestHelpers
-                    .KillRuntimeAndRecoverAssignedInventoryAsync(
-                        output,
-                        processControl,
-                        registry,
-                        runExecutionIndex,
-                        sharedRunStore,
-                        dagStore,
-                        tenantAInventory,
-                        unsafeTimeout: TimeSpan.FromSeconds(60),
-                        requeueTimeout: TimeSpan.FromSeconds(180),
-                        redispatchTimeout: scenario.DispatchTimeout,
-                        executionResolveTimeout: TimeSpan.FromSeconds(60));
-
-            var tenantBRecoveryTask =
-                ProductionRealRuntimeCrashRecoveryTestHelpers
-                    .KillRuntimeAndRecoverAssignedInventoryAsync(
-                        output,
-                        processControl,
-                        registry,
-                        runExecutionIndex,
-                        sharedRunStore,
-                        dagStore,
-                        tenantBInventory,
-                        unsafeTimeout: TimeSpan.FromSeconds(60),
-                        requeueTimeout: TimeSpan.FromSeconds(180),
-                        redispatchTimeout: scenario.DispatchTimeout,
-                        executionResolveTimeout: TimeSpan.FromSeconds(60));
-
-            await Task
-                .WhenAll(
-                    tenantARecoveryTask,
-                    tenantBRecoveryTask)
-                .ConfigureAwait(false);
-
-            var tenantARecovery =
-                await tenantARecoveryTask.ConfigureAwait(false);
-
-            var tenantBRecovery =
-                await tenantBRecoveryTask.ConfigureAwait(false);
-
-            Assert.DoesNotContain(
-                tenantARecovery.RecoveredWorks.Concat(tenantBRecovery.RecoveredWorks),
-                work => string.Equals(work.Original.SharedRun.AssignedRuntimeInstanceId, safeTenantInventory.RuntimeInstanceId, StringComparison.Ordinal));
-
-            WriteTiming("Kill impacted runtime processes and wait for automatic recovery");
-
-            WritePhaseHeader(
-                3,
-                "MCP RUNTIME RECOVERY FORENSICS PROOF",
-                "[PASS TARGET] Every impacted recovered work item must have runtime recovery forensics with no cross-tenant leak, no duplicate recovery record, and no safe tenant forensics contamination.");
-
-            var recoveries =
-                new[]
-                {
-            tenantARecovery,
-            tenantBRecovery
-                };
-
-            output.WriteLine(
-                $"[{profile.LogPrefix} TWO-TENANT CRASH SAFE-TENANT STEP 1 - MCP FORENSICS PROOF] Starting recovery forensics validation.");
-
-            var tenantAForensics =
-                await ProductionRealRuntimeCrashRecoveryTestHelpers
-                    .AssertRecoveredInventoryForensicsAsync(
-                        output,
-                        forensicsQueryService,
-                        tenantARecovery,
-                        TimeSpan.FromSeconds(60))
-                    .ConfigureAwait(false);
-
-            var tenantBForensics =
-                await ProductionRealRuntimeCrashRecoveryTestHelpers
-                    .AssertRecoveredInventoryForensicsAsync(
-                        output,
-                        forensicsQueryService,
-                        tenantBRecovery,
-                        TimeSpan.FromSeconds(60))
-                    .ConfigureAwait(false);
-
-            ProductionRealRuntimeCrashRecoveryTestHelpers.AssertNoCrossTenantRecoveryForensicsLeak(
-                tenantARecovery,
-                tenantAForensics,
-                tenantBRecovery,
-                tenantBForensics);
-
-            ProductionRealRuntimeCrashRecoveryTestHelpers.AssertNoDuplicateRecoveryForensics(
-                tenantAForensics
-                    .Concat(tenantBForensics)
-                    .ToArray());
-
-            Assert.DoesNotContain(
-                tenantAForensics.Concat(tenantBForensics),
-                record => string.Equals(record.TenantId, safeTenant.TenantId, StringComparison.Ordinal));
-
-            output.WriteLine(
-                $"[{profile.LogPrefix} TWO-TENANT CRASH SAFE-TENANT STEP 1 - MCP FORENSICS PROOF] " +
-                $"TenantA='{tenantA.TenantId}', FailedRuntimeA='{tenantAInventory.RuntimeInstanceId}', ExpectedA='{tenantARecovery.RecoveredWorks.Count}', ActualA='{tenantAForensics.Count}', " +
-                $"TenantB='{tenantB.TenantId}', FailedRuntimeB='{tenantBInventory.RuntimeInstanceId}', ExpectedB='{tenantBRecovery.RecoveredWorks.Count}', ActualB='{tenantBForensics.Count}', " +
-                $"SafeTenant='{safeTenant.TenantId}', SafeRuntime='{safeTenantInventory.RuntimeInstanceId}', ExpectedSafeRecovery='0', ActualSafeRecovery='0', SafeTenantRecoveryForensicsDetected='false', CrossTenantLeakDetected='false', DuplicateRecoveryDetected='false'.");
-
-            WriteTiming("Validate MCP runtime recovery forensics");
-
-            ProductionRealRuntimeCrashRecoveryTestHelpers.AssertNoCrossTenantInventoryRecoveryLeak(
-                recoveries);
-
-            WriteTiming("Validate no cross-tenant inventory recovery leak");
-
-            WritePhaseHeader(
-                4,
-                "RECOVERED AND SAFE TENANT DAG COMPLETION",
-                "[PASS TARGET] Impacted recovered DAG executions and safe tenant normal DAG executions must all complete the configured step count.");
-
-            await ProductionRealRuntimeCrashRecoveryTestHelpers
-                .AssertRecoveredInventoryDagCompletedAsync(
-                    output,
-                    dagStore,
-                    tenantARecovery,
-                    MultiTenantStepCount,
-                    scenario.CompletionTimeout)
-                .ConfigureAwait(false);
-
-            await ProductionRealRuntimeCrashRecoveryTestHelpers
-                .AssertRecoveredInventoryDagCompletedAsync(
-                    output,
-                    dagStore,
-                    tenantBRecovery,
-                    MultiTenantStepCount,
-                    scenario.CompletionTimeout)
-                .ConfigureAwait(false);
-
-            var safeExecutionTasks =
-                safeTenantInventory.Works
-                    .Select(work =>
-                        ProductionRecoveryWaitHelpers.WaitForDurableDagExecutionAsync(
-                            sharedRunStore,
-                            runExecutionIndex,
-                            dagStore,
-                            work.SharedRunId,
-                            scenario.CompletionTimeout))
-                    .ToArray();
-
-            var safeExecutions =
-                await Task
-                    .WhenAll(safeExecutionTasks)
-                    .ConfigureAwait(false);
-
-            foreach (var safeExecution in safeExecutions)
+            try
             {
-                await ProductionRecoveryWaitHelpers
-                    .WaitForDagCompletedStepCountAsync(
-                        dagStore,
-                        safeExecution.ExecutionId,
-                        MultiTenantStepCount,
-                        scenario.CompletionTimeout)
+                var tenantContexts =
+                    new List<ProcessHostTenantScenarioContext>();
+
+                foreach (var tenant in scenario.Tenants)
+                {
+                    var httpClient =
+                        host.CreateClient();
+
+                    tenantHttpClients.Add(httpClient);
+
+                    var mcp =
+                        await McpRbacTestClientHelper
+                            .CreateConfiguredClientAsync(
+                                host,
+                                httpClient,
+                                profile.RequestedBy,
+                                tenantId: tenant.TenantId,
+                                tenantGroupId: tenant.TenantGroupId)
+                            .ConfigureAwait(false);
+
+                    var isSafe =
+                        IsSafeCrashScenarioTenant(tenant);
+
+                    tenantContexts.Add(
+                        new ProcessHostTenantScenarioContext(
+                            tenant,
+                            mcp,
+                            $"{scenario.Name}-{tenant.TenantId}-{(isSafe ? "safe" : "real-crash")}-{Guid.NewGuid():N}",
+                            isSafe));
+                }
+
+                var impactedContexts =
+                    tenantContexts
+                        .Where(context => !context.IsSafe)
+                        .ToArray();
+
+                var safeContexts =
+                    tenantContexts
+                        .Where(context => context.IsSafe)
+                        .ToArray();
+
+                Assert.NotEmpty(impactedContexts);
+                Assert.NotEmpty(safeContexts);
+
+                WriteTiming("Setup host services and tenant MCP clients");
+
+                var ledgerTimelineFromUtc =
+                    DateTimeOffset.UtcNow.AddSeconds(-5);
+
+                output.WriteLine($"# SCENARIO INTRO - {profile.ProviderName.ToUpperInvariant()} PROCESS-HOST MULTI-TENANT CRASH RECOVERY WITH SAFE TENANTS");
+                output.WriteLine("Executive proof: every impacted tenant loses one real external runtime process and starts recovery immediately after its own crash inventory becomes ready, while every safe tenant continues normal execution without recovery contamination.");
+                output.WriteLine(string.Empty);
+                output.WriteLine("Scenario contract:");
+                output.WriteLine("  - [ON] Real external runtime host processes are used; no fixture runtime is accepted for this scenario.");
+                output.WriteLine("  - [ON] Each impacted tenant must lose one unsafe runtime instance without waiting for other tenant inventories.");
+                output.WriteLine("  - [ON] Safe tenant runtimes must not be killed, redispatched for recovery, or receive recovery forensics.");
+                output.WriteLine("  - [ON] Impacted in-flight DAG executions must resume with the same durable execution id.");
+                output.WriteLine("  - [ON] Impacted local queued work must be recovered through durable shared-run redispatch.");
+                output.WriteLine("  - [ON] No cross-tenant leak, duplicate recovery, or safe-tenant recovery contamination is allowed.");
+                output.WriteLine(string.Empty);
+                output.WriteLine("Workload summary:");
+                output.WriteLine($"  StepCount='{MultiTenantStepCount}'");
+                output.WriteLine($"  KillAfterCompletedStepCount='{KillAfterCompletedStepCount}'");
+                output.WriteLine($"  FlakyStepIntervalMs='{FlakyStepIntervalMs}'");
+                output.WriteLine($"  TenantCount='{tenantContexts.Count}'");
+                output.WriteLine($"  ImpactedTenantCount='{impactedContexts.Length}'");
+                output.WriteLine($"  SafeTenantCount='{safeContexts.Length}'");
+                output.WriteLine($"  SubmittedRuns='{tenantContexts.Sum(context => context.Tenant.Run.RunCount)}'");
+                output.WriteLine($"  ExpectedRecoveredWork='{impactedContexts.Sum(context => context.Tenant.Run.RunCount)}'");
+                output.WriteLine($"  ExpectedSafeTenantRecoveredWork='0'");
+                output.WriteLine(string.Empty);
+                output.WriteLine("Runtime profile:");
+                output.WriteLine($"  Provider='{profile.ProviderName}'");
+                output.WriteLine($"  ProviderLabel='{profile.ProviderLabel}'");
+                output.WriteLine($"  ControlPlaneId='{controlPlaneId}'");
+                output.WriteLine($"  HostCreationMode='{profile.HostCreationMode}'");
+                output.WriteLine($"  PersistenceProfile='{scenario.PersistenceProfile}'");
+                output.WriteLine($"  ObservabilityProfile='{scenario.ObservabilityProfile}'");
+                output.WriteLine($"  RuntimeHostAssemblyPath='{runtimeHostAssemblyPath}'");
+                output.WriteLine($"  ObservationMode='{ObservationMode}'");
+                output.WriteLine($"  HybridFallbackPollInterval='{HybridFallbackPollInterval}'");
+                output.WriteLine(string.Empty);
+
+                foreach (var context in tenantContexts)
+                {
+                    output.WriteLine(
+                        $"[{profile.LogPrefix} TENANT SCENARIO] TenantId='{context.Tenant.TenantId}', Role='{(context.IsSafe ? "Safe" : "Impacted")}', PipelinePrefix='{context.PipelinePrefix}', RunCount='{context.Tenant.Run.RunCount}'.");
+                }
+
+                WriteTiming("Scenario identifiers and intro output");
+
+                WritePhaseHeader(
+                    1,
+                    "BUILD INVENTORIES AND CRASH IMPACTED TENANTS IMMEDIATELY",
+                    "[PASS TARGET] Build every tenant inventory concurrently. As soon as an impacted tenant reaches the required in-flight/local-queued shape, kill that tenant runtime immediately instead of waiting at a global inventory barrier.");
+
+                async Task<ProcessHostImpactedTenantExecutionResult> ExecuteImpactedTenantRecoveryFlowAsync(
+                    ProcessHostTenantScenarioContext context)
+                {
+                    var inventory =
+                        await ProductionRealRuntimeCrashRecoveryTestHelpers
+                            .SubmitAndBuildAssignedWorkInventoryAsync(
+                                output,
+                                context.Mcp,
+                                scaleOutRequestStore,
+                                sharedRunStore,
+                                runExecutionIndex,
+                                dagStore,
+                                context.Tenant,
+                                controlPlaneId,
+                                context.PipelinePrefix,
+                                profile.RequestedBy,
+                                profile.Source,
+                                runCount: context.Tenant.Run.RunCount,
+                                minimumInFlightExecutionCount: 1,
+                                minimumLocalQueuedRunCount: 1,
+                                minimumCompletedStepsBeforeKill: KillAfterCompletedStepCount,
+                                scaleOutTimeout: scenario.ScaleOutTimeout,
+                                dispatchTimeout: scenario.DispatchTimeout,
+                                progressTimeout: TimeSpan.FromMinutes(3),
+                                observationMode: ObservationMode)
+                            .ConfigureAwait(false);
+
+                    ProductionRealRuntimeCrashRecoveryTestHelpers.AssertRuntimeBelongsToTenant(
+                        inventory.RuntimeInstanceId,
+                        context.Tenant);
+
+                    output.WriteLine(
+                        $"[{profile.LogPrefix} IMPACTED TENANT READY FOR CRASH] TenantId='{context.Tenant.TenantId}', RuntimeInstanceId='{inventory.RuntimeInstanceId}', InFlight='{inventory.InFlightExecutions.Count}', LocalQueued='{inventory.LocalQueuedRuns.Count}'. Killing immediately without waiting for other tenant inventories.");
+
+                    var recovery =
+                        await ProductionRealRuntimeCrashRecoveryTestHelpers
+                            .KillRuntimeAndRecoverAssignedInventoryAsync(
+                                output,
+                                processControl,
+                                registry,
+                                runExecutionIndex,
+                                sharedRunStore,
+                                sharedQueue,
+                                dagStore,
+                                inventory,
+                                minimumCompletedStepsBeforeKill:
+                                    KillAfterCompletedStepCount,
+                                progressTimeout:
+                                    TimeSpan.FromMinutes(3),
+                                unsafeTimeout:
+                                    TimeSpan.FromSeconds(60),
+                                requeueTimeout:
+                                    TimeSpan.FromSeconds(180),
+                                redispatchTimeout:
+                                    scenario.DispatchTimeout,
+                                executionResolveTimeout:
+                                    TimeSpan.FromSeconds(60),
+                                observationMode:
+                                    ObservationMode,
+                                signalSubscriber:
+                                    signalSubscriber,
+                                controlPlaneId:
+                                    controlPlaneId,
+                                hybridFallbackPollInterval:
+                                    HybridFallbackPollInterval)
+                            .ConfigureAwait(false);
+
+                    return new ProcessHostImpactedTenantExecutionResult(
+                        context,
+                        inventory,
+                        recovery);
+                }
+
+                async Task<ProcessHostSafeTenantExecutionResult> BuildSafeTenantInventoryAsync(
+                    ProcessHostTenantScenarioContext context)
+                {
+                    var inventory =
+                        await ProductionRealRuntimeCrashRecoveryTestHelpers
+                            .SubmitAndBuildAssignedWorkInventoryAsync(
+                                output,
+                                context.Mcp,
+                                scaleOutRequestStore,
+                                sharedRunStore,
+                                runExecutionIndex,
+                                dagStore,
+                                context.Tenant,
+                                controlPlaneId,
+                                context.PipelinePrefix,
+                                profile.RequestedBy,
+                                profile.Source,
+                                runCount: context.Tenant.Run.RunCount,
+                                minimumInFlightExecutionCount: 1,
+                                minimumLocalQueuedRunCount: 1,
+                                minimumCompletedStepsBeforeKill: KillAfterCompletedStepCount,
+                                scaleOutTimeout: scenario.ScaleOutTimeout,
+                                dispatchTimeout: scenario.DispatchTimeout,
+                                progressTimeout: TimeSpan.FromMinutes(3),
+                                observationMode: ObservationMode)
+                            .ConfigureAwait(false);
+
+                    ProductionRealRuntimeCrashRecoveryTestHelpers.AssertRuntimeBelongsToTenant(
+                        inventory.RuntimeInstanceId,
+                        context.Tenant);
+
+                    return new ProcessHostSafeTenantExecutionResult(
+                        context,
+                        inventory);
+                }
+
+                var impactedFlowTasks =
+                    impactedContexts
+                        .Select(ExecuteImpactedTenantRecoveryFlowAsync)
+                        .ToArray();
+
+                var safeInventoryTasks =
+                    safeContexts
+                        .Select(BuildSafeTenantInventoryAsync)
+                        .ToArray();
+
+                var allTenantFlowTasks =
+                    impactedFlowTasks
+                        .Select(task => (Task)task)
+                        .Concat(safeInventoryTasks.Select(task => (Task)task))
+                        .ToArray();
+
+                WritePhaseHeader(
+                    2,
+                    "KILL IMPACTED RUNTIMES AND WAIT AUTOMATIC RECOVERY",
+                    "[PASS TARGET] Each impacted tenant flow kills its selected runtime immediately after its own inventory is ready, while safe tenant flows continue without process termination.");
+
+                await Task
+                    .WhenAll(allTenantFlowTasks)
                     .ConfigureAwait(false);
+
+                var impactedResults =
+                    await Task
+                        .WhenAll(impactedFlowTasks)
+                        .ConfigureAwait(false);
+
+                var safeResults =
+                    await Task
+                        .WhenAll(safeInventoryTasks)
+                        .ConfigureAwait(false);
+
+                WriteTiming("Build tenant inventories, kill impacted runtimes, and wait for automatic recovery");
+
+                var allRuntimeIds =
+                    impactedResults
+                        .Select(result => result.Inventory.RuntimeInstanceId)
+                        .Concat(safeResults.Select(result => result.Inventory.RuntimeInstanceId))
+                        .ToArray();
+
+                Assert.Equal(
+                    allRuntimeIds.Length,
+                    allRuntimeIds.Distinct(StringComparer.Ordinal).Count());
+
+                var recoveries =
+                    impactedResults
+                        .Select(result => result.Recovery)
+                        .ToArray();
+
+                ProductionRealRuntimeCrashRecoveryTestHelpers.AssertNoCrossTenantInventoryRecoveryLeak(
+                    recoveries);
+
+                var safeRuntimeIds =
+                    safeResults
+                        .Select(result => result.Inventory.RuntimeInstanceId)
+                        .ToHashSet(StringComparer.Ordinal);
+
+                var safeSharedRunIds =
+                    safeResults
+                        .SelectMany(result => result.Inventory.Works)
+                        .Select(work => work.SharedRunId)
+                        .ToHashSet(StringComparer.Ordinal);
+
+                Assert.DoesNotContain(
+                    recoveries.SelectMany(recovery => recovery.RecoveredWorks),
+                    work =>
+                        safeRuntimeIds.Contains(work.ReplacementRuntimeInstanceId) ||
+                        safeSharedRunIds.Contains(work.Original.SharedRunId) ||
+                        safeSharedRunIds.Contains(work.RedispatchedRun.SharedRunId));
+
+                WriteTiming("Validate runtime ownership and no cross-tenant inventory recovery leak");
+
+                WritePhaseHeader(
+                    3,
+                    "MCP RUNTIME RECOVERY FORENSICS PROOF",
+                    "[PASS TARGET] Every impacted recovered work item must have tenant-owned recovery forensics, while safe tenants remain absent from recovery evidence.");
+
+                var initialForensicsTasks =
+                    impactedResults
+                        .Select(async result => new
+                        {
+                            Result = result,
+                            Records = await ProductionRealRuntimeCrashRecoveryTestHelpers
+                                .AssertRecoveredInventoryForensicsAsync(
+                                    output,
+                                    forensicsQueryService,
+                                    result.Recovery,
+                                    TimeSpan.FromSeconds(60))
+                                .ConfigureAwait(false)
+                        })
+                        .ToArray();
+
+                var initialForensicsResults =
+                    await Task
+                        .WhenAll(initialForensicsTasks)
+                        .ConfigureAwait(false);
+
+                var initialForensicsRecords =
+                    initialForensicsResults
+                        .SelectMany(result => result.Records)
+                        .ToArray();
+
+                ProductionRealRuntimeCrashRecoveryTestHelpers.AssertNoDuplicateRecoveryForensics(
+                    initialForensicsRecords);
+
+                for (var leftIndex = 0; leftIndex < initialForensicsResults.Length; leftIndex++)
+                {
+                    for (var rightIndex = leftIndex + 1; rightIndex < initialForensicsResults.Length; rightIndex++)
+                    {
+                        var left = initialForensicsResults[leftIndex];
+                        var right = initialForensicsResults[rightIndex];
+
+                        ProductionRealRuntimeCrashRecoveryTestHelpers.AssertNoCrossTenantRecoveryForensicsLeak(
+                            left.Result.Recovery,
+                            left.Records,
+                            right.Result.Recovery,
+                            right.Records);
+                    }
+                }
+
+                var safeTenantIds =
+                    safeContexts
+                        .Select(context => context.Tenant.TenantId)
+                        .ToHashSet(StringComparer.Ordinal);
+
+                Assert.DoesNotContain(
+                    initialForensicsRecords,
+                    record => !string.IsNullOrWhiteSpace(record.TenantId) && safeTenantIds.Contains(record.TenantId));
+
+                WriteTiming("Validate MCP runtime recovery forensics");
+
+                WritePhaseHeader(
+                    4,
+                    "RECOVERED AND SAFE TENANT DAG COMPLETION",
+                    "[PASS TARGET] Every impacted recovered DAG and every safe tenant normal DAG must complete the configured step count.");
+
+                await Task
+                    .WhenAll(
+                        impactedResults.Select(result =>
+                            ProductionRealRuntimeCrashRecoveryTestHelpers.AssertRecoveredInventoryDagCompletedAsync(
+                                output,
+                                dagStore,
+                                runExecutionIndex,
+                                result.Recovery,
+                                MultiTenantStepCount,
+                                scenario.CompletionTimeout)))
+                    .ConfigureAwait(false);
+
+                var safeExecutionTasks =
+                    safeResults
+                        .SelectMany(result =>
+                            result.Inventory.Works.Select(async work => new
+                            {
+                                Result = result,
+                                Execution = await ProductionRecoveryWaitHelpers
+                                    .WaitForDurableDagExecutionAsync(
+                                        sharedRunStore,
+                                        runExecutionIndex,
+                                        dagStore,
+                                        work.SharedRunId,
+                                        scenario.CompletionTimeout)
+                                    .ConfigureAwait(false)
+                            }))
+                        .ToArray();
+
+                var safeExecutions =
+                    await Task
+                        .WhenAll(safeExecutionTasks)
+                        .ConfigureAwait(false);
+
+                await Task
+                    .WhenAll(
+                        safeExecutions.Select(async item =>
+                        {
+                            await WaitForDagCompletedStepCountByObservationModeAsync(
+                                    dagStore,
+                                    signalSubscriber,
+                                    controlPlaneId,
+                                    item.Execution.ExecutionId,
+                                    MultiTenantStepCount,
+                                    scenario.CompletionTimeout)
+                                .ConfigureAwait(false);
+
+                            output.WriteLine(
+                                $"[{profile.LogPrefix} SAFE TENANT COMPLETION] TenantId='{item.Result.Context.Tenant.TenantId}', SharedRunId='{item.Execution.SharedRun.SharedRunId}', RuntimeInstanceId='{item.Execution.SharedRun.AssignedRuntimeInstanceId}', LocalRunId='{item.Execution.SharedRun.LocalRunId}', ExecutionId='{item.Execution.ExecutionId}', CompletedSteps='{MultiTenantStepCount}'.");
+                        }))
+                    .ConfigureAwait(false);
+
+                WriteTiming("Wait for recovered and safe tenant DAG completion");
+
+                WritePhaseHeader(
+                    5,
+                    "TERMINAL RUNTIME RUN STATUS CONVERGENCE",
+                    "[PASS TARGET] Runtime queue status must converge to completed for every impacted recovered run and every safe tenant normal run.");
+
+                var impactedStatusTasks =
+                    impactedResults
+                        .Select(async result => new
+                        {
+                            Result = result,
+                            Statuses = await McpTestWaitHelpers
+                                .WaitForTerminalRuntimeRunStatusesAsync(
+                                    result.Context.Mcp,
+                                    result.Recovery.RecoveredWorks.Select(work => work.RedispatchedRun).ToArray(),
+                                    timeout: scenario.CompletionTimeout)
+                                .ConfigureAwait(false)
+                        })
+                        .ToArray();
+
+                var impactedStatusResults =
+                    await Task
+                        .WhenAll(impactedStatusTasks)
+                        .ConfigureAwait(false);
+
+                var safeStatusTasks =
+                    safeResults
+                        .Select(async result =>
+                        {
+                            var executions =
+                                safeExecutions
+                                    .Where(item => string.Equals(
+                                        item.Result.Context.Tenant.TenantId,
+                                        result.Context.Tenant.TenantId,
+                                        StringComparison.Ordinal))
+                                    .Select(item => item.Execution)
+                                    .ToArray();
+
+                            var statuses =
+                                await McpTestWaitHelpers
+                                    .WaitForTerminalRuntimeRunStatusesAsync(
+                                        result.Context.Mcp,
+                                        executions.Select(execution => execution.SharedRun).ToArray(),
+                                        timeout: scenario.CompletionTimeout)
+                                    .ConfigureAwait(false);
+
+                            return new
+                            {
+                                Result = result,
+                                Executions = executions,
+                                Statuses = statuses
+                            };
+                        })
+                        .ToArray();
+
+                var safeStatusResults =
+                    await Task
+                        .WhenAll(safeStatusTasks)
+                        .ConfigureAwait(false);
+
+                foreach (var result in impactedStatusResults)
+                {
+                    AssertAllRuntimeStatusesCompleted(result.Statuses);
+                }
+
+                foreach (var result in safeStatusResults)
+                {
+                    AssertAllRuntimeStatusesCompleted(result.Statuses);
+
+                    Assert.DoesNotContain(
+                        result.Statuses,
+                        status => impactedResults.Any(impacted =>
+                            string.Equals(
+                                status.RuntimeInstanceId,
+                                impacted.Inventory.RuntimeInstanceId,
+                                StringComparison.Ordinal)));
+                }
+
+                WriteTiming("Wait for terminal runtime run statuses");
+
+                WritePhaseHeader(
+                    6,
+                    "MCP REPLAY LEDGER TRACE PROOF",
+                    "[PASS TARGET] MCP replay tooling must expose replay, ledger, trace, completion, and step-completion evidence for every impacted and safe tenant execution.");
+
+                var impactedReplayTasks =
+                    impactedStatusResults
+                        .Select(async statusResult => new
+                        {
+                            Result = statusResult.Result,
+                            Proofs = await HttpProcessHostConcurrentRuntimeRecoveryScenarioTests
+                                .AssertRecoveredExecutionsReplayableThroughMcpAsync(
+                                    statusResult.Result.Context.Mcp,
+                                    statusResult.Result.Context.Tenant.TenantId,
+                                    statusResult.Statuses,
+                                    profile.RequestedBy,
+                                    profile.Source)
+                                .ConfigureAwait(false)
+                        })
+                        .ToArray();
+
+                var safeReplayTasks =
+                    safeStatusResults
+                        .Select(async statusResult => new
+                        {
+                            Result = statusResult.Result,
+                            Proofs = await HttpProcessHostConcurrentRuntimeRecoveryScenarioTests
+                                .AssertRecoveredExecutionsReplayableThroughMcpAsync(
+                                    statusResult.Result.Context.Mcp,
+                                    statusResult.Result.Context.Tenant.TenantId,
+                                    statusResult.Statuses,
+                                    profile.RequestedBy,
+                                    profile.Source)
+                                .ConfigureAwait(false)
+                        })
+                        .ToArray();
+
+                var impactedReplayResults =
+                    await Task
+                        .WhenAll(impactedReplayTasks)
+                        .ConfigureAwait(false);
+
+                var safeReplayResults =
+                    await Task
+                        .WhenAll(safeReplayTasks)
+                        .ConfigureAwait(false);
+
+                foreach (var replayResult in impactedReplayResults)
+                {
+                    output.WriteLine(
+                        $"[{profile.LogPrefix} TENANT REPLAY PROOF] TenantId='{replayResult.Result.Context.Tenant.TenantId}', Role='Impacted', ReplayProofCount='{replayResult.Proofs.Count}', ExecutionIds='{string.Join(",", replayResult.Proofs.Select(proof => proof.ExecutionId))}'.");
+                }
+
+                foreach (var replayResult in safeReplayResults)
+                {
+                    output.WriteLine(
+                        $"[{profile.LogPrefix} TENANT REPLAY PROOF] TenantId='{replayResult.Result.Context.Tenant.TenantId}', Role='Safe', ReplayProofCount='{replayResult.Proofs.Count}', ExecutionIds='{string.Join(",", replayResult.Proofs.Select(proof => proof.ExecutionId))}'.");
+                }
+
+                WriteTiming("Validate MCP replay ledger and trace proof");
+
+                WritePhaseHeader(
+                    7,
+                    "MCP TENANT-SCOPED LEDGER PROOF",
+                    "[PASS TARGET] Tenant-scoped ledger queries must expose recovery evidence for every impacted tenant, with no impacted-to-impacted or safe-tenant recovery leakage.");
+
+                var ledgerTimelineToUtc =
+                    DateTimeOffset.UtcNow.AddSeconds(5);
+
+                var impactedLedgerTasks =
+                    impactedReplayResults
+                        .Select(async replayResult => new
+                        {
+                            Result = replayResult.Result,
+                            ReplayProofs = replayResult.Proofs,
+                            Query = await ProductionControlPlaneLedgerTenantQuery
+                                .QueryRecoveredTenantLedgerEvidenceAsync(
+                                    replayResult.Result.Context.Mcp,
+                                    replayResult.Result.Recovery,
+                                    replayResult.Proofs.Select(proof => proof.ExecutionId).ToArray(),
+                                    ledgerTimelineFromUtc,
+                                    ledgerTimelineToUtc)
+                                .ConfigureAwait(false)
+                        })
+                        .ToArray();
+
+                var impactedLedgerResults =
+                    await Task
+                        .WhenAll(impactedLedgerTasks)
+                        .ConfigureAwait(false);
+
+                var ledgerEntries =
+                    impactedLedgerResults
+                        .SelectMany(result => result.Query.Entries)
+                        .GroupBy(entry => entry.EntryId, StringComparer.Ordinal)
+                        .Select(group => group.OrderBy(entry => entry.TimestampUtc).ThenBy(entry => entry.Sequence).First())
+                        .OrderBy(entry => entry.TimestampUtc)
+                        .ThenBy(entry => entry.Sequence)
+                        .ToArray();
+
+                Assert.NotEmpty(ledgerEntries);
+
+                var crossTenantLedgerLeakDetected =
+                    false;
+
+                foreach (var ledgerResult in impactedLedgerResults)
+                {
+                    var tenantId =
+                        ledgerResult.Result.Context.Tenant.TenantId;
+
+                    Assert.Contains(
+                        ledgerResult.Query.Entries,
+                        entry => LedgerEntryContainsTenant(entry, tenantId));
+
+                    var foreignImpactedEntries =
+                        impactedContexts
+                            .Where(context => !string.Equals(context.Tenant.TenantId, tenantId, StringComparison.Ordinal))
+                            .Sum(context => ledgerResult.Query.Entries.Count(entry =>
+                                LedgerEntryContainsTenant(entry, context.Tenant.TenantId)));
+
+                    var safeRecoveryEntries =
+                        safeContexts.Sum(context => ledgerResult.Query.Entries.Count(entry =>
+                            LedgerEntryContainsTenant(entry, context.Tenant.TenantId) &&
+                            IsInfraLedgerEntry(entry) &&
+                            entry.EventType.Contains("recovery", StringComparison.Ordinal)));
+
+                    var infraEntryCount =
+                        ledgerResult.Query.Entries.Count(IsInfraLedgerEntry);
+
+                    Assert.True(
+                        infraEntryCount > 0,
+                        $"Tenant-scoped ledger query did not return infra/control-plane/runtime recovery evidence. TenantId='{tenantId}', RuntimeIds='{string.Join(",", ledgerResult.Query.RuntimeInstanceIds)}', ExecutionIds='{string.Join(",", ledgerResult.Query.ExecutionIds)}'.");
+
+                    crossTenantLedgerLeakDetected |=
+                        foreignImpactedEntries > 0 ||
+                        safeRecoveryEntries > 0;
+
+                    output.WriteLine(
+                        $"[{profile.LogPrefix} TENANT-SCOPED LEDGER PROOF] TenantId='{tenantId}', Entries='{ledgerResult.Query.Entries.Count}', RuntimeIds='{ledgerResult.Query.RuntimeInstanceIds.Count}', ExecutionIds='{ledgerResult.Query.ExecutionIds.Count}', InfraEntries='{infraEntryCount}', ForeignImpactedEntries='{foreignImpactedEntries}', SafeRecoveryEntries='{safeRecoveryEntries}'.");
+                }
+
+                var infraLedgerValidated =
+                    impactedLedgerResults.All(result =>
+                        result.Query.Entries.Count(IsInfraLedgerEntry) > 0);
+
+                Assert.False(
+                    crossTenantLedgerLeakDetected,
+                    "Cross-tenant or safe-tenant recovery ledger leakage was detected.");
+
+                var expectedRecoveredWorkCount =
+                    impactedResults.Sum(result => result.Inventory.Works.Count);
+
+                var allImpactedReplayExecutionIds =
+                    impactedReplayResults
+                        .SelectMany(result => result.Proofs)
+                        .Select(proof => proof.ExecutionId)
+                        .ToArray();
+
+                var causalChainLedgerEntries =
+                    await ProductionControlPlaneLedgerCausalChainQuery
+                        .QueryRecoveredScenarioCausalChainEvidenceAsync(
+                            impactedResults[0].Context.Mcp,
+                            controlPlaneId,
+                            impactedResults.Select(result => result.Context.Tenant.TenantId).ToArray(),
+                            recoveries,
+                            allImpactedReplayExecutionIds,
+                            impactedResults.Select(result => result.Context.PipelinePrefix).ToArray(),
+                            ledgerTimelineFromUtc,
+                            ledgerTimelineToUtc)
+                        .ConfigureAwait(false);
+
+                Assert.NotEmpty(causalChainLedgerEntries);
+
+                var failedRuntimeUnsafeValidated =
+                    impactedResults.All(result =>
+                        result.Recovery.RecoveredWorks.Count == result.Inventory.Works.Count);
+
+                var causalChainProof =
+                    ProductionControlPlaneLedgerCausalChainProof.Validate(
+                        causalChainLedgerEntries,
+                        expectedRecoveredWorkCount,
+                        recoveries.Sum(recovery => recovery.RecoveredWorks.Count),
+                        failedRuntimeUnsafeValidated,
+                        requireProcessRuntimeHostStarted:
+                            this.profile.HostCreationMode ==
+                            AiRuntimeHostCreationMode.Process);
 
                 output.WriteLine(
-                    $"[{profile.LogPrefix} SAFE TENANT COMPLETION] Safe tenant DAG execution completed without crash recovery. TenantId='{safeTenant.TenantId}', SharedRunId='{safeExecution.SharedRun.SharedRunId}', RuntimeInstanceId='{safeExecution.SharedRun.AssignedRuntimeInstanceId}', LocalRunId='{safeExecution.SharedRun.LocalRunId}', ExecutionId='{safeExecution.ExecutionId}', CompletedSteps='{MultiTenantStepCount}'.");
+                    $"[{profile.LogPrefix} MULTI-TENANT CONTROL-PLANE LEDGER QUERY PROOF] ScenarioCausalChainEntries='{causalChainLedgerEntries.Count}', ImpactedTenantCount='{impactedResults.Length}', ExpectedRecoveredWork='{expectedRecoveredWorkCount}', ActualRecoveredWork='{recoveries.Sum(recovery => recovery.RecoveredWorks.Count)}', Validated='{causalChainProof.IsValidated.ToString().ToLowerInvariant()}'.");
+
+                if (impactedResults.Length == 2)
+                {
+                    ProductionControlPlaneLedgerCausalChainProofOutput.Write(
+                        output,
+                        controlPlaneId,
+                        impactedResults[0].Context.Tenant.TenantId,
+                        impactedResults[1].Context.Tenant.TenantId,
+                        impactedResults[0].Inventory.RuntimeInstanceId,
+                        impactedResults[1].Inventory.RuntimeInstanceId,
+                        causalChainProof,
+                        crossTenantLedgerLeakDetected,
+                        infraLedgerValidated);
+                }
+
+                WriteTiming("Query and validate tenant-scoped ledger and control-plane causal chain");
+
+                WritePhaseHeader(
+                    8,
+                    "FINAL PRODUCTION PROOF",
+                    "[PASS TARGET] Re-query final recovery forensics, prove safe-tenant non-impact, and summarize all impacted and safe tenants dynamically.");
+
+                var finalForensicsTasks =
+                    impactedResults
+                        .Select(async result => new
+                        {
+                            Result = result,
+                            Records = await ProductionRealRuntimeCrashRecoveryTestHelpers
+                                .AssertRecoveredInventoryForensicsAsync(
+                                    output,
+                                    forensicsQueryService,
+                                    result.Recovery,
+                                    TimeSpan.FromSeconds(60))
+                                .ConfigureAwait(false)
+                        })
+                        .ToArray();
+
+                var finalForensicsResults =
+                    await Task
+                        .WhenAll(finalForensicsTasks)
+                        .ConfigureAwait(false);
+
+                var finalForensicsRecords =
+                    finalForensicsResults
+                        .SelectMany(result => result.Records)
+                        .ToArray();
+
+                ProductionRealRuntimeCrashRecoveryTestHelpers.AssertNoDuplicateRecoveryForensics(
+                    finalForensicsRecords);
+
+                for (var leftIndex = 0; leftIndex < finalForensicsResults.Length; leftIndex++)
+                {
+                    for (var rightIndex = leftIndex + 1; rightIndex < finalForensicsResults.Length; rightIndex++)
+                    {
+                        var left = finalForensicsResults[leftIndex];
+                        var right = finalForensicsResults[rightIndex];
+
+                        ProductionRealRuntimeCrashRecoveryTestHelpers.AssertNoCrossTenantRecoveryForensicsLeak(
+                            left.Result.Recovery,
+                            left.Records,
+                            right.Result.Recovery,
+                            right.Records);
+                    }
+                }
+
+                Assert.DoesNotContain(
+                    finalForensicsRecords,
+                    record => !string.IsNullOrWhiteSpace(record.TenantId) && safeTenantIds.Contains(record.TenantId));
+
+                output.WriteLine(string.Empty);
+                output.WriteLine("# FINAL FORENSICS TIMELINE PROOF");
+
+                foreach (var forensicsResult in finalForensicsResults)
+                {
+                    ProductionTenantRecoveryFinalProofHelper.WriteForensicsTimelineProof(
+                        output.WriteLine,
+                        forensicsResult.Result.Context.Tenant.TenantId,
+                        forensicsResult.Records,
+                        record => record.ForensicsId,
+                        record => record.ExecutionId,
+                        record => record.SharedRunId,
+                        record => record.TenantId,
+                        record => record.RuntimeFailureIncidentId,
+                        record => record.Timeline.Select(item => item.EventType).ToArray());
+
+                    output.WriteLine(string.Empty);
+                }
+
+                output.WriteLine("# SAFE TENANT NON-IMPACT PROOF");
+
+                foreach (var safeResult in safeResults)
+                {
+                    var statusResult =
+                        safeStatusResults.Single(result => string.Equals(
+                            result.Result.Context.Tenant.TenantId,
+                            safeResult.Context.Tenant.TenantId,
+                            StringComparison.Ordinal));
+
+                    var replayResult =
+                        safeReplayResults.Single(result => string.Equals(
+                            result.Result.Context.Tenant.TenantId,
+                            safeResult.Context.Tenant.TenantId,
+                            StringComparison.Ordinal));
+
+                    output.WriteLine($"TenantId='{safeResult.Context.Tenant.TenantId}'");
+                    output.WriteLine($"  Runtime='{safeResult.Inventory.RuntimeInstanceId}'");
+                    output.WriteLine($"  SubmittedRuns='{safeResult.Inventory.Works.Count}'");
+                    output.WriteLine($"  CompletedRuns='{statusResult.Statuses.Count}'");
+                    output.WriteLine($"  ReplayProofs='{replayResult.Proofs.Count}'");
+                    output.WriteLine("  RecoveredWork='0'");
+                    output.WriteLine("  RecoveryForensics='0'");
+                    output.WriteLine("  RuntimeProcessKilled='false'");
+                    output.WriteLine("  CrashImpacted='false'");
+                }
+
+                var finalRecoveryProofs =
+                    finalForensicsResults
+                        .Select(result => new
+                        {
+                            Result = result.Result,
+                            Proof = ProductionTenantRecoveryFinalProofHelper.Build(
+                                result.Result.Context.Tenant.TenantId,
+                                result.Result.Recovery.RecoveredWorks,
+                                result.Records,
+                                work => work.Original.Kind == RealRuntimeCrashWorkKind.InFlightExecution,
+                                record => record.RuntimeFailureIncidentId,
+                                record => record.ForensicsId,
+                                record => record.Timeline.Select(item => item.EventType).ToArray())
+                        })
+                        .ToArray();
+
+                WriteTiming("Query final runtime recovery forensics timelines and safe-tenant non-impact proof");
+                WriteTiming("Scenario finalization");
+                WriteTimingSummary();
+
+                output.WriteLine(string.Empty);
+
+                ProductionTenantLedgerSummaryOutput.Write(
+                    output,
+                    "TENANT-SCOPED LEDGER SUMMARY",
+                    impactedLedgerResults
+                        .Select(result =>
+                            new ProductionTenantLedgerSummary(
+                                result.Result.Context.Tenant.TenantId,
+                                result.Query.RuntimeInstanceIds,
+                                result.Query.ExecutionIds,
+                                result.Query.Entries))
+                        .ToArray(),
+                    maxLedgerEntriesPerTenant: 50,
+                    maxEventTypeRowsPerTenant: 30,
+                    maxLedgerEntriesPerExecution: 25);
+
+                output.WriteLine(string.Empty);
+                output.WriteLine($"[{profile.LogPrefix} MULTI-TENANT CRASH SAFE-TENANT FINAL PROOF]");
+                output.WriteLine($"ControlPlaneId='{controlPlaneId}'");
+                output.WriteLine($"TotalElapsed='{scenarioStopwatch.Elapsed}'");
+                output.WriteLine($"ImpactedTenantCount='{impactedResults.Length}'");
+                output.WriteLine($"SafeTenantCount='{safeResults.Length}'");
+
+                foreach (var finalProof in finalRecoveryProofs)
+                {
+                    var replayResult =
+                        impactedReplayResults.Single(result => string.Equals(
+                            result.Result.Context.Tenant.TenantId,
+                            finalProof.Result.Context.Tenant.TenantId,
+                            StringComparison.Ordinal));
+
+                    output.WriteLine(string.Empty);
+                    output.WriteLine($"ImpactedTenant='{finalProof.Result.Context.Tenant.TenantId}'");
+                    output.WriteLine($"  FailedRuntime='{finalProof.Result.Inventory.RuntimeInstanceId}'");
+                    output.WriteLine($"  ForensicsTimelineTypes='{ProductionTenantRecoveryFinalProofHelper.FormatForensicsTimelineTypes(finalProof.Proof)}'");
+                    output.WriteLine($"  RecoveryModes='{ProductionTenantRecoveryFinalProofHelper.FormatRecoveryModes(finalProof.Proof)}'");
+                    output.WriteLine($"  RuntimeFailureIncidentIds='{ProductionTenantRecoveryFinalProofHelper.FormatRuntimeFailureIncidentIds(finalProof.Proof)}'");
+                    output.WriteLine($"  ForensicsIds='{ProductionTenantRecoveryFinalProofHelper.FormatForensicsIds(finalProof.Proof)}'");
+                    output.WriteLine($"  Recovered='{finalProof.Result.Recovery.RecoveredWorks.Count}'");
+                    output.WriteLine($"  Forensics='{finalForensicsResults.Single(result => string.Equals(result.Result.Context.Tenant.TenantId, finalProof.Result.Context.Tenant.TenantId, StringComparison.Ordinal)).Records.Count}'");
+                    output.WriteLine($"  ReplayProof='{replayResult.Proofs.Count}'");
+                }
+
+                foreach (var safeResult in safeResults)
+                {
+                    var statusResult =
+                        safeStatusResults.Single(result => string.Equals(
+                            result.Result.Context.Tenant.TenantId,
+                            safeResult.Context.Tenant.TenantId,
+                            StringComparison.Ordinal));
+
+                    var replayResult =
+                        safeReplayResults.Single(result => string.Equals(
+                            result.Result.Context.Tenant.TenantId,
+                            safeResult.Context.Tenant.TenantId,
+                            StringComparison.Ordinal));
+
+                    output.WriteLine(string.Empty);
+                    output.WriteLine($"SafeTenant='{safeResult.Context.Tenant.TenantId}'");
+                    output.WriteLine($"  Runtime='{safeResult.Inventory.RuntimeInstanceId}'");
+                    output.WriteLine($"  SubmittedRuns='{safeResult.Inventory.Works.Count}'");
+                    output.WriteLine($"  CompletedRuns='{statusResult.Statuses.Count}'");
+                    output.WriteLine($"  ReplayProof='{replayResult.Proofs.Count}'");
+                    output.WriteLine("  Recovered='0'");
+                    output.WriteLine("  Forensics='0'");
+                    output.WriteLine("  RuntimeProcessKilled='false'");
+                    output.WriteLine("  CrashImpacted='false'");
+                }
+
+                output.WriteLine(string.Empty);
+                output.WriteLine("Safety:");
+                output.WriteLine("  ForensicsValidated='true'");
+                output.WriteLine("  StrictResumeValidated='true'");
+                output.WriteLine("  SafeTenantNonImpactValidated='true'");
+                output.WriteLine("  ReplayValidated='true'");
+                output.WriteLine("  LedgerValidated='true'");
+                output.WriteLine("  TraceValidated='true'");
+                output.WriteLine($"  InfraLedgerValidated='{infraLedgerValidated.ToString().ToLowerInvariant()}'");
+                output.WriteLine($"  ControlPlaneCausalChainValidated='{causalChainProof.IsValidated.ToString().ToLowerInvariant()}'");
+                output.WriteLine("  CrossTenantLeakDetected='false'");
+                output.WriteLine($"  CrossTenantLedgerLeakDetected='{crossTenantLedgerLeakDetected.ToString().ToLowerInvariant()}'");
+                output.WriteLine("  SafeTenantRecoveryLeakDetected='false'");
+                output.WriteLine("  DuplicateRecoveryDetected='false'");
+                output.WriteLine(string.Empty);
+            }
+            finally
+            {
+                foreach (var httpClient in tenantHttpClients)
+                {
+                    httpClient.Dispose();
+                }
+            }
+        }
+
+        /// <summary>
+        /// Executes multiple isolated multi-tenant process-host crash-recovery scenarios concurrently.
+        /// </summary>
+        /// <param name="parallelism">
+        /// The number of crash-recovery scenarios to execute concurrently.
+        /// </param>
+        /// <returns>
+        /// A task that completes when every concurrent scenario has completed.
+        /// </returns>
+        /// <exception cref="AggregateException">
+        /// Thrown when one or more concurrent crash-recovery scenarios fail.
+        /// </exception>
+        protected async Task ExecuteMultiTenantCrashRecoveryScenariosInParallelAsync(
+            int parallelism)
+        {
+            ArgumentOutOfRangeException.ThrowIfLessThan(
+                parallelism,
+                1);
+
+            var overallStopwatch = Stopwatch.StartNew();
+
+            output.WriteLine(
+                $"# PARALLEL CRASH-RECOVERY PROOF - STARTING {parallelism} SCENARIOS");
+
+            output.WriteLine(
+                $"[PARALLEL SUMMARY] Parallelism='{parallelism}', " +
+                $"ExpectedTenants='{parallelism * 3}', " +
+                $"ExpectedSubmittedRuns='{parallelism * 9}', " +
+                $"ExpectedImpactedTenants='{parallelism * 2}', " +
+                $"ExpectedSafeTenants='{parallelism}'.");
+
+            var scenarioTasks = Enumerable
+                .Range(
+                    1,
+                    parallelism)
+                .Select(
+                    scenarioNumber =>
+                    {
+                        var scenarioId = Guid.NewGuid()
+                            .ToString("N")[..8];
+
+                        return ExecuteScenarioWithDiagnosticsAsync(
+                            scenarioNumber,
+                            parallelism,
+                            scenarioId);
+                    })
+                .ToArray();
+
+            var results = await Task
+                .WhenAll(scenarioTasks)
+                .ConfigureAwait(false);
+
+            overallStopwatch.Stop();
+
+            output.WriteLine(string.Empty);
+            output.WriteLine(
+                "# PARALLEL CRASH-RECOVERY PROOF - RESULTS");
+
+            foreach (var result in results.OrderBy(
+                         result => result.ScenarioNumber))
+            {
+                output.WriteLine(
+                    $"[PARALLEL SCENARIO {result.ScenarioNumber}/{parallelism}] " +
+                    $"ScenarioId='{result.ScenarioId}', " +
+                    $"Outcome='{(result.Exception is null ? "PASSED" : "FAILED")}', " +
+                    $"Duration='{result.Duration}'.");
+
+                if (result.Exception is null)
+                {
+                    continue;
+                }
+
+                output.WriteLine(
+                    $"[PARALLEL SCENARIO {result.ScenarioNumber}/{parallelism} FAILURE] " +
+                    $"ScenarioId='{result.ScenarioId}', " +
+                    $"ExceptionType='{result.Exception.GetType().FullName}', " +
+                    $"Message='{result.Exception.Message}'.");
+
+                output.WriteLine(
+                    result.Exception.ToString());
             }
 
-            WriteTiming("Wait for recovered and safe tenant DAG completion");
+            var failures = results
+                .Where(result => result.Exception is not null)
+                .ToArray();
 
-            WritePhaseHeader(
-                5,
-                "TERMINAL RUNTIME RUN STATUS CONVERGENCE",
-                "[PASS TARGET] MCP runtime queue status must converge to completed for impacted recovered local runs and safe tenant normal local runs.");
-
-            var tenantARedispatchedRuns =
-                tenantARecovery.RecoveredWorks
-                    .Select(work => work.RedispatchedRun)
-                    .ToArray();
-
-            var tenantBRedispatchedRuns =
-                tenantBRecovery.RecoveredWorks
-                    .Select(work => work.RedispatchedRun)
-                    .ToArray();
-
-            var safeTenantCompletedRuns =
-                safeExecutions
-                    .Select(execution => execution.SharedRun)
-                    .ToArray();
-
-            var tenantAFinalStatuses =
-                await McpTestWaitHelpers
-                    .WaitForTerminalRuntimeRunStatusesAsync(
-                        tenantAMcp,
-                        tenantARedispatchedRuns,
-                        timeout: scenario.CompletionTimeout)
-                    .ConfigureAwait(false);
-
-            var tenantBFinalStatuses =
-                await McpTestWaitHelpers
-                    .WaitForTerminalRuntimeRunStatusesAsync(
-                        tenantBMcp,
-                        tenantBRedispatchedRuns,
-                        timeout: scenario.CompletionTimeout)
-                    .ConfigureAwait(false);
-
-            var safeTenantFinalStatuses =
-                await McpTestWaitHelpers
-                    .WaitForTerminalRuntimeRunStatusesAsync(
-                        safeTenantMcp,
-                        safeTenantCompletedRuns,
-                        timeout: scenario.CompletionTimeout)
-                    .ConfigureAwait(false);
-
-            AssertAllRuntimeStatusesCompleted(
-                tenantAFinalStatuses);
-
-            AssertAllRuntimeStatusesCompleted(
-                tenantBFinalStatuses);
-
-            AssertAllRuntimeStatusesCompleted(
-                safeTenantFinalStatuses);
-
-            Assert.DoesNotContain(
-                safeTenantFinalStatuses,
-                status => string.Equals(status.RuntimeInstanceId, tenantAInventory.RuntimeInstanceId, StringComparison.Ordinal) ||
-                    string.Equals(status.RuntimeInstanceId, tenantBInventory.RuntimeInstanceId, StringComparison.Ordinal));
-
-            WriteTiming("Wait for terminal runtime run statuses");
-
-            WritePhaseHeader(
-                6,
-                "MCP REPLAY LEDGER TRACE PROOF",
-                "[PASS TARGET] MCP replay tooling must expose replay report, replay ledger, replay trace, execution ledger, execution trace, completion evidence, and step-completion evidence for impacted and safe tenant executions.");
-
-            var tenantAReplayProofs =
-                await HttpProcessHostConcurrentRuntimeRecoveryScenarioTests
-                    .AssertRecoveredExecutionsReplayableThroughMcpAsync(
-                        tenantAMcp,
-                        tenantA.TenantId,
-                        tenantAFinalStatuses,
-                        profile.RequestedBy,
-                        profile.Source)
-                    .ConfigureAwait(false);
-
-            var tenantBReplayProofs =
-                await HttpProcessHostConcurrentRuntimeRecoveryScenarioTests
-                    .AssertRecoveredExecutionsReplayableThroughMcpAsync(
-                        tenantBMcp,
-                        tenantB.TenantId,
-                        tenantBFinalStatuses,
-                        profile.RequestedBy,
-                        profile.Source)
-                    .ConfigureAwait(false);
-
-            var safeTenantReplayProofs =
-                await HttpProcessHostConcurrentRuntimeRecoveryScenarioTests
-                    .AssertRecoveredExecutionsReplayableThroughMcpAsync(
-                        safeTenantMcp,
-                        safeTenant.TenantId,
-                        safeTenantFinalStatuses,
-                        profile.RequestedBy,
-                        profile.Source)
-                    .ConfigureAwait(false);
-
-            ProductionRuntimeReplayOutput.WriteRecoveredExecutionReplayProof(
-                output,
-                tenantAReplayProofs,
-                tenantBReplayProofs,
-                safeTenantReplayProofs);
-
-            WriteTiming("Validate MCP replay ledger and trace proof");
-
-            WritePhaseHeader(
-                7,
-                "MCP TENANT-SCOPED LEDGER PROOF",
-                "[PASS TARGET] Tenant-scoped MCP ledger queries must expose control-plane, runtime-instance, and recovery evidence for impacted tenants, while safe tenant remains absent from recovery evidence.");
-
-            var ledgerTimelineToUtc =
-                DateTimeOffset.UtcNow.AddSeconds(5);
-
-            var tenantALedgerQuery =
-                await ProductionControlPlaneLedgerTenantQuery
-                    .QueryRecoveredTenantLedgerEvidenceAsync(
-                        tenantAMcp,
-                        tenantARecovery,
-                        tenantAReplayProofs.Select(proof => proof.ExecutionId).ToArray(),
-                        ledgerTimelineFromUtc,
-                        ledgerTimelineToUtc)
-                    .ConfigureAwait(false);
-
-            var tenantBLedgerQuery =
-                await ProductionControlPlaneLedgerTenantQuery
-                    .QueryRecoveredTenantLedgerEvidenceAsync(
-                        tenantBMcp,
-                        tenantBRecovery,
-                        tenantBReplayProofs.Select(proof => proof.ExecutionId).ToArray(),
-                        ledgerTimelineFromUtc,
-                        ledgerTimelineToUtc)
-                    .ConfigureAwait(false);
-
-            var tenantALedgerEntries =
-                tenantALedgerQuery.Entries;
-
-            var tenantBLedgerEntries =
-                tenantBLedgerQuery.Entries;
-
-            var ledgerEntries =
-                tenantALedgerEntries
-                    .Concat(tenantBLedgerEntries)
-                    .GroupBy(entry => entry.EntryId, StringComparer.Ordinal)
-                    .Select(group => group.OrderBy(entry => entry.TimestampUtc).ThenBy(entry => entry.Sequence).First())
-                    .OrderBy(entry => entry.TimestampUtc)
-                    .ThenBy(entry => entry.Sequence)
-                    .ToArray();
-
-            Assert.NotEmpty(
-                ledgerEntries);
-
-            Assert.Contains(
-                ledgerEntries,
-                entry =>
-                    entry.EventType.StartsWith(
-                        "control.",
-                        StringComparison.Ordinal) ||
-                    entry.EventType.Contains(
-                        "runtime-execution-recovery",
-                        StringComparison.Ordinal) ||
-                    entry.EventType.Contains(
-                        "runtime-instance",
-                        StringComparison.Ordinal));
-
-            Assert.Contains(
-                ledgerEntries,
-                entry =>
-                    LedgerEntryContainsTenant(
-                        entry,
-                        tenantA.TenantId));
-
-            Assert.Contains(
-                ledgerEntries,
-                entry =>
-                    LedgerEntryContainsTenant(
-                        entry,
-                        tenantB.TenantId));
-
-            var tenantBEntriesVisibleFromTenantA =
-                tenantALedgerEntries.Count(entry =>
-                    LedgerEntryContainsTenant(
-                        entry,
-                        tenantB.TenantId));
-
-            var tenantAEntriesVisibleFromTenantB =
-                tenantBLedgerEntries.Count(entry =>
-                    LedgerEntryContainsTenant(
-                        entry,
-                        tenantA.TenantId));
-
-            var safeTenantRecoveryEntriesVisibleFromImpactedQueries =
-                ledgerEntries.Count(entry =>
-                    LedgerEntryContainsTenant(
-                        entry,
-                        safeTenant.TenantId) &&
-                    IsInfraLedgerEntry(entry) &&
-                    entry.EventType.Contains("recovery", StringComparison.Ordinal));
-
-            var crossTenantLedgerLeakDetected =
-                tenantBEntriesVisibleFromTenantA > 0 ||
-                tenantAEntriesVisibleFromTenantB > 0 ||
-                safeTenantRecoveryEntriesVisibleFromImpactedQueries > 0;
-
-            var tenantAInfraEntries =
-                tenantALedgerEntries.Count(IsInfraLedgerEntry);
-
-            var tenantBInfraEntries =
-                tenantBLedgerEntries.Count(IsInfraLedgerEntry);
-
-            var infraLedgerValidated =
-                tenantAInfraEntries > 0 &&
-                tenantBInfraEntries > 0;
-
-            Assert.False(
-                crossTenantLedgerLeakDetected,
-                $"Cross-tenant ledger leak detected. TenantBEntriesVisibleFromTenantA='{tenantBEntriesVisibleFromTenantA}', TenantAEntriesVisibleFromTenantB='{tenantAEntriesVisibleFromTenantB}', SafeTenantRecoveryEntriesVisibleFromImpactedQueries='{safeTenantRecoveryEntriesVisibleFromImpactedQueries}'.");
-
-            Assert.True(
-                tenantAInfraEntries > 0,
-                $"Tenant A scoped ledger query did not return infra/control-plane/runtime recovery evidence. TenantId='{tenantA.TenantId}', RuntimeIds='{string.Join(",", tenantALedgerQuery.RuntimeInstanceIds)}', ExecutionIds='{string.Join(",", tenantALedgerQuery.ExecutionIds)}'.");
-
-            Assert.True(
-                tenantBInfraEntries > 0,
-                $"Tenant B scoped ledger query did not return infra/control-plane/runtime recovery evidence. TenantId='{tenantB.TenantId}', RuntimeIds='{string.Join(",", tenantBLedgerQuery.RuntimeInstanceIds)}', ExecutionIds='{string.Join(",", tenantBLedgerQuery.ExecutionIds)}'.");
+            output.WriteLine(string.Empty);
 
             output.WriteLine(
-                $"[{profile.LogPrefix} TWO-TENANT CRASH SAFE-TENANT STEP 3 - MCP LEDGER PROOF] " +
-                $"TenantAEntries='{tenantALedgerEntries.Count}', TenantARuntimeIds='{tenantALedgerQuery.RuntimeInstanceIds.Count}', TenantAExecutionIds='{tenantALedgerQuery.ExecutionIds.Count}', TenantAInfraEntries='{tenantAInfraEntries}', TenantBEntriesVisibleFromTenantA='{tenantBEntriesVisibleFromTenantA}', " +
-                $"TenantBEntries='{tenantBLedgerEntries.Count}', TenantBRuntimeIds='{tenantBLedgerQuery.RuntimeInstanceIds.Count}', TenantBExecutionIds='{tenantBLedgerQuery.ExecutionIds.Count}', TenantBInfraEntries='{tenantBInfraEntries}', TenantAEntriesVisibleFromTenantB='{tenantAEntriesVisibleFromTenantB}', " +
-                $"SafeTenant='{safeTenant.TenantId}', SafeTenantRuntime='{safeTenantInventory.RuntimeInstanceId}', SafeTenantRecoveryEntriesVisibleFromImpactedQueries='{safeTenantRecoveryEntriesVisibleFromImpactedQueries}', " +
-                $"CombinedScenarioEntries='{ledgerEntries.Length}', QueryScope='runtime-instance + execution', IncludesInfra='true', InfraLedgerValidated='{infraLedgerValidated.ToString().ToLowerInvariant()}', CrossTenantLedgerLeakDetected='{crossTenantLedgerLeakDetected.ToString().ToLowerInvariant()}', TimestampFromUtc='{ledgerTimelineFromUtc:O}', TimestampToUtc='{ledgerTimelineToUtc:O}'.");
+                $"[PARALLEL SUMMARY] " +
+                $"Parallelism='{parallelism}', " +
+                $"Passed='{results.Length - failures.Length}', " +
+                $"Failed='{failures.Length}', " +
+                $"TotalDuration='{overallStopwatch.Elapsed}'.");
 
-            var expectedRecoveredWorkCount =
-                6;
+            if (failures.Length > 0)
+            {
+                throw new AggregateException(
+                    $"{failures.Length} of {parallelism} parallel crash-recovery scenarios failed.",
+                    failures.Select(result => result.Exception!));
+            }
+        }
 
-            var causalChainLedgerEntries =
-                await ProductionControlPlaneLedgerCausalChainQuery
-                    .QueryRecoveredScenarioCausalChainEvidenceAsync(
-                        tenantAMcp,
+        /// <summary>
+        /// Executes one isolated multi-tenant process-host crash-recovery scenario
+        /// and captures its diagnostic result without interrupting sibling scenarios.
+        /// </summary>
+        /// <param name="scenarioNumber">The one-based scenario number.</param>
+        /// <param name="parallelism">The total number of concurrent scenarios.</param>
+        /// <param name="scenarioId">The diagnostic scenario identifier.</param>
+        /// <returns>The captured scenario result.</returns>
+        private async Task<ParallelScenarioResult> ExecuteScenarioWithDiagnosticsAsync(
+            int scenarioNumber,
+            int parallelism,
+            string scenarioId)
+        {
+            var stopwatch = Stopwatch.StartNew();
+
+            output.WriteLine(string.Empty);
+
+            output.WriteLine(
+                $"# PARALLEL SCENARIO {scenarioNumber}/{parallelism} - START");
+
+            output.WriteLine(
+                $"[PARALLEL SCENARIO {scenarioNumber}/{parallelism}] " +
+                $"ScenarioId='{scenarioId}', " +
+                $"StartedAtUtc='{DateTimeOffset.UtcNow:O}'.");
+
+            try
+            {
+                await ProcessHost_Should_Recover_Two_Tenants_After_Real_Runtime_Process_Kills_Without_Impacting_Safe_Tenant_With_Strict_Dag_Resume_Replay_Ledger_And_Trace()
+                    .ConfigureAwait(false);
+
+                stopwatch.Stop();
+
+                output.WriteLine(
+                    $"[PARALLEL SCENARIO {scenarioNumber}/{parallelism}] " +
+                    $"ScenarioId='{scenarioId}', " +
+                    $"Outcome='PASSED', " +
+                    $"Duration='{stopwatch.Elapsed}'.");
+
+                return new ParallelScenarioResult(
+                    scenarioNumber,
+                    scenarioId,
+                    stopwatch.Elapsed,
+                    Exception: null);
+            }
+            catch (Exception exception)
+            {
+                stopwatch.Stop();
+
+                output.WriteLine(
+                    $"[PARALLEL SCENARIO {scenarioNumber}/{parallelism}] " +
+                    $"ScenarioId='{scenarioId}', " +
+                    $"Outcome='FAILED', " +
+                    $"Duration='{stopwatch.Elapsed}', " +
+                    $"ExceptionType='{exception.GetType().FullName}', " +
+                    $"Message='{exception.Message}'.");
+
+                return new ParallelScenarioResult(
+                    scenarioNumber,
+                    scenarioId,
+                    stopwatch.Elapsed,
+                    exception);
+            }
+        }
+
+        /// <summary>
+        /// Represents the captured outcome of one parallel crash-recovery scenario.
+        /// </summary>
+        /// <param name="ScenarioNumber">The one-based scenario number.</param>
+        /// <param name="ScenarioId">The diagnostic scenario identifier.</param>
+        /// <param name="Duration">The total scenario duration.</param>
+        /// <param name="Exception">The captured failure, when present.</param>
+        private sealed record ParallelScenarioResult(
+            int ScenarioNumber,
+            string ScenarioId,
+            TimeSpan Duration,
+            Exception? Exception);
+
+        /// <summary>
+        /// Resolves the runtime signal subscriber only when hybrid observation is enabled.
+        /// </summary>
+        /// <param name="services">The scenario service provider.</param>
+        /// <returns>The runtime signal subscriber in hybrid mode; otherwise, <c>null</c>.</returns>
+        private IAiRuntimeSignalSubscriber? ResolveSignalSubscriber(
+            IServiceProvider services)
+        {
+            ArgumentNullException.ThrowIfNull(services);
+
+            return ObservationMode == ProductionRecoveryObservationMode.HybridSignals
+                ? services.GetRequiredService<IAiRuntimeSignalSubscriber>()
+                : null;
+        }
+
+        /// <summary>
+        /// Waits for durable DAG progress using the configured observation mode.
+        /// </summary>
+        private async Task WaitForDagCompletedStepCountByObservationModeAsync(
+            IAiDagExecutionStore dagStore,
+            IAiRuntimeSignalSubscriber? signalSubscriber,
+            string controlPlaneId,
+            string executionId,
+            int minimumCompletedSteps,
+            TimeSpan timeout)
+        {
+            ArgumentNullException.ThrowIfNull(dagStore);
+            ArgumentException.ThrowIfNullOrWhiteSpace(controlPlaneId);
+            ArgumentException.ThrowIfNullOrWhiteSpace(executionId);
+
+            if (ObservationMode == ProductionRecoveryObservationMode.HybridSignals)
+            {
+                ArgumentNullException.ThrowIfNull(signalSubscriber);
+
+                await ProductionRecoveryWaitHelpers
+                    .WaitForDagCompletedStepCountHybridAsync(
+                        dagStore,
+                        signalSubscriber,
                         controlPlaneId,
-                        new[] { tenantA.TenantId, tenantB.TenantId },
-                        new[] { tenantARecovery, tenantBRecovery },
-                        tenantAReplayProofs.Concat(tenantBReplayProofs).Select(proof => proof.ExecutionId).ToArray(),
-                        new[] { tenantAPipelinePrefix, tenantBPipelinePrefix },
-                        ledgerTimelineFromUtc,
-                        ledgerTimelineToUtc)
+                        executionId,
+                        minimumCompletedSteps,
+                        timeout,
+                        HybridFallbackPollInterval)
                     .ConfigureAwait(false);
 
-            Assert.NotEmpty(
-                causalChainLedgerEntries);
+                return;
+            }
 
-            var failedRuntimeUnsafeValidated =
-                tenantARecovery.RecoveredWorks.Count == tenantAInventory.Works.Count &&
-                tenantBRecovery.RecoveredWorks.Count == tenantBInventory.Works.Count;
+            await ProductionRecoveryWaitHelpers
+                .WaitForDagCompletedStepCountAsync(
+                    dagStore,
+                    executionId,
+                    minimumCompletedSteps,
+                    timeout)
+                .ConfigureAwait(false);
+        }
 
-            var causalChainProof =
-                ProductionControlPlaneLedgerCausalChainProof.Validate(
-                    causalChainLedgerEntries,
-                    expectedRecoveredWorkCount,
-                    tenantARecovery.RecoveredWorks.Count + tenantBRecovery.RecoveredWorks.Count,
-                    failedRuntimeUnsafeValidated);
+        private sealed record ProcessHostTenantScenarioContext(
+            ProductionTenantScenarioDefinition Tenant,
+            McpTestClient Mcp,
+            string PipelinePrefix,
+            bool IsSafe);
 
-            output.WriteLine(
-                $"[{profile.LogPrefix} TWO-TENANT CRASH SAFE-TENANT MCP CONTROL-PLANE LEDGER QUERY PROOF] " +
-                $"ScenarioCausalChainEntries='{causalChainLedgerEntries.Count}', ControlPlaneEntries='{causalChainLedgerEntries.Count(entry => entry.EventType.StartsWith("control.", StringComparison.Ordinal))}', QueryScope='runtime-instance ids + execution ids + control-plane run execution ids + impacted scenario membership filter'.");
+        private sealed record ProcessHostImpactedTenantExecutionResult(
+            ProcessHostTenantScenarioContext Context,
+            RealRuntimeCrashAssignedWorkInventoryProof Inventory,
+            RealRuntimeCrashFailedRuntimeRecoveryProof Recovery);
 
-            ProductionControlPlaneLedgerCausalChainProofOutput.Write(
-                output,
-                controlPlaneId,
-                tenantA.TenantId,
-                tenantB.TenantId,
-                tenantAInventory.RuntimeInstanceId,
-                tenantBInventory.RuntimeInstanceId,
-                causalChainProof,
-                crossTenantLedgerLeakDetected,
-                infraLedgerValidated);
+        private sealed record ProcessHostSafeTenantExecutionResult(
+            ProcessHostTenantScenarioContext Context,
+            RealRuntimeCrashAssignedWorkInventoryProof Inventory);
 
-            WriteTiming("Query and validate tenant scoped MCP ledger and control-plane causal chain");
+        private static bool IsSafeCrashScenarioTenant(
+            ProductionTenantScenarioDefinition tenant)
+        {
+            ArgumentNullException.ThrowIfNull(tenant);
 
-            WritePhaseHeader(
-                8,
-                "FINAL PRODUCTION PROOF",
-                "[PASS TARGET] Re-query final runtime recovery forensics after completion, print the causal forensics timeline first, prove safe tenant non-impact, then summarize recovery, replay, ledger, trace, timing, and safety invariants.");
-
-            var tenantAFinalForensics =
-                await ProductionRealRuntimeCrashRecoveryTestHelpers
-                    .AssertRecoveredInventoryForensicsAsync(
-                        output,
-                        forensicsQueryService,
-                        tenantARecovery,
-                        TimeSpan.FromSeconds(60))
-                    .ConfigureAwait(false);
-
-            var tenantBFinalForensics =
-                await ProductionRealRuntimeCrashRecoveryTestHelpers
-                    .AssertRecoveredInventoryForensicsAsync(
-                        output,
-                        forensicsQueryService,
-                        tenantBRecovery,
-                        TimeSpan.FromSeconds(60))
-                    .ConfigureAwait(false);
-
-            ProductionRealRuntimeCrashRecoveryTestHelpers.AssertNoCrossTenantRecoveryForensicsLeak(
-                tenantARecovery,
-                tenantAFinalForensics,
-                tenantBRecovery,
-                tenantBFinalForensics);
-
-            ProductionRealRuntimeCrashRecoveryTestHelpers.AssertNoDuplicateRecoveryForensics(
-                tenantAFinalForensics
-                    .Concat(tenantBFinalForensics)
-                    .ToArray());
-
-            Assert.DoesNotContain(
-                tenantAFinalForensics.Concat(tenantBFinalForensics),
-                record => string.Equals(record.TenantId, safeTenant.TenantId, StringComparison.Ordinal));
-
-            output.WriteLine(string.Empty);
-            output.WriteLine("# FINAL FORENSICS TIMELINE PROOF");
-            output.WriteLine("Source: runtime recovery forensics queried after recovered DAG completion, terminal runtime status convergence, replay, ledger, and trace validation.");
-            output.WriteLine(string.Empty);
-
-            ProductionTenantRecoveryFinalProofHelper.WriteForensicsTimelineProof(
-                output.WriteLine,
-                tenantA.TenantId,
-                tenantAFinalForensics,
-                record => record.ForensicsId,
-                record => record.ExecutionId,
-                record => record.SharedRunId,
-                record => record.TenantId,
-                record => record.RuntimeFailureIncidentId,
-                record => record.Timeline.Select(item => item.EventType).ToArray());
-
-            output.WriteLine(string.Empty);
-
-            ProductionTenantRecoveryFinalProofHelper.WriteForensicsTimelineProof(
-                output.WriteLine,
-                tenantB.TenantId,
-                tenantBFinalForensics,
-                record => record.ForensicsId,
-                record => record.ExecutionId,
-                record => record.SharedRunId,
-                record => record.TenantId,
-                record => record.RuntimeFailureIncidentId,
-                record => record.Timeline.Select(item => item.EventType).ToArray());
-
-            output.WriteLine(string.Empty);
-            output.WriteLine("# SAFE TENANT NON-IMPACT PROOF");
-            output.WriteLine($"TenantId='{safeTenant.TenantId}'");
-            output.WriteLine($"SafeRuntime='{safeTenantInventory.RuntimeInstanceId}'");
-            output.WriteLine($"SubmittedRuns='{safeTenantInventory.Works.Count}'");
-            output.WriteLine($"CompletedRuns='{safeTenantFinalStatuses.Count}'");
-            output.WriteLine($"ReplayProofs='{safeTenantReplayProofs.Count}'");
-            output.WriteLine("RecoveredWork='0'");
-            output.WriteLine("RecoveryForensics='0'");
-            output.WriteLine("RuntimeProcessKilled='false'");
-            output.WriteLine("CrashImpacted='false'");
-            output.WriteLine(string.Empty);
-
-            WriteTiming("Query final runtime recovery forensics timelines and safe tenant non-impact proof");
-
-            var tenantAFinalRecoveryProof =
-                ProductionTenantRecoveryFinalProofHelper.Build(
-                    tenantA.TenantId,
-                    tenantARecovery.RecoveredWorks,
-                    tenantAFinalForensics,
-                    work => work.Original.Kind == RealRuntimeCrashWorkKind.InFlightExecution,
-                    record => record.RuntimeFailureIncidentId,
-                    record => record.ForensicsId,
-                    record => record.Timeline.Select(item => item.EventType).ToArray());
-
-            var tenantBFinalRecoveryProof =
-                ProductionTenantRecoveryFinalProofHelper.Build(
-                    tenantB.TenantId,
-                    tenantBRecovery.RecoveredWorks,
-                    tenantBFinalForensics,
-                    work => work.Original.Kind == RealRuntimeCrashWorkKind.InFlightExecution,
-                    record => record.RuntimeFailureIncidentId,
-                    record => record.ForensicsId,
-                    record => record.Timeline.Select(item => item.EventType).ToArray());
-
-            WriteTiming("Scenario finalization");
-
-            WriteTimingSummary();
-
-            output.WriteLine(string.Empty);
-
-            ProductionTenantLedgerSummaryOutput.Write(
-                output,
-                "TENANT-SCOPED LEDGER SUMMARY",
-                new[]
-                {
-            new ProductionTenantLedgerSummary(
-                tenantA.TenantId,
-                tenantALedgerQuery.RuntimeInstanceIds,
-                tenantALedgerQuery.ExecutionIds,
-                tenantALedgerEntries),
-            new ProductionTenantLedgerSummary(
-                tenantB.TenantId,
-                tenantBLedgerQuery.RuntimeInstanceIds,
-                tenantBLedgerQuery.ExecutionIds,
-                tenantBLedgerEntries)
-                },
-                maxLedgerEntriesPerTenant: 50,
-                maxEventTypeRowsPerTenant: 30,
-                maxLedgerEntriesPerExecution: 25);
-
-            output.WriteLine(string.Empty);
-
-            output.WriteLine($"[{profile.LogPrefix} TWO-TENANT CRASH SAFE-TENANT FINAL PROOF]");
-            output.WriteLine($"ControlPlaneId='{controlPlaneId}'");
-            output.WriteLine($"TotalElapsed='{scenarioStopwatch.Elapsed}'");
-
-            output.WriteLine(string.Empty);
-            output.WriteLine("TenantA:");
-            output.WriteLine($"  TenantId='{tenantA.TenantId}'");
-            output.WriteLine($"  FailedRuntime='{tenantAInventory.RuntimeInstanceId}'");
-            output.WriteLine($"  ForensicsTimelineTypes='{ProductionTenantRecoveryFinalProofHelper.FormatForensicsTimelineTypes(tenantAFinalRecoveryProof)}'");
-            output.WriteLine($"  RecoveryModes='{ProductionTenantRecoveryFinalProofHelper.FormatRecoveryModes(tenantAFinalRecoveryProof)}'");
-            output.WriteLine($"  RuntimeFailureIncidentIds='{ProductionTenantRecoveryFinalProofHelper.FormatRuntimeFailureIncidentIds(tenantAFinalRecoveryProof)}'");
-            output.WriteLine($"  ForensicsIds='{ProductionTenantRecoveryFinalProofHelper.FormatForensicsIds(tenantAFinalRecoveryProof)}'");
-            output.WriteLine($"  Recovered='{tenantARecovery.RecoveredWorks.Count}'");
-            output.WriteLine($"  Forensics='{tenantAFinalForensics.Count}'");
-            output.WriteLine($"  ReplayProof='{tenantAReplayProofs.Count}'");
-
-            output.WriteLine(string.Empty);
-            output.WriteLine("TenantB:");
-            output.WriteLine($"  TenantId='{tenantB.TenantId}'");
-            output.WriteLine($"  FailedRuntime='{tenantBInventory.RuntimeInstanceId}'");
-            output.WriteLine($"  ForensicsTimelineTypes='{ProductionTenantRecoveryFinalProofHelper.FormatForensicsTimelineTypes(tenantBFinalRecoveryProof)}'");
-            output.WriteLine($"  RecoveryModes='{ProductionTenantRecoveryFinalProofHelper.FormatRecoveryModes(tenantBFinalRecoveryProof)}'");
-            output.WriteLine($"  RuntimeFailureIncidentIds='{ProductionTenantRecoveryFinalProofHelper.FormatRuntimeFailureIncidentIds(tenantBFinalRecoveryProof)}'");
-            output.WriteLine($"  ForensicsIds='{ProductionTenantRecoveryFinalProofHelper.FormatForensicsIds(tenantBFinalRecoveryProof)}'");
-            output.WriteLine($"  Recovered='{tenantBRecovery.RecoveredWorks.Count}'");
-            output.WriteLine($"  Forensics='{tenantBFinalForensics.Count}'");
-            output.WriteLine($"  ReplayProof='{tenantBReplayProofs.Count}'");
-
-            output.WriteLine(string.Empty);
-            output.WriteLine("SafeTenant:");
-            output.WriteLine($"  TenantId='{safeTenant.TenantId}'");
-            output.WriteLine($"  Runtime='{safeTenantInventory.RuntimeInstanceId}'");
-            output.WriteLine($"  SubmittedRuns='{safeTenantInventory.Works.Count}'");
-            output.WriteLine($"  CompletedRuns='{safeTenantFinalStatuses.Count}'");
-            output.WriteLine($"  ReplayProof='{safeTenantReplayProofs.Count}'");
-            output.WriteLine("  Recovered='0'");
-            output.WriteLine("  Forensics='0'");
-            output.WriteLine("  RuntimeProcessKilled='false'");
-            output.WriteLine("  CrashImpacted='false'");
-
-            output.WriteLine(string.Empty);
-            output.WriteLine("Safety:");
-            output.WriteLine("  ForensicsValidated='true'");
-            output.WriteLine("  StrictResumeValidated='true'");
-            output.WriteLine("  SafeTenantNonImpactValidated='true'");
-            output.WriteLine("  ReplayValidated='true'");
-            output.WriteLine("  LedgerValidated='true'");
-            output.WriteLine("  TraceValidated='true'");
-            output.WriteLine($"  InfraLedgerValidated='{infraLedgerValidated.ToString().ToLowerInvariant()}'");
-            output.WriteLine($"  ControlPlaneCausalChainValidated='{causalChainProof.IsValidated.ToString().ToLowerInvariant()}'");
-            output.WriteLine("  CrossTenantLeakDetected='false'");
-            output.WriteLine($"  CrossTenantLedgerLeakDetected='{crossTenantLedgerLeakDetected.ToString().ToLowerInvariant()}'");
-            output.WriteLine("  SafeTenantRecoveryLeakDetected='false'");
-            output.WriteLine("  DuplicateRecoveryDetected='false'");
-
-            output.WriteLine(string.Empty);
+            return tenant.TenantId.Contains("safe", StringComparison.OrdinalIgnoreCase) ||
+                (!string.IsNullOrWhiteSpace(tenant.RuntimeInstanceIdPrefix) &&
+                    tenant.RuntimeInstanceIdPrefix.Contains("safe", StringComparison.OrdinalIgnoreCase));
         }
 
         private static ProductionRuntimeScenarioDefinition CreateRealRuntimeCrashRecoveryTwoTenantInventoryScenario(

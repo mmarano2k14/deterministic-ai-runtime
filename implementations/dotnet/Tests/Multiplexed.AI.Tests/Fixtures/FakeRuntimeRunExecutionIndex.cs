@@ -1,9 +1,4 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Threading;
-using System.Threading.Tasks;
-using Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue;
+﻿using Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue;
 
 namespace Multiplexed.AI.Tests.Fixtures
 {
@@ -47,12 +42,21 @@ namespace Multiplexed.AI.Tests.Fixtures
         /// </summary>
         public List<AiRuntimeRunExecutionIndexEntry> UnfinishedRuns { get; } = [];
 
+        /// <summary>
+        /// Gets recoverable runs returned by runtime-instance recovery scans.
+        /// </summary>
+        public List<AiRuntimeRunExecutionIndexEntry> RecoverableRuns { get; } = [];
+
         /// <inheritdoc />
         public Task RegisterQueuedAsync(
             AiRuntimeRunExecutionIndexEntry entry,
             CancellationToken cancellationToken = default)
         {
-            RegisteredEntries.Add(entry);
+            ArgumentNullException.ThrowIfNull(entry);
+
+            cancellationToken.ThrowIfCancellationRequested();
+
+            this.RegisteredEntries.Add(entry);
 
             return Task.CompletedTask;
         }
@@ -63,6 +67,8 @@ namespace Multiplexed.AI.Tests.Fixtures
             string executionId,
             CancellationToken cancellationToken = default)
         {
+            cancellationToken.ThrowIfCancellationRequested();
+
             return Task.CompletedTask;
         }
 
@@ -72,6 +78,8 @@ namespace Multiplexed.AI.Tests.Fixtures
             string executionId,
             CancellationToken cancellationToken = default)
         {
+            cancellationToken.ThrowIfCancellationRequested();
+
             return Task.CompletedTask;
         }
 
@@ -82,6 +90,8 @@ namespace Multiplexed.AI.Tests.Fixtures
             string failureReason,
             CancellationToken cancellationToken = default)
         {
+            cancellationToken.ThrowIfCancellationRequested();
+
             return Task.CompletedTask;
         }
 
@@ -92,6 +102,8 @@ namespace Multiplexed.AI.Tests.Fixtures
             string? reason,
             CancellationToken cancellationToken = default)
         {
+            cancellationToken.ThrowIfCancellationRequested();
+
             return Task.CompletedTask;
         }
 
@@ -102,12 +114,14 @@ namespace Multiplexed.AI.Tests.Fixtures
             string reason,
             CancellationToken cancellationToken = default)
         {
-            MarkRequeuedForRecoveryCalls++;
-            LastRequeuedRunId = runId;
-            LastRequeuedExecutionId = executionId;
-            LastRequeuedReason = reason;
+            cancellationToken.ThrowIfCancellationRequested();
 
-            return Task.FromResult(MarkRequeuedForRecoveryResult);
+            this.MarkRequeuedForRecoveryCalls++;
+            this.LastRequeuedRunId = runId;
+            this.LastRequeuedExecutionId = executionId;
+            this.LastRequeuedReason = reason;
+
+            return Task.FromResult(this.MarkRequeuedForRecoveryResult);
         }
 
         /// <inheritdoc />
@@ -115,8 +129,11 @@ namespace Multiplexed.AI.Tests.Fixtures
             string runId,
             CancellationToken cancellationToken = default)
         {
-            var entry = RegisteredEntries
-                .Concat(UnfinishedRuns)
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var entry = this.RegisteredEntries
+                .Concat(this.UnfinishedRuns)
+                .Concat(this.RecoverableRuns)
                 .FirstOrDefault(x => string.Equals(
                     x.RunId,
                     runId,
@@ -130,26 +147,73 @@ namespace Multiplexed.AI.Tests.Fixtures
             string runtimeInstanceId,
             CancellationToken cancellationToken = default)
         {
-            var matches = UnfinishedRuns
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var matches = this.UnfinishedRuns
                 .Where(x => string.Equals(
                     x.RuntimeInstanceId,
                     runtimeInstanceId,
                     StringComparison.OrdinalIgnoreCase))
+                .OrderBy(entry => entry.CreatedAtUtc)
+                .ThenBy(entry => entry.RunId, StringComparer.Ordinal)
                 .ToList();
 
             return Task.FromResult<IReadOnlyList<AiRuntimeRunExecutionIndexEntry>>(matches);
         }
 
+        /// <inheritdoc />
         public Task<IReadOnlyList<AiRuntimeRunExecutionIndexEntry>> ListUnfinishedAsync(
-             CancellationToken cancellationToken = default)
+            CancellationToken cancellationToken = default)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            var matches =
-                UnfinishedRuns
-                    .OrderBy(entry => entry.CreatedAtUtc)
-                    .ThenBy(entry => entry.RunId, StringComparer.Ordinal)
-                    .ToList();
+            var matches = this.UnfinishedRuns
+                .OrderBy(entry => entry.CreatedAtUtc)
+                .ThenBy(entry => entry.RunId, StringComparer.Ordinal)
+                .ToList();
+
+            return Task.FromResult<IReadOnlyList<AiRuntimeRunExecutionIndexEntry>>(matches);
+        }
+
+        /// <inheritdoc />
+        public Task<IReadOnlyList<AiRuntimeRunExecutionIndexEntry>> ListRecoverableByRuntimeInstanceAsync(
+            string runtimeInstanceId,
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var source =
+                this.RecoverableRuns.Count > 0
+                    ? this.RecoverableRuns
+                    : this.UnfinishedRuns;
+
+            var matches = source
+                .Where(x => string.Equals(
+                    x.RuntimeInstanceId,
+                    runtimeInstanceId,
+                    StringComparison.OrdinalIgnoreCase))
+                .OrderBy(entry => entry.CreatedAtUtc)
+                .ThenBy(entry => entry.RunId, StringComparer.Ordinal)
+                .ToList();
+
+            return Task.FromResult<IReadOnlyList<AiRuntimeRunExecutionIndexEntry>>(matches);
+        }
+
+        /// <inheritdoc />
+        public Task<IReadOnlyList<AiRuntimeRunExecutionIndexEntry>> ListRecoverableAsync(
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var source =
+                this.RecoverableRuns.Count > 0
+                    ? this.RecoverableRuns
+                    : this.UnfinishedRuns;
+
+            var matches = source
+                .OrderBy(entry => entry.CreatedAtUtc)
+                .ThenBy(entry => entry.RunId, StringComparer.Ordinal)
+                .ToList();
 
             return Task.FromResult<IReadOnlyList<AiRuntimeRunExecutionIndexEntry>>(matches);
         }

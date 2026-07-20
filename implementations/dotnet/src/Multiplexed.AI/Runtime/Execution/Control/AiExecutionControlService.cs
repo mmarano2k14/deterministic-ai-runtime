@@ -24,6 +24,7 @@ namespace Multiplexed.AI.Runtime.Execution.Control
         private const string ControlPipelineKey = "execution-control";
         private const string ControlScope = "_control";
         private const string HumanInputScope = "_human_input";
+        private const string RuntimeRecoveryOwnerPrefix = "runtime-recovery:";
 
         private readonly IAiExecutionControlStore _store;
         private readonly IAiRuntimeObservability? _observability;
@@ -373,6 +374,304 @@ namespace Multiplexed.AI.Runtime.Execution.Control
             return state;
         }
 
+        /// <inheritdoc />
+        public async Task<AiExecutionControlState> PauseExecutionForRecoveryAsync(
+            string executionId,
+            string recoveryOwnerId,
+            string? reason = null,
+            CancellationToken cancellationToken = default)
+        {
+            ValidateExecutionId(executionId);
+            ValidateRecoveryOwnerId(recoveryOwnerId);
+
+            var state =
+                await ApplyTransitionAsync(
+                        executionId,
+                        existing => ApplyRecoveryPause(
+                            existing,
+                            executionId,
+                            recoveryOwnerId,
+                            reason),
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+            var applied =
+                IsOwnedByRecovery(
+                    state,
+                    recoveryOwnerId) &&
+                state.Status is
+                    AiExecutionControlStatus.Pausing or
+                    AiExecutionControlStatus.Paused;
+
+            await RecordControlLedgerEventAsync(
+                    state,
+                    AiDecisionLedgerEvents.Control.PauseRequested,
+                    applied
+                        ? AiDecisionLedgerOutcome.Applied
+                        : AiDecisionLedgerOutcome.Blocked,
+                    applied
+                        ? reason ?? "Execution paused automatically for runtime recovery."
+                        : "Runtime recovery pause was blocked by the existing execution control state.",
+                    CreateControlMetadata(state),
+                    cancellationToken)
+                .ConfigureAwait(false);
+
+            await RecordControlStateChangedLedgerEventAsync(
+                    state,
+                    applied
+                        ? "Execution control state changed after runtime recovery pause request."
+                        : "Execution control state was preserved because runtime recovery could not acquire pause ownership.",
+                    cancellationToken)
+                .ConfigureAwait(false);
+
+            return state;
+        }
+
+        /// <inheritdoc />
+        public async Task<AiExecutionControlState> ResumeExecutionFromRecoveryAsync(
+            string executionId,
+            string recoveryOwnerId,
+            CancellationToken cancellationToken = default)
+        {
+            ValidateExecutionId(executionId);
+            ValidateRecoveryOwnerId(recoveryOwnerId);
+
+            var state =
+                await ApplyTransitionAsync(
+                        executionId,
+                        existing => ApplyRecoveryResume(
+                            existing,
+                            executionId,
+                            recoveryOwnerId),
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+            var applied =
+                IsOwnedByRecovery(
+                    state,
+                    recoveryOwnerId) &&
+                state.Status == AiExecutionControlStatus.Resuming &&
+                state.PendingAction == AiExecutionControlAction.Resume;
+
+            await RecordControlLedgerEventAsync(
+                    state,
+                    AiDecisionLedgerEvents.Control.ResumeRequested,
+                    applied
+                        ? AiDecisionLedgerOutcome.Applied
+                        : AiDecisionLedgerOutcome.Blocked,
+                    applied
+                        ? "Execution resume requested automatically by runtime recovery."
+                        : "Runtime recovery resume was blocked because the pause was not owned by this recovery operation or was not fully paused.",
+                    CreateControlMetadata(state),
+                    cancellationToken)
+                .ConfigureAwait(false);
+
+            await RecordControlStateChangedLedgerEventAsync(
+                    state,
+                    applied
+                        ? "Execution control state changed after runtime recovery resume request."
+                        : "Execution control state was preserved because runtime recovery could not resume the execution.",
+                    cancellationToken)
+                .ConfigureAwait(false);
+
+            return state;
+        }
+
+        /// <summary>
+        /// Applies a runtime-recovery-owned pause transition.
+        /// </summary>
+        private static AiExecutionControlState ApplyRecoveryPause(
+            AiExecutionControlState? existing,
+            string executionId,
+            string recoveryOwnerId,
+            string? reason)
+        {
+            var state =
+                CloneOrCreate(
+                    existing,
+                    executionId);
+
+            if (state.Status is
+                AiExecutionControlStatus.Cancelled or
+                AiExecutionControlStatus.Cancelling)
+            {
+                return state;
+            }
+
+            /*
+             * Reconciliation is idempotent for the same recovery operation.
+             * It must not restart the pause transition after recovery already
+             * owns the execution.
+             */
+            if (IsOwnedByRecovery(
+                    state,
+                    recoveryOwnerId) &&
+                state.Status is
+                    AiExecutionControlStatus.Pausing or
+                    AiExecutionControlStatus.Paused or
+                    AiExecutionControlStatus.Resuming)
+            {
+                return state;
+            }
+
+            /*
+             * A recovery operation must never overwrite a user pause,
+             * waiting-for-input state, or another unresolved pause.
+             */
+            if (state.Status is
+                AiExecutionControlStatus.Pausing or
+                AiExecutionControlStatus.Paused or
+                AiExecutionControlStatus.WaitingForInput)
+            {
+                return state;
+            }
+
+            if (state.Status is not
+                (AiExecutionControlStatus.None or
+                 AiExecutionControlStatus.Running or
+                 AiExecutionControlStatus.Resuming))
+            {
+                return state;
+            }
+
+            state.Status =
+                AiExecutionControlStatus.Pausing;
+
+            state.PendingAction =
+                AiExecutionControlAction.Pause;
+
+            state.Reason =
+                reason ??
+                "runtime-instance-unavailable";
+
+            state.RequestedBy =
+                recoveryOwnerId;
+
+            state.PauseRequestedAtUtc =
+                DateTime.UtcNow;
+
+            return state;
+        }
+
+        /// <summary>
+        /// Applies a runtime-recovery-owned resume transition.
+        /// </summary>
+        private static AiExecutionControlState ApplyRecoveryResume(
+            AiExecutionControlState? existing,
+            string executionId,
+            string recoveryOwnerId)
+        {
+            var state =
+                CloneOrCreate(
+                    existing,
+                    executionId);
+
+            if (state.Status is
+                AiExecutionControlStatus.Cancelled or
+                AiExecutionControlStatus.Cancelling)
+            {
+                return state;
+            }
+
+            /*
+             * A repeated resume request from the same recovery operation
+             * is semantically idempotent.
+             */
+            if (IsOwnedByRecovery(
+                    state,
+                    recoveryOwnerId) &&
+                state.Status == AiExecutionControlStatus.Resuming &&
+                state.PendingAction == AiExecutionControlAction.Resume)
+            {
+                return state;
+            }
+
+            /*
+             * Recovery may resume only the durable pause it owns.
+             * Pausing is deliberately not accepted here: active work and
+             * orphaned claims must first be drained or recovered.
+             */
+            if (!IsOwnedByRecovery(
+                    state,
+                    recoveryOwnerId) ||
+                state.Status != AiExecutionControlStatus.Paused ||
+                state.PendingAction != AiExecutionControlAction.None)
+            {
+                return state;
+            }
+
+            state.Status =
+                AiExecutionControlStatus.Resuming;
+
+            state.PendingAction =
+                AiExecutionControlAction.Resume;
+
+            state.ResumeRequestedAtUtc =
+                DateTime.UtcNow;
+
+            return state;
+        }
+
+        /// <summary>
+        /// Determines whether the control state is owned by runtime recovery.
+        /// </summary>
+        private static bool IsRuntimeRecoveryOwned(
+            AiExecutionControlState state)
+        {
+            ArgumentNullException.ThrowIfNull(state);
+
+            return IsRuntimeRecoveryOwnerId(
+                state.RequestedBy);
+        }
+
+        /// <summary>
+        /// Determines whether the control state belongs to a specific recovery operation.
+        /// </summary>
+        private static bool IsOwnedByRecovery(
+            AiExecutionControlState state,
+            string recoveryOwnerId)
+        {
+            ArgumentNullException.ThrowIfNull(state);
+
+            return string.Equals(
+                state.RequestedBy,
+                recoveryOwnerId,
+                StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Determines whether an identifier represents a runtime recovery owner.
+        /// </summary>
+        private static bool IsRuntimeRecoveryOwnerId(
+            string? ownerId)
+        {
+            return !string.IsNullOrWhiteSpace(ownerId) &&
+                   ownerId.StartsWith(
+                       RuntimeRecoveryOwnerPrefix,
+                       StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Validates a deterministic runtime recovery owner identifier.
+        /// </summary>
+        private static void ValidateRecoveryOwnerId(
+            string recoveryOwnerId)
+        {
+            if (string.IsNullOrWhiteSpace(recoveryOwnerId))
+            {
+                throw new ArgumentException(
+                    "Recovery owner id cannot be null, empty, or whitespace.",
+                    nameof(recoveryOwnerId));
+            }
+
+            if (!IsRuntimeRecoveryOwnerId(recoveryOwnerId))
+            {
+                throw new ArgumentException(
+                    $"Recovery owner id must start with '{RuntimeRecoveryOwnerPrefix}'.",
+                    nameof(recoveryOwnerId));
+            }
+        }
+
         /// <summary>
         /// Applies a durable execution control transition using optimistic concurrency.
         /// </summary>
@@ -445,6 +744,19 @@ namespace Multiplexed.AI.Runtime.Execution.Control
                 return state;
             }
 
+            /*
+             * A generic pause must not replace or restart a runtime-recovery-owned
+             * control transition.
+             */
+            if (IsRuntimeRecoveryOwned(state) &&
+                state.Status is
+                    AiExecutionControlStatus.Pausing or
+                    AiExecutionControlStatus.Paused or
+                    AiExecutionControlStatus.Resuming)
+            {
+                return state;
+            }
+
             if (state.Status == AiExecutionControlStatus.Paused &&
                 state.PendingAction == AiExecutionControlAction.None)
             {
@@ -492,7 +804,16 @@ namespace Multiplexed.AI.Runtime.Execution.Control
 
             state.Status = AiExecutionControlStatus.Paused;
             state.PendingAction = AiExecutionControlAction.None;
-            state.RequestedBy = requestedBy ?? state.RequestedBy;
+
+            /*
+             * The runtime worker confirms that active work has drained, but it
+             * must not replace the recovery operation that owns the pause.
+             */
+            if (!IsRuntimeRecoveryOwned(state))
+            {
+                state.RequestedBy = requestedBy ?? state.RequestedBy;
+            }
+
             state.PausedAtUtc ??= DateTime.UtcNow;
 
             return state;
@@ -513,6 +834,19 @@ namespace Multiplexed.AI.Runtime.Execution.Control
             var state = CloneOrCreate(existing, executionId);
 
             if (state.Status is AiExecutionControlStatus.Cancelled or AiExecutionControlStatus.Cancelling)
+            {
+                return state;
+            }
+
+            /*
+             * A generic user or API resume must never release a pause owned by
+             * runtime recovery.
+             */
+            if (IsRuntimeRecoveryOwned(state) &&
+                state.Status is
+                    AiExecutionControlStatus.Pausing or
+                    AiExecutionControlStatus.Paused or
+                    AiExecutionControlStatus.Resuming)
             {
                 return state;
             }
@@ -888,6 +1222,10 @@ namespace Multiplexed.AI.Runtime.Execution.Control
                 ["status"] = state.Status.ToString(),
                 ["pending.action"] = state.PendingAction.ToString(),
                 ["requested.by"] = state.RequestedBy ?? string.Empty,
+                ["owner.kind"] = IsRuntimeRecoveryOwned(state)
+                    ? "runtime-recovery"
+                    : "requester",
+                ["owner.id"] = state.RequestedBy ?? string.Empty,
                 ["reason"] = state.Reason ?? string.Empty,
                 ["version"] = state.Version.ToString()
             };

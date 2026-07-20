@@ -1,6 +1,7 @@
 ﻿using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Claiming;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Queue;
 using System.Collections.Concurrent;
+using System.Globalization;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue
 {
@@ -16,6 +17,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue
     /// </remarks>
     public sealed class InMemoryAiSharedQueue : IAiSharedQueue
     {
+        private const string QueuePriorityMetadataKey = "queue.priority";
+
         private readonly ConcurrentDictionary<string, AiSharedQueueItem> _items =
             new(StringComparer.Ordinal);
 
@@ -67,6 +70,134 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue
                 .ToArray();
 
             return Task.FromResult<IReadOnlyList<AiSharedQueueItem>>(items);
+        }
+
+
+        /// <inheritdoc />
+        public Task<AiSharedQueueItem?> ClaimAsync(
+            string sharedRunId,
+            AiSharedQueueClaimRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(sharedRunId);
+            ArgumentNullException.ThrowIfNull(request);
+            ArgumentException.ThrowIfNullOrWhiteSpace(
+                request.RuntimeInstanceId);
+
+            cancellationToken.ThrowIfCancellationRequested();
+
+            while (true)
+            {
+                if (!_items.TryGetValue(
+                        sharedRunId,
+                        out var existing))
+                {
+                    return Task.FromResult<AiSharedQueueItem?>(
+                        null);
+                }
+
+                if (existing.Status !=
+                    AiSharedQueueItemStatus.Pending)
+                {
+                    return Task.FromResult<AiSharedQueueItem?>(
+                        null);
+                }
+
+                if (!MatchesTenant(
+                        existing,
+                        request.TenantId))
+                {
+                    return Task.FromResult<AiSharedQueueItem?>(
+                        null);
+                }
+
+                if (!MatchesPipeline(
+                        existing,
+                        request.PipelineKey))
+                {
+                    return Task.FromResult<AiSharedQueueItem?>(
+                        null);
+                }
+
+                if (!string.IsNullOrWhiteSpace(
+                        request.ControlPlaneId) &&
+                    !string.Equals(
+                        existing.ControlPlaneId,
+                        request.ControlPlaneId,
+                        StringComparison.Ordinal))
+                {
+                    return Task.FromResult<AiSharedQueueItem?>(
+                        null);
+                }
+
+                var now =
+                    DateTimeOffset.UtcNow;
+
+                var claimTtl =
+                    request.ClaimTtl <= TimeSpan.Zero
+                        ? TimeSpan.FromSeconds(30)
+                        : request.ClaimTtl;
+
+                var claimed =
+                    new AiSharedQueueItem
+                    {
+                        SharedRunId =
+                            existing.SharedRunId,
+
+                        ControlPlaneId =
+                            existing.ControlPlaneId,
+
+                        Status =
+                            AiSharedQueueItemStatus.Claimed,
+
+                        ExecutionContextSnapshot =
+                            existing.ExecutionContextSnapshot,
+
+                        PipelineKey =
+                            existing.PipelineKey,
+
+                        Priority =
+                            existing.Priority,
+
+                        ClaimedByRuntimeInstanceId =
+                            request.RuntimeInstanceId,
+
+                        ClaimedByWorkerId =
+                            request.WorkerId,
+
+                        ClaimToken =
+                            Guid.NewGuid().ToString("N"),
+
+                        EnqueuedAtUtc =
+                            existing.EnqueuedAtUtc,
+
+                        UpdatedAtUtc =
+                            now,
+
+                        ClaimedAtUtc =
+                            now,
+
+                        ClaimExpiresAtUtc =
+                            now.Add(claimTtl),
+
+                        Reason =
+                            request.Reason,
+
+                        Metadata =
+                            existing.Metadata
+                    };
+
+                if (_items.TryUpdate(
+                        sharedRunId,
+                        claimed,
+                        existing))
+                {
+                    return Task.FromResult<AiSharedQueueItem?>(
+                        claimed);
+                }
+
+                cancellationToken.ThrowIfCancellationRequested();
+            }
         }
 
         /// <inheritdoc />
@@ -233,6 +364,12 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue
                 }
 
                 var now = DateTimeOffset.UtcNow;
+                var mergedMetadata = MergeMetadata(
+                    existing.Metadata,
+                    metadata);
+                var priority = ResolvePriority(
+                    existing.Priority,
+                    metadata);
 
                 var updated = new AiSharedQueueItem
                 {
@@ -240,13 +377,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue
                     Status = AiSharedQueueItemStatus.Pending,
                     ExecutionContextSnapshot = existing.ExecutionContextSnapshot,
                     PipelineKey = existing.PipelineKey,
-                    Priority = existing.Priority,
+                    Priority = priority,
                     EnqueuedAtUtc = existing.EnqueuedAtUtc,
                     UpdatedAtUtc = now,
                     Reason = reason,
-                    Metadata = MergeMetadata(
-                        existing.Metadata,
-                        metadata)
+                    Metadata = mergedMetadata
                 };
 
                 if (_items.TryUpdate(sharedRunId, updated, existing))
@@ -361,6 +496,44 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue
                     return Task.FromResult<AiSharedQueueItem?>(updated);
                 }
             }
+        }
+
+        /// <summary>
+        /// Resolves an optional durable queue-priority override from item metadata.
+        /// </summary>
+        /// <param name="existingPriority">The current queue priority.</param>
+        /// <param name="metadata">The optional transition metadata.</param>
+        /// <returns>The effective queue priority.</returns>
+        private static int ResolvePriority(
+            int existingPriority,
+            IReadOnlyDictionary<string, string>? metadata)
+        {
+            if (metadata is null ||
+                metadata.Count == 0)
+            {
+                return existingPriority;
+            }
+
+            foreach (var pair in metadata)
+            {
+                if (!string.Equals(
+                        pair.Key,
+                        QueuePriorityMetadataKey,
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                return int.TryParse(
+                    pair.Value,
+                    NumberStyles.Integer,
+                    CultureInfo.InvariantCulture,
+                    out var priority)
+                        ? priority
+                        : existingPriority;
+            }
+
+            return existingPriority;
         }
 
         /// <summary>

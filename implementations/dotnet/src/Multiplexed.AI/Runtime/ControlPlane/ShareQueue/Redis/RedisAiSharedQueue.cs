@@ -40,6 +40,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
     /// </remarks>
     public sealed class RedisAiSharedQueue : IAiSharedQueue
     {
+        private const string QueuePriorityMetadataKey = "queue.priority";
+
         private const string DefaultKeyPrefix =
             "ai";
 
@@ -135,13 +137,28 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
             var controlPlaneId =
                 await ResolveControlPlaneIdAsync(
                         item.ControlPlaneId,
+                        item.Metadata,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+            var controlPlaneMetadata =
+                await _controlPlaneIdResolver
+                    .ResolveMetadataAsync(
+                        new AiControlPlaneIdResolutionRequest
+                        {
+                            RequestedControlPlaneId = controlPlaneId,
+                            Metadata = item.Metadata,
+                            Source = "redis-shared-queue-enqueue-metadata",
+                            AllowGeneratedFallback = false
+                        },
                         cancellationToken)
                     .ConfigureAwait(false);
 
             var effectiveItem =
                 EnsureControlPlaneId(
                     item,
-                    controlPlaneId);
+                    controlPlaneId,
+                    controlPlaneMetadata);
 
             var itemKey =
                 BuildItemKey(
@@ -222,6 +239,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
             var controlPlaneId =
                 await ResolveControlPlaneIdAsync(
                         requestedControlPlaneId: null,
+                        metadata: null,
                         cancellationToken)
                     .ConfigureAwait(false);
 
@@ -242,6 +260,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
             var controlPlaneId =
                 await ResolveControlPlaneIdAsync(
                         requestedControlPlaneId: null,
+                        metadata: null,
                         cancellationToken)
                     .ConfigureAwait(false);
 
@@ -346,6 +365,180 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
         }
 
         /// <inheritdoc />
+        public async Task<AiSharedQueueItem?> ClaimAsync(
+            string sharedRunId,
+            AiSharedQueueClaimRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(sharedRunId);
+            ArgumentNullException.ThrowIfNull(request);
+            ArgumentException.ThrowIfNullOrWhiteSpace(
+                request.RuntimeInstanceId);
+
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var controlPlaneId =
+                await ResolveControlPlaneIdAsync(
+                        request.ControlPlaneId,
+                        request.Metadata,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+            var now =
+                DateTimeOffset.UtcNow;
+
+            var claimTtl =
+                request.ClaimTtl <= TimeSpan.Zero
+                    ? TimeSpan.FromSeconds(30)
+                    : request.ClaimTtl;
+
+            var claimToken =
+                Guid.NewGuid().ToString("N");
+
+            var effectiveTenantId =
+                string.IsNullOrWhiteSpace(request.TenantId)
+                    ? null
+                    : request.TenantId;
+
+            var tenantPendingIndexKey =
+                string.IsNullOrWhiteSpace(effectiveTenantId)
+                    ? (RedisKey)string.Empty
+                    : BuildTenantPendingIndexKey(
+                        controlPlaneId,
+                        effectiveTenantId);
+
+            var result =
+                await _scripts
+                    .ExecuteClaimAsync(
+                        _database,
+                        new RedisKey[]
+                        {
+                    BuildItemKey(
+                        controlPlaneId,
+                        sharedRunId),
+
+                    BuildPendingIndexKey(
+                        controlPlaneId),
+
+                    tenantPendingIndexKey
+                        },
+                        new RedisValue[]
+                        {
+                    sharedRunId,
+                    request.RuntimeInstanceId,
+                    request.WorkerId ?? string.Empty,
+                    claimToken,
+                    FormatDate(now),
+                    FormatDate(now.Add(claimTtl)),
+                    effectiveTenantId ?? string.Empty,
+                    request.PipelineKey ?? string.Empty,
+                    request.Reason ?? string.Empty
+                        })
+                    .ConfigureAwait(false);
+
+            var status =
+                result.ToString();
+
+            if (string.Equals(
+                    status,
+                    "missing",
+                    StringComparison.Ordinal) ||
+                string.Equals(
+                    status,
+                    "not-pending",
+                    StringComparison.Ordinal) ||
+                string.Equals(
+                    status,
+                    "shared-run-mismatch",
+                    StringComparison.Ordinal) ||
+                string.Equals(
+                    status,
+                    "tenant-mismatch",
+                    StringComparison.Ordinal) ||
+                string.Equals(
+                    status,
+                    "pipeline-mismatch",
+                    StringComparison.Ordinal))
+            {
+                return null;
+            }
+
+            if (string.Equals(
+                    status,
+                    "invalid-snapshot",
+                    StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    $"Shared queue item '{sharedRunId}' contains an invalid execution context snapshot.");
+            }
+
+            if (!string.Equals(
+                    status,
+                    "claimed",
+                    StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    $"Unexpected Redis targeted claim result for shared queue item '{sharedRunId}': '{status}'.");
+            }
+
+            var rawItem =
+                await GetRawAsync(
+                        controlPlaneId,
+                        sharedRunId,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+            if (rawItem is null)
+            {
+                return null;
+            }
+
+            if (!BelongsToControlPlane(
+                    rawItem.ControlPlaneId,
+                    controlPlaneId))
+            {
+                await CleanupItemAsync(
+                        controlPlaneId,
+                        sharedRunId,
+                        rawItem.ExecutionContextSnapshot.TenantId,
+                        deleteItem: true)
+                    .ConfigureAwait(false);
+
+                return null;
+            }
+
+            var item =
+                EnsureControlPlaneId(
+                    rawItem,
+                    controlPlaneId);
+
+            if (!BelongsToTenant(
+                    item,
+                    effectiveTenantId))
+            {
+                return null;
+            }
+
+            if (!string.Equals(
+                    item.SharedRunId,
+                    sharedRunId,
+                    StringComparison.Ordinal) ||
+                item.Status != AiSharedQueueItemStatus.Claimed ||
+                !string.Equals(
+                    item.ClaimToken,
+                    claimToken,
+                    StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    $"Redis targeted claim postcondition failed for shared queue item '{sharedRunId}'. " +
+                    $"Status='{item.Status}', " +
+                    $"ClaimTokenMatches='{string.Equals(item.ClaimToken, claimToken, StringComparison.Ordinal)}'.");
+            }
+
+            return item;
+        }
+
+        /// <inheritdoc />
         public async Task<AiSharedQueueItem?> ClaimNextAsync(
             AiSharedQueueClaimRequest request,
             CancellationToken cancellationToken = default)
@@ -357,7 +550,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
 
             var controlPlaneId =
                 await ResolveControlPlaneIdAsync(
-                        requestedControlPlaneId: null,
+                        request.ControlPlaneId,
+                        request.Metadata,
                         cancellationToken)
                     .ConfigureAwait(false);
 
@@ -512,6 +706,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
             var controlPlaneId =
                 await ResolveControlPlaneIdAsync(
                         requestedControlPlaneId: null,
+                        metadata: null,
                         cancellationToken)
                     .ConfigureAwait(false);
 
@@ -579,6 +774,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
             var controlPlaneId =
                 await ResolveControlPlaneIdAsync(
                         requestedControlPlaneId: null,
+                        metadata: null,
                         cancellationToken)
                     .ConfigureAwait(false);
 
@@ -595,8 +791,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
 
             var now = DateTimeOffset.UtcNow;
             var score = BuildQueueScoreFromParts(
-                priority: 0,
-                enqueuedAtUtc: now);
+                existing.Priority,
+                existing.EnqueuedAtUtc);
 
             var requeueKeys = string.IsNullOrWhiteSpace(existing.ExecutionContextSnapshot.TenantId)
                 ? new RedisKey[]
@@ -683,6 +879,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
             var controlPlaneId =
                 await ResolveControlPlaneIdAsync(
                         requestedControlPlaneId: null,
+                        metadata: null,
                         cancellationToken)
                     .ConfigureAwait(false);
 
@@ -704,13 +901,14 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
 
             var now = DateTimeOffset.UtcNow;
 
-            var score = BuildQueueScoreFromParts(
-                existing.Priority,
-                existing.EnqueuedAtUtc);
-
             var tenantPendingIndexKey = string.IsNullOrWhiteSpace(existing.ExecutionContextSnapshot.TenantId)
                 ? (RedisKey)string.Empty
                 : BuildTenantPendingIndexKey(
+                    controlPlaneId,
+                    existing.ExecutionContextSnapshot.TenantId);
+            var tenantAllIndexKey = string.IsNullOrWhiteSpace(existing.ExecutionContextSnapshot.TenantId)
+                ? (RedisKey)string.Empty
+                : BuildTenantAllIndexKey(
                     controlPlaneId,
                     existing.ExecutionContextSnapshot.TenantId);
 
@@ -719,6 +917,30 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
                     existing.Metadata,
                     metadata);
 
+            var controlPlaneMetadata =
+                await _controlPlaneIdResolver
+                    .ResolveMetadataAsync(
+                        new AiControlPlaneIdResolutionRequest
+                        {
+                            RequestedControlPlaneId = controlPlaneId,
+                            Metadata = mergedMetadata,
+                            Source = "redis-shared-queue-requeue-dispatched-metadata",
+                            AllowGeneratedFallback = false
+                        },
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+            mergedMetadata =
+                MergeMetadata(
+                    mergedMetadata,
+                    controlPlaneMetadata);
+
+            var priority = ResolvePriority(
+                existing.Priority,
+                metadata);
+            var score = BuildQueueScoreFromParts(
+                priority,
+                existing.EnqueuedAtUtc);
             var metadataJson =
                 Serialize(mergedMetadata);
 
@@ -731,7 +953,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
                             controlPlaneId,
                             sharedRunId),
                         BuildPendingIndexKey(controlPlaneId),
-                        tenantPendingIndexKey
+                        tenantPendingIndexKey,
+                        BuildAllIndexKey(controlPlaneId),
+                        tenantAllIndexKey
                     },
                     new RedisValue[]
                     {
@@ -740,7 +964,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
                         score,
                         FormatDate(now),
                         reason ?? string.Empty,
-                        metadataJson
+                        metadataJson,
+                        priority.ToString(CultureInfo.InvariantCulture)
                     })
                 .ConfigureAwait(false);
 
@@ -779,6 +1004,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
             var controlPlaneId =
                 await ResolveControlPlaneIdAsync(
                         requestedControlPlaneId: null,
+                        metadata: null,
                         cancellationToken)
                     .ConfigureAwait(false);
 
@@ -1135,6 +1361,38 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
             };
         }
 
+        private static int ResolvePriority(
+            int existingPriority,
+            IReadOnlyDictionary<string, string>? metadata)
+        {
+            if (metadata is null ||
+                metadata.Count == 0)
+            {
+                return existingPriority;
+            }
+
+            foreach (var pair in metadata)
+            {
+                if (!string.Equals(
+                        pair.Key,
+                        QueuePriorityMetadataKey,
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                return int.TryParse(
+                    pair.Value,
+                    NumberStyles.Integer,
+                    CultureInfo.InvariantCulture,
+                    out var priority)
+                        ? priority
+                        : existingPriority;
+            }
+
+            return existingPriority;
+        }
+
         private static IReadOnlyDictionary<string, string> MergeMetadata(
             IReadOnlyDictionary<string, string> existingMetadata,
             IReadOnlyDictionary<string, string>? metadata)
@@ -1165,18 +1423,22 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
 
         private async Task<string> ResolveControlPlaneIdAsync(
             string? requestedControlPlaneId,
+            IReadOnlyDictionary<string, string>? metadata,
             CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            if (!string.IsNullOrWhiteSpace(requestedControlPlaneId))
-            {
-                return requestedControlPlaneId;
-            }
-
             var resolvedControlPlaneId =
                 await _controlPlaneIdResolver
-                    .ResolveAsync(cancellationToken)
+                    .ResolveAsync(
+                        new AiControlPlaneIdResolutionRequest
+                        {
+                            RequestedControlPlaneId = requestedControlPlaneId,
+                            Metadata = metadata,
+                            Source = "redis-shared-queue",
+                            AllowGeneratedFallback = false
+                        },
+                        cancellationToken)
                     .ConfigureAwait(false);
 
             if (string.IsNullOrWhiteSpace(resolvedControlPlaneId))
@@ -1192,21 +1454,32 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
             AiSharedQueueItem item,
             string controlPlaneId)
         {
-            if (string.Equals(
-                    item.ControlPlaneId,
-                    controlPlaneId,
-                    StringComparison.Ordinal))
-            {
-                return item;
-            }
+            return EnsureControlPlaneId(
+                item,
+                controlPlaneId,
+                controlPlaneMetadata: null);
+        }
 
+        private static AiSharedQueueItem EnsureControlPlaneId(
+            AiSharedQueueItem item,
+            string controlPlaneId,
+            IReadOnlyDictionary<string, string>? controlPlaneMetadata)
+        {
             var metadata =
                 new Dictionary<string, string>(
                     item.Metadata,
-                    StringComparer.Ordinal)
+                    StringComparer.OrdinalIgnoreCase);
+
+            if (controlPlaneMetadata is not null)
+            {
+                foreach (var pair in controlPlaneMetadata)
                 {
-                    ["controlPlaneId"] = controlPlaneId
-                };
+                    if (!string.IsNullOrWhiteSpace(pair.Key))
+                    {
+                        metadata[pair.Key] = pair.Value;
+                    }
+                }
+            }
 
             return new AiSharedQueueItem
             {

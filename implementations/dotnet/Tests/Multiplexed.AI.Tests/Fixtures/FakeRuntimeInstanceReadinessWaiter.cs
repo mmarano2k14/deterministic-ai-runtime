@@ -1,5 +1,5 @@
 ﻿using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager;
-using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager.Readiness;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Readiness;
 
 namespace Multiplexed.AI.Tests.Fixtures
 {

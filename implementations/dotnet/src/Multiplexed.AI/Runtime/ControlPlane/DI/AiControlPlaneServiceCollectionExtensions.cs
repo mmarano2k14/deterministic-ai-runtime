@@ -551,26 +551,16 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
             return services;
         }
 
-        /// <summary>
-        /// Registers the runtime instance registration hosted service.
-        ///
-        /// This service publishes runtime instance registration and heartbeats
-        /// used by MCP tools, dashboards, autoscaling, diagnostics, and future
-        /// Kubernetes controllers.
-        /// </summary>
-        /// <param name="services">The service collection.</param>
-        /// <param name="configure">Optional runtime instance registration options configuration.</param>
-        /// <returns>The same service collection for chaining.</returns>
         public static IServiceCollection AddAiRuntimeInstanceRegistrationHostedService(
             this IServiceCollection services,
             Action<AiRuntimeInstanceRegistrationOptions>? configure = null)
         {
             ArgumentNullException.ThrowIfNull(services);
 
-            if (configure is null)
-            {
+            var optionsBuilder =
                 services
                     .AddOptions<AiRuntimeInstanceRegistrationOptions>()
+                    .BindConfiguration("AiRuntimeInstanceRegistration")
                     .Validate(
                         options => options.HeartbeatInterval > TimeSpan.Zero,
                         "Runtime instance heartbeat interval must be positive.")
@@ -580,21 +570,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
                     .Validate(
                         options => options.CapacityTtl > TimeSpan.Zero,
                         "Runtime instance capacity TTL must be positive.");
-            }
-            else
+
+            if (configure is not null)
             {
-                services
-                    .AddOptions<AiRuntimeInstanceRegistrationOptions>()
-                    .Configure(configure)
-                    .Validate(
-                        options => options.HeartbeatInterval > TimeSpan.Zero,
-                        "Runtime instance heartbeat interval must be positive.")
-                    .Validate(
-                        options => options.RegistryTtl > TimeSpan.Zero,
-                        "Runtime instance registry TTL must be positive.")
-                    .Validate(
-                        options => options.CapacityTtl > TimeSpan.Zero,
-                        "Runtime instance capacity TTL must be positive.");
+                optionsBuilder.Configure(configure);
             }
 
             services.TryAddEnumerable(

@@ -1,6 +1,6 @@
 # Runtime Discovery, Registry, and Capacity
 
-Status: Implemented foundation / validated for MCP, Redis, local runtime pools, Redis-backed scale-out request lifecycle, local runtime scale-out, fulfilled-run requeue, HTTP pooled runtime scenarios, process-host HTTP and gRPC runtime crash recovery, gRPC process-host scale-out and dispatch, unsafe runtime capacity suppression, fulfilled replacement capacity visibility, and multi-tenant runtime isolation across shared, dedicated, and hybrid tenant modes.
+Status: Implemented foundation / validated for MCP, Redis, local runtime pools, Redis-backed scale-out request lifecycle, local runtime scale-out, fulfilled-run requeue, HTTP pooled runtime scenarios, process-host HTTP and gRPC runtime crash recovery, gRPC process-host scale-out and dispatch, unsafe runtime capacity suppression, fulfilled replacement capacity visibility, and multi-tenant runtime isolation across shared, dedicated, and hybrid tenant modes, including Kubernetes control-plane publication after Pod and transport readiness.
 
 This document describes the runtime discovery, registry, and capacity model used by the Deterministic AI Runtime control plane.
 
@@ -13,6 +13,7 @@ This document complements:
 - [Multi-Tenant Control Plane Isolation](multi-tenant-control-plane-isolation.md)
 - [MCP Server as Runtime Control Plane](mcp-server-control-plane.md)
 - [Runtime Instance Provider Model](runtime-instance-provider-model.md)
+- [Kubernetes Runtime Host Provider](kubernetes-runtime-host-provider.md)
 - [HTTP Runtime Provider](http-runtime-provider.md)
 - [gRPC Runtime Provider](grpc-runtime-provider.md)
 - [HTTP Runtime Provider](http-runtime-provider.md)
@@ -68,7 +69,7 @@ This layer is required for:
 - tenant-scoped replacement capacity selection
 - safe-tenant non-impact validation
 - gRPC runtime process-host dispatch and scale-out
-- future Kubernetes runtime pods
+- Kubernetes `RuntimeInstanceOnly` Pods
 - future autoscaling and dashboards.
 
 ---
@@ -124,7 +125,7 @@ Scale-out watcher
     ↓
 Provider-based scale-out selector
     ↓
-Local runtime scaler or future Kubernetes scaler
+Local runtime scaler or Kubernetes Host Manager strategy
     ↓
 Tenant-scoped runtime instance registration
     ↓
@@ -283,7 +284,7 @@ This affects:
 - local runtime queue enqueue
 - background controller processing
 - direct runtime integration tests
-- HTTP, gRPC, and future Kubernetes provider paths.
+- HTTP/gRPC process-host and Kubernetes-hosted provider paths.
 
 ---
 
@@ -1060,14 +1061,16 @@ tenant-b Hybrid
     Shared runtime fallback is allowed when shared capacity is visible
 ```
 
-Future Kubernetes scale-out should reuse the same visibility flow.
+Kubernetes scale-out reuses the same visibility flow through `KubernetesAiRuntimeInstancePublisher` after layered readiness.
 
 ```text
-Kubernetes scaler creates or expands runtime pods
+Kubernetes Host Manager creates or converges runtime Pods
     ↓
-runtime pod registers with tenant isolation metadata
+Pod and HTTP/gRPC command readiness succeed
     ↓
-runtime pod publishes tenant-scoped capacity
+control-plane publisher registers tenant isolation metadata
+    ↓
+control-plane publisher publishes tenant-scoped capacity
     ↓
 scale-out request fulfilled
     ↓
@@ -1212,7 +1215,7 @@ Assertions should validate assignment to the child runtime identity.
 
 They should not assume that all runs are assigned to a fixed parent HTTP host identity.
 
-Future HTTP/gRPC/Kubernetes tenant propagation should preserve the same rule:
+HTTP/gRPC process and Kubernetes tenant propagation preserve the same rule:
 
 ```text
 ExecutionContextSnapshot must travel with the dispatched run.
@@ -1473,20 +1476,28 @@ All gRPC process-host crash recovery scenarios = green
 | Shutdown cleanup without late rediscovery | Implemented / validated |
 | Registry/capacity TTL hardening | Planned |
 | Registry self-healing ListAsync cleanup | Planned |
-| Kubernetes pod metadata integration | Planned |
-| Kubernetes autoscaling integration | Planned |
+| Kubernetes Pod/Service metadata publication | Implemented / validated |
+| Kubernetes runtime Pod scale-out through Host Manager | Implemented / validated |
+| Cluster autoscaling/HPA integration | Planned |
 
 ---
+
+
+## Kubernetes Publication Boundary
+
+Kubernetes runtime Pods intentionally start with runtime self-registration disabled. After Pod readiness and required HTTP/gRPC command readiness, `KubernetesAiRuntimeInstancePublisher` writes the runtime registration and capacity descriptor from the control plane.
+
+This prevents a Pod that is merely `Running` from becoming visible as executable capacity before its selected transport endpoint is safe to use.
+
+See [Kubernetes Runtime Host Provider](kubernetes-runtime-host-provider.md).
 
 ## Current Limitations
 
 The current implementation does not yet provide:
 
-- Kubernetes pod metadata provider
-- Kubernetes autoscaling adapter
-- Kubernetes pod/deployment scale-out implementation
+- cluster autoscaling/HPA adapter beyond runtime Pod creation
+- production multi-control-plane leader election for shared cluster provisioning
 - Redis command queue provider
-- production multi-control-plane leader election
 - fully hardened registry/capacity TTL self-healing
 - database-backed tenant runtime settings provider
 - production dashboard UI
@@ -1541,6 +1552,6 @@ These are intentionally separate from the current validated discovery, registry,
 
 This document describes the runtime discovery, registry, capacity, tenant visibility, unsafe runtime visibility, and crash recovery capacity foundation.
 
-Do not present Kubernetes autoscaling, Redis command queue dispatch, production dashboard features, database-backed tenant settings, or production multi-control-plane leader election as completed capabilities until they are implemented and validated.
+Do not present cluster autoscaling/HPA, Redis command queue dispatch, production dashboard features, database-backed tenant settings, or production multi-control-plane leader election as completed capabilities until they are implemented and validated. Kubernetes Runtime Host Manager Pod/Service lifecycle and control-plane publication are implemented on the Kubernetes branch.
 
 The gRPC runtime provider and gRPC process-host crash recovery path are now implemented and validated. Provider-aware gRPC readiness hardening remains a future improvement.

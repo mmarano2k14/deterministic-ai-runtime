@@ -470,8 +470,7 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution
                 AiSharedRunStatus.QueuedGlobally,
                 updated.Status);
 
-            Assert.Equal(
-                "runtime-1",
+            Assert.Null(
                 updated.AssignedRuntimeInstanceId);
 
             Assert.Equal(
@@ -496,8 +495,7 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution
                 AiSharedRunStatus.QueuedGlobally,
                 loaded.Status);
 
-            Assert.Equal(
-                "runtime-1",
+            Assert.Null(
                 loaded.AssignedRuntimeInstanceId);
 
             Assert.Equal(

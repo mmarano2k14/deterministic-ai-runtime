@@ -193,7 +193,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Recovery
 
             Assert.Equal("runtime-1", decision.RuntimeInstanceId);
             Assert.Equal("none", decision.Action);
-            Assert.Equal("no-unfinished-runtime-runs", decision.Reason);
+            Assert.Equal("no-recoverable-runtime-runs", decision.Reason);
             Assert.False(decision.Changed);
         }
 
@@ -233,6 +233,67 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Recovery
             Assert.Equal("runtime-1", entry.RuntimeInstanceId);
             Assert.Equal("running", entry.Status);
             Assert.Null(entry.CompletedAtUtc);
+        }
+
+        /// <summary>
+        /// Verifies that durable in-flight execution recovery is processed before local queued recovery.
+        /// </summary>
+        [Fact]
+        public async Task ReconcileAsync_Should_Process_InFlight_Execution_Before_Local_Queued_Run()
+        {
+            var registry = new InMemoryAiRuntimeInstanceRegistry();
+            var index = new InMemoryAiRuntimeRunExecutionIndex();
+
+            await registry.RegisterAsync(CreateRegistration("runtime-1"));
+            await registry.MarkUnhealthyAsync("runtime-1");
+
+            var recoveryStartedAtUtc =
+                DateTimeOffset.UtcNow;
+
+            await index.RegisterQueuedAsync(
+                CreateIndexEntry(
+                    "runtime-1",
+                    "local-queued-run",
+                    string.Empty,
+                    recoveryStartedAtUtc));
+
+            await index.RegisterQueuedAsync(
+                CreateIndexEntry(
+                    "runtime-1",
+                    "in-flight-run",
+                    "execution-1",
+                    recoveryStartedAtUtc.AddSeconds(1)));
+
+            await index.MarkStartedAsync(
+                "in-flight-run",
+                "execution-1");
+
+            var reconciler = CreateReconciler(
+                registry,
+                index,
+                new AiRuntimeExecutionRecoveryReconciliationOptions
+                {
+                    Enabled = true,
+                    IncludeUnhealthyRuntimeInstances = true,
+                    DryRun = true
+                });
+
+            var result = await reconciler.ReconcileAsync();
+
+            var orderedOwnershipDecisions =
+                result.Decisions
+                    .Where(decision =>
+                        string.Equals(
+                            decision.Action,
+                            "ownership-resolution",
+                            StringComparison.Ordinal))
+                    .ToList();
+
+            Assert.Equal(2, orderedOwnershipDecisions.Count);
+            Assert.Equal("in-flight-run", orderedOwnershipDecisions[0].LocalRunId);
+            Assert.Equal("execution-1", orderedOwnershipDecisions[0].ExecutionId);
+            Assert.Equal("local-queued-run", orderedOwnershipDecisions[1].LocalRunId);
+            Assert.True(string.IsNullOrWhiteSpace(orderedOwnershipDecisions[1].ExecutionId));
         }
 
         /// <summary>
@@ -299,11 +360,13 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Recovery
         /// <param name="runtimeInstanceId">The runtime instance identifier.</param>
         /// <param name="runId">The local runtime run identifier.</param>
         /// <param name="executionId">The durable execution identifier.</param>
+        /// <param name="createdAtUtc">The optional deterministic creation time.</param>
         /// <returns>The runtime run execution index entry.</returns>
         private static AiRuntimeRunExecutionIndexEntry CreateIndexEntry(
             string runtimeInstanceId,
             string runId,
-            string executionId)
+            string executionId,
+            DateTimeOffset? createdAtUtc = null)
         {
             return new AiRuntimeRunExecutionIndexEntry
             {
@@ -311,7 +374,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Recovery
                 ExecutionId = executionId,
                 RuntimeInstanceId = runtimeInstanceId,
                 Status = "queued",
-                CreatedAtUtc = DateTimeOffset.UtcNow,
+                CreatedAtUtc = createdAtUtc ?? DateTimeOffset.UtcNow,
                 ExecutionContextSnapshot = CreateExecutionContextSnapshot(),
                 Metadata = new Dictionary<string, string>
                 {

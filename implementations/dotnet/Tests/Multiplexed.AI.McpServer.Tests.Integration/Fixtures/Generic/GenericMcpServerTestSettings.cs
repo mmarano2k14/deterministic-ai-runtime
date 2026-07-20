@@ -7,7 +7,7 @@
     {
         private const string RedisConnectionString = "localhost:6379";
         private const string MongoConnectionString = "mongodb://localhost:27017";
-        private const string DatabaseName = "multiplexed-ai-mcp-http-tests";
+        public const string DefaultDatabaseName = "multiplexed-ai-mcp-http-tests";
 
         private static readonly string DefaultControlPlaneId = CreateControlPlaneId("mcp-http-tests");
 
@@ -44,6 +44,7 @@
             IReadOnlyDictionary<string, string?>? overrides = null)
         {
             var effectiveControlPlaneId = string.IsNullOrWhiteSpace(controlPlaneId) ? DefaultControlPlaneId : controlPlaneId;
+            var effectiveDatabaseName = ResolveDatabaseName(overrides);
 
             var settings = new Dictionary<string, string?>
             {
@@ -89,14 +90,14 @@
 
                 ["ConnectionStrings:Redis"] = RedisConnectionString,
                 ["ConnectionStrings:Mongo"] = MongoConnectionString,
-                ["Mongo:DatabaseName"] = DatabaseName,
+                ["Mongo:DatabaseName"] = effectiveDatabaseName,
 
                 ["AiEngine:RuntimeInstanceId"] = "mcp-control-plane-http",
 
                 ["AiEngine:Snapshots:Enabled"] = "true",
                 ["AiEngine:Snapshots:Mongo:Enabled"] = "true",
                 ["AiEngine:Snapshots:Mongo:ConnectionString"] = MongoConnectionString,
-                ["AiEngine:Snapshots:Mongo:DatabaseName"] = DatabaseName
+                ["AiEngine:Snapshots:Mongo:DatabaseName"] = effectiveDatabaseName
             };
 
             ApplyOverrides(settings, overrides);
@@ -131,6 +132,7 @@
             ArgumentException.ThrowIfNullOrWhiteSpace(runtimeInstanceId);
 
             var effectiveControlPlaneId = string.IsNullOrWhiteSpace(controlPlaneId) ? DefaultControlPlaneId : controlPlaneId;
+            var effectiveDatabaseName = ResolveDatabaseName(overrides);
             var endpoint = $"http://localhost:{port}";
 
             var settings = new Dictionary<string, string?>
@@ -183,14 +185,14 @@
 
                 ["ConnectionStrings:Redis"] = RedisConnectionString,
                 ["ConnectionStrings:Mongo"] = MongoConnectionString,
-                ["Mongo:DatabaseName"] = DatabaseName,
+                ["Mongo:DatabaseName"] = effectiveDatabaseName,
 
                 ["AiEngine:RuntimeInstanceId"] = runtimeInstanceId,
 
                 ["AiEngine:Snapshots:Enabled"] = "true",
                 ["AiEngine:Snapshots:Mongo:Enabled"] = "true",
                 ["AiEngine:Snapshots:Mongo:ConnectionString"] = MongoConnectionString,
-                ["AiEngine:Snapshots:Mongo:DatabaseName"] = DatabaseName,
+                ["AiEngine:Snapshots:Mongo:DatabaseName"] = effectiveDatabaseName,
 
                 ["AiEngine:PipelineBackgroundController:RuntimeInstanceId"] = runtimeInstanceId,
                 ["AiEngine:PipelineBackgroundController:MaxConcurrentRuns"] = "5",
@@ -487,16 +489,46 @@
 
                     ["AiRuntimeProcessHostCreation:EnvironmentVariables:ConnectionStrings__Redis"] = RedisConnectionString,
                     ["AiRuntimeProcessHostCreation:EnvironmentVariables:ConnectionStrings__Mongo"] = MongoConnectionString,
-                    ["AiRuntimeProcessHostCreation:EnvironmentVariables:Mongo__DatabaseName"] = DatabaseName,
+                    ["AiRuntimeProcessHostCreation:EnvironmentVariables:Mongo__DatabaseName"] = DefaultDatabaseName,
                     ["AiRuntimeProcessHostCreation:EnvironmentVariables:AiEngine__Snapshots__Enabled"] = "true",
                     ["AiRuntimeProcessHostCreation:EnvironmentVariables:AiEngine__Snapshots__Mongo__Enabled"] = "true",
                     ["AiRuntimeProcessHostCreation:EnvironmentVariables:AiEngine__Snapshots__Mongo__ConnectionString"] = MongoConnectionString,
-                    ["AiRuntimeProcessHostCreation:EnvironmentVariables:AiEngine__Snapshots__Mongo__DatabaseName"] = DatabaseName,
+                    ["AiRuntimeProcessHostCreation:EnvironmentVariables:AiEngine__Snapshots__Mongo__DatabaseName"] = DefaultDatabaseName,
 
                     ["AiDecisionLedger:Provider"] = "mongo",
                     ["AiRuntimeProcessHostCreation:EnvironmentVariables:AiDecisionLedger__Provider"] = "mongo",
 
                 });
+        }
+
+        /// <summary>
+        /// Resolves the MongoDB database used by the current test host.
+        /// </summary>
+        /// <param name="overrides">Optional scenario-specific configuration overrides.</param>
+        /// <returns>The effective MongoDB database name.</returns>
+        private static string ResolveDatabaseName(
+            IReadOnlyDictionary<string, string?>? overrides)
+        {
+            if (overrides is not null)
+            {
+                if (overrides.TryGetValue(
+                        "AiEngine:Snapshots:Mongo:DatabaseName",
+                        out var snapshotDatabaseName) &&
+                    !string.IsNullOrWhiteSpace(snapshotDatabaseName))
+                {
+                    return snapshotDatabaseName;
+                }
+
+                if (overrides.TryGetValue(
+                        "Mongo:DatabaseName",
+                        out var mongoDatabaseName) &&
+                    !string.IsNullOrWhiteSpace(mongoDatabaseName))
+                {
+                    return mongoDatabaseName;
+                }
+            }
+
+            return DefaultDatabaseName;
         }
 
         /// <summary>
