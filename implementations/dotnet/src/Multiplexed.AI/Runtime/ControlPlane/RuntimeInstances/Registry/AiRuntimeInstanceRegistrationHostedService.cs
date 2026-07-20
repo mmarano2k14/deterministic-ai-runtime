@@ -668,6 +668,14 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
                 new AiRuntimeInstanceCapacityDescriptor
                 {
                     RuntimeInstanceId = runtimeInstanceId,
+                    TenantId =
+                        GetMetadataValue(
+                            descriptorMetadata,
+                            AiRuntimeInstanceIsolationMetadataKeys.TenantId),
+                    TenantGroupId =
+                        GetMetadataValue(
+                            descriptorMetadata,
+                            AiRuntimeInstanceIsolationMetadataKeys.TenantGroupId),
                     ControlPlaneId = this.controlPlaneId,
                     ControlPlaneHostId = this.controlPlaneHostId,
                     Role = this.options.Role,
@@ -894,13 +902,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
         }
 
         /// <summary>
-        /// Determines whether the descriptor has the required transport endpoint
-        /// before it can accept runs.
+        /// Determines whether the descriptor has the required transport endpoint before it can accept runs.
         /// </summary>
         /// <param name="metadata">The descriptor metadata.</param>
-        /// <returns>
-        /// <see langword="true"/> when the descriptor can be admitted for dispatch.
-        /// </returns>
+        /// <returns><see langword="true"/> when the descriptor can be admitted for dispatch.</returns>
         private static bool HasRequiredTransportEndpoint(
             IReadOnlyDictionary<string, string> metadata)
         {
@@ -913,95 +918,17 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
                        metadata,
                        out var transportEndpoint) &&
                    !string.IsNullOrWhiteSpace(transportEndpoint) &&
-                   !IsUnsafeKubernetesLocalhostEndpoint(
-                       transportEndpoint);
+                   !IsUnsafeKubernetesLocalhostEndpoint(transportEndpoint);
         }
 
         /// <summary>
-        /// Determines whether the metadata represents a Kubernetes-backed
-        /// HTTP or gRPC runtime.
-        /// </summary>
-        /// <param name="metadata">The runtime metadata.</param>
-        /// <returns>
-        /// <see langword="true"/> for a Kubernetes-backed remote runtime.
-        /// </returns>
-        private static bool IsKubernetesRemoteRuntime(
-            IReadOnlyDictionary<string, string> metadata)
-        {
-            var provider =
-                GetMetadataValue(
-                    metadata,
-                    AiRuntimeInstanceProviderMetadataKeys.ProviderName) ??
-                GetMetadataValue(
-                    metadata,
-                    "provider");
-
-            var transport =
-                GetMetadataValue(
-                    metadata,
-                    "transport.name") ??
-                GetMetadataValue(
-                    metadata,
-                    "transportName") ??
-                provider;
-
-            var hostProvider =
-                GetMetadataValue(
-                    metadata,
-                    "host.provider");
-
-            var hostType =
-                GetMetadataValue(
-                    metadata,
-                    "hostType");
-
-            var deployment =
-                GetMetadataValue(
-                    metadata,
-                    "deployment");
-
-            var isRemoteTransport =
-                string.Equals(
-                    provider,
-                    "http",
-                    StringComparison.OrdinalIgnoreCase) ||
-                string.Equals(
-                    provider,
-                    "grpc",
-                    StringComparison.OrdinalIgnoreCase) ||
-                string.Equals(
-                    transport,
-                    "http",
-                    StringComparison.OrdinalIgnoreCase) ||
-                string.Equals(
-                    transport,
-                    "grpc",
-                    StringComparison.OrdinalIgnoreCase);
-
-            var isKubernetes =
-                string.Equals(
-                    hostProvider,
-                    "kubernetes",
-                    StringComparison.OrdinalIgnoreCase) ||
-                string.Equals(
-                    hostType,
-                    "runtime-instance-kubernetes",
-                    StringComparison.OrdinalIgnoreCase) ||
-                string.Equals(
-                    deployment,
-                    "kubernetes-host",
-                    StringComparison.OrdinalIgnoreCase);
-
-            return isRemoteTransport &&
-                   isKubernetes;
-        }
-
-        /// <summary>
-        /// Determines whether the descriptor represents a Kubernetes-backed gRPC runtime.
+        /// Determines whether the descriptor represents a Kubernetes-backed remote runtime.
         /// </summary>
         /// <param name="metadata">The descriptor metadata.</param>
-        /// <returns><see langword="true"/> when this is a Kubernetes gRPC runtime descriptor.</returns>
-        private static bool IsKubernetesGrpcRuntime(
+        /// <returns>
+        /// <see langword="true"/> when this is a Kubernetes HTTP or gRPC runtime descriptor.
+        /// </returns>
+        private static bool IsKubernetesRemoteRuntime(
             IReadOnlyDictionary<string, string> metadata)
         {
             var provider =
@@ -1013,6 +940,12 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
                 GetMetadataValue(metadata, "transportName") ??
                 provider;
 
+            var isRemoteTransport =
+                string.Equals(provider, "http", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(provider, "grpc", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(transport, "http", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(transport, "grpc", StringComparison.OrdinalIgnoreCase);
+
             var hostProvider =
                 GetMetadataValue(metadata, "host.provider");
 
@@ -1022,16 +955,13 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
             var deployment =
                 GetMetadataValue(metadata, "deployment");
 
-            var isGrpc =
-                string.Equals(provider, "grpc", StringComparison.OrdinalIgnoreCase) ||
-                string.Equals(transport, "grpc", StringComparison.OrdinalIgnoreCase);
-
             var isKubernetes =
                 string.Equals(hostProvider, "kubernetes", StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(hostType, "runtime-instance-kubernetes", StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(deployment, "kubernetes-host", StringComparison.OrdinalIgnoreCase);
 
-            return isGrpc && isKubernetes;
+            return isRemoteTransport &&
+                   isKubernetes;
         }
 
         /// <summary>

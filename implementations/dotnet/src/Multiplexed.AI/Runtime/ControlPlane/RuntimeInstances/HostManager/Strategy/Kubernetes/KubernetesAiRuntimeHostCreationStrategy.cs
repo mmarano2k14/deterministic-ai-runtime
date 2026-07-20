@@ -18,8 +18,10 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
 using System.Net;
+using System.Net.Http;
 using System.Net.Sockets;
 using System.Threading;
+using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
 using DiagnosticsProcess = System.Diagnostics.Process;
@@ -40,8 +42,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
     public sealed class KubernetesAiRuntimeHostCreationStrategy : IAiRuntimeHostCreationStrategy, IAiRuntimeHostProcessControl, IDisposable
     {
         private const string DefaultGatewayRoutingHeaderName = "x-ai-runtime-instance-id";
+        private const string DefaultHttpCommandEndpointPath = "/runtime-instance/commands";
         private static readonly JsonSerializerOptions GatewayGrpcProbeJsonOptions = new(JsonSerializerDefaults.Web);
         private static readonly TimeSpan MaximumGatewayGrpcProbeAttemptTimeout = TimeSpan.FromSeconds(5);
+        private static readonly TimeSpan MaximumGatewayHttpProbeAttemptTimeout = TimeSpan.FromSeconds(5);
+        private static readonly HttpClient GatewayHttpProbeClient = new();
 
         private readonly AiKubernetesRuntimeHostOptions options;
         private readonly AiKubernetesRuntimePodSpecBuilder podSpecBuilder;
@@ -217,7 +222,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
                         if (existingHostReadiness.Success)
                         {
                             existingGatewayProbeFailure =
-                                await this.WaitForGatewayGrpcTransportReadinessBeforePublicationAsync(
+                                await this.WaitForGatewayTransportReadinessBeforePublicationAsync(
                                         request,
                                         existingStartedResult.TransportEndpoint,
                                         existingStartedResult.Metadata,
@@ -1083,12 +1088,53 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
             }
 
             return await this
-                .WaitForGatewayGrpcTransportReadinessBeforePublicationAsync(
+                .WaitForGatewayTransportReadinessBeforePublicationAsync(
                     request,
                     transportEndpoint,
                     metadata,
                     cancellationToken)
                 .ConfigureAwait(false);
+        }
+
+        /// <summary>
+        /// Verifies the complete shared-Gateway route for the configured runtime transport
+        /// before runtime capacity is published.
+        /// </summary>
+        /// <param name="request">The runtime host start request.</param>
+        /// <param name="transportEndpoint">The resolved shared Gateway endpoint.</param>
+        /// <param name="metadata">The runtime and Gateway route metadata.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <returns>A failure reason when the route is not command-routable; otherwise, <see langword="null"/>.</returns>
+        private Task<string?> WaitForGatewayTransportReadinessBeforePublicationAsync(
+            AiRuntimeHostStartRequest request,
+            string? transportEndpoint,
+            IReadOnlyDictionary<string, string> metadata,
+            CancellationToken cancellationToken)
+        {
+            if (!this.options.UseGatewayTransportEndpoint)
+            {
+                return Task.FromResult<string?>(null);
+            }
+
+            if (IsGrpcRuntimeTransport(request))
+            {
+                return this.WaitForGatewayGrpcTransportReadinessBeforePublicationAsync(
+                    request,
+                    transportEndpoint,
+                    metadata,
+                    cancellationToken);
+            }
+
+            if (IsHttpRuntimeTransport(request))
+            {
+                return this.WaitForGatewayHttpTransportReadinessBeforePublicationAsync(
+                    request,
+                    transportEndpoint,
+                    metadata,
+                    cancellationToken);
+            }
+
+            return Task.FromResult<string?>(null);
         }
 
         /// <summary>
@@ -1125,7 +1171,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
             }
 
             var routingHeaderName =
-                ResolveGatewayGrpcProbeRoutingHeaderName(metadata);
+                ResolveGatewayProbeRoutingHeaderName(metadata);
 
             if (!IsValidGrpcMetadataKey(routingHeaderName))
             {
@@ -1346,6 +1392,331 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
         }
 
         /// <summary>
+        /// Verifies the complete shared-Gateway HTTP route before runtime capacity is published.
+        /// </summary>
+        /// <remarks>
+        /// The HTTPRoute is selected through <c>x-ai-runtime-instance-id</c>. A plain socket or
+        /// unauthenticated GET only proves that the Gateway listener is reachable; it does not
+        /// prove that the route targets the expected runtime. This probe sends the real
+        /// <c>GetQueueStatus</c> command through the Gateway with the runtime routing header and
+        /// validates the runtime identity returned by the command endpoint.
+        /// </remarks>
+        /// <param name="request">The runtime host start request.</param>
+        /// <param name="transportEndpoint">The resolved shared Gateway endpoint.</param>
+        /// <param name="metadata">The runtime and Gateway route metadata.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <returns>A failure reason when the route does not become command-routable; otherwise, <see langword="null"/>.</returns>
+        private async Task<string?> WaitForGatewayHttpTransportReadinessBeforePublicationAsync(
+            AiRuntimeHostStartRequest request,
+            string? transportEndpoint,
+            IReadOnlyDictionary<string, string> metadata,
+            CancellationToken cancellationToken)
+        {
+            if (!this.options.UseGatewayTransportEndpoint ||
+                !IsHttpRuntimeTransport(request))
+            {
+                return null;
+            }
+
+            if (string.IsNullOrWhiteSpace(transportEndpoint) ||
+                !Uri.TryCreate(transportEndpoint, UriKind.Absolute, out var baseEndpoint))
+            {
+                return $"kubernetes-gateway-http-probe-endpoint-invalid:{transportEndpoint ?? "(null)"}";
+            }
+
+            var commandEndpoint =
+                new Uri(
+                    baseEndpoint.ToString().TrimEnd('/') +
+                    DefaultHttpCommandEndpointPath);
+
+            var routingHeaderName =
+                ResolveGatewayProbeRoutingHeaderName(metadata);
+
+            if (string.IsNullOrWhiteSpace(routingHeaderName))
+            {
+                return "kubernetes-gateway-http-probe-routing-header-missing";
+            }
+
+            var timeout =
+                this.options.ReadinessTimeout > TimeSpan.Zero
+                    ? this.options.ReadinessTimeout
+                    : TimeSpan.FromSeconds(60);
+
+            var pollInterval =
+                this.options.GatewayReadinessPollInterval > TimeSpan.Zero
+                    ? this.options.GatewayReadinessPollInterval
+                    : this.options.ReadinessPollInterval > TimeSpan.Zero
+                        ? this.options.ReadinessPollInterval
+                        : TimeSpan.FromMilliseconds(500);
+
+            var correlationId =
+                $"kubernetes-gateway-http-probe:{request.RuntimeInstanceId}";
+
+            var probeMetadata =
+                new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["kubernetes.gateway.http.probe"] = "true",
+                    ["runtime.instance.id"] = request.RuntimeInstanceId,
+                    ["gateway.routing.header"] = routingHeaderName,
+                    ["gateway.routing.value"] = request.RuntimeInstanceId
+                };
+
+            var commandRequest =
+                new AiRuntimeInstanceCommandRequest
+                {
+                    Operation = AiRuntimeInstanceCommandOperation.GetQueueStatus,
+                    RuntimeInstanceId = request.RuntimeInstanceId,
+                    QueueRequest =
+                        new AiRuntimeQueueControlPlaneRequest
+                        {
+                            Operation = AiRuntimeQueueControlPlaneOperation.GetQueueStatus,
+                            RuntimeInstanceId = request.RuntimeInstanceId,
+                            CorrelationId = correlationId,
+                            RequestedBy = "kubernetes-runtime-host-readiness",
+                            Source = "kubernetes-gateway-http-probe",
+                            Reason = "verify-shared-gateway-route-before-publication",
+                            Metadata = probeMetadata
+                        },
+                    CorrelationId = correlationId,
+                    RequestedBy = "kubernetes-runtime-host-readiness",
+                    Source = "kubernetes-gateway-http-probe",
+                    Reason = "verify-shared-gateway-route-before-publication",
+                    Metadata = probeMetadata
+                };
+
+            var requestJson =
+                JsonSerializer.Serialize(
+                    commandRequest,
+                    GatewayGrpcProbeJsonOptions);
+
+            var stopwatch =
+                Stopwatch.StartNew();
+
+            var attempt = 0;
+            var lastFailureReason =
+                "gateway-route-not-yet-command-routable";
+
+            this.logger.LogInformation(
+                "KUBERNETES GATEWAY HTTP PROBE BEGIN RuntimeInstanceId={RuntimeInstanceId} Endpoint={Endpoint} RoutingHeaderName={RoutingHeaderName} Timeout={Timeout} PollInterval={PollInterval}",
+                request.RuntimeInstanceId,
+                commandEndpoint,
+                routingHeaderName,
+                timeout,
+                pollInterval);
+
+            Console.WriteLine(
+                $"[KUBERNETES GATEWAY HTTP PROBE BEGIN] RuntimeInstanceId='{request.RuntimeInstanceId}', Endpoint='{commandEndpoint}', RoutingHeaderName='{routingHeaderName}', Timeout='{timeout}', PollInterval='{pollInterval}'.");
+
+            while (stopwatch.Elapsed < timeout)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                attempt++;
+
+                var remaining =
+                    timeout - stopwatch.Elapsed;
+
+                var attemptTimeout =
+                    remaining < MaximumGatewayHttpProbeAttemptTimeout
+                        ? remaining
+                        : MaximumGatewayHttpProbeAttemptTimeout;
+
+                if (attemptTimeout <= TimeSpan.Zero)
+                {
+                    break;
+                }
+
+                using var attemptCancellationTokenSource =
+                    CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+
+                attemptCancellationTokenSource.CancelAfter(attemptTimeout);
+
+                try
+                {
+                    using var message =
+                        new HttpRequestMessage(
+                            HttpMethod.Post,
+                            commandEndpoint)
+                        {
+                            Content =
+                                new StringContent(
+                                    requestJson,
+                                    Encoding.UTF8,
+                                    "application/json")
+                        };
+
+                    if (!message.Headers.TryAddWithoutValidation(
+                            routingHeaderName,
+                            request.RuntimeInstanceId))
+                    {
+                        return
+                            $"kubernetes-gateway-http-probe-routing-header-invalid:{routingHeaderName}";
+                    }
+
+                    using var response =
+                        await GatewayHttpProbeClient
+                            .SendAsync(
+                                message,
+                                HttpCompletionOption.ResponseHeadersRead,
+                                attemptCancellationTokenSource.Token)
+                            .ConfigureAwait(false);
+
+                    if (!response.IsSuccessStatusCode)
+                    {
+                        lastFailureReason =
+                            $"http-status-{(int)response.StatusCode}:{response.ReasonPhrase ?? "unknown"}";
+                    }
+                    else
+                    {
+                        var responseJson =
+                            await response.Content
+                                .ReadAsStringAsync(
+                                    attemptCancellationTokenSource.Token)
+                                .ConfigureAwait(false);
+
+                        var commandResult =
+                            JsonSerializer.Deserialize<AiRuntimeInstanceCommandResult>(
+                                responseJson,
+                                GatewayGrpcProbeJsonOptions);
+
+                        var validationFailure =
+                            ValidateGatewayHttpProbeResponse(
+                                request.RuntimeInstanceId,
+                                commandResult);
+
+                        if (string.IsNullOrWhiteSpace(validationFailure))
+                        {
+                            this.logger.LogInformation(
+                                "KUBERNETES GATEWAY HTTP PROBE COMPLETED RuntimeInstanceId={RuntimeInstanceId} Endpoint={Endpoint} RoutingHeaderName={RoutingHeaderName} Attempts={Attempts} Elapsed={Elapsed}",
+                                request.RuntimeInstanceId,
+                                commandEndpoint,
+                                routingHeaderName,
+                                attempt,
+                                stopwatch.Elapsed);
+
+                            Console.WriteLine(
+                                $"[KUBERNETES GATEWAY HTTP PROBE COMPLETED] RuntimeInstanceId='{request.RuntimeInstanceId}', Endpoint='{commandEndpoint}', RoutingHeaderName='{routingHeaderName}', Attempts='{attempt}', Elapsed='{stopwatch.Elapsed}'.");
+
+                            return null;
+                        }
+
+                        lastFailureReason =
+                            validationFailure;
+                    }
+                }
+                catch (OperationCanceledException)
+                    when (!cancellationToken.IsCancellationRequested)
+                {
+                    lastFailureReason =
+                        $"http-probe-attempt-timeout:{attemptTimeout}";
+                }
+                catch (HttpRequestException exception)
+                {
+                    lastFailureReason =
+                        $"http-probe-unreachable:{exception.Message}";
+                }
+                catch (JsonException exception)
+                {
+                    lastFailureReason =
+                        $"http-probe-response-json-invalid:{exception.Message}";
+                }
+                catch (Exception exception)
+                    when (exception is not OperationCanceledException)
+                {
+                    lastFailureReason =
+                        $"http-probe-failed:{exception.GetType().Name}:{exception.Message}";
+                }
+
+                this.logger.LogInformation(
+                    "KUBERNETES GATEWAY HTTP PROBE ATTEMPT FAILED RuntimeInstanceId={RuntimeInstanceId} Endpoint={Endpoint} Attempt={Attempt} Elapsed={Elapsed} FailureReason={FailureReason}",
+                    request.RuntimeInstanceId,
+                    commandEndpoint,
+                    attempt,
+                    stopwatch.Elapsed,
+                    lastFailureReason);
+
+                Console.WriteLine(
+                    $"[KUBERNETES GATEWAY HTTP PROBE ATTEMPT FAILED] RuntimeInstanceId='{request.RuntimeInstanceId}', Endpoint='{commandEndpoint}', Attempt='{attempt}', Elapsed='{stopwatch.Elapsed}', FailureReason='{lastFailureReason}'.");
+
+                var delay =
+                    timeout - stopwatch.Elapsed < pollInterval
+                        ? timeout - stopwatch.Elapsed
+                        : pollInterval;
+
+                if (delay > TimeSpan.Zero)
+                {
+                    await Task
+                        .Delay(delay, cancellationToken)
+                        .ConfigureAwait(false);
+                }
+            }
+
+            this.logger.LogWarning(
+                "KUBERNETES GATEWAY HTTP PROBE TIMED OUT RuntimeInstanceId={RuntimeInstanceId} Endpoint={Endpoint} RoutingHeaderName={RoutingHeaderName} Attempts={Attempts} Elapsed={Elapsed} LastFailureReason={LastFailureReason}",
+                request.RuntimeInstanceId,
+                commandEndpoint,
+                routingHeaderName,
+                attempt,
+                stopwatch.Elapsed,
+                lastFailureReason);
+
+            Console.WriteLine(
+                $"[KUBERNETES GATEWAY HTTP PROBE TIMED OUT] RuntimeInstanceId='{request.RuntimeInstanceId}', Endpoint='{commandEndpoint}', RoutingHeaderName='{routingHeaderName}', Attempts='{attempt}', Elapsed='{stopwatch.Elapsed}', LastFailureReason='{lastFailureReason}'.");
+
+            return
+                $"kubernetes-gateway-http-probe-timeout:{lastFailureReason}";
+        }
+
+        /// <summary>
+        /// Validates the application-level HTTP probe response and target runtime identity.
+        /// </summary>
+        private static string? ValidateGatewayHttpProbeResponse(
+            string expectedRuntimeInstanceId,
+            AiRuntimeInstanceCommandResult? commandResult)
+        {
+            if (commandResult is null)
+            {
+                return "http-probe-command-result-null";
+            }
+
+            if (!string.Equals(
+                    commandResult.RuntimeInstanceId,
+                    expectedRuntimeInstanceId,
+                    StringComparison.Ordinal))
+            {
+                return
+                    $"http-probe-runtime-mismatch:expected={expectedRuntimeInstanceId};actual={commandResult.RuntimeInstanceId ?? "(null)"}";
+            }
+
+            if (!commandResult.Success)
+            {
+                return
+                    $"http-probe-command-failed:{commandResult.FailureReason ?? commandResult.Message ?? "unknown"}";
+            }
+
+            if (commandResult.QueueResult is null)
+            {
+                return "http-probe-queue-result-missing";
+            }
+
+            if (!string.Equals(
+                    commandResult.QueueResult.RuntimeInstanceId,
+                    expectedRuntimeInstanceId,
+                    StringComparison.Ordinal))
+            {
+                return
+                    $"http-probe-queue-runtime-mismatch:expected={expectedRuntimeInstanceId};actual={commandResult.QueueResult.RuntimeInstanceId ?? "(null)"}";
+            }
+
+            if (!commandResult.QueueResult.Success)
+            {
+                return
+                    $"http-probe-queue-command-failed:{commandResult.QueueResult.FailureReason ?? commandResult.QueueResult.Message ?? "unknown"}";
+            }
+
+            return null;
+        }
+
+        /// <summary>
         /// Validates the application-level gRPC probe response and target runtime identity.
         /// </summary>
         private static string? ValidateGatewayGrpcProbeResponse(
@@ -1407,9 +1778,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
         }
 
         /// <summary>
-        /// Resolves the exact gRPC metadata header used by the shared Gateway route.
+        /// Resolves the exact routing header used by the shared Gateway route.
         /// </summary>
-        private string ResolveGatewayGrpcProbeRoutingHeaderName(
+        private string ResolveGatewayProbeRoutingHeaderName(
             IReadOnlyDictionary<string, string> metadata)
         {
             if (TryGetMetadataValue(

@@ -4,6 +4,8 @@ using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.ControlPlane.Discovery;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Capacity;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers.Transport;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
 using Multiplexed.Abstractions.Core.ExecutionContext;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Isolation;
@@ -41,6 +43,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Capacity
 
         private const string CapacityKeySegment =
             "runtime-instance-capacity";
+
+        private const int MaximumPublishCompareExchangeAttempts =
+            8;
 
         private static readonly JsonSerializerOptions JsonOptions =
             new(JsonSerializerDefaults.Web);
@@ -131,11 +136,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Capacity
                     descriptor,
                     controlPlaneId);
 
-            var json =
-                JsonSerializer.Serialize(
-                    effectiveDescriptor,
-                    JsonOptions);
-
             var capacitySetKey =
                 GetCapacitySetKey(controlPlaneId);
 
@@ -144,24 +144,78 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Capacity
                     controlPlaneId,
                     effectiveDescriptor.RuntimeInstanceId);
 
-            var batch =
-                database.CreateBatch();
+            if (!IsKubernetesRemoteRuntime(effectiveDescriptor.Metadata) ||
+                HasUsableTransportEndpoint(effectiveDescriptor.Metadata))
+            {
+                await PublishDescriptorUnconditionallyAsync(
+                        capacitySetKey,
+                        capacityKey,
+                        effectiveDescriptor)
+                    .ConfigureAwait(false);
 
-            var setTask =
-                batch.StringSetAsync(
-                    capacityKey,
-                    json,
-                    registrationOptions.CapacityTtl);
+                return;
+            }
 
-            var addTask =
-                batch.SetAddAsync(
-                    capacitySetKey,
-                    effectiveDescriptor.RuntimeInstanceId);
+            for (var attempt = 1;
+                 attempt <= MaximumPublishCompareExchangeAttempts;
+                 attempt++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
 
-            batch.Execute();
+                var existingValue =
+                    await database
+                        .StringGetAsync(capacityKey)
+                        .ConfigureAwait(false);
 
-            await setTask.ConfigureAwait(false);
-            await addTask.ConfigureAwait(false);
+                var descriptorToPublish =
+                    PreserveExternallyPublishedKubernetesMetadata(
+                        effectiveDescriptor,
+                        existingValue);
+
+                var json =
+                    JsonSerializer.Serialize(
+                        descriptorToPublish,
+                        JsonOptions);
+
+                var transaction =
+                    database.CreateTransaction();
+
+                transaction.AddCondition(
+                    existingValue.HasValue
+                        ? Condition.StringEqual(
+                            capacityKey,
+                            existingValue)
+                        : Condition.KeyNotExists(capacityKey));
+
+                var setTask =
+                    transaction.StringSetAsync(
+                        capacityKey,
+                        json,
+                        registrationOptions.CapacityTtl);
+
+                var addTask =
+                    transaction.SetAddAsync(
+                        capacitySetKey,
+                        descriptorToPublish.RuntimeInstanceId);
+
+                var committed =
+                    await transaction
+                        .ExecuteAsync()
+                        .ConfigureAwait(false);
+
+                if (!committed)
+                {
+                    continue;
+                }
+
+                await setTask.ConfigureAwait(false);
+                await addTask.ConfigureAwait(false);
+
+                return;
+            }
+
+            throw new InvalidOperationException(
+                $"Runtime capacity descriptor publication for '{effectiveDescriptor.RuntimeInstanceId}' could not converge after '{MaximumPublishCompareExchangeAttempts}' compare-exchange attempts.");
         }
 
         /// <inheritdoc />
@@ -329,6 +383,322 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Capacity
                 out _);
 
             return removedFromIndex;
+        }
+
+        /// <summary>
+        /// Publishes a descriptor through the existing fast path when no Kubernetes
+        /// endpoint-preservation compare-exchange is required.
+        /// </summary>
+        /// <param name="capacitySetKey">The scoped capacity index key.</param>
+        /// <param name="capacityKey">The scoped capacity descriptor key.</param>
+        /// <param name="descriptor">The descriptor to publish.</param>
+        private async Task PublishDescriptorUnconditionallyAsync(
+            string capacitySetKey,
+            string capacityKey,
+            AiRuntimeInstanceCapacityDescriptor descriptor)
+        {
+            var json =
+                JsonSerializer.Serialize(
+                    descriptor,
+                    JsonOptions);
+
+            var batch =
+                database.CreateBatch();
+
+            var setTask =
+                batch.StringSetAsync(
+                    capacityKey,
+                    json,
+                    registrationOptions.CapacityTtl);
+
+            var addTask =
+                batch.SetAddAsync(
+                    capacitySetKey,
+                    descriptor.RuntimeInstanceId);
+
+            batch.Execute();
+
+            await setTask.ConfigureAwait(false);
+            await addTask.ConfigureAwait(false);
+        }
+
+        /// <summary>
+        /// Preserves Kubernetes transport and ownership metadata when a stale runtime heartbeat
+        /// races with the external Kubernetes host publisher.
+        /// </summary>
+        /// <param name="incomingDescriptor">The descriptor prepared by the current publisher.</param>
+        /// <param name="existingValue">The descriptor value observed before the compare-exchange write.</param>
+        /// <returns>The descriptor that can be written without losing externally published routing metadata.</returns>
+        private static AiRuntimeInstanceCapacityDescriptor PreserveExternallyPublishedKubernetesMetadata(
+            AiRuntimeInstanceCapacityDescriptor incomingDescriptor,
+            RedisValue existingValue)
+        {
+            if (!existingValue.HasValue ||
+                HasUsableTransportEndpoint(incomingDescriptor.Metadata))
+            {
+                return incomingDescriptor;
+            }
+
+            AiRuntimeInstanceCapacityDescriptor? existingDescriptor;
+
+            try
+            {
+                existingDescriptor =
+                    JsonSerializer.Deserialize<AiRuntimeInstanceCapacityDescriptor>(
+                        existingValue.ToString(),
+                        JsonOptions);
+            }
+            catch (JsonException)
+            {
+                return incomingDescriptor;
+            }
+
+            if (existingDescriptor is null ||
+                (!IsKubernetesRemoteRuntime(incomingDescriptor.Metadata) &&
+                 !IsKubernetesRemoteRuntime(existingDescriptor.Metadata)) ||
+                !TryGetUsableTransportEndpoint(
+                    existingDescriptor.Metadata,
+                    out var existingTransportEndpoint))
+            {
+                return incomingDescriptor;
+            }
+
+            var metadata =
+                new Dictionary<string, string>(
+                    existingDescriptor.Metadata,
+                    StringComparer.OrdinalIgnoreCase);
+
+            foreach (var item in incomingDescriptor.Metadata)
+            {
+                metadata[item.Key] =
+                    item.Value;
+            }
+
+            AddTransportEndpointAliases(
+                metadata,
+                existingTransportEndpoint);
+
+            metadata["transport.endpoint.source"] =
+                "preserved-existing-capacity-descriptor-compare-exchange";
+
+            return new AiRuntimeInstanceCapacityDescriptor
+            {
+                RuntimeInstanceId = incomingDescriptor.RuntimeInstanceId,
+                TenantId =
+                    FirstNonEmpty(
+                        incomingDescriptor.TenantId,
+                        existingDescriptor.TenantId,
+                        GetMetadataValue(
+                            metadata,
+                            AiRuntimeInstanceIsolationMetadataKeys.TenantId)),
+                TenantGroupId =
+                    FirstNonEmpty(
+                        incomingDescriptor.TenantGroupId,
+                        existingDescriptor.TenantGroupId,
+                        GetMetadataValue(
+                            metadata,
+                            AiRuntimeInstanceIsolationMetadataKeys.TenantGroupId)),
+                ControlPlaneId = incomingDescriptor.ControlPlaneId,
+                ControlPlaneHostId =
+                    FirstNonEmpty(
+                        incomingDescriptor.ControlPlaneHostId,
+                        existingDescriptor.ControlPlaneHostId),
+                Role = incomingDescriptor.Role,
+                Status = incomingDescriptor.Status,
+                WorkerCount = incomingDescriptor.WorkerCount,
+                ActiveWorkerCount = incomingDescriptor.ActiveWorkerCount,
+                AvailableWorkerCount = incomingDescriptor.AvailableWorkerCount,
+                MaxWorkersPerRun = incomingDescriptor.MaxWorkersPerRun,
+                MinWorkersRequiredPerRun = incomingDescriptor.MinWorkersRequiredPerRun,
+                QueuedRunCount = incomingDescriptor.QueuedRunCount,
+                RunningRunCount = incomingDescriptor.RunningRunCount,
+                ActiveRunCount = incomingDescriptor.ActiveRunCount,
+                MaxConcurrentRuns = incomingDescriptor.MaxConcurrentRuns,
+                MaxRunSlots = incomingDescriptor.MaxRunSlots,
+                AvailableRunSlots = incomingDescriptor.AvailableRunSlots,
+                ReservedRunSlots = incomingDescriptor.ReservedRunSlots,
+                EffectiveAvailableRunSlots = incomingDescriptor.EffectiveAvailableRunSlots,
+                IsQueuePaused = incomingDescriptor.IsQueuePaused,
+                CanAcceptRun = incomingDescriptor.CanAcceptRun,
+                LastHeartbeatAtUtc = incomingDescriptor.LastHeartbeatAtUtc,
+                Metadata = metadata
+            };
+        }
+
+        /// <summary>
+        /// Determines whether metadata identifies a Kubernetes-backed HTTP or gRPC runtime.
+        /// </summary>
+        /// <param name="metadata">The runtime metadata.</param>
+        /// <returns><see langword="true"/> for a Kubernetes-backed remote runtime.</returns>
+        private static bool IsKubernetesRemoteRuntime(
+            IReadOnlyDictionary<string, string>? metadata)
+        {
+            var provider =
+                GetMetadataValue(
+                    metadata,
+                    AiRuntimeInstanceProviderMetadataKeys.ProviderName) ??
+                GetMetadataValue(
+                    metadata,
+                    "provider");
+
+            var transport =
+                GetMetadataValue(
+                    metadata,
+                    "transport.name") ??
+                GetMetadataValue(
+                    metadata,
+                    "transportName") ??
+                provider;
+
+            var isRemoteTransport =
+                string.Equals(provider, "http", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(provider, "grpc", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(transport, "http", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(transport, "grpc", StringComparison.OrdinalIgnoreCase);
+
+            var hostProvider =
+                GetMetadataValue(
+                    metadata,
+                    "host.provider");
+
+            var hostType =
+                GetMetadataValue(
+                    metadata,
+                    "hostType");
+
+            var deployment =
+                GetMetadataValue(
+                    metadata,
+                    "deployment");
+
+            var isKubernetes =
+                string.Equals(hostProvider, "kubernetes", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(hostType, "runtime-instance-kubernetes", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(deployment, "kubernetes-host", StringComparison.OrdinalIgnoreCase);
+
+            return isRemoteTransport &&
+                   isKubernetes;
+        }
+
+        /// <summary>
+        /// Determines whether metadata contains a safe transport endpoint.
+        /// </summary>
+        /// <param name="metadata">The runtime metadata.</param>
+        /// <returns><see langword="true"/> when a safe transport endpoint exists.</returns>
+        private static bool HasUsableTransportEndpoint(
+            IReadOnlyDictionary<string, string>? metadata)
+        {
+            return TryGetUsableTransportEndpoint(
+                metadata,
+                out _);
+        }
+
+        /// <summary>
+        /// Resolves a safe transport endpoint from all supported metadata aliases.
+        /// </summary>
+        /// <param name="metadata">The runtime metadata.</param>
+        /// <param name="transportEndpoint">The resolved endpoint.</param>
+        /// <returns><see langword="true"/> when a safe endpoint exists.</returns>
+        private static bool TryGetUsableTransportEndpoint(
+            IReadOnlyDictionary<string, string>? metadata,
+            out string transportEndpoint)
+        {
+            transportEndpoint =
+                GetMetadataValue(metadata, "transport.endpoint") ??
+                GetMetadataValue(metadata, "transportEndpoint") ??
+                GetMetadataValue(metadata, "runtime.command.endpoint") ??
+                GetMetadataValue(metadata, "grpc.endpoint") ??
+                string.Empty;
+
+            return !string.IsNullOrWhiteSpace(transportEndpoint) &&
+                   !IsUnsafeKubernetesLocalhostEndpoint(
+                       transportEndpoint);
+        }
+
+        /// <summary>
+        /// Adds all supported transport endpoint aliases.
+        /// </summary>
+        /// <param name="metadata">The metadata dictionary.</param>
+        /// <param name="transportEndpoint">The transport endpoint.</param>
+        private static void AddTransportEndpointAliases(
+            IDictionary<string, string> metadata,
+            string transportEndpoint)
+        {
+            metadata[AiRuntimeInstanceCommandTransportMetadataKeys.TransportEndpoint] =
+                transportEndpoint;
+            metadata["transport.endpoint"] =
+                transportEndpoint;
+            metadata["transportEndpoint"] =
+                transportEndpoint;
+            metadata["grpc.endpoint"] =
+                transportEndpoint;
+        }
+
+        /// <summary>
+        /// Determines whether a Kubernetes endpoint is an unsafe pod-local default.
+        /// </summary>
+        /// <param name="transportEndpoint">The transport endpoint.</param>
+        /// <returns><see langword="true"/> when the endpoint is unsafe for multi-pod dispatch.</returns>
+        private static bool IsUnsafeKubernetesLocalhostEndpoint(
+            string? transportEndpoint)
+        {
+            if (string.IsNullOrWhiteSpace(transportEndpoint))
+            {
+                return false;
+            }
+
+            return transportEndpoint.Contains(
+                       "127.0.0.1:8080",
+                       StringComparison.OrdinalIgnoreCase) ||
+                   transportEndpoint.Contains(
+                       "localhost:8080",
+                       StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>
+        /// Gets a metadata value using case-insensitive matching.
+        /// </summary>
+        /// <param name="metadata">The metadata dictionary.</param>
+        /// <param name="key">The metadata key.</param>
+        /// <returns>The metadata value, or <see langword="null"/> when absent.</returns>
+        private static string? GetMetadataValue(
+            IReadOnlyDictionary<string, string>? metadata,
+            string key)
+        {
+            if (metadata is null)
+            {
+                return null;
+            }
+
+            if (metadata.TryGetValue(
+                    key,
+                    out var value))
+            {
+                return value;
+            }
+
+            foreach (var item in metadata)
+            {
+                if (string.Equals(
+                        item.Key,
+                        key,
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    return item.Value;
+                }
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// Returns the first non-empty value.
+        /// </summary>
+        private static string? FirstNonEmpty(
+            params string?[] values)
+        {
+            return values.FirstOrDefault(
+                value => !string.IsNullOrWhiteSpace(value));
         }
 
         /// <summary>
