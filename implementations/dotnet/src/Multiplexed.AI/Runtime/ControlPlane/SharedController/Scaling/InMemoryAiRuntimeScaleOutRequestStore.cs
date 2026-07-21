@@ -12,6 +12,14 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
     /// </remarks>
     public sealed class InMemoryAiRuntimeScaleOutRequestStore : IAiRuntimeScaleOutRequestStore
     {
+        private const string ScaleOutIntentMetadataKey = "scaleout.intent";
+        private const string ScaleOutReplacementForRuntimeInstanceIdMetadataKey = "scaleout.replacementForRuntimeInstanceId";
+        private const string ScaleOutExcludedRuntimeInstanceIdMetadataKey = "scaleout.excludedRuntimeInstanceId";
+        private const string RecoveryReplacementMetadataKey = "recovery.replacement";
+        private const string RecoveryFailedRuntimeInstanceIdMetadataKey = "recovery.failedRuntimeInstanceId";
+        private const string RecoveryForensicsIdMetadataKey = "recovery.forensicsId";
+        private const string ScaleOutDedupScopeMetadataKey = "scaleout.dedup.scope";
+
         /// <summary>
         /// Synchronizes access to the in-memory request collection.
         /// </summary>
@@ -54,7 +62,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
 
                 if (this.options.EnableDeduplication)
                 {
-                    var duplicate = this.FindDuplicatePendingUnsafe(normalized, DateTimeOffset.UtcNow);
+                    var duplicate = this.FindDuplicateUnsafe(normalized, DateTimeOffset.UtcNow);
 
                     if (duplicate is not null)
                     {
@@ -303,30 +311,186 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
         }
 
         /// <summary>
-        /// Finds an existing pending request matching the deduplication identity of the supplied request.
+        /// Finds an existing request matching the deduplication identity of the supplied request.
         /// </summary>
         /// <param name="request">The request used to compute the deduplication identity.</param>
         /// <param name="now">The current UTC time.</param>
-        /// <returns>The duplicate pending request when found; otherwise, <see langword="null" />.</returns>
+        /// <returns>The duplicate request when found; otherwise, <see langword="null" />.</returns>
         /// <remarks>
+        /// Normal scale-out requests retain the existing pending-request time-window behavior.
+        /// Recovery replacement requests are single-flight across their complete active lifecycle,
+        /// including the observed/provisioning phase, and are matched by exact recovery generation.
         /// The caller must hold <see cref="syncRoot" /> before invoking this method.
         /// </remarks>
-        private AiRuntimeScaleOutRequestRecord? FindDuplicatePendingUnsafe(
+        private AiRuntimeScaleOutRequestRecord? FindDuplicateUnsafe(
             AiRuntimeScaleOutRequestRecord request,
             DateTimeOffset now)
         {
+            if (IsRecoveryReplacementRequest(request))
+            {
+                return this.requests.Values
+                    .Where(candidate => candidate.Status is
+                        AiRuntimeScaleOutRequestStatus.Pending or
+                        AiRuntimeScaleOutRequestStatus.Observed)
+                    .Where(candidate => IsEquivalentRecoveryReplacement(candidate, request))
+                    .OrderByDescending(candidate => candidate.CreatedAtUtc)
+                    .FirstOrDefault();
+            }
+
             var lowerBound = now.Subtract(this.options.DeduplicationWindow);
 
             return this.requests.Values
                 .Where(candidate => candidate.Status is AiRuntimeScaleOutRequestStatus.Pending)
                 .Where(candidate => candidate.CreatedAtUtc >= lowerBound)
-                .Where(candidate => string.Equals(candidate.ControlPlaneId, request.ControlPlaneId, StringComparison.Ordinal))
-                .Where(candidate => string.Equals(candidate.TenantId, request.TenantId, StringComparison.Ordinal))
-                .Where(candidate => string.Equals(candidate.PipelineKey, request.PipelineKey, StringComparison.Ordinal))
-                .Where(candidate => string.Equals(candidate.Reason, request.Reason, StringComparison.Ordinal))
-                .Where(candidate => string.Equals(candidate.ProviderHint, request.ProviderHint, StringComparison.Ordinal))
+                .Where(candidate => HasEquivalentBaseDeduplicationIdentity(candidate, request))
                 .OrderByDescending(candidate => candidate.CreatedAtUtc)
                 .FirstOrDefault();
+        }
+
+        /// <summary>
+        /// Determines whether two requests share the normal scale-out deduplication identity.
+        /// </summary>
+        private static bool HasEquivalentBaseDeduplicationIdentity(
+            AiRuntimeScaleOutRequestRecord candidate,
+            AiRuntimeScaleOutRequestRecord request)
+        {
+            return string.Equals(candidate.ControlPlaneId, request.ControlPlaneId, StringComparison.Ordinal) &&
+                   string.Equals(candidate.TenantId, request.TenantId, StringComparison.Ordinal) &&
+                   string.Equals(candidate.PipelineKey, request.PipelineKey, StringComparison.Ordinal) &&
+                   string.Equals(candidate.Reason, request.Reason, StringComparison.Ordinal) &&
+                   string.Equals(candidate.ProviderHint, request.ProviderHint, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Determines whether two recovery replacement requests target the same recovery generation.
+        /// </summary>
+        private static bool IsEquivalentRecoveryReplacement(
+            AiRuntimeScaleOutRequestRecord candidate,
+            AiRuntimeScaleOutRequestRecord request)
+        {
+            return HasEquivalentBaseDeduplicationIdentity(candidate, request) &&
+                   string.Equals(candidate.SharedRunId, request.SharedRunId, StringComparison.Ordinal) &&
+                   MetadataValueEquals(candidate, request, ScaleOutIntentMetadataKey) &&
+                   string.Equals(
+                       GetFailedRuntimeInstanceId(candidate),
+                       GetFailedRuntimeInstanceId(request),
+                       StringComparison.Ordinal) &&
+                   MetadataValueEquals(candidate, request, RecoveryForensicsIdMetadataKey) &&
+                   string.Equals(
+                       GetDeduplicationScope(candidate),
+                       GetDeduplicationScope(request),
+                       StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Determines whether one metadata value is equal across two requests.
+        /// </summary>
+        private static bool MetadataValueEquals(
+            AiRuntimeScaleOutRequestRecord first,
+            AiRuntimeScaleOutRequestRecord second,
+            string key)
+        {
+            return string.Equals(
+                GetMetadataValue(first.Metadata, key),
+                GetMetadataValue(second.Metadata, key),
+                StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Resolves the failed runtime instance identifier used by a recovery replacement request.
+        /// </summary>
+        private static string? GetFailedRuntimeInstanceId(
+            AiRuntimeScaleOutRequestRecord request)
+        {
+            return FirstNonEmpty(
+                GetMetadataValue(request.Metadata, ScaleOutReplacementForRuntimeInstanceIdMetadataKey),
+                GetMetadataValue(request.Metadata, ScaleOutExcludedRuntimeInstanceIdMetadataKey),
+                GetMetadataValue(request.Metadata, RecoveryFailedRuntimeInstanceIdMetadataKey));
+        }
+
+        /// <summary>
+        /// Resolves the recovery replacement deduplication scope.
+        /// </summary>
+        private static string GetDeduplicationScope(
+            AiRuntimeScaleOutRequestRecord request)
+        {
+            return FirstNonEmpty(
+                       GetMetadataValue(request.Metadata, ScaleOutDedupScopeMetadataKey),
+                       "recovery-replacement")
+                   ?? "recovery-replacement";
+        }
+
+        /// <summary>
+        /// Determines whether a scale-out request is recovery replacement driven.
+        /// </summary>
+        private static bool IsRecoveryReplacementRequest(
+            AiRuntimeScaleOutRequestRecord request)
+        {
+            return IsTrue(GetMetadataValue(request.Metadata, RecoveryReplacementMetadataKey)) ||
+                   !string.IsNullOrWhiteSpace(
+                       GetMetadataValue(request.Metadata, ScaleOutReplacementForRuntimeInstanceIdMetadataKey)) ||
+                   !string.IsNullOrWhiteSpace(
+                       GetMetadataValue(request.Metadata, ScaleOutExcludedRuntimeInstanceIdMetadataKey)) ||
+                   !string.IsNullOrWhiteSpace(
+                       GetMetadataValue(request.Metadata, RecoveryFailedRuntimeInstanceIdMetadataKey));
+        }
+
+        /// <summary>
+        /// Resolves a metadata value using case-insensitive matching.
+        /// </summary>
+        private static string? GetMetadataValue(
+            IDictionary<string, string>? metadata,
+            string key)
+        {
+            if (metadata is null)
+            {
+                return null;
+            }
+
+            if (metadata.TryGetValue(key, out var value) &&
+                !string.IsNullOrWhiteSpace(value))
+            {
+                return value;
+            }
+
+            foreach (var pair in metadata)
+            {
+                if (string.Equals(pair.Key, key, StringComparison.OrdinalIgnoreCase) &&
+                    !string.IsNullOrWhiteSpace(pair.Value))
+                {
+                    return pair.Value;
+                }
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// Returns the first non-empty value.
+        /// </summary>
+        private static string? FirstNonEmpty(
+            params string?[] values)
+        {
+            foreach (var value in values)
+            {
+                if (!string.IsNullOrWhiteSpace(value))
+                {
+                    return value;
+                }
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// Parses a boolean-like metadata value.
+        /// </summary>
+        private static bool IsTrue(
+            string? value)
+        {
+            return string.Equals(value, "true", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(value, "1", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(value, "yes", StringComparison.OrdinalIgnoreCase);
         }
 
         /// <summary>

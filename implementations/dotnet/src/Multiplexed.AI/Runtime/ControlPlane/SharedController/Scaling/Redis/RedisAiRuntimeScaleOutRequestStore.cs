@@ -397,24 +397,35 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
                 return false;
             }
 
-            var controlPlaneId =
+            var requestEntries =
                 await database
-                    .HashGetAsync(
-                        requestKey,
-                        "controlPlaneId")
+                    .HashGetAllAsync(requestKey)
                     .ConfigureAwait(false);
 
-            if (controlPlaneId.IsNullOrEmpty)
+            if (requestEntries.Length == 0)
             {
                 return false;
             }
+
+            var existingRequest =
+                FromHashEntries(requestEntries);
+
+            if (string.IsNullOrWhiteSpace(existingRequest.ControlPlaneId))
+            {
+                return false;
+            }
+
+            var releaseRecoveryDeduplication =
+                IsRecoveryReplacementRequest(existingRequest) &&
+                IsTerminalStatus(targetStatus);
 
             var values =
                 new List<RedisValue>
                 {
                     targetStatus.ToString(),
                     timestampField,
-                    FormatDate(DateTimeOffset.UtcNow)
+                    FormatDate(DateTimeOffset.UtcNow),
+                    releaseRecoveryDeduplication ? "1" : "0"
                 };
 
             foreach (var pair in additionalFields)
@@ -430,7 +441,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
                         new RedisKey[]
                         {
                             requestKey,
-                            this.GetPendingIndexKey(controlPlaneId.ToString())
+                            this.GetPendingIndexKey(existingRequest.ControlPlaneId),
+                            this.GetDedupKey(existingRequest)
                         },
                         values.ToArray())
                     .ConfigureAwait(false);
@@ -950,7 +962,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
                     request.SharedRunId,
                     request.CreatedAtUtc.ToUnixTimeMilliseconds().ToString(CultureInfo.InvariantCulture),
                     GetExpirationSeconds(request, options).ToString(CultureInfo.InvariantCulture),
-                    GetDeduplicationSeconds(options).ToString(CultureInfo.InvariantCulture),
+                    GetDeduplicationSeconds(request, options).ToString(CultureInfo.InvariantCulture),
                     options.EnableDeduplication ? "1" : "0",
                     request.ControlPlaneId
                 };
@@ -996,11 +1008,30 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
         /// <summary>
         /// Gets the deduplication expiration in seconds.
         /// </summary>
+        /// <param name="request">The request whose deduplication lease is being created.</param>
         /// <param name="options">The store options.</param>
         /// <returns>The deduplication expiration duration in seconds.</returns>
+        /// <remarks>
+        /// Recovery replacement requests use the request lifetime rather than the short normal
+        /// deduplication window. This keeps one distributed single-flight owner while the request
+        /// is observed and the replacement runtime is still provisioning or becoming ready.
+        /// Terminal transitions release the recovery deduplication key atomically.
+        /// </remarks>
         private static long GetDeduplicationSeconds(
+            AiRuntimeScaleOutRequestRecord request,
             RedisAiRuntimeScaleOutRequestStoreOptions options)
         {
+            if (IsRecoveryReplacementRequest(request))
+            {
+                var requestLifetimeSeconds =
+                    GetExpirationSeconds(request, options);
+
+                if (requestLifetimeSeconds > 0)
+                {
+                    return requestLifetimeSeconds;
+                }
+            }
+
             return options.DeduplicationWindow > TimeSpan.Zero
                 ? Math.Max(
                     1,
@@ -1445,6 +1476,21 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
             {
                 return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             }
+        }
+
+        /// <summary>
+        /// Determines whether a scale-out request status is terminal.
+        /// </summary>
+        /// <param name="status">The status to evaluate.</param>
+        /// <returns><see langword="true"/> when the status is terminal; otherwise, <see langword="false"/>.</returns>
+        private static bool IsTerminalStatus(
+            AiRuntimeScaleOutRequestStatus status)
+        {
+            return status is
+                AiRuntimeScaleOutRequestStatus.Fulfilled or
+                AiRuntimeScaleOutRequestStatus.Rejected or
+                AiRuntimeScaleOutRequestStatus.Expired or
+                AiRuntimeScaleOutRequestStatus.Cancelled;
         }
 
         /// <summary>

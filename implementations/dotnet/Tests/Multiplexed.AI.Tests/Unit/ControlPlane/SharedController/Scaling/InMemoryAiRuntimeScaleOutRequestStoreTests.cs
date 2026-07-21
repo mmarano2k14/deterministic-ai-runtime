@@ -96,6 +96,76 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController.Scaling
         }
 
         /// <summary>
+        /// Verifies that an observed recovery replacement remains single-flight after the normal deduplication window.
+        /// </summary>
+        [Fact]
+        public async Task CreateAsync_Should_Deduplicate_Observed_Recovery_Replacement_Beyond_Normal_Window()
+        {
+            var store = CreateStore(new AiRuntimeScaleOutRequestStoreOptions
+            {
+                EnableDeduplication = true,
+                DefaultTtl = TimeSpan.FromMinutes(30),
+                DeduplicationWindow = TimeSpan.FromMilliseconds(1),
+                MaxListResults = 100
+            });
+
+            var first = await store.CreateAsync(CreateRecoveryReplacementRequest("request-1"));
+            await store.MarkObservedAsync(first.RequestId, "scaler-test");
+            await Task.Delay(TimeSpan.FromMilliseconds(20));
+
+            var second = await store.CreateAsync(CreateRecoveryReplacementRequest("request-2"));
+
+            Assert.Equal(first.RequestId, second.RequestId);
+            Assert.Equal(AiRuntimeScaleOutRequestStatus.Observed, second.Status);
+
+            var all = await store.ListAsync(new AiRuntimeScaleOutRequestQuery
+            {
+                ControlPlaneId = "cp-test"
+            });
+
+            Assert.Single(all);
+        }
+
+        /// <summary>
+        /// Verifies that a terminal recovery request releases its generation for a later retry.
+        /// </summary>
+        [Fact]
+        public async Task CreateAsync_Should_Allow_New_Recovery_Replacement_After_Terminal_Transition()
+        {
+            var store = CreateStore();
+
+            var first = await store.CreateAsync(CreateRecoveryReplacementRequest("request-1"));
+            await store.MarkObservedAsync(first.RequestId, "scaler-test");
+            await store.MarkRejectedAsync(first.RequestId, "scaler-test", "provisioning failed");
+
+            var second = await store.CreateAsync(CreateRecoveryReplacementRequest("request-2"));
+
+            Assert.Equal("request-2", second.RequestId);
+            Assert.NotEqual(first.RequestId, second.RequestId);
+            Assert.Equal(AiRuntimeScaleOutRequestStatus.Pending, second.Status);
+        }
+
+        /// <summary>
+        /// Verifies that different recovery forensics identities are independent generations.
+        /// </summary>
+        [Fact]
+        public async Task CreateAsync_Should_Not_Deduplicate_Different_Recovery_Generation()
+        {
+            var store = CreateStore();
+
+            var first = await store.CreateAsync(CreateRecoveryReplacementRequest("request-1"));
+            await store.MarkObservedAsync(first.RequestId, "scaler-test");
+
+            var nextGeneration = CreateRecoveryReplacementRequest("request-2");
+            nextGeneration.Metadata["recovery.forensicsId"] = "forensics-2";
+
+            var second = await store.CreateAsync(nextGeneration);
+
+            Assert.Equal("request-2", second.RequestId);
+            Assert.NotEqual(first.RequestId, second.RequestId);
+        }
+
+        /// <summary>
         /// Verifies that deduplication can be disabled.
         /// </summary>
         [Fact]
@@ -482,6 +552,26 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController.Scaling
         {
             return new InMemoryAiRuntimeScaleOutRequestStore(
                 Options.Create(options));
+        }
+
+        /// <summary>
+        /// Creates a recovery replacement request with an exact recovery-generation identity.
+        /// </summary>
+        /// <param name="requestId">The request identifier.</param>
+        /// <returns>The created recovery replacement request.</returns>
+        private static AiRuntimeScaleOutRequestRecord CreateRecoveryReplacementRequest(string requestId)
+        {
+            var request = CreateRequest(requestId);
+
+            request.Metadata["scaleout.intent"] = "shared-queue-redispatch-replacement";
+            request.Metadata["scaleout.replacementForRuntimeInstanceId"] = "runtime-failed-1";
+            request.Metadata["scaleout.excludedRuntimeInstanceId"] = "runtime-failed-1";
+            request.Metadata["scaleout.dedup.scope"] = "recovery-replacement";
+            request.Metadata["recovery.replacement"] = "true";
+            request.Metadata["recovery.failedRuntimeInstanceId"] = "runtime-failed-1";
+            request.Metadata["recovery.forensicsId"] = "forensics-1";
+
+            return request;
         }
 
         /// <summary>

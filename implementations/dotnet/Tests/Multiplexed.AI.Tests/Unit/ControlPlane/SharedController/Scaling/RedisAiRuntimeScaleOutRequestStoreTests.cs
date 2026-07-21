@@ -129,6 +129,78 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController.Scaling
         }
 
         /// <summary>
+        /// Verifies that an observed recovery replacement remains single-flight after the normal Redis deduplication TTL.
+        /// </summary>
+        [Fact]
+        public async Task CreateAsync_Should_Deduplicate_Observed_Recovery_Replacement_Beyond_Normal_Window()
+        {
+            var store = this.CreateStore(
+                keyPrefix: $"{this.keyPrefix}-recovery-active",
+                deduplicationWindow: TimeSpan.FromMilliseconds(100));
+
+            var first = await store.CreateAsync(CreateRecoveryReplacementRequest("request-1"));
+            await store.MarkObservedAsync(first.RequestId, "scaler-test");
+
+            // Redis rounds the normal deduplication lease to at least one second.
+            await Task.Delay(TimeSpan.FromMilliseconds(1_200));
+
+            var second = await store.CreateAsync(CreateRecoveryReplacementRequest("request-2"));
+
+            Assert.Equal(first.RequestId, second.RequestId);
+            Assert.Equal(AiRuntimeScaleOutRequestStatus.Observed, second.Status);
+
+            var all = await store.ListAsync(new AiRuntimeScaleOutRequestQuery
+            {
+                ControlPlaneId = "cp-test"
+            });
+
+            Assert.Single(all);
+        }
+
+        /// <summary>
+        /// Verifies that a terminal recovery request releases its Redis single-flight key atomically.
+        /// </summary>
+        [Fact]
+        public async Task CreateAsync_Should_Allow_New_Recovery_Replacement_After_Terminal_Transition()
+        {
+            var store = this.CreateStore(
+                keyPrefix: $"{this.keyPrefix}-recovery-terminal",
+                deduplicationWindow: TimeSpan.FromSeconds(30));
+
+            var first = await store.CreateAsync(CreateRecoveryReplacementRequest("request-1"));
+            await store.MarkObservedAsync(first.RequestId, "scaler-test");
+            await store.MarkRejectedAsync(first.RequestId, "scaler-test", "provisioning failed");
+
+            var second = await store.CreateAsync(CreateRecoveryReplacementRequest("request-2"));
+
+            Assert.Equal("request-2", second.RequestId);
+            Assert.NotEqual(first.RequestId, second.RequestId);
+            Assert.Equal(AiRuntimeScaleOutRequestStatus.Pending, second.Status);
+        }
+
+        /// <summary>
+        /// Verifies that different recovery forensics identities use different Redis single-flight keys.
+        /// </summary>
+        [Fact]
+        public async Task CreateAsync_Should_Not_Deduplicate_Different_Recovery_Generation()
+        {
+            var store = this.CreateStore(
+                keyPrefix: $"{this.keyPrefix}-recovery-generation",
+                deduplicationWindow: TimeSpan.FromSeconds(30));
+
+            var first = await store.CreateAsync(CreateRecoveryReplacementRequest("request-1"));
+            await store.MarkObservedAsync(first.RequestId, "scaler-test");
+
+            var nextGeneration = CreateRecoveryReplacementRequest("request-2");
+            nextGeneration.Metadata["recovery.forensicsId"] = "forensics-2";
+
+            var second = await store.CreateAsync(nextGeneration);
+
+            Assert.Equal("request-2", second.RequestId);
+            Assert.NotEqual(first.RequestId, second.RequestId);
+        }
+
+        /// <summary>
         /// Verifies that a pending request can transition to observed and then fulfilled.
         /// </summary>
         [Fact]
@@ -254,6 +326,34 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController.Scaling
         }
 
         /// <summary>
+        /// Creates an isolated Redis store using a dedicated key prefix and deduplication window.
+        /// </summary>
+        /// <param name="keyPrefix">The Redis key prefix.</param>
+        /// <param name="deduplicationWindow">The normal scale-out deduplication window.</param>
+        /// <returns>The configured Redis scale-out request store.</returns>
+        private RedisAiRuntimeScaleOutRequestStore CreateStore(
+            string keyPrefix,
+            TimeSpan deduplicationWindow)
+        {
+            var connection =
+                this.connection
+                ?? throw new InvalidOperationException("Redis connection was not initialized.");
+
+            return new RedisAiRuntimeScaleOutRequestStore(
+                connection,
+                Options.Create(new RedisAiRuntimeScaleOutRequestStoreOptions
+                {
+                    KeyPrefix = keyPrefix,
+                    DefaultTtl = TimeSpan.FromMinutes(2),
+                    DeduplicationWindow = deduplicationWindow,
+                    EnableDeduplication = true,
+                    MaxListResults = 100,
+                    DefaultIndexScanLimit = 1_000
+                }),
+                new RedisAiRuntimeScaleOutRequestStoreScriptCache(connection));
+        }
+
+        /// <summary>
         /// Gets the Redis connection string used by integration tests.
         /// </summary>
         /// <returns>The Redis connection string.</returns>
@@ -261,6 +361,26 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController.Scaling
         {
             return Environment.GetEnvironmentVariable("REDIS_CONNECTION_STRING")
                 ?? "localhost:6379";
+        }
+
+        /// <summary>
+        /// Creates a recovery replacement request with an exact recovery-generation identity.
+        /// </summary>
+        /// <param name="requestId">The request identifier.</param>
+        /// <returns>The created recovery replacement request.</returns>
+        private static AiRuntimeScaleOutRequestRecord CreateRecoveryReplacementRequest(string requestId)
+        {
+            var request = CreateRequest(requestId);
+
+            request.Metadata["scaleout.intent"] = "shared-queue-redispatch-replacement";
+            request.Metadata["scaleout.replacementForRuntimeInstanceId"] = "runtime-failed-1";
+            request.Metadata["scaleout.excludedRuntimeInstanceId"] = "runtime-failed-1";
+            request.Metadata["scaleout.dedup.scope"] = "recovery-replacement";
+            request.Metadata["recovery.replacement"] = "true";
+            request.Metadata["recovery.failedRuntimeInstanceId"] = "runtime-failed-1";
+            request.Metadata["recovery.forensicsId"] = "forensics-1";
+
+            return request;
         }
 
         /// <summary>
