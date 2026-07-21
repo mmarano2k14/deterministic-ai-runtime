@@ -108,6 +108,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             settings["AiGrpcRuntimeScaleOut:RequireReadiness"] = "true";
             settings["AiGrpcRuntimeScaleOut:ReadinessTimeoutSeconds"] = "30";
             settings["AiGrpcRuntimeScaleOut:ReadinessPollIntervalMilliseconds"] = "100";
+            settings["AiGrpcRuntimeScaleOut:MaxConcurrentProcessHostStartups"] = "6";
+            settings["AiGrpcRuntimeScaleOut:ProcessHostStartupConcurrencyKey"] = "grpc-process-host-startup";
             settings["AiGrpcRuntimeScaleOut:DefaultRuntimeInstanceIdPrefix"] = "grpc-runtime";
             settings["AiGrpcRuntimeScaleOut:EndpointTemplate"] = "http://127.0.0.1:{port}/{runtimeInstanceId}";
         }
@@ -183,7 +185,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             string key,
             string value)
         {
-            settings[$"AiRuntimeProcessHostCreation:EnvironmentVariables:{key.Replace(":", "__", StringComparison.Ordinal)}"] = value;
+            settings[
+                $"AiRuntimeProcessHostCreation:EnvironmentVariables:{key.Replace(":", "__", StringComparison.Ordinal)}"] =
+                value;
         }
 
         /// <summary>
@@ -193,12 +197,23 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
         private static void WriteGrpcSettingsDebug(
             Dictionary<string, string?> settings)
         {
-            foreach (var setting in settings.OrderBy(pair => pair.Key, StringComparer.Ordinal))
+            foreach (var setting in settings.OrderBy(
+                         pair => pair.Key,
+                         StringComparer.Ordinal))
             {
-                if (setting.Key.Contains("Provider", StringComparison.OrdinalIgnoreCase) ||
-                    setting.Key.Contains("ScaleOut", StringComparison.OrdinalIgnoreCase) ||
-                    setting.Key.Contains("Tenant", StringComparison.OrdinalIgnoreCase) ||
-                    string.Equals(setting.Value, "http", StringComparison.OrdinalIgnoreCase))
+                if (setting.Key.Contains(
+                        "Provider",
+                        StringComparison.OrdinalIgnoreCase) ||
+                    setting.Key.Contains(
+                        "ScaleOut",
+                        StringComparison.OrdinalIgnoreCase) ||
+                    setting.Key.Contains(
+                        "Tenant",
+                        StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(
+                        setting.Value,
+                        "http",
+                        StringComparison.OrdinalIgnoreCase))
                 {
                     Console.WriteLine(
                         $"[GRPC SETTINGS DEBUG] {setting.Key}='{setting.Value}'");

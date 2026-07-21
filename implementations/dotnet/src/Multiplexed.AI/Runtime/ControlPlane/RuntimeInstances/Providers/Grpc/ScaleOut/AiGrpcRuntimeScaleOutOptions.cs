@@ -56,6 +56,20 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Grpc.Sc
         public int ReadinessPollIntervalMilliseconds { get; set; } = 250;
 
         /// <summary>
+        /// Gets or sets the maximum number of process hosts that may be concurrently started and held in readiness.
+        /// </summary>
+        /// <remarks>
+        /// A value less than or equal to zero disables process-host startup gating.
+        /// The gate is applied only when <see cref="HostCreationMode"/> is <see cref="AiRuntimeHostCreationMode.Process"/>.
+        /// </remarks>
+        public int MaxConcurrentProcessHostStartups { get; set; }
+
+        /// <summary>
+        /// Gets or sets the process-wide concurrency key used to coordinate process-host startup across provisioner instances.
+        /// </summary>
+        public string ProcessHostStartupConcurrencyKey { get; set; } = "grpc-process-host-startup";
+
+        /// <summary>
         /// Gets or sets the physical host creation mode used when gRPC scale-out mode is HostManager.
         /// </summary>
         public AiRuntimeHostCreationMode HostCreationMode { get; set; } = AiRuntimeHostCreationMode.Fixture;
