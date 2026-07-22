@@ -179,25 +179,114 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController.Scaling
         }
 
         /// <summary>
-        /// Verifies that different recovery forensics identities use different Redis single-flight keys.
+        /// Verifies that diagnostic metadata cannot create a second active owner for the same recovery replacement.
         /// </summary>
         [Fact]
-        public async Task CreateAsync_Should_Not_Deduplicate_Different_Recovery_Generation()
+        public async Task CreateAsync_Should_Deduplicate_Recovery_Retries_With_Different_Diagnostic_Metadata()
         {
             var store = this.CreateStore(
-                keyPrefix: $"{this.keyPrefix}-recovery-generation",
+                keyPrefix: $"{this.keyPrefix}-recovery-diagnostics",
+                deduplicationWindow: TimeSpan.FromSeconds(30));
+
+            var first = await store.CreateAsync(CreateRecoveryReplacementRequest("request-1"));
+            await store.MarkObservedAsync(first.RequestId, "scaler-test");
+
+            var retry = CreateRecoveryReplacementRequest("request-2");
+            retry.Reason = "Replacement requested by a later recovery observation.";
+            retry.ProviderHint = "alternate-provider";
+            retry.Metadata["recovery.forensicsId"] = "forensics-2";
+
+            var second = await store.CreateAsync(retry);
+
+            Assert.Equal(first.RequestId, second.RequestId);
+            Assert.Equal(AiRuntimeScaleOutRequestStatus.Observed, second.Status);
+
+            var all = await store.ListAsync(new AiRuntimeScaleOutRequestQuery
+            {
+                ControlPlaneId = "cp-test"
+            });
+
+            Assert.Single(all);
+        }
+
+        /// <summary>
+        /// Verifies that concurrent recovery retries converge on one atomic Redis single-flight owner.
+        /// </summary>
+        [Fact]
+        public async Task CreateAsync_Should_Deduplicate_Concurrent_Recovery_Retries()
+        {
+            var store = this.CreateStore(
+                keyPrefix: $"{this.keyPrefix}-recovery-concurrent",
+                deduplicationWindow: TimeSpan.FromSeconds(30));
+
+            var requests =
+                Enumerable
+                    .Range(1, 20)
+                    .Select(index =>
+                    {
+                        var request =
+                            CreateRecoveryReplacementRequest(
+                                $"request-{index:D2}");
+
+                        request.Reason =
+                            $"Recovery observation {index}.";
+
+                        request.ProviderHint =
+                            index % 2 == 0
+                                ? "provider-a"
+                                : "provider-b";
+
+                        request.Metadata["recovery.forensicsId"] =
+                            $"forensics-{index:D2}";
+
+                        return request;
+                    })
+                    .ToArray();
+
+            var created =
+                await Task
+                    .WhenAll(
+                        requests.Select(request =>
+                            store.CreateAsync(request)))
+                    .ConfigureAwait(false);
+
+            Assert.Single(
+                created
+                    .Select(request => request.RequestId)
+                    .Distinct(StringComparer.Ordinal));
+
+            var all = await store.ListAsync(new AiRuntimeScaleOutRequestQuery
+            {
+                ControlPlaneId = "cp-test"
+            });
+
+            Assert.Single(all);
+        }
+
+        /// <summary>
+        /// Verifies that a later failed runtime creates a distinct recovery replacement generation.
+        /// </summary>
+        [Fact]
+        public async Task CreateAsync_Should_Allow_Recovery_Replacement_For_Different_Failed_Runtime()
+        {
+            var store = this.CreateStore(
+                keyPrefix: $"{this.keyPrefix}-recovery-failed-runtime",
                 deduplicationWindow: TimeSpan.FromSeconds(30));
 
             var first = await store.CreateAsync(CreateRecoveryReplacementRequest("request-1"));
             await store.MarkObservedAsync(first.RequestId, "scaler-test");
 
             var nextGeneration = CreateRecoveryReplacementRequest("request-2");
+            nextGeneration.Metadata["scaleout.replacementForRuntimeInstanceId"] = "runtime-failed-2";
+            nextGeneration.Metadata["scaleout.excludedRuntimeInstanceId"] = "runtime-failed-2";
+            nextGeneration.Metadata["recovery.failedRuntimeInstanceId"] = "runtime-failed-2";
             nextGeneration.Metadata["recovery.forensicsId"] = "forensics-2";
 
             var second = await store.CreateAsync(nextGeneration);
 
             Assert.Equal("request-2", second.RequestId);
             Assert.NotEqual(first.RequestId, second.RequestId);
+            Assert.Equal(AiRuntimeScaleOutRequestStatus.Pending, second.Status);
         }
 
         /// <summary>

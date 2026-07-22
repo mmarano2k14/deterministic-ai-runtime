@@ -1,4 +1,4 @@
-﻿using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Forensics;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager;
@@ -28,6 +28,7 @@ using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.ProcessControl;
 using Multiplexed.AI.Stores;
 using System.Diagnostics;
+using System.Globalization;
 using System.Net.Http;
 using Xunit;
 using Xunit.Abstractions;
@@ -1187,15 +1188,30 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
         /// Verifies that all impacted tenants recover real process-host runtime crashes while all safe tenants
         /// continue normal execution without recovery, forensics, redispatch, or cross-tenant leakage.
         /// </summary>
+        /// <param name="parallelism">
+        /// The total parallel scenario count used to resolve harness-only timeout and crash-boundary budgets.
+        /// When omitted, the strict single-scenario budget is preserved.
+        /// </param>
         /// <returns>A task that completes when the proof has finished.</returns>
-        protected async Task ProcessHost_Should_Recover_Two_Tenants_After_Real_Runtime_Process_Kills_Without_Impacting_Safe_Tenant_With_Strict_Dag_Resume_Replay_Ledger_And_Trace()
+        protected async Task ProcessHost_Should_Recover_Two_Tenants_After_Real_Runtime_Process_Kills_Without_Impacting_Safe_Tenant_With_Strict_Dag_Resume_Replay_Ledger_And_Trace(
+            int? parallelism = null)
         {
+            var harnessBudget =
+                CreateParallelScenarioHarnessBudget(
+                    parallelism ?? 1);
+
             var scenario =
                 CreateRealRuntimeCrashRecoveryTwoTenantInventoryScenario(
                     includeSafeTenant: true);
 
-            scenario.DispatchTimeout = TimeSpan.FromMinutes(3);
-            scenario.CompletionTimeout = TimeSpan.FromMinutes(3);
+            scenario.ScaleOutTimeout =
+                harnessBudget.ScaleOutTimeout;
+
+            scenario.DispatchTimeout =
+                harnessBudget.DispatchTimeout;
+
+            scenario.CompletionTimeout =
+                harnessBudget.CompletionTimeout;
 
             var scenarioStopwatch =
                 System.Diagnostics.Stopwatch.StartNew();
@@ -1254,6 +1270,14 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                     scenario,
                     controlPlaneId,
                     runtimeHostAssemblyPath);
+
+            if (settings.ContainsKey(
+                    "AiGrpcRuntimeScaleOut:ReadinessTimeoutSeconds"))
+            {
+                settings["AiGrpcRuntimeScaleOut:ReadinessTimeoutSeconds"] =
+                    ((int)harnessBudget.RuntimeReadinessTimeout.TotalSeconds)
+                        .ToString(CultureInfo.InvariantCulture);
+            }
 
             settings["Tests:UseCapturingLedgerRecorder"] = "false";
             settings["AiRuntimeRecoveryForensics:StrictPersistence"] = "true";
@@ -1365,7 +1389,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 output.WriteLine(string.Empty);
                 output.WriteLine("Workload summary:");
                 output.WriteLine($"  StepCount='{MultiTenantStepCount}'");
-                output.WriteLine($"  KillAfterCompletedStepCount='{KillAfterCompletedStepCount}'");
+                output.WriteLine($"  KillAfterCompletedStepCount='{harnessBudget.KillAfterCompletedStepCount}'");
                 output.WriteLine($"  FlakyStepIntervalMs='{FlakyStepIntervalMs}'");
                 output.WriteLine($"  TenantCount='{tenantContexts.Count}'");
                 output.WriteLine($"  ImpactedTenantCount='{impactedContexts.Length}'");
@@ -1384,6 +1408,18 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 output.WriteLine($"  RuntimeHostAssemblyPath='{runtimeHostAssemblyPath}'");
                 output.WriteLine($"  ObservationMode='{ObservationMode}'");
                 output.WriteLine($"  HybridFallbackPollInterval='{HybridFallbackPollInterval}'");
+                output.WriteLine(string.Empty);
+                output.WriteLine("Parallel harness budget:");
+                output.WriteLine($"  Parallelism='{harnessBudget.Parallelism}'");
+                output.WriteLine($"  PressureStepCount='{harnessBudget.PressureStepCount}'");
+                output.WriteLine($"  ScaleOutTimeout='{harnessBudget.ScaleOutTimeout}'");
+                output.WriteLine($"  RuntimeReadinessTimeout='{harnessBudget.RuntimeReadinessTimeout}'");
+                output.WriteLine($"  DispatchTimeout='{harnessBudget.DispatchTimeout}'");
+                output.WriteLine($"  ProgressTimeout='{harnessBudget.ProgressTimeout}'");
+                output.WriteLine($"  UnsafeTimeout='{harnessBudget.UnsafeTimeout}'");
+                output.WriteLine($"  RequeueTimeout='{harnessBudget.RequeueTimeout}'");
+                output.WriteLine($"  ExecutionResolveTimeout='{harnessBudget.ExecutionResolveTimeout}'");
+                output.WriteLine($"  CompletionTimeout='{harnessBudget.CompletionTimeout}'");
                 output.WriteLine(string.Empty);
 
                 foreach (var context in tenantContexts)
@@ -1419,10 +1455,10 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                                 runCount: context.Tenant.Run.RunCount,
                                 minimumInFlightExecutionCount: 1,
                                 minimumLocalQueuedRunCount: 1,
-                                minimumCompletedStepsBeforeKill: KillAfterCompletedStepCount,
+                                minimumCompletedStepsBeforeKill: harnessBudget.KillAfterCompletedStepCount,
                                 scaleOutTimeout: scenario.ScaleOutTimeout,
                                 dispatchTimeout: scenario.DispatchTimeout,
-                                progressTimeout: TimeSpan.FromMinutes(3),
+                                progressTimeout: harnessBudget.ProgressTimeout,
                                 observationMode: ObservationMode)
                             .ConfigureAwait(false);
 
@@ -1445,17 +1481,17 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                                 dagStore,
                                 inventory,
                                 minimumCompletedStepsBeforeKill:
-                                    KillAfterCompletedStepCount,
+                                    harnessBudget.KillAfterCompletedStepCount,
                                 progressTimeout:
-                                    TimeSpan.FromMinutes(3),
+                                    harnessBudget.ProgressTimeout,
                                 unsafeTimeout:
-                                    TimeSpan.FromSeconds(60),
+                                    harnessBudget.UnsafeTimeout,
                                 requeueTimeout:
-                                    TimeSpan.FromSeconds(180),
+                                    harnessBudget.RequeueTimeout,
                                 redispatchTimeout:
                                     scenario.DispatchTimeout,
                                 executionResolveTimeout:
-                                    TimeSpan.FromSeconds(60),
+                                    harnessBudget.ExecutionResolveTimeout,
                                 observationMode:
                                     ObservationMode,
                                 signalSubscriber:
@@ -1492,10 +1528,10 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                                 runCount: context.Tenant.Run.RunCount,
                                 minimumInFlightExecutionCount: 1,
                                 minimumLocalQueuedRunCount: 1,
-                                minimumCompletedStepsBeforeKill: KillAfterCompletedStepCount,
+                                minimumCompletedStepsBeforeKill: harnessBudget.KillAfterCompletedStepCount,
                                 scaleOutTimeout: scenario.ScaleOutTimeout,
                                 dispatchTimeout: scenario.DispatchTimeout,
-                                progressTimeout: TimeSpan.FromMinutes(3),
+                                progressTimeout: harnessBudget.ProgressTimeout,
                                 observationMode: ObservationMode)
                             .ConfigureAwait(false);
 
@@ -1816,6 +1852,28 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                                 .ConfigureAwait(false)
                         })
                         .ToArray();
+
+                var allReplayTasks =
+                    impactedReplayTasks
+                        .Select(task => (Task)task)
+                        .Concat(safeReplayTasks.Select(task => (Task)task))
+                        .ToArray();
+
+                /*
+                 * Drain every replay request before the scenario host can be disposed.
+                 * Awaiting impacted and safe batches sequentially is unsafe: if the
+                 * first batch faults, the second batch is still running against the
+                 * same TestServer while the method unwinds and disposes its services.
+                 */
+                await Task
+                    .WhenAll(allReplayTasks)
+                    .ConfigureAwait(false);
+
+                output.WriteLine(
+                    $"[REAL RUNTIME HARNESS TASK DRAIN] " +
+                    $"TaskGroup='tenant-replay-requests', " +
+                    $"TaskCount='{allReplayTasks.Length}', " +
+                    "PendingAfterDrain='0'.");
 
                 var impactedReplayResults =
                     await Task
@@ -2218,10 +2276,28 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 parallelism,
                 1);
 
+            var harnessBudget =
+                CreateParallelScenarioHarnessBudget(
+                    parallelism);
+
             var overallStopwatch = Stopwatch.StartNew();
 
             output.WriteLine(
                 $"# PARALLEL CRASH-RECOVERY PROOF - STARTING {parallelism} SCENARIOS");
+
+            output.WriteLine(
+                $"[PARALLEL HARNESS BUDGET] " +
+                $"Parallelism='{harnessBudget.Parallelism}', " +
+                $"PressureStepCount='{harnessBudget.PressureStepCount}', " +
+                $"KillAfterCompletedStepCount='{harnessBudget.KillAfterCompletedStepCount}', " +
+                $"ScaleOutTimeout='{harnessBudget.ScaleOutTimeout}', " +
+                $"RuntimeReadinessTimeout='{harnessBudget.RuntimeReadinessTimeout}', " +
+                $"DispatchTimeout='{harnessBudget.DispatchTimeout}', " +
+                $"ProgressTimeout='{harnessBudget.ProgressTimeout}', " +
+                $"UnsafeTimeout='{harnessBudget.UnsafeTimeout}', " +
+                $"RequeueTimeout='{harnessBudget.RequeueTimeout}', " +
+                $"ExecutionResolveTimeout='{harnessBudget.ExecutionResolveTimeout}', " +
+                $"CompletionTimeout='{harnessBudget.CompletionTimeout}'.");
 
             output.WriteLine(
                 $"[PARALLEL SUMMARY] Parallelism='{parallelism}', " +
@@ -2329,7 +2405,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
 
             try
             {
-                await ProcessHost_Should_Recover_Two_Tenants_After_Real_Runtime_Process_Kills_Without_Impacting_Safe_Tenant_With_Strict_Dag_Resume_Replay_Ledger_And_Trace()
+                await ProcessHost_Should_Recover_Two_Tenants_After_Real_Runtime_Process_Kills_Without_Impacting_Safe_Tenant_With_Strict_Dag_Resume_Replay_Ledger_And_Trace(
+                        parallelism)
                     .ConfigureAwait(false);
 
                 stopwatch.Stop();
@@ -2378,6 +2455,73 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             string ScenarioId,
             TimeSpan Duration,
             Exception? Exception);
+
+        /// <summary>
+        /// Builds a deterministic harness budget that grows with parallel pressure
+        /// without modifying any production Redis or provider timeout.
+        /// </summary>
+        /// <param name="parallelism">The number of concurrently executed scenarios.</param>
+        /// <returns>The resolved harness-only timeout and crash-boundary budget.</returns>
+        private static ParallelScenarioHarnessBudget CreateParallelScenarioHarnessBudget(
+            int parallelism)
+        {
+            ArgumentOutOfRangeException.ThrowIfLessThan(
+                parallelism,
+                1);
+
+            var pressureStepCount =
+                parallelism <= 15
+                    ? 0
+                    : ((parallelism - 16) / 5) + 1;
+
+            return new ParallelScenarioHarnessBudget(
+                Parallelism: parallelism,
+                PressureStepCount: pressureStepCount,
+                KillAfterCompletedStepCount:
+                    Math.Max(
+                        10,
+                        KillAfterCompletedStepCount - (pressureStepCount * 10)),
+                ScaleOutTimeout:
+                    TimeSpan.FromMinutes(
+                        2 + pressureStepCount),
+                RuntimeReadinessTimeout:
+                    TimeSpan.FromSeconds(
+                        30 + (pressureStepCount * 60)),
+                DispatchTimeout:
+                    TimeSpan.FromMinutes(
+                        3 + (pressureStepCount * 2)),
+                ProgressTimeout:
+                    TimeSpan.FromMinutes(
+                        3 + pressureStepCount),
+                UnsafeTimeout:
+                    TimeSpan.FromSeconds(
+                        60 + (pressureStepCount * 30)),
+                RequeueTimeout:
+                    TimeSpan.FromMinutes(
+                        3 + (pressureStepCount * 2)),
+                ExecutionResolveTimeout:
+                    TimeSpan.FromSeconds(
+                        60 + (pressureStepCount * 30)),
+                CompletionTimeout:
+                    TimeSpan.FromMinutes(
+                        3 + (pressureStepCount * 2)));
+        }
+
+        /// <summary>
+        /// Represents timeout and crash-boundary values used only by the parallel integration harness.
+        /// </summary>
+        private sealed record ParallelScenarioHarnessBudget(
+            int Parallelism,
+            int PressureStepCount,
+            int KillAfterCompletedStepCount,
+            TimeSpan ScaleOutTimeout,
+            TimeSpan RuntimeReadinessTimeout,
+            TimeSpan DispatchTimeout,
+            TimeSpan ProgressTimeout,
+            TimeSpan UnsafeTimeout,
+            TimeSpan RequeueTimeout,
+            TimeSpan ExecutionResolveTimeout,
+            TimeSpan CompletionTimeout);
 
         /// <summary>
         /// Resolves the runtime signal subscriber only when hybrid observation is enabled.

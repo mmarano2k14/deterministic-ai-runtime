@@ -99,6 +99,11 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             Dictionary<string, string?> settings)
         {
             settings["AiRuntimeScaleOutRequestWatcher:Enabled"] = "true";
+            settings["AiRuntimeScaleOutRequestWatcher:EnableProcessWideRequestProcessingCoordination"] = "true";
+            settings["AiRuntimeScaleOutRequestWatcher:RequestProcessingCoordinationKey"] = "grpc-process-host-request-processing";
+            settings["AiRuntimeScaleOutRequestWatcher:MaxConcurrentRequestProcessingWorkflows"] = "6";
+            settings["AiRuntimeScaleOutRequestWatcher:MaxConcurrentRequestProcessingWorkflowsPerControlPlane"] = "1";
+            settings["AiRuntimeScaleOutRequestWatcher:RecoveryDispatchBurstLimit"] = "3";
 
             settings["AiHttpRuntimeScaleOut:Enabled"] = "false";
 

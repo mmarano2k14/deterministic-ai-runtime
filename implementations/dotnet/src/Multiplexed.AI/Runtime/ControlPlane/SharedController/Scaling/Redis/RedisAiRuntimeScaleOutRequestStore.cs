@@ -24,7 +24,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
         private const string ScaleOutExcludedRuntimeInstanceIdMetadataKey = "scaleout.excludedRuntimeInstanceId";
         private const string RecoveryReplacementMetadataKey = "recovery.replacement";
         private const string RecoveryFailedRuntimeInstanceIdMetadataKey = "recovery.failedRuntimeInstanceId";
-        private const string RecoveryForensicsIdMetadataKey = "recovery.forensicsId";
         private const string ScaleOutDedupScopeMetadataKey = "scaleout.dedup.scope";
 
 
@@ -720,18 +719,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
         private RedisKey GetDedupKey(
             AiRuntimeScaleOutRequestRecord request)
         {
-            var tenant =
-                NormalizeKeyPart(request.TenantId);
-
-            var pipeline =
-                NormalizeKeyPart(request.PipelineKey);
-
-            var reason =
-                NormalizeKeyPart(request.Reason);
-
-            var provider =
-                NormalizeKeyPart(request.ProviderHint);
-
             if (IsRecoveryReplacementRequest(request))
             {
                 var intent =
@@ -753,12 +740,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
                                 request.Metadata,
                                 RecoveryFailedRuntimeInstanceIdMetadataKey)));
 
-                var forensicsId =
-                    NormalizeKeyPart(
-                        GetMetadataValue(
-                            request.Metadata,
-                            RecoveryForensicsIdMetadataKey));
-
                 var sharedRunId =
                     NormalizeKeyPart(
                         request.SharedRunId);
@@ -771,8 +752,23 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
                                 ScaleOutDedupScopeMetadataKey),
                             "recovery-replacement"));
 
-                return $"{this.options.KeyPrefix}:{{{request.ControlPlaneId}}}:scaleout:dedup:{tenant}:{pipeline}:{reason}:{provider}:{dedupScope}:{intent}:{sharedRunId}:{failedRuntimeInstanceId}:{forensicsId}";
+                // A recovery replacement has one active owner per shared run and failed runtime.
+                // Diagnostic evidence such as reason, provider hint, and forensics id must not
+                // create parallel scale-out requests for the same unfinished recovery intent.
+                return $"{this.options.KeyPrefix}:{{{request.ControlPlaneId}}}:scaleout:dedup:{dedupScope}:{intent}:{sharedRunId}:{failedRuntimeInstanceId}";
             }
+
+            var tenant =
+                NormalizeKeyPart(request.TenantId);
+
+            var pipeline =
+                NormalizeKeyPart(request.PipelineKey);
+
+            var reason =
+                NormalizeKeyPart(request.Reason);
+
+            var provider =
+                NormalizeKeyPart(request.ProviderHint);
 
             return $"{this.options.KeyPrefix}:{{{request.ControlPlaneId}}}:scaleout:dedup:{tenant}:{pipeline}:{reason}:{provider}";
         }

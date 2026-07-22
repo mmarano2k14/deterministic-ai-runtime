@@ -1,4 +1,5 @@
-﻿using Microsoft.Extensions.Hosting;
+﻿using System.Collections.Concurrent;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.ControlPlane.Discovery;
 using Multiplexed.Abstractions.AI.ControlPlane.Observability;
@@ -36,6 +37,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
         private readonly IAiControlPlaneIdResolver controlPlaneIdResolver;
         private readonly AiRuntimeScaleOutRequestWatcherOptions options;
         private readonly IAiControlPlaneObserver observer;
+        private readonly ConcurrentDictionary<string, Lazy<Task>> scheduledRequests =
+            new(StringComparer.Ordinal);
 
         /// <summary>
         /// Initializes a new instance of the <see cref="AiRuntimeScaleOutRequestWatcherHostedService" /> class.
@@ -84,6 +87,36 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
             this.controlPlaneIdResolver = controlPlaneIdResolver ?? throw new ArgumentNullException(nameof(controlPlaneIdResolver));
             this.options = options?.Value ?? throw new ArgumentNullException(nameof(options));
             this.observer = observer ?? throw new ArgumentNullException(nameof(observer));
+
+            if (this.options.EnableProcessWideRequestProcessingCoordination)
+            {
+                ArgumentException.ThrowIfNullOrWhiteSpace(
+                    this.options.RequestProcessingCoordinationKey);
+
+                if (this.options.MaxConcurrentRequestProcessingWorkflows <= 0)
+                {
+                    throw new ArgumentOutOfRangeException(
+                        nameof(options),
+                        this.options.MaxConcurrentRequestProcessingWorkflows,
+                        "Process-wide request-processing workflow concurrency must be greater than zero.");
+                }
+
+                if (this.options.MaxConcurrentRequestProcessingWorkflowsPerControlPlane <= 0)
+                {
+                    throw new ArgumentOutOfRangeException(
+                        nameof(options),
+                        this.options.MaxConcurrentRequestProcessingWorkflowsPerControlPlane,
+                        "Per-control-plane request-processing workflow concurrency must be greater than zero.");
+                }
+
+                if (this.options.RecoveryDispatchBurstLimit <= 0)
+                {
+                    throw new ArgumentOutOfRangeException(
+                        nameof(options),
+                        this.options.RecoveryDispatchBurstLimit,
+                        "Recovery dispatch burst limit must be greater than zero.");
+                }
+            }
         }
 
         /// <inheritdoc />
@@ -95,20 +128,84 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
                 return;
             }
 
-            while (!stoppingToken.IsCancellationRequested)
+            try
             {
-                await this.ProcessCycleAsync(stoppingToken).ConfigureAwait(false);
-                await Task.Delay(this.options.Interval, stoppingToken).ConfigureAwait(false);
+                if (!this.options.EnableProcessWideRequestProcessingCoordination)
+                {
+                    while (!stoppingToken.IsCancellationRequested)
+                    {
+                        await this.ProcessSequentialCycleAsync(stoppingToken).ConfigureAwait(false);
+                        await Task.Delay(this.options.Interval, stoppingToken).ConfigureAwait(false);
+                    }
+
+                    return;
+                }
+
+                while (!stoppingToken.IsCancellationRequested)
+                {
+                    var scheduledTasks =
+                        await this.SchedulePendingRequestsAsync(stoppingToken).ConfigureAwait(false);
+
+                    ObserveBackgroundTasks(scheduledTasks);
+
+                    await Task
+                        .Delay(
+                            this.options.Interval,
+                            stoppingToken)
+                        .ConfigureAwait(false);
+                }
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                // Normal hosted-service shutdown.
+            }
+            finally
+            {
+                await this
+                    .DrainScheduledRequestsAsync()
+                    .ConfigureAwait(false);
             }
         }
 
         /// <summary>
-        /// Processes one watcher cycle.
+        /// Processes one watcher cycle and waits for requests scheduled by that cycle.
         /// </summary>
         /// <param name="cancellationToken">The cancellation token.</param>
         /// <returns>A task representing the asynchronous operation.</returns>
+        /// <remarks>
+        /// The hosted execution loop queues lightweight request identities without waiting for
+        /// workflow completion. No observer, request-store transition, provider-request
+        /// materialization, provider call, or terminal store write occurs before process-wide
+        /// coordinator admission.
+        /// Direct callers retain the original awaitable cycle semantics.
+        /// </remarks>
         public async Task ProcessCycleAsync(
             CancellationToken cancellationToken = default)
+        {
+            if (!this.options.EnableProcessWideRequestProcessingCoordination)
+            {
+                await this
+                    .ProcessSequentialCycleAsync(cancellationToken)
+                    .ConfigureAwait(false);
+
+                return;
+            }
+
+            var scheduledTasks =
+                await this.SchedulePendingRequestsAsync(cancellationToken).ConfigureAwait(false);
+
+            await Task
+                .WhenAll(scheduledTasks)
+                .ConfigureAwait(false);
+        }
+
+        /// <summary>
+        /// Processes one watcher cycle with the original sequential behavior.
+        /// </summary>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <returns>A task representing the asynchronous operation.</returns>
+        private async Task ProcessSequentialCycleAsync(
+            CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
@@ -145,6 +242,209 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
         }
 
         /// <summary>
+        /// Finds pending requests and queues them through the process-wide request-processing coordinator.
+        /// </summary>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <returns>The request-processing tasks newly queued by this cycle.</returns>
+        private async Task<IReadOnlyList<Task>> SchedulePendingRequestsAsync(
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var controlPlaneId =
+                await this.ResolveControlPlaneIdAsync(cancellationToken).ConfigureAwait(false);
+
+            if (string.IsNullOrWhiteSpace(controlPlaneId))
+            {
+                if (this.options.IgnoreWhenControlPlaneIdMissing)
+                {
+                    return Array.Empty<Task>();
+                }
+
+                throw new InvalidOperationException(
+                    "Scale-out request watcher control-plane id cannot be resolved.");
+            }
+
+            var remainingScheduleCapacity =
+                Math.Max(
+                    0,
+                    this.options.MaxRequestsPerCycle - this.scheduledRequests.Count);
+
+            if (remainingScheduleCapacity == 0)
+            {
+                return Array.Empty<Task>();
+            }
+
+            var pendingRequests =
+                await this.store
+                    .ListPendingAsync(
+                        new AiRuntimeScaleOutRequestQuery
+                        {
+                            ControlPlaneId = controlPlaneId,
+                            MaxResults = remainingScheduleCapacity
+                        },
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+            var scheduledTasks =
+                new List<Task>(pendingRequests.Count);
+
+            foreach (var request in pendingRequests)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                var scheduledTask =
+                    this.TryScheduleRequest(
+                        request,
+                        cancellationToken);
+
+                if (scheduledTask is not null)
+                {
+                    scheduledTasks.Add(scheduledTask);
+                }
+            }
+
+            return scheduledTasks;
+        }
+
+        /// <summary>
+        /// Queues one request once while preserving request-id single-flight inside this watcher.
+        /// </summary>
+        /// <param name="request">The pending request.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <returns>The scheduled task, or <c>null</c> when the request is already scheduled.</returns>
+        private Task? TryScheduleRequest(
+            AiRuntimeScaleOutRequestRecord request,
+            CancellationToken cancellationToken)
+        {
+            ArgumentNullException.ThrowIfNull(request);
+
+            var lazyTask =
+                new Lazy<Task>(
+                    () => this.ProcessScheduledRequestAsync(
+                        request,
+                        cancellationToken),
+                    LazyThreadSafetyMode.ExecutionAndPublication);
+
+            if (!this.scheduledRequests.TryAdd(
+                    request.RequestId,
+                    lazyTask))
+            {
+                return null;
+            }
+
+            try
+            {
+                return lazyTask.Value;
+            }
+            catch
+            {
+                this.scheduledRequests.TryRemove(
+                    request.RequestId,
+                    out _);
+
+                throw;
+            }
+        }
+
+        /// <summary>
+        /// Processes one scheduled request only after process-wide workflow admission.
+        /// </summary>
+        /// <param name="request">The scheduled request.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <returns>A task representing the asynchronous operation.</returns>
+        private async Task ProcessScheduledRequestAsync(
+            AiRuntimeScaleOutRequestRecord request,
+            CancellationToken cancellationToken)
+        {
+            try
+            {
+                await AiRuntimeScaleOutRequestProcessingCoordinator
+                    .ScheduleAsync(
+                        this.options.RequestProcessingCoordinationKey,
+                        request.ControlPlaneId,
+                        request.RequestId,
+                        request.SharedRunId,
+                        AiRuntimeScaleOutRequestPriorityClassifier.IsRecoveryRequest(
+                            request.RequestId,
+                            request.Metadata.Keys,
+                            request.Source,
+                            request.Reason),
+                        this.options.MaxConcurrentRequestProcessingWorkflows,
+                        this.options.MaxConcurrentRequestProcessingWorkflowsPerControlPlane,
+                        this.options.RecoveryDispatchBurstLimit,
+                        workflowCancellationToken =>
+                            this.ProcessRequestAsync(
+                                request,
+                                workflowCancellationToken),
+                        cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            finally
+            {
+                this.scheduledRequests.TryRemove(
+                    request.RequestId,
+                    out _);
+            }
+        }
+
+        /// <summary>
+        /// Observes faults from hosted background request tasks.
+        /// </summary>
+        /// <param name="tasks">The scheduled tasks.</param>
+        private static void ObserveBackgroundTasks(
+            IReadOnlyList<Task> tasks)
+        {
+            foreach (var task in tasks)
+            {
+                _ = task.ContinueWith(
+                    static completedTask =>
+                    {
+                        _ = completedTask.Exception;
+                    },
+                    CancellationToken.None,
+                    TaskContinuationOptions.ExecuteSynchronously |
+                    TaskContinuationOptions.OnlyOnFaulted,
+                    TaskScheduler.Default);
+            }
+        }
+
+        /// <summary>
+        /// Waits for all currently scheduled requests during hosted-service shutdown.
+        /// </summary>
+        /// <returns>A task representing the asynchronous drain operation.</returns>
+        private async Task DrainScheduledRequestsAsync()
+        {
+            var scheduledTasks =
+                this.scheduledRequests
+                    .Values
+                    .Where(lazyTask => lazyTask.IsValueCreated)
+                    .Select(lazyTask => lazyTask.Value)
+                    .ToArray();
+
+            if (scheduledTasks.Length == 0)
+            {
+                return;
+            }
+
+            try
+            {
+                await Task
+                    .WhenAll(scheduledTasks)
+                    .ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                // Scheduled requests use the hosted-service cancellation token.
+            }
+            catch
+            {
+                // Background faults were already observed. Shutdown must still wait
+                // for terminal completion before dependent stores are disposed.
+            }
+        }
+
+        /// <summary>
         /// Processes one pending scale-out request.
         /// </summary>
         /// <param name="request">The pending scale-out request.</param>
@@ -169,7 +469,17 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
                     {
                         ["watcherId"] = this.options.WatcherId,
                         ["rejectOnProviderFailure"] = this.options.RejectOnProviderFailure,
-                        ["maxRequestsPerCycle"] = this.options.MaxRequestsPerCycle
+                        ["maxRequestsPerCycle"] = this.options.MaxRequestsPerCycle,
+                        ["processWideRequestProcessingCoordinationEnabled"] = this.options.EnableProcessWideRequestProcessingCoordination,
+                        ["requestProcessingCoordinationKey"] = this.options.RequestProcessingCoordinationKey,
+                        ["maxConcurrentRequestProcessingWorkflows"] = this.options.MaxConcurrentRequestProcessingWorkflows,
+                        ["maxConcurrentRequestProcessingWorkflowsPerControlPlane"] = this.options.MaxConcurrentRequestProcessingWorkflowsPerControlPlane,
+                        ["recoveryDispatchBurstLimit"] = this.options.RecoveryDispatchBurstLimit,
+                        ["recoveryPriority"] = AiRuntimeScaleOutRequestPriorityClassifier.IsRecoveryRequest(
+                            request.RequestId,
+                            request.Metadata.Keys,
+                            request.Source,
+                            request.Reason)
                     },
                     cancellationToken)
                 .ConfigureAwait(false);
