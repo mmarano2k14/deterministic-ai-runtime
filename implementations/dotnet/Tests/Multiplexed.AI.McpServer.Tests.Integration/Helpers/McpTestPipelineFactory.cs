@@ -14,10 +14,15 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Helpers
             int stepCount,
             object? input = null,
             bool enableRetention = false,
-            int flakyStepInterval = 0)
+            int flakyStepInterval = 0,
+            McpTestCrashCheckpointDefinition? crashCheckpoint = null)
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(pipelineName);
             ArgumentOutOfRangeException.ThrowIfNegativeOrZero(stepCount);
+
+            ValidateCrashCheckpoint(
+                stepCount,
+                crashCheckpoint);
 
             return new AiRuntimePipelineRunRequest
             {
@@ -26,7 +31,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Helpers
                     pipelineName,
                     stepCount,
                     enableRetention,
-                    flakyStepInterval),
+                    flakyStepInterval,
+                    crashCheckpoint),
                 Input = input ?? new
                 {
                     source = "mcp-integration-test",
@@ -41,34 +47,50 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Helpers
             string pipelineName,
             int stepCount,
             bool enableRetention = false,
-            int flakyStepInterval = 0)
+            int flakyStepInterval = 0,
+            McpTestCrashCheckpointDefinition? crashCheckpoint = null)
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(pipelineName);
             ArgumentOutOfRangeException.ThrowIfNegativeOrZero(stepCount);
+
+            ValidateCrashCheckpoint(
+                stepCount,
+                crashCheckpoint);
 
             var steps = new List<AiPipelineStepDefinition>();
 
             for (var index = 1; index <= stepCount; index++)
             {
-                var isFlaky = IsFlakyStep(
-                    index,
-                    flakyStepInterval);
+                var isCrashCheckpoint =
+                    crashCheckpoint?.StepIndex == index;
+
+                var isFlaky =
+                    !isCrashCheckpoint &&
+                    IsFlakyStep(
+                        index,
+                        flakyStepInterval);
 
                 steps.Add(
                     new AiPipelineStepDefinition
                     {
                         Name = ToStepName(index),
-                        StepKey = isFlaky
-                            ? "distributed.chaos.flaky-provider"
-                            : "hello-world",
+                        StepKey = isCrashCheckpoint
+                            ? McpTestCrashCheckpointDefinition.StepKey
+                            : isFlaky
+                                ? "distributed.chaos.flaky-provider"
+                                : "hello-world",
                         Order = index,
                         DependsOn = CreateVariableDependencies(
                             index,
-                            stepCount),
+                            stepCount,
+                            crashCheckpoint),
                         Config = CreateStepConfig(
                             pipelineName,
                             index,
-                            isFlaky)
+                            isFlaky,
+                            isCrashCheckpoint
+                                ? crashCheckpoint
+                                : null)
                     });
             }
 
@@ -84,7 +106,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Helpers
 
         private static string[] CreateVariableDependencies(
             int stepIndex,
-            int stepCount)
+            int stepCount,
+            McpTestCrashCheckpointDefinition? crashCheckpoint)
         {
             if (stepIndex <= 1)
             {
@@ -92,6 +115,13 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Helpers
             }
 
             var previousStepCount = stepIndex - 1;
+
+            if (crashCheckpoint?.StepIndex == stepIndex)
+            {
+                return Enumerable.Range(1, previousStepCount)
+                    .Select(ToStepName)
+                    .ToArray();
+            }
 
             var minDependencyCount = Math.Max(
                 1,
@@ -110,13 +140,24 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Helpers
                 previousStepCount,
                 targetDependencyCount);
 
-            return Enumerable.Range(1, previousStepCount)
-                .Where(index => ShouldSelectDependency(
-                    stepIndex,
-                    index,
-                    dependencyCount,
-                    previousStepCount))
-                .Take(dependencyCount)
+            var dependencyIndexes =
+                Enumerable.Range(1, previousStepCount)
+                    .Where(index => ShouldSelectDependency(
+                        stepIndex,
+                        index,
+                        dependencyCount,
+                        previousStepCount))
+                    .Take(dependencyCount)
+                    .ToHashSet();
+
+            if (crashCheckpoint is not null &&
+                stepIndex > crashCheckpoint.StepIndex)
+            {
+                dependencyIndexes.Add(
+                    crashCheckpoint.StepIndex);
+            }
+
+            return dependencyIndexes
                 .OrderBy(index => index)
                 .Select(ToStepName)
                 .ToArray();
@@ -196,7 +237,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Helpers
         private static Dictionary<string, object?> CreateStepConfig(
             string pipelineName,
             int index,
-            bool isFlaky)
+            bool isFlaky,
+            McpTestCrashCheckpointDefinition? crashCheckpoint)
         {
             var config = new Dictionary<string, object?>
             {
@@ -205,6 +247,21 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Helpers
                 ["operation"] = "llm.chat",
                 ["delayMs"] = isFlaky ? 10 : 1
             };
+
+            if (crashCheckpoint is not null)
+            {
+                config["test.crashCheckpoint.stateKey"] =
+                    crashCheckpoint.StateKey;
+
+                config["test.crashCheckpoint.reachedChannel"] =
+                    crashCheckpoint.ReachedChannel;
+
+                config["test.crashCheckpoint.releasedChannel"] =
+                    crashCheckpoint.ReleasedChannel;
+
+                config["test.crashCheckpoint.ttlSeconds"] =
+                    crashCheckpoint.TtlSeconds;
+            }
 
             if (isFlaky)
             {
@@ -222,6 +279,37 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Helpers
             }
 
             return config;
+        }
+
+        private static void ValidateCrashCheckpoint(
+            int stepCount,
+            McpTestCrashCheckpointDefinition? crashCheckpoint)
+        {
+            if (crashCheckpoint is null)
+            {
+                return;
+            }
+
+            if (crashCheckpoint.StepIndex <= 1 ||
+                crashCheckpoint.StepIndex > stepCount)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(crashCheckpoint),
+                    crashCheckpoint.StepIndex,
+                    $"The crash checkpoint step index must be between 2 and '{stepCount}'.");
+            }
+
+            ArgumentException.ThrowIfNullOrWhiteSpace(
+                crashCheckpoint.StateKey);
+
+            ArgumentException.ThrowIfNullOrWhiteSpace(
+                crashCheckpoint.ReachedChannel);
+
+            ArgumentException.ThrowIfNullOrWhiteSpace(
+                crashCheckpoint.ReleasedChannel);
+
+            ArgumentOutOfRangeException.ThrowIfNegativeOrZero(
+                crashCheckpoint.TtlSeconds);
         }
 
         private static bool IsFlakyStep(

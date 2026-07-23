@@ -24,6 +24,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
         /// <param name="pipelineName">The pipeline name.</param>
         /// <param name="requestedBy">The logical requester identifier.</param>
         /// <param name="source">The logical request source.</param>
+        /// <param name="crashCheckpoint">The optional test-only durable crash checkpoint.</param>
         /// <returns>The submitted shared run identifier.</returns>
         public static async Task<string> SubmitOneRunAsync(
             McpTestClient mcp,
@@ -31,7 +32,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
             string controlPlaneId,
             string pipelineName,
             string requestedBy,
-            string source)
+            string source,
+            McpTestCrashCheckpointDefinition? crashCheckpoint = null)
         {
             ArgumentNullException.ThrowIfNull(mcp);
             ArgumentNullException.ThrowIfNull(tenant);
@@ -79,7 +81,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
                         stepCount: tenant.Run.StepCount,
                         input: input,
                         enableRetention: tenant.Run.EnableRetention,
-                        flakyStepInterval: tenant.Run.FlakyStepInterval)
+                        flakyStepInterval: tenant.Run.FlakyStepInterval,
+                        crashCheckpoint: crashCheckpoint)
                 };
 
             var submitResults =
@@ -329,6 +332,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
         /// <param name="source">The logical request source.</param>
         /// <param name="scaleOutTimeout">The scale-out fulfillment timeout.</param>
         /// <param name="dispatchTimeout">The dispatch timeout.</param>
+        /// <param name="crashCheckpoint">The optional test-only durable crash checkpoint.</param>
         /// <returns>The dispatched shared run record.</returns>
         public static async Task<AiSharedRunRecord> SubmitAndDispatchOneRunAsync(
             McpTestClient mcp,
@@ -339,7 +343,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
             string requestedBy,
             string source,
             TimeSpan scaleOutTimeout,
-            TimeSpan dispatchTimeout)
+            TimeSpan dispatchTimeout,
+            McpTestCrashCheckpointDefinition? crashCheckpoint = null)
         {
             ArgumentNullException.ThrowIfNull(mcp);
             ArgumentNullException.ThrowIfNull(scaleOutRequestStore);
@@ -356,7 +361,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
                         controlPlaneId,
                         pipelineName,
                         requestedBy,
-                        source)
+                        source,
+                        crashCheckpoint)
                     .ConfigureAwait(false);
 
             await WaitForAnyTenantScaleOutRequestFulfilledAsync(

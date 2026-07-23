@@ -68,7 +68,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
         /// <param name="parallelism">The number of scenarios executed concurrently.</param>
         /// <returns>A task that completes when all concurrent scenarios have finished.</returns>
         [Theory]
-        [InlineData(20)]
+        [InlineData(30)]
         public Task Grpc_ProcessHost_Should_Execute_MultiTenant_Crash_Recovery_Scenarios_In_Parallel(
             int parallelism)
         {

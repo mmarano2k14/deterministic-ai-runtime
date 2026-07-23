@@ -46,6 +46,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
         /// <param name="dispatchTimeout">The dispatch wait timeout.</param>
         /// <param name="progressTimeout">The DAG progress wait timeout.</param>
         /// <param name="observationMode">The production recovery observation mode.</param>
+        /// <param name="crashCheckpointGate">The optional test-only durable crash checkpoint gate.</param>
         /// <returns>The real assigned work inventory selected for process crash.</returns>
         public static async Task<RealRuntimeCrashAssignedWorkInventoryProof> SubmitAndBuildAssignedWorkInventoryAsync(
             ITestOutputHelper output,
@@ -67,7 +68,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
             TimeSpan dispatchTimeout,
             TimeSpan progressTimeout,
             ProductionRecoveryObservationMode observationMode =
-                ProductionRecoveryObservationMode.Polling)
+                ProductionRecoveryObservationMode.Polling,
+            ProductionCrashCheckpointGate? crashCheckpointGate = null)
         {
             ArgumentNullException.ThrowIfNull(output);
             ArgumentNullException.ThrowIfNull(mcp);
@@ -94,165 +96,267 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
                     "The production recovery observation mode is not supported.");
             }
 
-            var dispatchedRuns = new List<(AiSharedRunRecord Run, string PipelineName)>();
+            var trackedRuns =
+                new List<(
+                    string SharedRunId,
+                    string PipelineName,
+                    AiSharedRunRecord? InitialRun)>();
 
-            for (var index = 1; index <= runCount; index++)
+            var firstPipelineName =
+                $"{pipelineNamePrefix}-run-01-{Guid.NewGuid():N}";
+
+            var firstDispatchedRun =
+                await ProductionSharedRunTestHelpers
+                    .SubmitAndDispatchOneRunAsync(
+                        mcp,
+                        scaleOutRequestStore,
+                        tenant,
+                        controlPlaneId,
+                        firstPipelineName,
+                        requestedBy,
+                        source,
+                        scaleOutTimeout,
+                        dispatchTimeout,
+                        crashCheckpointGate?.Definition)
+                    .ConfigureAwait(false);
+
+            Assert.False(
+                string.IsNullOrWhiteSpace(
+                    firstDispatchedRun.SharedRunId));
+
+            Assert.False(
+                string.IsNullOrWhiteSpace(
+                    firstDispatchedRun.AssignedRuntimeInstanceId));
+
+            Assert.False(
+                string.IsNullOrWhiteSpace(
+                    firstDispatchedRun.LocalRunId));
+
+            trackedRuns.Add(
+                (
+                    firstDispatchedRun.SharedRunId,
+                    firstPipelineName,
+                    firstDispatchedRun));
+
+            output.WriteLine(
+                $"[REAL RUNTIME INVENTORY] Run dispatched. TenantId='{tenant.TenantId}', SharedRunId='{firstDispatchedRun.SharedRunId}', RuntimeInstanceId='{firstDispatchedRun.AssignedRuntimeInstanceId}', LocalRunId='{firstDispatchedRun.LocalRunId}', PipelineName='{firstPipelineName}'.");
+
+            if (crashCheckpointGate is not null)
             {
-                var pipelineName = $"{pipelineNamePrefix}-run-{index:00}-{Guid.NewGuid():N}";
-                AiSharedRunRecord dispatchedRun;
-
-                if (index == 1)
-                {
-                    dispatchedRun =
-                        await ProductionSharedRunTestHelpers
-                            .SubmitAndDispatchOneRunAsync(
-                                mcp,
-                                scaleOutRequestStore,
-                                tenant,
-                                controlPlaneId,
-                                pipelineName,
-                                requestedBy,
-                                source,
-                                scaleOutTimeout,
-                                dispatchTimeout)
-                            .ConfigureAwait(false);
-                }
-                else
-                {
-                    var sharedRunId =
-                        await ProductionSharedRunTestHelpers
-                            .SubmitOneRunAsync(
-                                mcp,
-                                tenant,
-                                controlPlaneId,
-                                pipelineName,
-                                requestedBy,
-                                source)
-                            .ConfigureAwait(false);
-
-                    dispatchedRun =
-                        await ProductionSharedRunTestHelpers
-                            .WaitForSingleDispatchedRunAsync(
-                                mcp,
-                                pipelineName,
-                                sharedRunId,
-                                dispatchTimeout)
-                            .ConfigureAwait(false);
-                }
-
-                Assert.False(string.IsNullOrWhiteSpace(dispatchedRun.SharedRunId));
-                Assert.False(string.IsNullOrWhiteSpace(dispatchedRun.AssignedRuntimeInstanceId));
-                Assert.False(string.IsNullOrWhiteSpace(dispatchedRun.LocalRunId));
-
-                dispatchedRuns.Add((dispatchedRun, pipelineName));
+                await crashCheckpointGate
+                    .WaitUntilReachedAsync(progressTimeout)
+                    .ConfigureAwait(false);
 
                 output.WriteLine(
-                    $"[REAL RUNTIME INVENTORY] Run dispatched. TenantId='{tenant.TenantId}', SharedRunId='{dispatchedRun.SharedRunId}', RuntimeInstanceId='{dispatchedRun.AssignedRuntimeInstanceId}', LocalRunId='{dispatchedRun.LocalRunId}', PipelineName='{pipelineName}'.");
+                    $"[REAL RUNTIME INVENTORY CRASH GATE CONFIRMED] TenantId='{tenant.TenantId}', SharedRunId='{firstDispatchedRun.SharedRunId}', RuntimeInstanceId='{firstDispatchedRun.AssignedRuntimeInstanceId}', PipelineName='{firstPipelineName}', CheckpointStepIndex='{crashCheckpointGate.Definition.StepIndex}'. Submitting local queued work only after durable gate reach.");
             }
 
-            var deadline = DateTimeOffset.UtcNow.Add(progressTimeout);
-            RealRuntimeCrashAssignedWorkInventoryProof? selectedInventory = null;
-            var lastInventorySummary = string.Empty;
+            /*
+             * Submit every remaining run before waiting for any individual
+             * dispatch. The first execution must stay active long enough for
+             * the later runs to occupy the same runtime local queue.
+             */
+            for (var index = 2; index <= runCount; index++)
+            {
+                var pipelineName =
+                    $"{pipelineNamePrefix}-run-{index:00}-{Guid.NewGuid():N}";
+
+                var sharedRunId =
+                    await ProductionSharedRunTestHelpers
+                        .SubmitOneRunAsync(
+                            mcp,
+                            tenant,
+                            controlPlaneId,
+                            pipelineName,
+                            requestedBy,
+                            source)
+                        .ConfigureAwait(false);
+
+                trackedRuns.Add(
+                    (
+                        sharedRunId,
+                        pipelineName,
+                        null));
+
+                output.WriteLine(
+                    $"[REAL RUNTIME INVENTORY] Run submitted before combined inventory wait. TenantId='{tenant.TenantId}', SharedRunId='{sharedRunId}', PipelineName='{pipelineName}'.");
+            }
+
+            /*
+             * Resolve dispatch and assigned-work state through one bounded
+             * durable loop. This avoids both failure modes observed under P20:
+             *
+             *  - independent concurrent dispatch pollers overload Redis;
+             *  - sequential dispatch waits allow the first DAG to complete
+             *    before the crash inventory can be captured.
+             */
+            var inventoryTimeout =
+                dispatchTimeout > progressTimeout
+                    ? dispatchTimeout
+                    : progressTimeout;
+
+            var deadline =
+                DateTimeOffset.UtcNow.Add(inventoryTimeout);
+
+            var loggedDispatchedRunIds =
+                new HashSet<string>(StringComparer.Ordinal)
+                {
+                    firstDispatchedRun.SharedRunId
+                };
+
+            RealRuntimeCrashAssignedWorkInventoryProof? selectedInventory =
+                null;
+
+            var lastInventorySummary =
+                string.Empty;
 
             while (DateTimeOffset.UtcNow < deadline)
             {
-                var inventories = new List<RealRuntimeCrashAssignedWorkInventoryProof>();
+                var worksByRuntime =
+                    new Dictionary<
+                        string,
+                        List<RealRuntimeCrashWorkProof>>(
+                            StringComparer.Ordinal);
 
-                foreach (var group in dispatchedRuns.GroupBy(item => item.Run.AssignedRuntimeInstanceId!, StringComparer.Ordinal))
+                var unresolvedRuns =
+                    new List<string>();
+
+                foreach (var trackedRun in trackedRuns)
                 {
-                    var works = new List<RealRuntimeCrashWorkProof>();
+                    var refreshedRun =
+                        await sharedRunStore
+                            .GetAsync(trackedRun.SharedRunId)
+                            .ConfigureAwait(false) ??
+                        trackedRun.InitialRun;
 
-                    foreach (var item in group)
+                    if (refreshedRun is null ||
+                        string.IsNullOrWhiteSpace(
+                            refreshedRun.AssignedRuntimeInstanceId) ||
+                        string.IsNullOrWhiteSpace(
+                            refreshedRun.LocalRunId))
                     {
-                        var refreshedRun =
-                            await sharedRunStore
-                                .GetAsync(item.Run.SharedRunId)
-                                .ConfigureAwait(false) ??
-                            item.Run;
+                        unresolvedRuns.Add(
+                            $"{trackedRun.SharedRunId}:not-dispatched");
 
-                        var localRunId =
-                            refreshedRun.LocalRunId ??
-                            item.Run.LocalRunId;
-
-                        Assert.False(string.IsNullOrWhiteSpace(localRunId));
-
-                        var indexEntry =
-                            await runExecutionIndex
-                                .GetAsync(localRunId!)
-                                .ConfigureAwait(false);
-
-                        var executionId =
-                            refreshedRun.ExecutionId ??
-                            indexEntry?.ExecutionId;
-
-                        if (indexEntry is null)
-                        {
-                            continue;
-                        }
-
-                        RealRuntimeCrashWorkKind? kind =
-                            null;
-
-                        if (string.Equals(
-                                indexEntry.Status,
-                                "running",
-                                StringComparison.OrdinalIgnoreCase) &&
-                            !string.IsNullOrWhiteSpace(executionId))
-                        {
-                            kind =
-                                RealRuntimeCrashWorkKind.InFlightExecution;
-                        }
-                        else if (string.Equals(
-                                     indexEntry.Status,
-                                     "queued",
-                                     StringComparison.OrdinalIgnoreCase) &&
-                                 string.IsNullOrWhiteSpace(executionId))
-                        {
-                            kind =
-                                RealRuntimeCrashWorkKind.LocalQueued;
-                        }
-
-                        if (kind is null)
-                        {
-                            continue;
-                        }
-
-                        works.Add(
-                            new RealRuntimeCrashWorkProof
-                            {
-                                Kind = kind.Value,
-                                SharedRun = refreshedRun,
-                                SharedRunId = refreshedRun.SharedRunId,
-                                LocalRunId = localRunId!,
-                                ExecutionId = executionId,
-                                PipelineName = item.PipelineName
-                            });
+                        continue;
                     }
 
-                    inventories.Add(
-                        new RealRuntimeCrashAssignedWorkInventoryProof
+                    if (loggedDispatchedRunIds.Add(
+                            refreshedRun.SharedRunId))
+                    {
+                        output.WriteLine(
+                            $"[REAL RUNTIME INVENTORY] Run dispatch observed by combined inventory wait. TenantId='{tenant.TenantId}', SharedRunId='{refreshedRun.SharedRunId}', RuntimeInstanceId='{refreshedRun.AssignedRuntimeInstanceId}', LocalRunId='{refreshedRun.LocalRunId}', PipelineName='{trackedRun.PipelineName}'.");
+                    }
+
+                    var indexEntry =
+                        await runExecutionIndex
+                            .GetAsync(refreshedRun.LocalRunId)
+                            .ConfigureAwait(false);
+
+                    if (indexEntry is null)
+                    {
+                        unresolvedRuns.Add(
+                            $"{trackedRun.SharedRunId}:index-missing");
+
+                        continue;
+                    }
+
+                    var executionId =
+                        refreshedRun.ExecutionId ??
+                        indexEntry.ExecutionId;
+
+                    RealRuntimeCrashWorkKind? kind =
+                        null;
+
+                    if (string.Equals(
+                            indexEntry.Status,
+                            "running",
+                            StringComparison.OrdinalIgnoreCase) &&
+                        !string.IsNullOrWhiteSpace(executionId))
+                    {
+                        kind =
+                            RealRuntimeCrashWorkKind.InFlightExecution;
+                    }
+                    else if (string.Equals(
+                                 indexEntry.Status,
+                                 "queued",
+                                 StringComparison.OrdinalIgnoreCase) &&
+                             string.IsNullOrWhiteSpace(executionId))
+                    {
+                        kind =
+                            RealRuntimeCrashWorkKind.LocalQueued;
+                    }
+
+                    if (kind is null)
+                    {
+                        unresolvedRuns.Add(
+                            $"{trackedRun.SharedRunId}:status={indexEntry.Status}");
+
+                        continue;
+                    }
+
+                    if (!worksByRuntime.TryGetValue(
+                            refreshedRun.AssignedRuntimeInstanceId,
+                            out var works))
+                    {
+                        works =
+                            new List<RealRuntimeCrashWorkProof>();
+
+                        worksByRuntime.Add(
+                            refreshedRun.AssignedRuntimeInstanceId,
+                            works);
+                    }
+
+                    works.Add(
+                        new RealRuntimeCrashWorkProof
                         {
-                            Tenant = tenant,
-                            Mcp = mcp,
-                            RuntimeInstanceId = group.Key,
-                            Works = works
+                            Kind = kind.Value,
+                            SharedRun = refreshedRun,
+                            SharedRunId = refreshedRun.SharedRunId,
+                            LocalRunId = refreshedRun.LocalRunId,
+                            ExecutionId = executionId,
+                            PipelineName = trackedRun.PipelineName
                         });
                 }
 
+                var inventories =
+                    worksByRuntime
+                        .Select(pair =>
+                            new RealRuntimeCrashAssignedWorkInventoryProof
+                            {
+                                Tenant = tenant,
+                                Mcp = mcp,
+                                RuntimeInstanceId = pair.Key,
+                                Works = pair.Value
+                            })
+                        .ToArray();
+
                 selectedInventory =
                     inventories
-                        .OrderByDescending(inventory => inventory.Works.Count)
-                        .ThenByDescending(inventory => inventory.InFlightExecutions.Count)
-                        .ThenByDescending(inventory => inventory.LocalQueuedRuns.Count)
+                        .OrderByDescending(inventory =>
+                            inventory.Works.Count)
+                        .ThenByDescending(inventory =>
+                            inventory.InFlightExecutions.Count)
+                        .ThenByDescending(inventory =>
+                            inventory.LocalQueuedRuns.Count)
                         .FirstOrDefault(inventory =>
-                            inventory.InFlightExecutions.Count >= minimumInFlightExecutionCount &&
-                            inventory.LocalQueuedRuns.Count >= minimumLocalQueuedRunCount);
+                            inventory.Works.Count == runCount &&
+                            inventory.InFlightExecutions.Count ==
+                            minimumInFlightExecutionCount &&
+                            inventory.LocalQueuedRuns.Count >=
+                            minimumLocalQueuedRunCount);
 
                 lastInventorySummary =
                     string.Join(
                         " | ",
                         inventories.Select(inventory =>
                             $"Runtime='{inventory.RuntimeInstanceId}', Total='{inventory.Works.Count}', InFlight='{inventory.InFlightExecutions.Count}', LocalQueued='{inventory.LocalQueuedRuns.Count}'"));
+
+                if (unresolvedRuns.Count > 0)
+                {
+                    lastInventorySummary =
+                        $"{lastInventorySummary} | Unresolved='{string.Join(",", unresolvedRuns)}'";
+                }
 
                 if (selectedInventory is not null)
                 {
@@ -264,13 +368,13 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
                 }
 
                 await Task
-                    .Delay(TimeSpan.FromMilliseconds(250))
+                    .Delay(TimeSpan.FromMilliseconds(500))
                     .ConfigureAwait(false);
             }
 
             Assert.Fail(
                 "Could not build a real assigned work inventory matching the expected runtime shape before crash. " +
-                $"TenantId='{tenant.TenantId}', ExpectedInFlight='{minimumInFlightExecutionCount}', ExpectedLocalQueued='{minimumLocalQueuedRunCount}', LastInventorySummary='{lastInventorySummary}'.");
+                $"TenantId='{tenant.TenantId}', ExpectedTotal='{runCount}', ExpectedInFlight='{minimumInFlightExecutionCount}', ExpectedLocalQueued='{minimumLocalQueuedRunCount}', InventoryTimeout='{inventoryTimeout}', LastInventorySummary='{lastInventorySummary}'.");
 
             throw new InvalidOperationException("Unreachable assertion path.");
         }
@@ -298,6 +402,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
         /// <param name="signalSubscriber">The runtime signal subscriber used only in hybrid mode.</param>
         /// <param name="controlPlaneId">The logical control-plane identifier used only in hybrid mode.</param>
         /// <param name="hybridFallbackPollInterval">The slow durable fallback interval used only in hybrid mode.</param>
+        /// <param name="crashCheckpointGate">The optional durable crash checkpoint released immediately after process termination.</param>
         /// <returns>The failed-runtime recovery proof.</returns>
         public static async Task<RealRuntimeCrashFailedRuntimeRecoveryProof>
             KillRuntimeAndRecoverAssignedInventoryAsync(
@@ -319,7 +424,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
                     ProductionRecoveryObservationMode.Polling,
                 IAiRuntimeSignalSubscriber? signalSubscriber = null,
                 string? controlPlaneId = null,
-                TimeSpan? hybridFallbackPollInterval = null)
+                TimeSpan? hybridFallbackPollInterval = null,
+                ProductionCrashCheckpointGate? crashCheckpointGate = null)
         {
             ArgumentNullException.ThrowIfNull(output);
             ArgumentNullException.ThrowIfNull(processControl);
@@ -379,38 +485,6 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
 
             try
             {
-                if (observationMode == ProductionRecoveryObservationMode.HybridSignals)
-                {
-                    foreach (var work in inventory.Works)
-                    {
-                        var subscription = await signalSubscriber!
-                            .SubscribeAsync(
-                                AiRuntimeSignalType.SharedRunDispatched,
-                                controlPlaneId!,
-                                work.SharedRunId)
-                            .ConfigureAwait(false);
-
-                        sharedRunDispatchSubscriptions.Add(
-                            work.SharedRunId,
-                            subscription);
-
-                        sharedRunDispatchSignalTasks.Add(
-                            work.SharedRunId,
-                            ReadRequiredSharedRunDispatchedSignalAsync(
-                                subscription,
-                                controlPlaneId!,
-                                work.SharedRunId,
-                                sharedRunSignalLifetime.Token));
-
-                        output.WriteLine(
-                            $"[REAL RUNTIME INVENTORY REDISPATCH SIGNAL SUBSCRIBED] " +
-                            $"ObservationMode='{observationMode}', " +
-                            $"TenantId='{inventory.Tenant.TenantId}', " +
-                            $"SharedRunId='{work.SharedRunId}', " +
-                            $"Kind='{work.Kind}'.");
-                    }
-                }
-
                 var inFlightWork = Assert.Single(inventory.InFlightExecutions);
 
                 Assert.False(string.IsNullOrWhiteSpace(inFlightWork.ExecutionId));
@@ -446,6 +520,53 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
                                 minimumCompletedStepsBeforeKill,
                                 progressTimeout)
                             .ConfigureAwait(false);
+
+                if (killObservation.Killed &&
+                    crashCheckpointGate is not null)
+                {
+                    await crashCheckpointGate
+                        .ReleaseAsync()
+                        .ConfigureAwait(false);
+                }
+
+                /*
+                 * Redispatch subscriptions belong after process termination.
+                 * Creating them before crash observation can consume the entire
+                 * in-flight DAG window under high parallel pressure. Durable
+                 * fallback polling still guarantees convergence if a signal is
+                 * published before a subscription becomes active.
+                 */
+                if (observationMode == ProductionRecoveryObservationMode.HybridSignals)
+                {
+                    foreach (var work in inventory.Works)
+                    {
+                        var subscription = await signalSubscriber!
+                            .SubscribeAsync(
+                                AiRuntimeSignalType.SharedRunDispatched,
+                                controlPlaneId!,
+                                work.SharedRunId)
+                            .ConfigureAwait(false);
+
+                        sharedRunDispatchSubscriptions.Add(
+                            work.SharedRunId,
+                            subscription);
+
+                        sharedRunDispatchSignalTasks.Add(
+                            work.SharedRunId,
+                            ReadRequiredSharedRunDispatchedSignalAsync(
+                                subscription,
+                                controlPlaneId!,
+                                work.SharedRunId,
+                                sharedRunSignalLifetime.Token));
+
+                        output.WriteLine(
+                            $"[REAL RUNTIME INVENTORY REDISPATCH SIGNAL SUBSCRIBED AFTER KILL] " +
+                            $"ObservationMode='{observationMode}', " +
+                            $"TenantId='{inventory.Tenant.TenantId}', " +
+                            $"SharedRunId='{work.SharedRunId}', " +
+                            $"Kind='{work.Kind}'.");
+                    }
+                }
 
                 var observedCrashSnapshot =
                     killObservation.ObservedCrashSnapshot;
