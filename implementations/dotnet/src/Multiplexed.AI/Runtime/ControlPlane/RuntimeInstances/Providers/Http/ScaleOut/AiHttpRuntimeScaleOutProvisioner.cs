@@ -9,6 +9,7 @@ using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers.Transp
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Readiness;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Scaling;
+using System.Collections.Concurrent;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http.ScaleOut
 {
@@ -73,6 +74,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http.Sc
         /// </summary>
         private const string RecoveryFailedRuntimeInstanceIdMetadataKey =
             "recovery.failedRuntimeInstanceId";
+
+        private static readonly ConcurrentDictionary<string, byte> RuntimeInstanceIdReservations =
+            new(StringComparer.OrdinalIgnoreCase);
 
         private readonly IAiRuntimeInstanceRegistry registry;
         private readonly IAiRuntimeInstanceCapacityStore capacityStore;
@@ -146,84 +150,98 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http.Sc
                 return CreateRejectedResult(request, "http-runtime-scaleout-control-plane-id-missing", "HTTP runtime scale-out control-plane id is missing.");
             }
 
-            var context = CreateProvisioningContext(request);
+            var context =
+                await this.CreateProvisioningContextAsync(
+                        request,
+                        cancellationToken)
+                    .ConfigureAwait(false);
 
-            if (IsHostManagerMode(this.options.Mode))
+            try
             {
-                return await this.ProvisionWithHostManagerAsync(request, context, startedAtUtc, cancellationToken).ConfigureAwait(false);
+                if (IsHostManagerMode(this.options.Mode))
+                {
+                    return await this.ProvisionWithHostManagerAsync(request, context, startedAtUtc, cancellationToken).ConfigureAwait(false);
+                }
+
+                this.logger.LogInformation(
+                    "HTTP SCALE-OUT PROVISION START RequestId={RequestId} SharedRunId={SharedRunId} RuntimeInstanceId={RuntimeInstanceId} Endpoint={Endpoint} TenantId={TenantId} TenantGroupId={TenantGroupId} IsolationMode={IsolationMode} WorkerCount={WorkerCount} MaxConcurrentRuns={MaxConcurrentRuns} QueueCapacity={QueueCapacity}",
+                    request.RequestId,
+                    request.SharedRunId,
+                    context.RuntimeInstanceId,
+                    context.Endpoint,
+                    context.TenantId,
+                    context.TenantGroupId,
+                    context.IsolationMode,
+                    context.WorkerCount,
+                    context.MaxConcurrentRuns,
+                    context.QueueCapacity);
+
+                await this.registry.RegisterAsync(
+                    new AiRuntimeInstanceRegistration
+                    {
+                        RuntimeInstanceId = context.RuntimeInstanceId,
+                        ControlPlaneId = request.ControlPlaneId,
+                        ControlPlaneHostId = $"http-scaleout-{request.ControlPlaneId}",
+                        HostId = $"http-host-{context.RuntimeInstanceId}",
+                        RuntimeId = context.RuntimeInstanceId,
+                        Role = AiRuntimeInstanceRole.Runtime,
+                        WorkerCount = context.WorkerCount,
+                        MaxConcurrentRuns = context.MaxConcurrentRuns,
+                        QueueCapacity = context.QueueCapacity,
+                        RegisteredAtUtc = startedAtUtc,
+                        Metadata = context.Metadata
+                    },
+                    cancellationToken).ConfigureAwait(false);
+
+                await this.capacityStore.PublishAsync(
+                    new AiRuntimeInstanceCapacityDescriptor
+                    {
+                        RuntimeInstanceId = context.RuntimeInstanceId,
+                        ControlPlaneId = request.ControlPlaneId,
+                        ControlPlaneHostId = $"http-scaleout-{request.ControlPlaneId}",
+                        Role = AiRuntimeInstanceRole.Runtime,
+                        Status = AiRuntimeInstanceStatus.Ready,
+                        WorkerCount = context.WorkerCount,
+                        ActiveWorkerCount = 0,
+                        AvailableWorkerCount = context.WorkerCount,
+                        MaxWorkersPerRun = context.WorkerCount,
+                        MinWorkersRequiredPerRun = 1,
+                        QueuedRunCount = 0,
+                        RunningRunCount = 0,
+                        ActiveRunCount = 0,
+                        MaxConcurrentRuns = context.MaxConcurrentRuns,
+                        MaxRunSlots = context.MaxConcurrentRuns,
+                        AvailableRunSlots = context.MaxConcurrentRuns,
+                        ReservedRunSlots = 0,
+                        EffectiveAvailableRunSlots = context.MaxConcurrentRuns,
+                        IsQueuePaused = false,
+                        CanAcceptRun = true,
+                        LastHeartbeatAtUtc = startedAtUtc,
+                        Metadata = context.Metadata
+                    },
+                    cancellationToken).ConfigureAwait(false);
+
+                this.logger.LogInformation(
+                    "HTTP SCALE-OUT PROVISION FULFILLED RequestId={RequestId} SharedRunId={SharedRunId} RuntimeInstanceId={RuntimeInstanceId} Endpoint={Endpoint}",
+                    request.RequestId,
+                    request.SharedRunId,
+                    context.RuntimeInstanceId,
+                    context.Endpoint);
+
+                return CreateFulfilledResult(
+                    request,
+                    context.RuntimeInstanceId,
+                    $"http-scaleout-{request.RequestId}",
+                    "HTTP runtime scale-out request was fulfilled.",
+                    context.Metadata);
             }
-
-            this.logger.LogInformation(
-                "HTTP SCALE-OUT PROVISION START RequestId={RequestId} SharedRunId={SharedRunId} RuntimeInstanceId={RuntimeInstanceId} Endpoint={Endpoint} TenantId={TenantId} TenantGroupId={TenantGroupId} IsolationMode={IsolationMode} WorkerCount={WorkerCount} MaxConcurrentRuns={MaxConcurrentRuns} QueueCapacity={QueueCapacity}",
-                request.RequestId,
-                request.SharedRunId,
-                context.RuntimeInstanceId,
-                context.Endpoint,
-                context.TenantId,
-                context.TenantGroupId,
-                context.IsolationMode,
-                context.WorkerCount,
-                context.MaxConcurrentRuns,
-                context.QueueCapacity);
-
-            await this.registry.RegisterAsync(
-                new AiRuntimeInstanceRegistration
+            finally
+            {
+                if (this.ShouldReserveRuntimeInstanceId())
                 {
-                    RuntimeInstanceId = context.RuntimeInstanceId,
-                    ControlPlaneId = request.ControlPlaneId,
-                    ControlPlaneHostId = $"http-scaleout-{request.ControlPlaneId}",
-                    HostId = $"http-host-{context.RuntimeInstanceId}",
-                    RuntimeId = context.RuntimeInstanceId,
-                    Role = AiRuntimeInstanceRole.Runtime,
-                    WorkerCount = context.WorkerCount,
-                    MaxConcurrentRuns = context.MaxConcurrentRuns,
-                    QueueCapacity = context.QueueCapacity,
-                    RegisteredAtUtc = startedAtUtc,
-                    Metadata = context.Metadata
-                },
-                cancellationToken).ConfigureAwait(false);
-
-            await this.capacityStore.PublishAsync(
-                new AiRuntimeInstanceCapacityDescriptor
-                {
-                    RuntimeInstanceId = context.RuntimeInstanceId,
-                    ControlPlaneId = request.ControlPlaneId,
-                    ControlPlaneHostId = $"http-scaleout-{request.ControlPlaneId}",
-                    Role = AiRuntimeInstanceRole.Runtime,
-                    Status = AiRuntimeInstanceStatus.Ready,
-                    WorkerCount = context.WorkerCount,
-                    ActiveWorkerCount = 0,
-                    AvailableWorkerCount = context.WorkerCount,
-                    MaxWorkersPerRun = context.WorkerCount,
-                    MinWorkersRequiredPerRun = 1,
-                    QueuedRunCount = 0,
-                    RunningRunCount = 0,
-                    ActiveRunCount = 0,
-                    MaxConcurrentRuns = context.MaxConcurrentRuns,
-                    MaxRunSlots = context.MaxConcurrentRuns,
-                    AvailableRunSlots = context.MaxConcurrentRuns,
-                    ReservedRunSlots = 0,
-                    EffectiveAvailableRunSlots = context.MaxConcurrentRuns,
-                    IsQueuePaused = false,
-                    CanAcceptRun = true,
-                    LastHeartbeatAtUtc = startedAtUtc,
-                    Metadata = context.Metadata
-                },
-                cancellationToken).ConfigureAwait(false);
-
-            this.logger.LogInformation(
-                "HTTP SCALE-OUT PROVISION FULFILLED RequestId={RequestId} SharedRunId={SharedRunId} RuntimeInstanceId={RuntimeInstanceId} Endpoint={Endpoint}",
-                request.RequestId,
-                request.SharedRunId,
-                context.RuntimeInstanceId,
-                context.Endpoint);
-
-            return CreateFulfilledResult(
-                request,
-                context.RuntimeInstanceId,
-                $"http-scaleout-{request.RequestId}",
-                "HTTP runtime scale-out request was fulfilled.",
-                context.Metadata);
+                    ReleaseRuntimeInstanceIdReservation(context.RuntimeInstanceId);
+                }
+            }
         }
 
         /// <summary>
@@ -240,8 +258,165 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http.Sc
             DateTimeOffset startedAtUtc,
             CancellationToken cancellationToken)
         {
+            if (!this.ShouldUseProcessHostStartupGate())
+            {
+                return await this.ProvisionWithHostManagerCoreAsync(
+                        request,
+                        context,
+                        startedAtUtc,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+            }
+
+            var concurrencyKey =
+                this.ResolveProcessHostStartupConcurrencyKey();
+
+            var requestedMaxConcurrency =
+                this.options.MaxConcurrentProcessHostStartups;
+
             this.logger.LogInformation(
-                "HTTP SCALE-OUT HOST-MANAGER START RequestId={RequestId} SharedRunId={SharedRunId} RuntimeInstanceId={RuntimeInstanceId} Endpoint={Endpoint} HostCreationMode={HostCreationMode} TenantId={TenantId} TenantGroupId={TenantGroupId} IsolationMode={IsolationMode} WorkerCount={WorkerCount} MaxConcurrentRuns={MaxConcurrentRuns} QueueCapacity={QueueCapacity}",
+                "HTTP PROCESS HOST STARTUP GATE WAIT RequestId={RequestId} SharedRunId={SharedRunId} RuntimeInstanceId={RuntimeInstanceId} ConcurrencyKey={ConcurrencyKey} RequestedMaxConcurrency={RequestedMaxConcurrency}",
+                request.RequestId,
+                request.SharedRunId,
+                context.RuntimeInstanceId,
+                concurrencyKey,
+                requestedMaxConcurrency);
+
+            var lease =
+                await AiHttpProcessHostStartupConcurrencyGate
+                    .AcquireAsync(
+                        concurrencyKey,
+                        requestedMaxConcurrency,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+            if (lease.RequestedMaxConcurrency != lease.EffectiveMaxConcurrency)
+            {
+                this.logger.LogWarning(
+                    "HTTP PROCESS HOST STARTUP GATE LIMIT MISMATCH RequestId={RequestId} SharedRunId={SharedRunId} RuntimeInstanceId={RuntimeInstanceId} ConcurrencyKey={ConcurrencyKey} RequestedMaxConcurrency={RequestedMaxConcurrency} EffectiveMaxConcurrency={EffectiveMaxConcurrency}",
+                    request.RequestId,
+                    request.SharedRunId,
+                    context.RuntimeInstanceId,
+                    lease.ConcurrencyKey,
+                    lease.RequestedMaxConcurrency,
+                    lease.EffectiveMaxConcurrency);
+            }
+
+            var acquiredAtUtc = DateTimeOffset.UtcNow;
+
+            this.logger.LogInformation(
+                "HTTP PROCESS HOST STARTUP GATE ACQUIRED RequestId={RequestId} SharedRunId={SharedRunId} RuntimeInstanceId={RuntimeInstanceId} ConcurrencyKey={ConcurrencyKey} EffectiveMaxConcurrency={EffectiveMaxConcurrency} ActiveCount={ActiveCount} WaitingCount={WaitingCount} WaitDurationMs={WaitDurationMs}",
+                request.RequestId,
+                request.SharedRunId,
+                context.RuntimeInstanceId,
+                lease.ConcurrencyKey,
+                lease.EffectiveMaxConcurrency,
+                lease.ActiveCount,
+                lease.WaitingCount,
+                lease.WaitDuration.TotalMilliseconds);
+
+            try
+            {
+                return await this.ProvisionWithHostManagerCoreAsync(
+                        request,
+                        context,
+                        startedAtUtc,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            finally
+            {
+                lease.Dispose();
+
+                this.logger.LogInformation(
+                    "HTTP PROCESS HOST STARTUP GATE RELEASED RequestId={RequestId} SharedRunId={SharedRunId} RuntimeInstanceId={RuntimeInstanceId} ConcurrencyKey={ConcurrencyKey} EffectiveMaxConcurrency={EffectiveMaxConcurrency} ActiveCount={ActiveCount} WaitingCount={WaitingCount} HeldDurationMs={HeldDurationMs}",
+                    request.RequestId,
+                    request.SharedRunId,
+                    context.RuntimeInstanceId,
+                    lease.ConcurrencyKey,
+                    lease.EffectiveMaxConcurrency,
+                    lease.ActiveCount,
+                    lease.WaitingCount,
+                    (DateTimeOffset.UtcNow - acquiredAtUtc).TotalMilliseconds);
+            }
+        }
+
+        /// <summary>
+        /// Executes host-manager startup and readiness after any process-host startup gate has been acquired.
+        /// </summary>
+        private async Task<AiRuntimeScaleOutProviderResult> ProvisionWithHostManagerCoreAsync(
+            AiRuntimeScaleOutProviderRequest request,
+            AiRuntimeScaleOutProvisioningContext context,
+            DateTimeOffset startedAtUtc,
+            CancellationToken cancellationToken)
+        {
+            var maxAttempts =
+                this.ResolveProcessHostStartupMaxAttempts();
+
+            AiRuntimeScaleOutProviderResult? lastResult = null;
+
+            for (var attempt = 1; attempt <= maxAttempts; attempt++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                this.logger.LogInformation(
+                    "HTTP PROCESS HOST STARTUP ATTEMPT RequestId={RequestId} SharedRunId={SharedRunId} RuntimeInstanceId={RuntimeInstanceId} Attempt={Attempt} MaxAttempts={MaxAttempts}",
+                    request.RequestId,
+                    request.SharedRunId,
+                    context.RuntimeInstanceId,
+                    attempt,
+                    maxAttempts);
+
+                var attemptResult =
+                    await this.ProvisionWithHostManagerAttemptAsync(
+                            request,
+                            context,
+                            startedAtUtc,
+                            attempt,
+                            maxAttempts,
+                            cancellationToken)
+                        .ConfigureAwait(false);
+
+                lastResult = attemptResult.Result;
+
+                if (attemptResult.Result.Success ||
+                    !attemptResult.CanRetryProcessRegistrationFailure ||
+                    attempt >= maxAttempts)
+                {
+                    return attemptResult.Result;
+                }
+
+                this.logger.LogWarning(
+                    "HTTP PROCESS HOST STARTUP RETRY RequestId={RequestId} SharedRunId={SharedRunId} RuntimeInstanceId={RuntimeInstanceId} CompletedAttempt={CompletedAttempt} NextAttempt={NextAttempt} MaxAttempts={MaxAttempts} FailureReason={FailureReason}",
+                    request.RequestId,
+                    request.SharedRunId,
+                    context.RuntimeInstanceId,
+                    attempt,
+                    attempt + 1,
+                    maxAttempts,
+                    attemptResult.Result.FailureReason);
+            }
+
+            return lastResult ??
+                   CreateRejectedResult(
+                       request,
+                       "http-process-host-startup-attempts-exhausted",
+                       "HTTP process-host startup attempts were exhausted.");
+        }
+
+        /// <summary>
+        /// Executes one HTTP host-manager process startup and readiness attempt.
+        /// </summary>
+        private async Task<HttpProcessHostProvisionAttemptResult> ProvisionWithHostManagerAttemptAsync(
+            AiRuntimeScaleOutProviderRequest request,
+            AiRuntimeScaleOutProvisioningContext context,
+            DateTimeOffset startedAtUtc,
+            int attempt,
+            int maxAttempts,
+            CancellationToken cancellationToken)
+        {
+            this.logger.LogInformation(
+                "HTTP SCALE-OUT HOST-MANAGER START RequestId={RequestId} SharedRunId={SharedRunId} RuntimeInstanceId={RuntimeInstanceId} Endpoint={Endpoint} HostCreationMode={HostCreationMode} TenantId={TenantId} TenantGroupId={TenantGroupId} IsolationMode={IsolationMode} WorkerCount={WorkerCount} MaxConcurrentRuns={MaxConcurrentRuns} QueueCapacity={QueueCapacity} Attempt={Attempt} MaxAttempts={MaxAttempts}",
                 request.RequestId,
                 request.SharedRunId,
                 context.RuntimeInstanceId,
@@ -252,7 +427,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http.Sc
                 context.IsolationMode,
                 context.WorkerCount,
                 context.MaxConcurrentRuns,
-                context.QueueCapacity);
+                context.QueueCapacity,
+                attempt,
+                maxAttempts);
 
             var startResult =
                 await this.runtimeHostManager.StartRuntimeAsync(
@@ -281,7 +458,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http.Sc
                     cancellationToken).ConfigureAwait(false);
 
             this.logger.LogInformation(
-                "HTTP SCALE-OUT HOST-MANAGER START RESULT RequestId={RequestId} SharedRunId={SharedRunId} Success={Success} RuntimeInstanceId={RuntimeInstanceId} ProviderName={ProviderName} TransportName={TransportName} TransportEndpoint={TransportEndpoint} FailureReason={FailureReason}",
+                "HTTP SCALE-OUT HOST-MANAGER START RESULT RequestId={RequestId} SharedRunId={SharedRunId} Success={Success} RuntimeInstanceId={RuntimeInstanceId} ProviderName={ProviderName} TransportName={TransportName} TransportEndpoint={TransportEndpoint} FailureReason={FailureReason} Attempt={Attempt} MaxAttempts={MaxAttempts}",
                 request.RequestId,
                 request.SharedRunId,
                 startResult.Success,
@@ -289,22 +466,28 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http.Sc
                 startResult.ProviderName,
                 startResult.TransportName,
                 startResult.TransportEndpoint,
-                startResult.FailureReason ?? "(none)");
+                startResult.FailureReason ?? "(none)",
+                attempt,
+                maxAttempts);
 
             if (!startResult.Success)
             {
                 this.logger.LogWarning(
-                    "HTTP SCALE-OUT HOST-MANAGER REJECTED RequestId={RequestId} SharedRunId={SharedRunId} RuntimeInstanceId={RuntimeInstanceId} HostCreationMode={HostCreationMode} FailureReason={FailureReason}",
+                    "HTTP SCALE-OUT HOST-MANAGER REJECTED RequestId={RequestId} SharedRunId={SharedRunId} RuntimeInstanceId={RuntimeInstanceId} HostCreationMode={HostCreationMode} FailureReason={FailureReason} Attempt={Attempt} MaxAttempts={MaxAttempts}",
                     request.RequestId,
                     request.SharedRunId,
                     context.RuntimeInstanceId,
                     this.options.HostCreationMode,
-                    startResult.FailureReason);
+                    startResult.FailureReason,
+                    attempt,
+                    maxAttempts);
 
-                return CreateRejectedResult(
-                    request,
-                    startResult.FailureReason ?? "runtime-host-start-failed",
-                    "HTTP runtime scale-out host manager start failed.");
+                return new HttpProcessHostProvisionAttemptResult(
+                    CreateRejectedResult(
+                        request,
+                        startResult.FailureReason ?? "runtime-host-start-failed",
+                        "HTTP runtime scale-out host manager start failed."),
+                    CanRetryProcessRegistrationFailure: false);
             }
 
             var excludedRuntimeInstanceId =
@@ -328,17 +511,21 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http.Sc
             if (string.IsNullOrWhiteSpace(fulfilledRuntimeInstanceId))
             {
                 this.logger.LogWarning(
-                    "HTTP SCALE-OUT HOST-MANAGER REJECTED RequestId={RequestId} SharedRunId={SharedRunId} RuntimeInstanceId={RuntimeInstanceId} HostCreationMode={HostCreationMode} FailureReason={FailureReason}",
+                    "HTTP SCALE-OUT HOST-MANAGER REJECTED RequestId={RequestId} SharedRunId={SharedRunId} RuntimeInstanceId={RuntimeInstanceId} HostCreationMode={HostCreationMode} FailureReason={FailureReason} Attempt={Attempt} MaxAttempts={MaxAttempts}",
                     request.RequestId,
                     request.SharedRunId,
                     context.RuntimeInstanceId,
                     this.options.HostCreationMode,
-                    "runtime-host-started-without-runtime-instance-id");
-
-                return CreateRejectedResult(
-                    request,
                     "runtime-host-started-without-runtime-instance-id",
-                    "HTTP runtime scale-out host manager returned success without a runtime instance id.");
+                    attempt,
+                    maxAttempts);
+
+                return new HttpProcessHostProvisionAttemptResult(
+                    CreateRejectedResult(
+                        request,
+                        "runtime-host-started-without-runtime-instance-id",
+                        "HTTP runtime scale-out host manager returned success without a runtime instance id."),
+                    CanRetryProcessRegistrationFailure: false);
             }
 
             if (string.Equals(
@@ -347,17 +534,21 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http.Sc
                     StringComparison.Ordinal))
             {
                 this.logger.LogWarning(
-                    "HTTP SCALE-OUT HOST-MANAGER REJECTED EXCLUDED RUNTIME RequestId={RequestId} SharedRunId={SharedRunId} RuntimeInstanceId={RuntimeInstanceId} ExcludedRuntimeInstanceId={ExcludedRuntimeInstanceId} HostCreationMode={HostCreationMode}",
+                    "HTTP SCALE-OUT HOST-MANAGER REJECTED EXCLUDED RUNTIME RequestId={RequestId} SharedRunId={SharedRunId} RuntimeInstanceId={RuntimeInstanceId} ExcludedRuntimeInstanceId={ExcludedRuntimeInstanceId} HostCreationMode={HostCreationMode} Attempt={Attempt} MaxAttempts={MaxAttempts}",
                     request.RequestId,
                     request.SharedRunId,
                     fulfilledRuntimeInstanceId,
                     excludedRuntimeInstanceId,
-                    this.options.HostCreationMode);
+                    this.options.HostCreationMode,
+                    attempt,
+                    maxAttempts);
 
-                return CreateRejectedResult(
-                    request,
-                    "runtime-host-started-with-excluded-runtime-instance-id",
-                    "HTTP runtime scale-out host manager returned the excluded failed runtime instance id for a recovery replacement.");
+                return new HttpProcessHostProvisionAttemptResult(
+                    CreateRejectedResult(
+                        request,
+                        "runtime-host-started-with-excluded-runtime-instance-id",
+                        "HTTP runtime scale-out host manager returned the excluded failed runtime instance id for a recovery replacement."),
+                    CanRetryProcessRegistrationFailure: false);
             }
 
             if (this.options.RequireReadiness)
@@ -366,7 +557,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http.Sc
                     this.ShouldRequireTransportEndpointForReadiness();
 
                 this.logger.LogInformation(
-                    "HTTP SCALE-OUT HOST-MANAGER READINESS WAIT RequestId={RequestId} SharedRunId={SharedRunId} RuntimeInstanceId={RuntimeInstanceId} HostCreationMode={HostCreationMode} RequireTransportEndpoint={RequireTransportEndpoint} TransportEndpoint={TransportEndpoint} TimeoutSeconds={TimeoutSeconds} PollIntervalMilliseconds={PollIntervalMilliseconds}",
+                    "HTTP SCALE-OUT HOST-MANAGER READINESS WAIT RequestId={RequestId} SharedRunId={SharedRunId} RuntimeInstanceId={RuntimeInstanceId} HostCreationMode={HostCreationMode} RequireTransportEndpoint={RequireTransportEndpoint} TransportEndpoint={TransportEndpoint} TimeoutSeconds={TimeoutSeconds} PollIntervalMilliseconds={PollIntervalMilliseconds} Attempt={Attempt} MaxAttempts={MaxAttempts}",
                     request.RequestId,
                     request.SharedRunId,
                     fulfilledRuntimeInstanceId,
@@ -374,7 +565,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http.Sc
                     requireTransportEndpoint,
                     fulfilledTransportEndpoint,
                     Math.Max(1, this.options.ReadinessTimeoutSeconds),
-                    Math.Max(1, this.options.ReadinessPollIntervalMilliseconds));
+                    Math.Max(1, this.options.ReadinessPollIntervalMilliseconds),
+                    attempt,
+                    maxAttempts);
 
                 var readinessResult =
                     await this.readinessWaiter.WaitUntilReadyAsync(
@@ -393,7 +586,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http.Sc
                         cancellationToken).ConfigureAwait(false);
 
                 this.logger.LogInformation(
-                    "HTTP SCALE-OUT HOST-MANAGER READINESS RESULT RequestId={RequestId} SharedRunId={SharedRunId} RuntimeInstanceId={RuntimeInstanceId} HostCreationMode={HostCreationMode} Success={Success} TimedOut={TimedOut} FailureReason={FailureReason} TransportEndpoint={TransportEndpoint}",
+                    "HTTP SCALE-OUT HOST-MANAGER READINESS RESULT RequestId={RequestId} SharedRunId={SharedRunId} RuntimeInstanceId={RuntimeInstanceId} HostCreationMode={HostCreationMode} Success={Success} TimedOut={TimedOut} FailureReason={FailureReason} TransportEndpoint={TransportEndpoint} Attempt={Attempt} MaxAttempts={MaxAttempts}",
                     request.RequestId,
                     request.SharedRunId,
                     readinessResult.RuntimeInstanceId,
@@ -401,28 +594,41 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http.Sc
                     readinessResult.Success,
                     readinessResult.TimedOut,
                     readinessResult.FailureReason ?? "(none)",
-                    readinessResult.TransportEndpoint ?? "(null)");
+                    readinessResult.TransportEndpoint ?? "(null)",
+                    attempt,
+                    maxAttempts);
 
                 if (!readinessResult.Success)
                 {
                     this.logger.LogWarning(
-                        "HTTP SCALE-OUT HOST-MANAGER READINESS FAILED RequestId={RequestId} SharedRunId={SharedRunId} RuntimeInstanceId={RuntimeInstanceId} HostCreationMode={HostCreationMode} FailureReason={FailureReason} TimedOut={TimedOut}",
+                        "HTTP SCALE-OUT HOST-MANAGER READINESS FAILED RequestId={RequestId} SharedRunId={SharedRunId} RuntimeInstanceId={RuntimeInstanceId} HostCreationMode={HostCreationMode} FailureReason={FailureReason} TimedOut={TimedOut} Attempt={Attempt} MaxAttempts={MaxAttempts}",
                         request.RequestId,
                         request.SharedRunId,
                         fulfilledRuntimeInstanceId,
                         this.options.HostCreationMode,
                         readinessResult.FailureReason,
-                        readinessResult.TimedOut);
+                        readinessResult.TimedOut,
+                        attempt,
+                        maxAttempts);
 
-                    await this.TryCleanupFailedProcessHostAsync(
+                    var cleanupSucceeded =
+                        await this.TryCleanupFailedProcessHostAsync(
+                                request,
+                                fulfilledRuntimeInstanceId)
+                            .ConfigureAwait(false);
+
+                    var canRetry =
+                        cleanupSucceeded &&
+                        attempt < maxAttempts &&
+                        this.IsRetryableProcessRegistrationFailure(
+                            readinessResult.FailureReason);
+
+                    return new HttpProcessHostProvisionAttemptResult(
+                        CreateRejectedResult(
                             request,
-                            fulfilledRuntimeInstanceId)
-                        .ConfigureAwait(false);
-
-                    return CreateRejectedResult(
-                        request,
-                        readinessResult.FailureReason ?? "runtime-readiness-failed",
-                        "HTTP runtime scale-out readiness check failed.");
+                            readinessResult.FailureReason ?? "runtime-readiness-failed",
+                            "HTTP runtime scale-out readiness check failed."),
+                        canRetry);
                 }
 
                 if (!string.IsNullOrWhiteSpace(readinessResult.RuntimeInstanceId))
@@ -443,22 +649,26 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http.Sc
                         StringComparison.Ordinal))
                 {
                     this.logger.LogWarning(
-                        "HTTP SCALE-OUT HOST-MANAGER READINESS RETURNED EXCLUDED RUNTIME RequestId={RequestId} SharedRunId={SharedRunId} RuntimeInstanceId={RuntimeInstanceId} ExcludedRuntimeInstanceId={ExcludedRuntimeInstanceId} HostCreationMode={HostCreationMode}",
+                        "HTTP SCALE-OUT HOST-MANAGER READINESS RETURNED EXCLUDED RUNTIME RequestId={RequestId} SharedRunId={SharedRunId} RuntimeInstanceId={RuntimeInstanceId} ExcludedRuntimeInstanceId={ExcludedRuntimeInstanceId} HostCreationMode={HostCreationMode} Attempt={Attempt} MaxAttempts={MaxAttempts}",
                         request.RequestId,
                         request.SharedRunId,
                         fulfilledRuntimeInstanceId,
                         excludedRuntimeInstanceId,
-                        this.options.HostCreationMode);
+                        this.options.HostCreationMode,
+                        attempt,
+                        maxAttempts);
 
                     await this.TryCleanupFailedProcessHostAsync(
                             request,
                             fulfilledRuntimeInstanceId)
                         .ConfigureAwait(false);
 
-                    return CreateRejectedResult(
-                        request,
-                        "runtime-readiness-returned-excluded-runtime-instance-id",
-                        "HTTP runtime readiness returned the excluded failed runtime instance id for a recovery replacement.");
+                    return new HttpProcessHostProvisionAttemptResult(
+                        CreateRejectedResult(
+                            request,
+                            "runtime-readiness-returned-excluded-runtime-instance-id",
+                            "HTTP runtime readiness returned the excluded failed runtime instance id for a recovery replacement."),
+                        CanRetryProcessRegistrationFailure: false);
                 }
             }
 
@@ -470,21 +680,87 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http.Sc
                     fulfilledRuntimeInstanceId,
                     fulfilledTransportEndpoint);
 
+            metadata["processHost.startupAttempt"] = attempt.ToString();
+            metadata["processHost.startupMaxAttempts"] = maxAttempts.ToString();
+
             this.logger.LogInformation(
-                "HTTP SCALE-OUT HOST-MANAGER FULFILLED RequestId={RequestId} SharedRunId={SharedRunId} RuntimeInstanceId={RuntimeInstanceId} Endpoint={Endpoint} HostCreationMode={HostCreationMode} DurationMs={DurationMs}",
+                "HTTP SCALE-OUT HOST-MANAGER FULFILLED RequestId={RequestId} SharedRunId={SharedRunId} RuntimeInstanceId={RuntimeInstanceId} Endpoint={Endpoint} HostCreationMode={HostCreationMode} DurationMs={DurationMs} Attempt={Attempt} MaxAttempts={MaxAttempts}",
                 request.RequestId,
                 request.SharedRunId,
                 fulfilledRuntimeInstanceId,
                 fulfilledTransportEndpoint,
                 this.options.HostCreationMode,
-                (DateTimeOffset.UtcNow - startedAtUtc).TotalMilliseconds);
+                (DateTimeOffset.UtcNow - startedAtUtc).TotalMilliseconds,
+                attempt,
+                maxAttempts);
 
-            return CreateFulfilledResult(
-                request,
-                fulfilledRuntimeInstanceId,
-                $"http-host-manager-scaleout-{request.RequestId}",
-                "HTTP runtime scale-out request was fulfilled by the runtime host manager.",
-                metadata);
+            return new HttpProcessHostProvisionAttemptResult(
+                CreateFulfilledResult(
+                    request,
+                    fulfilledRuntimeInstanceId,
+                    $"http-host-manager-scaleout-{request.RequestId}",
+                    "HTTP runtime scale-out request was fulfilled by the runtime host manager.",
+                    metadata),
+                CanRetryProcessRegistrationFailure: false);
+        }
+
+        /// <summary>
+        /// Resolves the bounded number of process-host startup attempts.
+        /// </summary>
+        private int ResolveProcessHostStartupMaxAttempts()
+        {
+            if (this.options.HostCreationMode != AiRuntimeHostCreationMode.Process)
+            {
+                return 1;
+            }
+
+            return 1 +
+                   Math.Clamp(
+                       this.options.ProcessHostStartupRetryCount,
+                       0,
+                       1);
+        }
+
+        /// <summary>
+        /// Determines whether the failed HTTP readiness result represents the single
+        /// process-registration failure that is safe to retry.
+        /// </summary>
+        private bool IsRetryableProcessRegistrationFailure(
+            string? failureReason)
+        {
+            return this.options.HostCreationMode == AiRuntimeHostCreationMode.Process &&
+                   string.Equals(
+                       failureReason,
+                       "runtime-readiness-compatible-registry-missing",
+                       StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>
+        /// Determines whether process-host startup gating is enabled for the current host-manager mode.
+        /// </summary>
+        private bool ShouldUseProcessHostStartupGate()
+        {
+            return this.options.HostCreationMode == AiRuntimeHostCreationMode.Process &&
+                   this.options.MaxConcurrentProcessHostStartups > 0;
+        }
+
+        /// <summary>
+        /// Resolves the process-wide startup gate key.
+        /// </summary>
+        private string ResolveProcessHostStartupConcurrencyKey()
+        {
+            return string.IsNullOrWhiteSpace(this.options.ProcessHostStartupConcurrencyKey)
+                ? "http-process-host-startup"
+                : this.options.ProcessHostStartupConcurrencyKey.Trim();
+        }
+
+        /// <summary>
+        /// Determines whether atomic runtime id reservation is required for the current mode.
+        /// </summary>
+        private bool ShouldReserveRuntimeInstanceId()
+        {
+            return IsHostManagerMode(this.options.Mode) &&
+                   this.options.HostCreationMode == AiRuntimeHostCreationMode.Process;
         }
 
         /// <summary>
@@ -499,13 +775,13 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http.Sc
         /// <param name="request">The scale-out provider request.</param>
         /// <param name="runtimeInstanceId">The process runtime instance id.</param>
         /// <returns>A task representing the cleanup attempt.</returns>
-        private async Task TryCleanupFailedProcessHostAsync(
+        private async Task<bool> TryCleanupFailedProcessHostAsync(
             AiRuntimeScaleOutProviderRequest request,
             string runtimeInstanceId)
         {
             if (this.options.HostCreationMode != AiRuntimeHostCreationMode.Process)
             {
-                return;
+                return false;
             }
 
             if (this.runtimeHostProcessControl is null)
@@ -517,7 +793,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http.Sc
                     runtimeInstanceId,
                     "process-control-unavailable");
 
-                return;
+                return false;
             }
 
             try
@@ -545,6 +821,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http.Sc
                         request.SharedRunId,
                         runtimeInstanceId);
                 }
+
+                return cleaned;
             }
             catch (Exception exception)
             {
@@ -554,6 +832,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http.Sc
                     request.RequestId,
                     request.SharedRunId,
                     runtimeInstanceId);
+
+                return false;
             }
         }
 
@@ -584,9 +864,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http.Sc
         /// Creates the tenant-aware provisioning context for the scale-out request.
         /// </summary>
         /// <param name="request">The scale-out provider request.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
         /// <returns>The resolved provisioning context.</returns>
-        private AiRuntimeScaleOutProvisioningContext CreateProvisioningContext(
-            AiRuntimeScaleOutProviderRequest request)
+        private async Task<AiRuntimeScaleOutProvisioningContext> CreateProvisioningContextAsync(
+            AiRuntimeScaleOutProviderRequest request,
+            CancellationToken cancellationToken)
         {
             var tenantSettings =
                 this.tenantRuntimeSettingsProvider.GetSettings(
@@ -636,17 +918,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http.Sc
                 tenantSettings.PreferDedicatedCapacity,
                 tenantSettings.AllowSharedFallback);
 
-            var runtimeInstanceId =
-                ResolveRuntimeInstanceId(
-                    request,
-                    runtimeInstanceIdPrefix);
-
-            var endpoint =
-                ResolveEndpoint(
-                    request,
-                    runtimeInstanceId,
-                    runtimeInstanceIdPrefix);
-
             var workerCount =
                 ResolvePositiveOrDefault(
                     tenantSettings.WorkerCountPerInstance,
@@ -670,39 +941,76 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http.Sc
                     tenantSettings.MaxRuntimeInstances,
                     request.MaxRuntimeInstances);
 
-            var metadata =
-                CreateMetadata(
-                    request,
-                    tenantSettings,
-                    tenantId,
-                    tenantGroupId,
-                    isolationMode,
-                    preferDedicatedCapacity,
-                    allowSharedFallback,
-                    runtimeInstanceId,
-                    runtimeInstanceIdPrefix,
-                    endpoint,
-                    workerCount,
-                    maxConcurrentRuns,
-                    queueCapacity,
-                    maxRuntimeInstances);
+            string runtimeInstanceId;
 
-            return new AiRuntimeScaleOutProvisioningContext
+            if (this.ShouldReserveRuntimeInstanceId())
             {
-                TenantId = tenantId,
-                TenantGroupId = tenantGroupId,
-                IsolationMode = isolationMode,
-                PreferDedicatedCapacity = preferDedicatedCapacity,
-                AllowSharedFallback = allowSharedFallback,
-                RuntimeInstanceId = runtimeInstanceId,
-                RuntimeInstanceIdPrefix = runtimeInstanceIdPrefix,
-                Endpoint = endpoint,
-                WorkerCount = workerCount,
-                MaxConcurrentRuns = maxConcurrentRuns,
-                QueueCapacity = queueCapacity,
-                MaxRuntimeInstances = maxRuntimeInstances,
-                Metadata = metadata
-            };
+                runtimeInstanceId =
+                    await this.ReserveRuntimeInstanceIdAsync(
+                            request,
+                            runtimeInstanceIdPrefix,
+                            cancellationToken)
+                        .ConfigureAwait(false);
+            }
+            else
+            {
+                runtimeInstanceId =
+                    ResolveRuntimeInstanceId(
+                        request,
+                        runtimeInstanceIdPrefix);
+            }
+
+            try
+            {
+                var endpoint =
+                    ResolveEndpoint(
+                        request,
+                        runtimeInstanceId,
+                        runtimeInstanceIdPrefix);
+
+                var metadata =
+                    CreateMetadata(
+                        request,
+                        tenantSettings,
+                        tenantId,
+                        tenantGroupId,
+                        isolationMode,
+                        preferDedicatedCapacity,
+                        allowSharedFallback,
+                        runtimeInstanceId,
+                        runtimeInstanceIdPrefix,
+                        endpoint,
+                        workerCount,
+                        maxConcurrentRuns,
+                        queueCapacity,
+                        maxRuntimeInstances);
+
+                return new AiRuntimeScaleOutProvisioningContext
+                {
+                    TenantId = tenantId,
+                    TenantGroupId = tenantGroupId,
+                    IsolationMode = isolationMode,
+                    PreferDedicatedCapacity = preferDedicatedCapacity,
+                    AllowSharedFallback = allowSharedFallback,
+                    RuntimeInstanceId = runtimeInstanceId,
+                    RuntimeInstanceIdPrefix = runtimeInstanceIdPrefix,
+                    Endpoint = endpoint,
+                    WorkerCount = workerCount,
+                    MaxConcurrentRuns = maxConcurrentRuns,
+                    QueueCapacity = queueCapacity,
+                    MaxRuntimeInstances = maxRuntimeInstances,
+                    Metadata = metadata
+                };
+            }
+            catch
+            {
+                if (this.ShouldReserveRuntimeInstanceId())
+                {
+                    ReleaseRuntimeInstanceIdReservation(runtimeInstanceId);
+                }
+
+                throw;
+            }
         }
 
         /// <summary>
@@ -804,6 +1112,135 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http.Sc
             }
 
             return $"{request.ControlPlaneId}:{runtimeInstanceIdPrefix}-recovery-{Guid.NewGuid():N}";
+        }
+
+        /// <summary>
+        /// Reserves the next free runtime instance id for the scale-out request.
+        /// </summary>
+        /// <remarks>
+        /// Requested target instance count is a desired capacity count, not an identity suffix.
+        /// Existing registry snapshots, capacity descriptors, and in-process reservations are all
+        /// excluded so concurrent recovery requests cannot converge on the same runtime id.
+        /// </remarks>
+        /// <param name="request">The scale-out provider request.</param>
+        /// <param name="runtimeInstanceIdPrefix">The runtime instance id prefix.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <returns>The reserved runtime instance id.</returns>
+        private async Task<string> ReserveRuntimeInstanceIdAsync(
+            AiRuntimeScaleOutProviderRequest request,
+            string runtimeInstanceIdPrefix,
+            CancellationToken cancellationToken)
+        {
+            var excludedRuntimeInstanceId =
+                ResolveExcludedRuntimeInstanceId(
+                    request.Metadata);
+
+            var registrySnapshots =
+                await this.registry
+                    .ListAsync(
+                        includeStopped: true,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+            var capacityDescriptors =
+                await this.capacityStore
+                    .ListAsync(cancellationToken)
+                    .ConfigureAwait(false);
+
+            var existingRuntimeInstanceIds =
+                new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            existingRuntimeInstanceIds.UnionWith(
+                registrySnapshots.Select(snapshot => snapshot.RuntimeInstanceId));
+
+            existingRuntimeInstanceIds.UnionWith(
+                capacityDescriptors.Select(descriptor => descriptor.RuntimeInstanceId));
+
+            var currentInstanceCount =
+                Math.Max(
+                    0,
+                    Convert.ToInt32(request.CurrentInstanceCount));
+
+            var requestedTargetInstanceCount =
+                Math.Max(
+                    0,
+                    Convert.ToInt32(request.RequestedTargetInstanceCount));
+
+            var target = Math.Max(1, currentInstanceCount + 1);
+
+            while (target > 0)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                var candidate =
+                    $"{request.ControlPlaneId}:{runtimeInstanceIdPrefix}-{target}";
+
+                var isExcluded =
+                    string.Equals(
+                        candidate,
+                        excludedRuntimeInstanceId,
+                        StringComparison.OrdinalIgnoreCase);
+
+                if (!isExcluded &&
+                    !existingRuntimeInstanceIds.Contains(candidate) &&
+                    RuntimeInstanceIdReservations.TryAdd(candidate, 0))
+                {
+                    this.logger.LogInformation(
+                        "HTTP SCALE-OUT RUNTIME ID RESERVED RequestId={RequestId} SharedRunId={SharedRunId} RuntimeInstanceId={RuntimeInstanceId} CurrentInstanceCount={CurrentInstanceCount} RequestedTargetInstanceCount={RequestedTargetInstanceCount} ExistingRuntimeInstanceCount={ExistingRuntimeInstanceCount} ExcludedRuntimeInstanceId={ExcludedRuntimeInstanceId}",
+                        request.RequestId,
+                        request.SharedRunId,
+                        candidate,
+                        currentInstanceCount,
+                        requestedTargetInstanceCount,
+                        existingRuntimeInstanceIds.Count,
+                        excludedRuntimeInstanceId ?? "(none)");
+
+                    return candidate;
+                }
+
+                if (target == int.MaxValue)
+                {
+                    break;
+                }
+
+                target++;
+            }
+
+            for (var attempt = 0; attempt < 32; attempt++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                var candidate =
+                    $"{request.ControlPlaneId}:{runtimeInstanceIdPrefix}-recovery-{Guid.NewGuid():N}";
+
+                if (!string.Equals(
+                        candidate,
+                        excludedRuntimeInstanceId,
+                        StringComparison.OrdinalIgnoreCase) &&
+                    !existingRuntimeInstanceIds.Contains(candidate) &&
+                    RuntimeInstanceIdReservations.TryAdd(candidate, 0))
+                {
+                    return candidate;
+                }
+            }
+
+            throw new InvalidOperationException(
+                $"No free runtime instance id could be reserved for control plane '{request.ControlPlaneId}' and prefix '{runtimeInstanceIdPrefix}'.");
+        }
+
+        /// <summary>
+        /// Releases an in-process runtime instance id reservation.
+        /// </summary>
+        /// <param name="runtimeInstanceId">The reserved runtime instance id.</param>
+        private static void ReleaseRuntimeInstanceIdReservation(
+            string runtimeInstanceId)
+        {
+            if (string.IsNullOrWhiteSpace(runtimeInstanceId))
+            {
+                return;
+            }
+
+            RuntimeInstanceIdReservations.TryRemove(runtimeInstanceId, out _);
         }
 
         /// <summary>
@@ -1126,6 +1563,13 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http.Sc
                 target[item.Key] = item.Value ?? string.Empty;
             }
         }
+
+        /// <summary>
+        /// Represents the result of one bounded HTTP process-host provisioning attempt.
+        /// </summary>
+        private sealed record HttpProcessHostProvisionAttemptResult(
+            AiRuntimeScaleOutProviderResult Result,
+            bool CanRetryProcessRegistrationFailure);
 
         /// <summary>
         /// Creates a fulfilled scale-out provider result.

@@ -73,7 +73,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
         /// </param>
         /// <returns>A task that completes when every parallel scenario has finished.</returns>
         [Theory]
-        [InlineData(10)]
+        [InlineData(35)]
         public Task Http_ProcessHost_Should_Execute_MultiTenant_Crash_Recovery_Scenarios_In_Parallel(
             int parallelism)
         {
