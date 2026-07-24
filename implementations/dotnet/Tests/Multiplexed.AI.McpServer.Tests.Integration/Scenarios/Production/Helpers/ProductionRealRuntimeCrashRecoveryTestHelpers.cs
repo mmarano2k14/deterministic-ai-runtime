@@ -31,6 +31,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
         /// <param name="mcp">The tenant-scoped MCP client.</param>
         /// <param name="scaleOutRequestStore">The scale-out request store.</param>
         /// <param name="sharedRunStore">The shared run store.</param>
+        /// <param name="sharedQueue">The durable shared queue used only for timeout diagnostics.</param>
         /// <param name="runExecutionIndex">The runtime run execution index.</param>
         /// <param name="dagStore">The DAG execution store.</param>
         /// <param name="tenant">The tenant scenario definition.</param>
@@ -53,6 +54,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
             McpTestClient mcp,
             IAiRuntimeScaleOutRequestStore scaleOutRequestStore,
             IAiSharedRunStore sharedRunStore,
+            IAiSharedQueue sharedQueue,
             IAiRuntimeRunExecutionIndex runExecutionIndex,
             IAiDagExecutionStore dagStore,
             ProductionTenantScenarioDefinition tenant,
@@ -75,6 +77,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
             ArgumentNullException.ThrowIfNull(mcp);
             ArgumentNullException.ThrowIfNull(scaleOutRequestStore);
             ArgumentNullException.ThrowIfNull(sharedRunStore);
+            ArgumentNullException.ThrowIfNull(sharedQueue);
             ArgumentNullException.ThrowIfNull(runExecutionIndex);
             ArgumentNullException.ThrowIfNull(dagStore);
             ArgumentNullException.ThrowIfNull(tenant);
@@ -372,11 +375,252 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
                     .ConfigureAwait(false);
             }
 
+            await WriteAssignedWorkInventoryTimeoutDiagnosticsAsync(
+                    output,
+                    scaleOutRequestStore,
+                    sharedRunStore,
+                    sharedQueue,
+                    runExecutionIndex,
+                    tenant,
+                    controlPlaneId,
+                    trackedRuns,
+                    inventoryTimeout,
+                    lastInventorySummary)
+                .ConfigureAwait(false);
+
             Assert.Fail(
                 "Could not build a real assigned work inventory matching the expected runtime shape before crash. " +
                 $"TenantId='{tenant.TenantId}', ExpectedTotal='{runCount}', ExpectedInFlight='{minimumInFlightExecutionCount}', ExpectedLocalQueued='{minimumLocalQueuedRunCount}', InventoryTimeout='{inventoryTimeout}', LastInventorySummary='{lastInventorySummary}'.");
 
             throw new InvalidOperationException("Unreachable assertion path.");
+        }
+
+        /// <summary>
+        /// Writes one bounded durable diagnostic snapshot when assigned-work inventory
+        /// construction times out. This method does not mutate shared-run, queue,
+        /// scale-out, runtime-index, provider, or recovery state.
+        /// </summary>
+        private static async Task WriteAssignedWorkInventoryTimeoutDiagnosticsAsync(
+            ITestOutputHelper output,
+            IAiRuntimeScaleOutRequestStore scaleOutRequestStore,
+            IAiSharedRunStore sharedRunStore,
+            IAiSharedQueue sharedQueue,
+            IAiRuntimeRunExecutionIndex runExecutionIndex,
+            ProductionTenantScenarioDefinition tenant,
+            string controlPlaneId,
+            IReadOnlyList<(
+                string SharedRunId,
+                string PipelineName,
+                AiSharedRunRecord? InitialRun)> trackedRuns,
+            TimeSpan inventoryTimeout,
+            string lastInventorySummary)
+        {
+            ArgumentNullException.ThrowIfNull(output);
+            ArgumentNullException.ThrowIfNull(scaleOutRequestStore);
+            ArgumentNullException.ThrowIfNull(sharedRunStore);
+            ArgumentNullException.ThrowIfNull(sharedQueue);
+            ArgumentNullException.ThrowIfNull(runExecutionIndex);
+            ArgumentNullException.ThrowIfNull(tenant);
+            ArgumentException.ThrowIfNullOrWhiteSpace(controlPlaneId);
+            ArgumentNullException.ThrowIfNull(trackedRuns);
+
+            output.WriteLine(string.Empty);
+            output.WriteLine("[ASSIGNED WORK INVENTORY TIMEOUT DIAGNOSTICS]");
+            output.WriteLine($"CapturedAtUtc='{DateTimeOffset.UtcNow:O}'");
+            output.WriteLine($"ControlPlaneId='{controlPlaneId}'");
+            output.WriteLine($"TenantId='{tenant.TenantId}'");
+            output.WriteLine($"InventoryTimeout='{inventoryTimeout}'");
+            output.WriteLine($"TrackedRunCount='{trackedRuns.Count}'");
+            output.WriteLine($"LastInventorySummary='{lastInventorySummary}'");
+
+            foreach (var trackedRun in trackedRuns)
+            {
+                output.WriteLine(string.Empty);
+                output.WriteLine(
+                    $"[ASSIGNED WORK INVENTORY RUN DIAGNOSTIC] SharedRunId='{trackedRun.SharedRunId}', PipelineName='{trackedRun.PipelineName}'.");
+
+                AiSharedRunRecord? persistedRun = null;
+
+                try
+                {
+                    persistedRun =
+                        await sharedRunStore
+                            .GetAsync(trackedRun.SharedRunId)
+                            .ConfigureAwait(false);
+
+                    var effectiveRun =
+                        persistedRun ??
+                        trackedRun.InitialRun;
+
+                    if (effectiveRun is null)
+                    {
+                        output.WriteLine("  SharedRun.Exists='false'");
+                    }
+                    else
+                    {
+                        output.WriteLine("  SharedRun.Exists='true'");
+                        output.WriteLine($"  SharedRun.Source='{(persistedRun is null ? "initial-submit-result" : "durable-store")}'");
+                        output.WriteLine($"  SharedRun.Status='{effectiveRun.Status}'");
+                        output.WriteLine($"  SharedRun.ControlPlaneId='{effectiveRun.ControlPlaneId}'");
+                        output.WriteLine($"  SharedRun.AssignedRuntimeInstanceId='{effectiveRun.AssignedRuntimeInstanceId}'");
+                        output.WriteLine($"  SharedRun.LocalRunId='{effectiveRun.LocalRunId}'");
+                        output.WriteLine($"  SharedRun.ExecutionId='{effectiveRun.ExecutionId}'");
+                        output.WriteLine($"  SharedRun.PipelineKey='{effectiveRun.PipelineKey}'");
+                        output.WriteLine($"  SharedRun.Reason='{effectiveRun.Reason}'");
+                        output.WriteLine($"  SharedRun.FailureReason='{effectiveRun.FailureReason}'");
+                        output.WriteLine($"  SharedRun.SubmittedAtUtc='{effectiveRun.SubmittedAtUtc:O}'");
+                        output.WriteLine($"  SharedRun.UpdatedAtUtc='{effectiveRun.UpdatedAtUtc:O}'");
+
+                        var admission =
+                            effectiveRun.AdmissionDecision;
+
+                        if (admission is null)
+                        {
+                            output.WriteLine("  AdmissionDecision.Exists='false'");
+                        }
+                        else
+                        {
+                            output.WriteLine("  AdmissionDecision.Exists='true'");
+                            output.WriteLine($"  AdmissionDecision.DecisionType='{admission.DecisionType}'");
+                            output.WriteLine($"  AdmissionDecision.Accepted='{admission.Accepted}'");
+                            output.WriteLine($"  AdmissionDecision.ShouldRequestScaleOut='{admission.ShouldRequestScaleOut}'");
+                            output.WriteLine($"  AdmissionDecision.ShouldQueueGlobally='{admission.ShouldQueueGlobally}'");
+                            output.WriteLine($"  AdmissionDecision.AssignedRuntimeInstanceId='{admission.AssignedRuntimeInstanceId}'");
+                            output.WriteLine($"  AdmissionDecision.Reason='{admission.Reason}'");
+                            output.WriteLine($"  AdmissionDecision.VisibleInstanceCount='{admission.VisibleInstanceCount}'");
+                            output.WriteLine($"  AdmissionDecision.AvailableInstanceCount='{admission.AvailableInstanceCount}'");
+                            output.WriteLine($"  AdmissionDecision.CurrentInstanceCount='{admission.CurrentInstanceCount}'");
+                            output.WriteLine($"  AdmissionDecision.MaxInstanceCount='{admission.MaxInstanceCount}'");
+                            output.WriteLine($"  AdmissionDecision.DecidedAtUtc='{admission.DecidedAtUtc:O}'");
+                            output.WriteLine($"  AdmissionDecision.Diagnostics='{string.Join(" || ", admission.Diagnostics)}'");
+                        }
+
+                        if (!string.IsNullOrWhiteSpace(effectiveRun.LocalRunId))
+                        {
+                            var indexEntry =
+                                await runExecutionIndex
+                                    .GetAsync(effectiveRun.LocalRunId)
+                                    .ConfigureAwait(false);
+
+                            if (indexEntry is null)
+                            {
+                                output.WriteLine("  RuntimeIndex.Exists='false'");
+                            }
+                            else
+                            {
+                                output.WriteLine("  RuntimeIndex.Exists='true'");
+                                output.WriteLine($"  RuntimeIndex.Status='{indexEntry.Status}'");
+                                output.WriteLine($"  RuntimeIndex.RuntimeInstanceId='{indexEntry.RuntimeInstanceId}'");
+                                output.WriteLine($"  RuntimeIndex.ExecutionId='{indexEntry.ExecutionId}'");
+                                output.WriteLine($"  RuntimeIndex.CompletedAtUtc='{indexEntry.CompletedAtUtc:O}'");
+                            }
+                        }
+                        else
+                        {
+                            output.WriteLine("  RuntimeIndex.Skipped='local-run-id-missing'");
+                        }
+                    }
+                }
+                catch (Exception exception)
+                {
+                    output.WriteLine(
+                        $"  SharedRunOrRuntimeIndex.ReadError.Type='{exception.GetType().FullName}', Message='{exception.Message}'.");
+                }
+
+                try
+                {
+                    var queueItem =
+                        await sharedQueue
+                            .GetAsync(trackedRun.SharedRunId)
+                            .ConfigureAwait(false);
+
+                    if (queueItem is null)
+                    {
+                        output.WriteLine("  SharedQueueItem.Exists='false'");
+                    }
+                    else
+                    {
+                        output.WriteLine("  SharedQueueItem.Exists='true'");
+                        output.WriteLine($"  SharedQueueItem.Status='{queueItem.Status}'");
+                        output.WriteLine($"  SharedQueueItem.ControlPlaneId='{queueItem.ControlPlaneId}'");
+                        output.WriteLine($"  SharedQueueItem.PipelineKey='{queueItem.PipelineKey}'");
+                        output.WriteLine($"  SharedQueueItem.ClaimedByRuntimeInstanceId='{queueItem.ClaimedByRuntimeInstanceId}'");
+                        output.WriteLine($"  SharedQueueItem.ClaimedByWorkerId='{queueItem.ClaimedByWorkerId}'");
+                        output.WriteLine($"  SharedQueueItem.ClaimToken='{queueItem.ClaimToken}'");
+                        output.WriteLine($"  SharedQueueItem.EnqueuedAtUtc='{queueItem.EnqueuedAtUtc:O}'");
+                        output.WriteLine($"  SharedQueueItem.UpdatedAtUtc='{queueItem.UpdatedAtUtc:O}'");
+                        output.WriteLine($"  SharedQueueItem.ClaimedAtUtc='{queueItem.ClaimedAtUtc:O}'");
+                        output.WriteLine($"  SharedQueueItem.ClaimExpiresAtUtc='{queueItem.ClaimExpiresAtUtc:O}'");
+                        output.WriteLine($"  SharedQueueItem.Reason='{queueItem.Reason}'");
+                    }
+                }
+                catch (Exception exception)
+                {
+                    output.WriteLine(
+                        $"  SharedQueueItem.ReadError.Type='{exception.GetType().FullName}', Message='{exception.Message}'.");
+                }
+
+                try
+                {
+                    var scaleOutRequests =
+                        await scaleOutRequestStore
+                            .ListAsync(
+                                new AiRuntimeScaleOutRequestQuery
+                                {
+                                    ControlPlaneId = controlPlaneId,
+                                    TenantId = tenant.TenantId,
+                                    SharedRunId = trackedRun.SharedRunId,
+                                    IncludeExpired = true,
+                                    MaxResults = 100
+                                })
+                            .ConfigureAwait(false);
+
+                    output.WriteLine($"  ScaleOutRequest.Count='{scaleOutRequests.Count}'");
+
+                    var requestIndex =
+                        1;
+
+                    foreach (var request in scaleOutRequests
+                        .OrderBy(item => item.CreatedAtUtc))
+                    {
+                        output.WriteLine(
+                            $"  ScaleOutRequest[{requestIndex:00}]." +
+                            $"RequestId='{request.RequestId}', " +
+                            $"Status='{request.Status}', " +
+                            $"ControlPlaneId='{request.ControlPlaneId}', " +
+                            $"SharedRunId='{request.SharedRunId}', " +
+                            $"Reason='{request.Reason}', " +
+                            $"ProviderHint='{request.ProviderHint}', " +
+                            $"VisibleInstanceCount='{request.VisibleInstanceCount}', " +
+                            $"AvailableInstanceCount='{request.AvailableInstanceCount}', " +
+                            $"CurrentInstanceCount='{request.CurrentInstanceCount}', " +
+                            $"MaxInstanceCount='{request.MaxInstanceCount}', " +
+                            $"RequestedTargetInstanceCount='{request.RequestedTargetInstanceCount}', " +
+                            $"CreatedAtUtc='{request.CreatedAtUtc:O}', " +
+                            $"ObservedAtUtc='{request.ObservedAtUtc:O}', " +
+                            $"FulfilledAtUtc='{request.FulfilledAtUtc:O}', " +
+                            $"RejectedAtUtc='{request.RejectedAtUtc:O}', " +
+                            $"ExpiredAtUtc='{request.ExpiredAtUtc:O}', " +
+                            $"CancelledAtUtc='{request.CancelledAtUtc:O}', " +
+                            $"ExpiresAtUtc='{request.ExpiresAtUtc:O}', " +
+                            $"FulfilledRuntimeInstanceId='{request.FulfilledRuntimeInstanceId}', " +
+                            $"ObservedBy='{request.ObservedBy}', " +
+                            $"FulfilledBy='{request.FulfilledBy}', " +
+                            $"RejectedBy='{request.RejectedBy}', " +
+                            $"RejectionReason='{request.RejectionReason}'.");
+
+                        requestIndex++;
+                    }
+                }
+                catch (Exception exception)
+                {
+                    output.WriteLine(
+                        $"  ScaleOutRequest.ReadError.Type='{exception.GetType().FullName}', Message='{exception.Message}'.");
+                }
+            }
+
+            output.WriteLine("[ASSIGNED WORK INVENTORY TIMEOUT DIAGNOSTICS END]");
+            output.WriteLine(string.Empty);
         }
 
         /// <summary>
