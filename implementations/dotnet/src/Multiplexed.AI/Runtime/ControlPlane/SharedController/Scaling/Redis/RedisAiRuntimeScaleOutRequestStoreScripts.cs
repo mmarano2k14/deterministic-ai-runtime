@@ -84,20 +84,24 @@
         /// Keys:
         /// - KEYS[1] = request hash key.
         /// - KEYS[2] = pending requests sorted-set index key.
+        /// - KEYS[3] = recovery replacement deduplication key.
         ///
         /// Arguments:
         /// - ARGV[1] = target status.
         /// - ARGV[2] = transition timestamp field name.
         /// - ARGV[3] = transition timestamp.
-        /// - ARGV[4...] = additional hash field pairs.
+        /// - ARGV[4] = release recovery deduplication flag.
+        /// - ARGV[5...] = additional hash field pairs.
         /// </remarks>
         public const string Transition = """
             local requestKey = KEYS[1]
             local pendingIndexKey = KEYS[2]
+            local dedupKey = KEYS[3]
 
             local targetStatus = ARGV[1]
             local timestampField = ARGV[2]
             local timestampValue = ARGV[3]
+            local releaseRecoveryDeduplication = ARGV[4]
 
             if redis.call('EXISTS', requestKey) == 0 then
                 return 'missing'
@@ -120,14 +124,25 @@
             redis.call('HSET', requestKey, 'status', targetStatus)
             redis.call('HSET', requestKey, timestampField, timestampValue)
 
-            for i = 4, #ARGV, 2 do
+            for i = 5, #ARGV, 2 do
                 redis.call('HSET', requestKey, ARGV[i], ARGV[i + 1])
             end
 
+            local requestId = redis.call('HGET', requestKey, 'requestId')
+
             if targetStatus ~= 'Pending' then
-                local requestId = redis.call('HGET', requestKey, 'requestId')
                 if requestId ~= false and requestId ~= nil and requestId ~= '' then
                     redis.call('ZREM', pendingIndexKey, requestId)
+                end
+            end
+
+            if releaseRecoveryDeduplication == '1' and
+               (targetStatus == 'Fulfilled' or targetStatus == 'Rejected' or targetStatus == 'Expired' or targetStatus == 'Cancelled') and
+               requestId ~= false and requestId ~= nil and requestId ~= '' then
+                local deduplicatedRequestId = redis.call('GET', dedupKey)
+
+                if deduplicatedRequestId == requestId then
+                    redis.call('DEL', dedupKey)
                 end
             end
 

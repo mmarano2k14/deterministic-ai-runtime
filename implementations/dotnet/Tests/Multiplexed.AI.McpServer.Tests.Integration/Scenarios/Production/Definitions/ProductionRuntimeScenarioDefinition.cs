@@ -138,7 +138,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Defini
         /// This timeout covers the period between run submission and fulfilled
         /// scale-out request observation.
         /// </remarks>
-        public TimeSpan ScaleOutTimeout { get; init; } = TimeSpan.FromMinutes(2);
+        public TimeSpan ScaleOutTimeout { get; set; } = TimeSpan.FromMinutes(2);
 
         /// <summary>
         /// Gets the timeout used while waiting for dispatch.
@@ -166,5 +166,6 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Defini
         /// must create runtime capacity before another tenant submits work.
         /// </remarks>
         public bool RunTenantsSequentially { get; init; } = false;
+
     }
 }

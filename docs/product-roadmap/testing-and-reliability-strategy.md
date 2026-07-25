@@ -520,6 +520,62 @@ Chaos tests are important because distributed runtime systems fail in non-linear
 
 ---
 
+
+# Validated Adversarial Process-Host Campaign
+
+The current foundation now includes a completed parallel HTTP and gRPC process-host crash-recovery campaign.
+
+Each scenario validates:
+
+```text
+two impacted tenants
+    one in-flight execution
+    two local-queued runs
+    one real external process kill
+
+one safe tenant
+    three runs
+    no process kill
+    zero recovery contamination
+```
+
+The crash boundary is based on durable state and an exact assigned-work inventory, not on a fixed delay.
+
+Current validation ladder:
+
+| Level | Classification |
+|---|---|
+| P10 | Repeatedly green |
+| P15 | Green intermediate validation |
+| P20 | Heavy-pressure validation |
+| P30 | Reproducibly stable validated ceiling |
+| P35 | Completed on HTTP and gRPC; experimental local-machine edge |
+
+At P35, each transport validated:
+
+```text
+35 scenarios
+105 tenants
+315 DAG executions
+15,750 logical DAG step completions
+70 real process kills
+210 affected jobs recovered
+```
+
+The HTTP run also measured 4,191,448 Redis and MongoDB operations and 18.29 GiB of datastore traffic.
+
+The product interpretation is:
+
+> Capacity degraded before correctness did.
+
+This is not a universal capacity guarantee. It is evidence that identity, ownership, tenant isolation, recovery, replay, ledger, trace, and forensics remained correct while the local environment saturated.
+
+Detailed reference:
+
+- [`../ai/concurrency-hardening-and-adversarial-validation.md`](../ai/concurrency-hardening-and-adversarial-validation.md)
+
+---
+
 # 18. Performance and Load Tests
 
 Performance tests should validate runtime capacity.
@@ -605,6 +661,10 @@ Each guarantee should map to tests.
 | Retention/eviction/compaction tests direction | Foundation exists / active direction |
 | Redis/Mongo integration test direction | Foundation exists |
 | Chaos/reliability test direction | Foundation exists / active direction |
+| Validated HTTP/gRPC process-host concurrency campaign | Implemented / validated through P35; P35 is the experimental local-machine edge |
+| Durable crash-gate validation | Implemented / validated |
+| Exact multi-tenant recovery inventory | Implemented / validated |
+| Safe-tenant non-impact under parallel process loss | Implemented / validated |
 | Performance/load tests | Productization target |
 | Public test documentation | Productization target |
 | Test reporting dashboard direction | Future direction |
@@ -711,3 +771,5 @@ The runtime must prove deterministic execution, replay, audit, decision recordin
 A production AI runtime should not only have a strong architecture.
 
 It should prove that architecture under failure, concurrency, replay, cancellation, policy, retention, and distributed execution.
+
+The current process-host campaign now provides that proof through exact inventories, durable crash boundaries, real process kills, HTTP/gRPC validation, and safe-tenant controls.

@@ -36,6 +36,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
         private readonly IAiControlPlaneIdResolver controlPlaneIdResolver;
         private readonly AiRuntimeScaleOutRequestWatcherOptions options;
         private readonly IAiControlPlaneObserver observer;
+        private readonly TaskCompletionSource<bool> readiness =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private DateTimeOffset? readyAtUtc;
+        private string? resolvedControlPlaneId;
 
         /// <summary>
         /// Initializes a new instance of the <see cref="AiRuntimeScaleOutRequestWatcherHostedService" /> class.
@@ -86,19 +90,87 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
             this.observer = observer ?? throw new ArgumentNullException(nameof(observer));
         }
 
+        /// <summary>
+        /// Gets a value indicating whether the watcher has completed its first
+        /// successful control-plane store scan.
+        /// </summary>
+        public bool IsReady => this.readiness.Task.IsCompletedSuccessfully;
+
+        /// <summary>
+        /// Gets the timestamp at which the watcher became ready.
+        /// </summary>
+        public DateTimeOffset? ReadyAtUtc => this.readyAtUtc;
+
+        /// <summary>
+        /// Gets the logical control-plane identifier resolved by the first
+        /// successful watcher cycle.
+        /// </summary>
+        public string? ResolvedControlPlaneId => this.resolvedControlPlaneId;
+
+        /// <summary>
+        /// Gets the configured watcher identifier.
+        /// </summary>
+        public string WatcherId => this.options.WatcherId;
+
+        /// <summary>
+        /// Waits until the watcher has resolved its control-plane identity and
+        /// completed its first successful pending-request store scan.
+        /// </summary>
+        /// <param name="timeout">The maximum readiness wait.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <returns>A task that completes when the watcher is ready.</returns>
+        public async Task WaitUntilReadyAsync(
+            TimeSpan timeout,
+            CancellationToken cancellationToken = default)
+        {
+            if (timeout <= TimeSpan.Zero)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(timeout),
+                    timeout,
+                    "Scale-out watcher readiness timeout must be positive.");
+            }
+
+            try
+            {
+                await this.readiness.Task
+                    .WaitAsync(timeout, cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            catch (TimeoutException exception)
+            {
+                throw new TimeoutException(
+                    $"Scale-out request watcher '{this.options.WatcherId}' did not become ready within '{timeout}'.",
+                    exception);
+            }
+        }
+
         /// <inheritdoc />
         protected override async Task ExecuteAsync(
             CancellationToken stoppingToken)
         {
             if (!this.options.Enabled)
             {
+                this.MarkReady(controlPlaneId: null);
                 return;
             }
 
-            while (!stoppingToken.IsCancellationRequested)
+            try
             {
-                await this.ProcessCycleAsync(stoppingToken).ConfigureAwait(false);
-                await Task.Delay(this.options.Interval, stoppingToken).ConfigureAwait(false);
+                while (!stoppingToken.IsCancellationRequested)
+                {
+                    await this.ProcessCycleAsync(stoppingToken).ConfigureAwait(false);
+                    await Task.Delay(this.options.Interval, stoppingToken).ConfigureAwait(false);
+                }
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                this.readiness.TrySetCanceled(stoppingToken);
+            }
+            catch (Exception exception)
+            {
+                this.readiness.TrySetException(exception);
+                throw;
             }
         }
 
@@ -137,11 +209,29 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
                         cancellationToken)
                     .ConfigureAwait(false);
 
+            this.MarkReady(controlPlaneId);
+
             foreach (var request in pendingRequests)
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 await this.ProcessRequestAsync(request, cancellationToken).ConfigureAwait(false);
             }
+        }
+
+        /// <summary>
+        /// Marks the hosted watcher ready after its first successful store scan.
+        /// </summary>
+        /// <param name="controlPlaneId">The resolved logical control-plane identifier.</param>
+        private void MarkReady(string? controlPlaneId)
+        {
+            if (this.readiness.Task.IsCompleted)
+            {
+                return;
+            }
+
+            this.resolvedControlPlaneId = controlPlaneId;
+            this.readyAtUtc = DateTimeOffset.UtcNow;
+            this.readiness.TrySetResult(true);
         }
 
         /// <summary>

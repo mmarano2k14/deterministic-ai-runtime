@@ -1,4 +1,5 @@
 ﻿using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Forensics;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager;
@@ -26,9 +27,12 @@ using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Providers.
 using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Scenarios;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.ProcessControl;
+using Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling;
 using Multiplexed.AI.Stores;
 using System.Diagnostics;
+using System.Globalization;
 using System.Net.Http;
+using StackExchange.Redis;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -43,6 +47,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
         private const int KillAfterCompletedStepCount = 25;
         private const int MultiTenantStepCount = 50;
         private const int FlakyStepIntervalMs = 500;
+        private const int CrashCheckpointStateTtlMinutes = 30;
+        private static readonly TimeSpan ScaleOutWatcherReadinessTimeout =
+            TimeSpan.FromMinutes(1);
 
         private readonly ITestOutputHelper output;
         private readonly IProcessHostScenarioRuntimeProfile profile;
@@ -304,7 +311,12 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                         tenantGroupId: tenantB.TenantGroupId)
                     .ConfigureAwait(false);
 
-            WriteTiming("Setup host services and tenant MCP clients");
+            await WaitForScaleOutWatcherReadyAsync(
+                    host.Services,
+                    controlPlaneId)
+                .ConfigureAwait(false);
+
+            WriteTiming("Setup host services, tenant MCP clients, and scale-out watcher readiness");
 
             var ledgerTimelineFromUtc =
                 DateTimeOffset.UtcNow.AddSeconds(-5);
@@ -335,6 +347,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                         tenantAMcp,
                         scaleOutRequestStore,
                         sharedRunStore,
+                        sharedQueue,
                         runExecutionIndex,
                         dagStore,
                         tenantA,
@@ -358,6 +371,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                         tenantBMcp,
                         scaleOutRequestStore,
                         sharedRunStore,
+                        sharedQueue,
                         runExecutionIndex,
                         dagStore,
                         tenantB,
@@ -1038,6 +1052,11 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                         tenantGroupId: tenant.TenantGroupId)
                     .ConfigureAwait(false);
 
+            await WaitForScaleOutWatcherReadyAsync(
+                    host.Services,
+                    controlPlaneId)
+                .ConfigureAwait(false);
+
             var pipelineName =
                 $"{scenario.Name}-{tenant.TenantId}-real-process-kill-{Guid.NewGuid():N}";
 
@@ -1187,15 +1206,30 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
         /// Verifies that all impacted tenants recover real process-host runtime crashes while all safe tenants
         /// continue normal execution without recovery, forensics, redispatch, or cross-tenant leakage.
         /// </summary>
+        /// <param name="parallelism">
+        /// The total parallel scenario count used to resolve harness-only timeout and crash-boundary budgets.
+        /// When omitted, the strict single-scenario budget is preserved.
+        /// </param>
         /// <returns>A task that completes when the proof has finished.</returns>
-        protected async Task ProcessHost_Should_Recover_Two_Tenants_After_Real_Runtime_Process_Kills_Without_Impacting_Safe_Tenant_With_Strict_Dag_Resume_Replay_Ledger_And_Trace()
+        protected async Task ProcessHost_Should_Recover_Two_Tenants_After_Real_Runtime_Process_Kills_Without_Impacting_Safe_Tenant_With_Strict_Dag_Resume_Replay_Ledger_And_Trace(
+            int? parallelism = null)
         {
+            var harnessBudget =
+                CreateParallelScenarioHarnessBudget(
+                    parallelism ?? 1);
+
             var scenario =
                 CreateRealRuntimeCrashRecoveryTwoTenantInventoryScenario(
                     includeSafeTenant: true);
 
-            scenario.DispatchTimeout = TimeSpan.FromMinutes(3);
-            scenario.CompletionTimeout = TimeSpan.FromMinutes(3);
+            scenario.ScaleOutTimeout =
+                harnessBudget.ScaleOutTimeout;
+
+            scenario.DispatchTimeout =
+                harnessBudget.DispatchTimeout;
+
+            scenario.CompletionTimeout =
+                harnessBudget.CompletionTimeout;
 
             var scenarioStopwatch =
                 System.Diagnostics.Stopwatch.StartNew();
@@ -1255,6 +1289,14 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                     controlPlaneId,
                     runtimeHostAssemblyPath);
 
+            if (settings.ContainsKey(
+                    "AiGrpcRuntimeScaleOut:ReadinessTimeoutSeconds"))
+            {
+                settings["AiGrpcRuntimeScaleOut:ReadinessTimeoutSeconds"] =
+                    ((int)harnessBudget.RuntimeReadinessTimeout.TotalSeconds)
+                        .ToString(CultureInfo.InvariantCulture);
+            }
+
             settings["Tests:UseCapturingLedgerRecorder"] = "false";
             settings["AiRuntimeRecoveryForensics:StrictPersistence"] = "true";
 
@@ -1295,6 +1337,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
 
             var sharedQueue = host.Services.GetRequiredService<IAiSharedQueue>();
 
+            var crashCheckpointConnection =
+                host.Services.GetRequiredService<IConnectionMultiplexer>();
+
             ProductionRecoveryOptionsAssertions.AssertDagResumeRecoveryEnabled(
                 recoveryOptions);
 
@@ -1334,6 +1379,11 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                             isSafe));
                 }
 
+                await WaitForScaleOutWatcherReadyAsync(
+                        host.Services,
+                        controlPlaneId)
+                    .ConfigureAwait(false);
+
                 var impactedContexts =
                     tenantContexts
                         .Where(context => !context.IsSafe)
@@ -1365,7 +1415,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 output.WriteLine(string.Empty);
                 output.WriteLine("Workload summary:");
                 output.WriteLine($"  StepCount='{MultiTenantStepCount}'");
-                output.WriteLine($"  KillAfterCompletedStepCount='{KillAfterCompletedStepCount}'");
+                output.WriteLine($"  KillAfterCompletedStepCount='{harnessBudget.KillAfterCompletedStepCount}'");
                 output.WriteLine($"  FlakyStepIntervalMs='{FlakyStepIntervalMs}'");
                 output.WriteLine($"  TenantCount='{tenantContexts.Count}'");
                 output.WriteLine($"  ImpactedTenantCount='{impactedContexts.Length}'");
@@ -1385,6 +1435,19 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 output.WriteLine($"  ObservationMode='{ObservationMode}'");
                 output.WriteLine($"  HybridFallbackPollInterval='{HybridFallbackPollInterval}'");
                 output.WriteLine(string.Empty);
+                output.WriteLine("Parallel harness budget:");
+                output.WriteLine($"  Parallelism='{harnessBudget.Parallelism}'");
+                output.WriteLine($"  PressureStepCount='{harnessBudget.PressureStepCount}'");
+                output.WriteLine($"  ScaleOutTimeout='{harnessBudget.ScaleOutTimeout}'");
+                output.WriteLine($"  RuntimeReadinessTimeout='{harnessBudget.RuntimeReadinessTimeout}'");
+                output.WriteLine($"  DispatchTimeout='{harnessBudget.DispatchTimeout}'");
+                output.WriteLine($"  RecoveryRedispatchTimeout='{harnessBudget.RecoveryRedispatchTimeout}'");
+                output.WriteLine($"  ProgressTimeout='{harnessBudget.ProgressTimeout}'");
+                output.WriteLine($"  UnsafeTimeout='{harnessBudget.UnsafeTimeout}'");
+                output.WriteLine($"  RequeueTimeout='{harnessBudget.RequeueTimeout}'");
+                output.WriteLine($"  ExecutionResolveTimeout='{harnessBudget.ExecutionResolveTimeout}'");
+                output.WriteLine($"  CompletionTimeout='{harnessBudget.CompletionTimeout}'");
+                output.WriteLine(string.Empty);
 
                 foreach (var context in tenantContexts)
                 {
@@ -1402,110 +1465,172 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 async Task<ProcessHostImpactedTenantExecutionResult> ExecuteImpactedTenantRecoveryFlowAsync(
                     ProcessHostTenantScenarioContext context)
                 {
-                    var inventory =
-                        await ProductionRealRuntimeCrashRecoveryTestHelpers
-                            .SubmitAndBuildAssignedWorkInventoryAsync(
+                    var crashCheckpointGate =
+                        await ProductionCrashCheckpointGate
+                            .ArmAsync(
+                                crashCheckpointConnection,
                                 output,
-                                context.Mcp,
-                                scaleOutRequestStore,
-                                sharedRunStore,
-                                runExecutionIndex,
-                                dagStore,
-                                context.Tenant,
                                 controlPlaneId,
+                                context.Tenant.TenantId,
                                 context.PipelinePrefix,
-                                profile.RequestedBy,
-                                profile.Source,
-                                runCount: context.Tenant.Run.RunCount,
-                                minimumInFlightExecutionCount: 1,
-                                minimumLocalQueuedRunCount: 1,
-                                minimumCompletedStepsBeforeKill: KillAfterCompletedStepCount,
-                                scaleOutTimeout: scenario.ScaleOutTimeout,
-                                dispatchTimeout: scenario.DispatchTimeout,
-                                progressTimeout: TimeSpan.FromMinutes(3),
-                                observationMode: ObservationMode)
+                                harnessBudget.KillAfterCompletedStepCount + 1,
+                                TimeSpan.FromMinutes(CrashCheckpointStateTtlMinutes))
                             .ConfigureAwait(false);
 
-                    ProductionRealRuntimeCrashRecoveryTestHelpers.AssertRuntimeBelongsToTenant(
-                        inventory.RuntimeInstanceId,
-                        context.Tenant);
-
-                    output.WriteLine(
-                        $"[{profile.LogPrefix} IMPACTED TENANT READY FOR CRASH] TenantId='{context.Tenant.TenantId}', RuntimeInstanceId='{inventory.RuntimeInstanceId}', InFlight='{inventory.InFlightExecutions.Count}', LocalQueued='{inventory.LocalQueuedRuns.Count}'. Killing immediately without waiting for other tenant inventories.");
-
-                    var recovery =
-                        await ProductionRealRuntimeCrashRecoveryTestHelpers
-                            .KillRuntimeAndRecoverAssignedInventoryAsync(
-                                output,
-                                processControl,
-                                registry,
-                                runExecutionIndex,
-                                sharedRunStore,
-                                sharedQueue,
-                                dagStore,
-                                inventory,
-                                minimumCompletedStepsBeforeKill:
-                                    KillAfterCompletedStepCount,
-                                progressTimeout:
-                                    TimeSpan.FromMinutes(3),
-                                unsafeTimeout:
-                                    TimeSpan.FromSeconds(60),
-                                requeueTimeout:
-                                    TimeSpan.FromSeconds(180),
-                                redispatchTimeout:
-                                    scenario.DispatchTimeout,
-                                executionResolveTimeout:
-                                    TimeSpan.FromSeconds(60),
-                                observationMode:
-                                    ObservationMode,
-                                signalSubscriber:
-                                    signalSubscriber,
-                                controlPlaneId:
+                    try
+                    {
+                        var inventory =
+                            await ProductionRealRuntimeCrashRecoveryTestHelpers
+                                .SubmitAndBuildAssignedWorkInventoryAsync(
+                                    output,
+                                    context.Mcp,
+                                    scaleOutRequestStore,
+                                    sharedRunStore,
+                                    sharedQueue,
+                                    runExecutionIndex,
+                                    dagStore,
+                                    context.Tenant,
                                     controlPlaneId,
-                                hybridFallbackPollInterval:
-                                    HybridFallbackPollInterval)
-                            .ConfigureAwait(false);
+                                    context.PipelinePrefix,
+                                    profile.RequestedBy,
+                                    profile.Source,
+                                    runCount: context.Tenant.Run.RunCount,
+                                    minimumInFlightExecutionCount: 1,
+                                    minimumLocalQueuedRunCount:
+                                        context.Tenant.Run.RunCount - 1,
+                                    minimumCompletedStepsBeforeKill:
+                                        harnessBudget.KillAfterCompletedStepCount,
+                                    scaleOutTimeout:
+                                        scenario.ScaleOutTimeout,
+                                    dispatchTimeout:
+                                        scenario.DispatchTimeout,
+                                    progressTimeout:
+                                        harnessBudget.ProgressTimeout,
+                                    observationMode:
+                                        ObservationMode,
+                                    crashCheckpointGate:
+                                        crashCheckpointGate)
+                                .ConfigureAwait(false);
 
-                    return new ProcessHostImpactedTenantExecutionResult(
-                        context,
-                        inventory,
-                        recovery);
+                        ProductionRealRuntimeCrashRecoveryTestHelpers.AssertRuntimeBelongsToTenant(
+                            inventory.RuntimeInstanceId,
+                            context.Tenant);
+
+                        output.WriteLine(
+                            $"[{profile.LogPrefix} IMPACTED TENANT READY FOR CRASH] TenantId='{context.Tenant.TenantId}', RuntimeInstanceId='{inventory.RuntimeInstanceId}', InFlight='{inventory.InFlightExecutions.Count}', LocalQueued='{inventory.LocalQueuedRuns.Count}'. Killing immediately without waiting for other tenant inventories.");
+
+                        var recovery =
+                            await ProductionRealRuntimeCrashRecoveryTestHelpers
+                                .KillRuntimeAndRecoverAssignedInventoryAsync(
+                                    output,
+                                    processControl,
+                                    registry,
+                                    runExecutionIndex,
+                                    sharedRunStore,
+                                    sharedQueue,
+                                    dagStore,
+                                    inventory,
+                                    minimumCompletedStepsBeforeKill:
+                                        harnessBudget.KillAfterCompletedStepCount,
+                                    progressTimeout:
+                                        harnessBudget.ProgressTimeout,
+                                    unsafeTimeout:
+                                        harnessBudget.UnsafeTimeout,
+                                    requeueTimeout:
+                                        harnessBudget.RequeueTimeout,
+                                    redispatchTimeout:
+                                        harnessBudget.RecoveryRedispatchTimeout,
+                                    executionResolveTimeout:
+                                        harnessBudget.ExecutionResolveTimeout,
+                                    observationMode:
+                                        ObservationMode,
+                                    signalSubscriber:
+                                        signalSubscriber,
+                                    controlPlaneId:
+                                        controlPlaneId,
+                                    hybridFallbackPollInterval:
+                                        HybridFallbackPollInterval,
+                                    crashCheckpointGate:
+                                        crashCheckpointGate)
+                                .ConfigureAwait(false);
+
+                        return new ProcessHostImpactedTenantExecutionResult(
+                            context,
+                            inventory,
+                            recovery);
+                    }
+                    finally
+                    {
+                        await crashCheckpointGate
+                            .ReleaseAsync()
+                            .ConfigureAwait(false);
+                    }
                 }
 
                 async Task<ProcessHostSafeTenantExecutionResult> BuildSafeTenantInventoryAsync(
                     ProcessHostTenantScenarioContext context)
                 {
-                    var inventory =
-                        await ProductionRealRuntimeCrashRecoveryTestHelpers
-                            .SubmitAndBuildAssignedWorkInventoryAsync(
+                    var crashCheckpointGate =
+                        await ProductionCrashCheckpointGate
+                            .ArmAsync(
+                                crashCheckpointConnection,
                                 output,
-                                context.Mcp,
-                                scaleOutRequestStore,
-                                sharedRunStore,
-                                runExecutionIndex,
-                                dagStore,
-                                context.Tenant,
                                 controlPlaneId,
+                                context.Tenant.TenantId,
                                 context.PipelinePrefix,
-                                profile.RequestedBy,
-                                profile.Source,
-                                runCount: context.Tenant.Run.RunCount,
-                                minimumInFlightExecutionCount: 1,
-                                minimumLocalQueuedRunCount: 1,
-                                minimumCompletedStepsBeforeKill: KillAfterCompletedStepCount,
-                                scaleOutTimeout: scenario.ScaleOutTimeout,
-                                dispatchTimeout: scenario.DispatchTimeout,
-                                progressTimeout: TimeSpan.FromMinutes(3),
-                                observationMode: ObservationMode)
+                                harnessBudget.KillAfterCompletedStepCount + 1,
+                                TimeSpan.FromMinutes(CrashCheckpointStateTtlMinutes))
                             .ConfigureAwait(false);
 
-                    ProductionRealRuntimeCrashRecoveryTestHelpers.AssertRuntimeBelongsToTenant(
-                        inventory.RuntimeInstanceId,
-                        context.Tenant);
+                    try
+                    {
+                        var inventory =
+                            await ProductionRealRuntimeCrashRecoveryTestHelpers
+                                .SubmitAndBuildAssignedWorkInventoryAsync(
+                                    output,
+                                    context.Mcp,
+                                    scaleOutRequestStore,
+                                    sharedRunStore,
+                                    sharedQueue,
+                                    runExecutionIndex,
+                                    dagStore,
+                                    context.Tenant,
+                                    controlPlaneId,
+                                    context.PipelinePrefix,
+                                    profile.RequestedBy,
+                                    profile.Source,
+                                    runCount: context.Tenant.Run.RunCount,
+                                    minimumInFlightExecutionCount: 1,
+                                    minimumLocalQueuedRunCount:
+                                        context.Tenant.Run.RunCount - 1,
+                                    minimumCompletedStepsBeforeKill:
+                                        harnessBudget.KillAfterCompletedStepCount,
+                                    scaleOutTimeout:
+                                        scenario.ScaleOutTimeout,
+                                    dispatchTimeout:
+                                        scenario.DispatchTimeout,
+                                    progressTimeout:
+                                        harnessBudget.ProgressTimeout,
+                                    observationMode:
+                                        ObservationMode,
+                                    crashCheckpointGate:
+                                        crashCheckpointGate)
+                                .ConfigureAwait(false);
 
-                    return new ProcessHostSafeTenantExecutionResult(
-                        context,
-                        inventory);
+                        ProductionRealRuntimeCrashRecoveryTestHelpers.AssertRuntimeBelongsToTenant(
+                            inventory.RuntimeInstanceId,
+                            context.Tenant);
+
+                        return new ProcessHostSafeTenantExecutionResult(
+                            context,
+                            inventory);
+                    }
+                    finally
+                    {
+                        await crashCheckpointGate
+                            .ReleaseAsync()
+                            .ConfigureAwait(false);
+                    }
                 }
 
                 var impactedFlowTasks =
@@ -1816,6 +1941,28 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                                 .ConfigureAwait(false)
                         })
                         .ToArray();
+
+                var allReplayTasks =
+                    impactedReplayTasks
+                        .Select(task => (Task)task)
+                        .Concat(safeReplayTasks.Select(task => (Task)task))
+                        .ToArray();
+
+                /*
+                 * Drain every replay request before the scenario host can be disposed.
+                 * Awaiting impacted and safe batches sequentially is unsafe: if the
+                 * first batch faults, the second batch is still running against the
+                 * same TestServer while the method unwinds and disposes its services.
+                 */
+                await Task
+                    .WhenAll(allReplayTasks)
+                    .ConfigureAwait(false);
+
+                output.WriteLine(
+                    $"[REAL RUNTIME HARNESS TASK DRAIN] " +
+                    $"TaskGroup='tenant-replay-requests', " +
+                    $"TaskCount='{allReplayTasks.Length}', " +
+                    "PendingAfterDrain='0'.");
 
                 var impactedReplayResults =
                     await Task
@@ -2218,10 +2365,34 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 parallelism,
                 1);
 
+            await using var dataStoreTrafficObserver =
+                await ProductionDataStoreTrafficObserver
+                    .StartAsync(output)
+                    .ConfigureAwait(false);
+
+            var harnessBudget =
+                CreateParallelScenarioHarnessBudget(
+                    parallelism);
+
             var overallStopwatch = Stopwatch.StartNew();
 
             output.WriteLine(
                 $"# PARALLEL CRASH-RECOVERY PROOF - STARTING {parallelism} SCENARIOS");
+
+            output.WriteLine(
+                $"[PARALLEL HARNESS BUDGET] " +
+                $"Parallelism='{harnessBudget.Parallelism}', " +
+                $"PressureStepCount='{harnessBudget.PressureStepCount}', " +
+                $"KillAfterCompletedStepCount='{harnessBudget.KillAfterCompletedStepCount}', " +
+                $"ScaleOutTimeout='{harnessBudget.ScaleOutTimeout}', " +
+                $"RuntimeReadinessTimeout='{harnessBudget.RuntimeReadinessTimeout}', " +
+                $"DispatchTimeout='{harnessBudget.DispatchTimeout}', " +
+                $"RecoveryRedispatchTimeout='{harnessBudget.RecoveryRedispatchTimeout}', " +
+                $"ProgressTimeout='{harnessBudget.ProgressTimeout}', " +
+                $"UnsafeTimeout='{harnessBudget.UnsafeTimeout}', " +
+                $"RequeueTimeout='{harnessBudget.RequeueTimeout}', " +
+                $"ExecutionResolveTimeout='{harnessBudget.ExecutionResolveTimeout}', " +
+                $"CompletionTimeout='{harnessBudget.CompletionTimeout}'.");
 
             output.WriteLine(
                 $"[PARALLEL SUMMARY] Parallelism='{parallelism}', " +
@@ -2329,7 +2500,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
 
             try
             {
-                await ProcessHost_Should_Recover_Two_Tenants_After_Real_Runtime_Process_Kills_Without_Impacting_Safe_Tenant_With_Strict_Dag_Resume_Replay_Ledger_And_Trace()
+                await ProcessHost_Should_Recover_Two_Tenants_After_Real_Runtime_Process_Kills_Without_Impacting_Safe_Tenant_With_Strict_Dag_Resume_Replay_Ledger_And_Trace(
+                        parallelism)
                     .ConfigureAwait(false);
 
                 stopwatch.Stop();
@@ -2378,6 +2550,80 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             string ScenarioId,
             TimeSpan Duration,
             Exception? Exception);
+
+        /// <summary>
+        /// Builds a deterministic harness budget that grows with parallel pressure
+        /// without modifying any production Redis or provider timeout.
+        /// </summary>
+        /// <param name="parallelism">The number of concurrently executed scenarios.</param>
+        /// <returns>The resolved harness-only timeout and crash-boundary budget.</returns>
+        private static ParallelScenarioHarnessBudget CreateParallelScenarioHarnessBudget(
+            int parallelism)
+        {
+            ArgumentOutOfRangeException.ThrowIfLessThan(
+                parallelism,
+                1);
+
+            var pressureStepCount =
+                parallelism <= 15
+                    ? 0
+                    : ((parallelism - 16) / 5) + 1;
+
+            return new ParallelScenarioHarnessBudget(
+                Parallelism: parallelism,
+                PressureStepCount: pressureStepCount,
+                KillAfterCompletedStepCount:
+                    Math.Max(
+                        10,
+                        KillAfterCompletedStepCount - (pressureStepCount * 10)),
+                ScaleOutTimeout:
+                    TimeSpan.FromMinutes(
+                        2 + (pressureStepCount * 3)),
+                RuntimeReadinessTimeout:
+                    TimeSpan.FromSeconds(
+                        30 + (pressureStepCount * 150)),
+                DispatchTimeout:
+                    TimeSpan.FromMinutes(
+                        3 + (pressureStepCount * 5)),
+                RecoveryRedispatchTimeout:
+                    TimeSpan.FromMinutes(
+                        3 + (pressureStepCount * 5)) +
+                    TimeSpan.FromSeconds(
+                        30 + (pressureStepCount * 150)) +
+                    TimeSpan.FromMinutes(1),
+                ProgressTimeout:
+                    TimeSpan.FromMinutes(
+                        3 + pressureStepCount),
+                UnsafeTimeout:
+                    TimeSpan.FromSeconds(
+                        60 + (pressureStepCount * 30)),
+                RequeueTimeout:
+                    TimeSpan.FromMinutes(
+                        3 + (pressureStepCount * 2)),
+                ExecutionResolveTimeout:
+                    TimeSpan.FromSeconds(
+                        60 + (pressureStepCount * 30)),
+                CompletionTimeout:
+                    TimeSpan.FromMinutes(
+                        3 + (pressureStepCount * 2)));
+        }
+
+        /// <summary>
+        /// Represents timeout and crash-boundary values used only by the parallel integration harness.
+        /// </summary>
+        private sealed record ParallelScenarioHarnessBudget(
+            int Parallelism,
+            int PressureStepCount,
+            int KillAfterCompletedStepCount,
+            TimeSpan ScaleOutTimeout,
+            TimeSpan RuntimeReadinessTimeout,
+            TimeSpan DispatchTimeout,
+            TimeSpan RecoveryRedispatchTimeout,
+            TimeSpan ProgressTimeout,
+            TimeSpan UnsafeTimeout,
+            TimeSpan RequeueTimeout,
+            TimeSpan ExecutionResolveTimeout,
+            TimeSpan CompletionTimeout);
 
         /// <summary>
         /// Resolves the runtime signal subscriber only when hybrid observation is enabled.
@@ -2434,6 +2680,35 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                     minimumCompletedSteps,
                     timeout)
                 .ConfigureAwait(false);
+        }
+
+        private async Task WaitForScaleOutWatcherReadyAsync(
+            IServiceProvider services,
+            string controlPlaneId)
+        {
+            ArgumentNullException.ThrowIfNull(services);
+            ArgumentException.ThrowIfNullOrWhiteSpace(controlPlaneId);
+
+            var watcher = services
+                .GetServices<IHostedService>()
+                .OfType<AiRuntimeScaleOutRequestWatcherHostedService>()
+                .SingleOrDefault()
+                ?? throw new InvalidOperationException(
+                    "The runtime scale-out request watcher hosted service is not registered.");
+
+            await watcher
+                .WaitUntilReadyAsync(ScaleOutWatcherReadinessTimeout)
+                .ConfigureAwait(false);
+
+            Assert.True(
+                string.Equals(
+                    watcher.ResolvedControlPlaneId,
+                    controlPlaneId,
+                    StringComparison.Ordinal),
+                $"Scale-out watcher resolved an unexpected control-plane id. Expected='{controlPlaneId}', Actual='{watcher.ResolvedControlPlaneId}'.");
+
+            output.WriteLine(
+                $"[SCALE-OUT WATCHER READY] WatcherId='{watcher.WatcherId}', ControlPlaneId='{watcher.ResolvedControlPlaneId ?? controlPlaneId}', ReadyAtUtc='{watcher.ReadyAtUtc:O}', Timeout='{ScaleOutWatcherReadinessTimeout}'.");
         }
 
         private sealed record ProcessHostTenantScenarioContext(

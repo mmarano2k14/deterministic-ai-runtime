@@ -191,12 +191,25 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
         /// <remarks>
         /// The watcher observes Redis scale-out requests and asks the selected
         /// provider to provision runtime capacity.
+        ///
+        /// HTTP process-host scenarios deliberately use a lower process-wide workflow
+        /// limit than gRPC. Kestrel startup, runtime registration, capacity publication,
+        /// and HTTP command-endpoint readiness all share the same local Redis data plane.
+        /// Keeping four workflows active prevents queued HTTP startups from amplifying
+        /// registry polling pressure at P25/P30 while preserving cross-control-plane concurrency.
         /// </remarks>
         private static void ApplyScaleOutSettings(
             Dictionary<string, string?> settings)
         {
             settings["AiRuntimeScaleOutWatcher:Enabled"] = "true";
             settings["AiRuntimeScaleOutWatcher:IntervalSeconds"] = "1";
+
+            settings["AiRuntimeScaleOutRequestWatcher:Enabled"] = "true";
+            settings["AiRuntimeScaleOutRequestWatcher:EnableProcessWideRequestProcessingCoordination"] = "true";
+            settings["AiRuntimeScaleOutRequestWatcher:RequestProcessingCoordinationKey"] = "http-process-host-request-processing";
+            settings["AiRuntimeScaleOutRequestWatcher:MaxConcurrentRequestProcessingWorkflows"] = "4";
+            settings["AiRuntimeScaleOutRequestWatcher:MaxConcurrentRequestProcessingWorkflowsPerControlPlane"] = "1";
+            settings["AiRuntimeScaleOutRequestWatcher:RecoveryDispatchBurstLimit"] = "3";
         }
 
         /// <summary>
@@ -208,10 +221,36 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
         /// the test validates process-host provisioning, dispatch, persistence,
         /// replay, and observability without mixing endpoint-health behavior into
         /// the same assertion path.
+        ///
+        /// The HTTP process-host readiness budget is intentionally longer and less
+        /// poll-intensive than the gRPC profile. Under P25/P30 pressure, the previous
+        /// 30-second/100-millisecond profile could issue hundreds of scoped and unscoped
+        /// registry/capacity reads while Kestrel and the child runtime were still starting.
+        /// A 90-second budget with 500-millisecond polling preserves the same readiness
+        /// contract while avoiding a self-amplifying Redis polling storm.
+        ///
+        /// One bounded HTTP-only process restart is allowed only when the child process
+        /// never publishes a compatible registry entry. Other readiness, transport,
+        /// tenant, capacity, or host-start failures remain immediate rejections.
         /// </remarks>
         private static void ApplyHttpProviderSettings(
             Dictionary<string, string?> settings)
         {
+            settings["AiGrpcRuntimeScaleOut:Enabled"] = "false";
+
+            settings["AiHttpRuntimeScaleOut:Enabled"] = "true";
+            settings["AiHttpRuntimeScaleOut:Mode"] = "HostManager";
+            settings["AiHttpRuntimeScaleOut:HostCreationMode"] = "Process";
+            settings["AiHttpRuntimeScaleOut:RequireReadiness"] = "true";
+            settings["AiHttpRuntimeScaleOut:ReadinessTimeoutSeconds"] = "90";
+            settings["AiHttpRuntimeScaleOut:ReadinessPollIntervalMilliseconds"] = "500";
+            settings["AiHttpRuntimeScaleOut:MaxConcurrentProcessHostStartups"] = "4";
+            settings["AiHttpRuntimeScaleOut:ProcessHostStartupConcurrencyKey"] = "http-process-host-startup";
+            settings["AiHttpRuntimeScaleOut:ProcessHostStartupRetryCount"] = "1";
+            settings["AiHttpRuntimeScaleOut:DefaultRuntimeInstanceIdPrefix"] = "http-runtime";
+            settings["AiHttpRuntimeScaleOut:EndpointTemplate"] = "http://127.0.0.1:{port}";
+
+            settings["AiHttpRuntimeInstanceProvider:DispatchTimeout"] = "00:00:30";
             settings["AiHttpRuntimeInstanceProvider:EnableCircuitBreaker"] = "false";
             settings["AiHttpRuntimeInstanceProvider:CircuitBreakerFailureThreshold"] = "100";
         }

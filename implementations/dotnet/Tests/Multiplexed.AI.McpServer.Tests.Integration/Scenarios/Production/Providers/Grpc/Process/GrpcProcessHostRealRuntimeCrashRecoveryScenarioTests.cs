@@ -68,7 +68,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
         /// <param name="parallelism">The number of scenarios executed concurrently.</param>
         /// <returns>A task that completes when all concurrent scenarios have finished.</returns>
         [Theory]
-        [InlineData(10)]
+        [InlineData(35)]
         public Task Grpc_ProcessHost_Should_Execute_MultiTenant_Crash_Recovery_Scenarios_In_Parallel(
             int parallelism)
         {
@@ -208,6 +208,247 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                     $"crash-recovery stability iterations failed with parallelism '{parallelism}'.",
                     failures);
             }
+        }
+
+        /// <summary>
+        /// Verifies that multiple multi-tenant crash-recovery scenarios can execute
+        /// under progressively increasing parallel load without cross-scenario interference.
+        /// </summary>
+        /// <param name="maximumParallelism">
+        /// The maximum parallelism reached by the progressive load test.
+        /// The test increases parallelism in increments of five.
+        /// </param>
+        /// <returns>
+        /// A task that completes when every progressive parallelism level has been validated.
+        /// </returns>
+        [Theory]
+        [InlineData(50)]
+        public async Task Grpc_ProcessHost_Should_Progressively_Increase_MultiTenant_Crash_Recovery_Parallelism(
+            int maximumParallelism)
+        {
+            const int parallelismIncrement = 10;
+            const int maximumRetriesPerLevel = 3;
+
+            var retryCooldown =
+                TimeSpan.FromSeconds(10);
+
+            var levelCooldown =
+                TimeSpan.FromSeconds(10);
+
+            ArgumentOutOfRangeException.ThrowIfLessThan(
+                maximumParallelism,
+                parallelismIncrement);
+
+            if (maximumParallelism % parallelismIncrement != 0)
+            {
+                throw new ArgumentException(
+                    $"Maximum parallelism '{maximumParallelism}' must be divisible by " +
+                    $"the parallelism increment '{parallelismIncrement}'.",
+                    nameof(maximumParallelism));
+            }
+
+            var overallStopwatch =
+                Stopwatch.StartNew();
+
+            var levelCount =
+                maximumParallelism / parallelismIncrement;
+
+            var completedLevels = 0;
+            var totalAttempts = 0;
+            var totalExecutedScenarios = 0;
+            var highestValidatedParallelism = 0;
+
+            _output.WriteLine(string.Empty);
+            _output.WriteLine(
+                "# PROGRESSIVE PARALLEL CRASH-RECOVERY LOAD TEST - START");
+
+            _output.WriteLine(
+                $"[PROGRESSIVE LOAD SUMMARY] " +
+                $"MinimumParallelism='{parallelismIncrement}', " +
+                $"MaximumParallelism='{maximumParallelism}', " +
+                $"ParallelismIncrement='{parallelismIncrement}', " +
+                $"LevelCount='{levelCount}', " +
+                $"MaximumRetriesPerLevel='{maximumRetriesPerLevel}', " +
+                $"MaximumAttemptsPerLevel='{maximumRetriesPerLevel + 1}'.");
+
+            for (var currentParallelism = parallelismIncrement;
+                 currentParallelism <= maximumParallelism;
+                 currentParallelism += parallelismIncrement)
+            {
+                var levelStopwatch =
+                    Stopwatch.StartNew();
+
+                var levelFailures =
+                    new List<Exception>();
+
+                var levelPassed = false;
+
+                _output.WriteLine(string.Empty);
+                _output.WriteLine(
+                    $"# PROGRESSIVE LOAD LEVEL - PARALLELISM {currentParallelism}");
+
+                _output.WriteLine(
+                    $"[PROGRESSIVE LOAD LEVEL START] " +
+                    $"Parallelism='{currentParallelism}', " +
+                    $"Level='{completedLevels + 1}/{levelCount}', " +
+                    $"ExpectedTenantsPerAttempt='{currentParallelism * 3}', " +
+                    $"ExpectedSubmittedRunsPerAttempt='{currentParallelism * 9}', " +
+                    $"ExpectedImpactedTenantsPerAttempt='{currentParallelism * 2}', " +
+                    $"ExpectedSafeTenantsPerAttempt='{currentParallelism}'.");
+
+                for (var retry = 0;
+                     retry <= maximumRetriesPerLevel;
+                     retry++)
+                {
+                    var attemptNumber =
+                        retry + 1;
+
+                    var maximumAttempts =
+                        maximumRetriesPerLevel + 1;
+
+                    var attemptStopwatch =
+                        Stopwatch.StartNew();
+
+                    totalAttempts++;
+                    totalExecutedScenarios += currentParallelism;
+
+                    _output.WriteLine(string.Empty);
+                    _output.WriteLine(
+                        $"[PROGRESSIVE LOAD ATTEMPT START] " +
+                        $"Parallelism='{currentParallelism}', " +
+                        $"Attempt='{attemptNumber}/{maximumAttempts}', " +
+                        $"Retry='{retry}/{maximumRetriesPerLevel}'.");
+
+                    try
+                    {
+                        await ExecuteMultiTenantCrashRecoveryScenariosInParallelAsync(
+                                currentParallelism)
+                            .ConfigureAwait(false);
+
+                        attemptStopwatch.Stop();
+                        levelStopwatch.Stop();
+
+                        levelPassed = true;
+                        completedLevels++;
+                        highestValidatedParallelism = currentParallelism;
+
+                        _output.WriteLine(
+                            $"[PROGRESSIVE LOAD ATTEMPT PASS] " +
+                            $"Parallelism='{currentParallelism}', " +
+                            $"Attempt='{attemptNumber}/{maximumAttempts}', " +
+                            $"Retry='{retry}/{maximumRetriesPerLevel}', " +
+                            $"AttemptDuration='{attemptStopwatch.Elapsed}', " +
+                            $"LevelDuration='{levelStopwatch.Elapsed}'.");
+
+                        break;
+                    }
+                    catch (Exception exception)
+                    {
+                        attemptStopwatch.Stop();
+
+                        var wrappedException =
+                            new InvalidOperationException(
+                                $"Progressive gRPC process-host crash-recovery attempt " +
+                                $"'{attemptNumber}/{maximumAttempts}' failed at parallelism " +
+                                $"'{currentParallelism}' after '{attemptStopwatch.Elapsed}'.",
+                                exception);
+
+                        levelFailures.Add(
+                            wrappedException);
+
+                        _output.WriteLine(
+                            $"[PROGRESSIVE LOAD ATTEMPT FAIL] " +
+                            $"Parallelism='{currentParallelism}', " +
+                            $"Attempt='{attemptNumber}/{maximumAttempts}', " +
+                            $"Retry='{retry}/{maximumRetriesPerLevel}', " +
+                            $"Duration='{attemptStopwatch.Elapsed}', " +
+                            $"ExceptionType='{exception.GetType().FullName}', " +
+                            $"Message='{exception.Message}'.");
+
+                        _output.WriteLine(
+                            exception.ToString());
+
+                        if (retry < maximumRetriesPerLevel)
+                        {
+                            _output.WriteLine(
+                                $"[PROGRESSIVE LOAD RETRY COOLDOWN] " +
+                                $"Parallelism='{currentParallelism}', " +
+                                $"FailedAttempt='{attemptNumber}/{maximumAttempts}', " +
+                                $"NextAttempt='{attemptNumber + 1}/{maximumAttempts}', " +
+                                $"Duration='{retryCooldown}'.");
+
+                            await Task
+                                .Delay(retryCooldown)
+                                .ConfigureAwait(false);
+                        }
+                    }
+                }
+
+                if (!levelPassed)
+                {
+                    levelStopwatch.Stop();
+                    overallStopwatch.Stop();
+
+                    _output.WriteLine(string.Empty);
+                    _output.WriteLine(
+                        "# PROGRESSIVE PARALLEL CRASH-RECOVERY LOAD TEST - STOPPED");
+
+                    _output.WriteLine(
+                        $"[PROGRESSIVE LOAD TERMINAL FAILURE] " +
+                        $"FailedParallelism='{currentParallelism}', " +
+                        $"Attempts='{maximumRetriesPerLevel + 1}', " +
+                        $"CompletedLevels='{completedLevels}/{levelCount}', " +
+                        $"HighestValidatedParallelism='{highestValidatedParallelism}', " +
+                        $"TotalAttempts='{totalAttempts}', " +
+                        $"TotalExecutedScenarios='{totalExecutedScenarios}', " +
+                        $"LevelDuration='{levelStopwatch.Elapsed}', " +
+                        $"TotalDuration='{overallStopwatch.Elapsed}'.");
+
+                    throw new AggregateException(
+                        $"Progressive gRPC process-host crash-recovery load test stopped at " +
+                        $"parallelism '{currentParallelism}'. The level failed after one initial " +
+                        $"attempt and '{maximumRetriesPerLevel}' retries. The highest validated " +
+                        $"parallelism was '{highestValidatedParallelism}'.",
+                        levelFailures);
+                }
+
+                _output.WriteLine(
+                    $"[PROGRESSIVE LOAD LEVEL PASS] " +
+                    $"Parallelism='{currentParallelism}', " +
+                    $"CompletedLevels='{completedLevels}/{levelCount}', " +
+                    $"AttemptsUsed='{levelFailures.Count + 1}', " +
+                    $"FailuresBeforePass='{levelFailures.Count}', " +
+                    $"Duration='{levelStopwatch.Elapsed}'.");
+
+                if (currentParallelism < maximumParallelism)
+                {
+                    _output.WriteLine(
+                        $"[PROGRESSIVE LOAD LEVEL COOLDOWN] " +
+                        $"CompletedParallelism='{currentParallelism}', " +
+                        $"NextParallelism='{currentParallelism + parallelismIncrement}', " +
+                        $"Duration='{levelCooldown}'.");
+
+                    await Task
+                        .Delay(levelCooldown)
+                        .ConfigureAwait(false);
+                }
+            }
+
+            overallStopwatch.Stop();
+
+            _output.WriteLine(string.Empty);
+            _output.WriteLine(
+                "# PROGRESSIVE PARALLEL CRASH-RECOVERY LOAD TEST - FINAL SUMMARY");
+
+            _output.WriteLine(
+                $"[PROGRESSIVE LOAD FINAL SUMMARY] " +
+                $"MinimumParallelism='{parallelismIncrement}', " +
+                $"MaximumParallelism='{maximumParallelism}', " +
+                $"HighestValidatedParallelism='{highestValidatedParallelism}', " +
+                $"CompletedLevels='{completedLevels}/{levelCount}', " +
+                $"TotalAttempts='{totalAttempts}', " +
+                $"TotalExecutedScenarios='{totalExecutedScenarios}', " +
+                $"TotalDuration='{overallStopwatch.Elapsed}'.");
         }
     }
 }

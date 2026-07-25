@@ -80,6 +80,10 @@ The following capabilities are already implemented or available as validated run
 | Runtime recovery forensics | Implemented / validated |
 | Control-plane causal-chain ledger proof | Implemented / validated |
 | Safe tenant non-impact validation | Implemented / validated |
+| Stable recovery scale-out single-flight deduplication | Implemented / validated |
+| Durable crash-gate process-host validation | Implemented / validated |
+| Parallel HTTP/gRPC process-host concurrency campaign through P35 | Implemented / validated; P35 is the experimental local-machine edge |
+| Content-agnostic step execution boundary | Implemented architecture foundation |
 | Runtime metrics and tracing foundations | Foundation available |
 | Enterprise runtime demo scenarios | Completed (V1) |
 | MCP production runtime scenario framework | Implemented / validated |
@@ -297,6 +301,33 @@ The local runtime queue remains intentionally volatile. Durable truth is held by
 - ledger, trace, forensics, and replay evidence
 
 The validated multi-tenant crash scenario proves that two impacted tenants can recover while a safe tenant remains untouched.
+
+---
+
+
+## Phase 1D — Concurrency Hardening and Adversarial Recovery Validation
+
+**Status:** Completed / validated
+
+Goal: prove that process-host recovery remains correct when control planes, tenants, external runtime processes, Redis coordination, MongoDB evidence, claims, leases, scale-out, redispatch, and process kills are concentrated under parallel pressure.
+
+Validated capabilities include:
+
+- stable single-flight recovery scale-out identity;
+- readiness as registration, capacity publication, endpoint reachability, and dispatchability;
+- exact pre-crash assigned-work inventory;
+- durable crash-gate state instead of elapsed-time process termination;
+- in-flight resume with the same `ExecutionId`;
+- local-queued redispatch through the same `SharedRunId`;
+- safe-tenant non-impact;
+- failure classification between infrastructure saturation, runtime lifecycle, recovery convergence, and harness races;
+- HTTP and gRPC P35 completion;
+- datastore pressure measurement for the HTTP P35 run;
+- production interpretation based on warm runtime pools rather than one tenant per process or pod.
+
+The detailed technical reference is:
+
+- [`docs/ai/concurrency-hardening-and-adversarial-validation.md`](ai/concurrency-hardening-and-adversarial-validation.md)
 
 ---
 
@@ -571,6 +602,9 @@ Potential topics:
 - why local queues can be volatile when durable truth lives elsewhere
 - why runtime crash recovery needs evidence, not only restart logic
 - how multi-tenant runtime isolation changes recovery expectations
+- why P20/P30/P35 are intentionally more violent than production
+- why capacity can degrade before correctness breaks
+- why the runtime owns execution semantics rather than model semantics
 
 The goal is to position the project seriously and clearly.
 
@@ -655,6 +689,9 @@ All roadmap work should respect these principles:
 - maintain clear documentation
 - avoid overclaiming maturity
 - distinguish implemented features from foundations and planned work
+- do not map tenants one-to-one to processes or pods in the production capacity model
+- distinguish local saturation from protocol correctness
+- prefer durable crash preconditions over elapsed-time test assumptions
 
 ---
 
@@ -671,6 +708,16 @@ Replay and recovery controller/API design
 Road to MLOps platform direction
 Kubernetes deployment demo
 Articles and public positioning
+```
+
+The next capacity-hardening priorities are:
+
+```text
+Runtime Pool Manager design
+Warm runtime process reuse inside pool pods
+Tenant-aware cell and catalog direction
+Bounded process-level scale-out
+Kubernetes runtime-pool continuity
 ```
 
 Phase 0 documentation restructure is complete as V1.

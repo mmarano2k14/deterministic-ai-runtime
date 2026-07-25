@@ -205,6 +205,95 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Grpc.Sc
             DateTimeOffset startedAtUtc,
             CancellationToken cancellationToken)
         {
+            if (!ShouldUseProcessHostStartupGate())
+            {
+                return await ProvisionWithHostManagerCoreAsync(
+                        request,
+                        context,
+                        startedAtUtc,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+            }
+
+            var concurrencyKey = ResolveProcessHostStartupConcurrencyKey();
+            var requestedMaxConcurrency = options.MaxConcurrentProcessHostStartups;
+
+            logger.LogInformation(
+                "GRPC PROCESS HOST STARTUP GATE WAIT RequestId={RequestId} SharedRunId={SharedRunId} RuntimeInstanceId={RuntimeInstanceId} ConcurrencyKey={ConcurrencyKey} RequestedMaxConcurrency={RequestedMaxConcurrency}",
+                request.RequestId,
+                request.SharedRunId,
+                context.RuntimeInstanceId,
+                concurrencyKey,
+                requestedMaxConcurrency);
+
+            var lease =
+                await AiGrpcProcessHostStartupConcurrencyGate
+                    .AcquireAsync(
+                        concurrencyKey,
+                        requestedMaxConcurrency,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+            if (lease.RequestedMaxConcurrency != lease.EffectiveMaxConcurrency)
+            {
+                logger.LogWarning(
+                    "GRPC PROCESS HOST STARTUP GATE LIMIT MISMATCH RequestId={RequestId} SharedRunId={SharedRunId} RuntimeInstanceId={RuntimeInstanceId} ConcurrencyKey={ConcurrencyKey} RequestedMaxConcurrency={RequestedMaxConcurrency} EffectiveMaxConcurrency={EffectiveMaxConcurrency}",
+                    request.RequestId,
+                    request.SharedRunId,
+                    context.RuntimeInstanceId,
+                    lease.ConcurrencyKey,
+                    lease.RequestedMaxConcurrency,
+                    lease.EffectiveMaxConcurrency);
+            }
+
+            var acquiredAtUtc = DateTimeOffset.UtcNow;
+
+            logger.LogInformation(
+                "GRPC PROCESS HOST STARTUP GATE ACQUIRED RequestId={RequestId} SharedRunId={SharedRunId} RuntimeInstanceId={RuntimeInstanceId} ConcurrencyKey={ConcurrencyKey} EffectiveMaxConcurrency={EffectiveMaxConcurrency} ActiveCount={ActiveCount} WaitingCount={WaitingCount} WaitDurationMs={WaitDurationMs}",
+                request.RequestId,
+                request.SharedRunId,
+                context.RuntimeInstanceId,
+                lease.ConcurrencyKey,
+                lease.EffectiveMaxConcurrency,
+                lease.ActiveCount,
+                lease.WaitingCount,
+                lease.WaitDuration.TotalMilliseconds);
+
+            try
+            {
+                return await ProvisionWithHostManagerCoreAsync(
+                        request,
+                        context,
+                        startedAtUtc,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            finally
+            {
+                lease.Dispose();
+
+                logger.LogInformation(
+                    "GRPC PROCESS HOST STARTUP GATE RELEASED RequestId={RequestId} SharedRunId={SharedRunId} RuntimeInstanceId={RuntimeInstanceId} ConcurrencyKey={ConcurrencyKey} EffectiveMaxConcurrency={EffectiveMaxConcurrency} ActiveCount={ActiveCount} WaitingCount={WaitingCount} HeldDurationMs={HeldDurationMs}",
+                    request.RequestId,
+                    request.SharedRunId,
+                    context.RuntimeInstanceId,
+                    lease.ConcurrencyKey,
+                    lease.EffectiveMaxConcurrency,
+                    lease.ActiveCount,
+                    lease.WaitingCount,
+                    (DateTimeOffset.UtcNow - acquiredAtUtc).TotalMilliseconds);
+            }
+        }
+
+        /// <summary>
+        /// Executes host-manager startup and readiness after any process-host startup gate has been acquired.
+        /// </summary>
+        private async Task<AiRuntimeScaleOutProviderResult> ProvisionWithHostManagerCoreAsync(
+            AiRuntimeScaleOutProviderRequest request,
+            AiRuntimeScaleOutProvisioningContext context,
+            DateTimeOffset startedAtUtc,
+            CancellationToken cancellationToken)
+        {
             logger.LogInformation(
                 "GRPC SCALE-OUT HOST-MANAGER START RequestId={RequestId} SharedRunId={SharedRunId} RuntimeInstanceId={RuntimeInstanceId} Endpoint={Endpoint} HostCreationMode={HostCreationMode} TenantId={TenantId} TenantGroupId={TenantGroupId} IsolationMode={IsolationMode} WorkerCount={WorkerCount} MaxConcurrentRuns={MaxConcurrentRuns} QueueCapacity={QueueCapacity}",
                 request.RequestId,
@@ -394,6 +483,25 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Grpc.Sc
                 (DateTimeOffset.UtcNow - startedAtUtc).TotalMilliseconds);
 
             return CreateFulfilledResult(request, fulfilledRuntimeInstanceId, $"grpc-host-manager-scaleout-{request.RequestId}", "gRPC runtime scale-out request was fulfilled by the runtime host manager.", metadata);
+        }
+
+        /// <summary>
+        /// Determines whether process-host startup gating is enabled for the current host-manager mode.
+        /// </summary>
+        private bool ShouldUseProcessHostStartupGate()
+        {
+            return options.HostCreationMode == AiRuntimeHostCreationMode.Process &&
+                   options.MaxConcurrentProcessHostStartups > 0;
+        }
+
+        /// <summary>
+        /// Resolves the process-wide startup gate key.
+        /// </summary>
+        private string ResolveProcessHostStartupConcurrencyKey()
+        {
+            return string.IsNullOrWhiteSpace(options.ProcessHostStartupConcurrencyKey)
+                ? "grpc-process-host-startup"
+                : options.ProcessHostStartupConcurrencyKey.Trim();
         }
 
         /// <summary>

@@ -705,6 +705,25 @@ The DAG engine does not hardcode step behavior.
 
 It coordinates execution, while step plugins provide the domain-specific logic.
 
+#### Content-Agnostic Execution Boundary
+
+The runtime owns execution semantics, not the semantic meaning of the result.
+
+A step may execute RAG, an LLM call, vector search, an external MCP tool, an internal network service, a database operation, human approval, or code implemented in any language behind a supported adapter.
+
+```text
+step implementation
+    = domain behavior and result semantics
+
+runtime engine
+    = admission, ownership, dispatch, retry, retention,
+      eviction, recovery, replay, and observability
+```
+
+Real AI operations can have different latency, streaming, side-effect, retry, cost, and cancellation characteristics. Those differences affect policy and capacity configuration, but they do not redesign the runtime's durable ownership and recovery model.
+
+> The runtime does not need to understand the answer. It needs to guarantee what happens to the execution that produced it.
+
 Step executors receive resolved context from the context resolution layer.
 
 ---
@@ -1601,6 +1620,33 @@ resume.context.seeded
 
 These validations prove that recovery is not treated as a global panic button. The control plane recovers assigned work for impacted unsafe runtime instances while unrelated tenant runtime capacity continues normally.
 
+
+## Concurrency Hardening and Adversarial Validation
+
+The process-host validation campaign now includes an explicit adversarial concurrency proof model.
+
+The local harness intentionally concentrates control planes, tenants, queues, runtime processes, Redis, MongoDB, scale-out, process kills, recovery, ledger, trace, and forensics on one machine.
+
+This is intentionally harsher than the expected production topology.
+
+Validated boundaries include:
+
+- exact pre-crash inventory: one in-flight execution and two local-queued runs;
+- durable crash-gate state instead of elapsed-time process termination;
+- stable single-flight recovery scale-out identity;
+- readiness as registration, capacity, endpoint, and dispatchability;
+- failed runtime capacity suppression;
+- in-flight resume with the same `ExecutionId`;
+- local-queued redispatch through the durable `SharedRunId`;
+- safe-tenant non-impact;
+- HTTP and gRPC process-host P35 completion;
+- local saturation classification separated from protocol defects.
+
+The full reference is:
+
+- [Concurrency Hardening and Adversarial Validation](concurrency-hardening-and-adversarial-validation.md)
+
+
 ## Related Documents
 
 - [Multi-Tenant Control Plane Isolation](multi-tenant-control-plane-isolation.md)
@@ -1623,6 +1669,7 @@ These validations prove that recovery is not treated as a global panic button. T
 - [Recovery Replay Ledger Trace Proof](recovery-replay-ledger-trace-proof.md)
 - [Retention and Compaction](retention-and-compaction.md)
 - [Distributed Concurrency and Throttling](distributed-concurrency-throttling.md)
+- [Concurrency Hardening and Adversarial Validation](concurrency-hardening-and-adversarial-validation.md)
 - [Replay and Audit](replay-and-audit.md)
 - [Observability](observability.md)
 - [Config-Driven Runtime](config-driven-runtime.md)

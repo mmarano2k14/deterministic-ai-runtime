@@ -37,6 +37,7 @@ Focused AI runtime documentation is organized under:
 | [`ai/shared-controller-usage.md`](ai/shared-controller-usage.md) | Shared runtime controller usage, queue-first/direct-dispatch modes, Redis stores, scale-out request persistence, tenant snapshot propagation, manual drain, and background pump setup. |
 | [`ai/shared-queue-pump-and-worker-capacity.md`](ai/shared-queue-pump-and-worker-capacity.md) | Shared queue pump, fulfilled-run requeue, dispatch-time admission, context restoration, worker capacity visibility, and `MaxLocalWorkersPerExecution`. |
 | [`ai/testing-strategy.md`](ai/testing-strategy.md) | Testing strategy and validation approach for distributed runtime guarantees, RBAC context propagation, tenant isolation, Redis/local scale-out, HTTP/gRPC process-host provisioning, runtime crash recovery, safe-tenant isolation, recovery forensics, replay/ledger/trace proof, requeue, dispatch, and execution evidence. |
+| [`ai/concurrency-hardening-and-adversarial-validation.md`](ai/concurrency-hardening-and-adversarial-validation.md) | Adversarial concurrency and crash-recovery validation reference covering exact pre-crash inventories, durable crash gates, readiness, single-flight scale-out, claims and leases, P10–P35 validation evidence, local saturation boundaries, content-agnostic steps, and production runtime-pool interpretation. |
 | [`ai/execution-correlated-ledger.md`](ai/execution-correlated-ledger.md) | Execution-correlated runtime decision ledger, audit foundations, retention auditability, and replay lifecycle event correlation. |
 | [`ai/observability.md`](ai/observability.md) | High-level observability index summarizing ledger, tracing, metrics, logs, correlation, replay diagnostics, and roadmap direction. |
 | [`ai/observability-tracing.md`](ai/observability-tracing.md) | Runtime tracing, trace timelines, correlation, trace storage modes, Mongo trace persistence, MemoryAndMongo mode, and tracing improvements. |
@@ -703,6 +704,7 @@ The project roadmap organized into phases:
 | [`ai/runtime-recovery-forensics.md`](ai/runtime-recovery-forensics.md) | Recovery forensics evidence linking incidents, recovered work items, timelines, runtime replacement, and tenant-scoped MCP queries. |
 | [`ai/recovery-replay-ledger-trace-proof.md`](ai/recovery-replay-ledger-trace-proof.md) | Cross-layer proof model connecting replay, ledger, trace, forensics, completion evidence, and safe-tenant non-impact. |
 | [`ai/testing-strategy.md`](ai/testing-strategy.md) | Integration testing strategy and validation approach for distributed runtime guarantees, RBAC context propagation, tenant isolation, HTTP hardening, Runtime Host Manager process-host provisioning, Redis/local scale-out request, requeue, dispatch, and execution evidence. |
+| [`ai/concurrency-hardening-and-adversarial-validation.md`](ai/concurrency-hardening-and-adversarial-validation.md) | Exact concurrency-hardening proof model for process kills, recovery ownership, deterministic crash boundaries, safe-tenant controls, pressure classification, P35 evidence, and production-vs-local interpretation. |
 | [`ai/mcp-production-runtime-scenario-framework.md`](ai/mcp-production-runtime-scenario-framework.md) | Production scenario evidence for HTTP/gRPC process-host execution, mixed tenant runtime modes, durable ledger/trace/replay, and real process-boundary validation. |
 | [`ai/multi-tenant-runtime-flow.md`](ai/multi-tenant-runtime-flow.md) | Operational context/audit map tying tenant context, correlation ids, shared run ids, local run ids, execution ids, runtime instances, workers, ledger, tracing, metrics, and replay together. |
 
@@ -803,6 +805,7 @@ Many focused documents started as documentation split placeholders, but several 
 - control-plane ledger causal chain
 - recovery replay / ledger / trace proof
 - testing strategy
+- concurrency hardening and adversarial process-host validation
 
 The complete technical reference remains preserved in:
 
