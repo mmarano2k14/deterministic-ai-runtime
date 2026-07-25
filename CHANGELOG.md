@@ -6,7 +6,765 @@ This project follows a deterministic runtime and observability model designed fo
 
 ---
 
-## [Unreleased] - 2026-07-20 - Kubernetes Runtime Host Provider Completion, Recovery Hardening, and Documentation
+## 1.0.7.4 - 2026-07-25 — Concurrency Hardening and Crash Recovery
+
+## Recovery scale-out deduplication hardened
+
+The Redis-backed recovery scale-out request store now deduplicates replacement-capacity requests using a stable functional identity:
+
+```text
+ControlPlaneId
++ deduplication scope
++ recovery intent
++ SharedRunId
++ failed RuntimeInstanceId
+```
+
+Transient or diagnostic metadata no longer fragments one logical recovery need into multiple scale-out requests.
+
+### Validation
+
+- Redis scale-out request-store tests passed.
+- Parallel validation passed at P5.
+- Parallel validation passed at P10.
+- Parallel validation passed twice at P15.
+
+---
+
+## Parallel harness budgets made pressure-aware
+
+The crash-recovery harness now derives its time budgets from the requested parallelism instead of using one fixed profile for every run.
+
+The active values are printed at the beginning of each batch so stale configuration can be distinguished from real runtime behavior.
+
+The pressure-aware budget covers:
+
+- scale-out observation;
+- runtime readiness;
+- initial dispatch;
+- recovery redispatch;
+- execution progress;
+- unsafe-capacity convergence;
+- requeue convergence;
+- execution resolution;
+- final completion.
+
+This made failures attributable to a precise lifecycle stage rather than one generic timeout.
+
+---
+
+## Runtime readiness redefined as a lifecycle chain
+
+A runtime is no longer considered ready because its process exists.
+
+The readiness boundary now requires the full chain:
+
+```text
+process created
+-> runtime registered
+-> compatible capacity published
+-> transport endpoint reachable
+-> runtime dispatchable
+```
+
+This prevents a control plane from dispatching work to a process that exists but is not yet usable.
+
+For HTTP process hosting, a bounded second startup attempt was added under strict conditions:
+
+- HTTP process-host mode only;
+- one retry only;
+- compatible-registry-missing condition only;
+- failed process cleaned up before retry;
+- no infinite retry;
+- no behavior change for gRPC;
+- conservative production defaults preserved.
+
+---
+
+## Scale-out watcher startup race removed
+
+Work submission is now gated by an explicit scale-out watcher readiness boundary.
+
+The watcher must have:
+
+- resolved its `ControlPlaneId`;
+- completed a successful store access;
+- entered a functional polling cycle.
+
+This prevents work from being submitted before the component responsible for observing and fulfilling scale-out requests is operational.
+
+---
+
+## Redispatch observation moved behind the crash boundary
+
+Recovery subscriptions and redispatch observation are established after the target runtime is killed.
+
+This prevents the harness from delaying the crash while preparing observation infrastructure and reduces the chance that the selected in-flight DAG completes before the process is terminated.
+
+---
+
+## Shared-queue pressure experiments isolated infrastructure saturation
+
+Aggressive throttling of the shared-queue pump was tested to reduce concurrent Redis pressure.
+
+The experiment showed that very low dispatch throughput could produce one green P20 but was not repeatable.
+
+Observed saturation signals included:
+
+```text
+high ThreadPool worker utilization
+queued ThreadPool work
+thousands of asynchronous Redis operations
+Redis connection state SpinningDown
+HGETALL and SMEMBERS timeouts
+secondary ObjectDisposedException during shutdown
+```
+
+The normal shared-queue dispatch throughput was restored.
+
+The result was important:
+
+- Redis timeouts largely disappeared;
+- readiness failures largely disappeared;
+- disposal failures largely disappeared;
+- the remaining failures became concentrated around inventory timing.
+
+This separated infrastructure pressure from the harness race.
+
+---
+
+## Assigned-work inventory observation consolidated
+
+The harness now observes all submitted runs through one combined inventory loop instead of independent per-run polling.
+
+The loop:
+
+```text
+observes all SharedRunIds
+-> resolves their runtime indexes
+-> groups assigned work by RuntimeInstanceId
+-> selects only the intended runtime shape
+```
+
+The expected pre-crash inventory is exact:
+
+```text
+TotalWorkCount = 3
+InFlightExecutionCount = 1
+LocalQueuedRunCount = 2
+```
+
+The harness no longer accepts ambiguous shapes such as:
+
+```text
+2 in-flight
+1 local queued
+```
+
+This prevents false-positive recovery tests in which the supposed local-queued work had already started.
+
+---
+
+## Timing-based crash boundaries replaced by durable state
+
+Elapsed-time crash scheduling was found to be nondeterministic under pressure.
+
+The same delay could represent:
+
+- a DAG with only a few committed steps;
+- a DAG near completion;
+- a DAG already completed.
+
+The crash boundary was therefore moved to durable execution state.
+
+The intended lifecycle is:
+
+```text
+gate armed
+-> in-flight DAG reaches persisted checkpoint
+-> exact assigned-work inventory confirmed
+-> impacted runtime killed
+-> gate released
+-> replacement runtime resumes execution
+```
+
+The crash is authorized by state, not by wall-clock delay.
+
+This guarantees that the runtime is killed while the intended execution is still genuinely in flight.
+
+---
+
+## Long artificial checkpoint delays rejected
+
+A long test-only DAG delay successfully prevented early completion but created excessive local pressure.
+
+Under P20 it produced:
+
+- Redis `HGETALL` timeouts;
+- scale-out requests remaining `Observed`;
+- increased ThreadPool pressure;
+- more active runtime processes;
+- checkpoint replay after recovery;
+- unnecessary long-running work for safe tenants.
+
+The conclusion was that a delay is not equivalent to a true distributed gate.
+
+The final design direction is an explicitly released durable gate:
+
+```text
+Armed
+-> Reached
+-> Kill or Safe-Control Decision
+-> Released
+```
+
+The replacement runtime must not replay a long artificial wait after recovery.
+
+---
+
+## Recovery redispatch separated from ordinary dispatch
+
+Recovery is no longer budgeted as if it were normal dispatch.
+
+The recovery lifecycle is modeled explicitly:
+
+```text
+detect failed runtime
+-> suppress unsafe capacity
+-> enumerate assigned work
+-> request replacement capacity
+-> wait for runtime readiness
+-> requeue unfinished work
+-> redispatch
+-> resolve replacement ownership
+-> resume or start execution
+```
+
+Separate budgets now exist for:
+
+- initial dispatch;
+- recovery redispatch;
+- unsafe-state convergence;
+- requeue convergence;
+- execution resolution.
+
+This avoids hiding multiple protocols inside one large timeout.
+
+---
+
+## In-flight recovery and local-queued recovery kept distinct
+
+The runtime validates two separate recovery paths.
+
+### In-flight execution
+
+```text
+same TenantId
+same SharedRunId
+same ExecutionId
+failed RuntimeInstanceId suppressed
+replacement RuntimeInstanceId becomes owner
+remaining DAG steps continue
+```
+
+Committed steps are not replayed as a new execution.
+
+### Local-queued run
+
+```text
+same TenantId
+same SharedRunId
+old LocalRunId belongs to failed runtime
+work had not started
+run is durably requeued
+replacement runtime receives a new LocalRunId
+new ExecutionId starts after redispatch
+```
+
+A generic “run recovered” assertion is not accepted.
+
+---
+
+## Safe tenant retained as an active control
+
+Every parallel scenario contains:
+
+- two impacted tenants;
+- one safe tenant.
+
+The safe tenant continues executing while neighboring runtimes are killed and recovered.
+
+The harness validates that the safe tenant:
+
+- is not killed;
+- is not redispatched for recovery;
+- receives no recovery forensics;
+- retains tenant-scoped ledger isolation;
+- does not inherit capacity or ownership from impacted tenants;
+- completes its DAGs normally.
+
+The expected value remains:
+
+```text
+SafeTenantRecoveredWork = 0
+```
+
+---
+
+## Failed runtime capacity suppression hardened
+
+After a process dies, its runtime capacity must stop advertising before recovery proceeds.
+
+The harness verifies:
+
+```text
+failed process terminated
+-> runtime marked unsafe
+-> capacity suppressed
+-> assigned work enumerated
+-> replacement capacity created
+```
+
+This prevents stale capacity from accepting new work while recovery is in progress.
+
+---
+
+## Exact recovery inventory validated
+
+For every impacted tenant, the expected recovery inventory is:
+
+```text
+1 in-flight execution
+2 local-queued runs
+3 affected jobs total
+```
+
+The system must recover them differently:
+
+```text
+1 resume-existing-execution
+2 requeue-local-queued-run
+```
+
+Forensics must contain both timeline types:
+
+```text
+in-flight-resume-recovery
+local-queued-recovery
+```
+
+---
+
+## Strict execution continuity validated
+
+For captured crash handovers:
+
+```text
+last step on failed runtime = checkpoint step
+first step on replacement runtime = checkpoint step + 1
+```
+
+The same `ExecutionId` continues on the replacement runtime.
+
+The validation checks:
+
+- no committed step is emitted twice;
+- no step is owned by two runtime instances;
+- `ExecutionVersion` remains monotonic;
+- no rollback occurs;
+- no forked execution appears;
+- the DAG reaches its terminal step.
+
+---
+
+## Datastore instrumentation added
+
+Server-side Redis and MongoDB counters are captured before and after the batch.
+
+The measurement scope includes traffic from:
+
+- the test host;
+- control planes;
+- external runtime processes;
+- shared queues;
+- local queues;
+- DAG stores;
+- claims and leases;
+- registry and capacity;
+- heartbeats;
+- scale-out watchers;
+- recovery reconcilers;
+- ledger;
+- tracing;
+- forensics.
+
+The instrumentation explicitly reports that the counters are server-wide deltas and may include concurrent external users of the same datastores.
+
+---
+
+## HTTP P35 validation completed
+
+The final HTTP P35 batch completed:
+
+```text
+35 scenarios passed
+0 scenarios failed
+105 tenants
+315 real DAG executions
+15,750 logical DAG step completions
+70 real process kills
+210 affected jobs recovered
+```
+
+Measured datastore activity:
+
+```text
+Redis commands                 2,913,328
+MongoDB operations             1,278,120
+Combined datastore operations  4,191,448
+Total datastore traffic        18.29 GiB
+```
+
+Observed Redis keyspace behavior:
+
+```text
+94.2% hit rate
+0 evicted keys
+```
+
+Observed MongoDB behavior:
+
+```text
+0 rejected connections
+0 deletes
+```
+
+P35 is classified as the experimental edge of the local machine, not the reproducibly stable operating range.
+
+---
+
+## gRPC P35 validation completed
+
+The final gRPC P35 batch also completed:
+
+```text
+35 scenarios passed
+0 scenarios failed
+105 tenants
+315 real DAG executions
+15,750 logical DAG step completions
+70 real process kills
+210 affected jobs recovered
+```
+
+An independent raw-log sample confirmed:
+
+```text
+6,170 step-completion events
+6,170 distinct ExecutionId/step pairs
+0 duplicate step completions
+0 contested runtime ownership
+131 observed executions reached step 50
+```
+
+Eleven complete handovers in the sample showed:
+
+```text
+runtime-1 completed through step 10
+runtime-2 resumed at step 11
+```
+
+---
+
+## Validation ladder established
+
+The current interpretation is:
+
+| Level | Classification |
+|---|---|
+| P10 | Repeatedly green; fast validation |
+| P15 | Green intermediate validation |
+| P20 | Heavy-pressure validation |
+| P30 | Reproducibly stable validated ceiling |
+| P35 | Successful on HTTP and gRPC; experimental local-machine edge |
+
+Above P35 is not currently validated and is increasingly likely to measure local hardware and topology limits rather than protocol correctness.
+
+---
+
+## Failure taxonomy documented
+
+Failures are now classified before any patch is proposed.
+
+### Infrastructure saturation
+
+- Redis timeout;
+- ThreadPool queue growth;
+- high asynchronous operation counts;
+- shutdown during pending operations.
+
+### Runtime lifecycle
+
+- registry visibility missing;
+- capacity not yet published;
+- endpoint not reachable;
+- scale-out observed but not fulfilled.
+
+### Recovery convergence
+
+- claim not released;
+- work still associated with failed runtime;
+- redispatch not completed;
+- replacement ownership unresolved.
+
+### Harness race
+
+- DAG completed before kill;
+- inventory disappeared before observation;
+- invalid inventory shape;
+- crash observer started too late.
+
+This prevents random timeout tuning.
+
+---
+
+## Runtime execution clarified as content-agnostic
+
+The runtime does not interpret the business meaning of a step result.
+
+A step may perform:
+
+- RAG;
+- an LLM call;
+- vector search;
+- an external MCP invocation;
+- an internal network call;
+- Python, .NET, Java, Go, Rust, or JavaScript code;
+- a database operation;
+- a human approval.
+
+The runtime owns execution semantics:
+
+```text
+admission
+policy enforcement
+durable ownership
+dispatch
+retry
+retention
+eviction
+claims and leases
+recovery
+replay
+observability
+ledger
+tracing
+forensics
+tenant isolation
+```
+
+The runtime does not need to judge whether an LLM answer is intelligent or whether retrieved content is relevant.
+
+Its responsibility is to guarantee what happens to the execution that produced the result.
+
+> **The runtime does not need to understand the answer. It needs to guarantee what happens to the execution that produced it.**
+
+---
+
+## Production topology documented
+
+The local tests intentionally compress onto one machine what production would distribute across:
+
+- multiple Kubernetes nodes;
+- runtime pools;
+- replicated control-plane workers;
+- tenant-aware cells;
+- Redis Cluster or isolated Redis cells;
+- MongoDB replica sets or shards;
+- admission control;
+- backpressure;
+- autoscaling;
+- warm runtime capacity;
+- separate observability storage.
+
+A tenant is not mapped one-to-one to a process or pod.
+
+Production selection should follow:
+
+```text
+shared queue
+-> admission and backpressure
+-> compatible warm runtime
+-> atomic capacity reservation
+-> execution
+-> return runtime to pool
+-> bounded process scale-out
+-> runtime-pool pod scale-out
+-> node autoscaling
+```
+
+---
+
+## Runtime Pool Manager architecture defined
+
+The next unit of capacity is a pool pod containing multiple independently registered runtime processes.
+
+```text
+One Logical Control Plane
+        |
+        +---- Runtime Pool Pod A
+        |     ├── Runtime Process A1
+        |     ├── Runtime Process A2
+        |     └── Runtime Process A3
+        |
+        +---- Runtime Pool Pod B
+              ├── Runtime Process B1
+              └── Runtime Process B2
+```
+
+Each runtime remains independently registered with:
+
+```text
+RuntimeInstanceId
+PoolId
+PodName
+PodUid
+NodeName
+ProcessId
+transport endpoint
+status
+available capacity
+tenant ownership
+isolation mode
+draining state
+```
+
+Capacity selection becomes:
+
+```text
+compatible warm runtime
+-> free slot in existing pool
+-> new runtime process in existing pool
+-> new runtime-pool pod
+```
+
+Failure domains remain explicit:
+
+- process-level recovery;
+- pod-level recovery.
+
+---
+
+## Tenant-aware cell architecture documented
+
+The long-term topology keeps one logical control plane while physically partitioning work:
+
+```text
+Global API
+    |
+Tenant Catalog
+    |
+One Logical Control Plane
+    |
+Partitioned control-plane workers
+    |
++----------------+----------------+----------------+
+| Cell A         | Cell B         | Cell C         |
+| Redis shards   | Redis shards   | Redis shards   |
+| Mongo shards   | Mongo shards   | Mongo shards   |
+| Runtime pools  | Runtime pools  | Runtime pools  |
++----------------+----------------+----------------+
+```
+
+A tenant is deterministically routed to a cell.
+
+This provides:
+
+- lower blast radius;
+- predictable datastore partitioning;
+- colocated atomic keys;
+- independent runtime-pool scaling;
+- cell-by-cell failover and maintenance;
+- no redesign of execution identity or recovery semantics.
+
+---
+
+## Article produced and hardened
+
+The article:
+
+```text
+The Machine Slowed Down Before Correctness Broke
+```
+
+now includes:
+
+- explicit environment placeholders;
+- precise P35 scope;
+- validation-versus-benchmark distinction;
+- cautious Redis error-reply interpretation;
+- independent gRPC event analysis;
+- falsification conditions;
+- exact recovery arithmetic;
+- content-agnostic execution semantics;
+- production topology;
+- tenant-aware cells;
+- Runtime Pool Manager direction.
+
+Core statements:
+
+> **Capacity degraded before correctness did.**
+
+> **The test was intentionally a poor production topology and an excellent race-condition laboratory.**
+
+> **A broken ownership protocol does not become correct by adding more pods.**
+
+> **The next step is not another retry or another timeout. It is a new unit of capacity.**
+
+---
+
+## Validation discipline established
+
+Future work follows these rules:
+
+1. Analyze complete logs before changing code.
+2. Patch only a proven first cause.
+3. Compile and run targeted tests before expensive parallel runs.
+4. Do not run P20 or P30 after speculative tuning.
+5. Separate protocol defects from harness defects.
+6. Separate local saturation from architecture limits.
+7. Do not use Redis timeout increases as the primary fix for pressure.
+8. One green P20 does not establish repeatability.
+9. Require exact crash preconditions.
+10. Prefer durable state transitions over elapsed-time assumptions.
+11. Keep safe tenants as active controls.
+12. Preserve distinct proofs for in-flight resume and local-queued redispatch.
+
+---
+
+## Final result
+
+The work established that the local machine can lose efficiency before the execution protocol loses correctness.
+
+The next engineering objective is not a higher local parallelism number.
+
+It is to preserve the validated identity, recovery, replay, observability, and tenant-isolation semantics while introducing a better unit of capacity:
+
+```text
+warm runtime pools
+-> bounded process reuse
+-> independent runtime registration
+-> pool-aware recovery
+-> Kubernetes pool-pod scale-out
+-> tenant-aware cells
+```
+
+> **The machine slowed down before correctness broke.**
+
+
+---
+
+## 1.0.7.3 - 2026-07-20 - Kubernetes Runtime Host Provider Completion, Recovery Hardening, and Documentation
 
 ## Summary
 

@@ -2365,6 +2365,11 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 parallelism,
                 1);
 
+            await using var dataStoreTrafficObserver =
+                await ProductionDataStoreTrafficObserver
+                    .StartAsync(output)
+                    .ConfigureAwait(false);
+
             var harnessBudget =
                 CreateParallelScenarioHarnessBudget(
                     parallelism);
