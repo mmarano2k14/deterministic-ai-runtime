@@ -4,21 +4,25 @@ A deterministic, multi-tenant .NET runtime for durable AI workflow execution acr
 
 Deterministic AI Runtime treats AI orchestration as a distributed systems problem. It combines DAG execution, Redis-backed coordination, durable execution state, provider-based dispatch, crash recovery, replay, audit, observability, execution control, and tenant isolation behind a shared control plane.
 
-The current Kubernetes milestone adds SDK-driven `RuntimeInstanceOnly` Pod and Service provisioning, layered readiness, Service/NodePort/port-forward/Gateway exposure, tenant-aware registry and capacity publication, and Pod crash recovery while preserving the same HTTP or gRPC runtime transport and durable execution protocol used by process-host scenarios.
+The current concurrency-hardening milestone validates that the same durable execution and recovery protocol continues to converge under adversarial parallel pressure across real HTTP and gRPC child-process hosts. P35 completed 35/35 on both transports: 105 tenants, 315 real DAG executions, 70 real process kills, 210 affected jobs recovered, and 15,750 logical DAG step completions per transport. The measured HTTP run drove 4,191,448 Redis and MongoDB operations and 18.29 GiB of datastore traffic while preserving strict resume, local-queued redispatch, tenant isolation, ledger, trace, replay, and recovery forensics.
+
+Kubernetes hosting remains part of the same architecture: SDK-driven `RuntimeInstanceOnly` Pod and Service provisioning, layered readiness, Service/NodePort/port-forward/Gateway exposure, tenant-aware registry and capacity publication, and Pod crash recovery preserve the same HTTP or gRPC transport and durable execution protocol validated by the process-host campaign.
 
 The runtime foundations are intentionally designed as the base for a broader product platform for deterministic AI execution, runtime control, replay, governance, observability, dashboarding, pipeline building, managed hosting, and enterprise-oriented AI operations.
 
-[![Version](https://img.shields.io/badge/Version-1.0.7.1-blue)](./CHANGELOG.md)
+[![Version](https://img.shields.io/badge/Version-1.0.7.3-blue)](./CHANGELOG.md)
 [![Changelog](https://img.shields.io/badge/Changelog-view-lightgrey)](./CHANGELOG.md)
 ![AI Runtime](https://img.shields.io/badge/AI-Deterministic%20Execution-purple)
 ![Runtime](https://img.shields.io/badge/Runtime-distributed-brightgreen)
 ![Redis](https://img.shields.io/badge/Redis-required-red?logo=redis)
 ![MongoDB](https://img.shields.io/badge/MongoDB-required-green?logo=mongodb)
+![Kubernetes](https://img.shields.io/badge/Kubernetes-supported-326CE5?logo=kubernetes&logoColor=white)
 ![Status](https://img.shields.io/badge/Status-active%20development-orange)
 
 ### Start Here
 
 - [Architecture overview](docs/ai/architecture-overview.md)
+- [Concurrency hardening and adversarial validation](docs/ai/concurrency-hardening-and-adversarial-validation.md)
 - [Kubernetes Runtime Host Provider](docs/ai/kubernetes-runtime-host-provider.md)
 - [Provider-agnostic process-host recovery](docs/ai/provider-agnostic-process-host-recovery.md)
 - [Multi-tenant crash isolation](docs/ai/multi-tenant-runtime-crash-isolation.md)
@@ -28,10 +32,19 @@ The runtime foundations are intentionally designed as the base for a broader pro
 
 ## Latest Updates
 
-The latest milestone moves the same runtime execution and recovery protocol from child processes into Kubernetes Pods. Kubernetes now owns host lifecycle, networking, and readiness; HTTP and gRPC providers remain responsible for runtime commands; the shared control plane remains responsible for admission, scale-out, dispatch, registry/capacity visibility, and recovery.
+The latest milestone hardens the same runtime execution and recovery protocol under adversarial concurrency. Real HTTP and gRPC process-host batches now validate exact pre-crash inventory, durable crash boundaries, single-flight recovery scale-out, strict in-flight resume, local-queued redispatch, safe-tenant non-impact, and final convergence at P35.
+
+Kubernetes remains a host-lifecycle implementation of that same protocol. Kubernetes owns Pod and Service lifecycle, networking, and layered readiness; HTTP and gRPC providers remain responsible for runtime commands; the shared control plane remains responsible for admission, scale-out, dispatch, registry/capacity visibility, and recovery.
 
 | Area | Summary |
 |---|---|
+| Adversarial concurrency hardening | Added P10–P35 parallel crash-recovery validation across real HTTP and gRPC child-process hosts, with exact inventory, durable crash boundaries, strict identity proofs, safe-tenant controls, and explicit saturation diagnostics. |
+| HTTP and gRPC P35 validation | Completed 35/35 on both transports: 105 tenants, 315 DAG executions, 70 real process kills, 210 affected jobs recovered, and 15,750 logical DAG step completions per transport. |
+| Durable crash gate | Replaced elapsed-time crash scheduling with a durable `Armed -> Reached -> Released` boundary so the process is killed only after the intended persisted DAG checkpoint and exact assigned-work shape are visible. |
+| Exact recovery inventory | Requires one genuinely in-flight execution and two genuinely local-queued runs on the selected runtime before crash, preventing false-positive recovery proofs. |
+| Recovery scale-out single-flight | Recovery replacement requests now deduplicate by stable functional identity so concurrent recovery observations do not create duplicate replacement capacity. |
+| Content-agnostic step execution | Clarified that the runtime owns execution semantics rather than model semantics: steps may be RAG, LLM, MCP, database, human, or polyglot service calls while the engine owns policy, retry, retention, eviction, recovery, replay, and observability. |
+| Runtime pool direction | Defined the next capacity unit as independently registered warm runtime processes inside runtime-pool Pods, with process-level and Pod-level failure domains and bounded scale-out. |
 | Kubernetes Runtime Host Provider | Added `KubernetesAiRuntimeHostCreationStrategy` as a Runtime Host Manager lifecycle strategy that creates and converges `RuntimeInstanceOnly` Pods and Services through the Kubernetes .NET SDK. |
 | Kubernetes transport preservation | Kubernetes changes where a runtime is hosted, not how commands are dispatched: HTTP remains HTTP and gRPC remains gRPC through the existing runtime providers. |
 | Layered Kubernetes readiness | Host startup distinguishes Kubernetes resource readiness, runtime registration/capacity readiness, and transport endpoint readiness instead of treating `Pod Running` as executable capacity. |
@@ -67,13 +80,15 @@ The latest milestone moves the same runtime execution and recovery protocol from
 | Durable process-boundary observability | Validated ledger, trace, replay report, replay ledger, replay trace, and retention across real runtime process boundaries. |
 | MCP production scenario framework | Added `docs/ai/mcp-production-runtime-scenario-framework.md`, documenting the Host Manager, HTTP process-host flow, tenant runtime modes, final mixed-tenant production validation, and remaining boundaries. |
 
-For detailed changes, see [`CHANGELOG.md`](./CHANGELOG.md), [`docs/index.md`](docs/index.md), [`docs/ai/multi-tenant-control-plane-isolation.md`](docs/ai/multi-tenant-control-plane-isolation.md), [`docs/ai/multi-tenant-runtime-flow.md`](docs/ai/multi-tenant-runtime-flow.md), [`docs/ai/http-runtime-provider.md`](docs/ai/http-runtime-provider.md), [`docs/ai/grpc-runtime-provider.md`](docs/ai/grpc-runtime-provider.md), [`docs/ai/kubernetes-runtime-host-provider.md`](docs/ai/kubernetes-runtime-host-provider.md), [`docs/ai/provider-agnostic-process-host-recovery.md`](docs/ai/provider-agnostic-process-host-recovery.md), [`docs/ai/mcp-production-runtime-scenario-framework.md`](docs/ai/mcp-production-runtime-scenario-framework.md), [`docs/ai/runtime-process-crash-recovery.md`](docs/ai/runtime-process-crash-recovery.md), [`docs/ai/runtime-recovery-forensics.md`](docs/ai/runtime-recovery-forensics.md), [`docs/ai/multi-tenant-runtime-crash-isolation.md`](docs/ai/multi-tenant-runtime-crash-isolation.md), [`docs/ai/control-plane-ledger-causal-chain.md`](docs/ai/control-plane-ledger-causal-chain.md), [`docs/ai/recovery-replay-ledger-trace-proof.md`](docs/ai/recovery-replay-ledger-trace-proof.md), and the product roadmap documentation under [`docs/product-roadmap/index.md`](docs/product-roadmap/index.md).
+For detailed changes, see [`CHANGELOG.md`](./CHANGELOG.md), [`docs/index.md`](docs/index.md), [`docs/ai/concurrency-hardening-and-adversarial-validation.md`](docs/ai/concurrency-hardening-and-adversarial-validation.md), [`docs/ai/multi-tenant-control-plane-isolation.md`](docs/ai/multi-tenant-control-plane-isolation.md), [`docs/ai/multi-tenant-runtime-flow.md`](docs/ai/multi-tenant-runtime-flow.md), [`docs/ai/http-runtime-provider.md`](docs/ai/http-runtime-provider.md), [`docs/ai/grpc-runtime-provider.md`](docs/ai/grpc-runtime-provider.md), [`docs/ai/kubernetes-runtime-host-provider.md`](docs/ai/kubernetes-runtime-host-provider.md), [`docs/ai/provider-agnostic-process-host-recovery.md`](docs/ai/provider-agnostic-process-host-recovery.md), [`docs/ai/mcp-production-runtime-scenario-framework.md`](docs/ai/mcp-production-runtime-scenario-framework.md), [`docs/ai/runtime-process-crash-recovery.md`](docs/ai/runtime-process-crash-recovery.md), [`docs/ai/runtime-recovery-forensics.md`](docs/ai/runtime-recovery-forensics.md), [`docs/ai/multi-tenant-runtime-crash-isolation.md`](docs/ai/multi-tenant-runtime-crash-isolation.md), [`docs/ai/control-plane-ledger-causal-chain.md`](docs/ai/control-plane-ledger-causal-chain.md), [`docs/ai/recovery-replay-ledger-trace-proof.md`](docs/ai/recovery-replay-ledger-trace-proof.md), and the product roadmap documentation under [`docs/product-roadmap/index.md`](docs/product-roadmap/index.md).
 
 ---
 
 ## Overview
 
 Deterministic AI Runtime is a .NET runtime for executing complex AI workflows as controlled, observable, recoverable, replayable, auditable, and tenant-isolated distributed executions.
+
+The engine is content-agnostic. A step may be a RAG operation, an LLM call, an external MCP invocation, a database action, a human approval, or code implemented in any language behind a supported execution boundary. The runtime does not judge the semantic quality of the result; it guarantees the durable lifecycle of the execution that produced it.
 
 It is designed for workloads such as:
 
@@ -86,6 +101,8 @@ It is designed for workloads such as:
 - shared control-plane orchestration
 - multi-tenant AI runtime hosting
 - Kubernetes-hosted runtime instance pools
+- polyglot step execution through MCP, HTTP, gRPC, or internal service boundaries
+- adversarial concurrency and crash-recovery validation
 - process crash recovery workflows
 - recovery forensics and incident investigation
 - operational replay and audit workflows
@@ -105,7 +122,8 @@ It provides a state-driven execution layer where:
 - Redis Lua scripts enforce atomic coordination
 - MongoDB stores durable payloads and snapshots
 - context helpers resolve inputs, payloads, provider metadata, and policy context
-- policies control retry, retention, and concurrency
+- policies control retry, retention, eviction, and concurrency
+- step implementations remain independent from the engine's durable execution semantics
 - metrics, traces, and ledger events share runtime correlation
 - executions can be replay-validated from persisted snapshots
 - execution can be paused, resumed, cancelled, or blocked for human input
@@ -129,6 +147,7 @@ It provides a state-driven execution layer where:
 - runtime process crash recovery validates that killed runtime processes do not imply lost work when durable shared state, execution indexes, DAG state, registry/capacity, ledger, trace, replay, and forensics are available
 - in-flight recovered executions resume with the same durable `ExecutionId`, while local queued work that had not started yet is redispatched through its durable `SharedRunId`
 - safe tenant non-impact is validated as a first-class guarantee: tenants not affected by a crash should not receive recovery entries, recovery forensics, or cross-tenant ledger leakage
+- adversarial P10–P35 campaigns validate exact crash preconditions, durable ownership, strict resume, local-queued redispatch, and convergence while the local machine approaches saturation
 - tenant runtime settings can define the desired isolation mode, fallback behavior, runtime instance prefix, worker count, local queue capacity, max concurrent runs, and max runtime instances
 
 The project should be read as an AI execution infrastructure foundation. The runtime core is already substantial, while the longer-term direction is to evolve toward a broader product platform for deterministic AI execution, operational control, replay/audit, dashboarding, pipeline building, managed hosting, and enterprise AI workflow governance.
@@ -161,6 +180,9 @@ Once AI moves to production, the hard problem becomes execution:
 - How do you create runtime Pods without coupling Kubernetes lifecycle to HTTP or gRPC dispatch?
 - How do you distinguish a `Running` Pod from a registered, capacity-published, routable runtime?
 - How do you recover assigned work after a Pod is deleted or crashes?
+- How do you prove that the selected execution was genuinely in flight at the instant of process death?
+- How do you distinguish a protocol defect from local ThreadPool, process, Redis, MongoDB, or operating-system saturation?
+- How do you keep durable execution semantics independent from whether a step is implemented as RAG, LLM, MCP, Python, .NET, Java, Go, Rust, or JavaScript?
 - How do you prove deterministic convergence?
 
 This runtime exists to address those production execution concerns.
@@ -178,6 +200,11 @@ This runtime is designed to fix the operational problems that appear when AI wor
 | Problem | What the Runtime Provides |
 |---|---|
 | AI workflows are hard to reproduce | Deterministic DAG execution, persisted execution state, replay metadata, fingerprints, snapshots, and replay validation. |
+| Timing-based crash tests can pass at the wrong execution boundary | Durable crash gates and exact pre-crash work inventories ensure the selected process is killed only after the intended persisted checkpoint is reached. |
+| Rare races disappear in normal functional tests | P10–P35 adversarial campaigns concentrate real control planes, tenants, processes, claims, leases, scale-out, redispatch, ledger, trace, and forensics on one machine. |
+| Concurrent recovery observations can create replacement-capacity storms | Stable recovery scale-out identities provide single-flight deduplication for one logical replacement need. |
+| Local saturation can be mistaken for a protocol failure | Explicit failure taxonomy and server-side Redis/MongoDB counters separate harness races, lifecycle defects, recovery defects, and machine pressure. |
+| Step implementations can couple orchestration to one language or model | Content-agnostic execution contracts allow RAG, LLM, MCP, database, human, and polyglot service steps while the runtime owns durable lifecycle guarantees. |
 | Workers can crash mid-execution | Redis-backed execution state, stale running-step recovery, retry state, and deterministic convergence. |
 | Runtime processes can die with assigned work | Runtime process crash recovery reconciles assigned work, resumes in-flight DAG executions by `ExecutionId`, redispatches local queued shared runs by `SharedRunId`, and validates completion through replacement runtime capacity. |
 | Crash recovery can accidentally affect unrelated tenants | Tenant-scoped recovery queries, runtime visibility filtering, ledger/forensics isolation, and safe tenant non-impact validation prove that unaffected tenants remain outside the recovery surface. |
@@ -296,6 +323,11 @@ This project explores what an AI execution runtime should look like when reliabi
 | Recovery replay / ledger / trace proof | Implemented / validated | Recovered runs are validated through completion, replay report, replay ledger, replay trace, execution ledger, runtime trace, and tenant-scoped proof queries. |
 | Retention and compaction | Implemented | Hot state can be compacted/evicted while payloads remain resolvable. |
 | Distributed concurrency and throttling | Implemented | Redis ZSET leases enforce global, pipeline, step, execution, instance, provider, model, and operation limits. |
+| Adversarial concurrency and crash-recovery validation | Implemented / validated | P10–P35 campaigns validate real process kills, exact work inventories, strict resume, local-queued redispatch, safe-tenant non-impact, and convergence across HTTP and gRPC. |
+| Durable crash gate and exact inventory proof | Implemented / validated | Crash authorization is state-driven through a durable gate and an exact `1 in-flight + 2 local queued` inventory rather than elapsed time. |
+| Recovery scale-out single-flight | Implemented / validated | Stable recovery identities deduplicate concurrent replacement-capacity requests for the same failed runtime and durable work. |
+| Content-agnostic step execution | Implemented foundation | Steps may execute RAG, LLM, MCP, database, human, or polyglot operations while the runtime owns policy, retry, retention, eviction, recovery, replay, and observability. |
+| Runtime Pool Manager / warm runtime pools | Architecture defined / planned | The next capacity unit reuses independently registered warm runtime processes inside pool Pods before creating additional Kubernetes Pods. |
 | Enterprise throttling scenario | Implemented | `throttling-100` demonstrates provider-level distributed throttling with realtime visibility and deterministic convergence. |
 | Policy-driven execution | Implemented | Retry, retention, and concurrency use configurable policy definitions. |
 | Execution control state | Implemented | ExecutionId-level pause, resume, cancel, waiting-for-input, and human input submission. |
@@ -487,6 +519,8 @@ The runtime is intentionally split into layers:
 - runtime process crash recovery keeps responsibility boundaries explicit: health reconciliation suppresses unsafe capacity, execution recovery reconciles already assigned work, and HTTP/gRPC providers report transport signals without owning recovery
 - runtime capacity snapshots expose run slots, worker pressure, provider metadata, tenant visibility, and worker-aware `CanAcceptRun`
 - correlated observability records runtime behavior across ledger, metrics, traces, workers, tenants, and executions
+- adversarial validation uses durable crash state and exact inventories rather than elapsed-time assumptions
+- future runtime pools reuse independently registered warm processes before creating additional Kubernetes Pods
 
 ---
 
@@ -554,6 +588,142 @@ When a Pod disappears, Kubernetes terminates the host boundary. The existing hea
 Targeted SDK-backed scenarios validate Kubernetes scale-out, readiness, transport preservation, Pod deletion/crash recovery, and tenant-safe non-impact. Higher-parallelism stability on local Minikube/Docker Desktop environments remains an active hardening area rather than a claimed production guarantee.
 
 For the complete component map, lifecycle, networking modes, readiness model, configuration, tests, and source map, see [`docs/ai/kubernetes-runtime-host-provider.md`](docs/ai/kubernetes-runtime-host-provider.md).
+
+---
+
+## Concurrency Hardening and Adversarial Validation
+
+The concurrency campaign does not attempt to reproduce a comfortable production topology. It intentionally concentrates lifecycle collisions on one machine so race conditions appear before production.
+
+A P35 batch represents:
+
+```text
+35 parallel scenarios
+105 tenants
+315 real DAG executions
+70 real external process kills
+210 affected jobs recovered
+15,750 logical DAG step completions
+```
+
+The final HTTP and gRPC P35 validations both completed 35/35.
+
+The measured HTTP batch generated:
+
+```text
+Redis commands                 2,913,328
+MongoDB operations             1,278,120
+Combined datastore operations  4,191,448
+Total datastore traffic        18.29 GiB
+```
+
+The important result is not that the machine remained fast. It did not. Process startup became nonlinear, ThreadPool pressure increased, and average datastore throughput declined as parallelism rose.
+
+The important result is that execution correctness remained intact:
+
+- exact pre-crash inventory;
+- durable crash checkpoint;
+- same `ExecutionId` for in-flight resume;
+- new local ownership for work that had never started;
+- no duplicate step completion;
+- no contested runtime ownership;
+- failed capacity suppressed;
+- safe-tenant recovered work remained zero;
+- ledger, trace, replay, and forensics remained consistent.
+
+```text
+production topology
+  -> distributes pressure and preserves service levels
+
+adversarial local validation
+  -> concentrates collisions and reveals correctness defects
+```
+
+**The machine slowed down before correctness broke.**
+
+P35 is the experimental edge of the local machine, not a universal capacity guarantee. P10–P30 remain the reproducibly stable validation range. The campaign is evidence about protocol behavior under pressure, not proof of one universal throughput ceiling or every possible interleaving.
+
+For the complete topology, invariants, failure taxonomy, validation ladder, datastore evidence, and production interpretation, see [`docs/ai/concurrency-hardening-and-adversarial-validation.md`](docs/ai/concurrency-hardening-and-adversarial-validation.md).
+
+---
+
+## Step Execution Is Content-Agnostic
+
+The runtime owns **execution semantics**, not **model semantics**.
+
+A step may be:
+
+- a retrieval-augmented generation operation;
+- an LLM inference call;
+- a vector search;
+- an external MCP invocation;
+- an internal HTTP or gRPC service;
+- Python, .NET, Java, Go, Rust, or JavaScript code;
+- a database operation;
+- a human approval.
+
+The engine does not need to understand whether the result is a generated paragraph, retrieved evidence, structured JSON, an embedding, a risk score, or a financial calculation.
+
+Its role is:
+
+```text
+admit work
+-> apply tenant and execution policies
+-> assign durable ownership
+-> dispatch
+-> observe result or failure
+-> persist state
+-> retry when policy allows
+-> retain, compact, or evict
+-> maintain claims and leases
+-> recover after process or Pod failure
+-> preserve replayability
+-> preserve observability
+```
+
+Real AI operations introduce different latency, streaming, payload, rate-limit, side-effect, cancellation, and cost characteristics. Those differences affect policy and capacity configuration; they do not redesign the runtime's identity and recovery protocol.
+
+> **The runtime does not need to understand the answer. It needs to guarantee what happens to the execution that produced it.**
+
+---
+
+## Production Runtime Pool Direction
+
+A tenant is not mapped one-to-one to a process or Pod.
+
+The next unit of capacity is a runtime-pool Pod containing multiple independently registered runtime processes:
+
+```text
+One Logical Control Plane
+        |
+        +---- Runtime Pool Pod A
+        |     +-- Runtime Process A1
+        |     +-- Runtime Process A2
+        |     +-- Runtime Process A3
+        |
+        +---- Runtime Pool Pod B
+              +-- Runtime Process B1
+              +-- Runtime Process B2
+```
+
+Capacity selection becomes:
+
+```text
+compatible warm runtime
+-> free slot in an existing pool
+-> new runtime process in an existing pool
+-> new runtime-pool Pod
+-> Kubernetes node autoscaling when required
+```
+
+Every internal runtime remains independently registered with its own `RuntimeInstanceId`, capacity, tenant ownership, isolation mode, status, and failure evidence.
+
+This preserves two explicit recovery domains:
+
+- **process-level failure** — recover one runtime while neighboring processes in the pool remain alive;
+- **Pod-level failure** — recover every runtime associated with the failed `PoolId` while other pools absorb redispatch.
+
+The control plane remains logically coherent and does not move inside every pool Pod.
 
 ---
 
@@ -1276,6 +1446,9 @@ The strongest areas today are:
 - recovery replay / ledger / trace proof
 - retention/compaction
 - distributed concurrency and throttling
+- adversarial P10–P35 concurrency and real process crash-recovery validation
+- durable crash gates and exact pre-crash inventory proof
+- recovery scale-out single-flight deduplication
 - executable distributed throttling scenario
 - execution control state
 - shared run records
@@ -1340,6 +1513,8 @@ Areas still evolving include:
 - remote runtime instance dispatch hardening beyond the validated HTTP timeout/retry/circuit-breaker and gRPC process-host foundations
 - provider-based runtime instance administration beyond local/HTTP/gRPC foundations
 - higher-parallelism Kubernetes stability hardening for local Minikube/Docker Desktop environments
+- Runtime Pool Manager implementation, warm runtime reuse, pool-level routing, and bounded process creation
+- tenant-aware cell catalog and physical datastore/runtime-pool partitioning
 - tenant settings persistence through configuration or database-backed provider
 - final shared runtime pooling semantics and Hybrid shared fallback process-host validation
 - production-cluster Kubernetes RBAC, Gateway, ingress, and provider capability hardening
@@ -1446,6 +1621,8 @@ The roadmap is organized into phases.
 | Phase 8 | Cost, Provider Governance, and Tenant Governance | Planned |
 | Phase 9 | Articles and public positioning | Planned |
 
+The next scaling milestone is the Runtime Pool Manager: warm compatible runtime reuse inside existing pool Pods, independent registration of each runtime process, bounded process creation, pool-level failure recovery, and Kubernetes Pod scale-out only when existing pools are full.
+
 The roadmap above tracks the current runtime and enterprise demo evolution.
 
 The broader product direction is tracked in [`docs/product-roadmap/index.md`](docs/product-roadmap/index.md), which describes how these deterministic execution foundations evolve toward a complete product platform: runtime engine, replay/audit, Decision Ledger, policy governance, retention lifecycle, observability, execution control, MCP interface, enterprise dashboard, pipeline builder, memory/context lifecycle, security hardening, testing reliability, multi-tenant readiness, managed hosting, and banking/financial-services technical-control direction.
@@ -1502,6 +1679,7 @@ The full documentation map is available here:
 - [`docs/product-roadmap/roadmap-6-months.md`](docs/product-roadmap/roadmap-6-months.md) — Short-term productization direction for a single-developer project.
 - [`docs/product-roadmap/roadmap-12-24-months.md`](docs/product-roadmap/roadmap-12-24-months.md) — Longer-term product maturity, enterprise readiness, and commercial scale direction.
 - [`docs/ai/architecture-overview.md`](docs/ai/architecture-overview.md) — High-level runtime architecture and major runtime layers, including control-plane scale-out, fulfilled-run requeue, provider-based dispatch, and tenant-aware context propagation.
+- [`docs/ai/concurrency-hardening-and-adversarial-validation.md`](docs/ai/concurrency-hardening-and-adversarial-validation.md) — Adversarial P10–P35 crash-recovery validation, durable crash gates, exact work inventories, strict resume, local-queued redispatch, safe-tenant controls, saturation analysis, and production runtime-pool interpretation.
 - [`docs/ai/multi-tenant-control-plane-isolation.md`](docs/ai/multi-tenant-control-plane-isolation.md) — RBAC execution-context propagation, durable `ExecutionContextSnapshot`, tenant-aware Shared/Dedicated/Hybrid runtime isolation, registry/capacity filtering, admission, shared queue dispatch, and tenant-scoped scale-out settings.
 - [`docs/ai/multi-tenant-runtime-flow.md`](docs/ai/multi-tenant-runtime-flow.md) — End-to-end ASCII runtime flow from MCP/RBAC entry to durable snapshot, shared run store, tenant-aware admission, scale-out, shared queue dispatch, local runtime queue, DAG execution, worker loop, finalization, and observability.
 - [`docs/ai/runtime-control-plane.md`](docs/ai/runtime-control-plane.md) — Runtime control-plane foundation for replay, execution control, runtime queue control, runtime instance visibility/control, discovery, capacity, run admission, Shared Runtime Controller V1, Redis shared queue coordination, queue pump/background service, Redis-backed scale-out lifecycle, fulfilled-run requeue, and tenant-aware control-plane operations.
@@ -1530,6 +1708,7 @@ The full documentation map is available here:
 Focused AI runtime documentation:
 
 - [`docs/ai/architecture-overview.md`](docs/ai/architecture-overview.md)
+- [`docs/ai/concurrency-hardening-and-adversarial-validation.md`](docs/ai/concurrency-hardening-and-adversarial-validation.md)
 - [`docs/ai/multi-tenant-control-plane-isolation.md`](docs/ai/multi-tenant-control-plane-isolation.md)
 - [`docs/ai/multi-tenant-runtime-flow.md`](docs/ai/multi-tenant-runtime-flow.md)
 - [`docs/ai/distributed-execution.md`](docs/ai/distributed-execution.md)
@@ -1580,6 +1759,11 @@ Current validated evidence includes:
 large green test suite
 enterprise runtime demo passing
 HTTP/gRPC process-host recovery validation passing
+HTTP P35 = 35/35
+gRPC P35 = 35/35
+105 tenants and 315 DAG executions per P35 transport batch
+70 real process kills and 210 affected jobs recovered per transport
+15,750 logical DAG step completions per transport
 targeted Kubernetes SDK scale-out, readiness, and Pod crash recovery scenarios passing
 ```
 
@@ -1637,6 +1821,27 @@ Validated areas include:
 - safe tenant non-impact during multi-tenant crash recovery
 - tenant-scoped recovery forensics and no cross-tenant leakage
 - control-plane causal-chain proof for scale-out/replacement/recovery
+- adversarial P10–P35 concurrency validation
+- durable crash gate lifecycle
+- exact `1 in-flight + 2 local queued` inventory proof
+- recovery scale-out single-flight deduplication
+- server-wide Redis and MongoDB pressure measurement
+- independent gRPC duplicate-step and contested-ownership analysis
+
+Example concurrency-hardening evidence:
+
+```text
+HTTP P35 = 35/35
+gRPC P35 = 35/35
+Tenants per transport = 105
+Runs per transport = 315
+Logical DAG steps per transport = 15,750
+Real process kills per transport = 70
+Affected jobs recovered per transport = 210
+SafeTenantRecoveredWork = 0
+HTTP datastore operations = 4,191,448
+HTTP datastore traffic = 18.29 GiB
+```
 
 Example scale-out evidence:
 

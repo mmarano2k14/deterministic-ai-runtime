@@ -37,6 +37,14 @@ Without distributed concurrency control, multiple workers or runtime instances c
 
 The concurrency and throttling system exists to prevent overload while preserving deterministic distributed execution.
 
+This document describes production concurrency policy and Redis-backed capacity enforcement.
+
+The adversarial process-host validation campaign is documented separately:
+
+- [Concurrency Hardening and Adversarial Validation](concurrency-hardening-and-adversarial-validation.md)
+
+That document covers race-condition exposure, exact crash inventories, durable crash gates, process kills, recovery convergence, safe-tenant controls, P10–P35 validation, and the distinction between local saturation and protocol correctness.
+
 ---
 
 ## Core Idea
@@ -896,6 +904,7 @@ This provides a foundation for future cost and provider governance.
 - [Config-Driven Runtime](config-driven-runtime.md)
 - [Observability](observability.md)
 - [Testing Strategy](testing-strategy.md)
+- [Concurrency Hardening and Adversarial Validation](concurrency-hardening-and-adversarial-validation.md)
 
 ---
 

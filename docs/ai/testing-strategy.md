@@ -1977,6 +1977,90 @@ These tests are important because production AI execution failures often appear 
 
 ---
 
+
+## Parallel Process-Host Crash-Recovery Validation
+
+The production process-host campaign now validates concurrency and failure as a combined protocol.
+
+Each scenario contains:
+
+```text
+two impacted tenants
+    each with:
+    - one in-flight execution
+    - two local-queued runs
+    - one real external runtime process kill
+
+one safe tenant
+    - three runs
+    - no process kill
+    - zero recovery contamination
+```
+
+The harness requires an exact assigned-work inventory before the kill:
+
+```text
+TotalWorkCount = 3
+InFlightExecutionCount = 1
+LocalQueuedRunCount = 2
+```
+
+The crash boundary is state-driven:
+
+```text
+durable gate armed
+-> DAG reaches persisted checkpoint
+-> exact inventory confirmed
+-> process killed
+-> gate released
+-> replacement runtime resumes
+```
+
+This prevents the test from depending on laptop speed or elapsed-time assumptions.
+
+### Validation Ladder
+
+| Level | Scenarios | Tenants | Runs | Logical DAG steps | Processes killed | Affected jobs recovered | Classification |
+|---|---:|---:|---:|---:|---:|---:|---|
+| P10 | 10 | 30 | 90 | 4,500 | 20 | 60 | Repeatedly green |
+| P15 | 15 | 45 | 135 | 6,750 | 30 | 90 | Green intermediate validation |
+| P20 | 20 | 60 | 180 | 9,000 | 40 | 120 | Heavy-pressure validation |
+| P30 | 30 | 90 | 270 | 13,500 | 60 | 180 | Reproducibly stable validated ceiling |
+| P35 | 35 | 105 | 315 | 15,750 | 70 | 210 | Successful on HTTP and gRPC; experimental local-machine edge |
+
+The final HTTP P35 validation recorded:
+
+```text
+35 passed
+0 failed
+4,191,448 Redis + MongoDB operations
+18.29 GiB datastore traffic
+0 Redis evictions
+0 MongoDB rejected connections
+```
+
+The final gRPC P35 validation completed the same logical workload through the gRPC process-host path.
+
+An independent raw-log sample contained 6,170 unique step-completion events with zero duplicate `(ExecutionId, step)` pairs and zero contested runtime ownership.
+
+### Failure Classification
+
+Failures must be classified before changing code:
+
+```text
+infrastructure saturation
+runtime lifecycle
+recovery convergence
+harness race
+```
+
+A larger timeout cannot recover an inventory state that has already disappeared.
+
+The detailed proof model is documented in:
+
+- [Concurrency Hardening and Adversarial Validation](concurrency-hardening-and-adversarial-validation.md)
+
+
 ## Test Evidence and Documentation
 
 Tests are part of the project evidence.
@@ -2189,6 +2273,7 @@ Recovery validation should include replay report, replay ledger, replay trace, e
 | Runtime recovery forensics tests | Implemented / validated |
 | Recovery replay / ledger / trace proof tests | Implemented / validated |
 | Control-plane causal chain ledger tests | Implemented / validated |
+| Parallel HTTP/gRPC process-host concurrency hardening | Implemented / validated through P35; P35 classified as experimental local-machine edge |
 
 ---
 
@@ -2243,6 +2328,7 @@ It proves that:
 - fulfilled scale-out shared runs are requeued and dispatched through the normal pump
 - scale-out-created runtime instances execute runs to completion
 - runtime worker capacity is visible and enforceable
+- adversarial process-host validation preserves identity, ownership, recovery evidence, and safe-tenant isolation through the P35 campaign
 
 The goal is not only to test features.
 
@@ -2273,6 +2359,7 @@ The goal is to prove runtime guarantees.
 - [Control-Plane Ledger Causal Chain](control-plane-ledger-causal-chain.md)
 - [Recovery Replay Ledger Trace Proof](recovery-replay-ledger-trace-proof.md)
 - [Shared Queue Pump and Worker Capacity](shared-queue-pump-and-worker-capacity.md)
+- [Concurrency Hardening and Adversarial Validation](concurrency-hardening-and-adversarial-validation.md)
 - [Replay and Audit](replay-and-audit.md)
 - [Observability](observability.md)
 - [Policy-Driven Execution](policy-driven-execution.md)

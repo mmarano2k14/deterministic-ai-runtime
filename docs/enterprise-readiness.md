@@ -33,6 +33,8 @@ The runtime should not be positioned as a finished commercial platform yet. It i
 | How do you control human-in-the-loop? | Executions can be moved to `WaitingForInput`, new claims are blocked, and external input can be submitted to resume execution. | Durable execution control state, waiting key, waiting step name, submitted input payload, `SubmitHumanInputAsync`. | Integration tests cover waiting for input and human input submission. | Implemented |
 | How do you keep memory/state bounded? | The runtime separates hot state from cold payloads and can compact or evict completed data while preserving resolver access. | Retention engine, retention triggers, compaction, eviction, payload externalization, MongoDB payload store, rehydration resolver. | Tests validate retention safety, archived payload resolution, and resolver consistency after eviction. | Implemented |
 | How do you coordinate multiple runtime instances? | Runtime instances coordinate through Redis-backed state instead of direct communication. Claims, leases, concurrency admission, shared queue ownership, registry visibility, capacity descriptors, and dispatch ownership are coordinated through distributed state. | Redis DAG store, Lua atomic step claiming, Redis shared run store, Redis shared queue, Redis runtime registry, Redis runtime capacity store, Redis admission reservation store, runtime instance identity foundations. | Distributed multi-runtime-instance, shared queue, MCP, HTTP pooled runtime, and aggressive distributed scenario tests validate safe convergence and dispatch ownership. | Implemented |
+| How do you prove race-condition safety under real process loss? | The runtime uses adversarial parallel scenarios with exact pre-crash inventories, durable crash gates, real operating-system process kills, safe tenants, replay, ledger, trace, forensics, and independent HTTP/gRPC validation. The harness separates infrastructure saturation, lifecycle defects, recovery convergence defects, and harness races. | Real external process hosts, stable scale-out deduplication, readiness lifecycle, shared queue claims, runtime execution index, durable DAG state, recovery reconcilers, tenant-scoped evidence, and server-side Redis/MongoDB counters. | P10–P30 form the repeatable validation range. HTTP and gRPC P35 completed 35/35 with 105 tenants, 315 DAG executions, 70 real process kills, and 210 affected jobs recovered per transport. | Implemented / validated |
+| Does the runtime depend on the language or semantic content of a step? | No. The runtime owns execution semantics rather than model semantics. Steps may be RAG, LLM calls, MCP tools, network services, database operations, human approval, or code implemented in any language behind a supported adapter. | Step plugins and provider adapters return results into the same admission, policy, ownership, retry, retention, eviction, recovery, replay, and observability lifecycle. | Architecture and process-host tests validate the execution protocol independently of step business meaning. Workload-specific latency, side effects, streaming, and provider limits remain policy and adapter concerns. | Implemented architecture boundary |
 | How do you prove deterministic convergence? | Final execution status and completed outputs are derived from state, not execution order. Replay fingerprints validate restored terminal state. | DAG dependency rules, explicit state transitions, atomic claims, retry state, terminal finalization, deterministic fingerprint checks. | Tests validate large DAG completion, multi-worker convergence, retry convergence, replay fingerprint equality, and recovery convergence after real process death. | Implemented |
 | How do you submit work when no runtime capacity exists? | Admission can return `RequestScaleOut` instead of rejecting or queueing blindly. The shared run is persisted as `ScaleOutRequested`, a Redis scale-out request is created, and capacity can be created by a provider-backed scale-out flow. | Direct-dispatch submit mode, `IAiRunAdmissionController`, `StoreBackedAiRuntimeScaleOutRequestPublisher`, `RedisAiRuntimeScaleOutRequestStore`, `AiRuntimeScaleOutRequestWatcherHostedService`, `AiRuntimeScaleOutProviderSelector`. | MCP Redis local scale-out tests validate zero initial runtime capacity, `ScaleOutRequested`, persisted scale-out request, watcher processing, and fulfilled request. | Implemented |
 | How do you scale local runtime capacity without bypassing the architecture? | Scale-out is a provider capability, not a separate scheduler. The local provider can create a new isolated local runtime instance through the local runtime scaler while preserving the local queue ownership boundary. | `IAiRuntimeScaleOutProvider` extends `IAiRuntimeInstanceProvider`; `LocalAiRuntimeInstanceProvider`; `IAiLocalRuntimeInstanceScaler`; `AiLocalRuntimeInstanceScaler`; local runtime instance host/factory; runtime registration and capacity publication. | Local provider scale-out tests, local scaler tests, provider selector tests, and MCP Redis local scale-out tests validate dynamic runtime creation and registration. | Implemented |
@@ -78,6 +80,9 @@ The current runtime is strongest in these areas:
 - runtime recovery forensics
 - control-plane causal-chain proof
 - integration-test-driven validation
+- adversarial HTTP/gRPC process-host concurrency validation through P35
+- content-agnostic step execution boundary
+- stable single-flight recovery scale-out identity
 
 ---
 
@@ -245,6 +250,35 @@ The recovery reconciler decides what assigned work must be recovered.
 
 ---
 
+
+## Adversarial Concurrency Validation Evidence
+
+The local concurrency campaign intentionally concentrates more lifecycle pressure than a production topology should.
+
+P35 represents:
+
+```text
+35 scenarios
+105 tenants
+315 real 50-step DAG executions
+70 real process kills
+210 affected jobs recovered
+15,750 logical DAG step completions
+```
+
+The final HTTP run also measured 4,191,448 server-side Redis and MongoDB operations and 18.29 GiB of datastore traffic.
+
+The correct interpretation is not that one machine defines production capacity.
+
+The result is that ownership, execution identity, safe-tenant isolation, recovery, replay, ledger, trace, and forensics remained correct while local capacity degraded.
+
+Production should distribute the same protocol across warm runtime pools, tenant-aware cells, bounded scale-out, multiple nodes, and managed or clustered datastores.
+
+See:
+
+- [Concurrency Hardening and Adversarial Validation](ai/concurrency-hardening-and-adversarial-validation.md)
+
+
 ## Honest Boundaries
 
 The project should not be presented as a finished commercial platform yet.
@@ -353,4 +387,5 @@ It should be positioned seriously, without overstating its maturity.
 - [Execution-Correlated Ledger](ai/execution-correlated-ledger.md)
 - [Observability](ai/observability.md)
 - [Testing Strategy](ai/testing-strategy.md)
+- [Concurrency Hardening and Adversarial Validation](ai/concurrency-hardening-and-adversarial-validation.md)
 - [Comparison with Existing Tools](comparison-existing-tools.md)
