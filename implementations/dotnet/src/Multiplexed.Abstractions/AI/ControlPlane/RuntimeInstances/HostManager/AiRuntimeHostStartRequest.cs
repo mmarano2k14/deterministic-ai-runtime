@@ -23,15 +23,36 @@ namespace Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager
         /// </summary>
         /// <remarks>
         /// The execution context snapshot is the durable authority for tenant/runtime isolation.
-        /// Host manager implementations must not derive tenant ownership from diagnostics-only metadata
-        /// when this snapshot is available.
+        /// Host manager implementations must not derive tenant ownership from diagnostics-only
+        /// metadata when this snapshot is available.
         /// </remarks>
         public required ExecutionContextSnapshot ExecutionContextSnapshot { get; init; }
 
         /// <summary>
         /// Gets the physical host creation mode requested by the provider.
         /// </summary>
-        public AiRuntimeHostCreationMode HostCreationMode { get; init; } = AiRuntimeHostCreationMode.Fixture;
+        public AiRuntimeHostCreationMode HostCreationMode { get; init; } =
+            AiRuntimeHostCreationMode.Fixture;
+
+        /// <summary>
+        /// Gets the optional logical runtime pool identifier.
+        /// </summary>
+        /// <remarks>
+        /// This value is a first-class identity. Host creation strategies and future pool managers
+        /// must not infer it from provider metadata.
+        /// </remarks>
+        public string? PoolId { get; init; }
+
+        /// <summary>
+        /// Gets the optional immutable identifier of the exact host incarnation that contains the
+        /// requested runtime instance.
+        /// </summary>
+        /// <remarks>
+        /// For a process-host runtime pool, this value identifies one startup incarnation of the
+        /// pool manager. For a Kubernetes runtime pool, the provider maps the Kubernetes Pod UID to
+        /// this generic identity at the provider boundary.
+        /// </remarks>
+        public string? HostId { get; init; }
 
         /// <summary>
         /// Gets the runtime instance identifier to start or attach.
@@ -108,6 +129,11 @@ namespace Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager
         /// <summary>
         /// Gets provider-specific metadata carried with the host manager request.
         /// </summary>
+        /// <remarks>
+        /// Metadata is optional and non-authoritative. Correctness, pool membership, host
+        /// membership, routing, lifecycle, capacity selection, and recovery must rely on typed
+        /// fields instead.
+        /// </remarks>
         public IReadOnlyDictionary<string, string> Metadata { get; init; } =
             new Dictionary<string, string>();
     }

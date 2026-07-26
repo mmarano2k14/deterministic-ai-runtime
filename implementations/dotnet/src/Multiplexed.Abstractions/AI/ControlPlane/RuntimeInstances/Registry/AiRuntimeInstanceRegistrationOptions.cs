@@ -35,6 +35,26 @@
         public string? RuntimeInstanceId { get; set; }
 
         /// <summary>
+        /// Gets or sets the optional logical runtime pool identifier.
+        /// </summary>
+        /// <remarks>
+        /// This is an authoritative first-class membership identity. Registration, capacity,
+        /// lifecycle, routing, and recovery must not infer it from metadata.
+        /// </remarks>
+        public string? PoolId { get; set; }
+
+        /// <summary>
+        /// Gets or sets the optional immutable identifier of the exact host incarnation that
+        /// contains this runtime instance.
+        /// </summary>
+        /// <remarks>
+        /// Several independent runtime instances may share this value when they are hosted by one
+        /// process pool manager or one future Kubernetes pool pod. Provider-specific identities are
+        /// mapped to this generic value at the provider boundary.
+        /// </remarks>
+        public string? HostId { get; set; }
+
+        /// <summary>
         /// Gets or sets the runtime version exposed to the registry.
         /// </summary>
         public string? RuntimeVersion { get; set; }

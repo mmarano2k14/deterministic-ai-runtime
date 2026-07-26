@@ -6,6 +6,76 @@ This project follows a deterministic runtime and observability model designed fo
 
 ---
 
+## 1.0.7.6 - 2026-07-26 — Process-Host Runtime Pool Manager
+
+### Added
+
+- Added an opt-in process-host Runtime Pool Manager capable of owning several independently registered `RuntimeInstanceOnly` child processes.
+- Added first-class pool lifecycle configuration with:
+  - `PoolId`
+  - immutable host-incarnation `HostId`
+  - independent `RuntimeInstanceId`
+  - initial, minimum, and maximum process capacity
+  - bounded startup and shutdown behavior
+- Added deterministic child-process lifecycle management:
+  - capacity creation
+  - idempotent concurrent reconciliation
+  - partial-start preservation
+  - reverse-order shutdown
+  - failed-stop retention and retry
+- Added typed child lifecycle states and completion results for requested, unexpected, and adapter-faulted exits.
+- Added automatic observation of child-process termination.
+- Added targeted replacement of only the failed runtime while preserving healthy sibling runtimes.
+- Added explicit `Degraded` pool state when minimum capacity cannot be restored.
+- Added a real `System.Diagnostics.Process` adapter with:
+  - asynchronous process-exit observation
+  - bounded termination
+  - optional whole-process-tree shutdown
+  - asynchronous stdout and stderr draining
+- Added authoritative process-boundary identity propagation through:
+  - `MULTIPLEXED_AI_RUNTIME_POOL_ID`
+  - `MULTIPLEXED_AI_RUNTIME_HOST_ID`
+  - `MULTIPLEXED_AI_RUNTIME_INSTANCE_ID`
+  - `MULTIPLEXED_AI_RUNTIME_PROCESS_ORDINAL`
+- Added real `RuntimeInstanceOnly` child launch projection with:
+  - independent transport endpoints
+  - bounded port allocation
+  - control-plane identity
+  - pool and host identity
+  - runtime registration configuration
+  - capacity configuration
+  - heartbeat configuration
+- Added registry, capacity, and transport readiness gating before a child is admitted into active pool capacity.
+- Added typed control-plane discovery options for process-pool children.
+- Added additive production dependency-injection composition through `AddAiRuntimeProcessPool(...)`.
+- Added hosted startup and shutdown integration with rollback after partial startup failure.
+- Added a centralized test fixture for real process-pool scenarios without dedicated environment variables or JSON configuration.
+- Added an end-to-end proof using three real `RuntimeInstanceOnly` processes.
+
+### Changed
+
+- Extended runtime-instance registration options with first-class `PoolId` and `HostId`.
+- Propagated pool and host identity through runtime registration and capacity publication.
+- Allowed an explicitly configured `HostId` to take precedence while preserving the existing environment-derived behavior for historical hosting modes.
+- Isolated all process-pool configuration from the existing Process and Kubernetes host creation strategies.
+- Kept `AddAiControlPlane()` unchanged: the Runtime Pool Manager is registered only through explicit opt-in composition.
+
+### Validated
+
+- Proved that three real runtime child processes can become independently registered, ready, and selectable under one pool host.
+- Proved that killing runtime A1 at the operating-system boundary does not restart or replace A2 and A3.
+- Proved that A2 and A3 retain their original `RuntimeInstanceId`.
+- Proved that replacement runtime A4 receives a fresh `RuntimeInstanceId`.
+- Proved that A4 retains the same `PoolId` and `HostId` as the surviving sibling runtimes.
+- Proved that minimum process capacity is restored after an unexpected child-process failure.
+- Proved deterministic shutdown and cleanup of all managed child processes.
+- Validated concurrent child failures without over-creating replacement capacity.
+- Validated retry after replacement startup failure.
+- Validated compatibility with the existing Kubernetes HTTP and gRPC P5 scenarios.
+- Confirmed that the existing Kubernetes mode remains one `RuntimeInstanceOnly` runtime per Pod and that existing host creation mode values remain unchanged.
+
+---
+
 ## 1.0.7.5 - 2026-07-26 — Runtime Pool Identity Foundation
 
 ## First-class runtime pool identity model added
