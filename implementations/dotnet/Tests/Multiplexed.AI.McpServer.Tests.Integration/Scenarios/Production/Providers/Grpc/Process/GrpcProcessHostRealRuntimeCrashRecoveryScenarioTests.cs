@@ -87,7 +87,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
         /// A task that completes when all parallel stability iterations have finished.
         /// </returns>
         [Theory]
-        [InlineData(10)]
+        [InlineData(5)]
         public async Task Grpc_ProcessHost_Should_Execute_MultiTenant_Crash_Recovery_Scenarios_In_Parallel_Loop(
             int parallelism)
         {

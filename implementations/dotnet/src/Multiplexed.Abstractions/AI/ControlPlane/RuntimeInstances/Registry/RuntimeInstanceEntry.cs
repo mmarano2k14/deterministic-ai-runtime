@@ -34,9 +34,18 @@ namespace Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry
         public string? ControlPlaneId { get; init; }
 
         /// <summary>
-        /// Gets the physical host, process, or pod identity that owns this runtime instance.
+        /// Gets the immutable identity of the exact host incarnation that owns this runtime instance.
         /// </summary>
+        /// <remarks>
+        /// Multiple independently addressable runtime instances may share this identity when they
+        /// belong to the same runtime pool host.
+        /// </remarks>
         public string? HostId { get; init; }
+
+        /// <summary>
+        /// Gets the logical runtime pool identifier that owns this runtime instance.
+        /// </summary>
+        public string? PoolId { get; init; }
 
         /// <summary>
         /// Gets the logical runtime identity inside the owning host.
@@ -159,8 +168,13 @@ namespace Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry
         public string? RuntimeVersion { get; init; }
 
         /// <summary>
-        /// Gets optional metadata for dashboard, Kubernetes, tenant, zone, or deployment labels.
+        /// Gets optional non-authoritative metadata for diagnostics, observability, provider labels,
+        /// dashboards, zones, or deployment information.
         /// </summary>
+        /// <remarks>
+        /// Metadata must not control routing, membership, lifecycle, draining, capacity selection,
+        /// or recovery. Any value required for correctness must be represented by a typed property.
+        /// </remarks>
         public IReadOnlyDictionary<string, string> Metadata { get; init; } =
             new Dictionary<string, string>();
 
@@ -186,6 +200,7 @@ namespace Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry
                 TenantGroupId = registration.TenantGroupId,
                 ControlPlaneId = registration.ControlPlaneId,
                 HostId = registration.HostId,
+                PoolId = registration.PoolId,
                 RuntimeId = registration.RuntimeId,
                 ControlPlaneHostId = registration.ControlPlaneHostId,
                 Role = registration.Role,
@@ -236,9 +251,10 @@ namespace Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry
                 TenantId = registration.TenantId ?? TenantId,
                 TenantGroupId = registration.TenantGroupId ?? TenantGroupId,
                 ControlPlaneId = registration.ControlPlaneId ?? ControlPlaneId,
-                HostId = registration.HostId,
-                RuntimeId = registration.RuntimeId,
-                ControlPlaneHostId = registration.ControlPlaneHostId,
+                HostId = registration.HostId ?? HostId,
+                PoolId = registration.PoolId ?? PoolId,
+                RuntimeId = registration.RuntimeId ?? RuntimeId,
+                ControlPlaneHostId = registration.ControlPlaneHostId ?? ControlPlaneHostId,
                 Role = registration.Role,
                 Status = Status == AiRuntimeInstanceStatus.Stopped
                     ? AiRuntimeInstanceStatus.Ready
@@ -302,6 +318,7 @@ namespace Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry
                 TenantGroupId = TenantGroupId,
                 ControlPlaneId = ControlPlaneId,
                 HostId = HostId,
+                PoolId = PoolId,
                 RuntimeId = RuntimeId,
                 ControlPlaneHostId = ControlPlaneHostId,
                 Role = Role,
@@ -352,6 +369,7 @@ namespace Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry
                 TenantGroupId = TenantGroupId,
                 ControlPlaneId = ControlPlaneId,
                 HostId = HostId,
+                PoolId = PoolId,
                 RuntimeId = RuntimeId,
                 ControlPlaneHostId = ControlPlaneHostId,
                 Role = Role,
@@ -406,6 +424,7 @@ namespace Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry
                 TenantGroupId = TenantGroupId,
                 ControlPlaneId = ControlPlaneId,
                 HostId = HostId,
+                PoolId = PoolId,
                 RuntimeId = RuntimeId,
                 ControlPlaneHostId = ControlPlaneHostId,
                 Role = Role,

@@ -10,7 +10,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances
     /// tests, local demos, and as a baseline implementation before adding
     /// a Redis-backed distributed registry for Kubernetes.
     /// </summary>
-    public sealed class InMemoryAiRuntimeInstanceRegistry : IAiRuntimeInstanceRegistry
+    public sealed class InMemoryAiRuntimeInstanceRegistry : IAiRuntimeInstanceRegistry, IAiRuntimePoolMembershipReader
     {
         /// <summary>
         /// Stores runtime instance entries by runtime instance identifier.
@@ -23,8 +23,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances
             AiRuntimeInstanceRegistration registration,
             CancellationToken cancellationToken = default)
         {
-            ArgumentNullException.ThrowIfNull(registration);
-            ArgumentException.ThrowIfNullOrWhiteSpace(registration.RuntimeInstanceId);
+            AiRuntimePoolIdentityValidator.ValidateRegistration(registration);
 
             cancellationToken.ThrowIfCancellationRequested();
 
@@ -144,6 +143,78 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances
         }
 
         /// <inheritdoc />
+        public Task<IReadOnlyList<AiRuntimeInstanceSnapshot>> ListByPoolIdAsync(
+            string poolId,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(poolId);
+
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var now = DateTimeOffset.UtcNow;
+
+            var snapshots = _instances.Values
+                .Where(entry =>
+                    entry.Status != AiRuntimeInstanceStatus.Stopped &&
+                    string.Equals(
+                        entry.PoolId,
+                        poolId,
+                        StringComparison.Ordinal))
+                .Select(entry => entry.ToSnapshot(now))
+                .OrderBy(snapshot => snapshot.RuntimeInstanceId, StringComparer.Ordinal)
+                .ToArray();
+
+            return Task.FromResult<IReadOnlyList<AiRuntimeInstanceSnapshot>>(snapshots);
+        }
+
+        /// <inheritdoc />
+        public Task<IReadOnlyList<AiRuntimeInstanceSnapshot>> ListByHostIdAsync(
+            string hostId,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(hostId);
+
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var now = DateTimeOffset.UtcNow;
+
+            var snapshots = _instances.Values
+                .Where(entry =>
+                    entry.Status != AiRuntimeInstanceStatus.Stopped &&
+                    string.Equals(
+                        entry.HostId,
+                        hostId,
+                        StringComparison.Ordinal))
+                .Select(entry => entry.ToSnapshot(now))
+                .OrderBy(snapshot => snapshot.RuntimeInstanceId, StringComparer.Ordinal)
+                .ToArray();
+
+            return Task.FromResult<IReadOnlyList<AiRuntimeInstanceSnapshot>>(snapshots);
+        }
+
+        /// <inheritdoc />
+        public async Task<IReadOnlyList<string>> ListHostIdsByPoolIdAsync(
+            string poolId,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(poolId);
+
+            var members =
+                await this.ListByPoolIdAsync(
+                        poolId,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+            return members
+                .Select(member => member.HostId)
+                .Where(hostId => !string.IsNullOrWhiteSpace(hostId))
+                .Select(hostId => hostId!)
+                .Distinct(StringComparer.Ordinal)
+                .OrderBy(hostId => hostId, StringComparer.Ordinal)
+                .ToArray();
+        }
+
+        /// <inheritdoc />
         public Task<AiRuntimeInstanceSnapshot?> MarkDrainingAsync(
             string runtimeInstanceId,
             CancellationToken cancellationToken = default)
@@ -234,6 +305,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances
             /// <param name="runtimeInstanceId">The runtime instance identifier.</param>
             /// <param name="tenantId">The tenant identifier that owns the runtime instance.</param>
             /// <param name="tenantGroupId">The tenant group identifier that owns the runtime instance.</param>
+            /// <param name="poolId">The logical runtime pool identifier.</param>
+            /// <param name="hostId">The immutable host-incarnation identifier.</param>
+            /// <param name="runtimeId">The logical runtime identifier inside the host.</param>
+            /// <param name="controlPlaneHostId">The control-plane host identifier.</param>
+            /// <param name="controlPlaneId">The logical control-plane identifier.</param>
             /// <param name="role">The runtime instance role.</param>
             /// <param name="status">The runtime instance status.</param>
             /// <param name="hostName">The host name where the runtime instance is running.</param>
@@ -261,6 +337,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances
                 string runtimeInstanceId,
                 string? tenantId,
                 string? tenantGroupId,
+                string? poolId,
+                string? hostId,
+                string? runtimeId,
+                string? controlPlaneHostId,
+                string? controlPlaneId,
                 AiRuntimeInstanceRole role,
                 AiRuntimeInstanceStatus status,
                 string? hostName,
@@ -288,6 +369,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances
                 RuntimeInstanceId = runtimeInstanceId;
                 TenantId = tenantId;
                 TenantGroupId = tenantGroupId;
+                PoolId = poolId;
+                HostId = hostId;
+                RuntimeId = runtimeId;
+                ControlPlaneHostId = controlPlaneHostId;
+                ControlPlaneId = controlPlaneId;
                 Role = role;
                 Status = status;
                 HostName = hostName;
@@ -327,6 +413,31 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances
             /// Gets the tenant group identifier that owns the runtime instance.
             /// </summary>
             public string? TenantGroupId { get; }
+
+            /// <summary>
+            /// Gets the logical runtime pool identifier.
+            /// </summary>
+            public string? PoolId { get; }
+
+            /// <summary>
+            /// Gets the immutable host-incarnation identifier.
+            /// </summary>
+            public string? HostId { get; }
+
+            /// <summary>
+            /// Gets the logical runtime identifier inside the host.
+            /// </summary>
+            public string? RuntimeId { get; }
+
+            /// <summary>
+            /// Gets the control-plane host identifier.
+            /// </summary>
+            public string? ControlPlaneHostId { get; }
+
+            /// <summary>
+            /// Gets the logical control-plane identifier.
+            /// </summary>
+            public string? ControlPlaneId { get; }
 
             /// <summary>
             /// Gets the runtime instance role.
@@ -463,6 +574,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances
                     registration.RuntimeInstanceId,
                     registration.TenantId,
                     registration.TenantGroupId,
+                    registration.PoolId,
+                    registration.HostId,
+                    registration.RuntimeId,
+                    registration.ControlPlaneHostId,
+                    registration.ControlPlaneId,
                     registration.Role,
                     status,
                     registration.HostName,
@@ -516,8 +632,13 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances
 
                 return new RuntimeInstanceEntry(
                     registration.RuntimeInstanceId,
-                    registration.TenantId,
-                    registration.TenantGroupId,
+                    registration.TenantId ?? TenantId,
+                    registration.TenantGroupId ?? TenantGroupId,
+                    registration.PoolId ?? PoolId,
+                    registration.HostId ?? HostId,
+                    registration.RuntimeId ?? RuntimeId,
+                    registration.ControlPlaneHostId ?? ControlPlaneHostId,
+                    registration.ControlPlaneId ?? ControlPlaneId,
                     registration.Role,
                     nextStatus,
                     registration.HostName,
@@ -588,6 +709,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances
                     RuntimeInstanceId,
                     TenantId,
                     TenantGroupId,
+                    PoolId,
+                    HostId,
+                    RuntimeId,
+                    ControlPlaneHostId,
+                    ControlPlaneId,
                     Role,
                     status,
                     HostName,
@@ -640,6 +766,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances
                     RuntimeInstanceId,
                     TenantId,
                     TenantGroupId,
+                    PoolId,
+                    HostId,
+                    RuntimeId,
+                    ControlPlaneHostId,
+                    ControlPlaneId,
                     Role,
                     status,
                     HostName,
@@ -678,6 +809,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances
                     RuntimeInstanceId = RuntimeInstanceId,
                     TenantId = TenantId,
                     TenantGroupId = TenantGroupId,
+                    PoolId = PoolId,
+                    HostId = HostId,
+                    RuntimeId = RuntimeId,
+                    ControlPlaneHostId = ControlPlaneHostId,
+                    ControlPlaneId = ControlPlaneId,
                     Role = Role,
                     Status = Status,
                     HostName = HostName,

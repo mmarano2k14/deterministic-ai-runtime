@@ -25,6 +25,24 @@ namespace Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Capacity
         public required string RuntimeInstanceId { get; init; }
 
         /// <summary>
+        /// Gets the logical runtime pool identifier that owns this runtime capacity.
+        /// </summary>
+        /// <remarks>
+        /// This is a first-class membership and placement identity. Capacity selection must not
+        /// infer runtime pool membership from metadata.
+        /// </remarks>
+        public string? PoolId { get; init; }
+
+        /// <summary>
+        /// Gets the immutable identity of the exact host incarnation that publishes this capacity.
+        /// </summary>
+        /// <remarks>
+        /// Several runtime capacity descriptors may share this value when independent runtime
+        /// processes are hosted by the same runtime pool host.
+        /// </remarks>
+        public string? HostId { get; init; }
+
+        /// <summary>
         /// Gets the tenant identifier that owns this runtime capacity, when tenant-scoped.
         /// </summary>
         /// <remarks>
@@ -137,8 +155,13 @@ namespace Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Capacity
         public DateTimeOffset LastHeartbeatAtUtc { get; init; }
 
         /// <summary>
-        /// Gets optional metadata for diagnostics, dashboard, tenant, zone, or Kubernetes labels.
+        /// Gets optional non-authoritative metadata for diagnostics, observability, provider labels,
+        /// dashboards, zones, or deployment information.
         /// </summary>
+        /// <remarks>
+        /// Metadata must not control routing, membership, lifecycle, draining, capacity selection,
+        /// or recovery. Any value required for correctness must be represented by a typed property.
+        /// </remarks>
         public IReadOnlyDictionary<string, string> Metadata { get; init; } =
             new Dictionary<string, string>();
 

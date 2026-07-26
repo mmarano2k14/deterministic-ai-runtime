@@ -6,6 +6,162 @@ This project follows a deterministic runtime and observability model designed fo
 
 ---
 
+## 1.0.7.5 - 2026-07-26 — Runtime Pool Identity Foundation
+
+## First-class runtime pool identity model added
+
+Introduced the identity and membership foundation required for future runtime pools while preserving the existing runtime-hosting behavior.
+
+The runtime registry now represents the following identities as typed, first-class fields:
+
+```text
+PoolId
+HostId
+RuntimeInstanceId
+RuntimeInstanceStatus
+```
+
+`PoolId` identifies the logical runtime pool.
+
+`HostId` identifies the exact incarnation of the host containing one or more independently registered runtime instances.
+
+Provider-specific host identities are mapped at the provider boundary:
+
+```text
+Process pool host startup identity
+    -> HostId
+
+Kubernetes Pod UID
+    -> HostId
+```
+
+Kubernetes-specific identity does not leak into the shared control-plane abstractions.
+
+---
+
+## Runtime instance membership added
+
+Added typed membership queries for resolving runtime instances by logical pool and physical host:
+
+```text
+PoolId -> RuntimeInstanceIds
+HostId -> RuntimeInstanceIds
+PoolId -> HostIds
+```
+
+Membership remains based exclusively on authoritative first-class identity fields.
+
+Metadata is not used to determine:
+
+- pool membership;
+- host membership;
+- runtime selection;
+- draining;
+- lifecycle state;
+- capacity suppression;
+- recovery ownership.
+
+---
+
+## Identity propagation hardened
+
+Pool and host identities are preserved across:
+
+- runtime registration;
+- re-registration;
+- heartbeat updates;
+- status transitions;
+- snapshots;
+- capacity descriptors;
+- in-memory registry storage;
+- Redis registry serialization;
+- observability decorators;
+- dependency-injection composition.
+
+Legacy registrations without `PoolId` remain supported.
+
+A `HostId` without a `PoolId` remains valid for the existing non-pooled hosting modes.
+
+---
+
+## Identity validation added
+
+Registration validation now enforces:
+
+```text
+RuntimeInstanceId is required
+PoolId cannot be empty
+HostId cannot be empty
+PoolId requires HostId
+metadata cannot create authoritative membership
+```
+
+Draining remains an independent runtime-instance status.
+
+Several runtime instances may therefore share the same `PoolId` and `HostId` while retaining independent:
+
+- `RuntimeInstanceId`;
+- status;
+- heartbeat;
+- capacity;
+- lifecycle;
+- recovery ownership.
+
+---
+
+## Backward compatibility preserved
+
+The existing host creation modes remain unchanged:
+
+```text
+Fixture = 0
+Process = 1
+Kubernetes = 2
+Attach = 3
+```
+
+In particular, the current Kubernetes mode continues to use the existing model:
+
+```text
+one RuntimeInstanceOnly runtime
+-> one Kubernetes Pod
+-> one independently managed runtime lifecycle
+```
+
+No Runtime Pool Manager, pool transport router, Kubernetes pool mode, or hierarchical capacity selection is introduced in this milestone.
+
+The future Kubernetes Runtime Pool architecture will be added through a separate opt-in host creation mode and strategy.
+
+---
+
+## Validation
+
+Validated through targeted tests covering:
+
+- first-class identity propagation;
+- heartbeat preservation;
+- re-registration preservation;
+- draining preservation;
+- Redis serialization compatibility;
+- pool membership queries;
+- host membership queries;
+- observability composition;
+- dependency-injection resolution;
+- identity validation;
+- metadata non-authority.
+
+Existing Kubernetes HTTP and gRPC smoke scenarios remained green with the current one-runtime-per-Pod behavior unchanged.
+
+---
+
+## Result
+
+The runtime behaves as it did before this milestone, but it can now represent several independent runtime instances belonging to the same logical pool and exact host incarnation.
+
+This completes the identity foundation required before introducing the process-host Runtime Pool Manager.
+
+---
+
 ## 1.0.7.4 - 2026-07-25 — Concurrency Hardening and Crash Recovery
 
 ## Recovery scale-out deduplication hardened

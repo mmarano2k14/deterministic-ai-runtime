@@ -25,10 +25,12 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances
     /// - Reads are defensively filtered by logical control-plane identifier to avoid returning
     ///   stale, migrated, corrupted, or foreign entries.
     /// - Registry listing self-heals the scoped index by removing missing or foreign entries.
+    /// - Runtime pool and host membership queries project over the authoritative scoped registry.
+    ///   No provider-specific metadata or premature secondary Redis key topology is used.
     /// - Tenant-aware visibility is applied on read operations through the active execution context.
     /// - Tenant visibility supports both metadata-based isolation and first-class tenant fields.
     /// </remarks>
-    public sealed class RedisAiRuntimeInstanceRegistry : IAiRuntimeInstanceRegistry
+    public sealed class RedisAiRuntimeInstanceRegistry : IAiRuntimeInstanceRegistry, IAiRuntimePoolMembershipReader
     {
         private const string KeyPrefix = "ai:control-plane";
         private const string InstanceSetSegment = "runtime-instances";
@@ -95,8 +97,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances
             AiRuntimeInstanceRegistration registration,
             CancellationToken cancellationToken = default)
         {
-            ArgumentNullException.ThrowIfNull(registration);
-            ArgumentException.ThrowIfNullOrWhiteSpace(registration.RuntimeInstanceId);
+            AiRuntimePoolIdentityValidator.ValidateRegistration(registration);
 
             cancellationToken.ThrowIfCancellationRequested();
 
@@ -380,6 +381,78 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances
 
             return snapshots
                 .OrderBy(snapshot => snapshot.RuntimeInstanceId, StringComparer.Ordinal)
+                .ToArray();
+        }
+
+        /// <inheritdoc />
+        public async Task<IReadOnlyList<AiRuntimeInstanceSnapshot>> ListByPoolIdAsync(
+            string poolId,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(poolId);
+
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var snapshots =
+                await this.ListAsync(
+                        includeStopped: false,
+                        cancellationToken: cancellationToken)
+                    .ConfigureAwait(false);
+
+            return snapshots
+                .Where(snapshot =>
+                    string.Equals(
+                        snapshot.PoolId,
+                        poolId,
+                        StringComparison.Ordinal))
+                .OrderBy(snapshot => snapshot.RuntimeInstanceId, StringComparer.Ordinal)
+                .ToArray();
+        }
+
+        /// <inheritdoc />
+        public async Task<IReadOnlyList<AiRuntimeInstanceSnapshot>> ListByHostIdAsync(
+            string hostId,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(hostId);
+
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var snapshots =
+                await this.ListAsync(
+                        includeStopped: false,
+                        cancellationToken: cancellationToken)
+                    .ConfigureAwait(false);
+
+            return snapshots
+                .Where(snapshot =>
+                    string.Equals(
+                        snapshot.HostId,
+                        hostId,
+                        StringComparison.Ordinal))
+                .OrderBy(snapshot => snapshot.RuntimeInstanceId, StringComparer.Ordinal)
+                .ToArray();
+        }
+
+        /// <inheritdoc />
+        public async Task<IReadOnlyList<string>> ListHostIdsByPoolIdAsync(
+            string poolId,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(poolId);
+
+            var members =
+                await this.ListByPoolIdAsync(
+                        poolId,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+            return members
+                .Select(member => member.HostId)
+                .Where(hostId => !string.IsNullOrWhiteSpace(hostId))
+                .Select(hostId => hostId!)
+                .Distinct(StringComparer.Ordinal)
+                .OrderBy(hostId => hostId, StringComparer.Ordinal)
                 .ToArray();
         }
 
@@ -815,6 +888,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances
                     TenantGroupId = registration.TenantGroupId,
                     ControlPlaneId = registration.ControlPlaneId,
                     ControlPlaneHostId = registration.ControlPlaneHostId,
+                    PoolId = registration.PoolId,
                     HostId = registration.HostId,
                     RuntimeId = registration.RuntimeId,
                     Role = registration.Role,
@@ -840,6 +914,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances
                 TenantGroupId = registration.TenantGroupId,
                 ControlPlaneId = controlPlaneId,
                 ControlPlaneHostId = registration.ControlPlaneHostId,
+                PoolId = registration.PoolId,
                 HostId = registration.HostId,
                 RuntimeId = registration.RuntimeId,
                 Role = registration.Role,
