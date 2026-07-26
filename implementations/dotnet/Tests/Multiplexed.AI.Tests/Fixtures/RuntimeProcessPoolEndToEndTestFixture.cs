@@ -21,7 +21,8 @@ namespace Multiplexed.AI.Tests.Fixtures
     {
         private const string RedisHost = "127.0.0.1";
         private const int RedisPort = 6379;
-        private const int BasePort = 6100;
+        private const int HttpBasePort = 6100;
+        private const int GrpcBasePort = 6200;
         private const int PortRangeSize = 10;
         private IConnectionMultiplexer? redisConnection;
 
@@ -178,14 +179,54 @@ namespace Multiplexed.AI.Tests.Fixtures
         }
 
         /// <summary>
-        /// Creates the RuntimeInstanceOnly child settings used by the proof.
+        /// Creates the HTTP RuntimeInstanceOnly child settings used by the process-pool proofs.
         /// </summary>
         /// <param name="identity">The unique proof identity.</param>
         public AiRuntimeProcessPoolRuntimeInstanceOptions
             CreateRuntimeInstanceOptions(
                 RuntimeProcessPoolEndToEndIdentity identity)
         {
+            return CreateRuntimeInstanceOptions(
+                identity,
+                basePort: HttpBasePort,
+                providerName: "http",
+                transportName: "http",
+                runtimeVersion:
+                    "runtime-process-pool-http-e2e");
+        }
+
+        /// <summary>
+        /// Creates the gRPC RuntimeInstanceOnly child settings used by the process-pool proof.
+        /// </summary>
+        /// <param name="identity">The unique proof identity.</param>
+        public AiRuntimeProcessPoolRuntimeInstanceOptions
+            CreateGrpcRuntimeInstanceOptions(
+                RuntimeProcessPoolEndToEndIdentity identity)
+        {
+            return CreateRuntimeInstanceOptions(
+                identity,
+                basePort: GrpcBasePort,
+                providerName: "grpc",
+                transportName: "grpc",
+                runtimeVersion:
+                    "runtime-process-pool-grpc-e2e");
+        }
+
+        /// <summary>
+        /// Creates one strongly typed transport-specific RuntimeInstanceOnly profile.
+        /// </summary>
+        private static AiRuntimeProcessPoolRuntimeInstanceOptions
+            CreateRuntimeInstanceOptions(
+                RuntimeProcessPoolEndToEndIdentity identity,
+                int basePort,
+                string providerName,
+                string transportName,
+                string runtimeVersion)
+        {
             ArgumentNullException.ThrowIfNull(identity);
+            ArgumentException.ThrowIfNullOrWhiteSpace(providerName);
+            ArgumentException.ThrowIfNullOrWhiteSpace(transportName);
+            ArgumentException.ThrowIfNullOrWhiteSpace(runtimeVersion);
 
             var hostAssemblyPath =
                 ResolveRuntimeHostAssemblyPath();
@@ -195,19 +236,18 @@ namespace Multiplexed.AI.Tests.Fixtures
                 RuntimeHostAssemblyPath = hostAssemblyPath,
                 WorkingDirectory =
                     Path.GetDirectoryName(hostAssemblyPath),
-                BasePort = BasePort,
+                BasePort = basePort,
                 MaxPort = checked(
-                    BasePort + PortRangeSize),
+                    basePort + PortRangeSize),
                 EndpointHost = "127.0.0.1",
                 ControlPlaneId = identity.ControlPlaneId,
                 EnableControlPlaneDiscovery = false,
                 RequireControlPlaneDiscovery = false,
                 ExecutionContextSnapshot =
                     CreateExecutionContextSnapshot(identity),
-                ProviderName = "http",
-                TransportName = "http",
-                RuntimeVersion =
-                    "runtime-process-pool-e2e",
+                ProviderName = providerName,
+                TransportName = transportName,
+                RuntimeVersion = runtimeVersion,
                 WorkerCountPerInstance = 1,
                 MaxConcurrentRunsPerInstance = 1,
                 LocalQueueCapacity = 8,

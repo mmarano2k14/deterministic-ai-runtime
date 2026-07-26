@@ -154,6 +154,12 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
             environment["AiMcpHost__Port"] = port.ToString(CultureInfo.InvariantCulture);
             environment["ASPNETCORE_URLS"] = endpoint;
             environment["DOTNET_URLS"] = endpoint;
+
+            ApplyAuthoritativeTransportEnvironment(
+                environment,
+                endpoint,
+                options.TransportName);
+
             environment["AiMcpHost__EnableSharedQueuePump"] = "false";
             environment["AiMcpHost__EnableReplayTools"] = "false";
             environment["AiMcpHost__EnableObservabilityTools"] = "false";
@@ -264,6 +270,31 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
             environment["RuntimeInstanceId"] = request.RuntimeInstanceId;
             environment["AI_RUNTIME_INSTANCE_ID"] = request.RuntimeInstanceId;
             environment["MULTIPLEXED_AI_RUNTIME_INSTANCE_ID"] = request.RuntimeInstanceId;
+        }
+
+        /// <summary>
+        /// Applies transport-specific server settings to the exact allocated child endpoint.
+        /// </summary>
+        private static void ApplyAuthoritativeTransportEnvironment(
+            IDictionary<string, string> environment,
+            string endpoint,
+            string transportName)
+        {
+            if (!StringComparer.OrdinalIgnoreCase.Equals(
+                    transportName,
+                    "grpc"))
+            {
+                return;
+            }
+
+            environment["Kestrel__EndpointDefaults__Protocols"] =
+                "Http2";
+
+            environment["Kestrel__Endpoints__Grpc__Url"] =
+                endpoint;
+
+            environment["Kestrel__Endpoints__Grpc__Protocols"] =
+                "Http2";
         }
 
         /// <summary>

@@ -56,6 +56,60 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager.Po
         }
 
         /// <summary>
+        /// Verifies that a gRPC child receives authoritative HTTP/2 Kestrel settings on its exact
+        /// allocated endpoint.
+        /// </summary>
+        [Fact]
+        public async Task CreateAsync_Should_Project_Grpc_Http2_Endpoint()
+        {
+            var portAllocator =
+                new FakePortAllocator(6231);
+
+            var options =
+                CreateOptions();
+
+            options.ProviderName = "grpc";
+            options.TransportName = "grpc";
+
+            var factory =
+                new AiRuntimeProcessPoolRuntimeInstanceStartPlanFactory(
+                    options,
+                    portAllocator);
+
+            var plan =
+                await factory.CreateAsync(
+                    CreateRequest());
+
+            var environment =
+                plan.ProcessOptions.EnvironmentVariables;
+
+            Assert.Equal(
+                "grpc",
+                plan.ReadinessRequest.TransportName);
+
+            Assert.Equal(
+                "http://127.0.0.1:6231",
+                plan.TransportEndpoint);
+
+            Assert.Equal(
+                "Http2",
+                environment[
+                    "Kestrel__EndpointDefaults__Protocols"]);
+
+            Assert.Equal(
+                plan.TransportEndpoint,
+                environment[
+                    "Kestrel__Endpoints__Grpc__Url"]);
+
+            Assert.Equal(
+                "Http2",
+                environment[
+                    "Kestrel__Endpoints__Grpc__Protocols"]);
+
+            await plan.PortLease.DisposeAsync();
+        }
+
+        /// <summary>
         /// Creates valid RuntimeInstanceOnly options for focused projection tests.
         /// </summary>
         internal static AiRuntimeProcessPoolRuntimeInstanceOptions CreateOptions()

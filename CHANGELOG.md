@@ -6,6 +6,127 @@ This project follows a deterministic runtime and observability model designed fo
 
 ---
 
+## 1.0.7.7 - 2026-07-26 — Exact Runtime Pool Transport Routing
+
+### Added
+
+- Added a protocol-neutral Runtime Pool route registry mapping:
+  - `PoolId`
+  - `HostId`
+  - `RuntimeInstanceId`
+  - transport name
+  - exact child transport endpoint
+- Added immutable `RouteId` identities to distinguish successive route incarnations.
+- Added exact route registration, resolution, draining, removal, and host-local listing.
+- Added explicit route-resolution states:
+  - `Resolved`
+  - `NotFound`
+  - `PoolMismatch`
+  - `HostMismatch`
+  - `TransportMismatch`
+  - `Draining`
+- Added idempotent concurrent registration for identical route authority.
+- Added conflict detection when one `RuntimeInstanceId` is rebound to another route, endpoint, host, pool, or transport.
+- Added stale route mutation protection through authoritative `RouteId` validation.
+- Added automatic route lifecycle binding to real process-pool children:
+  - register after runtime readiness
+  - enter draining before graceful stop
+  - remove after process completion
+  - register a fresh route for replacement capacity
+- Added active forwarding leases to close the race between route resolution and runtime draining.
+- Added graceful draining that:
+  - rejects new forwarding operations
+  - waits for active forwarding leases
+  - stops only the exact target process
+- Added a protocol-neutral route forwarder that invokes transport adapters only after exact route acquisition.
+- Added a stable HTTP Runtime Pool command endpoint:
+
+  ```text
+  POST /runtime-pool/commands
+  ```
+
+- Added exact HTTP forwarding to the existing child endpoint:
+
+  ```text
+  POST /runtime-instance/commands
+  ```
+
+- Reused the existing:
+  - `AiRuntimeInstanceCommandRequest`
+  - `AiRuntimeInstanceCommandResult`
+  - runtime command operations
+  - queue-control request contracts
+- Added a stable gRPC Runtime Pool command service using the existing generated contract:
+
+  ```text
+  AiRuntimeInstanceCommandGrpc.ExecuteCommand
+  ```
+
+- Reused the existing gRPC JSON envelopes:
+  - `AiRuntimeInstanceGrpcCommandRequest`
+  - `AiRuntimeInstanceGrpcCommandResponse`
+- Added exact child gRPC client creation and deterministic channel disposal.
+- Added HTTP and gRPC response identity validation to reject responses claiming another `RuntimeInstanceId`.
+- Added explicit HTTP and gRPC routing failure reasons for:
+  - missing target identity
+  - missing route
+  - pool mismatch
+  - host mismatch
+  - transport mismatch
+  - draining route
+  - forwarding failure
+  - malformed gRPC envelopes
+- Added authoritative HTTP/2 Kestrel projection for process-pool children using the gRPC transport.
+- Added independent fixture profiles for real HTTP and gRPC child processes with separate local port ranges.
+- Added non-parallel xUnit collection handling for real process-pool proofs sharing fixture-owned resources.
+- Added real HTTP and gRPC end-to-end routing proofs using three external `RuntimeInstanceOnly` child processes.
+
+### Changed
+
+- Extended the opt-in `AddAiRuntimeProcessPool(...)` composition with:
+  - `IAiRuntimePoolRouteRegistry`
+  - `IAiRuntimePoolRouteForwarder`
+  - HTTP transport forwarding
+  - gRPC transport forwarding
+  - stable HTTP command handling
+  - stable gRPC command handling
+- Changed process-pool child readiness admission so a child is exposed to the manager only after its exact transport route has been registered.
+- Changed graceful child shutdown to drain the exact route before terminating the underlying process.
+- Changed child completion observation so the exact route is removed before replacement capacity is exposed.
+- Changed gRPC process launch projection to bind the allocated child endpoint explicitly to HTTP/2.
+- Preserved the existing HTTP and gRPC runtime command DTOs instead of introducing pool-specific transport models.
+- Preserved historical Process and Kubernetes host modes without enabling Runtime Pool routing implicitly.
+- Kept capacity selection, execution recovery, and redispatch outside the transport router.
+- Kept routing authority in typed fields rather than diagnostic metadata.
+
+### Validated
+
+- Proved that requesting runtime A2 routes only to A2.
+- Proved that an absent A2 never falls back to A1, A3, or a replacement runtime.
+- Proved that a draining route rejects new forwarding operations.
+- Proved that graceful draining waits for active forwarding operations to finish.
+- Proved that draining A1 does not block forwarding to A2 or A3.
+- Proved that transport callback failures still release their forwarding leases.
+- Proved that releasing a stale lease cannot mutate a newer replacement route.
+- Proved that an unexpected A1 process exit removes only the A1 route.
+- Proved that A2 and A3 remain routable after A1 exits.
+- Proved that replacement runtime A4 receives:
+  - a fresh `RuntimeInstanceId`
+  - a fresh `RouteId`
+  - the same authoritative `PoolId`
+  - the same authoritative `HostId`
+- Proved that A2 and A3 preserve their original `RuntimeInstanceId` and `RouteId` during A1 replacement.
+- Proved real HTTP forwarding through one stable Kestrel endpoint before and after A1 replacement.
+- Proved real gRPC forwarding through one stable HTTP/2 endpoint before and after A1 replacement.
+- Proved that the former A1 identity remains explicitly unavailable after A4 becomes ready.
+- Proved that HTTP and gRPC child responses with an unexpected runtime identity are rejected.
+- Proved that malformed gRPC command envelopes return explicit deterministic failures.
+- Confirmed that no routing decision silently triggers recovery or redispatch.
+- Confirmed that existing Process and Kubernetes hosting strategies remain behaviorally isolated from the opt-in Runtime Pool Router.
+
+
+---
+
 ## 1.0.7.6 - 2026-07-26 — Process-Host Runtime Pool Manager
 
 ### Added

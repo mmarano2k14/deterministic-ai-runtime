@@ -11,6 +11,7 @@ namespace Multiplexed.AI.Tests.Integration.ControlPlane.RuntimeInstances.HostMan
     /// Proves the complete Step 2 process-host Runtime Pool Manager contract with three real
     /// RuntimeInstanceOnly child processes.
     /// </summary>
+    [Collection(RuntimeProcessPoolEndToEndCollection.Name)]
     [Trait("Category", "RuntimeProcessPoolEndToEnd")]
     public sealed class RuntimeProcessPoolEndToEndProofTests :
         IClassFixture<RuntimeProcessPoolEndToEndTestFixture>

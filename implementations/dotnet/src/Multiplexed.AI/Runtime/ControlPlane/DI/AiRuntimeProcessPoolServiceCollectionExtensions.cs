@@ -5,6 +5,9 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Process;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Routing;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Routing.Grpc;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Routing.Http;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.DI
 {
@@ -75,6 +78,45 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
             services.AddLogging();
 
             services.TryAddSingleton<
+                IAiRuntimePoolRouteRegistry,
+                InMemoryAiRuntimePoolRouteRegistry>();
+
+            services.TryAddSingleton<
+                IAiRuntimePoolRouteForwarder,
+                AiRuntimePoolRouteForwarder>();
+
+            services.AddGrpc();
+
+            services.TryAddSingleton<
+                IAiRuntimePoolGrpcClientFactory,
+                AiRuntimePoolGrpcClientFactory>();
+
+            services.TryAddSingleton<
+                IAiRuntimePoolGrpcTransportForwarder,
+                AiRuntimePoolGrpcTransportForwarder>();
+
+            services.TryAddSingleton<
+                IAiRuntimePoolGrpcCommandHandler,
+                AiRuntimePoolGrpcCommandHandler>();
+
+            services.AddHttpClient(
+                AiRuntimePoolHttpTransportForwarder.HttpClientName);
+
+            services.TryAddSingleton<
+                IAiRuntimePoolHttpTransportForwarder>(
+                serviceProvider =>
+                    new AiRuntimePoolHttpTransportForwarder(
+                        serviceProvider
+                            .GetRequiredService<IHttpClientFactory>()
+                            .CreateClient(
+                                AiRuntimePoolHttpTransportForwarder
+                                    .HttpClientName)));
+
+            services.TryAddSingleton<
+                IAiRuntimePoolHttpCommandHandler,
+                AiRuntimePoolHttpCommandHandler>();
+
+            services.TryAddSingleton<
                 IAiRuntimeProcessPoolPortAllocator,
                 AiRuntimeProcessPoolPortAllocator>();
 
@@ -98,7 +140,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
                         serviceProvider.GetRequiredService<
                             IAiRuntimeProcessPoolChildProcessLauncher>(),
                         serviceProvider.GetRequiredService<
-                            Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Readiness.IAiRuntimeInstanceReadinessWaiter>()));
+                            Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Readiness.IAiRuntimeInstanceReadinessWaiter>(),
+                        serviceProvider.GetRequiredService<
+                            IAiRuntimePoolRouteRegistry>()));
 
             services.AddSingleton<IAiRuntimeProcessPoolManager>(
                 serviceProvider =>
