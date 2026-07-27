@@ -244,6 +244,15 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
                     serviceProvider.GetRequiredService<RedisAiRuntimeInstanceRegistry>(),
                     serviceProvider.GetRequiredService<IAiControlPlaneObserver>()));
 
+            services.TryAddSingleton<IAiRuntimePoolMembershipReader>(serviceProvider =>
+            {
+                var registry =
+                    serviceProvider.GetRequiredService<IAiRuntimeInstanceRegistry>();
+
+                return registry as IAiRuntimePoolMembershipReader
+                    ?? new AiRuntimePoolMembershipReader(registry);
+            });
+
             services.TryAddSingleton<IAiRuntimeInstanceControlPlane, AiRuntimeInstanceControlPlane>();
             services.TryAddSingleton<IAiRuntimeEnvironmentProvider, LocalAiRuntimeEnvironmentProvider>();
             services.TryAddSingleton<IAiSharedRuntimeInstanceRegistry, InMemoryAiSharedRuntimeInstanceRegistry>();

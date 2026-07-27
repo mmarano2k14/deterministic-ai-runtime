@@ -41,6 +41,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
         private readonly AiRuntimeInstanceRegistrationOptions options;
         private readonly ILogger<AiRuntimeInstanceRegistrationHostedService> logger;
 
+        private string? poolId;
+        private string? hostId;
         private string? runtimeInstanceId;
         private string? controlPlaneId;
         private string? controlPlaneHostId;
@@ -257,6 +259,14 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
                     .GetSnapshotAsync(cancellationToken)
                     .ConfigureAwait(false);
 
+            var registrationIdentity =
+                AiRuntimeInstanceRegistrationIdentityResolver.Resolve(
+                    this.options.PoolId,
+                    this.options.HostId,
+                    environment.HostId);
+
+            this.poolId = registrationIdentity.PoolId;
+            this.hostId = registrationIdentity.HostId;
             this.controlPlaneHostId =
                 environment.ControlPlaneHostId;
 
@@ -326,7 +336,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
                 environment.RuntimeInstanceId,
                 environment.HostName,
                 environment.ProcessId,
-                environment.HostId,
+                this.hostId,
                 environment.RuntimeId,
                 this.controlPlaneHostId,
                 providerName,
@@ -379,12 +389,13 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
                 new AiRuntimeInstanceRegistration
                 {
                     RuntimeInstanceId = this.runtimeInstanceId,
+                    PoolId = this.poolId,
+                    HostId = this.hostId,
                     TenantId = tenantId,
                     TenantGroupId = tenantGroupId,
                     ControlPlaneId = this.controlPlaneId,
                     HostName = environment.HostName,
                     ProcessId = environment.ProcessId,
-                    HostId = environment.HostId,
                     RuntimeId = environment.RuntimeId,
                     ControlPlaneHostId = this.controlPlaneHostId,
                     WorkerCount = this.options.WorkerCount,
@@ -668,6 +679,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
                 new AiRuntimeInstanceCapacityDescriptor
                 {
                     RuntimeInstanceId = runtimeInstanceId,
+                    PoolId = this.poolId,
+                    HostId = this.hostId,
                     TenantId =
                         GetMetadataValue(
                             descriptorMetadata,

@@ -194,6 +194,42 @@ Tenant C safe runtime not killed -> zero recovered work, zero recovery forensics
 
 ---
 
+## Stable HTTP Runtime Pool Endpoint
+
+The opt-in process-host Runtime Pool exposes one stable HTTP command endpoint:
+
+```text
+POST /runtime-pool/commands
+```
+
+The endpoint reuses the existing runtime command request and result contracts.
+
+```text
+Control Plane
+    -> stable pool endpoint
+    -> exact RuntimeInstanceId route
+    -> exact child /runtime-instance/commands endpoint
+```
+
+The pool router:
+
+- resolves the local `PoolId` and `HostId`;
+- acquires the exact route forwarding lease;
+- rejects draining or suppressed capacity;
+- invokes only the requested child;
+- validates the child response `RuntimeInstanceId`.
+
+It does not choose another runtime or perform recovery.
+
+Real end-to-end validation covers exact A2 routing, a real A1 process kill, preservation of A2/A3 routes, and fresh A4 replacement.
+
+See:
+
+- [Runtime Pool Architecture](runtime-pool-architecture.md)
+- [Runtime Pool Failure Recovery](runtime-pool-failure-recovery.md)
+
+---
+
 ## Provider vs Transport
 
 Provider identity and transport identity must remain separate.

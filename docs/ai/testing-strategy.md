@@ -2061,6 +2061,72 @@ The detailed proof model is documented in:
 - [Concurrency Hardening and Adversarial Validation](concurrency-hardening-and-adversarial-validation.md)
 
 
+## Runtime Pool Validation
+
+Runtime Pool validation is layered so failures remain diagnosable.
+
+### Identity and lifecycle gates
+
+- `PoolId` and `HostId` stability;
+- independent `RuntimeInstanceId`;
+- membership state;
+- graceful drain;
+- targeted replacement;
+- stale mutation protection.
+
+### Routing gates
+
+- exact route registration;
+- `RouteId` immutability;
+- forwarding lease concurrency;
+- HTTP stable endpoint;
+- gRPC stable endpoint;
+- no sibling fallback;
+- response identity validation;
+- suppression before transport.
+
+### Failure-recovery gates
+
+- exact A1 failure journal;
+- exact A1 suppression;
+- A2/A3 non-contamination;
+- assigned-work runtime boundary;
+- deterministic inventory order;
+- deterministic fingerprint;
+- one claim winner under concurrency;
+- stale `LeaseId` rejection;
+- in-flight same-`ExecutionId` transition;
+- local-queued `SharedRunId` redispatch;
+- claim retained after transition failure.
+
+### Real process-host gate
+
+The final proof uses real external child processes and a real OS kill.
+
+```text
+A1/A2/A3 ready
+    -> seed A1 and sibling control work
+    -> kill A1
+    -> observe A4
+    -> acquire one claim
+    -> recover A1 inventory only
+```
+
+### Regression gate
+
+After the Runtime Pool implementation:
+
+```text
+historical Process HTTP P10: green
+historical Process gRPC P10: green
+existing Kubernetes HTTP P5: green
+existing Kubernetes gRPC P5: green
+```
+
+The Kubernetes gate verifies compatibility with the existing one-runtime-per-Pod modes. It is not a Kubernetes Runtime Pool proof.
+
+---
+
 ## Test Evidence and Documentation
 
 Tests are part of the project evidence.
@@ -2206,6 +2272,26 @@ A safe tenant running in the same control plane should complete normally with ze
 
 Recovery validation should include replay report, replay ledger, replay trace, execution ledger, execution trace, completion evidence, and step completion evidence.
 ```
+
+---
+
+## Runtime Pool Test Status
+
+| Validation area | Status |
+|---|---|
+| Process pool manager and real child lifecycle | Green |
+| Exact route registry and draining | Green |
+| Stable HTTP pool routing | Green |
+| Stable gRPC pool routing | Green |
+| Targeted A1-to-A4 replacement | Green |
+| Exact failure journal and suppression | Green |
+| Assigned-work enumeration | Green |
+| Deterministic claims and lease generations | Green |
+| Claimed recovery transitions | Green |
+| Final real process-host recovery proof | Green |
+| Historical Process HTTP/gRPC regression | P10 green |
+| Existing Kubernetes HTTP/gRPC regression | P5 green |
+| Kubernetes Runtime Pool Pod proof | Not implemented |
 
 ---
 

@@ -4,7 +4,7 @@
 
 This document describes the public product roadmap for the Deterministic AI Runtime Platform.
 
-The roadmap is intentionally realistic and must be understood in the context of a project currently built and maintained by a single developer. Several important foundations already exist, including deterministic execution, replay and audit, decision ledger, configuration-driven runtime behavior, context-driven execution, policy-driven runtime decisions, provider-driven architecture, retention/eviction/compaction, automatic snapshot direction, execution control and state lifecycle, distributed workers, MCP control-plane direction, observability and runtime telemetry direction, testing and reliability direction, developer experience/API/SDK/CLI direction, security and encryption hardening direction, memory/context/reasoning lifecycle direction, and multi-instance runtime direction.
+The roadmap is intentionally realistic and must be understood in the context of a project currently built and maintained by a single developer. Several important foundations already exist, including deterministic execution, replay and audit, decision ledger, configuration-driven runtime behavior, context-driven execution, policy-driven runtime decisions, provider-driven architecture, retention/eviction/compaction, execution control and state lifecycle, distributed workers, Process and Kubernetes hosting, an opt-in process-host Runtime Pool with exact HTTP/gRPC routing and targeted recovery, MCP control-plane direction, observability, testing, security hardening, memory/context lifecycle direction, and multi-instance runtime direction.
 
 Transforming these foundations into a complete product requires progressive work across runtime hardening, execution lifecycle visibility, APIs, SDK/CLI, MCP control, dashboard, pipeline builder, observability, deployment, retention lifecycle diagnostics, memory/context governance, security hardening, multi-tenant readiness, managed hosting direction, and enterprise-oriented controls.
 
@@ -113,6 +113,7 @@ The roadmap is organized into several product tracks.
 | Developer Experience / API / SDK / CLI | Improve quickstart, examples, API packaging, SDK direction, CLI direction, diagnostics, and error model. |
 | Testing and Reliability | Prove runtime guarantees through unit, integration, distributed, provider, MCP, replay, lifecycle, and chaos-style tests. |
 | Security and Encryption Hardening | Improve RBAC-aware access, replay/ledger/MCP/dashboard security, redaction, payload protection, encrypted retention archive direction, and access-control direction. |
+| Runtime Pool and Failure Recovery | Reuse warm runtime capacity, route to exact child instances, isolate child failures, claim assigned work deterministically, and extend the model into Kubernetes Pool Pods. |
 | Distributed Runtime | Improve shared queue, runtime instances, worker capacity, provider/transport behavior, and Kubernetes-style execution. |
 | Multi-Tenant Readiness | Prepare isolation by tenant, project, pipeline, execution, storage, memory/context, telemetry, retention policy, and runtime capacity. |
 | Managed Hosting | Prepare a long-term hosting model based on runtime instances and workers. |
@@ -174,6 +175,38 @@ The project already contains the foundation for several major product capabiliti
 ---
 
 # Product Tracks
+
+## Runtime Pool Foundation
+
+The process-host Runtime Pool is now an implemented platform foundation.
+
+Completed capabilities include:
+
+- one logical `PoolId` with immutable host-incarnation `HostId`;
+- several independently registered `RuntimeInstanceId` children;
+- immutable `RouteId`;
+- stable HTTP and gRPC pool endpoints;
+- exact forwarding with no sibling fallback;
+- graceful route drain and forwarding leases;
+- targeted A1-to-A4 replacement;
+- first-class failure journaling and exact capacity suppression;
+- deterministic assigned-work inventory and claim authority;
+- claimed recovery through the existing ownership and transition services.
+
+Validated compatibility:
+
+```text
+Process HTTP P10
+Process gRPC P10
+Kubernetes HTTP P5
+Kubernetes gRPC P5
+```
+
+The existing Kubernetes modes remain one runtime per Pod. Kubernetes Runtime Pool Pods, Pod-wide failure suppression, hierarchical capacity selection, and Redis Cluster compatibility remain roadmap work.
+
+See [`runtime-pool-roadmap.md`](runtime-pool-roadmap.md).
+
+---
 
 ## 1. Runtime Foundation
 

@@ -18,6 +18,10 @@
 	</ItemGroup>
 
 	<ItemGroup>
+	  <PackageReference Include="System.Security.Cryptography.Xml" Version="10.0.10" />
+	</ItemGroup>
+
+	<ItemGroup>
 		<ProjectReference Include="..\..\src\Multiplexed.Abstractions\Multiplexed.Abstractions.csproj" />
 		<ProjectReference Include="..\..\src\Multiplexed.AI\Multiplexed.AI.csproj" />
 		<ProjectReference Include="..\Multiplexed.Sample.External.Plugins.Steps\Multiplexed.Sample.External.Plugins.Steps.csproj" />

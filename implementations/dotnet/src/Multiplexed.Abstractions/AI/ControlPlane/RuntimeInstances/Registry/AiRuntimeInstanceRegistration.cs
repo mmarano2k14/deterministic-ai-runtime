@@ -2,10 +2,14 @@
 {
     /// <summary>
     /// Represents a runtime instance registration request.
-    ///
-    /// A runtime instance corresponds to one runtime process.
-    /// In Kubernetes, one runtime instance normally corresponds to one pod/replica.
     /// </summary>
+    /// <remarks>
+    /// A runtime instance represents one independently addressable runtime process.
+    /// The existing Kubernetes host creation mode normally maps one runtime instance to one pod,
+    /// while a runtime pool may host several runtime instances under the same host incarnation.
+    /// Correctness-critical identity must be represented by first-class properties and must not
+    /// be inferred from optional metadata.
+    /// </remarks>
     public sealed class AiRuntimeInstanceRegistration
     {
         /// <summary>
@@ -46,9 +50,25 @@
         public string? TenantGroupId { get; init; }
 
         /// <summary>
-        /// Gets the physical host, process, or pod identity that owns this runtime instance.
+        /// Gets the immutable identity of the exact host incarnation that owns this runtime instance.
         /// </summary>
+        /// <remarks>
+        /// Multiple runtime instances may share this value when they are hosted by the same runtime
+        /// pool host. Providers map their exact host-incarnation identity to this generic field; for
+        /// example, a Kubernetes runtime pool maps the Kubernetes pod UID to <see cref="HostId"/>.
+        /// Reusable names such as pod names, service names, or machine names are not authoritative
+        /// host identities.
+        /// </remarks>
         public string? HostId { get; init; }
+
+        /// <summary>
+        /// Gets the logical runtime pool identifier that owns this runtime instance.
+        /// </summary>
+        /// <remarks>
+        /// This is a first-class membership and placement identity. Metadata may duplicate it for
+        /// diagnostics, but runtime pool membership must not depend on metadata.
+        /// </remarks>
+        public string? PoolId { get; init; }
 
         /// <summary>
         /// Gets the logical runtime identity inside the owning host.
@@ -112,8 +132,13 @@
         public string? RuntimeVersion { get; init; }
 
         /// <summary>
-        /// Optional metadata for future dashboard, Kubernetes, tenant, zone, or deployment labels.
+        /// Gets optional non-authoritative metadata for diagnostics, observability, provider labels,
+        /// dashboards, zones, or deployment information.
         /// </summary>
+        /// <remarks>
+        /// Metadata must not control routing, membership, lifecycle, draining, capacity selection,
+        /// or recovery. Any value required for correctness must be represented by a typed property.
+        /// </remarks>
         public IReadOnlyDictionary<string, string> Metadata { get; init; } =
             new Dictionary<string, string>();
 

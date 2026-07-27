@@ -10,7 +10,7 @@ The runtime is not designed to be locked to a single communication model. It is 
 
 The key idea is:
 
-> The runtime core should not care whether execution happens locally, over HTTP, through a runtime-instance-only host, or through a future transport such as gRPC, NATS, RabbitMQ, or another distributed communication layer.
+> The runtime core should not care whether execution happens locally, over HTTP, over gRPC, through a runtime-instance-only host, through a stable Runtime Pool endpoint, or through a future message-bus transport.
 
 The execution semantics should remain stable.
 
@@ -30,7 +30,7 @@ Production AI runtime infrastructure may need to support:
 - runtime-instance-only hosts;
 - HTTP-based dispatch;
 - Kubernetes-style runtime pods;
-- future gRPC communication;
+- implemented gRPC communication;
 - future message-bus communication;
 - managed hosting;
 - dedicated runtime instances;
@@ -69,6 +69,36 @@ These include:
 This means provider-based runtime communication is already part of the architecture.
 
 The roadmap is to harden, document, expose, and extend it.
+
+---
+
+## Implemented Runtime Pool Transport Model
+
+The platform now has an opt-in process-host Runtime Pool transport model.
+
+```text
+provider selects exact RuntimeInstanceId
+    -> stable pool HTTP or gRPC endpoint
+    -> exact RouteId
+    -> exact child endpoint
+```
+
+The stable endpoint does not perform scheduling.
+
+Implemented guarantees:
+
+- exact HTTP and gRPC forwarding;
+- no sibling fallback;
+- forwarding leases;
+- graceful route drain;
+- response identity validation;
+- targeted child replacement;
+- suppression-aware routing;
+- compatibility with existing modes.
+
+The existing Kubernetes mode remains one runtime per Pod. Kubernetes Runtime Pool Pods are planned as a separate mode.
+
+See [`runtime-pool-roadmap.md`](runtime-pool-roadmap.md).
 
 ---
 
@@ -857,83 +887,29 @@ Infrastructure must be tested under failure and concurrency.
 
 # Productization Roadmap
 
-## Step 1 — Document Provider Modes
+## Current Delivery Status
 
-Improve documentation for:
+| Capability | Status |
+|---|---|
+| Local provider | Implemented |
+| HTTP provider | Implemented |
+| gRPC provider | Implemented |
+| Process Runtime Host Manager | Implemented |
+| Kubernetes Runtime Host Manager | Implemented |
+| Process-host Runtime Pool Manager | Implemented |
+| Stable HTTP Runtime Pool router | Implemented |
+| Stable gRPC Runtime Pool router | Implemented |
+| Exact Runtime Pool failure recovery | Implemented |
+| Kubernetes Runtime Pool Pod | Planned |
+| Message-bus transport | Planned |
 
-- local provider;
-- HTTP runtime provider;
-- runtime-instance-only mode;
-- control-plane with runtime instances;
-- shared queue pump;
-- runtime instance registry;
-- provider diagnostics.
+## Next Provider and Transport Work
 
-## Step 2 — Harden Provider Interfaces
+1. add the new Kubernetes Runtime Pool mode;
+2. map Pod UID to immutable `HostId`;
+3. support Pod-wide failure suppression;
+4. persist distributed route, failure, safety, and claim authority;
+5. add hierarchical capacity selection;
+6. validate Redis Cluster key-slot and failover behavior;
+7. continue transport diagnostics and gateway hardening.
 
-Improve:
-
-- provider result model;
-- provider errors;
-- provider diagnostics;
-- provider health checks;
-- correlation propagation;
-- cancellation propagation;
-- retry-safe dispatch behavior.
-
-## Step 3 — Improve Distributed Demo
-
-Show:
-
-- multiple runtime instances;
-- multiple workers;
-- shared queue;
-- provider-based dispatch;
-- runtime-instance-only hosts;
-- MCP diagnostics;
-- replay and ledger after dispatch.
-
-## Step 4 — Add Dashboard Visibility
-
-Expose:
-
-- provider type;
-- transport type;
-- runtime instance status;
-- dispatch status;
-- provider errors;
-- queue pressure;
-- worker capacity.
-
-## Step 5 — Prepare Future Transport Options
-
-Prepare architecture for:
-
-- gRPC;
-- message bus;
-- NATS/RabbitMQ direction;
-- cloud queue direction;
-- managed internal transport direction.
-
----
-
-# Final Statement
-
-The runtime provider and transport model is one of the foundations that makes the platform scalable.
-
-It allows the runtime to evolve from local execution to distributed runtime instances without rewriting the deterministic core.
-
-The platform can support:
-
-- local execution;
-- remote runtime instances;
-- HTTP runtime provider;
-- runtime-instance-only hosts;
-- control-plane with runtime instances;
-- shared queue dispatch;
-- MCP-controlled execution;
-- Kubernetes-style runtime pods;
-- future gRPC or message-bus transports;
-- managed hosting by runtime instance and worker capacity.
-
-The long-term goal is to keep the runtime core deterministic while allowing communication, hosting, and transport strategies to evolve.

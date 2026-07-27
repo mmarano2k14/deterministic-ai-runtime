@@ -53,6 +53,44 @@ This document defines that contract.
 
 ---
 
+## Exact Runtime Pool Failure Chain
+
+The process-host Runtime Pool adds a first-class exact failure chain around one child runtime.
+
+```text
+A1 exits unexpectedly
+    -> record FailureId A1
+    -> suppress RuntimeInstanceId A1
+    -> remove RouteId A1
+    -> preserve A2/A3
+    -> start A4
+    -> enumerate A1 work only
+    -> acquire one claim
+    -> execute existing recovery transitions
+```
+
+This chain complements the historical runtime health and execution recovery reconcilers.
+
+The Runtime Pool supplies exact local authority and duplicate-coordinator protection. The existing ownership resolver and transition service continue to own durable recovery semantics.
+
+The complete identity boundary is:
+
+```text
+FailureId
+PoolId
+HostId
+RuntimeInstanceId
+RouteId
+LocalRunId
+ExecutionId / SharedRunId
+ClaimId
+LeaseId
+```
+
+See [Runtime Pool Failure Recovery](runtime-pool-failure-recovery.md).
+
+---
+
 ## Recovery Is Not Retry
 
 Retry and runtime crash recovery solve different problems.

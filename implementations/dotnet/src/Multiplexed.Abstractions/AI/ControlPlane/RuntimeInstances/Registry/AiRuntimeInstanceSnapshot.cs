@@ -2,11 +2,14 @@
 {
     /// <summary>
     /// Represents an immutable visibility snapshot of a registered runtime instance.
-    ///
-    /// In Kubernetes, one runtime instance normally corresponds to one pod / replica.
-    /// This model is intended for control-plane, dashboard, MCP, HTTP API,
-    /// CLI, shared admission, autoscaling, and diagnostics.
     /// </summary>
+    /// <remarks>
+    /// A runtime instance represents one independently addressable runtime process. The existing
+    /// Kubernetes host creation mode normally maps one runtime instance to one pod, while a runtime
+    /// pool may expose several independent runtime instances under the same host incarnation.
+    /// This model is intended for control-plane, dashboard, MCP, HTTP API, CLI, shared admission,
+    /// autoscaling, and diagnostics.
+    /// </remarks>
     public sealed class AiRuntimeInstanceSnapshot
     {
         /// <summary>
@@ -131,8 +134,13 @@
         public string? RuntimeVersion { get; init; }
 
         /// <summary>
-        /// Optional metadata for dashboard, Kubernetes, tenant, zone, or deployment labels.
+        /// Gets optional non-authoritative metadata for diagnostics, observability, provider labels,
+        /// dashboards, zones, or deployment information.
         /// </summary>
+        /// <remarks>
+        /// Metadata must not control routing, membership, lifecycle, draining, capacity selection,
+        /// or recovery. Any value required for correctness must be represented by a typed property.
+        /// </remarks>
         public IReadOnlyDictionary<string, string> Metadata { get; init; } =
             new Dictionary<string, string>();
 
@@ -154,9 +162,23 @@
         public int? MaxLocalWorkersPerExecution { get; init; }
 
         /// <summary>
-        /// Gets the physical host, process, or pod identity that owns this runtime instance.
+        /// Gets the immutable identity of the exact host incarnation that owns this runtime instance.
         /// </summary>
+        /// <remarks>
+        /// Multiple runtime instances may share this value when they are hosted by the same runtime
+        /// pool host. Provider-specific identities such as a Kubernetes pod UID are mapped to this
+        /// generic first-class property.
+        /// </remarks>
         public string? HostId { get; init; }
+
+        /// <summary>
+        /// Gets the logical runtime pool identifier that owns this runtime instance.
+        /// </summary>
+        /// <remarks>
+        /// This value is authoritative for runtime pool membership and must not be inferred from
+        /// optional metadata.
+        /// </remarks>
+        public string? PoolId { get; init; }
 
         /// <summary>
         /// Gets the logical runtime identity inside the owning host.

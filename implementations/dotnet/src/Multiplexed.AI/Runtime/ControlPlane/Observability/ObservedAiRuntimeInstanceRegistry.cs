@@ -7,22 +7,29 @@ using Multiplexed.Abstractions.AI.ControlPlane.Observability.Area;
 using Multiplexed.Abstractions.AI.ControlPlane.Observability.Events;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
 using Multiplexed.Abstractions.AI.Observability.Context;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.Observability
 {
     /// <summary>
     /// Observability decorator for runtime instance registry implementations.
     /// </summary>
-    public sealed class ObservedAiRuntimeInstanceRegistry : IAiRuntimeInstanceRegistry
+    public sealed class ObservedAiRuntimeInstanceRegistry :
+        IAiRuntimeInstanceRegistry,
+        IAiRuntimePoolMembershipReader
     {
         private const string RuntimeInstanceRegisterOperation = "runtime-instance-register";
         private const string RuntimeInstanceHeartbeatOperation = "runtime-instance-heartbeat";
         private const string RuntimeInstanceGetOperation = "runtime-instance-get";
         private const string RuntimeInstanceListOperation = "runtime-instance-list";
+        private const string RuntimeInstanceListByPoolOperation = "runtime-instance-list-by-pool";
+        private const string RuntimeInstanceListByHostOperation = "runtime-instance-list-by-host";
+        private const string RuntimeInstanceListPoolHostsOperation = "runtime-instance-list-pool-hosts";
         private const string RuntimeInstanceMarkDrainingOperation = "runtime-instance-mark-draining";
         private const string RuntimeInstanceMarkUnhealthyOperation = "runtime-instance-mark-unhealthy";
         private const string RuntimeInstanceUnregisterOperation = "runtime-instance-unregister";
         private readonly IAiRuntimeInstanceRegistry inner;
+        private readonly IAiRuntimePoolMembershipReader membershipReader;
         private readonly IAiControlPlaneObserver observer;
 
         /// <summary>
@@ -35,6 +42,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Observability
             IAiControlPlaneObserver observer)
         {
             this.inner = inner ?? throw new ArgumentNullException(nameof(inner));
+            this.membershipReader =
+                inner as IAiRuntimePoolMembershipReader
+                ?? new AiRuntimePoolMembershipReader(inner);
             this.observer = observer ?? new NoopAiControlPlaneObserver();
         }
 
@@ -135,6 +145,55 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Observability
             }
         }
 
+
+        /// <inheritdoc />
+        public Task<IReadOnlyList<AiRuntimeInstanceSnapshot>> ListByPoolIdAsync(
+            string poolId,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(poolId);
+
+            return this.RecordMembershipQueryAsync(
+                RuntimeInstanceListByPoolOperation,
+                identityName: "poolId",
+                identityValue: poolId,
+                action: token =>
+                    this.membershipReader.ListByPoolIdAsync(poolId, token),
+                cancellationToken: cancellationToken);
+        }
+
+        /// <inheritdoc />
+        public Task<IReadOnlyList<AiRuntimeInstanceSnapshot>> ListByHostIdAsync(
+            string hostId,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(hostId);
+
+            return this.RecordMembershipQueryAsync(
+                RuntimeInstanceListByHostOperation,
+                identityName: "hostId",
+                identityValue: hostId,
+                action: token =>
+                    this.membershipReader.ListByHostIdAsync(hostId, token),
+                cancellationToken: cancellationToken);
+        }
+
+        /// <inheritdoc />
+        public Task<IReadOnlyList<string>> ListHostIdsByPoolIdAsync(
+            string poolId,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(poolId);
+
+            return this.RecordMembershipQueryAsync(
+                RuntimeInstanceListPoolHostsOperation,
+                identityName: "poolId",
+                identityValue: poolId,
+                action: token =>
+                    this.membershipReader.ListHostIdsByPoolIdAsync(poolId, token),
+                cancellationToken: cancellationToken);
+        }
+
         /// <inheritdoc />
         public Task<AiRuntimeInstanceSnapshot?> MarkDrainingAsync(
             string runtimeInstanceId,
@@ -170,6 +229,84 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Observability
             catch (Exception exception) when (exception is not OperationCanceledException)
             {
                 await this.RecordFailedAsync(RuntimeInstanceUnregisterOperation, runtimeInstanceId, null, null, null, exception, startedAtUtc, cancellationToken).ConfigureAwait(false);
+                throw;
+            }
+        }
+
+
+        /// <summary>
+        /// Records a typed runtime pool membership query without making observability authoritative.
+        /// </summary>
+        /// <typeparam name="T">The membership result item type.</typeparam>
+        /// <param name="operation">The control-plane operation name.</param>
+        /// <param name="identityName">The queried typed identity property name.</param>
+        /// <param name="identityValue">The queried typed identity value.</param>
+        /// <param name="action">The membership query.</param>
+        /// <param name="cancellationToken">A token used to cancel the operation.</param>
+        /// <returns>The membership query result.</returns>
+        private async Task<IReadOnlyList<T>> RecordMembershipQueryAsync<T>(
+            string operation,
+            string identityName,
+            string identityValue,
+            Func<CancellationToken, Task<IReadOnlyList<T>>> action,
+            CancellationToken cancellationToken)
+        {
+            var startedAtUtc = DateTimeOffset.UtcNow;
+            var properties =
+                new Dictionary<string, object?>
+                {
+                    [identityName] = identityValue
+                };
+
+            await this.RecordStartedAsync(
+                    operation,
+                    runtimeInstanceId: null,
+                    controlPlaneId: null,
+                    tenantId: null,
+                    tenantGroupId: null,
+                    properties: properties,
+                    cancellationToken: cancellationToken)
+                .ConfigureAwait(false);
+
+            try
+            {
+                var result =
+                    await action(cancellationToken)
+                        .ConfigureAwait(false);
+
+                await this.RecordCompletedAsync(
+                        operation,
+                        runtimeInstanceId: null,
+                        controlPlaneId: null,
+                        tenantId: null,
+                        tenantGroupId: null,
+                        outcome: AiControlPlaneOperationOutcome.Succeeded,
+                        failureReason: null,
+                        startedAtUtc: startedAtUtc,
+                        properties: MergeProperties(
+                            properties,
+                            new Dictionary<string, object?>
+                            {
+                                ["resultCount"] = result.Count
+                            }),
+                        cancellationToken: cancellationToken)
+                    .ConfigureAwait(false);
+
+                return result;
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException)
+            {
+                await this.RecordFailedAsync(
+                        operation,
+                        runtimeInstanceId: null,
+                        controlPlaneId: null,
+                        tenantId: null,
+                        tenantGroupId: null,
+                        exception: exception,
+                        startedAtUtc: startedAtUtc,
+                        cancellationToken: cancellationToken)
+                    .ConfigureAwait(false);
+
                 throw;
             }
         }
