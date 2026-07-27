@@ -159,6 +159,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
                             .TransportMismatch,
                     AiRuntimePoolRouteResolutionStatus.Draining =>
                         AiRuntimePoolHttpRoutingFailureReasons.RouteDraining,
+                    AiRuntimePoolRouteResolutionStatus.Suppressed =>
+                        AiRuntimePoolHttpRoutingFailureReasons
+                            .CapacitySuppressed,
                     _ =>
                         AiRuntimePoolHttpRoutingFailureReasons
                             .ForwardingFailed

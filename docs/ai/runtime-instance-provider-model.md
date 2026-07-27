@@ -1,6 +1,6 @@
 # Runtime Instance Provider Model
 
-Status: Implemented foundation / validated for local dispatch, HTTP/gRPC dispatch, provider-based scale-out, Redis-backed request persistence, local scale-out, Runtime Host Manager process and Kubernetes provisioning, fulfilled-run requeue, end-to-end MCP scale-out execution, durable replay / ledger / trace validation, provider-agnostic process/Pod crash recovery, and tenant-aware runtime isolation across Shared, Dedicated, and Hybrid runtime modes.
+Status: Implemented foundation / validated for local dispatch, HTTP/gRPC dispatch, provider-based scale-out, Process and Kubernetes Runtime Host Manager provisioning, opt-in process-host Runtime Pools, stable exact HTTP/gRPC pool routing, targeted child replacement, exact failure recovery authority, replay / ledger / trace validation, provider-agnostic process/Pod recovery, and tenant-aware Shared/Dedicated/Hybrid isolation.
 
 This document describes the **runtime instance provider model** for the Deterministic AI Runtime control plane.
 
@@ -12,6 +12,8 @@ The complete technical reference is currently preserved in:
 
 - [Architecture Overview](architecture-overview.md)
 - [Runtime Control Plane](runtime-control-plane.md)
+- [Runtime Pool Architecture](runtime-pool-architecture.md)
+- [Runtime Pool Failure Recovery](runtime-pool-failure-recovery.md)
 - [Runtime Discovery, Registry, and Capacity](runtime-discovery-registry-capacity.md)
 - [MCP Server as Runtime Control Plane](mcp-server-control-plane.md)
 - [Multi-Tenant Control Plane Isolation](multi-tenant-control-plane-isolation.md)
@@ -948,6 +950,43 @@ The router should only resolve a provider for a descriptor that admission alread
 
 ---
 
+## Runtime Pool Provider and Router Boundary
+
+The opt-in Runtime Pool introduces a stable transport endpoint without changing provider selection semantics.
+
+```text
+control plane provider selection
+    -> exact RuntimeInstanceId
+    -> stable pool endpoint
+    -> exact route registry
+    -> exact child transport endpoint
+```
+
+The provider remains responsible for delivering the command over HTTP or gRPC.
+
+The Runtime Pool router is responsible for:
+
+- validating local pool and host authority;
+- resolving the exact runtime route;
+- acquiring a forwarding lease;
+- checking suppression before transport;
+- invoking the exact child endpoint;
+- validating response identity.
+
+The router must not:
+
+- select capacity;
+- choose a sibling;
+- request scale-out;
+- perform redispatch;
+- recover assigned work.
+
+Those responsibilities remain above or beside the transport layer.
+
+The stable HTTP and gRPC pool endpoints reuse the existing command DTOs and gRPC contract.
+
+---
+
 ## Provider Resolution Flow
 
 Shared queue dispatch flow:
@@ -1596,6 +1635,34 @@ This proves the provider model can cross a real process boundary without replaci
 
 ---
 
+## Process-Host Runtime Pool Mode
+
+The process-host Runtime Pool is additive and opt-in.
+
+It creates several real external `RuntimeInstanceOnly` child processes beneath one pool host.
+
+```text
+Pool Host
+    -> child A1
+    -> child A2
+    -> child A3
+```
+
+Each child registers and publishes capacity independently.
+
+The existing host creation modes remain unchanged:
+
+```text
+Fixture
+Process
+Kubernetes
+Attach
+```
+
+The future Kubernetes Runtime Pool will use a new mode rather than changing the meaning of the existing Kubernetes mode.
+
+---
+
 ## gRPC Provider
 
 The gRPC provider is now implemented and validated as a runtime instance provider and as a provider-based scale-out path for real process-host runtime instances.
@@ -2160,6 +2227,32 @@ No local queue behavior should change.
 No provider should bypass the runtime queue or DAG engine.
 
 Shared controller behavior should remain stable and delegate transport-specific dispatch to provider-capable components.
+
+---
+
+## Runtime Pool Implementation Status
+
+Completed:
+
+- process-host pool identity and lifecycle;
+- exact route registry;
+- stable HTTP and gRPC endpoints;
+- forwarding leases and drain;
+- real child replacement;
+- exact failure journal;
+- exact capacity suppression;
+- assigned-work enumeration;
+- deterministic recovery claim;
+- claimed recovery executor.
+
+Planned:
+
+- Kubernetes Runtime Pool Pod mode;
+- Pod UID `HostId`;
+- Pod-wide suppression;
+- distributed claim durability;
+- hierarchical capacity selection;
+- Redis Cluster compatibility.
 
 ---
 

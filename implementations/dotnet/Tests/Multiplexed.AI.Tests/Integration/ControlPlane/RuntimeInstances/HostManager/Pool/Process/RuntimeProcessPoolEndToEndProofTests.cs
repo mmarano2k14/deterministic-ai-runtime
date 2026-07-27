@@ -2,14 +2,17 @@
 using Microsoft.Extensions.Hosting;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
 using Multiplexed.AI.Runtime.ControlPlane.DI;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Capacity;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Failure;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Process;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Routing;
 using Multiplexed.AI.Tests.Fixtures;
 
 namespace Multiplexed.AI.Tests.Integration.ControlPlane.RuntimeInstances.HostManager.Pool.Process
 {
     /// <summary>
-    /// Proves the complete Step 2 process-host Runtime Pool Manager contract with three real
-    /// RuntimeInstanceOnly child processes.
+    /// Proves exact process-host Runtime Pool failure isolation, capacity suppression, and
+    /// replacement with three real RuntimeInstanceOnly child processes.
     /// </summary>
     [Collection(RuntimeProcessPoolEndToEndCollection.Name)]
     [Trait("Category", "RuntimeProcessPoolEndToEnd")]
@@ -35,8 +38,8 @@ namespace Multiplexed.AI.Tests.Integration.ControlPlane.RuntimeInstances.HostMan
         }
 
         /// <summary>
-        /// Starts three real runtimes, kills A1, preserves A2/A3, observes A4, and cleans up the
-        /// entire pool.
+        /// Starts three real runtimes, kills A1, proves exact A1 failure and suppression,
+        /// preserves A2/A3, observes safe A4 replacement, and cleans up the entire pool.
         /// </summary>
         [Fact]
         public async Task ProcessPool_Should_Replace_Killed_Runtime_Without_Touching_Siblings()
@@ -91,6 +94,18 @@ namespace Multiplexed.AI.Tests.Integration.ControlPlane.RuntimeInstances.HostMan
                 host.Services.GetRequiredService<
                     IAiRuntimePoolMembershipReader>();
 
+            var routeRegistry =
+                host.Services.GetRequiredService<
+                    IAiRuntimePoolRouteRegistry>();
+
+            var failureReader =
+                host.Services.GetRequiredService<
+                    IAiRuntimePoolFailureReader>();
+
+            var safetyReader =
+                host.Services.GetRequiredService<
+                    IAiRuntimePoolCapacitySafetyReader>();
+
             var launcher =
                 host.Services.GetRequiredService<
                     TrackingSystemRuntimeProcessPoolLauncher>();
@@ -109,14 +124,56 @@ namespace Multiplexed.AI.Tests.Integration.ControlPlane.RuntimeInstances.HostMan
                 initial.Children.Single(
                     child => child.Ordinal == 1);
 
+            var runtimeA2 =
+                initial.Children.Single(
+                    child => child.Ordinal == 2);
+
+            var runtimeA3 =
+                initial.Children.Single(
+                    child => child.Ordinal == 3);
+
             var preservedRuntimeIds =
-                initial.Children
-                    .Where(child => child.Ordinal is 2 or 3)
-                    .Select(child => child.RuntimeInstanceId)
-                    .OrderBy(
-                        value => value,
-                        StringComparer.Ordinal)
-                    .ToArray();
+                new[]
+                {
+                    runtimeA2.RuntimeInstanceId,
+                    runtimeA3.RuntimeInstanceId
+                }
+                .OrderBy(
+                    value => value,
+                    StringComparer.Ordinal)
+                .ToArray();
+
+            var initialRoutes =
+                await routeRegistry
+                    .ListByHostIdAsync(
+                        initial.HostId,
+                        timeout.Token)
+                    .ConfigureAwait(false);
+
+            Assert.Equal(
+                3,
+                initialRoutes.Count);
+
+            var routeA1 =
+                initialRoutes.Single(
+                    route =>
+                        StringComparer.Ordinal.Equals(
+                            route.RuntimeInstanceId,
+                            runtimeA1.RuntimeInstanceId));
+
+            var routeA2 =
+                initialRoutes.Single(
+                    route =>
+                        StringComparer.Ordinal.Equals(
+                            route.RuntimeInstanceId,
+                            runtimeA2.RuntimeInstanceId));
+
+            var routeA3 =
+                initialRoutes.Single(
+                    route =>
+                        StringComparer.Ordinal.Equals(
+                            route.RuntimeInstanceId,
+                            runtimeA3.RuntimeInstanceId));
 
             launcher.KillUnexpectedly(
                 runtimeA1.RuntimeInstanceId);
@@ -158,6 +215,189 @@ namespace Multiplexed.AI.Tests.Integration.ControlPlane.RuntimeInstances.HostMan
 
             Assert.True(
                 launcher.Children.Count >= 4);
+
+            var replacementRoutes =
+                await routeRegistry
+                    .ListByHostIdAsync(
+                        replacement.HostId,
+                        timeout.Token)
+                    .ConfigureAwait(false);
+
+            Assert.Equal(
+                3,
+                replacementRoutes.Count);
+
+            Assert.DoesNotContain(
+                replacementRoutes,
+                route =>
+                    StringComparer.Ordinal.Equals(
+                        route.RuntimeInstanceId,
+                        runtimeA1.RuntimeInstanceId));
+
+            Assert.Equal(
+                routeA2.RouteId,
+                replacementRoutes.Single(
+                    route =>
+                        StringComparer.Ordinal.Equals(
+                            route.RuntimeInstanceId,
+                            runtimeA2.RuntimeInstanceId))
+                    .RouteId);
+
+            Assert.Equal(
+                routeA3.RouteId,
+                replacementRoutes.Single(
+                    route =>
+                        StringComparer.Ordinal.Equals(
+                            route.RuntimeInstanceId,
+                            runtimeA3.RuntimeInstanceId))
+                    .RouteId);
+
+            var routeA4 =
+                replacementRoutes.Single(
+                    route =>
+                        StringComparer.Ordinal.Equals(
+                            route.RuntimeInstanceId,
+                            runtimeA4.RuntimeInstanceId));
+
+            Assert.NotEqual(
+                routeA1.RouteId,
+                routeA4.RouteId);
+
+            Assert.NotEqual(
+                routeA2.RouteId,
+                routeA4.RouteId);
+
+            Assert.NotEqual(
+                routeA3.RouteId,
+                routeA4.RouteId);
+
+            var hostFailures =
+                await failureReader
+                    .ListByHostIdAsync(
+                        replacement.HostId,
+                        timeout.Token)
+                    .ConfigureAwait(false);
+
+            var failureA1 =
+                Assert.Single(hostFailures);
+
+            Assert.Equal(
+                AiRuntimePoolFailureScope.RuntimeInstance,
+                failureA1.Scope);
+
+            Assert.Equal(
+                AiRuntimePoolFailureKind.UnexpectedProcessExit,
+                failureA1.Kind);
+
+            Assert.Equal(
+                manager.Identity.PoolId,
+                failureA1.PoolId);
+
+            Assert.Equal(
+                manager.Identity.HostId,
+                failureA1.HostId);
+
+            Assert.Equal(
+                runtimeA1.RuntimeInstanceId,
+                failureA1.RuntimeInstanceId);
+
+            Assert.Equal(
+                routeA1.RouteId,
+                failureA1.RouteId);
+
+            Assert.Single(
+                await failureReader
+                    .ListByRuntimeInstanceIdAsync(
+                        runtimeA1.RuntimeInstanceId,
+                        timeout.Token)
+                    .ConfigureAwait(false));
+
+            Assert.Empty(
+                await failureReader
+                    .ListByRuntimeInstanceIdAsync(
+                        runtimeA2.RuntimeInstanceId,
+                        timeout.Token)
+                    .ConfigureAwait(false));
+
+            Assert.Empty(
+                await failureReader
+                    .ListByRuntimeInstanceIdAsync(
+                        runtimeA3.RuntimeInstanceId,
+                        timeout.Token)
+                    .ConfigureAwait(false));
+
+            Assert.Empty(
+                await failureReader
+                    .ListByRuntimeInstanceIdAsync(
+                        runtimeA4.RuntimeInstanceId,
+                        timeout.Token)
+                    .ConfigureAwait(false));
+
+            var hostSuppressions =
+                await safetyReader
+                    .ListByHostIdAsync(
+                        replacement.HostId,
+                        timeout.Token)
+                    .ConfigureAwait(false);
+
+            var suppressionA1 =
+                Assert.Single(hostSuppressions);
+
+            Assert.Equal(
+                failureA1.FailureId,
+                suppressionA1.FailureId);
+
+            Assert.Equal(
+                failureA1.PoolId,
+                suppressionA1.PoolId);
+
+            Assert.Equal(
+                failureA1.HostId,
+                suppressionA1.HostId);
+
+            Assert.Equal(
+                failureA1.RuntimeInstanceId,
+                suppressionA1.RuntimeInstanceId);
+
+            Assert.Equal(
+                failureA1.RouteId,
+                suppressionA1.RouteId);
+
+            Assert.NotNull(
+                await safetyReader
+                    .GetSuppressionAsync(
+                        manager.Identity.PoolId,
+                        manager.Identity.HostId,
+                        runtimeA1.RuntimeInstanceId,
+                        timeout.Token)
+                    .ConfigureAwait(false));
+
+            Assert.Null(
+                await safetyReader
+                    .GetSuppressionAsync(
+                        manager.Identity.PoolId,
+                        manager.Identity.HostId,
+                        runtimeA2.RuntimeInstanceId,
+                        timeout.Token)
+                    .ConfigureAwait(false));
+
+            Assert.Null(
+                await safetyReader
+                    .GetSuppressionAsync(
+                        manager.Identity.PoolId,
+                        manager.Identity.HostId,
+                        runtimeA3.RuntimeInstanceId,
+                        timeout.Token)
+                    .ConfigureAwait(false));
+
+            Assert.Null(
+                await safetyReader
+                    .GetSuppressionAsync(
+                        manager.Identity.PoolId,
+                        manager.Identity.HostId,
+                        runtimeA4.RuntimeInstanceId,
+                        timeout.Token)
+                    .ConfigureAwait(false));
 
             await host.StopAsync(timeout.Token);
 

@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Threading;
 using System.Threading.Tasks;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Failure;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Routing;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Process
@@ -14,6 +15,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
         private readonly IAiRuntimeProcessPoolChild inner;
         private readonly IAiRuntimePoolRouteRegistry routeRegistry;
         private readonly AiRuntimePoolRouteDescriptor route;
+        private readonly IAiRuntimePoolFailureObserver? failureObserver;
+        private readonly string failureId;
         private readonly Task<AiRuntimeProcessPoolChildExit> completion;
 
         /// <summary>
@@ -33,6 +36,28 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
             IAiRuntimeProcessPoolChild inner,
             IAiRuntimePoolRouteRegistry routeRegistry,
             AiRuntimePoolRouteDescriptor route)
+            : this(
+                inner,
+                routeRegistry,
+                route,
+                failureObserver: null)
+        {
+        }
+
+        /// <summary>
+        /// Initializes a routed child with exact failure observation.
+        /// </summary>
+        /// <param name="inner">The ready underlying runtime child.</param>
+        /// <param name="routeRegistry">The exact local route registry.</param>
+        /// <param name="route">The registered route incarnation.</param>
+        /// <param name="failureObserver">
+        /// The observer that records unexpected exact runtime failures.
+        /// </param>
+        public AiRuntimeProcessPoolRoutedChild(
+            IAiRuntimeProcessPoolChild inner,
+            IAiRuntimePoolRouteRegistry routeRegistry,
+            AiRuntimePoolRouteDescriptor route,
+            IAiRuntimePoolFailureObserver? failureObserver)
         {
             this.inner =
                 inner ?? throw new ArgumentNullException(nameof(inner));
@@ -43,6 +68,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
 
             this.route =
                 route ?? throw new ArgumentNullException(nameof(route));
+
+            this.failureObserver = failureObserver;
+            this.failureId =
+                AiRuntimePoolFailureIdentityFactory
+                    .CreateFailureId();
 
             ValidateIdentity(this.inner, this.route);
             this.completion = this.ObserveCompletionAsync();
@@ -154,12 +184,46 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
                     };
             }
 
+            Exception? observationException = null;
+
+            if (exit.Kind !=
+                    AiRuntimeProcessPoolChildExitKind.Requested &&
+                this.failureObserver is not null)
+            {
+                try
+                {
+                    await this.failureObserver
+                        .RecordAsync(
+                            CreateFailureObservation(
+                                this.failureId,
+                                this.route,
+                                exit),
+                            CancellationToken.None)
+                        .ConfigureAwait(false);
+                }
+                catch (Exception exception)
+                {
+                    observationException = exception;
+                }
+            }
+
             var removal =
                 await this.routeRegistry
                     .RemoveAsync(
                         CreateMutationRequest(this.route),
                         CancellationToken.None)
                     .ConfigureAwait(false);
+
+            if (observationException is not null)
+            {
+                return new AiRuntimeProcessPoolChildExit
+                {
+                    Kind = AiRuntimeProcessPoolChildExitKind.Faulted,
+                    ExitCode = exit.ExitCode,
+                    FailureMessage =
+                        $"Runtime failure observation failed before route cleanup: {observationException.Message}"
+                };
+            }
 
             if (removal.Status is
                 AiRuntimePoolRouteMutationStatus.Applied or
@@ -175,6 +239,40 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
                 ExitCode = exit.ExitCode,
                 FailureMessage =
                     $"Runtime route cleanup returned unexpected status '{removal.Status}'."
+            };
+        }
+
+        /// <summary>
+        /// Creates one exact immutable failure observation before route removal.
+        /// </summary>
+        private static AiRuntimePoolFailureObservation
+            CreateFailureObservation(
+                string failureId,
+                AiRuntimePoolRouteDescriptor route,
+                AiRuntimeProcessPoolChildExit exit)
+        {
+            return new AiRuntimePoolFailureObservation
+            {
+                FailureId = failureId,
+                Scope =
+                    AiRuntimePoolFailureScope.RuntimeInstance,
+                PoolId = route.PoolId,
+                HostId = route.HostId,
+                RuntimeInstanceId =
+                    route.RuntimeInstanceId,
+                RouteId = route.RouteId,
+                Kind =
+                    exit.Kind ==
+                        AiRuntimeProcessPoolChildExitKind.Unexpected
+                        ? AiRuntimePoolFailureKind
+                            .UnexpectedProcessExit
+                        : AiRuntimePoolFailureKind
+                            .LifecycleObserverFault,
+                ExitCode = exit.ExitCode,
+                ObservedAtUtc =
+                    DateTimeOffset.UtcNow,
+                FailureMessage =
+                    exit.FailureMessage
             };
         }
 

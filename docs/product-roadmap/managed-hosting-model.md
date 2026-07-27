@@ -146,6 +146,48 @@ A managed service can eventually reason about:
 
 ---
 
+## Runtime Pool as a Managed Hosting Unit
+
+The implemented process-host Runtime Pool introduces a reusable capacity unit above individual runtime instances.
+
+```text
+PoolId
+    HostId
+        stable HTTP/gRPC endpoint
+        RuntimeInstanceId A1
+        RuntimeInstanceId A2
+        RuntimeInstanceId A3
+```
+
+This model supports:
+
+- warm reusable capacity;
+- independently selectable runtime instances;
+- exact transport routing;
+- targeted child replacement;
+- graceful draining;
+- child-local failure isolation;
+- deterministic recovery claims.
+
+A customer or tenant is not permanently mapped to one process.
+
+The existing Kubernetes mode remains one runtime per Pod. A future Kubernetes Runtime Pool mode will place several independently registered runtimes inside one Pod and use the Pod UID as the immutable `HostId`.
+
+Commercial packaging can eventually meter:
+
+- runtime pools;
+- warm runtime capacity;
+- workers per runtime;
+- execution volume;
+- recovery and audit retention;
+- dedicated Pool or Pod isolation.
+
+The transport router remains separate from tenant admission, scheduling, and commercial quota policy.
+
+See [`runtime-pool-roadmap.md`](runtime-pool-roadmap.md).
+
+---
+
 ## Runtime Instance as Hosting Unit
 
 A runtime instance is the primary hosting unit.

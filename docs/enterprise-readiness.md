@@ -4,7 +4,7 @@ This document maps core enterprise AI execution questions to the current runtime
 
 The goal is to be clear and honest about what is implemented, what is available as a foundation, and what remains planned.
 
-The runtime should not be positioned as a finished commercial platform yet. It is better described as an advanced, test-driven execution infrastructure project that is increasingly proving production-style runtime guarantees across Redis, MCP, HTTP process-host runtimes, replay, ledger, trace, and multi-tenant isolation boundaries.
+The runtime should not be positioned as a finished commercial platform yet. It is better described as an advanced, test-driven execution infrastructure project that is increasingly proving production-style runtime guarantees across Redis, MCP, HTTP/gRPC process hosts, Kubernetes runtime hosts, exact Runtime Pool routing, targeted failure isolation, deterministic recovery claims, replay, ledger, trace, and multi-tenant isolation boundaries.
 
 ---
 
@@ -23,6 +23,9 @@ The runtime should not be positioned as a finished commercial platform yet. It i
 | Enterprise Question | Runtime Answer | Implementation Mechanism | Evidence / Tests | Status |
 |---|---|---|---|---|
 | What happens if a worker crashes? | The runtime can recover stale `Running` steps and make them eligible again without consuming retry budget as a normal step failure. | Redis-backed DAG state, claim ownership, claimed timestamps, stale running-step recovery, recovery count. | Integration coverage around worker recovery, retry/recovery separation, distributed execution scenarios. | Implemented |
+| Can one stable host expose several independently selectable runtime instances? | Yes, through the opt-in process-host Runtime Pool. The host owns one `PoolId` and immutable `HostId`, while every child owns its own `RuntimeInstanceId` and `RouteId`. | Runtime Pool Manager, exact route registry, stable HTTP/gRPC endpoints, forwarding leases, real `RuntimeInstanceOnly` child processes. | Real three-child HTTP and gRPC proofs validate exact A2 routing, real A1 kill, A2/A3 preservation, and fresh A4 replacement. | Implemented / validated |
+| Can a failed child be isolated without removing healthy sibling capacity? | Yes. A runtime-instance failure journals and suppresses only the exact failed `RuntimeInstanceId`. Sibling routes remain independently usable. | `FailureId`, runtime-scoped failure observation, capacity-safety registry, suppression-aware forwarding, immutable `RouteId`. | Real process-host proof validates `unsafe = { A1 }`, preserved A2/A3 routes, and safe A4 replacement. | Implemented / validated |
+| Can two recovery coordinators recover the same failed-runtime inventory? | No. The exact inventory is fingerprinted and protected by one atomic active recovery claim. | Deterministic `ClaimId`, unique `LeaseId`, active lease validation, stale-lease rejection, explicit release authority. | Concurrent tests validate one winner and nineteen denied coordinators; final process proof validates one acquired and one denied coordinator. | Implemented / validated |
 | What happens if a runtime process dies while work is assigned to it? | The runtime separates runtime health from execution recovery. Unsafe capacity is suppressed, assigned work is reconciled, in-flight executions can resume from the same durable `ExecutionId`, and local queued work can be redispatched through the durable `SharedRunId`. | `RuntimeInstanceHealthReconciler`, `ExecutionRecoveryReconciler`, shared run store, shared queue, runtime run execution index, DAG store, registry/capacity, replay/ledger/trace evidence, recovery forensics. | Real HTTP `RuntimeInstanceOnly` process-kill scenarios validate recovery after external OS process death, including in-flight DAG resume and local queued redispatch. | Implemented / validated |
 | How do you prevent duplicate executions? | Only one worker can own a step at a time. Stale or competing workers cannot complete or fail a step they do not own. | Redis Lua atomic claim scripts, claim tokens, ownership validation on complete/fail transitions. | Multi-worker and distributed claim tests validate single ownership and convergence. | Implemented |
 | How do you replay a workflow? | Completed executions can be snapshotted and restored from terminal snapshot foundations. Replay can detect existing live state or restore deleted live state. MCP process-boundary scenarios also validate replay report, replay ledger, and replay trace after recovery. | MongoDB snapshots, replay service/foundations, `ExecutionId`-based snapshot restoration, deterministic replay fingerprint validation, replay report/ledger/trace retrieval through MCP tools. | Tests validate `AlreadyExists`, restore after live deletion, fingerprint equality, and process-boundary replay proof after real runtime recovery. | Implemented foundation / validated |
@@ -83,6 +86,39 @@ The current runtime is strongest in these areas:
 - adversarial HTTP/gRPC process-host concurrency validation through P35
 - content-agnostic step execution boundary
 - stable single-flight recovery scale-out identity
+
+---
+
+## Validated Runtime Pool Evidence
+
+The process-host Runtime Pool now proves a reusable warm-capacity model rather than a permanent one-runtime-per-process mapping.
+
+Validated capabilities include:
+
+- several real external `RuntimeInstanceOnly` children under one logical pool;
+- exact `PoolId`, `HostId`, `RuntimeInstanceId`, and `RouteId` separation;
+- stable HTTP and gRPC pool endpoints;
+- exact route forwarding with no sibling fallback;
+- route draining and active forwarding leases;
+- targeted child replacement;
+- first-class failure journaling;
+- exact capacity suppression;
+- exact assigned-work enumeration;
+- deterministic recovery fingerprints;
+- atomic recovery claims;
+- stale lease rejection;
+- claimed recovery through existing ownership and transition services.
+
+The final regression gates passed:
+
+```text
+Process HTTP P10
+Process gRPC P10
+Kubernetes HTTP P5
+Kubernetes gRPC P5
+```
+
+The Kubernetes results validate that the existing one-runtime-per-Pod modes remain compatible. They do not claim that Kubernetes Runtime Pool Pods are already implemented.
 
 ---
 
@@ -278,6 +314,32 @@ See:
 
 - [Concurrency Hardening and Adversarial Validation](ai/concurrency-hardening-and-adversarial-validation.md)
 
+
+## Runtime Pool Boundaries
+
+The current Runtime Pool implementation is production-oriented but intentionally scoped.
+
+Implemented:
+
+- process-host pool lifecycle;
+- stable HTTP and gRPC routing;
+- exact runtime-instance failure isolation;
+- exact claimed recovery;
+- real child-process replacement.
+
+Still required for distributed production pooling:
+
+- Kubernetes Runtime Pool Pod mode;
+- Pod UID to `HostId` mapping;
+- host-wide suppression after Pod loss;
+- durable distributed failure/safety/claim stores;
+- multi-control-plane claim ownership;
+- hierarchical runtime/Pod/node capacity selection;
+- Redis Cluster key-slot and failover validation.
+
+The existing Kubernetes mode remains one `RuntimeInstanceOnly` runtime per Pod/Service.
+
+---
 
 ## Honest Boundaries
 

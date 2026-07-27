@@ -224,6 +224,36 @@ The provider decides how to contact that runtime instance.
 
 ---
 
+## Stable gRPC Runtime Pool Endpoint
+
+The opt-in process-host Runtime Pool reuses the existing generated gRPC contract:
+
+```text
+AiRuntimeInstanceCommandGrpc.ExecuteCommand
+```
+
+No second pool-specific `.proto` contract is introduced.
+
+```text
+Control Plane
+    -> stable pool gRPC service
+    -> exact RuntimeInstanceId route
+    -> exact child gRPC service
+```
+
+The router validates pool, host, route, transport, capacity safety, and response identity.
+
+Each gRPC child is projected onto its exact allocated HTTP/2 Kestrel endpoint. The stable router creates and disposes the exact child channel deterministically.
+
+Real end-to-end validation covers exact routing before and after a real A1 process kill, unchanged A2/A3 route identity, safe A4 replacement, and explicit suppression of the former A1 identity.
+
+See:
+
+- [Runtime Pool Architecture](runtime-pool-architecture.md)
+- [Runtime Pool Failure Recovery](runtime-pool-failure-recovery.md)
+
+---
+
 ## Scale-Out Flow
 
 The gRPC provider also participates in the same scale-out capability model as local and HTTP providers.

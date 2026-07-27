@@ -23,6 +23,8 @@ Focused AI runtime documentation is organized under:
 | [`ai/multi-tenant-control-plane-isolation.md`](ai/multi-tenant-control-plane-isolation.md) | Multi-tenant control-plane isolation, RBAC execution-context propagation, durable `ExecutionContextSnapshot`, tenant-aware registry/capacity/admission, Shared/Dedicated/Hybrid runtime visibility, and tenant-aware scale-out. |
 | [`ai/multi-tenant-runtime-flow.md`](ai/multi-tenant-runtime-flow.md) | End-to-end ASCII runtime flow explaining MCP/RBAC context resolution, durable `ExecutionContextSnapshot`, shared run persistence, tenant-aware admission, tenant-aware scale-out, shared queue dispatch, local runtime queue execution, DAG worker loop, execution control, finalization, and observability. |
 | [`ai/runtime-control-plane.md`](ai/runtime-control-plane.md) | Runtime control-plane foundation covering replay, execution control, runtime queues, runtime registry/capacity, discovery, admission, shared controller orchestration, scale-out lifecycle, and tenant-aware dispatch. |
+| [`ai/runtime-pool-architecture.md`](ai/runtime-pool-architecture.md) | Runtime Pool architecture covering `PoolId`, `HostId`, independently registered `RuntimeInstanceId` capacity, immutable `RouteId`, real process-host child lifecycle, stable HTTP/gRPC endpoints, exact forwarding leases, targeted replacement, compatibility boundaries, and Kubernetes Pool direction. |
+| [`ai/runtime-pool-failure-recovery.md`](ai/runtime-pool-failure-recovery.md) | Exact Runtime Pool failure recovery covering `FailureId`, capacity suppression, assigned-work enumeration, deterministic inventory fingerprints, atomic recovery claims, active `LeaseId`, in-flight resume, local-queued redispatch, sibling isolation, and real process-host proof. |
 | [`ai/runtime-discovery-registry-capacity.md`](ai/runtime-discovery-registry-capacity.md) | Runtime discovery, registry, and capacity foundation covering Redis control-plane discovery, `ControlPlaneIdResolver`, runtime registration, tenant-filtered capacity descriptors, pump readiness, cleanup, local scale-out, and HTTP pooled runtime identity. |
 | [`ai/mcp-server-control-plane.md`](ai/mcp-server-control-plane.md) | MCP server as a runtime control-plane adapter, including host modes, RBAC integration, MCP tool groups, runtime role separation, local runtime pools, Redis/local scale-out, shared queue dispatch, and Kubernetes direction. |
 | [`ai/runtime-instance-provider-model.md`](ai/runtime-instance-provider-model.md) | Provider-based runtime instance administration for local, HTTP, gRPC, Redis command queue, and Kubernetes providers, including tenant-aware dispatch/status/control/scale-out capabilities and provider routing. |
@@ -45,6 +47,7 @@ Focused AI runtime documentation is organized under:
 | [`ai/replay-and-audit.md`](ai/replay-and-audit.md) | Deterministic Replay Engine V1, snapshot restore, fingerprint validation, replay metadata, ledger/timeline diagnostics, and replay improvements. |
 | [`comparison-existing-tools.md`](comparison-existing-tools.md) | Ecosystem positioning against agent frameworks, workflow engines, orchestration tools, observability platforms, and distributed infrastructure. |
 | [`roadmap.md`](roadmap.md) | Project roadmap organized by phases. |
+| [`product-roadmap/runtime-pool-roadmap.md`](product-roadmap/runtime-pool-roadmap.md) | Completed Process Runtime Pool foundation and remaining Kubernetes Pool, hierarchical capacity, and Redis Cluster roadmap. |
 
 ---
 
@@ -71,28 +74,30 @@ Start with:
 4. [`ai/multi-tenant-runtime-flow.md`](ai/multi-tenant-runtime-flow.md)
 5. [`enterprise-readiness.md`](enterprise-readiness.md)
 6. [`ai/runtime-control-plane.md`](ai/runtime-control-plane.md)
-7. [`ai/runtime-discovery-registry-capacity.md`](ai/runtime-discovery-registry-capacity.md)
-8. [`ai/mcp-server-control-plane.md`](ai/mcp-server-control-plane.md)
-9. [`ai/runtime-instance-provider-model.md`](ai/runtime-instance-provider-model.md)
-10. [`ai/http-runtime-provider.md`](ai/http-runtime-provider.md)
-11. [`ai/grpc-runtime-provider.md`](ai/grpc-runtime-provider.md)
-12. [`ai/mcp-production-runtime-scenario-framework.md`](ai/mcp-production-runtime-scenario-framework.md)
-13. [`ai/provider-agnostic-process-host-recovery.md`](ai/provider-agnostic-process-host-recovery.md)
-12. [`ai/runtime-process-crash-recovery.md`](ai/runtime-process-crash-recovery.md)
-13. [`ai/runtime-recovery-forensics.md`](ai/runtime-recovery-forensics.md)
-14. [`ai/multi-tenant-runtime-crash-isolation.md`](ai/multi-tenant-runtime-crash-isolation.md)
-15. [`ai/control-plane-ledger-causal-chain.md`](ai/control-plane-ledger-causal-chain.md)
-16. [`ai/recovery-replay-ledger-trace-proof.md`](ai/recovery-replay-ledger-trace-proof.md)
-17. [`ai/shared-controller-usage.md`](ai/shared-controller-usage.md)
-18. [`ai/shared-queue-pump-and-worker-capacity.md`](ai/shared-queue-pump-and-worker-capacity.md)
-19. [`ai/distributed-execution.md`](ai/distributed-execution.md)
-20. [`ai/execution-control-state.md`](ai/execution-control-state.md)
-21. [`ai/observability.md`](ai/observability.md)
-22. [`ai/execution-correlated-ledger.md`](ai/execution-correlated-ledger.md)
-23. [`ai/observability-tracing.md`](ai/observability-tracing.md)
-24. [`ai/runtime-metrics.md`](ai/runtime-metrics.md)
-25. [`ai/replay-and-audit.md`](ai/replay-and-audit.md)
-26. [`runtime-internals.md`](runtime-internals.md)
+7. [`ai/runtime-pool-architecture.md`](ai/runtime-pool-architecture.md)
+8. [`ai/runtime-pool-failure-recovery.md`](ai/runtime-pool-failure-recovery.md)
+9. [`ai/runtime-discovery-registry-capacity.md`](ai/runtime-discovery-registry-capacity.md)
+10. [`ai/mcp-server-control-plane.md`](ai/mcp-server-control-plane.md)
+11. [`ai/runtime-instance-provider-model.md`](ai/runtime-instance-provider-model.md)
+12. [`ai/http-runtime-provider.md`](ai/http-runtime-provider.md)
+13. [`ai/grpc-runtime-provider.md`](ai/grpc-runtime-provider.md)
+14. [`ai/mcp-production-runtime-scenario-framework.md`](ai/mcp-production-runtime-scenario-framework.md)
+15. [`ai/provider-agnostic-process-host-recovery.md`](ai/provider-agnostic-process-host-recovery.md)
+16. [`ai/runtime-process-crash-recovery.md`](ai/runtime-process-crash-recovery.md)
+17. [`ai/runtime-recovery-forensics.md`](ai/runtime-recovery-forensics.md)
+18. [`ai/multi-tenant-runtime-crash-isolation.md`](ai/multi-tenant-runtime-crash-isolation.md)
+19. [`ai/control-plane-ledger-causal-chain.md`](ai/control-plane-ledger-causal-chain.md)
+20. [`ai/recovery-replay-ledger-trace-proof.md`](ai/recovery-replay-ledger-trace-proof.md)
+21. [`ai/shared-controller-usage.md`](ai/shared-controller-usage.md)
+22. [`ai/shared-queue-pump-and-worker-capacity.md`](ai/shared-queue-pump-and-worker-capacity.md)
+23. [`ai/distributed-execution.md`](ai/distributed-execution.md)
+24. [`ai/execution-control-state.md`](ai/execution-control-state.md)
+25. [`ai/observability.md`](ai/observability.md)
+26. [`ai/execution-correlated-ledger.md`](ai/execution-correlated-ledger.md)
+27. [`ai/observability-tracing.md`](ai/observability-tracing.md)
+28. [`ai/runtime-metrics.md`](ai/runtime-metrics.md)
+29. [`ai/replay-and-audit.md`](ai/replay-and-audit.md)
+30. [`runtime-internals.md`](runtime-internals.md)
 
 This path gives both the strategic positioning and the complete technical depth.
 
@@ -108,29 +113,31 @@ Start with:
 6. [`ai/context-resolution-and-helpers.md`](ai/context-resolution-and-helpers.md)
 7. [`ai/step-plugins.md`](ai/step-plugins.md)
 8. [`ai/runtime-control-plane.md`](ai/runtime-control-plane.md)
-9. [`ai/runtime-discovery-registry-capacity.md`](ai/runtime-discovery-registry-capacity.md)
-10. [`ai/mcp-server-control-plane.md`](ai/mcp-server-control-plane.md)
-11. [`ai/runtime-instance-provider-model.md`](ai/runtime-instance-provider-model.md)
-12. [`ai/http-runtime-provider.md`](ai/http-runtime-provider.md)
-13. [`ai/grpc-runtime-provider.md`](ai/grpc-runtime-provider.md)
-14. [`ai/mcp-production-runtime-scenario-framework.md`](ai/mcp-production-runtime-scenario-framework.md)
-15. [`ai/provider-agnostic-process-host-recovery.md`](ai/provider-agnostic-process-host-recovery.md)
-14. [`ai/runtime-process-crash-recovery.md`](ai/runtime-process-crash-recovery.md)
-15. [`ai/runtime-recovery-forensics.md`](ai/runtime-recovery-forensics.md)
-16. [`ai/multi-tenant-runtime-crash-isolation.md`](ai/multi-tenant-runtime-crash-isolation.md)
-17. [`ai/control-plane-ledger-causal-chain.md`](ai/control-plane-ledger-causal-chain.md)
-18. [`ai/recovery-replay-ledger-trace-proof.md`](ai/recovery-replay-ledger-trace-proof.md)
-19. [`ai/shared-controller-usage.md`](ai/shared-controller-usage.md)
-20. [`ai/shared-queue-pump-and-worker-capacity.md`](ai/shared-queue-pump-and-worker-capacity.md)
-21. [`ai/distributed-execution.md`](ai/distributed-execution.md)
-22. [`ai/execution-control-state.md`](ai/execution-control-state.md)
-23. [`ai/execution-correlated-ledger.md`](ai/execution-correlated-ledger.md)
-24. [`ai/observability-tracing.md`](ai/observability-tracing.md)
-25. [`ai/runtime-metrics.md`](ai/runtime-metrics.md)
-26. [`ai/replay-and-audit.md`](ai/replay-and-audit.md)
-27. [`ai/testing-strategy.md`](ai/testing-strategy.md)
-28. [`runtime-internals.md`](runtime-internals.md)
-29. [`roadmap.md`](roadmap.md)
+9. [`ai/runtime-pool-architecture.md`](ai/runtime-pool-architecture.md)
+10. [`ai/runtime-pool-failure-recovery.md`](ai/runtime-pool-failure-recovery.md)
+11. [`ai/runtime-discovery-registry-capacity.md`](ai/runtime-discovery-registry-capacity.md)
+12. [`ai/mcp-server-control-plane.md`](ai/mcp-server-control-plane.md)
+13. [`ai/runtime-instance-provider-model.md`](ai/runtime-instance-provider-model.md)
+14. [`ai/http-runtime-provider.md`](ai/http-runtime-provider.md)
+15. [`ai/grpc-runtime-provider.md`](ai/grpc-runtime-provider.md)
+16. [`ai/mcp-production-runtime-scenario-framework.md`](ai/mcp-production-runtime-scenario-framework.md)
+17. [`ai/provider-agnostic-process-host-recovery.md`](ai/provider-agnostic-process-host-recovery.md)
+18. [`ai/runtime-process-crash-recovery.md`](ai/runtime-process-crash-recovery.md)
+19. [`ai/runtime-recovery-forensics.md`](ai/runtime-recovery-forensics.md)
+20. [`ai/multi-tenant-runtime-crash-isolation.md`](ai/multi-tenant-runtime-crash-isolation.md)
+21. [`ai/control-plane-ledger-causal-chain.md`](ai/control-plane-ledger-causal-chain.md)
+22. [`ai/recovery-replay-ledger-trace-proof.md`](ai/recovery-replay-ledger-trace-proof.md)
+23. [`ai/shared-controller-usage.md`](ai/shared-controller-usage.md)
+24. [`ai/shared-queue-pump-and-worker-capacity.md`](ai/shared-queue-pump-and-worker-capacity.md)
+25. [`ai/distributed-execution.md`](ai/distributed-execution.md)
+26. [`ai/execution-control-state.md`](ai/execution-control-state.md)
+27. [`ai/execution-correlated-ledger.md`](ai/execution-correlated-ledger.md)
+28. [`ai/observability-tracing.md`](ai/observability-tracing.md)
+29. [`ai/runtime-metrics.md`](ai/runtime-metrics.md)
+30. [`ai/replay-and-audit.md`](ai/replay-and-audit.md)
+31. [`ai/testing-strategy.md`](ai/testing-strategy.md)
+32. [`runtime-internals.md`](runtime-internals.md)
+33. [`roadmap.md`](roadmap.md)
 
 This path gives the current architecture, configuration model, RBAC/context propagation model, tenant isolation model, control-plane/runtime split, extension model, technical reference, and next planned improvements.
 
@@ -344,6 +351,38 @@ This document explains:
 - shared runtime controller foundations
 - RBAC execution-context restoration before background admission/dispatch
 - tenant-aware runtime visibility and dispatch
+
+### [`ai/runtime-pool-architecture.md`](ai/runtime-pool-architecture.md)
+
+Professional reference for the opt-in Runtime Pool hosting model.
+
+It documents:
+
+- `PoolId`, `HostId`, `RuntimeInstanceId`, and `RouteId`;
+- real process-host child lifecycle;
+- stable HTTP and gRPC endpoints;
+- exact route resolution and forwarding leases;
+- graceful draining;
+- targeted A1-to-A4 replacement;
+- compatibility with historical Process and Kubernetes modes;
+- Kubernetes Runtime Pool and Redis Cluster direction.
+
+### [`ai/runtime-pool-failure-recovery.md`](ai/runtime-pool-failure-recovery.md)
+
+Professional reference for exact failure and claimed recovery inside a Runtime Pool.
+
+It documents:
+
+- first-class failure observations;
+- exact capacity suppression;
+- suppression-aware routing;
+- A1-only assigned-work enumeration;
+- deterministic inventory fingerprints;
+- atomic claim and lease semantics;
+- existing ownership/transition service reuse;
+- in-flight `ExecutionId` preservation;
+- local-queued `SharedRunId` redispatch;
+- sibling isolation and current distributed-coordination boundaries.
 
 ### [`ai/runtime-discovery-registry-capacity.md`](ai/runtime-discovery-registry-capacity.md)
 

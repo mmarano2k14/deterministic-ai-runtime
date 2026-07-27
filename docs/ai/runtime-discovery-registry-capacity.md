@@ -1,6 +1,6 @@
 # Runtime Discovery, Registry, and Capacity
 
-Status: Implemented foundation / validated for MCP, Redis, local runtime pools, Redis-backed scale-out request lifecycle, local runtime scale-out, fulfilled-run requeue, HTTP pooled runtime scenarios, process-host HTTP and gRPC runtime crash recovery, gRPC process-host scale-out and dispatch, unsafe runtime capacity suppression, fulfilled replacement capacity visibility, and multi-tenant runtime isolation across shared, dedicated, and hybrid tenant modes, including Kubernetes control-plane publication after Pod and transport readiness.
+Status: Implemented foundation / validated for MCP, Redis registry and capacity, local and provider scale-out, historical HTTP/gRPC Process and Kubernetes modes, opt-in process-host Runtime Pools, exact route registration, forwarding leases, targeted child replacement, first-class failure journaling, exact capacity suppression, deterministic recovery claims, and tenant-aware runtime isolation.
 
 This document describes the runtime discovery, registry, and capacity model used by the Deterministic AI Runtime control plane.
 
@@ -12,6 +12,8 @@ This document complements:
 - [Runtime Control Plane](runtime-control-plane.md)
 - [Multi-Tenant Control Plane Isolation](multi-tenant-control-plane-isolation.md)
 - [MCP Server as Runtime Control Plane](mcp-server-control-plane.md)
+- [Runtime Pool Architecture](runtime-pool-architecture.md)
+- [Runtime Pool Failure Recovery](runtime-pool-failure-recovery.md)
 - [Runtime Instance Provider Model](runtime-instance-provider-model.md)
 - [Kubernetes Runtime Host Provider](kubernetes-runtime-host-provider.md)
 - [HTTP Runtime Provider](http-runtime-provider.md)
@@ -249,6 +251,47 @@ host-abc123:tenant-b-runtime-1
 ```
 
 That dynamically created runtime instance must register and publish capacity before admission can dispatch the requeued run to it.
+
+---
+
+## Runtime Pool Identity and Route Authority
+
+The Runtime Pool extends runtime identity without replacing the existing registry and capacity model.
+
+```text
+PoolId
+    logical reusable capacity group
+
+HostId
+    immutable process-host incarnation
+    future Kubernetes Pod UID boundary
+
+RuntimeInstanceId
+    independently selectable capacity
+
+RouteId
+    immutable transport-route incarnation
+```
+
+A stable pool endpoint is not a dispatch target by itself. The dispatch target remains the exact `RuntimeInstanceId`.
+
+The route registry binds:
+
+```text
+PoolId + HostId + RuntimeInstanceId + TransportName
+    -> RouteId + TransportEndpoint + RouteStatus
+```
+
+Route status can distinguish:
+
+- ready;
+- draining;
+- missing;
+- transport mismatch;
+- host or pool mismatch;
+- capacity suppressed.
+
+A replacement runtime receives a fresh `RuntimeInstanceId` and `RouteId`, while healthy siblings retain their identities.
 
 ---
 
@@ -887,6 +930,34 @@ safe tenant capacity remains visible and unaffected
 ```
 
 Recovery is complete only after the recovered work has converged and the proof surface is available through ledger, trace, replay, and recovery forensics.
+
+---
+
+## Runtime Pool Capacity Safety
+
+Runtime Pool failure safety is maintained separately from route existence.
+
+When A1 fails:
+
+```text
+failure observation A1
+    -> capacity suppression A1
+    -> route removal A1
+```
+
+The suppression persists for the immutable A1 identity even after its route is gone.
+
+This allows the stable endpoint to return:
+
+```text
+runtime-pool-capacity-suppressed
+```
+
+instead of reducing the failure to a generic missing route.
+
+Safety is checked before and after route-lease acquisition to prevent transport invocation during a concurrent failure race.
+
+Healthy A2/A3 capacity remains available.
 
 ---
 

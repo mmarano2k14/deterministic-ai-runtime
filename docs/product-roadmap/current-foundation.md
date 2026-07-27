@@ -211,6 +211,24 @@ Explicit identity is the foundation for auditability and distributed observabili
 
 ---
 
+## Runtime Pool Identity Foundation
+
+The current foundation now distinguishes hosting identity from execution-capacity identity.
+
+| Identifier | Current responsibility |
+|---|---|
+| `PoolId` | Logical reusable capacity group. |
+| `HostId` | Immutable process-host incarnation; future Kubernetes Pod UID boundary. |
+| `RuntimeInstanceId` | Independently selectable runtime capacity. |
+| `RouteId` | Immutable route incarnation. |
+| `FailureId` | Exact runtime failure observation. |
+| `ClaimId` | Deterministic recovery claim. |
+| `LeaseId` | Active claim acquisition generation. |
+
+This identity model enables several runtimes inside one host without making failure or recovery ambiguous.
+
+---
+
 ## 5. Execution vs Run
 
 The architecture separates `Execution` from `Run`.
@@ -838,6 +856,35 @@ This foundation is important because a commercial product may need to support se
 - managed cloud deployment;
 - distributed runtime clusters;
 - dedicated customer environments.
+
+---
+
+## Process-Host Runtime Pool Foundation
+
+The process-host Runtime Pool is now part of the implemented foundation.
+
+It provides:
+
+- several real external runtime processes under one host;
+- exact child membership and readiness;
+- stable HTTP and gRPC service boundaries;
+- immutable route identities;
+- forwarding leases and drain;
+- targeted replacement;
+- first-class failure journal;
+- exact capacity suppression;
+- deterministic assigned-work claim;
+- claimed recovery transitions.
+
+The implementation is opt-in and preserves existing hosting modes.
+
+The next infrastructure phase is Kubernetes Runtime Pool Pods, followed by hierarchical capacity selection and Redis Cluster compatibility.
+
+See:
+
+- [`../ai/runtime-pool-architecture.md`](../ai/runtime-pool-architecture.md)
+- [`../ai/runtime-pool-failure-recovery.md`](../ai/runtime-pool-failure-recovery.md)
+- [`runtime-pool-roadmap.md`](runtime-pool-roadmap.md)
 
 ---
 

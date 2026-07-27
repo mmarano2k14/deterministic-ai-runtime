@@ -237,7 +237,7 @@ namespace Multiplexed.AI.Tests.Integration.ControlPlane.RuntimeInstances.HostMan
 
                 Assert.Equal(
                     AiRuntimePoolHttpRoutingFailureReasons
-                        .RouteNotFound,
+                        .CapacitySuppressed,
                     formerA1.FailureReason);
 
                 var afterFailureA2 =

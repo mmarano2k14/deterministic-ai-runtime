@@ -42,6 +42,12 @@
             "runtime-pool-runtime-instance-id-missing";
 
         /// <summary>
+        /// The exact runtime capacity has been suppressed as unsafe.
+        /// </summary>
+        public const string CapacitySuppressed =
+            "runtime-pool-capacity-suppressed";
+
+        /// <summary>
         /// Exact gRPC forwarding failed.
         /// </summary>
         public const string ForwardingFailed =

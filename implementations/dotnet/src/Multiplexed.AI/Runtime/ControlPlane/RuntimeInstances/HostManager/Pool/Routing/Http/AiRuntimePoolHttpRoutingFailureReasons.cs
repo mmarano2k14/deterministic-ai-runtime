@@ -36,6 +36,12 @@
             "runtime-pool-route-draining";
 
         /// <summary>
+        /// The exact runtime capacity has been suppressed as unsafe.
+        /// </summary>
+        public const string CapacitySuppressed =
+            "runtime-pool-capacity-suppressed";
+
+        /// <summary>
         /// The exact HTTP child transport failed.
         /// </summary>
         public const string ForwardingFailed =

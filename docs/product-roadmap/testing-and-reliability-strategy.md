@@ -673,103 +673,48 @@ Each guarantee should map to tests.
 
 # Productization Roadmap
 
-## Step 1 — Organize Test Categories
+## Runtime Pool Reliability Evidence
 
-Improve structure around:
+The Runtime Pool foundation is covered by a dedicated validation ladder.
 
-- runtime tests;
-- replay tests;
-- ledger tests;
-- policy tests;
-- MCP tests;
-- provider tests;
-- shared queue tests;
-- retention tests;
-- observability tests.
+```text
+identity
+    -> lifecycle
+    -> route registry
+    -> HTTP/gRPC forwarding
+    -> real child failure
+    -> exact suppression
+    -> exact work inventory
+    -> deterministic claim
+    -> claimed transition
+    -> historical regression
+```
 
-## Step 2 — Document Test Execution
+Validated final gates:
 
-Add documentation for:
+| Gate | Result |
+|---|---|
+| Real process-host pool replacement | Green |
+| Stable HTTP pool routing | Green |
+| Stable gRPC pool routing | Green |
+| Exact claimed recovery | Green |
+| Historical Process HTTP | P10 green |
+| Historical Process gRPC | P10 green |
+| Existing Kubernetes HTTP | P5 green |
+| Existing Kubernetes gRPC | P5 green |
 
-- running all tests;
-- running integration tests;
-- running Docker-backed tests;
-- running MCP tests;
-- running manual stress tests;
-- expected environment variables;
-- troubleshooting common failures.
-
-## Step 3 — Strengthen Distributed Tests
-
-Improve tests for:
-
-- multi-instance dispatch;
-- multi-worker execution;
-- no double dispatch;
-- stale claims;
-- provider failure;
-- cancellation propagation;
-- replay after distributed execution.
-
-## Step 4 — Strengthen Lifecycle Tests
-
-Improve tests for:
-
-- pause/resume/cancel;
-- retry delay;
-- waiting-for-input direction;
-- finalization race direction;
-- retention after finalization;
-- eviction skipped while active;
-- compaction after snapshot.
-
-## Step 5 — Improve Test Visibility
-
-Prepare:
-
-- test summary documentation;
-- CI test grouping direction;
-- reliability badge direction;
-- manual stress test reports;
-- demo-ready test results.
+The Kubernetes gates are regression evidence for the existing hosting modes. Kubernetes Runtime Pool behavior remains planned.
 
 ---
 
-# Planned Improvements
+## Next Reliability Priorities
 
-The testing and reliability layer should continue improving through:
+1. Kubernetes Runtime Pool Pod lifecycle tests;
+2. real Pod deletion with host-wide suppression;
+3. distributed recovery claim durability;
+4. multi-control-plane claim arbitration;
+5. hierarchical runtime/Pod/node capacity tests;
+6. Redis Cluster key-slot and failover tests;
+7. longer mixed-mode soak and chaos validation;
+8. production telemetry for pool, host, route, failure, suppression, and claim state.
 
-- better test organization;
-- stronger integration tests;
-- more distributed runtime tests;
-- more provider/transport tests;
-- more MCP control tests;
-- more retention lifecycle tests;
-- more observability tests;
-- chaos-style test scenarios;
-- performance/load test direction;
-- public documentation for test execution;
-- CI grouping direction;
-- reliability reports.
-
-These are hardening and productization steps.
-
-They build on the existing reliability foundation.
-
----
-
-# Final Statement
-
-Testing and reliability are core to the Deterministic AI Runtime Platform.
-
-The platform is designed to solve hard production AI execution problems.
-
-That requires proof.
-
-The runtime must prove deterministic execution, replay, audit, decision recording, policy governance, distributed worker safety, provider dispatch, runtime control, retention lifecycle safety, and observability through tests.
-
-A production AI runtime should not only have a strong architecture.
-
-It should prove that architecture under failure, concurrency, replay, cancellation, policy, retention, and distributed execution.
-
-The current process-host campaign now provides that proof through exact inventories, durable crash boundaries, real process kills, HTTP/gRPC validation, and safe-tenant controls.

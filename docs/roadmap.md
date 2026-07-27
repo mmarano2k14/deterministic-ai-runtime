@@ -331,6 +331,48 @@ The detailed technical reference is:
 
 ---
 
+## Phase 1E — Runtime Pool Architecture and Exact Failure Recovery
+
+Status: **Completed for process-host Runtime Pools**
+
+Delivered:
+
+- first-class `PoolId`, `HostId`, membership, draining, and independent `RuntimeInstanceId` identities;
+- process-host Runtime Pool Manager with several real `RuntimeInstanceOnly` child processes;
+- stable protocol-neutral route registry with immutable `RouteId`;
+- forwarding leases and graceful route draining;
+- stable HTTP pool endpoint reusing existing command DTOs;
+- stable gRPC pool endpoint reusing the existing generated service and envelopes;
+- exact routing with no sibling fallback;
+- real A1 failure and A4 targeted replacement;
+- first-class `FailureId` journal;
+- exact capacity suppression;
+- A1-only assigned-work enumeration;
+- deterministic inventory fingerprints;
+- atomic `ClaimId` recovery authority;
+- unique active `LeaseId` generations;
+- stale-lease rejection;
+- claimed recovery through existing ownership and transition services.
+
+Validated regressions:
+
+```text
+Process HTTP P10
+Process gRPC P10
+Kubernetes HTTP P5
+Kubernetes gRPC P5
+```
+
+The Kubernetes regression validates compatibility with existing modes. Kubernetes Runtime Pool Pods remain a later phase.
+
+See:
+
+- [`ai/runtime-pool-architecture.md`](ai/runtime-pool-architecture.md)
+- [`ai/runtime-pool-failure-recovery.md`](ai/runtime-pool-failure-recovery.md)
+- [`product-roadmap/runtime-pool-roadmap.md`](product-roadmap/runtime-pool-roadmap.md)
+
+---
+
 ## Phase 2 — Real Enterprise Sample
 
 **Status:** Planned
@@ -448,6 +490,39 @@ replay / ledger / trace proof
 ```
 
 Future Kubernetes work should therefore reuse the same provider scale-out and recovery boundaries already validated locally.
+
+---
+
+## Phase 4B — Kubernetes Runtime Pool and Hierarchical Capacity
+
+Status: **Planned**
+
+This phase extends the completed process-host Runtime Pool foundation into Kubernetes without changing the existing one-runtime-per-Pod mode.
+
+Planned deliverables:
+
+1. new `KubernetesPool` host creation mode;
+2. one Pool Manager per Pod;
+3. several independently registered runtimes per Pod;
+4. `HostId` mapped from Kubernetes Pod UID;
+5. stable pool endpoint per Pod;
+6. atomic suppression of every runtime belonging to a failed Pod UID;
+7. targeted recovery scoped to failed runtime identities;
+8. warm-runtime-first capacity selection;
+9. existing-Pod-before-new-Pod scale-out;
+10. node autoscaling only after Pod capacity is exhausted;
+11. durable distributed recovery claims;
+12. Redis Cluster key-slot and failover validation.
+
+The order is intentional:
+
+```text
+process pool correctness
+    -> Kubernetes pool lifecycle
+    -> Pod failure proof
+    -> hierarchical capacity
+    -> Redis Cluster compatibility
+```
 
 ---
 
@@ -692,6 +767,28 @@ All roadmap work should respect these principles:
 - do not map tenants one-to-one to processes or pods in the production capacity model
 - distinguish local saturation from protocol correctness
 - prefer durable crash preconditions over elapsed-time test assumptions
+
+---
+
+## Runtime Pool Delivery Status
+
+| Workstream | Status |
+|---|---|
+| Process-host pool identity | Completed |
+| Process-host pool lifecycle | Completed |
+| Stable HTTP exact routing | Completed |
+| Stable gRPC exact routing | Completed |
+| Targeted child replacement | Completed |
+| Exact failure journal and suppression | Completed |
+| Exact assigned-work enumeration | Completed |
+| Deterministic recovery claim | Completed |
+| Claimed recovery transitions | Completed |
+| Real process-host final proof | Completed |
+| Existing Process/Kubernetes regression | Completed |
+| Kubernetes Runtime Pool Pod | Planned |
+| Pod-wide failure proof | Planned |
+| Hierarchical capacity selection | Planned |
+| Redis Cluster compatibility | Planned |
 
 ---
 

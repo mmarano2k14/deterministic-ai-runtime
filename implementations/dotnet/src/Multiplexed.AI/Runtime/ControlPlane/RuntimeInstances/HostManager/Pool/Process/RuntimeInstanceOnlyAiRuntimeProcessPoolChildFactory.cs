@@ -2,6 +2,7 @@
 using System.Threading;
 using System.Threading.Tasks;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Readiness;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Failure;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Routing;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Process
@@ -22,6 +23,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
             processLauncher;
         private readonly IAiRuntimeInstanceReadinessWaiter readinessWaiter;
         private readonly IAiRuntimePoolRouteRegistry? routeRegistry;
+        private readonly IAiRuntimePoolFailureObserver? failureObserver;
 
         /// <summary>
         /// Initializes a child factory without route lifecycle binding.
@@ -67,11 +69,38 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
             : this(
                 planFactory,
                 processLauncher,
+                readinessWaiter,
+                routeRegistry,
+                failureObserver: null)
+        {
+        }
+
+        /// <summary>
+        /// Initializes a child factory with exact route and failure lifecycle binding.
+        /// </summary>
+        /// <param name="planFactory">The RuntimeInstanceOnly launch plan factory.</param>
+        /// <param name="processLauncher">The operating-system child-process launcher.</param>
+        /// <param name="readinessWaiter">The provider-neutral runtime readiness waiter.</param>
+        /// <param name="routeRegistry">The exact local runtime route registry.</param>
+        /// <param name="failureObserver">
+        /// The observer that records exact unexpected child failures.
+        /// </param>
+        public RuntimeInstanceOnlyAiRuntimeProcessPoolChildFactory(
+            IAiRuntimeProcessPoolRuntimeInstanceStartPlanFactory planFactory,
+            IAiRuntimeProcessPoolChildProcessLauncher processLauncher,
+            IAiRuntimeInstanceReadinessWaiter readinessWaiter,
+            IAiRuntimePoolRouteRegistry routeRegistry,
+            IAiRuntimePoolFailureObserver? failureObserver)
+            : this(
+                planFactory,
+                processLauncher,
                 readinessWaiter)
         {
             this.routeRegistry =
                 routeRegistry
                 ?? throw new ArgumentNullException(nameof(routeRegistry));
+
+            this.failureObserver = failureObserver;
         }
 
         /// <inheritdoc />
@@ -185,7 +214,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
                 return new AiRuntimeProcessPoolRoutedChild(
                     child,
                     this.routeRegistry,
-                    route);
+                    route,
+                    this.failureObserver);
             }
             catch
             {

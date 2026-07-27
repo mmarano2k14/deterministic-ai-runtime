@@ -4,7 +4,15 @@ using System.Linq;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Recovery.Transition;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue;
+using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Ownership;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Capacity;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Failure;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Process;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Recovery.AssignedWork;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Recovery.Claims;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Recovery.Execution;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Routing;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Routing.Grpc;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Routing.Http;
@@ -78,12 +86,81 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
             services.AddLogging();
 
             services.TryAddSingleton<
+                InMemoryAiRuntimePoolFailureJournal>();
+
+            services.TryAddSingleton<
+                IAiRuntimePoolFailureReader>(
+                serviceProvider =>
+                    serviceProvider.GetRequiredService<
+                        InMemoryAiRuntimePoolFailureJournal>());
+
+            services.TryAddSingleton<
+                IAiRuntimePoolCapacitySafetyRegistry,
+                InMemoryAiRuntimePoolCapacitySafetyRegistry>();
+
+            services.TryAddSingleton<
+                IAiRuntimePoolCapacitySafetyWriter>(
+                serviceProvider =>
+                    serviceProvider.GetRequiredService<
+                        IAiRuntimePoolCapacitySafetyRegistry>());
+
+            services.TryAddSingleton<
+                IAiRuntimePoolCapacitySafetyReader>(
+                serviceProvider =>
+                    serviceProvider.GetRequiredService<
+                        IAiRuntimePoolCapacitySafetyRegistry>());
+
+            services.TryAddSingleton<
+                IAiRuntimePoolFailureObserver>(
+                serviceProvider =>
+                    new AiRuntimePoolFailureSafetyObserver(
+                        serviceProvider.GetRequiredService<
+                            InMemoryAiRuntimePoolFailureJournal>(),
+                        serviceProvider.GetRequiredService<
+                            IAiRuntimePoolCapacitySafetyWriter>()));
+
+            services.TryAddSingleton<
                 IAiRuntimePoolRouteRegistry,
                 InMemoryAiRuntimePoolRouteRegistry>();
 
             services.TryAddSingleton<
-                IAiRuntimePoolRouteForwarder,
-                AiRuntimePoolRouteForwarder>();
+                IAiRuntimePoolRouteForwarder>(
+                serviceProvider =>
+                    new AiRuntimePoolRouteForwarder(
+                        serviceProvider.GetRequiredService<
+                            IAiRuntimePoolRouteRegistry>(),
+                        serviceProvider.GetRequiredService<
+                            IAiRuntimePoolCapacitySafetyReader>()));
+
+            services.TryAddSingleton<
+                IAiRuntimePoolAssignedWorkEnumerator>(
+                serviceProvider =>
+                    new AiRuntimePoolAssignedWorkEnumerator(
+                        serviceProvider.GetRequiredService<
+                            IAiRuntimePoolFailureReader>(),
+                        serviceProvider.GetRequiredService<
+                            IAiRuntimePoolCapacitySafetyReader>(),
+                        serviceProvider.GetRequiredService<
+                            IAiRuntimeRunExecutionIndex>()));
+
+            services.TryAddSingleton<
+                IAiRuntimePoolRecoveryClaimStore,
+                InMemoryAiRuntimePoolRecoveryClaimStore>();
+
+            services.TryAddSingleton<
+                IAiRuntimePoolRecoveryClaimCoordinator,
+                AiRuntimePoolRecoveryClaimCoordinator>();
+
+            services.TryAddSingleton<
+                IAiRuntimePoolClaimedRecoveryExecutor>(
+                serviceProvider =>
+                    new AiRuntimePoolClaimedRecoveryExecutor(
+                        serviceProvider.GetRequiredService<
+                            IAiRuntimePoolRecoveryClaimStore>(),
+                        serviceProvider.GetRequiredService<
+                            IAiSharedRunOwnershipResolver>(),
+                        serviceProvider.GetRequiredService<
+                            IAiRuntimeExecutionRecoveryTransitionService>()));
 
             services.AddGrpc();
 
@@ -142,7 +219,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
                         serviceProvider.GetRequiredService<
                             Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Readiness.IAiRuntimeInstanceReadinessWaiter>(),
                         serviceProvider.GetRequiredService<
-                            IAiRuntimePoolRouteRegistry>()));
+                            IAiRuntimePoolRouteRegistry>(),
+                        serviceProvider.GetRequiredService<
+                            IAiRuntimePoolFailureObserver>()));
 
             services.AddSingleton<IAiRuntimeProcessPoolManager>(
                 serviceProvider =>

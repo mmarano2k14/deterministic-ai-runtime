@@ -6,6 +6,190 @@ This project follows a deterministic runtime and observability model designed fo
 
 ---
 
+## 1.0.7.8 - 2026-07-27 — Exact Runtime Pool Failure Recovery
+
+### Added
+
+- Added first-class runtime-pool failure observations containing:
+  - `FailureId`
+  - `PoolId`
+  - `HostId`
+  - `RuntimeInstanceId`
+  - `RouteId`
+  - failure scope
+  - failure kind
+  - exit code
+  - observation timestamp
+- Added typed failure scopes for exact runtime-instance failures and future host-wide failures.
+- Added typed failure kinds for unexpected process exits and lifecycle observer faults.
+- Added a thread-safe failure journal with idempotent recording, conflict detection, and lookup by failure, host, or runtime identity.
+- Added exact capacity suppressions containing:
+  - `FailureId`
+  - `PoolId`
+  - `HostId`
+  - `RuntimeInstanceId`
+  - `RouteId`
+  - suppression timestamp
+- Added a thread-safe capacity-safety registry with immutable runtime-instance suppression.
+- Added failure-to-suppression projection through `AiRuntimePoolFailureSafetyObserver`.
+- Added the `Suppressed` route-resolution status.
+- Added the stable transport failure reason:
+
+  ```text
+  runtime-pool-capacity-suppressed
+  ```
+
+- Added protocol-neutral capacity checks before and after forwarding-lease acquisition.
+- Added read-only assigned-work enumeration through the existing:
+
+  ```text
+  IAiRuntimeRunExecutionIndex.ListRecoverableByRuntimeInstanceAsync(...)
+  ```
+
+- Added exact assigned-work inventories containing:
+  - failure, pool, host, runtime, and route authority
+  - `LocalRunId`
+  - `ExecutionId`
+  - `SharedRunId`
+  - `TenantId`
+  - `TenantGroupId`
+  - indexed status
+  - recovery candidate kind
+  - creation timestamp
+- Added deterministic candidate ordering:
+  - `InFlight`
+  - `LocalQueued`
+  - `OtherRecoverable`
+- Added runtime-boundary validation rejecting sibling work returned for the failed runtime.
+- Added deterministic inventory fingerprints based on first-class candidate identity.
+- Added atomic recovery claims containing:
+  - `ClaimId`
+  - `FailureId`
+  - `PoolId`
+  - `HostId`
+  - `RuntimeInstanceId`
+  - `RouteId`
+  - inventory fingerprint
+  - candidate count
+  - coordinator identity
+  - claim timestamp
+- Added one active recovery claim per exact failure inventory.
+- Added concurrent claim arbitration through `Acquired` and `AlreadyClaimed`.
+- Added private release authority through `IAiRuntimePoolRecoveryClaimLease`.
+- Added unique `LeaseId` values for every active claim acquisition.
+- Added active-lease validation preventing stale leases from authorizing later recovery attempts.
+- Added claimed recovery execution through the existing:
+  - `IAiSharedRunOwnershipResolver`
+  - `IAiRuntimeExecutionRecoveryTransitionService`
+- Added claimed recovery handling for:
+  - in-flight work resuming the same durable `ExecutionId`
+  - local-queued work performing durable redispatch from its `SharedRunId`
+  - unsupported recoverable states returning a deterministic no-mutation outcome
+- Added exact ownership-boundary validation covering runtime, local run, execution, shared run, tenant, and tenant-group identity.
+- Added transition-result validation preventing recovery from returning another runtime or run identity.
+- Added bounded child-process `stdout` and `stderr` diagnostics for unexpected exits before readiness.
+- Added real process-host failure-recovery proofs using external `RuntimeInstanceOnly` child processes.
+- Added fixture-owned deterministic recovery boundaries for final infrastructure proof assertions.
+
+### Changed
+
+- Changed unexpected process completion ordering to:
+  1. record the exact failure observation
+  2. suppress the exact failed runtime capacity
+  3. remove the exact route
+  4. expose child completion to the pool manager
+  5. allow replacement capacity to start
+- Changed requested child shutdown so it creates no failure observation or capacity suppression.
+- Changed HTTP and gRPC routing so suppressed capacity is rejected before transport invocation.
+- Changed former-runtime behavior from:
+
+  ```text
+  runtime-pool-route-not-found
+  ```
+
+  to:
+
+  ```text
+  runtime-pool-capacity-suppressed
+  ```
+
+- Changed route forwarding to recheck capacity safety after acquiring the forwarding lease.
+- Changed recovery authority so enumeration requires exact agreement between failure observation, suppression, pool, host, runtime, and route identity.
+- Changed recovery coordination so concurrent readers may enumerate, but only one active lease can authorize mutation.
+- Changed recovery execution so the claim remains held after transitions until explicitly released by the caller.
+- Changed transition failures so they do not silently release recovery authority.
+- Changed claim release so disposal is idempotent and scoped to the exact active lease incarnation.
+- Changed repeated acquisition after release so deterministic `ClaimId` is preserved while a fresh `LeaseId` is issued.
+- Extended the opt-in `AddAiRuntimeProcessPool(...)` composition with:
+  - failure journal services
+  - capacity-safety services
+  - assigned-work enumeration
+  - deterministic recovery claims
+  - claimed recovery execution
+- Preserved the existing runtime-run index, ownership resolver, recovery transition service, and durable recovery semantics.
+- Preserved historical Process and Kubernetes modes without enabling Runtime Pool recovery implicitly.
+- Kept host-wide and Pod-wide suppression reserved for the Kubernetes Pool lifecycle boundary.
+- Kept correctness authority in typed fields rather than diagnostic metadata.
+
+### Validated
+
+- Proved that an unexpected A1 process exit creates exactly one A1 failure observation.
+- Proved that requested shutdown creates no false failure observation.
+- Proved that failure is recorded before route removal and before manager-visible completion.
+- Proved that A1 suppression does not contaminate A2 or A3.
+- Proved that capacity suppression is idempotent under concurrency.
+- Proved that one immutable `RuntimeInstanceId` cannot be rebound to another failure or route.
+- Proved that HTTP and gRPC reject suppressed A1 before transport invocation.
+- Proved that A2 and A3 remain independently routable while A1 is suppressed.
+- Proved that the post-lease safety check closes the route-lookup race.
+- Proved that exact A1 work enumeration excludes A2 and A3 work.
+- Proved deterministic ordering: in-flight first, local-queued second, other recoverable states last.
+- Proved that `TenantId`, `TenantGroupId`, `SharedRunId`, `LocalRunId`, and `ExecutionId` remain attached to exact candidates.
+- Proved that enumeration performs no recovery mutation.
+- Proved that missing suppression rejects enumeration.
+- Proved that sibling runtime entries are rejected as boundary violations.
+- Proved that 20 concurrent coordinators produce one acquired lease and nineteen already-claimed results.
+- Proved deterministic `ClaimId` generation from exact authority and inventory.
+- Proved that candidate order participates in the recovery fingerprint.
+- Proved that diagnostic metadata does not participate in recovery authority.
+- Proved that one `FailureId` cannot be rebound to another inventory.
+- Proved idempotent claim release and reacquisition after release.
+- Proved that a released lease generation cannot authorize a later claim generation.
+- Proved that an `AlreadyClaimed`, released, or stale lease cannot execute transitions.
+- Proved that ownership resolving to sibling A2 is rejected before mutation.
+- Proved that a transition exception keeps the exact claim active.
+- Proved that in-flight recovery preserves the same durable `ExecutionId`.
+- Proved that local-queued recovery preserves the exact `SharedRunId` and carries no `ExecutionId`.
+- Proved that unsupported recoverable states produce a deterministic no-mutation outcome.
+- Proved the complete real process-host chain:
+
+  ```text
+  kill A1
+      -> journal A1
+      -> suppress A1
+      -> remove A1 route
+      -> preserve A2/A3
+      -> start safe A4
+      -> enumerate A1 work only
+      -> acquire one claim
+      -> resume one in-flight execution
+      -> redispatch two local-queued runs
+      -> release the claim explicitly
+  ```
+
+- Proved that A2 and A3 preserve their original `RuntimeInstanceId` and `RouteId`.
+- Proved that A4 receives a fresh `RuntimeInstanceId` and fresh `RouteId`.
+- Proved that A2, A3, and A4 receive no failure observation or capacity suppression.
+- Proved that sibling A2/A3 control work never enters A1 recovery.
+- Validated historical Process Host HTTP scenarios through P10.
+- Validated historical Process Host gRPC scenarios through P10.
+- Validated Kubernetes HTTP scenarios through P5.
+- Validated Kubernetes gRPC scenarios through P5.
+- Confirmed that existing Process and Kubernetes hosting modes remain free of Runtime Pool recovery regressions.
+
+
+---
+
 ## 1.0.7.7 - 2026-07-26 — Exact Runtime Pool Transport Routing
 
 ### Added

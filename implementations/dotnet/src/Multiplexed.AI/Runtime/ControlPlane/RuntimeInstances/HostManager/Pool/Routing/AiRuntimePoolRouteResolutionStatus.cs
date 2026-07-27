@@ -33,6 +33,11 @@
         /// <summary>
         /// The exact route exists but is draining and cannot accept new requests.
         /// </summary>
-        Draining = 5
+        Draining = 5,
+
+        /// <summary>
+        /// The exact runtime instance has been suppressed as unsafe capacity.
+        /// </summary>
+        Suppressed = 6
     }
 }

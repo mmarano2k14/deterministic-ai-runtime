@@ -1129,6 +1129,44 @@ This improves confidence before deploying to a real distributed environment.
 
 ---
 
+## Process-Host Runtime Pool and Exact Recovery
+
+The platform now includes an implemented process-host Runtime Pool foundation.
+
+It already provides:
+
+- first-class `PoolId` and immutable `HostId`;
+- several independently registered `RuntimeInstanceId` children;
+- immutable `RouteId`;
+- real external child-process lifecycle;
+- stable HTTP and gRPC endpoints;
+- exact routing and forwarding leases;
+- graceful draining;
+- targeted replacement;
+- exact runtime failure journal;
+- exact capacity suppression;
+- exact assigned-work enumeration;
+- deterministic inventory fingerprint;
+- atomic recovery claim;
+- active `LeaseId` generation;
+- stale-lease rejection;
+- claimed in-flight and local-queued recovery through existing services.
+
+Validated compatibility:
+
+```text
+Process HTTP P10
+Process gRPC P10
+Kubernetes HTTP P5
+Kubernetes gRPC P5
+```
+
+The existing Kubernetes mode remains one runtime per Pod. Kubernetes Runtime Pool Pods remain roadmap work.
+
+See [`runtime-pool-roadmap.md`](runtime-pool-roadmap.md).
+
+---
+
 ## 31. Kubernetes-Ready Architecture Direction
 
 The architecture is already moving toward Kubernetes-ready runtime execution.

@@ -1,6 +1,6 @@
 # Provider-Agnostic Process-Host Recovery
 
-Status: Implemented / validated for HTTP and gRPC process-host runtime crash recovery using real `RuntimeInstanceOnly` processes, shared provider-neutral scenario base, tenant-scoped recovery, in-flight DAG resume, local-queued redispatch, replay / ledger / trace validation, and safe-tenant non-impact proof.
+Status: Implemented / validated for historical HTTP and gRPC process-host recovery and for the opt-in process-host Runtime Pool recovery chain: exact child failure journaling, capacity suppression, A1-only assigned-work enumeration, deterministic claim arbitration, claimed transitions, targeted A4 replacement, and sibling isolation.
 
 This document describes the provider-agnostic recovery model used by the Deterministic AI Runtime when a real runtime process disappears.
 
@@ -75,6 +75,48 @@ Runtime Host Manager
 ```
 
 This separation is the reason the same process-host recovery tests can be reused for HTTP and gRPC.
+
+---
+
+## Runtime Pool Recovery Model
+
+The Runtime Pool adds an exact local recovery authority around the existing provider-neutral transition boundary.
+
+```text
+real A1 child exits
+    -> FailureId for A1
+    -> suppress A1 capacity
+    -> remove A1 route
+    -> create A4
+    -> enumerate A1 work
+    -> acquire one deterministic claim
+    -> call existing ownership resolver
+    -> call existing recovery transition service
+```
+
+The pool-specific layer does not duplicate in-flight resume or local-queued redispatch logic.
+
+It supplies exact authority:
+
+```text
+FailureId
+PoolId
+HostId
+RuntimeInstanceId
+RouteId
+InventoryFingerprint
+ClaimId
+LeaseId
+```
+
+The existing transition boundary remains responsible for durable execution and shared-run recovery semantics.
+
+A2 and A3 are excluded by first-class runtime identity, not by convention or log filtering.
+
+See:
+
+- [Runtime Pool Architecture](runtime-pool-architecture.md)
+- [Runtime Pool Failure Recovery](runtime-pool-failure-recovery.md)
 
 ---
 
@@ -563,6 +605,23 @@ Replay / ledger / trace / forensics proof is transport-neutral.
 ```
 
 This is a major architecture milestone because it shows the runtime provider model is real, not just an HTTP-specific path renamed as a provider abstraction.
+
+---
+
+## Runtime Pool Scope and Remaining Work
+
+The process-host Runtime Pool proof establishes child-local failure isolation inside one live pool host.
+
+It does not yet prove:
+
+- complete pool-host loss;
+- Kubernetes Pod-wide suppression;
+- distributed claim ownership across control planes;
+- durable failure/safety/claim stores;
+- Redis Cluster failover;
+- hierarchical runtime/Pod/node scale-out.
+
+Those boundaries are documented in the Runtime Pool roadmap.
 
 ---
 
