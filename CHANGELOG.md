@@ -6,6 +6,378 @@ This project follows a deterministic runtime and observability model designed fo
 
 ---
 
+## 1.0.7.9 - 2026-07-28 — Kubernetes Runtime Pool 
+
+This changelog records the additive implementation of Kubernetes Runtime Pool hosting in chronological delivery order.
+
+The implementation introduces one Kubernetes Pod hosting one Runtime Pool Manager and several independently registered `RuntimeInstanceOnly` child processes. Pod-wide failure recovery is intentionally outside the scope of this delivery.
+
+## Compatibility Contract
+
+The existing host-creation modes remain available and unchanged, while Kubernetes Runtime Pool hosting is introduced as a separate opt-in mode:
+
+```text
+Fixture        = 0
+Process        = 1
+Kubernetes     = 2
+Attach         = 3
+KubernetesPool = 4
+```
+
+- `Kubernetes = 2` continues to represent one `RuntimeInstanceOnly` process per Pod and Service.
+- `KubernetesPool = 4` is a distinct lifecycle path and remains disabled by default.
+- `HostId` is the exact Kubernetes `PodUid` after Pod creation.
+- Every child keeps an independent `RuntimeInstanceId`.
+- Stable endpoint routing must target the requested child exactly and must never silently fall back to a sibling.
+- Correctness, lifecycle, membership, routing, and recovery boundaries use typed fields rather than arbitrary metadata parsing.
+
+---
+
+## 2026-07-27 — Identity and Topology Foundation
+
+### Added
+
+- `AiRuntimeHostCreationMode.KubernetesPool = 4` without changing existing enum values.
+- Strongly typed Kubernetes Runtime Pool options and validation.
+- Immutable pre-provisioning Pod plans.
+- Independent child runtime plans with distinct `RuntimeInstanceId` values and transport ports.
+- `PoolId`, `PodRequestId`, planned Pod name, provider, transport, and child membership boundaries.
+- Post-provisioning identity rule: `HostId = exact Kubernetes Pod UID`.
+- Host-manager selection tests keeping `Kubernetes` and `KubernetesPool` separate.
+
+### Invariant Established
+
+```text
+PoolId
+  └── PodRequestId / PodUid
+        ├── RuntimeInstanceId A1
+        ├── RuntimeInstanceId A2
+        └── RuntimeInstanceId A3
+```
+
+No provisional `HostId` is derived from the Pod name or diagnostic metadata.
+
+### Validation
+
+Focused unit coverage for topology, option validation, identity generation, and host-manager mode separation.
+
+---
+
+## 2026-07-27 — Runtime-Owned Pod and Bootstrap Specification
+
+### Added
+
+- Dedicated `AiKubernetesRuntimePoolPodSpec` model.
+- Dedicated Runtime Pool host options.
+- One stable parent transport port.
+- One exact internal child port per planned runtime identity.
+- Strongly typed `AiKubernetesRuntimePoolBootstrapSpec`.
+- Runtime Pool labels and annotations for diagnostics.
+- Strict agreement checks between topology plans and generated Pod specifications.
+- HTTP- and gRPC-neutral unit coverage.
+
+### Topology Defined
+
+```text
+Kubernetes Runtime Pool Pod
+  ├── stable parent endpoint :8080
+  ├── child A1              :18080
+  ├── child A2              :18081
+  └── child A3              :18082
+```
+
+Child ports remain identity-bound and are not modeled as independent Services.
+
+### Compatibility
+
+Existing one-runtime-per-Pod specification and strategy types remain unchanged.
+
+---
+
+## 2026-07-27 — Kubernetes SDK Resources and Dedicated Host Strategy
+
+### Added
+
+- Kubernetes SDK resource factory dedicated to Runtime Pool Pods.
+- One Pod resource containing the stable parent port and all internal child ports.
+- One stable Service selecting only the exact planned Pod.
+- ClusterIP and NodePort endpoint metadata.
+- Fake and Kubernetes SDK-backed Runtime Pool lifecycle clients.
+- Dedicated `KubernetesAiRuntimePoolHostCreationStrategy`.
+- Explicit opt-in dependency-injection registration.
+- Preservation of the provider-selected primary `RuntimeInstanceId` as the first planned child.
+- Authoritative `HostId = metadata.uid` mapping after Pod creation.
+
+### Resource Boundary
+
+```text
+Stable Service
+  └── exact Pod selector
+        └── stable parent port only
+```
+
+Internal child ports are not externally exposed as separate Kubernetes Services.
+
+### Compatibility
+
+The legacy `KubernetesAiRuntimeHostCreationStrategy` and `Kubernetes = 2` lifecycle remain separate and unchanged.
+
+---
+
+## 2026-07-27 — Real In-Pod Bootstrap and Readiness
+
+### Added
+
+- Real Runtime Pool Manager bootstrap inside the Kubernetes Pod.
+- Exact `HostId = PodUid` loading through a Kubernetes Downward API volume.
+- Exact planned A1/A2/A3 child runtime identities.
+- Reuse of the existing Process Pool child factory, routing, lifecycle, and replacement components.
+- Strongly typed parent command-line bootstrap.
+- Stable HTTP and gRPC parent endpoint mapping.
+- `/runtime-pool/readiness` endpoint.
+- Kubernetes readiness probe that becomes green only after minimum exact child capacity is running.
+- Real Kubernetes SDK integration proof under `Providers.Base.KubernetesPool`.
+
+### Proven Runtime Shape
+
+```text
+Kubernetes Pod
+  └── RuntimeInstanceOnly parent host
+        └── Runtime Pool Manager
+              ├── real child A1
+              ├── real child A2
+              └── real child A3
+```
+
+The Pod is not considered ready until all required child identities are registered, routed, and capacity-ready.
+
+### Incremental Corrections
+
+#### Readiness Exception Diagnostics
+
+Added stage-level START/END markers and complete exception diagnostics around:
+
+- request-scoped store creation;
+- scoped registry reads;
+- scoped capacity reads;
+- unscoped registry reads;
+- unscoped capacity reads.
+
+The public failure reason remains `runtime-readiness-exception`.
+
+#### Parent Provider and Datastore Configuration
+
+Corrected the parent bootstrap so standard host registration receives root configuration keys:
+
+```text
+ConnectionStrings:Redis
+ConnectionStrings:Mongo
+Mongo:DatabaseName
+OpenAI:ApiKey
+```
+
+`OpenAI:ApiKey` is configuration-driven with `OPENAI_API_KEY` retained as fallback. Nested in-Pod settings remain available for child-process configuration.
+
+This prevents the parent Pod from incorrectly using container-local `localhost` defaults for Redis and MongoDB.
+
+#### Parent Control-Plane Identity
+
+Published the authoritative logical control-plane identity through:
+
+```text
+AiEngine:ControlPlane:ControlPlaneId
+```
+
+This allows `DefaultAiControlPlaneIdResolver` to resolve the intended control plane directly instead of waiting for `default-control-plane` Redis discovery.
+
+### Validation
+
+Real Kubernetes readiness was required; unit tests alone were not considered sufficient.
+
+---
+
+## 2026-07-28 — HTTP Exact-Routing Proofs
+
+### Added
+
+Two opt-in MCP integration proofs:
+
+```text
+Providers.Http.ProcessPool
+Providers.Http.KubernetesPool
+```
+
+#### HTTP ProcessPool Proof
+
+- One stable real Kestrel HTTP endpoint.
+- Three real external `RuntimeInstanceOnly` child processes.
+- Three exact ready routes.
+- One targeted `GetQueueStatus` command per child through the same endpoint.
+- Response `RuntimeInstanceId` must equal the requested identity.
+- All three responses must remain distinct.
+- No fallback to another child is permitted.
+
+#### HTTP KubernetesPool Proof
+
+- One real Kubernetes Runtime Pool Pod.
+- One stable Kubernetes Service.
+- Three real in-Pod child processes.
+- Exact command routing to all three planned child identities through the same stable Service.
+- Same strict no-fallback identity contract as ProcessPool.
+
+### Incremental Corrections
+
+#### ASP.NET Core `IServer` Compile Ambiguity
+
+Resolved `CS0104` in the HTTP fixture by explicitly selecting:
+
+```text
+Microsoft.AspNetCore.Hosting.Server.IServer
+```
+
+This is a compile-only correction and changes no runtime behavior.
+
+#### Host-Portable Kubernetes Service Connectivity
+
+The Windows host could not directly reach the Minikube NodePort address. The integration proof now creates one scoped `kubectl port-forward` to the same stable Kubernetes Service.
+
+This changes only host-test connectivity. It does not bypass the Service, route directly to child ports, or alter production NodePort metadata.
+
+### Validation Status
+
+- HTTP ProcessPool exact-routing proof: **green**.
+- HTTP KubernetesPool exact-routing proof: **green**.
+
+---
+
+## 2026-07-28 — gRPC Exact-Routing Proofs
+
+### Added
+
+Two opt-in MCP integration proofs:
+
+```text
+Providers.Grpc.ProcessPool
+Providers.Grpc.KubernetesPool
+```
+
+#### gRPC ProcessPool Proof
+
+- One stable clear-text HTTP/2 Kestrel endpoint.
+- Three real external child processes.
+- Exact command routing to all three `RuntimeInstanceId` values.
+- Strict no-fallback response identity checks.
+
+#### gRPC KubernetesPool Proof
+
+- One real Kubernetes Runtime Pool Pod.
+- One stable h2c Service endpoint.
+- Three real in-Pod gRPC child processes.
+- Exact targeted command routing through the same stable Service.
+- Host connectivity through the scoped Service port-forward helper.
+
+### Endpoint Protocol Separation
+
+The parent Pod now uses transport-specific Kestrel protocols:
+
+```text
+HTTP pool transport  :8080 = HTTP/1
+gRPC pool transport  :8080 = HTTP/2
+readiness             :8081 = HTTP/1
+```
+
+A dedicated readiness port avoids mixing clear-text gRPC HTTP/2 requirements with Kubernetes HTTP/1 readiness probes.
+
+### Compatibility
+
+HTTP exact-routing semantics, child identity, `PoolId`, `HostId`, `PodUid`, route-registry behavior, and the legacy Kubernetes mode remain unchanged.
+
+### Validation Status
+
+- gRPC ProcessPool exact-routing proof: **green**.
+- gRPC KubernetesPool exact-routing proof: **green**.
+- HTTP regression gate after protocol changes: **green**.
+
+---
+
+## 2026-07-28 — Compatibility, Documentation, and Closure
+
+### Added
+
+- Focused closure tests locking the additive compatibility contract.
+- Source-local Kubernetes Runtime Pool architecture documentation in `README.md`.
+- A fixed-order PowerShell validation workflow for build, unit, process-host, legacy Kubernetes, readiness, HTTP, and gRPC gates.
+- Explicit documentation of Pod-failure invariants deferred to future recovery work.
+
+### Closure Contract Locked
+
+- Existing enum values remain unchanged.
+- `KubernetesPool` remains disabled by default.
+- Dependency-injection registration remains explicit.
+- `Kubernetes` and `KubernetesPool` use separate strategies.
+- `HostId` remains exact `PodUid`.
+- Child `RuntimeInstanceId` values remain independent.
+- Stable transport, readiness, and child ports do not overlap.
+
+### Closure Validation Order
+
+```text
+1. Build the real runtime host
+2. Run focused Runtime Pool and legacy Kubernetes compatibility unit gates
+3. Run HTTP and gRPC ProcessPool exact-routing proofs
+4. Run legacy one-runtime-per-Pod Kubernetes integration compatibility gate
+5. Run Kubernetes Runtime Pool in-Pod readiness proof
+6. Run HTTP and gRPC KubernetesPool exact-routing proofs
+```
+
+### Validation Status
+
+The implementation and documentation are complete. Final closure requires the complete validation workflow to remain green on the target development environment.
+
+---
+
+## Proof Matrix
+
+| Proof | Runtime shape | Stable endpoint | Exact children | Current status |
+|---|---|---:|---:|---|
+| HTTP ProcessPool | Local pool host + real external children | HTTP/1 | 3 | Green |
+| HTTP KubernetesPool | One Pod + one Service + real in-Pod children | HTTP/1 | 3 | Green |
+| gRPC ProcessPool | Local pool host + real external children | HTTP/2 | 3 | Green |
+| gRPC KubernetesPool | One Pod + one Service + real in-Pod children | HTTP/2 | 3 | Green |
+
+Every routing proof requires the response identity to equal the requested `RuntimeInstanceId`; successful transport alone is insufficient.
+
+## Delivered Outcome
+
+The completed delivery establishes and proves the Kubernetes hosting and exact-routing boundary:
+
+```text
+one Kubernetes Pod
+  + one Runtime Pool Manager
+  + several independently registered child processes
+  + one stable parent transport endpoint
+  + exact RuntimeInstanceId routing
+  + readiness derived from safe minimum child capacity
+```
+
+## Explicitly Outside This Delivery
+
+This delivery does not claim:
+
+- Pod deletion handling;
+- failed membership enumeration by `PodUid`;
+- atomic suppression of every child belonging to a deleted Pod;
+- assigned-work recovery from a failed Pod;
+- replacement Pod creation;
+- registration of new child identities after replacement;
+- stale-route rejection after Pod loss;
+- Pod-wide deterministic recovery convergence.
+
+These invariants must be introduced and validated incrementally in future Pod-failure recovery work.
+
+
+---
+
 ## 1.0.7.8 - 2026-07-27 — Exact Runtime Pool Failure Recovery
 
 ### Added

@@ -1,4 +1,4 @@
-﻿using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using MongoDB.Driver;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
 using Multiplexed.Abstractions.AI.Execution.Persistence.Replay.Metadata;
@@ -126,8 +126,11 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
                 .AddAiPromptRuntime(typeof(AiRuntimeAssemblyMarker).Assembly)
                 .AddOpenAiPromptProvider(openAiOptions =>
                 {
-                    openAiOptions.ApiKey = Environment.GetEnvironmentVariable("OPENAI_API_KEY")
-                        ?? throw new InvalidOperationException("OPENAI_API_KEY is required.");
+                    openAiOptions.ApiKey =
+                        configuration["OpenAI:ApiKey"]
+                        ?? Environment.GetEnvironmentVariable("OPENAI_API_KEY")
+                        ?? throw new InvalidOperationException(
+                            "OpenAI:ApiKey or OPENAI_API_KEY is required.");
                 });
 
             services.AddSingleton<McpRuntimeExecutionContextAccessor>();

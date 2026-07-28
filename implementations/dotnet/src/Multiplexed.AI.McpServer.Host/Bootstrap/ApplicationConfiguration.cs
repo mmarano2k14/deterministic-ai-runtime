@@ -1,5 +1,9 @@
-﻿using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Options;
 using Multiplexed.AI.McpServer.Host.Configuration;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Kubernetes.InPod;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Process;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Routing.Grpc;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Routing.Http;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Grpc;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http;
 using Multiplexed.Rbac.Core.Runtime;
@@ -14,7 +18,6 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
         /// <summary>
         /// Configures application endpoints according to the MCP host mode.
         /// </summary>
-        /// <param name="app">The web application.</param>
         public static void Configure(
             WebApplication app)
         {
@@ -25,8 +28,6 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
                     .GetRequiredService<IOptions<AiMcpHostOptions>>()
                     .Value;
 
-            Console.WriteLine($"[APP CONFIG] Mode='{hostOptions.Mode}'");
-
             app.MapHealthChecks("/health");
 
             switch (hostOptions.Mode)
@@ -35,28 +36,24 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
                 case AiMcpHostMode.ControlPlaneWithLocalRuntimeInstances:
                 case AiMcpHostMode.ControlPlaneWithHttpRuntimeInstances:
                 case AiMcpHostMode.ControlPlaneWithGrpcRuntimeInstances:
-                    Console.WriteLine("[APP CONFIG] Mapping MCP endpoint '/mcp'.");
-
                     app.UseAuthentication();
-
                     app.UseWhen(
-                        context => context.Request.Path.StartsWithSegments("/mcp"),
+                        context =>
+                            context.Request.Path
+                                .StartsWithSegments("/mcp"),
                         branch =>
                         {
-                            branch.UseMiddleware<ExecutionContextMiddleware>();
-                            branch.UseMiddleware<NamespaceGuardMiddleware>();
+                            branch.UseMiddleware<
+                                ExecutionContextMiddleware>();
+                            branch.UseMiddleware<
+                                NamespaceGuardMiddleware>();
                         });
-
                     app.UseAuthorization();
-
                     app.MapMcp("/mcp");
-
                     break;
 
                 case AiMcpHostMode.RuntimeInstanceOnly:
-                    ConfigureRuntimeInstanceEndpoints(
-                        app);
-
+                    ConfigureRuntimeInstanceEndpoints(app);
                     break;
 
                 default:
@@ -66,22 +63,30 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
         }
 
         /// <summary>
-        /// Configures runtime-instance command endpoints according to the runtime transport configuration.
+        /// Configures either a single runtime endpoint or the stable Runtime Pool endpoint.
         /// </summary>
-        /// <param name="app">The web application.</param>
         private static void ConfigureRuntimeInstanceEndpoints(
             WebApplication app)
         {
-            ArgumentNullException.ThrowIfNull(app);
+            var poolOptions =
+                app.Configuration
+                    .GetSection("AiKubernetesRuntimePoolInPod")
+                    .Get<AiKubernetesRuntimePoolInPodOptions>();
+
+            if (poolOptions?.Enabled == true)
+            {
+                ConfigureRuntimePoolEndpoints(
+                    app,
+                    poolOptions);
+                return;
+            }
 
             var disableRuntimeCommandEndpoint =
-                app.Configuration.GetValue<bool>("Tests:DisableRuntimeCommandEndpoint");
+                app.Configuration.GetValue<bool>(
+                    "Tests:DisableRuntimeCommandEndpoint");
 
             if (disableRuntimeCommandEndpoint)
             {
-                Console.WriteLine(
-                    "[APP CONFIG] Runtime command endpoint disabled by Tests:DisableRuntimeCommandEndpoint.");
-
                 return;
             }
 
@@ -92,16 +97,10 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
             switch (transportName)
             {
                 case "http":
-                    Console.WriteLine(
-                        "[APP CONFIG] Mapping runtime HTTP command endpoint '/runtime-instance/commands'.");
-
                     app.MapAiRuntimeInstanceHttpCommandEndpoint();
                     break;
 
                 case "grpc":
-                    Console.WriteLine(
-                        "[APP CONFIG] Mapping runtime gRPC command service.");
-
                     app.MapAiRuntimeInstanceGrpcCommandService();
                     break;
 
@@ -112,40 +111,120 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
         }
 
         /// <summary>
-        /// Resolves the command transport used by a runtime-instance-only host.
+        /// Maps the stable exact router and Kubernetes readiness endpoint.
         /// </summary>
-        /// <param name="configuration">The application configuration.</param>
-        /// <returns>The normalized runtime command transport name.</returns>
+        private static void ConfigureRuntimePoolEndpoints(
+            WebApplication app,
+            AiKubernetesRuntimePoolInPodOptions options)
+        {
+            switch (options.TransportName
+                .Trim()
+                .ToLowerInvariant())
+            {
+                case "http":
+                    app.MapAiRuntimePoolHttpCommandEndpoint();
+                    break;
+
+                case "grpc":
+                    app.MapAiRuntimePoolGrpcCommandService();
+                    break;
+
+                default:
+                    throw new InvalidOperationException(
+                        $"Unsupported Runtime Pool transport '{options.TransportName}'.");
+            }
+
+            app.MapGet(
+                "/runtime-pool/readiness",
+                async (
+                    IAiRuntimeProcessPoolManager manager,
+                    CancellationToken cancellationToken) =>
+                {
+                    var snapshot =
+                        await manager
+                            .GetSnapshotAsync(cancellationToken)
+                            .ConfigureAwait(false);
+
+                    var ready =
+                        snapshot.Status
+                            == AiRuntimeProcessPoolManagerStatus.Running
+                        && !snapshot.IsBelowMinimumCapacity
+                        && snapshot.Children.Count
+                            >= snapshot.MinimumProcessCount
+                        && snapshot.Children.All(
+                            child =>
+                                child.Status
+                                == AiRuntimeProcessPoolChildStatus.Running);
+
+                    return ready
+                        ? Results.Ok(
+                            new
+                            {
+                                ready = true,
+                                snapshot.PoolId,
+                                snapshot.HostId,
+                                RuntimeInstanceIds =
+                                    snapshot.Children
+                                        .Select(
+                                            child =>
+                                                child.RuntimeInstanceId)
+                                        .ToArray()
+                            })
+                        : Results.Json(
+                            new
+                            {
+                                ready = false,
+                                snapshot.PoolId,
+                                snapshot.HostId,
+                                Status =
+                                    snapshot.Status.ToString(),
+                                snapshot.IsBelowMinimumCapacity,
+                                ChildCount =
+                                    snapshot.Children.Count
+                            },
+                            statusCode:
+                                StatusCodes
+                                    .Status503ServiceUnavailable);
+                });
+        }
+
+        /// <summary>
+        /// Resolves the single-runtime command transport.
+        /// </summary>
         private static string ResolveRuntimeCommandTransportName(
             IConfiguration configuration)
         {
-            ArgumentNullException.ThrowIfNull(configuration);
-
             var transportName =
-                configuration["AiRuntimeInstanceRegistration:ProviderMetadata:transport.name"];
+                configuration[
+                    "AiRuntimeInstanceRegistration:ProviderMetadata:transport.name"];
 
             if (!string.IsNullOrWhiteSpace(transportName))
             {
-                return transportName.Trim().ToLowerInvariant();
+                return transportName
+                    .Trim()
+                    .ToLowerInvariant();
             }
 
             var providerName =
-                configuration["AiRuntimeInstanceRegistration:ProviderName"];
+                configuration[
+                    "AiRuntimeInstanceRegistration:ProviderName"];
 
             if (!string.IsNullOrWhiteSpace(providerName))
             {
-                return providerName.Trim().ToLowerInvariant();
+                return providerName
+                    .Trim()
+                    .ToLowerInvariant();
             }
 
-            var providerMetadataName =
-                configuration["AiRuntimeInstanceRegistration:ProviderMetadata:provider.name"];
+            var metadataProviderName =
+                configuration[
+                    "AiRuntimeInstanceRegistration:ProviderMetadata:provider.name"];
 
-            if (!string.IsNullOrWhiteSpace(providerMetadataName))
-            {
-                return providerMetadataName.Trim().ToLowerInvariant();
-            }
-
-            return "http";
+            return string.IsNullOrWhiteSpace(metadataProviderName)
+                ? "http"
+                : metadataProviderName
+                    .Trim()
+                    .ToLowerInvariant();
         }
     }
 }

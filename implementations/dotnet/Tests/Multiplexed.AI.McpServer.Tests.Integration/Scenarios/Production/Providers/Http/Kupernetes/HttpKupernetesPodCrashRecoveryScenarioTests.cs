@@ -7,7 +7,7 @@ using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Providers.
 using Xunit;
 using Xunit.Abstractions;
 
-namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Providers.Http.Kubernetes
+namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Providers.Http.Kupernetes
 {
     /// <summary>
     /// Runs the gRPC Kubernetes SDK pod crash recovery scenario,

@@ -1,4 +1,4 @@
-﻿using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.ControlPlane.Discovery;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Capacity;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
@@ -146,8 +146,21 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Readiness
                     "runtime-readiness-cancelled",
                     timedOut: false);
             }
-            catch
+            catch (Exception exception)
             {
+                Console.Error.WriteLine(
+                    $"[RUNTIME READINESS EXCEPTION] " +
+                    $"RuntimeInstanceId='{request.RuntimeInstanceId}', " +
+                    $"ControlPlaneId='{request.ControlPlaneId}', " +
+                    $"TenantId='{request.ExecutionContextSnapshot?.TenantId}', " +
+                    $"TenantGroupId='{request.ExecutionContextSnapshot?.TenantGroupId}', " +
+                    $"ExceptionType='{exception.GetType().FullName}', " +
+                    $"Message='{exception.Message}', " +
+                    $"InnerExceptionType='{exception.InnerException?.GetType().FullName}', " +
+                    $"InnerMessage='{exception.InnerException?.Message}'.");
+
+                Console.Error.WriteLine(exception);
+
                 return CreateFailure(
                     request,
                     "runtime-readiness-exception",
@@ -165,7 +178,16 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Readiness
             AiRuntimeInstanceReadinessRequest request,
             CancellationToken cancellationToken)
         {
+            Console.WriteLine(
+                $"[READINESS STAGE START] Stage='create-request-scoped-stores', RuntimeInstanceId='{request.RuntimeInstanceId}'.");
+
             var stores = this.CreateRequestScopedStores(request);
+
+            Console.WriteLine(
+                $"[READINESS STAGE END] Stage='create-request-scoped-stores', RuntimeInstanceId='{request.RuntimeInstanceId}'.");
+
+            Console.WriteLine(
+                $"[READINESS STAGE START] Stage='scoped-registry-get', RuntimeInstanceId='{request.RuntimeInstanceId}'.");
 
             var scopedSnapshot =
                 await stores.Registry
@@ -173,6 +195,12 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Readiness
                         request.RuntimeInstanceId,
                         cancellationToken)
                     .ConfigureAwait(false);
+
+            Console.WriteLine(
+                $"[READINESS STAGE END] Stage='scoped-registry-get', RuntimeInstanceId='{request.RuntimeInstanceId}', Found='{scopedSnapshot is not null}'.");
+
+            Console.WriteLine(
+                $"[READINESS STAGE START] Stage='scoped-capacity-get', RuntimeInstanceId='{request.RuntimeInstanceId}', RegistryFound='{scopedSnapshot is not null}'.");
 
             var scopedCapacity =
                 scopedSnapshot is null
@@ -183,12 +211,24 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Readiness
                             cancellationToken)
                         .ConfigureAwait(false);
 
+            Console.WriteLine(
+                $"[READINESS STAGE END] Stage='scoped-capacity-get', RuntimeInstanceId='{request.RuntimeInstanceId}', Found='{scopedCapacity is not null}'.");
+
+            Console.WriteLine(
+                $"[READINESS STAGE START] Stage='unscoped-registry-get', RuntimeInstanceId='{request.RuntimeInstanceId}'.");
+
             var unscopedSnapshot =
                 await this.runtimeInstanceRegistry
                     .GetAsync(
                         request.RuntimeInstanceId,
                         cancellationToken)
                     .ConfigureAwait(false);
+
+            Console.WriteLine(
+                $"[READINESS STAGE END] Stage='unscoped-registry-get', RuntimeInstanceId='{request.RuntimeInstanceId}', Found='{unscopedSnapshot is not null}'.");
+
+            Console.WriteLine(
+                $"[READINESS STAGE START] Stage='unscoped-capacity-get', RuntimeInstanceId='{request.RuntimeInstanceId}', RegistryFound='{unscopedSnapshot is not null}'.");
 
             var unscopedCapacity =
                 unscopedSnapshot is null
@@ -198,6 +238,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Readiness
                             request.RuntimeInstanceId,
                             cancellationToken)
                         .ConfigureAwait(false);
+
+            Console.WriteLine(
+                $"[READINESS STAGE END] Stage='unscoped-capacity-get', RuntimeInstanceId='{request.RuntimeInstanceId}', Found='{unscopedCapacity is not null}'.");
 
             Console.WriteLine(
                 $"[READINESS EXACT COMPARISON] " +
