@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Threading;
 using System.Threading.Tasks;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Capacity;
@@ -62,8 +62,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
                                 storedObservation.PoolId,
                             HostId =
                                 storedObservation.HostId,
+                            Scope =
+                                AiRuntimePoolCapacitySuppressionScope
+                                    .RuntimeInstanceRoute,
                             RuntimeInstanceId =
-                                storedObservation.RuntimeInstanceId,
+                                storedObservation.RuntimeInstanceId!,
                             RouteId =
                                 storedObservation.RouteId,
                             SuppressedAtUtc =

@@ -6,6 +6,157 @@ This project follows a deterministic runtime and observability model designed fo
 
 ---
 
+## 1.0.7.9 - 2026-07-28 — Kubernetes Runtime Pool Pod Failure Recovery
+
+### Added
+
+- Added Kubernetes Runtime Pool Pod membership enumeration using authoritative first-class identity:
+  - `PoolId`
+  - Kubernetes `PodUid` projected as `HostId`
+  - independent child `RuntimeInstanceId`
+  - runtime status and selectable-capacity state
+- Added strict membership-authority validation rejecting:
+  - missing Pod membership
+  - cross-pool members
+  - duplicate runtime identities
+  - stale or inconsistent host membership
+- Added Pod-wide capacity suppression through `HostMembership` scope.
+- Added atomic and idempotent suppression of every runtime instance belonging to one failed Pod.
+- Added Pod-assigned-work enumeration across the complete suppressed membership set.
+- Added deterministic Pod recovery inventory fingerprints based on authoritative candidate identity.
+- Added host-membership recovery claims so concurrent reconcilers compete for one exact failed Pod inventory.
+- Added claimed Pod recovery execution through the shared Runtime Pool recovery transition core.
+- Added Kubernetes Runtime Pool Pod replacement coordination using the existing Kubernetes Pool host-creation strategy.
+- Added deterministic replacement identities derived from the failure and recovery claim.
+- Added replacement readiness validation requiring every expected child runtime to be:
+  - registered
+  - `Ready`
+  - selectable
+  - associated with the replacement `PodUid`
+- Added Pod-level failure forensics distinguishing unexpected Pod deletion from process-level runtime failure.
+- Added production dependency-injection registrations for:
+  - Pod membership enumeration
+  - Pod-wide suppression
+  - assigned-work enumeration
+  - membership recovery claims
+  - claimed recovery execution
+  - replacement Pod coordination
+  - complete Pod failure recovery coordination
+
+### Changed
+
+- Extended Runtime Pool recovery claims with an exact host-membership authority containing:
+  - `PoolId`
+  - failed `HostId` / `PodUid`
+  - ordered failed `RuntimeInstanceId` membership
+  - deterministic membership inventory fingerprint
+- Reused the existing runtime recovery transition protocol instead of creating Kubernetes-specific execution mutations.
+- Reused:
+  - `IAiSharedRunOwnershipResolver`
+  - `IAiRuntimeExecutionRecoveryTransitionService`
+  - existing in-flight resume semantics
+  - existing local-queued redispatch semantics
+- Changed Pod failure coordination to enforce the sequence:
+
+  ```text
+  record exact Pod failure
+      -> enumerate authoritative Pod membership
+      -> suppress every failed member
+      -> acquire one membership recovery claim
+      -> create and converge replacement Pod capacity
+      -> recover work assigned to failed members
+      -> preserve healthy Pod capacity
+  ```
+
+- Changed replacement creation so retries reuse the same logical replacement identity while a successfully created Kubernetes Pod must receive a fresh `PodUid`.
+- Changed replacement validation so stale runtime identities from the failed Pod are rejected.
+- Changed Pod recovery so an `AlreadyClaimed` coordinator returns the exact existing failure and suppression facts without:
+  - creating another Pod
+  - executing recovery transitions
+  - mutating the replacement result
+- Extended the isolated Runtime Process Pool composition test with only the recovery executor's required ownership and transition dependencies.
+- Preserved correctness authority in typed fields rather than diagnostic metadata.
+
+### Validated
+
+- Proved that forced deletion of one real Kubernetes Runtime Pool Pod suppresses exactly its three child runtime instances.
+- Proved that the failed membership is resolved by the exact Kubernetes `PodUid`.
+- Proved that every suppression uses `HostMembership` scope and does not depend on process-local route identity.
+- Proved that no runtime instance from the deleted Pod remains selectable.
+- Proved that a separate healthy Runtime Pool Pod remains:
+  - unsuppressed
+  - ready
+  - selectable
+  - unchanged throughout recovery
+- Proved that concurrent recovery coordinators produce:
+  - one `Acquired` membership claim
+  - one `AlreadyClaimed` result
+  - one replacement Pod
+  - one recovery mutation chain
+- Proved that the replacement Pod receives a new `PodUid`.
+- Proved that the replacement Pod registers three fresh `RuntimeInstanceId` values.
+- Proved that no failed runtime identity is reused by replacement capacity.
+- Proved that recovery waits until all replacement members are ready and selectable.
+- Proved recovery of the exact five seeded candidates:
+  - five candidates enumerated
+  - five candidates accepted
+  - five recovery transitions changed
+  - zero candidates rejected
+- Proved that replacement runtime identities never appear as the failed ownership authority of recovered work.
+- Proved that retrying the same recovery fact reuses the same immutable failure observation and suppression set.
+- Proved that replacement coordination is stable across claim retries and lease reacquisition.
+- Proved that replacement creation rejects:
+  - failed `PodUid` reuse
+  - stale runtime identity reuse
+  - incomplete replacement readiness
+- Proved that Pod-level forensics remain distinct from process-level failure observations.
+- Validated the complete real Kubernetes chain:
+
+  ```text
+  create failed Runtime Pool Pod with A1/A2/A3
+      -> create independent healthy Runtime Pool Pod
+      -> seed durable work assigned to A1/A2/A3
+      -> force-delete failed Pod
+      -> observe Service endpoint removal
+      -> record unexpected Pod deletion
+      -> suppress A1/A2/A3 exactly
+      -> preserve healthy Pod membership
+      -> arbitrate concurrent recovery claims
+      -> create one replacement Runtime Pool Pod
+      -> register three fresh runtime identities
+      -> recover all five assigned candidates
+      -> keep healthy Pod capacity unchanged
+  ```
+
+### Backward Compatibility
+
+- Preserved `AiRuntimeHostCreationMode.Kubernetes = 2` as the existing one-runtime-per-Pod hosting mode.
+- Kept Kubernetes Runtime Pools isolated behind the explicit `AiRuntimeHostCreationMode.KubernetesPool` mode.
+- Preserved historical Process, Attach, Fixture, and Kubernetes host behavior.
+- Preserved existing HTTP and gRPC runtime command transports.
+- Preserved the existing shared durable execution recovery semantics.
+- Introduced no hierarchical capacity-selection or node-scaling behavior; those remain part of Step 7.
+
+### Result
+
+This step proves that a Kubernetes Runtime Pool Pod is an explicit failure boundary.
+
+When one Pod disappears, every runtime identity belonging to its exact `PodUid` becomes unsafe, work is recovered once from shared durable state, healthy Pods remain unaffected, and replacement capacity returns with a fresh Pod and fresh runtime identities.
+
+The completed recovery boundary is:
+
+```text
+process failure
+    -> suppress one exact RuntimeInstanceId
+
+Pod failure
+    -> suppress the complete RuntimeInstanceId membership of one PodUid
+```
+
+This completes the Pod Failure Proof required before hierarchical capacity selection.
+
+---
+
 ## 1.0.7.9 - 2026-07-28 — Kubernetes Runtime Pool 
 
 This changelog records the additive implementation of Kubernetes Runtime Pool hosting in chronological delivery order.

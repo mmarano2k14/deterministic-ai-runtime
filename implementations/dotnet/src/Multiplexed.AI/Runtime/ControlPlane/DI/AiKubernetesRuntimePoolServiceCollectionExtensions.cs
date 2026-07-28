@@ -3,9 +3,16 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Capacity;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Failure;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Kubernetes;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Kubernetes.Client;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Kubernetes.Failure;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Kubernetes.InPod;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Recovery.AssignedWork;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Recovery.Claims;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Recovery.Execution;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strategy;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strategy.Kubernetes.Client;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strategy.Kubernetes.Client.Factory;
@@ -115,6 +122,108 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
                                     "'."))
                     };
                 });
+
+            services.TryAddSingleton<
+                InMemoryAiRuntimePoolFailureJournal>();
+
+            services.TryAddSingleton<
+                IAiRuntimePoolFailureReader>(
+                serviceProvider =>
+                    serviceProvider.GetRequiredService<
+                        InMemoryAiRuntimePoolFailureJournal>());
+
+            services.TryAddSingleton<
+                IAiKubernetesRuntimePoolPodMembershipEnumerator,
+                AiKubernetesRuntimePoolPodMembershipEnumerator>();
+
+            services.TryAddSingleton<
+                IAiRuntimePoolCapacitySafetyRegistry,
+                InMemoryAiRuntimePoolCapacitySafetyRegistry>();
+
+            services.TryAddSingleton<
+                IAiRuntimePoolCapacitySafetyWriter>(
+                serviceProvider =>
+                    serviceProvider.GetRequiredService<
+                        IAiRuntimePoolCapacitySafetyRegistry>());
+
+            services.TryAddSingleton<
+                IAiRuntimePoolCapacitySafetyReader>(
+                serviceProvider =>
+                    serviceProvider.GetRequiredService<
+                        IAiRuntimePoolCapacitySafetyRegistry>());
+
+            services.TryAddSingleton<
+                IAiRuntimePoolFailureObserver>(
+                serviceProvider =>
+                    new AiRuntimePoolFailureSafetyObserver(
+                        serviceProvider.GetRequiredService<
+                            InMemoryAiRuntimePoolFailureJournal>(),
+                        serviceProvider.GetRequiredService<
+                            IAiRuntimePoolCapacitySafetyWriter>()));
+
+            services.TryAddSingleton<
+                IAiRuntimePoolCapacitySafetyBatchWriter>(
+                serviceProvider =>
+                {
+                    var registry =
+                        serviceProvider.GetRequiredService<
+                            IAiRuntimePoolCapacitySafetyRegistry>();
+
+                    return registry as
+                        IAiRuntimePoolCapacitySafetyBatchWriter
+                        ?? throw new InvalidOperationException(
+                            "The configured Runtime Pool capacity safety registry must support atomic batch suppression for Kubernetes Pod failure handling.");
+                });
+
+            services.TryAddSingleton<
+                IAiKubernetesRuntimePoolPodCapacitySuppressor,
+                AiKubernetesRuntimePoolPodCapacitySuppressor>();
+
+            services.TryAddSingleton<
+                IAiRuntimePoolSuppressedAssignedWorkEnumerator,
+                AiRuntimePoolSuppressedAssignedWorkEnumerator>();
+
+            services.TryAddSingleton<
+                IAiKubernetesRuntimePoolPodAssignedWorkEnumerator,
+                AiKubernetesRuntimePoolPodAssignedWorkEnumerator>();
+
+            services.TryAddSingleton<
+                IAiRuntimePoolRecoveryClaimStore,
+                InMemoryAiRuntimePoolRecoveryClaimStore>();
+
+            services.TryAddSingleton<
+                IAiRuntimePoolRecoveryMembershipClaimStore>(
+                serviceProvider =>
+                {
+                    var store =
+                        serviceProvider.GetRequiredService<
+                            IAiRuntimePoolRecoveryClaimStore>();
+
+                    return store as
+                        IAiRuntimePoolRecoveryMembershipClaimStore
+                        ?? throw new InvalidOperationException(
+                            "The configured Runtime Pool recovery claim store must support exact membership claims for Kubernetes Pod failure recovery.");
+                });
+
+            services.TryAddSingleton<
+                IAiKubernetesRuntimePoolPodRecoveryClaimCoordinator,
+                AiKubernetesRuntimePoolPodRecoveryClaimCoordinator>();
+
+            services.TryAddSingleton<
+                IAiKubernetesRuntimePoolPodReplacementCoordinator,
+                AiKubernetesRuntimePoolPodReplacementCoordinator>();
+
+            services.TryAddSingleton<
+                IAiRuntimePoolRecoveryCandidateTransitionExecutor,
+                AiRuntimePoolRecoveryCandidateTransitionExecutor>();
+
+            services.TryAddSingleton<
+                IAiKubernetesRuntimePoolPodClaimedRecoveryExecutor,
+                AiKubernetesRuntimePoolPodClaimedRecoveryExecutor>();
+
+            services.TryAddSingleton<
+                IAiKubernetesRuntimePoolPodFailureRecoveryCoordinator,
+                AiKubernetesRuntimePoolPodFailureRecoveryCoordinator>();
 
             services.TryAddEnumerable(
                 ServiceDescriptor.Singleton<

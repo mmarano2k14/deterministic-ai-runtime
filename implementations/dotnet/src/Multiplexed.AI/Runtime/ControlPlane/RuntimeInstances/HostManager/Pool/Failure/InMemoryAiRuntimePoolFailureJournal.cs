@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
@@ -148,18 +148,22 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
                 observation.PoolId);
             ArgumentException.ThrowIfNullOrWhiteSpace(
                 observation.HostId);
-            ArgumentException.ThrowIfNullOrWhiteSpace(
-                observation.RuntimeInstanceId);
-            ArgumentException.ThrowIfNullOrWhiteSpace(
-                observation.RouteId);
-
             if (observation.Scope ==
                     AiRuntimePoolFailureScope.RuntimeInstance &&
-                string.IsNullOrWhiteSpace(
-                    observation.RuntimeInstanceId))
+                (string.IsNullOrWhiteSpace(observation.RuntimeInstanceId) ||
+                 string.IsNullOrWhiteSpace(observation.RouteId)))
             {
                 throw new ArgumentException(
-                    "Runtime-instance failure scope requires RuntimeInstanceId.",
+                    "Runtime-instance failure scope requires RuntimeInstanceId and RouteId.",
+                    nameof(observation));
+            }
+
+            if (observation.Scope == AiRuntimePoolFailureScope.Host &&
+                (!string.IsNullOrWhiteSpace(observation.RuntimeInstanceId) ||
+                 !string.IsNullOrWhiteSpace(observation.RouteId)))
+            {
+                throw new ArgumentException(
+                    "Host failure scope must not carry one child runtime or local route identity.",
                     nameof(observation));
             }
 
@@ -183,8 +187,13 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
                 PoolId = observation.PoolId.Trim(),
                 HostId = observation.HostId.Trim(),
                 RuntimeInstanceId =
-                    observation.RuntimeInstanceId.Trim(),
-                RouteId = observation.RouteId.Trim()
+                    string.IsNullOrWhiteSpace(observation.RuntimeInstanceId)
+                        ? null
+                        : observation.RuntimeInstanceId.Trim(),
+                RouteId =
+                    string.IsNullOrWhiteSpace(observation.RouteId)
+                        ? null
+                        : observation.RouteId.Trim()
             };
         }
     }

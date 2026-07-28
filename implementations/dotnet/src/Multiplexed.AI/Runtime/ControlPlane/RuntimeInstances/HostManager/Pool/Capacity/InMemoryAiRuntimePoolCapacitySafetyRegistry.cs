@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
@@ -10,7 +10,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
     /// Provides a deterministic thread-safe in-memory exact capacity suppression registry.
     /// </summary>
     public sealed class InMemoryAiRuntimePoolCapacitySafetyRegistry :
-        IAiRuntimePoolCapacitySafetyRegistry
+        IAiRuntimePoolCapacitySafetyRegistry,
+        IAiRuntimePoolCapacitySafetyBatchWriter
     {
         private readonly object syncRoot = new();
 
@@ -19,36 +20,105 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
             new(StringComparer.Ordinal);
 
         /// <inheritdoc />
-        public Task<AiRuntimePoolCapacitySuppression> SuppressAsync(
+        public async Task<AiRuntimePoolCapacitySuppression> SuppressAsync(
             AiRuntimePoolCapacitySuppression suppression,
             CancellationToken cancellationToken = default)
         {
-            ValidateSuppression(suppression);
+            var suppressions =
+                await this.SuppressBatchAsync(
+                        new[]
+                        {
+                            suppression
+                        },
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+            return suppressions[0];
+        }
+
+        /// <inheritdoc />
+        public Task<IReadOnlyList<AiRuntimePoolCapacitySuppression>>
+            SuppressBatchAsync(
+                IReadOnlyList<AiRuntimePoolCapacitySuppression> suppressions,
+                CancellationToken cancellationToken = default)
+        {
+            ArgumentNullException.ThrowIfNull(suppressions);
             cancellationToken.ThrowIfCancellationRequested();
 
+            if (suppressions.Count == 0)
+            {
+                throw new ArgumentException(
+                    "At least one capacity suppression is required.",
+                    nameof(suppressions));
+            }
+
             var normalized =
-                Normalize(suppression);
+                suppressions
+                    .Select(
+                        suppression =>
+                        {
+                            ValidateSuppression(suppression);
+                            return Normalize(suppression);
+                        })
+                    .OrderBy(
+                        suppression => suppression.RuntimeInstanceId,
+                        StringComparer.Ordinal)
+                    .ToArray();
+
+            var runtimeInstanceIds =
+                new HashSet<string>(StringComparer.Ordinal);
+
+            foreach (var suppression in normalized)
+            {
+                if (!runtimeInstanceIds.Add(
+                        suppression.RuntimeInstanceId))
+                {
+                    throw new ArgumentException(
+                        string.Concat(
+                            "The batch contains duplicate RuntimeInstanceId '",
+                            suppression.RuntimeInstanceId,
+                            "'."),
+                        nameof(suppressions));
+                }
+            }
 
             lock (this.syncRoot)
             {
-                if (this.suppressionsByRuntimeInstanceId.TryGetValue(
-                        normalized.RuntimeInstanceId,
-                        out var existing))
+                foreach (var suppression in normalized)
                 {
-                    if (existing == normalized)
+                    if (this.suppressionsByRuntimeInstanceId.TryGetValue(
+                            suppression.RuntimeInstanceId,
+                            out var existing) &&
+                        existing != suppression)
                     {
-                        return Task.FromResult(existing);
+                        throw new AiRuntimePoolCapacitySuppressionConflictException(
+                            suppression.RuntimeInstanceId);
                     }
-
-                    throw new AiRuntimePoolCapacitySuppressionConflictException(
-                        normalized.RuntimeInstanceId);
                 }
 
-                this.suppressionsByRuntimeInstanceId.Add(
-                    normalized.RuntimeInstanceId,
-                    normalized);
+                var authoritative =
+                    new List<AiRuntimePoolCapacitySuppression>(
+                        normalized.Length);
 
-                return Task.FromResult(normalized);
+                foreach (var suppression in normalized)
+                {
+                    if (!this.suppressionsByRuntimeInstanceId.TryGetValue(
+                            suppression.RuntimeInstanceId,
+                            out var stored))
+                    {
+                        this.suppressionsByRuntimeInstanceId.Add(
+                            suppression.RuntimeInstanceId,
+                            suppression);
+
+                        stored = suppression;
+                    }
+
+                    authoritative.Add(stored);
+                }
+
+                return Task.FromResult<
+                    IReadOnlyList<AiRuntimePoolCapacitySuppression>>(
+                    authoritative.ToArray());
             }
         }
 
@@ -134,8 +204,23 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
                 suppression.HostId);
             ArgumentException.ThrowIfNullOrWhiteSpace(
                 suppression.RuntimeInstanceId);
-            ArgumentException.ThrowIfNullOrWhiteSpace(
-                suppression.RouteId);
+            if (suppression.Scope ==
+                    AiRuntimePoolCapacitySuppressionScope.RuntimeInstanceRoute &&
+                string.IsNullOrWhiteSpace(suppression.RouteId))
+            {
+                throw new ArgumentException(
+                    "Route-scoped capacity suppression requires RouteId.",
+                    nameof(suppression));
+            }
+
+            if (suppression.Scope ==
+                    AiRuntimePoolCapacitySuppressionScope.HostMembership &&
+                !string.IsNullOrWhiteSpace(suppression.RouteId))
+            {
+                throw new ArgumentException(
+                    "Host-membership capacity suppression must not carry a local RouteId.",
+                    nameof(suppression));
+            }
 
             if (suppression.SuppressedAtUtc == default)
             {
@@ -158,7 +243,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
                 HostId = suppression.HostId.Trim(),
                 RuntimeInstanceId =
                     suppression.RuntimeInstanceId.Trim(),
-                RouteId = suppression.RouteId.Trim()
+                RouteId = string.IsNullOrWhiteSpace(suppression.RouteId)
+                    ? null
+                    : suppression.RouteId.Trim()
             };
         }
     }

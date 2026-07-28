@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using Microsoft.Extensions.DependencyInjection;
@@ -152,15 +152,17 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
                 AiRuntimePoolRecoveryClaimCoordinator>();
 
             services.TryAddSingleton<
+                IAiRuntimePoolRecoveryCandidateTransitionExecutor,
+                AiRuntimePoolRecoveryCandidateTransitionExecutor>();
+
+            services.TryAddSingleton<
                 IAiRuntimePoolClaimedRecoveryExecutor>(
                 serviceProvider =>
                     new AiRuntimePoolClaimedRecoveryExecutor(
                         serviceProvider.GetRequiredService<
                             IAiRuntimePoolRecoveryClaimStore>(),
                         serviceProvider.GetRequiredService<
-                            IAiSharedRunOwnershipResolver>(),
-                        serviceProvider.GetRequiredService<
-                            IAiRuntimeExecutionRecoveryTransitionService>()));
+                            IAiRuntimePoolRecoveryCandidateTransitionExecutor>()));
 
             services.AddGrpc();
 

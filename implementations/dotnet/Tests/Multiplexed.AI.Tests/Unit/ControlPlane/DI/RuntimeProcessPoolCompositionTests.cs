@@ -1,8 +1,11 @@
 ﻿using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Readiness;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Recovery.Transition;
+using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Ownership;
 using Multiplexed.AI.Runtime.ControlPlane.DI;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Process;
+using Multiplexed.AI.Tests.Fixtures;
 
 namespace Multiplexed.AI.Tests.Unit.ControlPlane.DI
 {
@@ -45,6 +48,14 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.DI
             services.AddSingleton<
                 IAiRuntimeInstanceReadinessWaiter,
                 FakeReadinessWaiter>();
+
+            services.AddSingleton<
+                IAiSharedRunOwnershipResolver,
+                FakeSharedRunOwnershipResolver>();
+
+            services.AddSingleton<
+                IAiRuntimeExecutionRecoveryTransitionService,
+                FakeRecoveryTransitionService>();
 
             services.AddAiRuntimeProcessPool(
                 CreatePoolOptions(),
@@ -196,6 +207,30 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.DI
                         TransportName = request.TransportName,
                         TransportEndpoint = request.TransportEndpoint
                     });
+            }
+        }
+
+        private sealed class FakeSharedRunOwnershipResolver :
+            IAiSharedRunOwnershipResolver
+        {
+            public Task<AiSharedRunOwnershipResolutionResult> ResolveAsync(
+                AiSharedRunOwnershipResolutionRequest request,
+                CancellationToken cancellationToken = default)
+            {
+                throw new NotSupportedException(
+                    "Composition-only dependency.");
+            }
+        }
+
+        private sealed class FakeRecoveryTransitionService :
+            IAiRuntimeExecutionRecoveryTransitionService
+        {
+            public Task<AiRuntimeExecutionRecoveryTransitionResult> ApplyAsync(
+                AiRuntimeExecutionRecoveryTransitionRequest request,
+                CancellationToken cancellationToken = default)
+            {
+                throw new NotSupportedException(
+                    "Composition-only dependency.");
             }
         }
     }

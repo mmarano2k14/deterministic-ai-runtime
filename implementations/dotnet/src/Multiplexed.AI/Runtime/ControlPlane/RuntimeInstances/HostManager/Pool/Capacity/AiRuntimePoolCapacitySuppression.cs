@@ -13,6 +13,12 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
         public required string FailureId { get; init; }
 
         /// <summary>
+        /// Gets the authoritative suppression scope.
+        /// </summary>
+        public AiRuntimePoolCapacitySuppressionScope Scope { get; init; } =
+            AiRuntimePoolCapacitySuppressionScope.RuntimeInstanceRoute;
+
+        /// <summary>
         /// Gets the logical runtime pool identifier.
         /// </summary>
         public required string PoolId { get; init; }
@@ -28,9 +34,13 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
         public required string RuntimeInstanceId { get; init; }
 
         /// <summary>
-        /// Gets the exact route incarnation owned by the failed runtime.
+        /// Gets the exact route incarnation when the suppression authority is route-scoped.
         /// </summary>
-        public required string RouteId { get; init; }
+        /// <remarks>
+        /// Host-membership suppression intentionally has no route identity. Pool routes are local
+        /// to the failed host and cannot be treated as durable cross-host membership authority.
+        /// </remarks>
+        public string? RouteId { get; init; }
 
         /// <summary>
         /// Gets when capacity became unsafe.
