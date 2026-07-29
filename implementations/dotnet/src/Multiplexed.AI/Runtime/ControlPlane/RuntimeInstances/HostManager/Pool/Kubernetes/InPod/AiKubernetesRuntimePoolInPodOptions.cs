@@ -27,6 +27,21 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
             "/var/run/multiplexed/pod/uid";
 
         /// <summary>
+        /// Gets or sets the Kubernetes namespace projected by the Pod Downward API.
+        /// </summary>
+        public string KubernetesNamespace { get; set; } = string.Empty;
+
+        /// <summary>
+        /// Gets or sets the exact Kubernetes Pod name projected by the Pod Downward API.
+        /// </summary>
+        public string KubernetesPodName { get; set; } = string.Empty;
+
+        /// <summary>
+        /// Gets or sets the Kubernetes node name projected by the Pod Downward API.
+        /// </summary>
+        public string KubernetesNodeName { get; set; } = string.Empty;
+
+        /// <summary>
         /// Gets or sets the runtime instance identifier prefix used for replacement children.
         /// </summary>
         public string RuntimeInstanceIdPrefix { get; set; } =

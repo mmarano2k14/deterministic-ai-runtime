@@ -423,12 +423,16 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Capacity
         }
 
         /// <summary>
-        /// Preserves Kubernetes transport and ownership metadata when a stale runtime heartbeat
-        /// races with the external Kubernetes host publisher.
+        /// Preserves externally published Kubernetes transport metadata and first-class
+        /// capacity authority when a stale runtime heartbeat races with the external
+        /// Kubernetes host publisher.
         /// </summary>
         /// <param name="incomingDescriptor">The descriptor prepared by the current publisher.</param>
         /// <param name="existingValue">The descriptor value observed before the compare-exchange write.</param>
-        /// <returns>The descriptor that can be written without losing externally published routing metadata.</returns>
+        /// <returns>
+        /// The descriptor that can be written without losing externally published routing
+        /// metadata or typed capacity authority.
+        /// </returns>
         private static AiRuntimeInstanceCapacityDescriptor PreserveExternallyPublishedKubernetesMetadata(
             AiRuntimeInstanceCapacityDescriptor incomingDescriptor,
             RedisValue existingValue)
@@ -480,10 +484,24 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Capacity
 
             metadata["transport.endpoint.source"] =
                 "preserved-existing-capacity-descriptor-compare-exchange";
+            metadata["transport.endpoint.scope"] =
+                "control-plane";
 
             return new AiRuntimeInstanceCapacityDescriptor
             {
                 RuntimeInstanceId = incomingDescriptor.RuntimeInstanceId,
+                PoolId =
+                    FirstNonEmpty(
+                        incomingDescriptor.PoolId,
+                        existingDescriptor.PoolId),
+                HostId =
+                    FirstNonEmpty(
+                        incomingDescriptor.HostId,
+                        existingDescriptor.HostId),
+                ProviderName =
+                    FirstNonEmpty(
+                        incomingDescriptor.ProviderName,
+                        existingDescriptor.ProviderName),
                 TenantId =
                     FirstNonEmpty(
                         incomingDescriptor.TenantId,
@@ -498,6 +516,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Capacity
                         GetMetadataValue(
                             metadata,
                             AiRuntimeInstanceIsolationMetadataKeys.TenantGroupId)),
+                IsolationMode = incomingDescriptor.IsolationMode,
+                AllowSharedFallback =
+                    incomingDescriptor.AllowSharedFallback,
+                PreferDedicatedCapacity =
+                    incomingDescriptor.PreferDedicatedCapacity,
                 ControlPlaneId = incomingDescriptor.ControlPlaneId,
                 ControlPlaneHostId =
                     FirstNonEmpty(
@@ -612,6 +635,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Capacity
 
             return !string.IsNullOrWhiteSpace(transportEndpoint) &&
                    !IsUnsafeKubernetesLocalhostEndpoint(
+                       metadata,
                        transportEndpoint);
         }
 
@@ -640,11 +664,23 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Capacity
         /// <param name="transportEndpoint">The transport endpoint.</param>
         /// <returns><see langword="true"/> when the endpoint is unsafe for multi-pod dispatch.</returns>
         private static bool IsUnsafeKubernetesLocalhostEndpoint(
+            IReadOnlyDictionary<string, string>? metadata,
             string? transportEndpoint)
         {
             if (string.IsNullOrWhiteSpace(transportEndpoint))
             {
                 return false;
+            }
+
+            if (IsControlPlaneTransportEndpoint(metadata))
+            {
+                return false;
+            }
+
+            if (IsKubernetesPoolRuntime(metadata) &&
+                IsLoopbackTransportEndpoint(transportEndpoint))
+            {
+                return true;
             }
 
             return transportEndpoint.Contains(
@@ -653,6 +689,72 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Capacity
                    transportEndpoint.Contains(
                        "localhost:8080",
                        StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>
+        /// Determines whether metadata identifies a Kubernetes Runtime Pool child.
+        /// </summary>
+        private static bool IsKubernetesPoolRuntime(
+            IReadOnlyDictionary<string, string>? metadata)
+        {
+            return string.Equals(
+                       GetMetadataValue(metadata, "host.creation.mode"),
+                       "KubernetesPool",
+                       StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(
+                       GetMetadataValue(metadata, "hostType"),
+                       "runtime-instance-kubernetes-pool",
+                       StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(
+                       GetMetadataValue(metadata, "deployment"),
+                       "kubernetes-pool",
+                       StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>
+        /// Determines whether the endpoint was explicitly projected for control-plane routing.
+        /// </summary>
+        private static bool IsControlPlaneTransportEndpoint(
+            IReadOnlyDictionary<string, string>? metadata)
+        {
+            return string.Equals(
+                       GetMetadataValue(metadata, "transport.endpoint.scope"),
+                       "control-plane",
+                       StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(
+                       GetMetadataValue(metadata, "transport.endpoint.source"),
+                       "kubernetes-pool-service",
+                       StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(
+                       GetMetadataValue(metadata, "transport.endpoint.source"),
+                       "preserved-existing-capacity-descriptor",
+                       StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(
+                       GetMetadataValue(metadata, "transport.endpoint.source"),
+                       "preserved-existing-capacity-descriptor-compare-exchange",
+                       StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>
+        /// Determines whether an absolute transport endpoint resolves to the local machine.
+        /// </summary>
+        private static bool IsLoopbackTransportEndpoint(
+            string transportEndpoint)
+        {
+            return Uri.TryCreate(
+                       transportEndpoint,
+                       UriKind.Absolute,
+                       out var uri)
+                ? uri.IsLoopback
+                : transportEndpoint.Contains(
+                      "localhost",
+                      StringComparison.OrdinalIgnoreCase) ||
+                  transportEndpoint.Contains(
+                      "127.0.0.1",
+                      StringComparison.OrdinalIgnoreCase) ||
+                  transportEndpoint.Contains(
+                      "[::1]",
+                      StringComparison.OrdinalIgnoreCase);
         }
 
         /// <summary>
@@ -929,8 +1031,15 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Capacity
             return new AiRuntimeInstanceCapacityDescriptor
             {
                 RuntimeInstanceId = descriptor.RuntimeInstanceId,
+                PoolId = descriptor.PoolId,
+                HostId = descriptor.HostId,
+                ProviderName = descriptor.ProviderName,
                 TenantId = descriptor.TenantId,
                 TenantGroupId = descriptor.TenantGroupId,
+                IsolationMode = descriptor.IsolationMode,
+                AllowSharedFallback = descriptor.AllowSharedFallback,
+                PreferDedicatedCapacity =
+                    descriptor.PreferDedicatedCapacity,
                 ControlPlaneId = controlPlaneId,
                 ControlPlaneHostId = descriptor.ControlPlaneHostId,
                 Role = descriptor.Role,

@@ -1,4 +1,4 @@
-using Microsoft.Extensions.Options;
+﻿using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.ControlPlane.Discovery;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Capacity;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
@@ -279,6 +279,14 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Readiness
                         exactRuntime.CapacityMetadata,
                         cancellationToken)
                     .ConfigureAwait(false);
+            }
+
+            if (request.RequireExactRuntimeInstanceId)
+            {
+                return CreateFailure(
+                    request,
+                    "runtime-readiness-exact-registry-missing",
+                    timedOut: false);
             }
 
             var compatibleRuntime =

@@ -1,5 +1,6 @@
 ﻿using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.ControlPlane.Admission;
+using Multiplexed.Abstractions.AI.ControlPlane.Admission.Placement;
 using Multiplexed.Abstractions.AI.ControlPlane.Observability;
 using Multiplexed.Abstractions.AI.ControlPlane.Observability.Area;
 using Multiplexed.Abstractions.AI.ControlPlane.Observability.Events;
@@ -58,6 +59,62 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController
             Assert.Equal("execution-1", result.ExecutionId);
             Assert.True(admission.AdmitCalled);
             Assert.Equal("shared-run-1", admission.LastRequest?.RunId);
+        }
+
+        [Fact]
+        public async Task SubmitRunAsync_Should_Forward_Typed_Placement_To_Admission()
+        {
+            var admission = new FakeRunAdmissionController(
+                new AiRunAdmissionDecision
+                {
+                    DecisionType = AiRunAdmissionDecisionType.AssignToInstance,
+                    AssignedRuntimeInstanceId = "runtime-2",
+                    AssignedInstance = CreateRuntimeInstance("runtime-2"),
+                    Reason = "Required runtime placement selected."
+                });
+
+            var controller = CreateController(admission);
+
+            var placement = new AiRunPlacementDirective
+            {
+                Target = new AiRunPlacementTarget
+                {
+                    RuntimeInstanceId = "runtime-2",
+                    PoolId = "pool-1",
+                    NodeId = "node-1"
+                },
+                Requirement = AiRunPlacementRequirement.Required,
+                Fallback = AiRunPlacementFallback.Reject
+            };
+
+            var result = await controller.SubmitRunAsync(
+                new AiSharedRuntimeControllerRequest
+                {
+                    Operation = AiSharedRuntimeControllerOperation.SubmitRun,
+                    RequestedSharedRunId = "shared-run-placement",
+                    RunRequest = CreateRunRequest(),
+                    Placement = placement,
+                    RequestedBy = "tester",
+                    Source = "unit-test"
+                });
+
+            Assert.True(result.Success);
+            Assert.NotNull(admission.LastRequest?.Placement);
+            Assert.Equal(
+                "runtime-2",
+                admission.LastRequest!.Placement!.Target.RuntimeInstanceId);
+            Assert.Equal(
+                "pool-1",
+                admission.LastRequest.Placement.Target.PoolId);
+            Assert.Equal(
+                "node-1",
+                admission.LastRequest.Placement.Target.NodeId);
+            Assert.Equal(
+                AiRunPlacementRequirement.Required,
+                admission.LastRequest.Placement.Requirement);
+            Assert.Equal(
+                AiRunPlacementFallback.Reject,
+                admission.LastRequest.Placement.Fallback);
         }
 
         [Fact]

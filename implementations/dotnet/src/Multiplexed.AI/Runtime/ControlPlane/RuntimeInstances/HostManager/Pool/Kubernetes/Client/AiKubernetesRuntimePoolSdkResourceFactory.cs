@@ -17,6 +17,15 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
     {
         private const int KubernetesDnsLabelMaximumLength = 63;
 
+        private const string KubernetesNamespaceEnvironmentVariable =
+            "AiKubernetesRuntimePoolInPod__KubernetesNamespace";
+
+        private const string KubernetesPodNameEnvironmentVariable =
+            "AiKubernetesRuntimePoolInPod__KubernetesPodName";
+
+        private const string KubernetesNodeNameEnvironmentVariable =
+            "AiKubernetesRuntimePoolInPod__KubernetesNodeName";
+
         private readonly AiKubernetesRuntimePoolHostOptions options;
 
         /// <summary>
@@ -93,6 +102,19 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
                                     podSpec.ImagePullPolicy.ToString(),
                                 Args =
                                     podSpec.ContainerArguments.ToList(),
+                                Env =
+                                    new List<V1EnvVar>
+                                    {
+                                        CreateDownwardApiEnvironmentVariable(
+                                            KubernetesNamespaceEnvironmentVariable,
+                                            "metadata.namespace"),
+                                        CreateDownwardApiEnvironmentVariable(
+                                            KubernetesPodNameEnvironmentVariable,
+                                            "metadata.name"),
+                                        CreateDownwardApiEnvironmentVariable(
+                                            KubernetesNodeNameEnvironmentVariable,
+                                            "spec.nodeName")
+                                    },
                                 Ports =
                                     podSpec.Ports
                                         .Select(port =>
@@ -135,6 +157,29 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
                             }
                         }
                 }
+            };
+        }
+
+        /// <summary>
+        /// Creates one strongly typed Pod identity environment variable from the Kubernetes
+        /// Downward API.
+        /// </summary>
+        private static V1EnvVar CreateDownwardApiEnvironmentVariable(
+            string name,
+            string fieldPath)
+        {
+            return new V1EnvVar
+            {
+                Name = name,
+                ValueFrom =
+                    new V1EnvVarSource
+                    {
+                        FieldRef =
+                            new V1ObjectFieldSelector
+                            {
+                                FieldPath = fieldPath
+                            }
+                    }
             };
         }
 

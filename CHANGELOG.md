@@ -6,6 +6,593 @@ This project follows a deterministic runtime and observability model designed fo
 
 ---
 
+## 1.0.8.0 - 2026-07-29 — Hierarchical Runtime Capacity Selection and Kubernetes Runtime Pool Recovery
+
+---
+
+## Overview
+
+This release introduces deterministic hierarchical capacity selection for distributed AI runtimes and validates the resulting Kubernetes Runtime Pool topology under real process and Pod failures.
+
+The runtime can now choose the least expensive safe capacity option in a fixed order:
+
+```text
+1. Reuse a compatible warm runtime
+2. Reserve an available slot on an existing Runtime Pool runtime
+3. Create a new runtime process inside an existing Runtime Pool Pod
+4. Create a new Runtime Pool Pod
+5. Request external Kubernetes node capacity
+6. Apply backpressure when no safe capacity is available
+```
+
+Selection remains side-effect free. Inventory projection, atomic reservation, process creation, Pod creation, failure suppression, recovery, replay, tracing, and ledger persistence remain separate responsibilities with explicit authority boundaries.
+
+The final end-to-end validation completed successfully with:
+
+```text
+3 tenants
+2 impacted tenants
+1 safe tenant
+9 submitted runs
+2 real failure boundaries exercised
+6 recovered work items
+9 completed 50-step DAG executions
+9 MCP replay proofs
+0 cross-tenant recovery leaks
+0 safe-tenant recovery contamination
+ControlPlaneCausalChainValidated = true
+Total duration = 00:02:45.4834688
+```
+
+---
+
+## Architectural Guarantees
+
+The release preserves the following invariants:
+
+- Every runtime process has an independent `RuntimeInstanceId`.
+- `PoolId`, `HostId`, Kubernetes Pod identity, tenant ownership, lifecycle state, suppression state, and capacity are first-class fields.
+- Diagnostic metadata cannot repair or override missing authoritative identity.
+- Draining or suppressed capacity cannot receive new work.
+- Published runtime capacity is reduced by active temporary reservations before selection.
+- Concurrent admission cannot over-reserve a runtime slot.
+- Process creation is bounded by the selected Runtime Pool Manager.
+- Pod creation is deduplicated by logical request identity.
+- Required placement never silently falls back to sibling capacity.
+- Process failure suppresses only the failed runtime identity.
+- Pod failure suppresses the complete membership of the failed Pod incarnation.
+- In-flight recovery preserves the original durable `ExecutionId`.
+- Local-queued work returns through durable shared-run redispatch.
+- Safe tenants remain outside recovery evidence.
+- Kubernetes remains a lifecycle authority rather than the execution source of truth.
+
+---
+
+## Deterministic Hierarchical Capacity Selection
+
+A typed, side-effect-free selector now evaluates capacity candidates independently of their enumeration order.
+
+### Added model and contracts
+
+- `AiRuntimeCapacitySelectionLevel`
+- `AiRuntimeCapacitySelectionCandidate`
+- `AiRuntimeCapacitySelectionDecision`
+- `IAiRuntimeHierarchicalCapacitySelector`
+- `AiRuntimeHierarchicalCapacitySelector`
+
+### Selection behavior
+
+The selector:
+
+- preserves the exact hierarchy order;
+- excludes incompatible, unavailable, draining, or suppressed candidates;
+- rejects malformed first-class identity rather than inferring it from metadata;
+- breaks ties deterministically using:
+
+```text
+PoolId
+→ HostId
+→ RuntimeInstanceId
+→ ProviderName
+```
+
+- returns explicit `Backpressure` when no safe candidate exists.
+
+Focused tests validate hierarchy ordering, unsafe-candidate exclusion, identity enforcement, deterministic tie-breaking, and explicit capacity exhaustion.
+
+---
+
+## Authoritative Capacity Inventory
+
+A dedicated inventory builder now projects the current distributed runtime state into typed capacity candidates.
+
+### Added contracts
+
+- `IAiRuntimeCapacitySelectionInventoryBuilder`
+- `AiRuntimeCapacitySelectionInventoryBuilder`
+
+### Authoritative inputs
+
+- runtime instance registry;
+- runtime capacity store;
+- tenant visibility evaluator;
+- Runtime Pool capacity safety registry;
+- admission reservation store;
+- first-class isolation and lifecycle fields.
+
+### Effective capacity
+
+Idle compatible runtimes are projected as `CompatibleWarmRuntime`. Active runtimes with free capacity are projected as `ExistingPoolRuntimeSlot`.
+
+Available capacity is calculated as:
+
+```text
+EffectiveAvailableRunSlots
+    = PublishedAvailableRunSlots
+    - ReservedRunSlots
+```
+
+Tenant visibility is applied before a runtime enters the selectable inventory. Identity, provider, isolation, and lifecycle state are never reconstructed from metadata.
+
+---
+
+## Atomic Runtime-Slot Reservation
+
+Deterministic selection is now combined with bounded atomic reservation for existing runtime capacity.
+
+### Added contracts
+
+- `IAiRuntimeHierarchicalCapacityReservationCoordinator`
+- `AiRuntimeHierarchicalCapacityReservationCoordinator`
+- `AiRuntimeHierarchicalCapacityReservationResult`
+
+### Reservation behavior
+
+The coordinator:
+
+- builds a fresh authoritative inventory;
+- selects the least expensive safe capacity level;
+- atomically reserves slots only for existing runtime capacity;
+- rebuilds inventory and retries when a selected slot loses a reservation race;
+- leaves process creation, Pod creation, external-node requests, and backpressure outcomes mutation-free;
+- releases reservations through the existing reservation authority.
+
+Concurrency tests prove that one published slot is acquired exactly once, high contention cannot over-admit, and released capacity becomes selectable again.
+
+---
+
+## Bounded Process Creation Inside an Existing Pod
+
+Exact-host child-process creation now reuses the existing Runtime Pool Manager authority.
+
+### Added contracts
+
+- `IAiRuntimePoolProcessCreationExecutor`
+- `AiRuntimePoolProcessCreationExecutor`
+- `AiRuntimePoolProcessCreationResult`
+- `AiRuntimePoolProcessCreationStatus`
+
+### Process creation behavior
+
+The executor:
+
+- accepts only an `ExistingPoolPodProcessCreation` candidate;
+- requires exact `PoolId` and `HostId` identity;
+- resolves the selected Runtime Pool Manager;
+- creates at most one process for one logical request;
+- returns the fresh independently registered runtime identity;
+- rejects creation when the selected host is full;
+- deduplicates replay of the same request;
+- allows distinct concurrent requests only up to the configured manager maximum.
+
+---
+
+## Deterministic Runtime Pool Pod Creation
+
+New Kubernetes Runtime Pool Pods are created through the existing `KubernetesPool` host strategy.
+
+### Added contracts
+
+- `IAiRuntimePoolPodCreationExecutor`
+- `AiRuntimePoolPodCreationExecutor`
+- `AiRuntimePoolPodCreationIdentityFactory`
+- `AiRuntimePoolPodCreationResult`
+- `AiRuntimePoolPodCreationStatus`
+
+### Pod creation behavior
+
+The executor:
+
+- accepts only a `RuntimePoolPodCreation` candidate;
+- rejects requests containing an existing host or runtime identity;
+- reuses `KubernetesAiRuntimePoolHostCreationStrategy`;
+- generates deterministic host-request and primary-runtime identities;
+- waits for authoritative membership by `PoolId` and Pod UID;
+- requires the exact planned ready membership before reporting success;
+- deduplicates repeated and concurrent execution of the same logical request;
+- keeps rejected starts retryable.
+
+---
+
+## Capacity Execution Coordination
+
+A single execution coordinator now joins selection, reservation, process creation, and Pod creation without merging their authority boundaries.
+
+### Added contracts
+
+- `IAiRuntimeHierarchicalCapacityExecutionCoordinator`
+- `AiRuntimeHierarchicalCapacityExecutionCoordinator`
+- `AiRuntimeHierarchicalCapacityExecutionResult`
+
+### Execution flow
+
+```text
+Build inventory
+→ select hierarchy level
+→ reserve an existing runtime slot when possible
+→ otherwise create one process in the selected existing Pod
+→ otherwise create one new Runtime Pool Pod
+→ otherwise return external-node or backpressure outcome
+```
+
+Kubernetes node autoscaling remains external. `ExternalNodeCapacityRequest` is an explicit outcome for cluster-level capacity automation, while `Backpressure` remains the safe result when no capacity can be provided.
+
+---
+
+## Exact Runtime Placement
+
+First-class placement directives were added for scenarios and workloads that require one exact runtime identity.
+
+### Added model
+
+- `AiRunPlacementDirective`
+- `AiRunPlacementTarget`
+- `AiRunPlacementRequirement`
+- `AiRunPlacementFallback`
+
+The directive flows through shared control and admission without removing legacy scalar request fields.
+
+A required placement can now express:
+
+```text
+Target.RuntimeInstanceId = selected runtime
+Requirement = Required
+Fallback = Reject
+```
+
+This prevents admission from silently placing work on sibling capacity.
+
+---
+
+## Kubernetes Gateway Transport
+
+Runtime Pool transport publication was corrected for the Windows and Minikube development environment.
+
+The implementation now:
+
+- uses `ClusterIP` for Runtime Pool Services;
+- reuses the shared Kubernetes Gateway;
+- resolves exact runtime routes with `x-ai-runtime-instance-id`;
+- uses the host-local Gateway port-forward endpoint;
+- avoids publishing inaccessible Minikube NodePort endpoints;
+- validates the effective Gateway transport configuration before long-running scenarios begin.
+
+---
+
+## In-Pod Child Runtime Composition
+
+Every `RuntimeInstanceOnly` child inside a Runtime Pool Pod now receives the same durable persistence and observability profile as a standalone Process Host child.
+
+### Effective child capabilities
+
+```text
+Mongo execution snapshots
+Mongo/Redis replay-safe payload persistence
+Mongo decision ledger
+Mongo observability ledger
+Mongo replay metadata
+Mongo runtime tracing
+```
+
+### Key effective settings
+
+```text
+AiEngine__Snapshots__Enabled=true
+AiEngine__Snapshots__Mongo__Enabled=true
+AiPayloadStore__Provider=mongo-redis
+AiPayloadStore__RequireReplaySafePayloads=true
+AiDecisionLedger__Provider=mongo
+AiObservability__Ledger__Provider=mongo
+AiExecutionReplay__MetadataStore__Provider=mongo
+AiEngine__Observability__EnableTracing=true
+AiEngine__Observability__Tracing__Mode=Mongo
+```
+
+The exact configured Mongo database is shared by the control plane, Runtime Pool host, and all child runtimes. No alternate persistence authority is introduced.
+
+Child stdout and stderr are inherited by the Pod process so runtime failures remain visible through Kubernetes logs.
+
+---
+
+## First-Class Kubernetes Identity
+
+Kubernetes identity is now projected from the Downward API into every child registration.
+
+```text
+Kubernetes Downward API
+→ AiKubernetesRuntimePoolInPodOptions
+→ child provider metadata
+→ AiRuntimeInstanceRegistrationHostedService
+→ AiRuntimeInstanceSnapshot
+```
+
+Typed registration fields include:
+
+- `KubernetesNamespace`
+- `KubernetesPodName`
+- `KubernetesNodeName`
+
+Pod UID, Pool ID, Host ID, and runtime identity remain separate authoritative concepts.
+
+Non-Kubernetes runtimes remain unchanged and leave these fields empty.
+
+---
+
+## Typed Tenant Ownership
+
+Tenant ownership validation no longer depends on parsing the runtime identifier.
+
+Kubernetes Runtime Pool scenarios resolve ownership from `AiRuntimeInstanceSnapshot.TenantId` through the authoritative registry. This applies across:
+
+- the failed runtime;
+- redispatch;
+- replacement runtime selection;
+- final cross-tenant recovery-leak validation.
+
+Existing Process Host behavior remains backward compatible.
+
+---
+
+## Runtime Recovery Forensics
+
+The claimed-recovery path now records the same deterministic in-flight candidate evidence as the generic recovery reconciler:
+
+```text
+execution.recovery.candidate.detected
+```
+
+The forensics identity remains deterministic:
+
+```text
+runtime-recovery:{ExecutionId}:{SharedRunId}:{LocalRunId}
+```
+
+Local-queued work does not emit a false in-flight candidate event.
+
+Final in-flight timelines include:
+
+```text
+execution.recovery.candidate.detected
+→ shared.run.requeued.for.resume
+→ failed.local.run.marked.requeued.for.recovery
+→ replacement.runtime.selected
+→ replacement.local.run.registered
+→ resume.context.seeded
+→ dag.resume.started
+→ dag.resume.completed
+→ execution.recovery.completed
+```
+
+---
+
+## Control-Plane Recovery Ledger Evidence
+
+Runtime Pool recovery now completes the causal chain in the control-plane decision ledger.
+
+After a recovery transition is accepted and changes durable state, the control plane publishes:
+
+```text
+control.recovery.runtime-execution-recovery-reconcile.succeeded
+```
+
+with exact correlation and recovery metadata:
+
+```text
+TenantId
+TenantGroupId
+SharedRunId
+LocalRunId
+ExecutionId
+FailedRuntimeInstanceId
+recovery.forensicsId
+recovery.mode
+recovery.reason
+recovery.failedRuntimeInstanceId
+recovery.failedLocalRunId
+recovery.failedExecutionId
+```
+
+Refused transitions and accepted no-op transitions do not produce false `Succeeded` evidence.
+
+---
+
+## Public Model and API Additions
+
+### Capacity hierarchy
+
+- `AiRuntimeCapacitySelectionLevel`
+- `AiRuntimeCapacitySelectionCandidate`
+- `AiRuntimeCapacitySelectionDecision`
+- `IAiRuntimeHierarchicalCapacitySelector`
+- `IAiRuntimeCapacitySelectionInventoryBuilder`
+- `IAiRuntimeHierarchicalCapacityReservationCoordinator`
+- `IAiRuntimeHierarchicalCapacityExecutionCoordinator`
+- `AiRuntimeHierarchicalCapacityReservationResult`
+- `AiRuntimeHierarchicalCapacityExecutionResult`
+
+### Capacity creation
+
+- `IAiRuntimePoolProcessCreationExecutor`
+- `AiRuntimePoolProcessCreationResult`
+- `AiRuntimePoolProcessCreationStatus`
+- `IAiRuntimePoolPodCreationExecutor`
+- `AiRuntimePoolPodCreationResult`
+- `AiRuntimePoolPodCreationStatus`
+
+### Typed placement
+
+- `AiRunPlacementDirective`
+- `AiRunPlacementTarget`
+- `AiRunPlacementRequirement`
+- `AiRunPlacementFallback`
+
+---
+
+## Compatibility
+
+### Existing Kubernetes hosting mode
+
+`AiRuntimeHostCreationMode.Kubernetes = 2` continues to represent the existing one-runtime-per-Pod/Service model through `KubernetesAiRuntimeHostCreationStrategy`.
+
+Runtime Pool hosting remains a separate explicit mode:
+
+```text
+AiRuntimeHostCreationMode.KubernetesPool
+```
+
+The existing Kubernetes mode is not replaced or reinterpreted.
+
+### Existing request contracts
+
+Typed placement was added without removing legacy scalar request fields. Existing callers can continue using the previous request contract.
+
+### Preserved authority boundaries
+
+- Admission reservation store owns temporary slot reservations.
+- Runtime Pool Manager owns child-process lifecycle inside one host.
+- Kubernetes Runtime Pool host strategy owns Pod lifecycle.
+- Kubernetes owns scheduling and container lifecycle.
+- Redis and MongoDB remain shared durable authorities.
+- The control plane owns placement, safety, tenant visibility, recovery, and convergence.
+
+---
+
+## End-to-End Validation
+
+### Workload
+
+```text
+TenantCount = 3
+ImpactedTenantCount = 2
+SafeTenantCount = 1
+SubmittedRuns = 9
+StepCount = 50
+KillAfterCompletedStepCount = 25
+ExpectedRecoveredWork = 6
+```
+
+### Failure boundaries
+
+- One real runtime child process was killed inside a live Runtime Pool Pod.
+- One complete Runtime Pool Pod was deleted.
+- Healthy sibling and safe-tenant capacity remained available.
+
+### Recovery result
+
+```text
+RecoveredWork = 6/6
+In-flight recoveries = 2
+Local-queued recoveries = 4
+Lost executions = 0
+Duplicate recovery = 0
+Cross-tenant recovery leakage = 0
+Safe-tenant recovery contamination = 0
+```
+
+The two in-flight runs resumed with their original durable `ExecutionId`. Local-queued work returned through durable shared-run redispatch and received fresh execution identities only when execution began.
+
+### Completion and replay
+
+```text
+Completed DAG executions = 9/9
+Completed logical steps = 450/450
+MCP replay proofs = 9/9
+Terminal runtime run statuses = 9/9
+```
+
+Snapshots, payloads, replay metadata, decision ledger entries, and traces were accessible through MCP for impacted and safe tenants.
+
+### Tenant isolation
+
+```text
+ForeignImpactedEntries = 0
+SafeRecoveryEntries = 0
+CrossTenantLedgerLeakDetected = false
+```
+
+The safe tenant completed all three runs with:
+
+```text
+RecoveredWork = 0
+RecoveryForensics = 0
+RuntimeProcessKilled = false
+CrashImpacted = false
+```
+
+### Control-plane causal chain
+
+```text
+ScenarioCausalChainEntries = 493
+ExpectedRecoveredWork = 6
+ActualRecoveredWork = 6
+ControlPlaneCausalChainValidated = true
+```
+
+Validated evidence includes:
+
+```text
+Scale-out request persisted
+Scale-out watcher observed request
+Provider selected
+Runtime host manager created host
+Runtime capacity became visible
+Registry and capacity lookup succeeded
+Execution recovery reconciled assigned work
+Recovered work redispatched
+```
+
+### Timing
+
+```text
+Total = 00:02:45.4834688
+```
+
+---
+
+## Deliberate Non-Goals
+
+This release does not claim or implement:
+
+- runtime-owned Kubernetes node autoscaling;
+- a universal throughput ceiling;
+- million-request production capacity;
+- Redis Cluster key-slot compatibility;
+- Redis primary failover validation;
+- a Redis Cluster Catalog;
+- global tenant-cell placement;
+- every possible Kubernetes failure interleaving.
+
+`ExternalNodeCapacityRequest` is an explicit hierarchy outcome, but node creation remains an external Kubernetes or cluster-autoscaler capability. When external capacity cannot be obtained, correctness is preserved through bounded retry or backpressure.
+
+---
+
+## Final Status
+
+> The runtime can now deterministically reuse, reserve, or create the least expensive safe capacity level. The resulting Kubernetes Runtime Pool topology has been validated under real child-process failure, real Pod failure, durable recovery, replay, tracing, forensics, tenant-scoped ledger queries, and a complete control-plane causal chain.
+
+
+---
+
 ## 1.0.7.9 - 2026-07-28 — Kubernetes Runtime Pool Pod Failure Recovery
 
 ### Added

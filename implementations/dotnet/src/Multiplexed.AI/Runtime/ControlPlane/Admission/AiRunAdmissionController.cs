@@ -1,6 +1,7 @@
 ﻿using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.ControlPlane.Admission;
+using Multiplexed.Abstractions.AI.ControlPlane.Admission.Placement;
 using Multiplexed.Abstractions.AI.ControlPlane.Admission.Reservations;
 using Multiplexed.Abstractions.AI.ControlPlane.Observability;
 using Multiplexed.Abstractions.AI.ControlPlane.Observability.Area;
@@ -106,6 +107,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission
             ArgumentNullException.ThrowIfNull(request);
             ArgumentNullException.ThrowIfNull(request.RunRequest);
 
+            if (request.Placement is not null)
+            {
+                ArgumentNullException.ThrowIfNull(request.Placement.Target);
+            }
+
             cancellationToken.ThrowIfCancellationRequested();
 
             var startedAtUtc = DateTimeOffset.UtcNow;
@@ -132,6 +138,12 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission
                         ["tenantGroupId"] = tenantRuntimeSettings.TenantGroupId,
                         ["pipelineKey"] = request.PipelineKey,
                         ["preferredRuntimeInstanceId"] = request.PreferredRuntimeInstanceId,
+                        ["placementRuntimeInstanceId"] = request.Placement?.Target.RuntimeInstanceId,
+                        ["placementHostId"] = request.Placement?.Target.HostId,
+                        ["placementPoolId"] = request.Placement?.Target.PoolId,
+                        ["placementNodeId"] = request.Placement?.Target.NodeId,
+                        ["placementRequirement"] = request.Placement?.Requirement.ToString(),
+                        ["placementFallback"] = request.Placement?.Fallback.ToString(),
                         ["enableScaleOutRequest"] = _options.EnableScaleOutRequest,
                         ["enableGlobalQueueFallback"] = _options.EnableGlobalQueueFallback,
                         ["rejectWhenNoCapacity"] = _options.RejectWhenNoCapacity,
@@ -278,10 +290,19 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission
 
                 if (preferred is not null)
                 {
+                    var placementReason =
+                        request.Placement is null
+                            ? "Preferred runtime instance selected for run admission."
+                            : request.Placement.Requirement == AiRunPlacementRequirement.Required
+                                ? "Required runtime placement selected for run admission."
+                                : "Preferred runtime placement selected for run admission.";
+
                     _logger.LogInformation(
-                        "Admission selected preferred runtime instance. RunId={RunId}, RuntimeInstanceId={RuntimeInstanceId}, EffectiveAvailableRunSlots={EffectiveAvailableRunSlots}, ReservedRunCount={ReservedRunCount}",
+                        "Admission selected requested runtime placement. RunId={RunId}, RuntimeInstanceId={RuntimeInstanceId}, PlacementRequirement={PlacementRequirement}, PlacementFallback={PlacementFallback}, EffectiveAvailableRunSlots={EffectiveAvailableRunSlots}, ReservedRunCount={ReservedRunCount}",
                         request.RunId,
                         preferred.Instance.RuntimeInstanceId,
+                        request.Placement?.Requirement,
+                        request.Placement?.Fallback,
                         preferred.EffectiveAvailableRunSlots,
                         preferred.ReservedRunCount);
 
@@ -294,10 +315,41 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission
                         countableRuntimeInstances.Length,
                         effectiveMaxInstanceCount,
                         tenantRuntimeSettings,
-                        "Preferred runtime instance selected for run admission."),
+                        placementReason),
                         startedAtUtc,
                         cancellationToken)
                     .ConfigureAwait(false);
+                }
+
+                var placementFallbackDecision =
+                    CreatePlacementFallbackDecision(
+                        request,
+                        instances,
+                        availableInstances,
+                        countableRuntimeInstances.Length,
+                        effectiveMaxInstanceCount,
+                        tenantRuntimeSettings);
+
+                if (placementFallbackDecision is not null)
+                {
+                    _logger.LogWarning(
+                        "Admission could not select requested placement target. RunId={RunId}, RuntimeInstanceId={RuntimeInstanceId}, HostId={HostId}, PoolId={PoolId}, NodeId={NodeId}, PlacementRequirement={PlacementRequirement}, PlacementFallback={PlacementFallback}, DecisionType={DecisionType}, Reason={Reason}",
+                        request.RunId,
+                        request.Placement?.Target.RuntimeInstanceId,
+                        request.Placement?.Target.HostId,
+                        request.Placement?.Target.PoolId,
+                        request.Placement?.Target.NodeId,
+                        request.Placement?.Requirement,
+                        request.Placement?.Fallback,
+                        placementFallbackDecision.DecisionType,
+                        placementFallbackDecision.Reason);
+
+                    return await RecordAdmissionDecisionAsync(
+                            request,
+                            placementFallbackDecision,
+                            startedAtUtc,
+                            cancellationToken)
+                        .ConfigureAwait(false);
                 }
 
                 var selected =
@@ -460,6 +512,12 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission
                             ["tenantGroupId"] = tenantRuntimeSettings.TenantGroupId ?? request.RunRequest.ExecutionContextSnapshot?.TenantGroupId,
                             ["pipelineKey"] = request.PipelineKey,
                             ["preferredRuntimeInstanceId"] = request.PreferredRuntimeInstanceId,
+                            ["placementRuntimeInstanceId"] = request.Placement?.Target.RuntimeInstanceId,
+                            ["placementHostId"] = request.Placement?.Target.HostId,
+                            ["placementPoolId"] = request.Placement?.Target.PoolId,
+                            ["placementNodeId"] = request.Placement?.Target.NodeId,
+                            ["placementRequirement"] = request.Placement?.Requirement.ToString(),
+                            ["placementFallback"] = request.Placement?.Fallback.ToString(),
                             ["durationMs"] = durationMs,
                             ["exception.type"] = exception.GetType().FullName,
                             ["exception.message"] = exception.Message
@@ -1108,8 +1166,18 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission
             AiRunAdmissionRequest request,
             IReadOnlyCollection<AdmissionCandidate> availableCandidates)
         {
-            if (!_options.PreferRequestedRuntimeInstance ||
-                string.IsNullOrWhiteSpace(request.PreferredRuntimeInstanceId))
+            var requestedRuntimeInstanceId =
+                request.Placement is null
+                    ? request.PreferredRuntimeInstanceId
+                    : request.Placement.Target.RuntimeInstanceId;
+
+            if (string.IsNullOrWhiteSpace(requestedRuntimeInstanceId))
+            {
+                return null;
+            }
+
+            if (request.Placement is null &&
+                !_options.PreferRequestedRuntimeInstance)
             {
                 return null;
             }
@@ -1117,8 +1185,93 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission
             return availableCandidates.FirstOrDefault(candidate =>
                 string.Equals(
                     candidate.Instance.RuntimeInstanceId,
-                    request.PreferredRuntimeInstanceId,
+                    requestedRuntimeInstanceId,
                     StringComparison.Ordinal));
+        }
+
+        /// <summary>
+        /// Creates the explicit placement fallback decision when a typed placement target
+        /// cannot be selected by the current admission controller.
+        /// </summary>
+        private AiRunAdmissionDecision? CreatePlacementFallbackDecision(
+            AiRunAdmissionRequest request,
+            IReadOnlyCollection<AiRuntimeInstanceSnapshot> visibleInstances,
+            IReadOnlyCollection<AiRuntimeInstanceSnapshot> availableInstances,
+            int currentInstanceCount,
+            int? maxInstanceCount,
+            AiTenantRuntimeSettings tenantRuntimeSettings)
+        {
+            var placement = request.Placement;
+
+            if (placement is null ||
+                !HasPlacementTarget(placement.Target) ||
+                placement.Fallback == AiRunPlacementFallback.AnyCompatibleCapacity)
+            {
+                return null;
+            }
+
+            var targetSummary =
+                BuildPlacementTargetSummary(placement.Target);
+
+            if (placement.Fallback == AiRunPlacementFallback.GlobalQueue &&
+                _options.EnableGlobalQueueFallback)
+            {
+                return CreateDecision(
+                    AiRunAdmissionDecisionType.QueueGlobally,
+                    reason: $"Requested placement target '{targetSummary}' is not currently selectable; explicit global queue fallback was requested.",
+                    visibleInstances: visibleInstances,
+                    availableInstances: availableInstances,
+                    currentInstanceCount: currentInstanceCount,
+                    maxInstanceCount: maxInstanceCount,
+                    tenantRuntimeSettings: tenantRuntimeSettings);
+            }
+
+            var reason =
+                placement.Fallback == AiRunPlacementFallback.GlobalQueue
+                    ? $"Requested placement target '{targetSummary}' is not currently selectable and global queue fallback is disabled."
+                    : $"Requested placement target '{targetSummary}' is not currently selectable and explicit rejection was requested.";
+
+            return CreateDecision(
+                AiRunAdmissionDecisionType.Reject,
+                reason: reason,
+                visibleInstances: visibleInstances,
+                availableInstances: availableInstances,
+                currentInstanceCount: currentInstanceCount,
+                maxInstanceCount: maxInstanceCount,
+                tenantRuntimeSettings: tenantRuntimeSettings);
+        }
+
+        /// <summary>
+        /// Determines whether a typed placement target contains at least one first-class identity.
+        /// </summary>
+        private static bool HasPlacementTarget(
+            AiRunPlacementTarget target)
+        {
+            ArgumentNullException.ThrowIfNull(target);
+
+            return !string.IsNullOrWhiteSpace(target.RuntimeInstanceId) ||
+                   !string.IsNullOrWhiteSpace(target.HostId) ||
+                   !string.IsNullOrWhiteSpace(target.PoolId) ||
+                   !string.IsNullOrWhiteSpace(target.NodeId);
+        }
+
+        /// <summary>
+        /// Builds a compact typed placement target summary for diagnostics.
+        /// </summary>
+        private static string BuildPlacementTargetSummary(
+            AiRunPlacementTarget target)
+        {
+            ArgumentNullException.ThrowIfNull(target);
+
+            return string.Join(
+                ",",
+                new[]
+                {
+                    $"RuntimeInstanceId={target.RuntimeInstanceId ?? string.Empty}",
+                    $"HostId={target.HostId ?? string.Empty}",
+                    $"PoolId={target.PoolId ?? string.Empty}",
+                    $"NodeId={target.NodeId ?? string.Empty}"
+                });
         }
 
         /// <summary>

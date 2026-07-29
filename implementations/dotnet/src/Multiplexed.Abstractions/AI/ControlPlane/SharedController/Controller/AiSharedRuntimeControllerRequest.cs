@@ -1,4 +1,5 @@
-﻿using Multiplexed.Abstractions.AI.Execution.Instance.Worker;
+﻿using Multiplexed.Abstractions.AI.ControlPlane.Admission.Placement;
+using Multiplexed.Abstractions.AI.Execution.Instance.Worker;
 using Multiplexed.Abstractions.AI.Runtime.Execution.Instance.Worker;
 
 namespace Multiplexed.Abstractions.AI.ControlPlane.SharedController.Controller
@@ -52,6 +53,12 @@ namespace Multiplexed.Abstractions.AI.ControlPlane.SharedController.Controller
         /// Admission may try this runtime instance first when it is available.
         /// </summary>
         public string? PreferredRuntimeInstanceId { get; init; }
+
+        /// <summary>
+        /// Optional typed placement directive forwarded to run admission.
+        /// When omitted, the historical PreferredRuntimeInstanceId behavior is preserved.
+        /// </summary>
+        public AiRunPlacementDirective? Placement { get; init; }
 
         /// <summary>
         /// Indicates whether cancelled shared runs should be included when listing runs.

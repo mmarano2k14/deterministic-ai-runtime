@@ -54,6 +54,16 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
         public string NodePortHost { get; set; } = "127.0.0.1";
 
         /// <summary>
+        /// Gets or sets a value indicating whether the stable Runtime Pool Service should be
+        /// exposed through the existing shared Kubernetes Gateway transport endpoint.
+        /// </summary>
+        /// <remarks>
+        /// Gateway lifecycle and the optional host-local kubectl port-forward remain owned by
+        /// <see cref="AiKubernetesRuntimeHostOptions"/> and the existing Gateway managers.
+        /// </remarks>
+        public bool UseGatewayTransportEndpoint { get; set; }
+
+        /// <summary>
         /// Gets or sets Kubernetes resource and readiness timeout.
         /// </summary>
         public TimeSpan StartupTimeout { get; set; } =

@@ -14,6 +14,7 @@ using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Reco
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Recovery.Claims;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Recovery.Execution;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strategy;
+using Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling;
 using Xunit;
 
 namespace Multiplexed.AI.Tests.Unit.ControlPlane.DI
@@ -64,6 +65,34 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.DI
             Assert.Equal(
                 2,
                 (int)AiRuntimeHostCreationMode.Kubernetes);
+        }
+
+        /// <summary>
+        /// Verifies that Step 7E reuses the existing KubernetesPool host strategy through
+        /// one dedicated Pod creation executor.
+        /// </summary>
+        [Fact]
+        public void Add_Should_Register_RuntimePool_PodCreation_Executor()
+        {
+            var services = new ServiceCollection();
+
+            services.AddLogging();
+            services.AddAiKubernetesRuntimePoolHostProvider();
+
+            var descriptor =
+                Assert.Single(
+                    services.Where(
+                        item =>
+                            item.ServiceType ==
+                            typeof(
+                                IAiRuntimePoolPodCreationExecutor)));
+
+            Assert.Equal(
+                typeof(AiRuntimePoolPodCreationExecutor),
+                descriptor.ImplementationType);
+            Assert.Equal(
+                ServiceLifetime.Singleton,
+                descriptor.Lifetime);
         }
 
         /// <summary>

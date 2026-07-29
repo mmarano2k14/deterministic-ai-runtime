@@ -1,4 +1,5 @@
-﻿using Multiplexed.Abstractions.AI.ControlPlane.Signals;
+﻿using Multiplexed.Abstractions.AI.ControlPlane.Admission.Placement;
+using Multiplexed.Abstractions.AI.ControlPlane.Signals;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Forensics;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager.ProcessControl;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Recovery;
@@ -48,6 +49,10 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
         /// <param name="progressTimeout">The DAG progress wait timeout.</param>
         /// <param name="observationMode">The production recovery observation mode.</param>
         /// <param name="crashCheckpointGate">The optional test-only durable crash checkpoint gate.</param>
+        /// <param name="remainingRunPlacementFactory">
+        /// Optional factory that creates the placement directive for runs submitted after the first runtime assignment.
+        /// Historical scenarios leave this unset and preserve the existing admission behavior.
+        /// </param>
         /// <returns>The real assigned work inventory selected for process crash.</returns>
         public static async Task<RealRuntimeCrashAssignedWorkInventoryProof> SubmitAndBuildAssignedWorkInventoryAsync(
             ITestOutputHelper output,
@@ -71,7 +76,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
             TimeSpan progressTimeout,
             ProductionRecoveryObservationMode observationMode =
                 ProductionRecoveryObservationMode.Polling,
-            ProductionCrashCheckpointGate? crashCheckpointGate = null)
+            ProductionCrashCheckpointGate? crashCheckpointGate = null,
+            Func<string, AiRunPlacementDirective?>? remainingRunPlacementFactory = null)
         {
             ArgumentNullException.ThrowIfNull(output);
             ArgumentNullException.ThrowIfNull(mcp);
@@ -154,6 +160,10 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
                     $"[REAL RUNTIME INVENTORY CRASH GATE CONFIRMED] TenantId='{tenant.TenantId}', SharedRunId='{firstDispatchedRun.SharedRunId}', RuntimeInstanceId='{firstDispatchedRun.AssignedRuntimeInstanceId}', PipelineName='{firstPipelineName}', CheckpointStepIndex='{crashCheckpointGate.Definition.StepIndex}'. Submitting local queued work only after durable gate reach.");
             }
 
+            var remainingRunPlacement =
+                remainingRunPlacementFactory?.Invoke(
+                    firstDispatchedRun.AssignedRuntimeInstanceId!);
+
             /*
              * Submit every remaining run before waiting for any individual
              * dispatch. The first execution must stay active long enough for
@@ -172,7 +182,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
                             controlPlaneId,
                             pipelineName,
                             requestedBy,
-                            source)
+                            source,
+                            placement: remainingRunPlacement)
                         .ConfigureAwait(false);
 
                 trackedRuns.Add(
@@ -182,7 +193,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
                         null));
 
                 output.WriteLine(
-                    $"[REAL RUNTIME INVENTORY] Run submitted before combined inventory wait. TenantId='{tenant.TenantId}', SharedRunId='{sharedRunId}', PipelineName='{pipelineName}'.");
+                    $"[REAL RUNTIME INVENTORY] Run submitted before combined inventory wait. TenantId='{tenant.TenantId}', SharedRunId='{sharedRunId}', PipelineName='{pipelineName}', PlacementRuntimeInstanceId='{remainingRunPlacement?.Target.RuntimeInstanceId}', PlacementRequirement='{remainingRunPlacement?.Requirement}', PlacementFallback='{remainingRunPlacement?.Fallback}'.");
             }
 
             /*
@@ -647,6 +658,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
         /// <param name="controlPlaneId">The logical control-plane identifier used only in hybrid mode.</param>
         /// <param name="hybridFallbackPollInterval">The slow durable fallback interval used only in hybrid mode.</param>
         /// <param name="crashCheckpointGate">The optional durable crash checkpoint released immediately after process termination.</param>
+        /// <param name="runtimeTenantOwnershipAssertion">The optional authoritative runtime tenant ownership assertion. When omitted, the historical runtime-id naming assertion is preserved.</param>
         /// <returns>The failed-runtime recovery proof.</returns>
         public static async Task<RealRuntimeCrashFailedRuntimeRecoveryProof>
             KillRuntimeAndRecoverAssignedInventoryAsync(
@@ -669,7 +681,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
                 IAiRuntimeSignalSubscriber? signalSubscriber = null,
                 string? controlPlaneId = null,
                 TimeSpan? hybridFallbackPollInterval = null,
-                ProductionCrashCheckpointGate? crashCheckpointGate = null)
+                ProductionCrashCheckpointGate? crashCheckpointGate = null,
+                Func<IAiRuntimeInstanceRegistry, string, ProductionTenantScenarioDefinition, Task>?
+                    runtimeTenantOwnershipAssertion = null)
         {
             ArgumentNullException.ThrowIfNull(output);
             ArgumentNullException.ThrowIfNull(processControl);
@@ -1016,9 +1030,12 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
                     Assert.NotEqual(inventory.RuntimeInstanceId, redispatchedRun.AssignedRuntimeInstanceId);
                     Assert.NotEqual(work.LocalRunId, redispatchedRun.LocalRunId);
 
-                    AssertRuntimeBelongsToTenant(
-                        redispatchedRun.AssignedRuntimeInstanceId!,
-                        inventory.Tenant);
+                    await AssertRuntimeBelongsToTenantAsync(
+                            registry,
+                            redispatchedRun.AssignedRuntimeInstanceId!,
+                            inventory.Tenant,
+                            runtimeTenantOwnershipAssertion)
+                        .ConfigureAwait(false);
 
                     string recoveredExecutionId;
 
@@ -2029,6 +2046,45 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
                 }
             }
 
+            AssertNoDuplicateCrossTenantInventoryRecovery(proofs);
+        }
+
+        /// <summary>
+        /// Asserts that multiple failed-runtime recoveries did not leak work across tenant boundaries
+        /// using an optional authoritative runtime tenant ownership assertion.
+        /// </summary>
+        /// <param name="registry">The authoritative runtime instance registry.</param>
+        /// <param name="proofs">The failed-runtime recovery proofs.</param>
+        /// <param name="runtimeTenantOwnershipAssertion">The optional authoritative runtime tenant ownership assertion. When omitted, the historical runtime-id naming assertion is preserved.</param>
+        /// <returns>A task that completes when tenant ownership and duplicate recovery have been validated.</returns>
+        public static async Task AssertNoCrossTenantInventoryRecoveryLeakAsync(
+            IAiRuntimeInstanceRegistry registry,
+            IReadOnlyCollection<RealRuntimeCrashFailedRuntimeRecoveryProof> proofs,
+            Func<IAiRuntimeInstanceRegistry, string, ProductionTenantScenarioDefinition, Task>?
+                runtimeTenantOwnershipAssertion = null)
+        {
+            ArgumentNullException.ThrowIfNull(registry);
+            ArgumentNullException.ThrowIfNull(proofs);
+
+            foreach (var proof in proofs)
+            {
+                foreach (var recoveredWork in proof.RecoveredWorks)
+                {
+                    await AssertRuntimeBelongsToTenantAsync(
+                            registry,
+                            recoveredWork.ReplacementRuntimeInstanceId,
+                            proof.FailedInventory.Tenant,
+                            runtimeTenantOwnershipAssertion)
+                        .ConfigureAwait(false);
+                }
+            }
+
+            AssertNoDuplicateCrossTenantInventoryRecovery(proofs);
+        }
+
+        private static void AssertNoDuplicateCrossTenantInventoryRecovery(
+            IReadOnlyCollection<RealRuntimeCrashFailedRuntimeRecoveryProof> proofs)
+        {
             var allRecoveredSharedRunIds =
                 proofs
                     .SelectMany(proof => proof.RecoveredWorks)
@@ -2089,6 +2145,32 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
                         safeSharedRunIds.Contains(recovered.Original.SharedRunId) ||
                         safeSharedRunIds.Contains(recovered.RedispatchedRun.SharedRunId));
             }
+        }
+
+        private static Task AssertRuntimeBelongsToTenantAsync(
+            IAiRuntimeInstanceRegistry registry,
+            string runtimeInstanceId,
+            ProductionTenantScenarioDefinition tenant,
+            Func<IAiRuntimeInstanceRegistry, string, ProductionTenantScenarioDefinition, Task>?
+                runtimeTenantOwnershipAssertion)
+        {
+            ArgumentNullException.ThrowIfNull(registry);
+            ArgumentException.ThrowIfNullOrWhiteSpace(runtimeInstanceId);
+            ArgumentNullException.ThrowIfNull(tenant);
+
+            if (runtimeTenantOwnershipAssertion is not null)
+            {
+                return runtimeTenantOwnershipAssertion(
+                    registry,
+                    runtimeInstanceId,
+                    tenant);
+            }
+
+            AssertRuntimeBelongsToTenant(
+                runtimeInstanceId,
+                tenant);
+
+            return Task.CompletedTask;
         }
 
         /// <summary>

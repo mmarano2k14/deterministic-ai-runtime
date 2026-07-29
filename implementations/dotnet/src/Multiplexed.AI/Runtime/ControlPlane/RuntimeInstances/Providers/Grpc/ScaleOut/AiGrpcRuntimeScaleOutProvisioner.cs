@@ -101,6 +101,17 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Grpc.Sc
                 return CreateRejectedResult(request, "grpc-runtime-scaleout-control-plane-id-missing", "gRPC runtime scale-out control-plane id is missing.");
             }
 
+            if (IsHostManagerMode(options.Mode) &&
+                options.HostCreationMode ==
+                    AiRuntimeHostCreationMode.KubernetesPool &&
+                string.IsNullOrWhiteSpace(options.PoolId))
+            {
+                return CreateRejectedResult(
+                    request,
+                    "grpc-runtime-scaleout-kubernetes-pool-id-missing",
+                    "gRPC KubernetesPool scale-out requires a logical Runtime Pool identifier.");
+            }
+
             var context =
                 await CreateProvisioningContextAsync(
                         request,
@@ -321,6 +332,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Grpc.Sc
                         TransportName = AiGrpcRuntimeProviderConstants.TransportName,
                         TransportEndpoint = context.Endpoint,
                         HostCreationMode = options.HostCreationMode,
+                        PoolId =
+                            options.HostCreationMode ==
+                                AiRuntimeHostCreationMode.KubernetesPool
+                                ? options.PoolId?.Trim()
+                                : null,
                         TenantId = context.TenantId,
                         TenantGroupId = context.TenantGroupId,
                         IsolationMode = context.IsolationMode.ToString(),
@@ -419,6 +435,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Grpc.Sc
                             TransportName = AiGrpcRuntimeProviderConstants.TransportName,
                             TransportEndpoint = fulfilledTransportEndpoint,
                             RequireTransportEndpoint = requireTransportEndpoint,
+                            RequireExactRuntimeInstanceId =
+                                ShouldRequireExactRuntimeInstanceId(),
                             Timeout = TimeSpan.FromSeconds(Math.Max(1, options.ReadinessTimeoutSeconds)),
                             PollInterval = TimeSpan.FromMilliseconds(Math.Max(1, options.ReadinessPollIntervalMilliseconds))
                         },
@@ -483,6 +501,23 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Grpc.Sc
                 (DateTimeOffset.UtcNow - startedAtUtc).TotalMilliseconds);
 
             return CreateFulfilledResult(request, fulfilledRuntimeInstanceId, $"grpc-host-manager-scaleout-{request.RequestId}", "gRPC runtime scale-out request was fulfilled by the runtime host manager.", metadata);
+        }
+
+        /// <summary>
+        /// Determines whether readiness must resolve the exact requested runtime identity.
+        /// </summary>
+        /// <remarks>
+        /// Explicit Runtime Pool topologies require exact child identity. The host-creation fallback
+        /// preserves compatibility for existing KubernetesPool configurations that predate the
+        /// first-class topology option.
+        /// </remarks>
+        private bool ShouldRequireExactRuntimeInstanceId()
+        {
+            return options.CapacityTopologyMode is
+                       AiRuntimeCapacityTopologyMode.ProcessPool or
+                       AiRuntimeCapacityTopologyMode.KubernetesPool ||
+                   options.HostCreationMode ==
+                       AiRuntimeHostCreationMode.KubernetesPool;
         }
 
         /// <summary>
@@ -584,7 +619,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Grpc.Sc
                 return false;
             }
 
-            if (options.HostCreationMode == AiRuntimeHostCreationMode.Kubernetes)
+            if (options.HostCreationMode is
+                AiRuntimeHostCreationMode.Kubernetes or
+                AiRuntimeHostCreationMode.KubernetesPool)
             {
                 return false;
             }

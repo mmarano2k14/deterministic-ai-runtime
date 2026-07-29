@@ -20,6 +20,12 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager.Po
             options.EnvironmentVariables["AiMcpHost__Mode"] = "wrong-mode";
             options.EnvironmentVariables["AiRuntimeInstanceRegistration__PoolId"] = "wrong-pool";
             options.EnvironmentVariables["AiRuntimeInstanceRegistration__HostId"] = "wrong-host";
+            options.EnvironmentVariables[
+                "AiRuntimeInstanceRegistration__Metadata__hostType"] =
+                "runtime-instance-kubernetes-pool";
+            options.EnvironmentVariables[
+                "AiRuntimeInstanceRegistration__Metadata__deployment"] =
+                "kubernetes-pool";
 
             var factory =
                 new AiRuntimeProcessPoolRuntimeInstanceStartPlanFactory(
@@ -37,7 +43,16 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager.Po
             Assert.Equal("http://127.0.0.1:5931", plan.TransportEndpoint);
             Assert.Equal(plan.TransportEndpoint, plan.ReadinessRequest.TransportEndpoint);
             Assert.Equal(request.RuntimeInstanceId, plan.ReadinessRequest.RuntimeInstanceId);
+            Assert.True(plan.ReadinessRequest.RequireExactRuntimeInstanceId);
             Assert.True(plan.ReadinessRequest.RequireTransportEndpoint);
+            Assert.Equal(
+                "runtime-instance-kubernetes-pool",
+                environment[
+                    "AiRuntimeInstanceRegistration__Metadata__hostType"]);
+            Assert.Equal(
+                "kubernetes-pool",
+                environment[
+                    "AiRuntimeInstanceRegistration__Metadata__deployment"]);
             Assert.Equal(
                 "True",
                 environment["AiEngine__ControlPlane__EnableDiscovery"]);

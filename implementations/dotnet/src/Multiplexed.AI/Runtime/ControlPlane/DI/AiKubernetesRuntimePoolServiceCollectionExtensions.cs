@@ -16,6 +16,7 @@ using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Reco
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strategy;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strategy.Kubernetes.Client;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strategy.Kubernetes.Client.Factory;
+using Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.DI
 {
@@ -224,6 +225,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
             services.TryAddSingleton<
                 IAiKubernetesRuntimePoolPodFailureRecoveryCoordinator,
                 AiKubernetesRuntimePoolPodFailureRecoveryCoordinator>();
+
+            services.TryAddSingleton<
+                IAiRuntimePoolPodCreationExecutor,
+                AiRuntimePoolPodCreationExecutor>();
 
             services.TryAddEnumerable(
                 ServiceDescriptor.Singleton<

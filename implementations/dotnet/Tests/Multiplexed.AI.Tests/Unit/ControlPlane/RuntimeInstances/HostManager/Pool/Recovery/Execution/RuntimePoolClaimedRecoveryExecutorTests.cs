@@ -1,4 +1,8 @@
-﻿using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Recovery.Transition;
+﻿using Multiplexed.Abstractions.AI.ControlPlane.Observability;
+using Multiplexed.Abstractions.AI.ControlPlane.Observability.Area;
+using Multiplexed.Abstractions.AI.ControlPlane.Observability.Events;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Forensics;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Recovery.Transition;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Ownership;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Recovery.AssignedWork;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Recovery.Claims;
@@ -35,11 +39,23 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager.Po
             var transitionService =
                 new RecordingTransitionService();
 
+            var forensicsRecorder =
+                new RecordingForensicsRecorder();
+
+            var observer =
+                new RecordingControlPlaneObserver();
+
+            var candidateExecutor =
+                new AiRuntimePoolRecoveryCandidateTransitionExecutor(
+                    ownershipResolver,
+                    transitionService,
+                    forensicsRecorder,
+                    observer);
+
             var executor =
                 new AiRuntimePoolClaimedRecoveryExecutor(
                     store,
-                    ownershipResolver,
-                    transitionService);
+                    candidateExecutor);
 
             var result =
                 await executor.ExecuteAsync(
@@ -83,6 +99,119 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager.Po
             Assert.Null(
                 transitionService.Requests[1]
                     .Ownership.ExecutionId);
+
+            var candidateEvent =
+                Assert.Single(forensicsRecorder.Events);
+
+            Assert.Equal(
+                "runtime-recovery:execution-a1:shared-run-01:local-a1-flight",
+                candidateEvent.ForensicsId);
+            Assert.Equal(
+                "runtime-recovery:execution-a1:shared-run-01:local-a1-flight:execution.recovery.candidate.detected",
+                candidateEvent.EventId);
+            Assert.Equal(
+                AiRuntimeRecoveryForensicsEventType
+                    .ExecutionRecoveryCandidateDetected,
+                candidateEvent.EventType);
+            Assert.Equal(
+                "execution-a1",
+                candidateEvent.ExecutionId);
+            Assert.Equal(
+                "shared-run-01",
+                candidateEvent.SharedRunId);
+            Assert.Equal(
+                "local-a1-flight",
+                candidateEvent.LocalRunId);
+            Assert.Equal(
+                "runtime-a1",
+                candidateEvent.RuntimeInstanceId);
+            Assert.Equal(
+                "tenant-01",
+                candidateEvent.Metadata["tenant.id"]);
+            Assert.Equal(
+                "tenant-group-01",
+                candidateEvent.Metadata["tenant.group.id"]);
+            Assert.Equal(
+                bool.TrueString,
+                candidateEvent.Metadata["candidate.canRecover"]);
+
+            Assert.Equal(
+                2,
+                observer.Events.Count);
+
+            Assert.All(
+                observer.Events,
+                evt =>
+                {
+                    Assert.Equal(
+                        AiControlPlaneEventType.OperationCompleted,
+                        evt.EventType);
+                    Assert.Equal(
+                        AiControlPlaneArea.Recovery,
+                        evt.Area);
+                    Assert.Equal(
+                        "runtime-execution-recovery-reconcile",
+                        evt.Operation);
+                    Assert.Equal(
+                        AiControlPlaneOperationOutcome.Succeeded,
+                        evt.Outcome);
+                });
+
+            var inFlightLedgerEvent =
+                Assert.Single(
+                    observer.Events.Where(evt =>
+                        string.Equals(
+                            evt.Correlation.ExecutionId,
+                            "execution-a1",
+                            StringComparison.Ordinal)));
+
+            Assert.Equal(
+                "shared-run-01",
+                inFlightLedgerEvent.Correlation.RunId);
+            Assert.Equal(
+                "runtime-a1",
+                inFlightLedgerEvent.Correlation.RuntimeInstanceId);
+            Assert.Equal(
+                "runtime-recovery:execution-a1:shared-run-01:local-a1-flight",
+                inFlightLedgerEvent.Properties["recovery.forensicsId"]?.ToString());
+            Assert.Equal(
+                "resume-existing-execution",
+                inFlightLedgerEvent.Properties["recovery.mode"]?.ToString());
+            Assert.Equal(
+                "runtime-pool-claimed-in-flight-recovery",
+                inFlightLedgerEvent.Properties["recovery.reason"]?.ToString());
+            Assert.Equal(
+                "runtime-a1",
+                inFlightLedgerEvent.Properties[
+                    "recovery.failedRuntimeInstanceId"]?.ToString());
+            Assert.Equal(
+                "local-a1-flight",
+                inFlightLedgerEvent.Properties[
+                    "recovery.failedLocalRunId"]?.ToString());
+            Assert.Equal(
+                "execution-a1",
+                inFlightLedgerEvent.Properties[
+                    "recovery.failedExecutionId"]?.ToString());
+
+            var localQueuedLedgerEvent =
+                Assert.Single(
+                    observer.Events.Where(evt =>
+                        string.Equals(
+                            evt.Correlation.RunId,
+                            "shared-run-02",
+                            StringComparison.Ordinal)));
+
+            Assert.Null(
+                localQueuedLedgerEvent.Correlation.ExecutionId);
+            Assert.Equal(
+                "runtime-recovery:local-queued:shared-run-02:local-a1-queued",
+                localQueuedLedgerEvent.Properties["recovery.forensicsId"]?.ToString());
+            Assert.Equal(
+                "requeue-local-queued-run",
+                localQueuedLedgerEvent.Properties["recovery.mode"]?.ToString());
+            Assert.Equal(
+                "runtime-pool-claimed-local-queued-recovery",
+                localQueuedLedgerEvent.Properties["recovery.reason"]?.ToString());
 
             Assert.False(
                 claimedWork.Lease!.IsReleased);
@@ -348,6 +477,79 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager.Po
         }
 
         /// <summary>
+        /// Verifies a refused or unchanged transition cannot produce false successful
+        /// recovery reconciliation ledger evidence.
+        /// </summary>
+        [Theory]
+        [InlineData(false, false)]
+        [InlineData(true, false)]
+        public async Task ExecuteAsync_Should_Not_Record_Succeeded_Recovery_When_Transition_Does_Not_Change_State(
+            bool accepted,
+            bool changed)
+        {
+            var store =
+                new InMemoryAiRuntimePoolRecoveryClaimStore();
+
+            var inventory =
+                CreateInventory() with
+                {
+                    Candidates =
+                        new[]
+                        {
+                            CreateCandidate(
+                                localRunId: "local-a1-flight",
+                                executionId: "execution-a1",
+                                sharedRunId: "shared-run-01",
+                                kind:
+                                    AiRuntimePoolAssignedWorkKind
+                                        .InFlight,
+                                createdSecond: 1)
+                        }
+                };
+
+            var claimedWork =
+                await AcquireAsync(
+                    store,
+                    inventory);
+
+            var observer =
+                new RecordingControlPlaneObserver();
+
+            var candidateExecutor =
+                new AiRuntimePoolRecoveryCandidateTransitionExecutor(
+                    new RecordingOwnershipResolver(),
+                    new RecordingTransitionService
+                    {
+                        Accepted = accepted,
+                        Changed = changed
+                    },
+                    new RecordingForensicsRecorder(),
+                    observer);
+
+            var executor =
+                new AiRuntimePoolClaimedRecoveryExecutor(
+                    store,
+                    candidateExecutor);
+
+            var result =
+                await executor.ExecuteAsync(
+                    claimedWork);
+
+            var outcome =
+                Assert.Single(result.Outcomes);
+
+            Assert.Equal(
+                accepted,
+                outcome.Transition.Accepted);
+            Assert.Equal(
+                changed,
+                outcome.Transition.Changed);
+            Assert.Empty(observer.Events);
+
+            await claimedWork.Lease!.DisposeAsync();
+        }
+
+        /// <summary>
         /// Acquires one exact claim around the supplied inventory.
         /// </summary>
         private static async Task<
@@ -529,6 +731,52 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager.Po
         }
 
         /// <summary>
+        /// Records candidate forensics emitted by the claimed Runtime Pool path.
+        /// </summary>
+        private sealed class RecordingForensicsRecorder :
+            IAiRuntimeRecoveryForensicsRecorder
+        {
+            public List<AiRuntimeRecoveryForensicsRecord>
+                Records { get; } = new();
+
+            public List<AiRuntimeRecoveryForensicsEvent>
+                Events { get; } = new();
+
+            public Task RecordAsync(
+                AiRuntimeRecoveryForensicsRecord record,
+                CancellationToken cancellationToken = default)
+            {
+                this.Records.Add(record);
+                return Task.CompletedTask;
+            }
+
+            public Task RecordEventAsync(
+                AiRuntimeRecoveryForensicsEvent evt,
+                CancellationToken cancellationToken = default)
+            {
+                this.Events.Add(evt);
+                return Task.CompletedTask;
+            }
+        }
+
+        /// <summary>
+        /// Records structured control-plane recovery events.
+        /// </summary>
+        private sealed class RecordingControlPlaneObserver :
+            IAiControlPlaneObserver
+        {
+            public List<AiControlPlaneEvent> Events { get; } = new();
+
+            public Task RecordAsync(
+                AiControlPlaneEvent controlPlaneEvent,
+                CancellationToken cancellationToken = default)
+            {
+                this.Events.Add(controlPlaneEvent);
+                return Task.CompletedTask;
+            }
+        }
+
+        /// <summary>
         /// Records exact existing recovery transition requests.
         /// </summary>
         private sealed class RecordingTransitionService :
@@ -538,6 +786,16 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager.Po
             /// Gets or sets an exception thrown during transition.
             /// </summary>
             public Exception? ExceptionToThrow { get; init; }
+
+            /// <summary>
+            /// Gets or sets whether the transition is accepted.
+            /// </summary>
+            public bool Accepted { get; init; } = true;
+
+            /// <summary>
+            /// Gets or sets whether the transition changes durable state.
+            /// </summary>
+            public bool Changed { get; init; } = true;
 
             /// <summary>
             /// Gets the recorded transition requests.
@@ -561,8 +819,8 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager.Po
                 return Task.FromResult(
                     new AiRuntimeExecutionRecoveryTransitionResult
                     {
-                        Accepted = true,
-                        Changed = true,
+                        Accepted = this.Accepted,
+                        Changed = this.Changed,
                         SharedRunId =
                             request.Ownership.SharedRunId,
                         RuntimeInstanceId =

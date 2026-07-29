@@ -170,6 +170,78 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Capacity
         }
 
         /// <summary>
+        /// Verifies that control-plane normalization and Kubernetes endpoint preservation
+        /// retain the first-class authority required by hierarchical capacity selection.
+        /// </summary>
+        [Fact]
+        public async Task PublishAsync_Should_Preserve_FirstClass_Capacity_Selection_Authority()
+        {
+            var controlPlaneId = CreateControlPlaneId();
+
+            await using var fixture =
+                await RedisFixture.CreateAsync(controlPlaneId);
+
+            var store =
+                CreateStore(
+                    fixture.Redis,
+                    fixture.ControlPlaneIdResolver);
+
+            await store.PublishAsync(
+                CreateDescriptor(
+                    runtimeInstanceId: "runtime-step-7b-authority",
+                    metadata:
+                        CreateKubernetesRuntimeMetadata(
+                            "http://runtime-step-7b:8080"),
+                    tenantId: "tenant-step-7b",
+                    tenantGroupId: "tenant-group-step-7b",
+                    poolId: "pool-step-7b",
+                    hostId: "pod-uid-step-7b",
+                    providerName: "http",
+                    isolationMode:
+                        AiRuntimeInstanceIsolationMode.Dedicated,
+                    allowSharedFallback: false,
+                    preferDedicatedCapacity: true));
+
+            await store.PublishAsync(
+                CreateDescriptor(
+                    runtimeInstanceId: "runtime-step-7b-authority",
+                    metadata:
+                        CreateKubernetesRuntimeMetadata(
+                            transportEndpoint: null),
+                    tenantId: "tenant-step-7b",
+                    tenantGroupId: "tenant-group-step-7b",
+                    poolId: "pool-step-7b",
+                    hostId: "pod-uid-step-7b",
+                    providerName: "http",
+                    isolationMode:
+                        AiRuntimeInstanceIsolationMode.Dedicated,
+                    allowSharedFallback: false,
+                    preferDedicatedCapacity: true));
+
+            var descriptor =
+                await store.GetAsync(
+                    "runtime-step-7b-authority");
+
+            Assert.NotNull(descriptor);
+            Assert.Equal("pool-step-7b", descriptor!.PoolId);
+            Assert.Equal("pod-uid-step-7b", descriptor.HostId);
+            Assert.Equal("http", descriptor.ProviderName);
+            Assert.Equal("tenant-step-7b", descriptor.TenantId);
+            Assert.Equal(
+                "tenant-group-step-7b",
+                descriptor.TenantGroupId);
+            Assert.Equal(
+                AiRuntimeInstanceIsolationMode.Dedicated,
+                descriptor.IsolationMode);
+            Assert.False(descriptor.AllowSharedFallback);
+            Assert.True(descriptor.PreferDedicatedCapacity);
+            Assert.Equal(controlPlaneId, descriptor.ControlPlaneId);
+            Assert.Equal(
+                "http://runtime-step-7b:8080",
+                descriptor.Metadata["transport.endpoint"]);
+        }
+
+        /// <summary>
         /// Creates a Redis-backed runtime instance capacity store for a tenant-scoped visibility test.
         /// </summary>
         /// <param name="redis">The Redis connection multiplexer.</param>
@@ -208,18 +280,37 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Capacity
         /// <param name="metadata">The runtime isolation metadata.</param>
         /// <param name="tenantId">The optional first-class tenant identifier.</param>
         /// <param name="tenantGroupId">The optional first-class tenant group identifier.</param>
+        /// <param name="poolId">The optional first-class runtime pool identifier.</param>
+        /// <param name="hostId">The optional first-class host incarnation identifier.</param>
+        /// <param name="providerName">The optional first-class provider name.</param>
+        /// <param name="isolationMode">The first-class runtime isolation mode.</param>
+        /// <param name="allowSharedFallback">Whether shared fallback is allowed.</param>
+        /// <param name="preferDedicatedCapacity">Whether dedicated capacity is preferred.</param>
         /// <returns>The capacity descriptor.</returns>
         private static AiRuntimeInstanceCapacityDescriptor CreateDescriptor(
             string runtimeInstanceId,
             IReadOnlyDictionary<string, string> metadata,
             string? tenantId = null,
-            string? tenantGroupId = null)
+            string? tenantGroupId = null,
+            string? poolId = null,
+            string? hostId = null,
+            string? providerName = null,
+            AiRuntimeInstanceIsolationMode isolationMode =
+                AiRuntimeInstanceIsolationMode.Shared,
+            bool allowSharedFallback = true,
+            bool preferDedicatedCapacity = false)
         {
             return new AiRuntimeInstanceCapacityDescriptor
             {
                 RuntimeInstanceId = runtimeInstanceId,
+                PoolId = poolId,
+                HostId = hostId,
+                ProviderName = providerName,
                 TenantId = tenantId,
                 TenantGroupId = tenantGroupId,
+                IsolationMode = isolationMode,
+                AllowSharedFallback = allowSharedFallback,
+                PreferDedicatedCapacity = preferDedicatedCapacity,
                 Role = AiRuntimeInstanceRole.Runtime,
                 Status = AiRuntimeInstanceStatus.Ready,
                 WorkerCount = 10,
@@ -240,6 +331,33 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Capacity
                 LastHeartbeatAtUtc = DateTimeOffset.UtcNow,
                 Metadata = metadata
             };
+        }
+
+        /// <summary>
+        /// Creates Kubernetes-backed runtime metadata with an optional transport endpoint.
+        /// </summary>
+        /// <param name="transportEndpoint">The optional externally published endpoint.</param>
+        /// <returns>The Kubernetes runtime metadata.</returns>
+        private static IReadOnlyDictionary<string, string>
+            CreateKubernetesRuntimeMetadata(
+                string? transportEndpoint)
+        {
+            var metadata =
+                new Dictionary<string, string>
+                {
+                    ["provider.name"] = "http",
+                    ["provider"] = "http",
+                    ["transport.name"] = "http",
+                    ["host.provider"] = "kubernetes"
+                };
+
+            if (!string.IsNullOrWhiteSpace(transportEndpoint))
+            {
+                metadata["transport.endpoint"] =
+                    transportEndpoint;
+            }
+
+            return metadata;
         }
 
         /// <summary>

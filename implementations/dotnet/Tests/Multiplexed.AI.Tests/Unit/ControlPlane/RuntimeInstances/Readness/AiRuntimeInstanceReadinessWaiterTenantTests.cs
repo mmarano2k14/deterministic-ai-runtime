@@ -78,6 +78,69 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Readiness
         }
 
         /// <summary>
+        /// Verifies that an already-ready compatible sibling cannot satisfy readiness when the
+        /// caller requires one exact runtime instance identity.
+        /// </summary>
+        [Fact]
+        public async Task WaitUntilReadyAsync_Should_Reject_Compatible_Runtime_When_Exact_Id_Is_Required()
+        {
+            var controlPlaneId = "control-plane-a";
+            var compatibleRuntimeInstanceId = "host-a:mcp-runtime-1";
+            var requestedRuntimeInstanceId = "host-a:mcp-runtime-2";
+            var executionContextSnapshot =
+                AiExecutionContextSnapshotTestFactory.Create(
+                    tenantId: "tenant-a",
+                    tenantGroupId: "tenant-group-a");
+            var registry = new FakeRuntimeInstanceRegistry();
+            var capacityStore = new FakeRuntimeInstanceCapacityStore();
+
+            await registry
+                .RegisterAsync(
+                    CreateRegistration(
+                        compatibleRuntimeInstanceId,
+                        controlPlaneId,
+                        tenantId: "tenant-a",
+                        tenantGroupId: "tenant-group-a"))
+                .ConfigureAwait(false);
+            await capacityStore
+                .PublishAsync(
+                    CreateCapacityDescriptor(
+                        compatibleRuntimeInstanceId,
+                        controlPlaneId,
+                        tenantId: "tenant-a",
+                        tenantGroupId: "tenant-group-a"))
+                .ConfigureAwait(false);
+
+            var waiter =
+                new AiRuntimeInstanceReadinessWaiter(
+                    registry,
+                    capacityStore);
+            var result =
+                await waiter
+                    .WaitUntilReadyAsync(
+                        new AiRuntimeInstanceReadinessRequest
+                        {
+                            RuntimeInstanceId = requestedRuntimeInstanceId,
+                            RequireExactRuntimeInstanceId = true,
+                            ControlPlaneId = controlPlaneId,
+                            ProviderName = "grpc",
+                            TransportName = "grpc",
+                            ExecutionContextSnapshot = executionContextSnapshot,
+                            RequireTransportEndpoint = false,
+                            Timeout = TimeSpan.FromMilliseconds(50),
+                            PollInterval = TimeSpan.FromMilliseconds(10)
+                        })
+                    .ConfigureAwait(false);
+            Assert.False(result.Success);
+            Assert.Equal(
+                requestedRuntimeInstanceId,
+                result.RuntimeInstanceId);
+            Assert.Equal(
+                "runtime-readiness-exact-registry-missing",
+                result.FailureReason);
+        }
+
+        /// <summary>
         /// Verifies that a runtime published for another tenant cannot satisfy readiness.
         /// </summary>
         [Fact]

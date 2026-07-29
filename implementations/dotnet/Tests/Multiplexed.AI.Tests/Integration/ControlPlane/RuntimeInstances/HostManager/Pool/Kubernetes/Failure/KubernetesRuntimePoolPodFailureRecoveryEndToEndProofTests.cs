@@ -40,7 +40,7 @@ namespace Multiplexed.AI.Tests.Integration.ControlPlane.RuntimeInstances.HostMan
     public sealed class KubernetesRuntimePoolPodFailureRecoveryEndToEndProofTests
     {
         private const string RuntimeImage =
-            "multiplexed-ai-runtime:k8s-debug-071";
+            "multiplexed-ai-runtime:k8s-debug-074";
         private const string KubernetesNamespace = "ai-runtime";
         private const string MinikubeRedisConnectionString =
             "host.minikube.internal:6379,abortConnect=false";

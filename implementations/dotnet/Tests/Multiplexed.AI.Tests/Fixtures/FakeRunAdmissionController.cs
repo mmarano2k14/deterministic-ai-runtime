@@ -20,6 +20,7 @@ namespace Multiplexed.AI.Tests.Fixtures
 
             var resolvedRuntimeInstanceId =
                 assignedRuntimeInstanceId ??
+                request.Placement?.Target.RuntimeInstanceId ??
                 request.PreferredRuntimeInstanceId ??
                 "runtime-1";
 

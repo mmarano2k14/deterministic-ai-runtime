@@ -1,4 +1,5 @@
-﻿using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
+﻿using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
 
 namespace Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Capacity
 {
@@ -61,6 +62,36 @@ namespace Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Capacity
         /// relying only on metadata.
         /// </remarks>
         public string? TenantGroupId { get; init; }
+
+        /// <summary>
+        /// Gets the provider used to dispatch work to this runtime instance.
+        /// </summary>
+        /// <remarks>
+        /// This is a first-class compatibility and routing field. Capacity selection
+        /// must not infer provider compatibility from metadata.
+        /// </remarks>
+        public string? ProviderName { get; init; }
+
+        /// <summary>
+        /// Gets the tenant isolation mode published by this runtime instance.
+        /// </summary>
+        /// <remarks>
+        /// This is a first-class selection and isolation field. Metadata may duplicate
+        /// the value for diagnostics, but selection must use this property.
+        /// </remarks>
+        public AiRuntimeInstanceIsolationMode IsolationMode { get; init; } =
+            AiRuntimeInstanceIsolationMode.Shared;
+
+        /// <summary>
+        /// Gets a value indicating whether shared capacity may be used when owned
+        /// capacity is unavailable.
+        /// </summary>
+        public bool AllowSharedFallback { get; init; } = true;
+
+        /// <summary>
+        /// Gets a value indicating whether owned capacity should be preferred.
+        /// </summary>
+        public bool PreferDedicatedCapacity { get; init; }
 
         /// <summary>
         /// Gets the runtime instance role.

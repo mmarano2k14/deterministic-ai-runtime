@@ -36,6 +36,33 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager.Po
                 container.Ports
                     .Select(port => port.ContainerPort)
                     .ToArray());
+
+            var environment =
+                container.Env.ToDictionary(
+                    item => item.Name,
+                    StringComparer.Ordinal);
+
+            Assert.Equal(
+                "metadata.namespace",
+                environment[
+                    "AiKubernetesRuntimePoolInPod__KubernetesNamespace"]
+                    .ValueFrom
+                    .FieldRef
+                    .FieldPath);
+            Assert.Equal(
+                "metadata.name",
+                environment[
+                    "AiKubernetesRuntimePoolInPod__KubernetesPodName"]
+                    .ValueFrom
+                    .FieldRef
+                    .FieldPath);
+            Assert.Equal(
+                "spec.nodeName",
+                environment[
+                    "AiKubernetesRuntimePoolInPod__KubernetesNodeName"]
+                    .ValueFrom
+                    .FieldRef
+                    .FieldPath);
         }
 
         /// <summary>

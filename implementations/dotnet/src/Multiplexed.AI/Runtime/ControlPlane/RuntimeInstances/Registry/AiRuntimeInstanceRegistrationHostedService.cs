@@ -4,6 +4,7 @@ using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.ControlPlane.Discovery;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Capacity;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Environment;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager.Kubernetes;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
@@ -396,6 +397,18 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
                     ControlPlaneId = this.controlPlaneId,
                     HostName = environment.HostName,
                     ProcessId = environment.ProcessId,
+                    KubernetesNamespace =
+                        GetMetadataValue(
+                            this.runtimeMetadata,
+                            AiKubernetesRuntimeHostMetadataKeys.Namespace),
+                    KubernetesPodName =
+                        GetMetadataValue(
+                            this.runtimeMetadata,
+                            AiKubernetesRuntimeHostMetadataKeys.PodName),
+                    KubernetesNodeName =
+                        GetMetadataValue(
+                            this.runtimeMetadata,
+                            AiKubernetesRuntimeHostMetadataKeys.NodeName),
                     RuntimeId = environment.RuntimeId,
                     ControlPlaneHostId = this.controlPlaneHostId,
                     WorkerCount = this.options.WorkerCount,
@@ -681,6 +694,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
                     RuntimeInstanceId = runtimeInstanceId,
                     PoolId = this.poolId,
                     HostId = this.hostId,
+                    ProviderName =
+                        ResolveProviderNameFromMetadata(
+                            descriptorMetadata),
                     TenantId =
                         GetMetadataValue(
                             descriptorMetadata,
@@ -689,6 +705,21 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
                         GetMetadataValue(
                             descriptorMetadata,
                             AiRuntimeInstanceIsolationMetadataKeys.TenantGroupId),
+                    IsolationMode =
+                        ResolveIsolationMode(
+                            descriptorMetadata),
+                    AllowSharedFallback =
+                        ResolveBooleanMetadata(
+                            descriptorMetadata,
+                            AiRuntimeInstanceIsolationMetadataKeys
+                                .AllowSharedFallback,
+                            defaultValue: true),
+                    PreferDedicatedCapacity =
+                        ResolveBooleanMetadata(
+                            descriptorMetadata,
+                            AiRuntimeInstanceIsolationMetadataKeys
+                                .PreferDedicatedCapacity,
+                            defaultValue: false),
                     ControlPlaneId = this.controlPlaneId,
                     ControlPlaneHostId = this.controlPlaneHostId,
                     Role = this.options.Role,
@@ -835,38 +866,67 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
                         metadata),
                     StringComparer.OrdinalIgnoreCase);
 
-            if (HasTransportEndpoint(result))
+            var hasCurrentTransportEndpoint =
+                TryGetTransportEndpoint(
+                    result,
+                    out var currentTransportEndpoint);
+
+            if (hasCurrentTransportEndpoint &&
+                !IsUnsafeKubernetesLocalhostEndpoint(
+                    result,
+                    currentTransportEndpoint))
             {
                 return result;
             }
 
-            var existingTransportEndpoint =
-                await this.TryResolveExistingTransportEndpointAsync(
+            var existingDescriptor =
+                await this.TryResolveExistingTransportDescriptorAsync(
                         runtimeInstanceId,
                         cancellationToken)
                     .ConfigureAwait(false);
 
-            if (!string.IsNullOrWhiteSpace(existingTransportEndpoint))
+            if (existingDescriptor is not null &&
+                TryGetTransportEndpoint(
+                    existingDescriptor.Metadata,
+                    out var existingTransportEndpoint))
             {
+                CopyExternallyPublishedKubernetesMetadata(
+                    result,
+                    existingDescriptor.Metadata);
+
+                if (hasCurrentTransportEndpoint &&
+                    !string.Equals(
+                        currentTransportEndpoint,
+                        existingTransportEndpoint,
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    result["transport.endpoint.internal"] =
+                        currentTransportEndpoint;
+                }
+
                 AddTransportEndpointAliases(
                     result,
                     existingTransportEndpoint);
 
-                result["transport.endpoint.source"] = "preserved-existing-capacity-descriptor";
+                result["transport.endpoint.source"] =
+                    "preserved-existing-capacity-descriptor";
+                result["transport.endpoint.scope"] =
+                    "control-plane";
             }
 
             return result;
         }
 
         /// <summary>
-        /// Resolves an already published transport endpoint for the runtime instance.
+        /// Resolves an already published control-plane transport descriptor for the runtime instance.
         /// </summary>
         /// <param name="runtimeInstanceId">The runtime instance identifier.</param>
         /// <param name="cancellationToken">The cancellation token.</param>
-        /// <returns>The existing transport endpoint, when available.</returns>
-        private async Task<string?> TryResolveExistingTransportEndpointAsync(
-            string runtimeInstanceId,
-            CancellationToken cancellationToken)
+        /// <returns>The existing descriptor, when it owns a usable external endpoint.</returns>
+        private async Task<AiRuntimeInstanceCapacityDescriptor?>
+            TryResolveExistingTransportDescriptorAsync(
+                string runtimeInstanceId,
+                CancellationToken cancellationToken)
         {
             foreach (var capacityStore in this.capacityStores)
             {
@@ -892,9 +952,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
                     if (TryGetTransportEndpoint(
                             existingDescriptor.Metadata,
                             out var transportEndpoint) &&
-                        !IsUnsafeKubernetesLocalhostEndpoint(transportEndpoint))
+                        !IsUnsafeKubernetesLocalhostEndpoint(
+                            existingDescriptor.Metadata,
+                            transportEndpoint))
                     {
-                        return transportEndpoint;
+                        return existingDescriptor;
                     }
                 }
                 catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -915,6 +977,31 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
         }
 
         /// <summary>
+        /// Preserves externally projected Kubernetes and Gateway routing metadata while a child
+        /// heartbeat refreshes its operational capacity values.
+        /// </summary>
+        private static void CopyExternallyPublishedKubernetesMetadata(
+            IDictionary<string, string> destination,
+            IReadOnlyDictionary<string, string> source)
+        {
+            foreach (var pair in source)
+            {
+                if (pair.Key.StartsWith(
+                        "kubernetes.",
+                        StringComparison.OrdinalIgnoreCase) ||
+                    pair.Key.StartsWith(
+                        "runtime.pool.",
+                        StringComparison.OrdinalIgnoreCase) ||
+                    pair.Key.StartsWith(
+                        "gateway.routing.",
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    destination[pair.Key] = pair.Value;
+                }
+            }
+        }
+
+        /// <summary>
         /// Determines whether the descriptor has the required transport endpoint before it can accept runs.
         /// </summary>
         /// <param name="metadata">The descriptor metadata.</param>
@@ -931,7 +1018,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
                        metadata,
                        out var transportEndpoint) &&
                    !string.IsNullOrWhiteSpace(transportEndpoint) &&
-                   !IsUnsafeKubernetesLocalhostEndpoint(transportEndpoint);
+                   !IsUnsafeKubernetesLocalhostEndpoint(
+                       metadata,
+                       transportEndpoint);
         }
 
         /// <summary>
@@ -978,19 +1067,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
         }
 
         /// <summary>
-        /// Determines whether metadata already contains a transport endpoint.
-        /// </summary>
-        /// <param name="metadata">The metadata.</param>
-        /// <returns><see langword="true"/> when a transport endpoint exists.</returns>
-        private static bool HasTransportEndpoint(
-            IReadOnlyDictionary<string, string> metadata)
-        {
-            return TryGetTransportEndpoint(
-                metadata,
-                out _);
-        }
-
-        /// <summary>
         /// Gets a transport endpoint from metadata aliases.
         /// </summary>
         /// <param name="metadata">The metadata.</param>
@@ -1031,11 +1107,23 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
         /// <param name="transportEndpoint">The transport endpoint.</param>
         /// <returns><see langword="true"/> when the endpoint is unsafe.</returns>
         private static bool IsUnsafeKubernetesLocalhostEndpoint(
+            IReadOnlyDictionary<string, string> metadata,
             string? transportEndpoint)
         {
             if (string.IsNullOrWhiteSpace(transportEndpoint))
             {
                 return false;
+            }
+
+            if (IsControlPlaneTransportEndpoint(metadata))
+            {
+                return false;
+            }
+
+            if (IsKubernetesPoolRuntime(metadata) &&
+                IsLoopbackTransportEndpoint(transportEndpoint))
+            {
+                return true;
             }
 
             return transportEndpoint.Contains(
@@ -1044,6 +1132,72 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
                    transportEndpoint.Contains(
                        "localhost:8080",
                        StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>
+        /// Determines whether metadata identifies a Kubernetes Runtime Pool child.
+        /// </summary>
+        private static bool IsKubernetesPoolRuntime(
+            IReadOnlyDictionary<string, string> metadata)
+        {
+            return string.Equals(
+                       GetMetadataValue(metadata, "host.creation.mode"),
+                       "KubernetesPool",
+                       StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(
+                       GetMetadataValue(metadata, "hostType"),
+                       "runtime-instance-kubernetes-pool",
+                       StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(
+                       GetMetadataValue(metadata, "deployment"),
+                       "kubernetes-pool",
+                       StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>
+        /// Determines whether the endpoint was explicitly projected for control-plane routing.
+        /// </summary>
+        private static bool IsControlPlaneTransportEndpoint(
+            IReadOnlyDictionary<string, string> metadata)
+        {
+            return string.Equals(
+                       GetMetadataValue(metadata, "transport.endpoint.scope"),
+                       "control-plane",
+                       StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(
+                       GetMetadataValue(metadata, "transport.endpoint.source"),
+                       "kubernetes-pool-service",
+                       StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(
+                       GetMetadataValue(metadata, "transport.endpoint.source"),
+                       "preserved-existing-capacity-descriptor",
+                       StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(
+                       GetMetadataValue(metadata, "transport.endpoint.source"),
+                       "preserved-existing-capacity-descriptor-compare-exchange",
+                       StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>
+        /// Determines whether an absolute transport endpoint resolves to the local machine.
+        /// </summary>
+        private static bool IsLoopbackTransportEndpoint(
+            string transportEndpoint)
+        {
+            return Uri.TryCreate(
+                       transportEndpoint,
+                       UriKind.Absolute,
+                       out var uri)
+                ? uri.IsLoopback
+                : transportEndpoint.Contains(
+                      "localhost",
+                      StringComparison.OrdinalIgnoreCase) ||
+                  transportEndpoint.Contains(
+                      "127.0.0.1",
+                      StringComparison.OrdinalIgnoreCase) ||
+                  transportEndpoint.Contains(
+                      "[::1]",
+                      StringComparison.OrdinalIgnoreCase);
         }
 
         /// <summary>
@@ -1234,6 +1388,57 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
             }
 
             return result;
+        }
+
+        /// <summary>
+        /// Resolves the first-class runtime isolation mode from normalized runtime
+        /// metadata at the publication boundary.
+        /// </summary>
+        /// <param name="metadata">The normalized runtime metadata.</param>
+        /// <returns>
+        /// The parsed isolation mode, or
+        /// <see cref="AiRuntimeInstanceIsolationMode.Shared" /> when no valid value
+        /// was published.
+        /// </returns>
+        private static AiRuntimeInstanceIsolationMode ResolveIsolationMode(
+            IReadOnlyDictionary<string, string> metadata)
+        {
+            var value =
+                GetMetadataValue(
+                    metadata,
+                    AiRuntimeInstanceIsolationMetadataKeys.IsolationMode);
+
+            return Enum.TryParse<AiRuntimeInstanceIsolationMode>(
+                    value,
+                    ignoreCase: true,
+                    out var parsed)
+                ? parsed
+                : AiRuntimeInstanceIsolationMode.Shared;
+        }
+
+        /// <summary>
+        /// Resolves one first-class Boolean capacity field from normalized runtime
+        /// metadata at the publication boundary.
+        /// </summary>
+        /// <param name="metadata">The normalized runtime metadata.</param>
+        /// <param name="key">The canonical metadata key.</param>
+        /// <param name="defaultValue">The value used when no valid value was published.</param>
+        /// <returns>The parsed Boolean value.</returns>
+        private static bool ResolveBooleanMetadata(
+            IReadOnlyDictionary<string, string> metadata,
+            string key,
+            bool defaultValue)
+        {
+            var value =
+                GetMetadataValue(
+                    metadata,
+                    key);
+
+            return bool.TryParse(
+                    value,
+                    out var parsed)
+                ? parsed
+                : defaultValue;
         }
 
         private static string? GetMetadataValue(

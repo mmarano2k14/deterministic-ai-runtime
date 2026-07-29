@@ -1,6 +1,7 @@
 ﻿using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.ControlPlane.Admission;
+using Multiplexed.Abstractions.AI.ControlPlane.Admission.Placement;
 using Multiplexed.Abstractions.AI.ControlPlane.Admission.Reservations;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Capacity;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
@@ -93,6 +94,105 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.Admission
 
         [Fact]
         public async Task AdmitAsync_Should_Ignore_Preferred_Instance_When_Not_Available()
+        {
+            var registry = new FakeRuntimeInstanceRegistry(
+                CreateInstance(
+                    "runtime-a",
+                    AiRuntimeInstanceStatus.Ready,
+                    canAcceptRun: true,
+                    queuedRunCount: 0,
+                    runningRunCount: 0),
+                CreateInstance(
+                    "runtime-b",
+                    AiRuntimeInstanceStatus.Ready,
+                    canAcceptRun: false,
+                    queuedRunCount: 8,
+                    runningRunCount: 2));
+
+            var controller = CreateController(registry);
+
+            var decision = await controller.AdmitAsync(
+                CreateRequest(preferredRuntimeInstanceId: "runtime-b"));
+
+            Assert.Equal(AiRunAdmissionDecisionType.AssignToInstance, decision.DecisionType);
+            Assert.Equal("runtime-a", decision.AssignedRuntimeInstanceId);
+        }
+
+        [Fact]
+        public async Task AdmitAsync_Should_Assign_To_Required_Runtime_Placement()
+        {
+            var registry = new FakeRuntimeInstanceRegistry(
+                CreateInstance(
+                    "runtime-a",
+                    AiRuntimeInstanceStatus.Ready,
+                    canAcceptRun: true,
+                    queuedRunCount: 0,
+                    runningRunCount: 0),
+                CreateInstance(
+                    "runtime-b",
+                    AiRuntimeInstanceStatus.Ready,
+                    canAcceptRun: true,
+                    queuedRunCount: 2,
+                    runningRunCount: 1));
+
+            var controller = CreateController(registry);
+
+            var decision = await controller.AdmitAsync(
+                CreateRequest(
+                    placement: new AiRunPlacementDirective
+                    {
+                        Target = new AiRunPlacementTarget
+                        {
+                            RuntimeInstanceId = "runtime-b"
+                        },
+                        Requirement = AiRunPlacementRequirement.Required,
+                        Fallback = AiRunPlacementFallback.Reject
+                    }));
+
+            Assert.Equal(AiRunAdmissionDecisionType.AssignToInstance, decision.DecisionType);
+            Assert.Equal("runtime-b", decision.AssignedRuntimeInstanceId);
+            Assert.Contains("Required runtime placement", decision.Reason);
+        }
+
+        [Fact]
+        public async Task AdmitAsync_Should_Reject_When_Required_Runtime_Placement_Is_Unavailable()
+        {
+            var registry = new FakeRuntimeInstanceRegistry(
+                CreateInstance(
+                    "runtime-a",
+                    AiRuntimeInstanceStatus.Ready,
+                    canAcceptRun: true,
+                    queuedRunCount: 0,
+                    runningRunCount: 0),
+                CreateInstance(
+                    "runtime-b",
+                    AiRuntimeInstanceStatus.Ready,
+                    canAcceptRun: false,
+                    queuedRunCount: 8,
+                    runningRunCount: 2));
+
+            var controller = CreateController(registry);
+
+            var decision = await controller.AdmitAsync(
+                CreateRequest(
+                    placement: new AiRunPlacementDirective
+                    {
+                        Target = new AiRunPlacementTarget
+                        {
+                            RuntimeInstanceId = "runtime-b"
+                        },
+                        Requirement = AiRunPlacementRequirement.Required,
+                        Fallback = AiRunPlacementFallback.Reject
+                    }));
+
+            Assert.Equal(AiRunAdmissionDecisionType.Reject, decision.DecisionType);
+            Assert.Null(decision.AssignedRuntimeInstanceId);
+            Assert.Contains("runtime-b", decision.Reason);
+            Assert.Contains("explicit rejection", decision.Reason);
+        }
+
+        [Fact]
+        public async Task AdmitAsync_Should_Preserve_Legacy_Preferred_Runtime_Fallback()
         {
             var registry = new FakeRuntimeInstanceRegistry(
                 CreateInstance(
@@ -505,11 +605,13 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.Admission
 
         private static AiRunAdmissionRequest CreateRequest(
             string? preferredRuntimeInstanceId = null,
-            string? tenantId = null)
+            string? tenantId = null,
+            AiRunPlacementDirective? placement = null)
         {
             return new AiRunAdmissionRequest
             {
                 PreferredRuntimeInstanceId = preferredRuntimeInstanceId,
+                Placement = placement,
                 TenantId = tenantId,
                 RunRequest = new AiRuntimePipelineRunRequest
                 {

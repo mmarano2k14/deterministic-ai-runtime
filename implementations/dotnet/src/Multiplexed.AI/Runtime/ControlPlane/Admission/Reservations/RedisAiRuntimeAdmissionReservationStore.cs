@@ -12,6 +12,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission.Reservations
     /// <remarks>
     /// PURPOSE:
     /// - Provides distributed admission reservation tracking.
+    /// - Provides bounded atomic acquisition for hierarchical capacity selection.
     /// - Prevents multiple control-plane processes, pumps, or workers from repeatedly
     ///   selecting the same runtime instance before heartbeat/capacity snapshots catch up.
     ///
@@ -29,10 +30,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission.Reservations
     /// - If Redis evicts scripts and returns NOSCRIPT, scripts are reloaded and retried once.
     /// - Reservation keys are scoped by logical control-plane identifier.
     /// - Reservation members are also prefixed by logical control-plane and runtime instance identifiers.
-    /// - Count and release operations defensively remove expired or foreign members before returning results.
+    /// - Bounded acquisition, count, and release operations defensively remove expired
+    ///   or foreign members before returning results.
     /// </remarks>
     public sealed class RedisAiRuntimeAdmissionReservationStore :
-        IAiRuntimeAdmissionReservationStore
+        IAiRuntimeAtomicAdmissionReservationStore
     {
         private const string ControlPlaneKeySegment =
             "control-plane";
@@ -95,6 +97,80 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission.Reservations
             redis.call('PEXPIRE', key, keyTtlMs)
 
             return redis.call('ZCARD', key)
+            """;
+
+        private const string TryReserveScript = """
+            local key = KEYS[1]
+
+            local now = tonumber(ARGV[1])
+            local expiresAt = tonumber(ARGV[2])
+            local keyTtlMs = tonumber(ARGV[3])
+            local maximumReservedRunCount = tonumber(ARGV[4])
+            local count = tonumber(ARGV[5])
+            local memberPrefix = ARGV[6]
+
+            if now == nil then
+                return redis.error_reply('now must be provided')
+            end
+
+            if expiresAt == nil then
+                return redis.error_reply('expiresAt must be provided')
+            end
+
+            if keyTtlMs == nil or keyTtlMs <= 0 then
+                return redis.error_reply('keyTtlMs must be greater than zero')
+            end
+
+            if maximumReservedRunCount == nil or maximumReservedRunCount <= 0 then
+                return redis.error_reply('maximumReservedRunCount must be greater than zero')
+            end
+
+            if count == nil or count <= 0 then
+                return redis.error_reply('count must be greater than zero')
+            end
+
+            if memberPrefix == nil or memberPrefix == '' then
+                return redis.error_reply('memberPrefix must be provided')
+            end
+
+            redis.call('ZREMRANGEBYSCORE', key, '-inf', now)
+
+            local existingMembers = redis.call('ZRANGE', key, 0, -1)
+            for _, member in ipairs(existingMembers) do
+                if string.sub(member, 1, string.len(memberPrefix)) ~= memberPrefix then
+                    redis.call('ZREM', key, member)
+                end
+            end
+
+            local current = tonumber(redis.call('ZCARD', key))
+
+            if current + count > maximumReservedRunCount then
+                if current <= 0 then
+                    redis.call('DEL', key)
+                else
+                    redis.call('PEXPIRE', key, keyTtlMs)
+                end
+
+                return { 0, current }
+            end
+
+            for i = 1, count do
+                local member = ARGV[6 + i]
+
+                if member == nil or member == '' then
+                    return redis.error_reply('reservation member must be provided')
+                end
+
+                if string.sub(member, 1, string.len(memberPrefix)) ~= memberPrefix then
+                    return redis.error_reply('reservation member does not match memberPrefix')
+                end
+
+                redis.call('ZADD', key, expiresAt, member)
+            end
+
+            redis.call('PEXPIRE', key, keyTtlMs)
+
+            return { 1, tonumber(redis.call('ZCARD', key)) }
             """;
 
         private const string ReleaseScript = """
@@ -202,6 +278,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission.Reservations
         private readonly SemaphoreSlim scriptLoadLock = new(1, 1);
 
         private volatile byte[]? reserveScriptSha;
+        private volatile byte[]? tryReserveScriptSha;
         private volatile byte[]? releaseScriptSha;
         private volatile byte[]? countScriptSha;
 
@@ -303,6 +380,88 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission.Reservations
                     values,
                     cancellationToken)
                 .ConfigureAwait(false);
+        }
+
+        /// <inheritdoc />
+        public async Task<AiRuntimeAdmissionReservationAttemptResult>
+            TryReserveAsync(
+                string runtimeInstanceId,
+                int maximumReservedRunCount,
+                int runCount = 1,
+                CancellationToken cancellationToken = default)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(runtimeInstanceId);
+            ArgumentOutOfRangeException.ThrowIfNegativeOrZero(
+                maximumReservedRunCount);
+            ArgumentOutOfRangeException.ThrowIfNegativeOrZero(runCount);
+
+            cancellationToken.ThrowIfCancellationRequested();
+
+            await EnsureScriptsLoadedAsync(cancellationToken)
+                .ConfigureAwait(false);
+
+            var controlPlaneId =
+                await ResolveControlPlaneIdAsync(cancellationToken)
+                    .ConfigureAwait(false);
+
+            var now =
+                DateTimeOffset.UtcNow;
+
+            var expiresAt =
+                now.Add(options.ReservationTtl);
+
+            var memberPrefix =
+                CreateReservationMemberPrefix(
+                    controlPlaneId,
+                    runtimeInstanceId);
+
+            var values =
+                new RedisValue[6 + runCount];
+
+            values[0] =
+                now.ToUnixTimeMilliseconds();
+
+            values[1] =
+                expiresAt.ToUnixTimeMilliseconds();
+
+            values[2] =
+                GetKeyTtlMilliseconds();
+
+            values[3] =
+                maximumReservedRunCount;
+
+            values[4] =
+                runCount;
+
+            values[5] =
+                memberPrefix;
+
+            for (var index = 0; index < runCount; index++)
+            {
+                values[6 + index] =
+                    CreateReservationMember(
+                        memberPrefix);
+            }
+
+            var result =
+                await EvaluateShaWithNoScriptRetryAsync(
+                        tryReserveScriptSha!,
+                        TryReserveScript,
+                        new RedisKey[]
+                        {
+                            GetReservationKey(
+                                controlPlaneId,
+                                runtimeInstanceId)
+                        },
+                        values,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+            return ParseTryReserveResult(
+                runtimeInstanceId,
+                maximumReservedRunCount,
+                runCount,
+                result);
         }
 
         /// <inheritdoc />
@@ -410,6 +569,89 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission.Reservations
         }
 
         /// <summary>
+        /// Parses one bounded Redis admission reservation result.
+        /// </summary>
+        /// <param name="runtimeInstanceId">The runtime instance identifier.</param>
+        /// <param name="maximumReservedRunCount">
+        /// The maximum total reservation count.
+        /// </param>
+        /// <param name="requestedRunCount">The requested run count.</param>
+        /// <param name="result">The Redis script result.</param>
+        /// <returns>The bounded atomic reservation result.</returns>
+        /// <exception cref="InvalidOperationException">
+        /// Thrown when Redis returns an invalid result shape.
+        /// </exception>
+        private static AiRuntimeAdmissionReservationAttemptResult
+            ParseTryReserveResult(
+                string runtimeInstanceId,
+                int maximumReservedRunCount,
+                int requestedRunCount,
+                RedisResult result)
+        {
+            RedisResult[] values;
+
+            try
+            {
+                values = (RedisResult[])result!;
+            }
+            catch (InvalidCastException exception)
+            {
+                throw new InvalidOperationException(
+                    "Redis returned an invalid bounded admission reservation result.",
+                    exception);
+            }
+
+            if (values.Length != 2 ||
+                values[0].IsNull ||
+                values[1].IsNull)
+            {
+                throw new InvalidOperationException(
+                    "Redis returned an incomplete bounded admission reservation result.");
+            }
+
+            var acquired =
+                (long)values[0] == 1;
+
+            var reservedRunCount =
+                NormalizeReservedRunCount(
+                    (long)values[1]);
+
+            return new AiRuntimeAdmissionReservationAttemptResult
+            {
+                Status =
+                    acquired
+                        ? AiRuntimeAdmissionReservationAttemptStatus.Acquired
+                        : AiRuntimeAdmissionReservationAttemptStatus
+                            .CapacityUnavailable,
+                RuntimeInstanceId = runtimeInstanceId,
+                RequestedRunCount = requestedRunCount,
+                ReservedRunCount = reservedRunCount,
+                MaximumReservedRunCount = maximumReservedRunCount
+            };
+        }
+
+        /// <summary>
+        /// Normalizes a Redis reservation count to a non-negative CLR integer.
+        /// </summary>
+        /// <param name="value">The Redis reservation count.</param>
+        /// <returns>The normalized reservation count.</returns>
+        private static int NormalizeReservedRunCount(
+            long value)
+        {
+            if (value <= 0)
+            {
+                return 0;
+            }
+
+            if (value > int.MaxValue)
+            {
+                return int.MaxValue;
+            }
+
+            return (int)value;
+        }
+
+        /// <summary>
         /// Executes a cached Lua script SHA and reloads scripts once when Redis reports NOSCRIPT.
         /// </summary>
         /// <param name="sha">The cached script SHA.</param>
@@ -465,6 +707,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission.Reservations
             CancellationToken cancellationToken)
         {
             if (reserveScriptSha is not null &&
+                tryReserveScriptSha is not null &&
                 releaseScriptSha is not null &&
                 countScriptSha is not null)
             {
@@ -496,6 +739,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission.Reservations
             {
                 if (!forceReload &&
                     reserveScriptSha is not null &&
+                    tryReserveScriptSha is not null &&
                     releaseScriptSha is not null &&
                     countScriptSha is not null)
                 {
@@ -508,6 +752,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission.Reservations
                 reserveScriptSha =
                     await server
                         .ScriptLoadAsync(ReserveScript)
+                        .ConfigureAwait(false);
+
+                tryReserveScriptSha =
+                    await server
+                        .ScriptLoadAsync(TryReserveScript)
                         .ConfigureAwait(false);
 
                 releaseScriptSha =
@@ -538,6 +787,15 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission.Reservations
                 string.Equals(script, ReserveScript, StringComparison.Ordinal))
             {
                 return reserveScriptSha!;
+            }
+
+            if (ReferenceEquals(script, TryReserveScript) ||
+                string.Equals(
+                    script,
+                    TryReserveScript,
+                    StringComparison.Ordinal))
+            {
+                return tryReserveScriptSha!;
             }
 
             if (ReferenceEquals(script, ReleaseScript) ||

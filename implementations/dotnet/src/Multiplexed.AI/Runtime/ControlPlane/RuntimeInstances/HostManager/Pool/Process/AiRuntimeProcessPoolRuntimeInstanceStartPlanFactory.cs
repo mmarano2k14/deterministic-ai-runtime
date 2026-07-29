@@ -77,6 +77,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
                         ControlPlaneId = this.options.ControlPlaneId,
                         ExecutionContextSnapshot = this.options.ExecutionContextSnapshot,
                         RuntimeInstanceId = request.RuntimeInstanceId,
+                        RequireExactRuntimeInstanceId = true,
                         ProviderName = this.options.ProviderName,
                         TransportName = this.options.TransportName,
                         RequireTransportEndpoint = true,
@@ -236,10 +237,14 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
             environment["AiRuntimeInstanceRegistration__Metadata__transport.endpoint"] = endpoint;
             environment["AiRuntimeInstanceRegistration__Metadata__runtime.instance.id"] =
                 request.RuntimeInstanceId;
-            environment["AiRuntimeInstanceRegistration__Metadata__hostType"] =
-                "runtime-process-pool";
-            environment["AiRuntimeInstanceRegistration__Metadata__deployment"] =
-                "process-pool";
+            AddWhenMissing(
+                environment,
+                "AiRuntimeInstanceRegistration__Metadata__hostType",
+                "runtime-process-pool");
+            AddWhenMissing(
+                environment,
+                "AiRuntimeInstanceRegistration__Metadata__deployment",
+                "process-pool");
 
             environment[
                 string.Concat(
@@ -310,6 +315,20 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
             if (request.Ordinal <= 0)
             {
                 throw new ArgumentOutOfRangeException(nameof(request));
+            }
+        }
+
+        /// <summary>
+        /// Adds a default environment value without overwriting topology-specific authority.
+        /// </summary>
+        private static void AddWhenMissing(
+            IDictionary<string, string> environment,
+            string key,
+            string value)
+        {
+            if (!environment.ContainsKey(key))
+            {
+                environment[key] = value;
             }
         }
 
