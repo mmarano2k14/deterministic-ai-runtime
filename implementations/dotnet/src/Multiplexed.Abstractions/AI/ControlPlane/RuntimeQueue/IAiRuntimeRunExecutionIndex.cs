@@ -40,6 +40,24 @@ namespace Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue
             CancellationToken cancellationToken = default);
 
         /// <summary>
+        /// Atomically registers a queued runtime run only when the run identifier is not already present.
+        /// </summary>
+        /// <param name="entry">The runtime run index entry to register.</param>
+        /// <param name="cancellationToken">A token used to cancel the operation.</param>
+        /// <returns>
+        /// <c>true</c> when this caller created the durable run entry; otherwise,
+        /// <c>false</c> when another caller already registered the same run identifier.
+        /// </returns>
+        /// <remarks>
+        /// This compare-and-set boundary is used for recovery resume acceptance.
+        /// A deterministic recovery run identifier can be retried through an ambiguous
+        /// transport path without creating a second local runtime run.
+        /// </remarks>
+        Task<bool> TryRegisterQueuedAsync(
+            AiRuntimeRunExecutionIndexEntry entry,
+            CancellationToken cancellationToken = default);
+
+        /// <summary>
         /// Marks a runtime run as started and records the durable DAG execution identifier.
         /// </summary>
         /// <param name="runId">The local runtime run identifier.</param>

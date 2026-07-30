@@ -238,8 +238,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue
                     QueueState = request.IncludeQueueState ? operationResult.QueueState : null,
                     CorrelationId = correlation.CorrelationId,
                     RuntimeInstanceId =
-                        operationResult.QueueState?.RuntimeInstanceId ??
                         operationResult.RunState?.RuntimeInstanceId ??
+                        operationResult.QueueState?.RuntimeInstanceId ??
                         request.RuntimeInstanceId,
                     RequestedBy = request.RequestedBy,
                     StartedAtUtc = startedAtUtc,
@@ -396,6 +396,25 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue
             {
                 Console.WriteLine(
                     $"[RUNTIME QUEUE ENQUEUE] POST-ACCEPT RUN STATE FAILED RunId='{handle.RunId}', ExecutionId='{handle.ExecutionId}', ExceptionType='{exception.GetType().FullName}', Message='{exception.Message}'.");
+            }
+
+            if (runState is null &&
+                recoveryResume is not null)
+            {
+                var canonicalEntry = await _runExecutionIndex
+                    .GetAsync(
+                        handle.RunId,
+                        CancellationToken.None)
+                    .ConfigureAwait(false);
+
+                if (canonicalEntry is not null)
+                {
+                    runState =
+                        CreateRunStateFromIndex(canonicalEntry);
+
+                    Console.WriteLine(
+                        $"[RUNTIME QUEUE ENQUEUE] IDEMPOTENT RECOVERY ACCEPTANCE RESOLVED RunId='{handle.RunId}', ExecutionId='{canonicalEntry.ExecutionId}', CanonicalRuntimeInstanceId='{canonicalEntry.RuntimeInstanceId}', RequestedRuntimeInstanceId='{request.RuntimeInstanceId}', Status='{canonicalEntry.Status}'.");
+                }
             }
 
             AiRuntimePipelineQueueState? queueState =

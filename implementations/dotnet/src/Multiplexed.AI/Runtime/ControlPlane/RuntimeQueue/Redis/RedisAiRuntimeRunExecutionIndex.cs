@@ -189,6 +189,81 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue.Redis
         }
 
         /// <inheritdoc />
+        public async Task<bool> TryRegisterQueuedAsync(
+            AiRuntimeRunExecutionIndexEntry entry,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentNullException.ThrowIfNull(entry);
+            ArgumentException.ThrowIfNullOrWhiteSpace(entry.RunId);
+
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var controlPlaneId =
+                await ResolveControlPlaneIdAsync(
+                        entry.Metadata,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+            var now = DateTimeOffset.UtcNow;
+            var createdAtUtc = entry.CreatedAtUtc == default ? now : entry.CreatedAtUtc;
+            var executionContextSnapshot = entry.ExecutionContextSnapshot ?? TryResolveSnapshot();
+
+            var effectiveEntry = new AiRuntimeRunExecutionIndexEntry
+            {
+                RunId = entry.RunId,
+                ExecutionId = entry.ExecutionId,
+                RuntimeInstanceId = entry.RuntimeInstanceId,
+                Status = string.IsNullOrWhiteSpace(entry.Status) ? StatusQueued : entry.Status,
+                FailureReason = entry.FailureReason,
+                ExecutionContextSnapshot = executionContextSnapshot,
+                CreatedAtUtc = createdAtUtc,
+                StartedAtUtc = entry.StartedAtUtc,
+                CompletedAtUtc = entry.CompletedAtUtc,
+                Metadata = entry.Metadata
+            };
+
+            var score = BuildIndexScore(createdAtUtc);
+            var expireSeconds = GetExpireSeconds();
+            var keys = BuildRegisterKeys(
+                controlPlaneId,
+                effectiveEntry.RunId,
+                effectiveEntry.ExecutionContextSnapshot?.TenantId);
+
+            var values = BuildRegisterValues(
+                effectiveEntry,
+                score,
+                expireSeconds);
+
+            var result = await _scripts
+                .ExecuteTryRegisterQueuedAsync(
+                    _database,
+                    keys,
+                    values)
+                .ConfigureAwait(false);
+
+            var status = result.ToString();
+
+            if (string.Equals(status, "registered", StringComparison.Ordinal))
+            {
+                return true;
+            }
+
+            if (string.Equals(status, "existing", StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            if (string.Equals(status, "invalid-field-pairs", StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    $"Invalid Redis try-register arguments for runtime run index entry '{effectiveEntry.RunId}': field/value pairs are not balanced.");
+            }
+
+            throw new InvalidOperationException(
+                $"Unexpected Redis try-register result for runtime run index entry '{effectiveEntry.RunId}': '{status}'.");
+        }
+
+        /// <inheritdoc />
         public async Task MarkStartedAsync(
             string runId,
             string executionId,

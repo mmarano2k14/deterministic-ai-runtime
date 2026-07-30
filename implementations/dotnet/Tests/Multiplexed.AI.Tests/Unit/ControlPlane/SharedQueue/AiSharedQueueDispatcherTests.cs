@@ -119,6 +119,68 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
         }
 
         [Fact]
+        public async Task DispatchNextAsync_Should_Persist_Canonical_Runtime_When_A_Retry_Target_Reports_Existing_Acceptance()
+        {
+            var queue = new InMemoryAiSharedQueue();
+            var store = new InMemoryAiSharedRunStore();
+
+            await store.CreateAsync(
+                CreateSharedRun("shared-run-1", AiSharedRunStatus.QueuedGlobally));
+
+            await queue.EnqueueAsync(
+                CreateQueueItem("shared-run-1"));
+
+            var now = DateTimeOffset.UtcNow;
+            var runDispatcher = new FakeSharedRunDispatcher(
+                new AiSharedRunDispatchResult
+                {
+                    Success = true,
+                    SharedRunId = "shared-run-1",
+                    RuntimeInstanceId = "runtime-canonical-winner",
+                    LocalRunId = "local-run-canonical",
+                    ExecutionId = "execution-canonical",
+                    Message = "Existing recovery acceptance resolved.",
+                    StartedAtUtc = now,
+                    CompletedAtUtc = now
+                });
+
+            var dispatcher = new AiSharedQueueDispatcher(
+                queue,
+                store,
+                runDispatcher,
+                new FakeRunAdmissionController(),
+                new InMemoryAiRuntimeAdmissionReservationStore(),
+                await CreateReadyRuntimeRegistryAsync(),
+                new FakeRuntimeScaleOutRequestPublisher(),
+                new HardcodedAiTenantRuntimeSettingsProvider(),
+                new StaticAiControlPlaneIdResolver("control-plane-1"),
+                new FakeExecutionContextAccessor(),
+                NullLogger<AiSharedQueueDispatcher>.Instance);
+
+            var result = await dispatcher.DispatchNextAsync(new AiSharedQueueDispatchRequest
+            {
+                RuntimeInstanceId = "runtime-1",
+                WorkerId = "worker-1",
+                CorrelationId = "correlation-1",
+                RequestedBy = "tester",
+                Source = "unit-test",
+                Reason = "ambiguous recovery dispatch retry"
+            });
+
+            Assert.True(result.Success);
+            Assert.Equal("runtime-canonical-winner", result.RuntimeInstanceId);
+            Assert.Equal("runtime-1", runDispatcher.LastRequest!.RuntimeInstanceId);
+
+            var sharedRun = await store.GetAsync("shared-run-1");
+
+            Assert.NotNull(sharedRun);
+            Assert.Equal(AiSharedRunStatus.Dispatched, sharedRun!.Status);
+            Assert.Equal("runtime-canonical-winner", sharedRun.AssignedRuntimeInstanceId);
+            Assert.Equal("local-run-canonical", sharedRun.LocalRunId);
+            Assert.Equal("execution-canonical", sharedRun.ExecutionId);
+        }
+
+        [Fact]
         public async Task DispatchNextAsync_Should_Requeue_When_SharedRun_Is_Missing()
         {
             var queue = new InMemoryAiSharedQueue();
@@ -1049,7 +1111,10 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
                 {
                     Success = _result.Success,
                     SharedRunId = request.SharedRun.SharedRunId,
-                    RuntimeInstanceId = request.RuntimeInstanceId,
+                    RuntimeInstanceId =
+                        string.IsNullOrWhiteSpace(_result.RuntimeInstanceId)
+                            ? request.RuntimeInstanceId
+                            : _result.RuntimeInstanceId,
                     LocalRunId = _result.LocalRunId,
                     ExecutionId = _result.ExecutionId,
                     ClaimToken = request.ClaimToken,

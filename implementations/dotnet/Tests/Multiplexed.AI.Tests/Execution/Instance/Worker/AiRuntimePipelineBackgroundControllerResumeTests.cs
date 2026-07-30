@@ -121,13 +121,218 @@ namespace Multiplexed.AI.Tests.Unit.Execution.Instance.Worker
         }
 
         /// <summary>
+        /// Verifies that an ambiguous retry for the same recovery owner resolves to one canonical local run.
+        /// </summary>
+        [Fact]
+        public async Task EnqueueResumeAsync_Should_Return_Same_RunId_And_Execute_Only_Once_For_Same_RecoveryOwner()
+        {
+            const string existingExecutionId = "execution-existing-idempotent";
+            const string recoveryOwnerId =
+                "runtime-recovery:execution-existing-idempotent:shared-run-idempotent:local-run-failed-idempotent";
+
+            var worker = new CapturingRuntimeInstanceWorker();
+            var runExecutionIndex = new InMemoryAiRuntimeRunExecutionIndex();
+            var lifecycleHook = new CapturingRunLifecycleHook();
+            var executionControlService = new RecoveryExecutionControlService();
+            var controller = CreateController(
+                worker,
+                runExecutionIndex,
+                lifecycleHook,
+                executionControlService);
+
+            await controller.StartAsync().ConfigureAwait(false);
+            await controller
+                .PauseQueueAsync(
+                    reason: "hold canonical recovery acceptance",
+                    requestedBy: "unit-test")
+                .ConfigureAwait(false);
+
+            var request = new AiRuntimePipelineRunRequest
+            {
+                PipelineName = "pipeline-1",
+                ExecutionContextSnapshot = CreateExecutionContextSnapshot(),
+                PipelineDefinition = CreatePipelineDefinition(),
+                Metadata = new Dictionary<string, string>
+                {
+                    ["recovery.mode"] = "resume-existing-execution",
+                    ["recovery.forensicsId"] = recoveryOwnerId,
+                    ["recovery.failedExecutionId"] = existingExecutionId,
+                    ["recovery.failedRuntimeInstanceId"] = "runtime-instance-failed-idempotent",
+                    ["recovery.failedLocalRunId"] = "local-run-failed-idempotent",
+                    ["shared.run.id"] = "shared-run-idempotent"
+                }
+            };
+
+            var first = await controller
+                .EnqueueResumeAsync(
+                    request,
+                    existingExecutionId)
+                .ConfigureAwait(false);
+
+            var duplicate = await controller
+                .EnqueueResumeAsync(
+                    request,
+                    existingExecutionId)
+                .ConfigureAwait(false);
+
+            Assert.Equal(first.RunId, duplicate.RunId);
+            Assert.Equal(existingExecutionId, duplicate.ExecutionId);
+
+            await controller
+                .ResumeQueueAsync(requestedBy: "unit-test")
+                .ConfigureAwait(false);
+
+            var final = await first.Completion.WaitAsync(
+                TimeSpan.FromSeconds(10));
+
+            await controller.StopAsync().ConfigureAwait(false);
+
+            Assert.Equal(AiExecutionStatus.Completed, final.Status);
+            Assert.Equal(1, worker.RunExecutionCallCount);
+            Assert.Equal(1, executionControlService.ResumeFromRecoveryCallCount);
+            Assert.Equal(1, executionControlService.MarkRunningCallCount);
+        }
+
+        /// <summary>
+        /// Verifies that two runtime-pool children racing the same durable recovery owner
+        /// converge on one canonical runtime run and execute the DAG resume only once.
+        /// </summary>
+        [Fact]
+        public async Task EnqueueResumeAsync_Across_RuntimePool_Children_Should_Accept_And_Execute_Only_Once()
+        {
+            const string existingExecutionId = "execution-existing-pool-race";
+            const string recoveryOwnerId =
+                "runtime-recovery:execution-existing-pool-race:shared-run-pool-race:local-run-failed-pool-race";
+
+            var firstWorker = new CapturingRuntimeInstanceWorker();
+            var secondWorker = new CapturingRuntimeInstanceWorker();
+            var sharedRunExecutionIndex = new InMemoryAiRuntimeRunExecutionIndex();
+            var executionControlService = new RecoveryExecutionControlService();
+
+            var firstController = CreateController(
+                firstWorker,
+                sharedRunExecutionIndex,
+                new CapturingRunLifecycleHook(),
+                executionControlService,
+                runtimeInstanceId: "runtime-pool-child-1");
+
+            var secondController = CreateController(
+                secondWorker,
+                sharedRunExecutionIndex,
+                new CapturingRunLifecycleHook(),
+                executionControlService,
+                runtimeInstanceId: "runtime-pool-child-2");
+
+            await firstController.StartAsync().ConfigureAwait(false);
+            await secondController.StartAsync().ConfigureAwait(false);
+
+            await firstController
+                .PauseQueueAsync(
+                    reason: "hold first runtime-pool child",
+                    requestedBy: "unit-test")
+                .ConfigureAwait(false);
+
+            await secondController
+                .PauseQueueAsync(
+                    reason: "hold second runtime-pool child",
+                    requestedBy: "unit-test")
+                .ConfigureAwait(false);
+
+            var request = new AiRuntimePipelineRunRequest
+            {
+                PipelineName = "pipeline-1",
+                ExecutionContextSnapshot = CreateExecutionContextSnapshot(),
+                PipelineDefinition = CreatePipelineDefinition(),
+                Metadata = new Dictionary<string, string>
+                {
+                    ["recovery.mode"] = "resume-existing-execution",
+                    ["recovery.forensicsId"] = recoveryOwnerId,
+                    ["recovery.failedExecutionId"] = existingExecutionId,
+                    ["recovery.failedRuntimeInstanceId"] = "runtime-instance-failed-pool-race",
+                    ["recovery.failedLocalRunId"] = "local-run-failed-pool-race",
+                    ["shared.run.id"] = "shared-run-pool-race"
+                }
+            };
+
+            var firstEnqueueTask = firstController
+                .EnqueueResumeAsync(
+                    request,
+                    existingExecutionId)
+                .AsTask();
+
+            var secondEnqueueTask = secondController
+                .EnqueueResumeAsync(
+                    request,
+                    existingExecutionId)
+                .AsTask();
+
+            var enqueueResults = await Task
+                .WhenAll(
+                    firstEnqueueTask,
+                    secondEnqueueTask)
+                .ConfigureAwait(false);
+
+            Assert.Equal(enqueueResults[0].RunId, enqueueResults[1].RunId);
+
+            var canonicalEntry = await sharedRunExecutionIndex
+                .GetAsync(enqueueResults[0].RunId)
+                .ConfigureAwait(false);
+
+            Assert.NotNull(canonicalEntry);
+            Assert.True(
+                string.Equals(
+                    canonicalEntry!.RuntimeInstanceId,
+                    "runtime-pool-child-1",
+                    StringComparison.Ordinal) ||
+                string.Equals(
+                    canonicalEntry.RuntimeInstanceId,
+                    "runtime-pool-child-2",
+                    StringComparison.Ordinal),
+                $"Unexpected canonical runtime instance '{canonicalEntry.RuntimeInstanceId ?? string.Empty}'.");
+
+            await firstController
+                .ResumeQueueAsync(requestedBy: "unit-test")
+                .ConfigureAwait(false);
+
+            await secondController
+                .ResumeQueueAsync(requestedBy: "unit-test")
+                .ConfigureAwait(false);
+
+            var canonicalHandle = string.Equals(
+                    canonicalEntry.RuntimeInstanceId,
+                    "runtime-pool-child-1",
+                    StringComparison.Ordinal)
+                ? enqueueResults[0]
+                : enqueueResults[1];
+
+            var final = await canonicalHandle.Completion.WaitAsync(
+                TimeSpan.FromSeconds(10));
+
+            await firstController.StopAsync().ConfigureAwait(false);
+            await secondController.StopAsync().ConfigureAwait(false);
+
+            var finalIndex = await sharedRunExecutionIndex
+                .GetAsync(canonicalHandle.RunId)
+                .ConfigureAwait(false);
+
+            Assert.Equal(AiExecutionStatus.Completed, final.Status);
+            Assert.Equal(1, firstWorker.RunExecutionCallCount + secondWorker.RunExecutionCallCount);
+            Assert.Equal(1, executionControlService.ResumeFromRecoveryCallCount);
+            Assert.Equal(1, executionControlService.MarkRunningCallCount);
+            Assert.NotNull(finalIndex);
+            Assert.Equal("completed", finalIndex!.Status);
+            Assert.Equal(canonicalEntry.RuntimeInstanceId, finalIndex.RuntimeInstanceId);
+        }
+
+        /// <summary>
         /// Creates a runtime pipeline background controller with test doubles.
         /// </summary>
         private static AiRuntimePipelineBackgroundController CreateController(
             CapturingRuntimeInstanceWorker worker,
             IAiRuntimeRunExecutionIndex runExecutionIndex,
             IAiRuntimePipelineRunLifecycleHook lifecycleHook,
-            IAiExecutionControlService executionControlService)
+            IAiExecutionControlService executionControlService,
+            string runtimeInstanceId = "runtime-instance-1")
         {
             var engine = new AiDagExecutionEngine(
                 NullProxy.Create<IAiDagExecutionEngineServices>(),
@@ -142,7 +347,7 @@ namespace Multiplexed.AI.Tests.Unit.Execution.Instance.Worker
                 new NoopPipelineRunDefinitionPublisher(),
                 lifecycleHook,
                 executionControlService,
-                new TestRuntimeInstanceIdentity(),
+                new TestRuntimeInstanceIdentity(runtimeInstanceId),
                 NullProxy.Create<IAiRuntimeLogger>(),
                 NullProxy.Create<IAiRuntimeObservability>(),
                 NullProxy.Create<IAiExecutionAssistanceCandidateStore>(),
@@ -389,6 +594,8 @@ namespace Multiplexed.AI.Tests.Unit.Execution.Instance.Worker
         {
             public string? LastExecutionId { get; private set; }
 
+            public int RunExecutionCallCount { get; private set; }
+
             public Task<AiExecutionRecord> RunExecutionAsync(
                 string executionId,
                 CancellationToken cancellationToken = default)
@@ -397,6 +604,7 @@ namespace Multiplexed.AI.Tests.Unit.Execution.Instance.Worker
                 cancellationToken.ThrowIfCancellationRequested();
 
                 LastExecutionId = executionId;
+                RunExecutionCallCount++;
 
                 return Task.FromResult(new AiExecutionRecord
                 {
@@ -508,7 +716,14 @@ namespace Multiplexed.AI.Tests.Unit.Execution.Instance.Worker
         /// </summary>
         private sealed class TestRuntimeInstanceIdentity : IAiRuntimeInstanceIdentityDescriptor
         {
-            public string RuntimeInstanceId { get; } = "runtime-instance-1";
+            public TestRuntimeInstanceIdentity(
+                string runtimeInstanceId)
+            {
+                ArgumentException.ThrowIfNullOrWhiteSpace(runtimeInstanceId);
+                RuntimeInstanceId = runtimeInstanceId;
+            }
+
+            public string RuntimeInstanceId { get; }
 
             public string HostName => "unit-test-host";
 

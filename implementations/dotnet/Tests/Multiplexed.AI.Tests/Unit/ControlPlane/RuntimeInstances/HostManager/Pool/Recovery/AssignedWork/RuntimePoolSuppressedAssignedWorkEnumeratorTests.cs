@@ -2,6 +2,7 @@ using Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue;
 using Multiplexed.Abstractions.Core.ExecutionContext;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Capacity;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Recovery.AssignedWork;
+using Multiplexed.AI.Tests.Fixtures;
 
 namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager.Pool.Recovery.AssignedWork
 {
@@ -193,7 +194,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager.Po
         }
 
         private sealed class FakeRuntimeRunExecutionIndex :
-            IAiRuntimeRunExecutionIndex
+            RuntimeRunExecutionIndexTestFixture
         {
             private readonly IReadOnlyList<
                 AiRuntimeRunExecutionIndexEntry> entries;
@@ -212,7 +213,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager.Po
 
             public int MutationCallCount { get; private set; }
 
-            public Task RegisterQueuedAsync(
+            public override Task RegisterQueuedAsync(
                 AiRuntimeRunExecutionIndexEntry entry,
                 CancellationToken cancellationToken = default)
             {
@@ -220,7 +221,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager.Po
                 return Task.CompletedTask;
             }
 
-            public Task MarkStartedAsync(
+            public override Task MarkStartedAsync(
                 string runId,
                 string executionId,
                 CancellationToken cancellationToken = default)
@@ -229,7 +230,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager.Po
                 return Task.CompletedTask;
             }
 
-            public Task MarkCompletedAsync(
+            public override Task MarkCompletedAsync(
                 string runId,
                 string executionId,
                 CancellationToken cancellationToken = default)
@@ -238,7 +239,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager.Po
                 return Task.CompletedTask;
             }
 
-            public Task MarkFailedAsync(
+            public override Task MarkFailedAsync(
                 string runId,
                 string? executionId,
                 string failureReason,
@@ -248,7 +249,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager.Po
                 return Task.CompletedTask;
             }
 
-            public Task MarkCancelledAsync(
+            public override Task MarkCancelledAsync(
                 string runId,
                 string? executionId,
                 string? reason,
@@ -258,7 +259,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager.Po
                 return Task.CompletedTask;
             }
 
-            public Task<bool> MarkRequeuedForRecoveryAsync(
+            public override Task<bool> MarkRequeuedForRecoveryAsync(
                 string runId,
                 string executionId,
                 string reason,
@@ -268,7 +269,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager.Po
                 return Task.FromResult(true);
             }
 
-            public Task<AiRuntimeRunExecutionIndexEntry?> GetAsync(
+            public override Task<AiRuntimeRunExecutionIndexEntry?> GetAsync(
                 string runId,
                 CancellationToken cancellationToken = default)
             {
@@ -280,7 +281,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager.Po
                                 runId)));
             }
 
-            public Task<IReadOnlyList<AiRuntimeRunExecutionIndexEntry>>
+            public override Task<IReadOnlyList<AiRuntimeRunExecutionIndexEntry>>
                 ListUnfinishedByRuntimeInstanceAsync(
                     string runtimeInstanceId,
                     CancellationToken cancellationToken = default)
@@ -296,14 +297,14 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager.Po
                         .ToArray());
             }
 
-            public Task<IReadOnlyList<AiRuntimeRunExecutionIndexEntry>>
+            public override Task<IReadOnlyList<AiRuntimeRunExecutionIndexEntry>>
                 ListUnfinishedAsync(
                     CancellationToken cancellationToken = default)
             {
                 return Task.FromResult(this.entries);
             }
 
-            public Task<IReadOnlyList<AiRuntimeRunExecutionIndexEntry>>
+            public override Task<IReadOnlyList<AiRuntimeRunExecutionIndexEntry>>
                 ListRecoverableByRuntimeInstanceAsync(
                     string runtimeInstanceId,
                     CancellationToken cancellationToken = default)
@@ -321,7 +322,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager.Po
                         .ToArray());
             }
 
-            public Task<IReadOnlyList<AiRuntimeRunExecutionIndexEntry>>
+            public override Task<IReadOnlyList<AiRuntimeRunExecutionIndexEntry>>
                 ListRecoverableAsync(
                     CancellationToken cancellationToken = default)
             {

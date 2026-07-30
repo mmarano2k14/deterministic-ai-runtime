@@ -139,10 +139,39 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Ledger
                     timestampToUtc)
                 .ConfigureAwait(false);
 
+            /*
+             * Runtime Pool host creation is correlated to the host request identity, while
+             * recovered work can be bound only to child or replacement runtime identities.
+             * Runtime-scoped queries can therefore omit the valid host-creation event.
+             *
+             * P5 scenarios reuse tenant identifiers in parallel, so operation results must
+             * be narrowed by the exact ControlPlaneId before they are merged. Tenant-only
+             * filtering here would allow one parallel scenario to satisfy another scenario's
+             * host-creation proof.
+             */
+            var runtimeHostCreationEntries =
+                (await QueryByOperationsAsync(
+                        mcp,
+                        new[]
+                        {
+                            "runtime-host-creation",
+                            "runtime-process-host-creation"
+                        },
+                        timestampFromUtc,
+                        timestampToUtc)
+                    .ConfigureAwait(false))
+                .Where(entry =>
+                    CreateSearchText(entry)
+                        .Contains(
+                            controlPlaneId,
+                            StringComparison.Ordinal))
+                .ToArray();
+
             var entries =
                 runtimeEntries
                     .Concat(executionEntries)
                     .Concat(controlPlaneRunEntries)
+                    .Concat(runtimeHostCreationEntries)
                     .Where(entry =>
                         IsCausalChainEvent(entry) &&
                         BelongsToScenario(
@@ -208,6 +237,34 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Ledger
                             new AiDecisionLedgerQuery
                             {
                                 ExecutionId = executionId,
+                                TimestampFromUtc = timestampFromUtc,
+                                TimestampToUtc = timestampToUtc
+                            })
+                        .ConfigureAwait(false);
+
+                entries.AddRange(currentEntries);
+            }
+
+            return entries;
+        }
+
+        private static async Task<IReadOnlyCollection<AiDecisionLedgerEntry>> QueryByOperationsAsync(
+            McpTestClient mcp,
+            IReadOnlyCollection<string> operations,
+            DateTimeOffset timestampFromUtc,
+            DateTimeOffset timestampToUtc)
+        {
+            var entries =
+                new List<AiDecisionLedgerEntry>();
+
+            foreach (var operation in operations.Where(value => !string.IsNullOrWhiteSpace(value)).Distinct(StringComparer.Ordinal))
+            {
+                var currentEntries =
+                    await mcp
+                        .QueryLedgerAsync(
+                            new AiDecisionLedgerQuery
+                            {
+                                Operation = operation,
                                 TimestampFromUtc = timestampFromUtc,
                                 TimestampToUtc = timestampToUtc
                             })

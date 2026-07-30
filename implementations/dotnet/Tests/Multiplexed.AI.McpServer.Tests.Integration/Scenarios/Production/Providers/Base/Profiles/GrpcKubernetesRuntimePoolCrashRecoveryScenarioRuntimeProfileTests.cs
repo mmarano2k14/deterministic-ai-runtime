@@ -35,6 +35,69 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
         }
 
         /// <summary>
+        /// Verifies that the P5 profile binds one Pod failure to a two-Pod bounded topology.
+        /// </summary>
+        [Fact]
+        public void PodFailureP5Profile_Should_Declare_One_Pod_Failure_And_Two_Pod_Bound()
+        {
+            var profile =
+                new GrpcKubernetesRuntimePoolPodFailureP5ScenarioRuntimeProfile();
+
+            Assert.Equal(
+                AiRuntimeCapacityTopologyMode.KubernetesPool,
+                profile.CapacityTopologyMode);
+            Assert.Equal(
+                AiRuntimeHostCreationMode.KubernetesPool,
+                profile.HostCreationMode);
+            Assert.Equal(
+                2,
+                profile.CrashRecoveryPlan.InitialPodCount);
+            Assert.Equal(
+                2,
+                profile.CrashRecoveryPlan.MaximumPodCount);
+
+            var phase =
+                Assert.Single(
+                    profile.CrashRecoveryPlan.FailurePhases);
+
+            Assert.Equal(
+                RuntimePoolCrashFailureKind.KubernetesPod,
+                phase.FailureKind);
+        }
+
+        /// <summary>
+        /// Verifies that the Pod-failure P5 profile enables strict DAG resume independently
+        /// from the public scenario name used by the integration proof.
+        /// </summary>
+        [Fact]
+        public void PodFailureP5BuildSettings_Should_Enable_Strict_Dag_Resume_Recovery()
+        {
+            var profile =
+                new GrpcKubernetesRuntimePoolPodFailureP5ScenarioRuntimeProfile();
+
+            var scenario =
+                ProductionRuntimeScenarioFactory
+                    .CreateMultiTenantCapacityReplayLedgerScenario() with
+                {
+                    Name = "grpc-kubernetes-runtime-pool-pod-failure-p5"
+                };
+
+            var settings =
+                profile.BuildSettings(
+                    scenario,
+                    "control-plane-p5",
+                    "runtime-host.dll");
+
+            var configuredValue =
+                Assert.IsType<string>(
+                    settings[
+                        "AiRuntimeExecutionRecoveryReconciliation:EnableDagExecutionResume"]);
+
+            Assert.True(
+                bool.Parse(configuredValue));
+        }
+
+        /// <summary>
         /// Verifies that the Runtime Pool Pod and its Process children use the same Mongo database
         /// as the parent MCP host for snapshots, replay metadata, ledger, and trace queries.
         /// </summary>

@@ -62,6 +62,46 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
         }
 
         /// <summary>
+        /// Verifies that the dedicated Pod-failure plan contains exactly one complete Pod deletion.
+        /// </summary>
+        [Fact]
+        public void CreatePodFailureOnly_Should_Define_One_Pod_Failure()
+        {
+            var plan =
+                RuntimePoolCrashRecoveryScenarioPlan.CreatePodFailureOnly(
+                    initialPodCount: 2,
+                    maximumPodCount: 2,
+                    initialRuntimeCountPerPod: 3,
+                    maximumRuntimeCountPerPod: 3);
+
+            Assert.Equal(
+                2,
+                plan.InitialPodCount);
+            Assert.Equal(
+                2,
+                plan.MaximumPodCount);
+            Assert.Equal(
+                3,
+                plan.InitialRuntimeCountPerPod);
+            Assert.Equal(
+                3,
+                plan.MaximumRuntimeCountPerPod);
+
+            var phase =
+                Assert.Single(plan.FailurePhases);
+
+            Assert.Equal(
+                1,
+                phase.Order);
+            Assert.Equal(
+                RuntimePoolCrashFailureKind.KubernetesPod,
+                phase.FailureKind);
+            Assert.Equal(
+                "pod-failure",
+                phase.ImpactedTenantRole);
+        }
+
+        /// <summary>
         /// Verifies that the scenario always reserves one healthy Pod outside the Pod-failure boundary.
         /// </summary>
         [Fact]

@@ -58,6 +58,31 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
         }
 
         /// <summary>
+        /// Verifies deterministic assignment of the dedicated Pod-failure phase to one impacted tenant.
+        /// </summary>
+        [Fact]
+        public void Bind_Should_Assign_Pod_Only_Phase_To_One_Impacted_Tenant()
+        {
+            var impactedTenant =
+                CreateImpactedTenants()[0];
+
+            var result =
+                RuntimePoolCrashRecoveryFailurePhaseBinder.Bind(
+                    new GrpcKubernetesRuntimePoolPodFailureP5ScenarioRuntimeProfile(),
+                    new[]
+                    {
+                        impactedTenant
+                    });
+
+            var phase =
+                Assert.Single(result).Value;
+
+            Assert.Equal(
+                RuntimePoolCrashFailureKind.KubernetesPod,
+                phase.FailureKind);
+        }
+
+        /// <summary>
         /// Verifies that a Runtime Pool plan cannot silently omit or invent an impacted tenant flow.
         /// </summary>
         [Fact]

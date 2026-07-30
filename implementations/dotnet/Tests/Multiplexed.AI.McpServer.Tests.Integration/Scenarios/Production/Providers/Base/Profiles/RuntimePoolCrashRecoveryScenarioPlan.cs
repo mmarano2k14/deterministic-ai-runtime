@@ -1,7 +1,7 @@
 namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Providers.Base.Profiles
 {
     /// <summary>
-    /// Defines the bounded Runtime Pool topology and ordered failure phases used by one all-in-one crash-recovery proof.
+    /// Defines the bounded Runtime Pool topology and ordered failure phases used by one crash-recovery proof.
     /// </summary>
     public sealed class RuntimePoolCrashRecoveryScenarioPlan
     {
@@ -124,13 +124,59 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 });
         }
 
+        /// <summary>
+        /// Creates a bounded Runtime Pool proof that deletes one complete Kubernetes Pod.
+        /// </summary>
+        /// <param name="initialPodCount">The number of Runtime Pool Pods created before workload submission.</param>
+        /// <param name="maximumPodCount">The maximum number of Runtime Pool Pods permitted during the scenario.</param>
+        /// <param name="initialRuntimeCountPerPod">The initial number of child runtimes hosted by every Pod.</param>
+        /// <param name="maximumRuntimeCountPerPod">The maximum number of child runtimes permitted in every Pod.</param>
+        /// <returns>A plan containing one exact Kubernetes Pod failure phase.</returns>
+        public static RuntimePoolCrashRecoveryScenarioPlan CreatePodFailureOnly(
+            int initialPodCount,
+            int maximumPodCount,
+            int initialRuntimeCountPerPod,
+            int maximumRuntimeCountPerPod)
+        {
+            return new RuntimePoolCrashRecoveryScenarioPlan(
+                initialPodCount,
+                maximumPodCount,
+                initialRuntimeCountPerPod,
+                maximumRuntimeCountPerPod,
+                new[]
+                {
+                    new RuntimePoolCrashFailurePhase(
+                        order: 1,
+                        failureKind:
+                            RuntimePoolCrashFailureKind.KubernetesPod,
+                        impactedTenantRole:
+                            PodFailureTenantRole)
+                });
+        }
+
         private static void ValidateFailurePhases(
             IReadOnlyList<RuntimePoolCrashFailurePhase> failurePhases)
         {
+            if (failurePhases.Count == 1)
+            {
+                var singlePodFailurePhase = failurePhases[0];
+
+                if (singlePodFailurePhase.Order != 1 ||
+                    singlePodFailurePhase.FailureKind !=
+                        RuntimePoolCrashFailureKind.KubernetesPod)
+                {
+                    throw new ArgumentException(
+                        "The Pod-only Runtime Pool proof requires one Kubernetes Pod failure at order one.",
+                        nameof(failurePhases));
+                }
+
+                return;
+            }
+
             if (failurePhases.Count != 2)
             {
                 throw new ArgumentException(
-                    "The all-in-one Runtime Pool proof requires exactly two failure phases.",
+                    "A Runtime Pool crash-recovery proof requires either one Pod failure or the canonical runtime-then-Pod sequence.",
                     nameof(failurePhases));
             }
 

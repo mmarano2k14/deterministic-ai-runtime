@@ -6,6 +6,9 @@ using System.Threading.Tasks;
 using FluentAssertions;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using Multiplexed.Abstractions.AI.ControlPlane.Observability;
+using Multiplexed.Abstractions.AI.ControlPlane.Observability.Area;
+using Multiplexed.Abstractions.AI.ControlPlane.Observability.Events;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Forensics;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Recovery;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Recovery.Transition;
@@ -13,6 +16,7 @@ using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Ownership;
 using Multiplexed.Abstractions.Core.ExecutionContext;
+using Multiplexed.AI.Runtime.ControlPlane.Observability;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery;
 using Multiplexed.AI.Tests.Fixtures;
@@ -37,6 +41,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Recovery
             var transitionService = new FakeRuntimeExecutionRecoveryTransitionService();
             var forensicsStore = new InMemoryAiRuntimeRecoveryForensicsStore();
             var recorder = CreateRecorder(forensicsStore);
+            var observer = new CapturingControlPlaneObserver();
 
             registry.RuntimeInstances.Add(CreateRuntimeInstance("runtime-1", AiRuntimeInstanceStatus.Unhealthy));
             executionIndex.UnfinishedRuns.Add(CreateIndexEntry("local-run-1", "execution-1", "runtime-1"));
@@ -71,7 +76,8 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Recovery
                 executionIndex,
                 ownershipResolver,
                 transitionService,
-                recorder);
+                recorder,
+                observer);
 
             var result = await reconciler.ReconcileAsync();
 
@@ -131,6 +137,35 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Recovery
             evt.Metadata["tenant.id"].Should().Be("tenant-a");
             evt.Metadata["tenant.group.id"].Should().Be("tenant-group-a");
             evt.Metadata["candidate.canRecover"].Should().Be(bool.TrueString);
+
+            var ledgerEvidence =
+                observer.Events.Single(controlPlaneEvent =>
+                    controlPlaneEvent.EventType ==
+                        AiControlPlaneEventType.OperationCompleted &&
+                    controlPlaneEvent.Area == AiControlPlaneArea.Recovery &&
+                    controlPlaneEvent.Operation ==
+                        "runtime-execution-recovery-reconcile" &&
+                    controlPlaneEvent.Outcome ==
+                        AiControlPlaneOperationOutcome.Succeeded &&
+                    controlPlaneEvent.Properties is not null &&
+                    controlPlaneEvent.Properties.ContainsKey(
+                        "recovery.forensicsId"));
+
+            ledgerEvidence.Correlation.CorrelationId.Should().Be(
+                "runtime-recovery:execution-1:shared-run-1:local-run-1");
+            ledgerEvidence.Correlation.RunId.Should().Be("shared-run-1");
+            ledgerEvidence.Correlation.ExecutionId.Should().Be("execution-1");
+            ledgerEvidence.Correlation.RuntimeInstanceId.Should().Be("runtime-1");
+            ledgerEvidence.Properties!["recovery.mode"].Should().Be(
+                "resume-existing-execution");
+            ledgerEvidence.Properties["recovery.reason"].Should().Be(
+                "runtime-execution-recovery-requeue");
+            ledgerEvidence.Properties["recovery.failedRuntimeInstanceId"].Should().Be(
+                "runtime-1");
+            ledgerEvidence.Properties["recovery.failedLocalRunId"].Should().Be(
+                "local-run-1");
+            ledgerEvidence.Properties["recovery.failedExecutionId"].Should().Be(
+                "execution-1");
         }
 
         /// <summary>
@@ -145,6 +180,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Recovery
             var transitionService = new FakeRuntimeExecutionRecoveryTransitionService();
             var forensicsStore = new InMemoryAiRuntimeRecoveryForensicsStore();
             var recorder = CreateRecorder(forensicsStore);
+            var observer = new CapturingControlPlaneObserver();
 
             registry.RuntimeInstances.Add(CreateRuntimeInstance("runtime-1", AiRuntimeInstanceStatus.Unhealthy));
             executionIndex.UnfinishedRuns.Add(CreateIndexEntry("local-run-1", "execution-1", "runtime-1"));
@@ -179,13 +215,21 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Recovery
                 executionIndex,
                 ownershipResolver,
                 transitionService,
-                recorder);
+                recorder,
+                observer);
 
             var result = await reconciler.ReconcileAsync();
 
             result.DiscoveredUnfinishedRunCount.Should().Be(1);
             result.RecoveredRunCount.Should().Be(0);
             transitionService.ApplyCalls.Should().Be(1);
+
+            observer.Events.Should().NotContain(static controlPlaneEvent =>
+                controlPlaneEvent.EventType ==
+                    AiControlPlaneEventType.OperationCompleted &&
+                controlPlaneEvent.Properties != null &&
+                controlPlaneEvent.Properties.ContainsKey(
+                    "recovery.forensicsId"));
 
             var records = await forensicsStore.ListByExecutionIdAsync("execution-1");
 
@@ -306,13 +350,15 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Recovery
         /// <param name="ownershipResolver">The shared run ownership resolver.</param>
         /// <param name="transitionService">The transition service.</param>
         /// <param name="recorder">The runtime recovery forensics recorder.</param>
+        /// <param name="observer">The optional control-plane observer.</param>
         /// <returns>The recovery reconciler.</returns>
         private static AiRuntimeExecutionRecoveryReconciler CreateReconciler(
             IAiRuntimeInstanceRegistry registry,
             IAiRuntimeRunExecutionIndex executionIndex,
             IAiSharedRunOwnershipResolver ownershipResolver,
             IAiRuntimeExecutionRecoveryTransitionService transitionService,
-            IAiRuntimeRecoveryForensicsRecorder recorder)
+            IAiRuntimeRecoveryForensicsRecorder recorder,
+            IAiControlPlaneObserver? observer = null)
         {
             return new AiRuntimeExecutionRecoveryReconciler(
                 registry,
@@ -328,7 +374,8 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Recovery
                     RequeueUnfinishedRuns = true,
                     DryRun = false
                 }),
-                recorder);
+                recorder,
+                observer ?? new NoopAiControlPlaneObserver());
         }
 
         /// <summary>
@@ -347,6 +394,20 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Recovery
                     StrictPersistence = false
                 }),
                 NullLogger<BestEffortAiRuntimeRecoveryForensicsRecorder>.Instance);
+        }
+
+        private sealed class CapturingControlPlaneObserver :
+            IAiControlPlaneObserver
+        {
+            public List<AiControlPlaneEvent> Events { get; } = new();
+
+            public Task RecordAsync(
+                AiControlPlaneEvent controlPlaneEvent,
+                CancellationToken cancellationToken = default)
+            {
+                this.Events.Add(controlPlaneEvent);
+                return Task.CompletedTask;
+            }
         }
 
         /// <summary>

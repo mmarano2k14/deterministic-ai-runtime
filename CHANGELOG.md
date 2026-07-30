@@ -6,6 +6,374 @@ This project follows a deterministic runtime and observability model designed fo
 
 ---
 
+## 1.0.8.1 - 2026-07-30  — Kubernetes Runtime Pool P5 Pod-Failure Recovery
+
+This incremental release extends the previously validated hierarchical runtime-capacity architecture with a parallel Kubernetes Runtime Pool failure campaign.
+
+The new proof runs five independent gRPC Kubernetes Runtime Pool scenarios concurrently. Every scenario contains one impacted tenant and one safe tenant, deletes one real Runtime Pool Pod while work is active, recovers the work owned by the failed runtime membership, validates tenant isolation, replay, traces, forensics, and the complete control-plane ledger chain, and then removes every Pod created by that scenario.
+
+The final validation completed successfully with:
+
+```text
+Parallel scenarios = 5
+Tenants = 10
+Submitted runs = 30
+Real Pod deletions = 5
+Recovered work = 15/15
+In-flight recoveries = 5
+Local-queued recoveries = 10
+Completed DAG executions = 30/30
+Logical DAG steps completed = 1,500/1,500
+Cross-tenant recovery leaks = 0
+Safe-tenant recovery contamination = 0
+Duplicate recovery detected = 0
+Failed scenarios = 0
+Remaining test Pods = 0
+Total duration = 00:09:50.0337767
+```
+
+---
+
+## Parallel Kubernetes Runtime Pool Pod-Failure Proof
+
+A dedicated production-style scenario now validates five independent Pod deletions in one parallel run.
+
+### Scenario topology
+
+Each scenario contains:
+
+```text
+1 impacted tenant
+1 safe tenant
+3 submitted runs per tenant
+1 in-flight execution per tenant
+2 local-queued runs per tenant
+1 real Runtime Pool Pod deletion
+```
+
+Across the complete P5 campaign:
+
+```text
+Impacted tenants = 5
+Safe tenants = 5
+Submitted runs = 30
+Expected recovered work = 15
+Expected safe-tenant recovered work = 0
+```
+
+### Failure contract
+
+For each impacted tenant, the scenario:
+
+1. waits until one execution has durably completed 25 of 50 DAG steps;
+2. submits two additional runs to the same exact runtime identity;
+3. verifies an exact pre-failure inventory of one in-flight execution and two local-queued runs;
+4. deletes the Kubernetes Pod containing the selected runtime;
+5. waits for the complete failed Pod membership to become unsafe;
+6. verifies automatic recovery of all three owned work items;
+7. proves the safe tenant remains outside recovery handling.
+
+No global inventory barrier delays a scenario that is already ready to fail. Each impacted flow deletes its Pod as soon as its own exact inventory has been established.
+
+---
+
+## Idempotent Recovery Acceptance Across Runtime Pool Children
+
+The P5 campaign exposed a Kubernetes Runtime Pool-specific race that did not occur in Process Host P10 or P35 validation.
+
+A recovery dispatch could be accepted by one child runtime while the remote acknowledgement remained ambiguous long enough for the same recovery operation to be attempted through another child. The first attempt could resume the durable execution successfully, while a later duplicate attempt created a second local run and failed because the execution had already returned to `Running`.
+
+The acceptance boundary is now deterministic and durable.
+
+### Canonical recovery identity
+
+A recovery resume uses one stable local runtime-run identifier derived from the first-class recovery owner:
+
+```text
+RecoveryOwnerId
+→ deterministic SHA-256-derived RunId
+→ atomic durable registration
+→ one canonical RuntimeInstanceId
+→ one local Channel enqueue
+→ one DAG resume transition
+```
+
+### Atomic registration contract
+
+`IAiRuntimeRunExecutionIndex` now exposes:
+
+```csharp
+Task<bool> TryRegisterQueuedAsync(
+    AiRuntimeRunExecutionIndexEntry entry,
+    CancellationToken cancellationToken = default);
+```
+
+The operation registers a queued runtime run only when its deterministic `RunId` does not already exist.
+
+Production support is implemented by:
+
+- `InMemoryAiRuntimeRunExecutionIndex`;
+- `RedisAiRuntimeRunExecutionIndex`.
+
+The Redis implementation preserves tenant isolation and performs the first-writer decision atomically.
+
+### Duplicate delivery behavior
+
+When another runtime child receives the same recovery operation after a canonical acceptance already exists, it now:
+
+- resolves the existing durable runtime-run entry;
+- validates the same `RunId`, `ExecutionId`, and `RecoveryOwnerId`;
+- returns the canonical acceptance handle;
+- preserves the original accepting `RuntimeInstanceId`;
+- does not write a second item into its local Channel;
+- does not create another `LocalRunId`;
+- does not invoke the execution resume transition again;
+- does not overwrite the shared-run binding with a late competing response.
+
+A collision with a different execution or recovery owner fails explicitly rather than being treated as an idempotent retry.
+
+Terminal failed, cancelled, or requeued acceptances are also rejected instead of being acknowledged as successful duplicates.
+
+---
+
+## Canonical Runtime Host Creation Evidence
+
+Runtime Pool Pod creation now passes through the canonical runtime host manager path rather than invoking the host creation strategy directly.
+
+This restores the same authoritative lifecycle and decision-ledger boundary used by other host creation modes:
+
+```text
+Runtime Pool Pod creation executor
+→ IAiRuntimeHostManager
+→ AiRuntimeHostCreationManager
+→ selected host creation strategy
+→ runtime-host-creation ledger evidence
+```
+
+The direct strategy-based constructor remains available for focused compatibility tests, while the production composition uses the canonical manager.
+
+---
+
+## Recovery Ledger and Forensics Convergence
+
+Recovery evidence was strengthened so that every successful recovery path can participate in the same tenant-scoped causal proof.
+
+### Generic recovery reconciler evidence
+
+After a recovery transition is accepted and changes durable state, the generic reconciler now emits a succeeded decision-ledger event with the exact recovery identity:
+
+```text
+Operation = runtime-execution-recovery-reconcile
+Outcome = Succeeded
+```
+
+Correlated fields include:
+
+```text
+TenantId
+TenantGroupId
+SharedRunId
+LocalRunId
+ExecutionId
+RuntimeInstanceId
+recovery.forensicsId
+recovery.mode
+recovery.reason
+recovery.failedRuntimeInstanceId
+recovery.failedLocalRunId
+recovery.failedExecutionId
+```
+
+Rejected transitions and accepted no-op transitions do not emit false success evidence.
+
+### Scenario-scoped host creation query
+
+The causal-chain query now resolves canonical host creation operations:
+
+```text
+runtime-host-creation
+runtime-process-host-creation
+```
+
+and constrains the result to the exact `ControlPlaneId` of the scenario. This prevents parallel scenarios that reuse the same logical tenant identifiers from satisfying one another's infrastructure proof.
+
+### Durable binding convergence
+
+After the durable DAG reaches its expected terminal state, the scenario reloads the current shared-run binding before validating the final runtime-run status.
+
+This prevents the test from treating a superseded intermediate replacement binding as the authoritative owner while preserving strict requirements:
+
+- the current binding must exist;
+- its `RuntimeInstanceId` must exist;
+- its `LocalRunId` must exist;
+- in-flight recovery must retain the original `ExecutionId`;
+- the authoritative runtime-run status must be `completed`.
+
+---
+
+## MongoDB Ledger Query Index
+
+Parallel causal-chain validation introduced sustained operation-and-time-range queries over the shared decision ledger.
+
+The MongoDB ledger now creates the compound index:
+
+```text
+Name: ix_operation_timestamp
+Operation: ascending
+TimestampUtc: ascending
+```
+
+This supports queries that filter by canonical ledger operation and timestamp window without requiring a full collection scan under P5 load.
+
+The index is created automatically by the ledger initialization path and applies to existing collections without requiring a separate migration command.
+
+---
+
+## Strict Recovery Configuration
+
+The gRPC Kubernetes Runtime Pool crash-recovery settings builder now enables DAG execution resume explicitly.
+
+Strict crash-recovery behavior no longer depends on the public scenario name containing an internal phrase such as `dag-resume` or `real-runtime-crash-recovery`.
+
+Every scenario composed through this specialized builder receives:
+
+```text
+AiRuntimeExecutionRecoveryReconciliation:EnableDagExecutionResume = true
+```
+
+A focused regression test verifies that the public Pod-failure P5 profile receives the required setting.
+
+---
+
+## Local Kubernetes Validation Budgets
+
+The final P5 scenario preserves strict correctness assertions while using budgets appropriate for concurrent Minikube provisioning and replacement activity.
+
+The specialized P5 profile uses:
+
+```text
+ScaleOutTimeout = 00:04:00
+ProgressTimeout = 00:05:00
+RecoveryRedispatchTimeout = 00:04:30
+CompletionTimeout = 00:03:00
+```
+
+These are harness-specific minimums for the parallel Kubernetes Runtime Pool proof. Existing Process Host P10 and P35 budgets remain unchanged.
+
+The timeouts do not convert incomplete work into success. Scale-out requests must still reach `Fulfilled`, crash checkpoints must still be durably reached, and every runtime-run and DAG execution must still reach the required terminal state.
+
+---
+
+## Deterministic Cleanup
+
+Every scenario performs immediate cleanup in a `finally` boundary.
+
+Cleanup:
+
+- identifies Pods through the exact Runtime Pool annotation and `PoolId`;
+- deletes initial and replacement Pods created by that scenario;
+- waits for Kubernetes convergence;
+- asserts that the remaining Pod count is zero.
+
+A final safety cleanup runs after the parallel aggregate completes.
+
+The successful validation ended with:
+
+```text
+Scenario cleanup results = 5/5
+RemainingPodCount = 0 for every pool
+```
+
+---
+
+## Test Infrastructure Consolidation
+
+The runtime-run execution index test infrastructure was consolidated after the new atomic registration contract was added.
+
+A shared `RuntimeRunExecutionIndexTestFixture` now implements the common `IAiRuntimeRunExecutionIndex` surface for test doubles. Specialized fakes inherit from the fixture and override only the behavior relevant to their test.
+
+This removes duplicated interface implementations from composition and recovery tests while preserving existing read-only, mutation-counting, and idempotency semantics.
+
+The concurrent recovery-acceptance test also preserves real parallel execution by converting the two `ValueTask<AiRuntimeWorkerRunHandle>` operations to tasks before `Task.WhenAll`. No sequential fallback was introduced.
+
+---
+
+## Compatibility
+
+### Existing Process Host behavior
+
+The recovery acceptance change is compatible with existing HTTP and gRPC Process Host scenarios. P10 Process Host remained stable and did not require a separate recovery algorithm.
+
+### Existing Kubernetes mode
+
+The legacy hosting mode remains unchanged:
+
+```text
+AiRuntimeHostCreationMode.Kubernetes = 2
+```
+
+It continues to represent one runtime per Pod and Service through `KubernetesAiRuntimeHostCreationStrategy`.
+
+Kubernetes Runtime Pool remains a separate explicit mode and does not reinterpret or replace the legacy behavior.
+
+### Custom runtime-run index implementations
+
+Any external implementation of `IAiRuntimeRunExecutionIndex` must implement `TryRegisterQueuedAsync` with true atomic register-if-absent semantics. Implementations must not emulate this contract with a non-atomic `Get` followed by `Register` sequence.
+
+---
+
+## Final End-to-End Validation
+
+### Correctness result
+
+```text
+Passed scenarios = 5/5
+Failed scenarios = 0
+Real Pod deletions = 5
+Recovered work = 15/15
+In-flight executions resumed with the same ExecutionId = 5/5
+Local-queued runs durably redispatched = 10/10
+Completed DAG executions = 30/30
+Completed logical DAG steps = 1,500/1,500
+DuplicateRecoveryDetected = false
+CrossTenantLeakDetected = false
+CrossTenantLedgerLeakDetected = false
+Safe tenant recovered work = 0
+Safe tenant recovery forensics = 0
+ControlPlaneCausalChainValidated = true for 5/5 scenarios
+Remaining test Pods = 0
+```
+
+### Duration
+
+```text
+Parallel scenario duration = 00:09:50.0337767
+Observed datastore interval = 00:09:50.0368961
+```
+
+### Datastore traffic
+
+```text
+Redis commands = 660,370
+MongoDB operations = 295,077
+Combined observed operations = 955,447
+Redis commands per second = 1,119.20
+MongoDB operations per second = 500.10
+Redis evicted keys = 0
+MongoDB rejected connections = 0
+```
+
+The counters are server-wide deltas for the shared Redis and MongoDB instances during the test interval.
+
+---
+
+## Final Status
+
+The Kubernetes Runtime Pool now preserves one canonical recovery acceptance across ambiguous or repeated remote delivery. Five independent Pod deletions were executed concurrently, all 15 affected work items recovered, all 30 DAG executions completed, tenant isolation and control-plane evidence remained intact, and every test Pod was removed after validation.
+
+
+---
+
 ## 1.0.8.0 - 2026-07-29 — Hierarchical Runtime Capacity Selection and Kubernetes Runtime Pool Recovery
 
 ---

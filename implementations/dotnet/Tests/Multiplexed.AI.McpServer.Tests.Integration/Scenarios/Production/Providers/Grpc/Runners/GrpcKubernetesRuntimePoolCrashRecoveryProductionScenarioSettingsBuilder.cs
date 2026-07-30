@@ -44,6 +44,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
 
             ValidateProfile(profile);
 
+            ApplyStrictCrashRecoverySettings(
+                settings);
+
             ApplyGrpcKubernetesPoolScaleOutSettings(
                 settings,
                 poolId,
@@ -79,6 +82,21 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 throw new InvalidOperationException(
                     "The gRPC Kubernetes Runtime Pool settings builder requires the KubernetesPool host creation mode.");
             }
+        }
+
+        private static void ApplyStrictCrashRecoverySettings(
+            Dictionary<string, string?> settings)
+        {
+            ArgumentNullException.ThrowIfNull(settings);
+
+            /*
+             * Every scenario composed through this builder is a strict crash-recovery proof.
+             * Do not inherit the generic process-host name heuristic: profiles such as the
+             * Pod-failure P5 proof intentionally use a public scenario name that does not
+             * contain "dag-resume" or "real-runtime-crash-recovery".
+             */
+            settings["AiRuntimeExecutionRecoveryReconciliation:EnableDagExecutionResume"] =
+                "true";
         }
 
         private static void ApplyGrpcKubernetesPoolScaleOutSettings(

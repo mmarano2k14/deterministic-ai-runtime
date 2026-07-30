@@ -9,15 +9,15 @@ using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strategy;
 namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
 {
     /// <summary>
-    /// Creates one deterministic Kubernetes Runtime Pool Pod through the existing
-    /// <see cref="IAiRuntimeHostCreationStrategy" /> boundary.
+    /// Creates one deterministic Kubernetes Runtime Pool Pod through the canonical
+    /// <see cref="IAiRuntimeHostManager" /> lifecycle boundary.
     /// </summary>
     /// <remarks>
     /// <para>
-    /// The executor does not construct Kubernetes resources directly. It resolves the
+    /// The executor does not construct Kubernetes resources directly. It validates the
     /// single existing <see cref="AiRuntimeHostCreationMode.KubernetesPool" /> strategy,
-    /// supplies retry-stable first-class identities, and waits for exact shared-registry
-    /// membership convergence.
+    /// invokes it through the runtime host manager, supplies retry-stable first-class
+    /// identities, and waits for exact shared-registry membership convergence.
     /// </para>
     /// <para>
     /// Successful requests are deduplicated for the lifetime of this singleton
@@ -32,6 +32,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
             hostCreationStrategies;
         private readonly IAiKubernetesRuntimePoolPodMembershipEnumerator
             membershipEnumerator;
+        private readonly IAiRuntimeHostManager? runtimeHostManager;
         private readonly AiKubernetesRuntimePoolOptions poolOptions;
         private readonly AiKubernetesRuntimePoolHostOptions hostOptions;
         private readonly SemaphoreSlim executionGate = new(1, 1);
@@ -60,11 +61,59 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
                 membershipEnumerator,
             IOptions<AiKubernetesRuntimePoolOptions> poolOptions,
             IOptions<AiKubernetesRuntimePoolHostOptions> hostOptions)
+            : this(
+                MaterializeStrategies(hostCreationStrategies),
+                membershipEnumerator,
+                poolOptions,
+                hostOptions,
+                runtimeHostManager: null)
         {
-            this.hostCreationStrategies =
-                hostCreationStrategies?.ToArray() ??
-                throw new ArgumentNullException(
-                    nameof(hostCreationStrategies));
+        }
+
+        /// <summary>
+        /// Initializes a new instance that routes Pod creation through the canonical
+        /// runtime host manager observability boundary.
+        /// </summary>
+        /// <param name="hostCreationStrategies">
+        /// The registered host lifecycle strategies.
+        /// </param>
+        /// <param name="membershipEnumerator">
+        /// The exact shared-registry Pod membership authority.
+        /// </param>
+        /// <param name="poolOptions">The Kubernetes Runtime Pool options.</param>
+        /// <param name="hostOptions">The Kubernetes Runtime Pool host options.</param>
+        /// <param name="runtimeHostManager">
+        /// The canonical runtime host manager that records host lifecycle evidence.
+        /// </param>
+        public AiRuntimePoolPodCreationExecutor(
+            IEnumerable<IAiRuntimeHostCreationStrategy>
+                hostCreationStrategies,
+            IAiKubernetesRuntimePoolPodMembershipEnumerator
+                membershipEnumerator,
+            IOptions<AiKubernetesRuntimePoolOptions> poolOptions,
+            IOptions<AiKubernetesRuntimePoolHostOptions> hostOptions,
+            IAiRuntimeHostManager runtimeHostManager)
+            : this(
+                MaterializeStrategies(hostCreationStrategies),
+                membershipEnumerator,
+                poolOptions,
+                hostOptions,
+                runtimeHostManager ??
+                    throw new ArgumentNullException(
+                        nameof(runtimeHostManager)))
+        {
+        }
+
+        private AiRuntimePoolPodCreationExecutor(
+            IReadOnlyList<IAiRuntimeHostCreationStrategy>
+                hostCreationStrategies,
+            IAiKubernetesRuntimePoolPodMembershipEnumerator
+                membershipEnumerator,
+            IOptions<AiKubernetesRuntimePoolOptions> poolOptions,
+            IOptions<AiKubernetesRuntimePoolHostOptions> hostOptions,
+            IAiRuntimeHostManager? runtimeHostManager)
+        {
+            this.hostCreationStrategies = hostCreationStrategies;
 
             this.membershipEnumerator =
                 membershipEnumerator ??
@@ -78,6 +127,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
             this.hostOptions =
                 hostOptions?.Value ??
                 throw new ArgumentNullException(nameof(hostOptions));
+
+            this.runtimeHostManager = runtimeHostManager;
         }
 
         /// <inheritdoc />
@@ -148,11 +199,17 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
                         this.poolOptions);
 
                 var startResult =
-                    await strategy
-                        .StartAsync(
-                            hostRequest,
-                            cancellationToken)
-                        .ConfigureAwait(false);
+                    this.runtimeHostManager is null
+                        ? await strategy
+                            .StartAsync(
+                                hostRequest,
+                                cancellationToken)
+                            .ConfigureAwait(false)
+                        : await this.runtimeHostManager
+                            .StartRuntimeAsync(
+                                hostRequest,
+                                cancellationToken)
+                            .ConfigureAwait(false);
 
                 if (!startResult.Success)
                 {
@@ -233,6 +290,16 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
             {
                 this.executionGate.Release();
             }
+        }
+
+        private static IReadOnlyList<IAiRuntimeHostCreationStrategy>
+            MaterializeStrategies(
+                IEnumerable<IAiRuntimeHostCreationStrategy>
+                    hostCreationStrategies)
+        {
+            return hostCreationStrategies?.ToArray() ??
+                throw new ArgumentNullException(
+                    nameof(hostCreationStrategies));
         }
 
         /// <summary>

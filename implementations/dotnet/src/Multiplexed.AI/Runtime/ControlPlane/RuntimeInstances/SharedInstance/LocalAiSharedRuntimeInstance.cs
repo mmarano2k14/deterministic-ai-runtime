@@ -162,6 +162,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.SharedInstance
                     result.RunState?.ExecutionId ??
                     result.ExecutionId;
 
+                var acceptedRuntimeInstanceId =
+                    string.IsNullOrWhiteSpace(result.RuntimeInstanceId)
+                        ? RuntimeInstanceId
+                        : result.RuntimeInstanceId;
+
                 if (string.IsNullOrWhiteSpace(localRunId))
                 {
                     return new AiSharedRuntimeInstanceDispatchResult
@@ -239,7 +244,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.SharedInstance
                 return new AiSharedRuntimeInstanceDispatchResult
                 {
                     Success = true,
-                    RuntimeInstanceId = RuntimeInstanceId,
+                    RuntimeInstanceId = acceptedRuntimeInstanceId,
                     SharedRunId = request.SharedRun.SharedRunId,
                     LocalRunId = localRunId,
                     ExecutionId = executionId,
@@ -251,7 +256,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.SharedInstance
                     Metadata = CreateDebugMetadata(
                         request,
                         result,
-                        RuntimeInstanceId,
+                        acceptedRuntimeInstanceId,
                         localRunId,
                         executionId,
                         visibilityCheck,

@@ -747,6 +747,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                         var dispatchedLocalRunId =
                             dispatchResult.LocalRunId!;
 
+                        var acceptedRuntimeInstanceId =
+                            string.IsNullOrWhiteSpace(dispatchResult.RuntimeInstanceId)
+                                ? targetRuntimeInstanceId
+                                : dispatchResult.RuntimeInstanceId;
+
                         /*
                          * Runtime acceptance has already happened. From this point forward,
                          * persistence must not reuse the caller cancellation token.
@@ -761,7 +766,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                              attempt <= 2 &&
                              !MatchesDispatchOwnership(
                                  dispatchedRun,
-                                 targetRuntimeInstanceId,
+                                 acceptedRuntimeInstanceId,
                                  dispatchedLocalRunId,
                                  dispatchResult.ExecutionId);
                              attempt++)
@@ -771,7 +776,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                                 dispatchedRun = await _sharedRunStore
                                     .MarkDispatchedAsync(
                                         sharedRun.SharedRunId,
-                                        targetRuntimeInstanceId,
+                                        acceptedRuntimeInstanceId,
                                         dispatchedLocalRunId,
                                         dispatchResult.ExecutionId,
                                         dispatchResult.Message,
@@ -787,7 +792,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                                     "Shared-run dispatch ownership persistence attempt failed after runtime acceptance. The store will be read back before the attempt is classified. SharedRunId={SharedRunId}, ControlPlaneId={ControlPlaneId}, RuntimeInstanceId={RuntimeInstanceId}, LocalRunId={LocalRunId}, ExecutionId={ExecutionId}, Attempt={Attempt}",
                                     sharedRun.SharedRunId,
                                     controlPlaneId,
-                                    targetRuntimeInstanceId,
+                                    acceptedRuntimeInstanceId,
                                     dispatchedLocalRunId,
                                     dispatchResult.ExecutionId,
                                     attempt);
@@ -795,7 +800,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
 
                             if (MatchesDispatchOwnership(
                                     dispatchedRun,
-                                    targetRuntimeInstanceId,
+                                    acceptedRuntimeInstanceId,
                                     dispatchedLocalRunId,
                                     dispatchResult.ExecutionId))
                             {
@@ -812,7 +817,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
 
                                 if (MatchesDispatchOwnership(
                                         persistedRun,
-                                        targetRuntimeInstanceId,
+                                        acceptedRuntimeInstanceId,
                                         dispatchedLocalRunId,
                                         dispatchResult.ExecutionId))
                                 {
@@ -829,7 +834,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                                     "Shared-run dispatch ownership read-back failed after runtime acceptance. SharedRunId={SharedRunId}, ControlPlaneId={ControlPlaneId}, RuntimeInstanceId={RuntimeInstanceId}, LocalRunId={LocalRunId}, ExecutionId={ExecutionId}, Attempt={Attempt}",
                                     sharedRun.SharedRunId,
                                     controlPlaneId,
-                                    targetRuntimeInstanceId,
+                                    acceptedRuntimeInstanceId,
                                     dispatchedLocalRunId,
                                     dispatchResult.ExecutionId,
                                     attempt);
@@ -838,7 +843,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
 
                         if (!MatchesDispatchOwnership(
                                 dispatchedRun,
-                                targetRuntimeInstanceId,
+                                acceptedRuntimeInstanceId,
                                 dispatchedLocalRunId,
                                 dispatchResult.ExecutionId))
                         {
@@ -846,7 +851,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                                 "Shared-run dispatch ownership could not be confirmed after runtime acceptance. The claimed queue item will be requeued and must not become Dispatched. SharedRunId={SharedRunId}, ControlPlaneId={ControlPlaneId}, RuntimeInstanceId={RuntimeInstanceId}, LocalRunId={LocalRunId}, ExecutionId={ExecutionId}, LastException={LastException}",
                                 sharedRun.SharedRunId,
                                 controlPlaneId,
-                                targetRuntimeInstanceId,
+                                acceptedRuntimeInstanceId,
                                 dispatchedLocalRunId,
                                 dispatchResult.ExecutionId,
                                 lastSharedRunPersistenceException?.Message);
@@ -863,7 +868,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                             {
                                 Success = false,
                                 SharedRunId = queueItem.SharedRunId,
-                                RuntimeInstanceId = targetRuntimeInstanceId,
+                                RuntimeInstanceId = acceptedRuntimeInstanceId,
                                 QueueItem = queueItem,
                                 SharedRun = dispatchedRun ?? sharedRun,
                                 DispatchResult = dispatchResult,
@@ -874,7 +879,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                                 DurationMs = CalculateDurationMs(startedAtUtc, completedAtUtc),
                                 Diagnostics = new[]
                                 {
-                                    $"ExpectedRuntimeInstanceId='{targetRuntimeInstanceId}'",
+                                    $"ExpectedRuntimeInstanceId='{acceptedRuntimeInstanceId}'",
                                     $"ExpectedLocalRunId='{dispatchedLocalRunId}'",
                                     $"ExpectedExecutionId='{dispatchResult.ExecutionId}'",
                                     $"ActualRuntimeInstanceId='{dispatchedRun?.AssignedRuntimeInstanceId}'",
@@ -923,7 +928,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                                     queueItem.SharedRunId,
                                     controlPlaneId,
                                     queueItem.ClaimToken,
-                                    targetRuntimeInstanceId,
+                                    acceptedRuntimeInstanceId,
                                     dispatchedLocalRunId,
                                     attempt);
                             }
@@ -961,7 +966,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                                     queueItem.SharedRunId,
                                     controlPlaneId,
                                     queueItem.ClaimToken,
-                                    targetRuntimeInstanceId,
+                                    acceptedRuntimeInstanceId,
                                     dispatchedLocalRunId,
                                     attempt);
                             }
@@ -974,7 +979,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                                 queueItem.SharedRunId,
                                 controlPlaneId,
                                 queueItem.ClaimToken,
-                                targetRuntimeInstanceId,
+                                acceptedRuntimeInstanceId,
                                 dispatchedLocalRunId,
                                 dispatchResult.ExecutionId,
                                 lastQueueFinalizationException?.Message);
@@ -985,7 +990,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                             {
                                 Success = false,
                                 SharedRunId = queueItem.SharedRunId,
-                                RuntimeInstanceId = targetRuntimeInstanceId,
+                                RuntimeInstanceId = acceptedRuntimeInstanceId,
                                 QueueItem = queueItem,
                                 SharedRun = dispatchedRun,
                                 DispatchResult = dispatchResult,
@@ -998,7 +1003,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                                 {
                                     "The queue item was not requeued because the runtime already accepted the run.",
                                     $"ClaimToken='{queueItem.ClaimToken}'",
-                                    $"RuntimeInstanceId='{targetRuntimeInstanceId}'",
+                                    $"RuntimeInstanceId='{acceptedRuntimeInstanceId}'",
                                     $"LocalRunId='{dispatchedLocalRunId}'",
                                     $"ExecutionId='{dispatchResult.ExecutionId}'",
                                     $"LastFinalizationException='{lastQueueFinalizationException?.Message}'"
@@ -1013,7 +1018,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                             "Shared queue item finalized after durable shared-run ownership persistence. SharedRunId={SharedRunId}, ControlPlaneId={ControlPlaneId}, RuntimeInstanceId={RuntimeInstanceId}, LocalRunId={LocalRunId}, ExecutionId={ExecutionId}, ClaimToken={ClaimToken}",
                             sharedRun.SharedRunId,
                             controlPlaneId,
-                            targetRuntimeInstanceId,
+                            acceptedRuntimeInstanceId,
                             dispatchedLocalRunId,
                             dispatchResult.ExecutionId,
                             queueItem.ClaimToken);
@@ -1030,7 +1035,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                         {
                             Success = true,
                             SharedRunId = queueItem.SharedRunId,
-                            RuntimeInstanceId = targetRuntimeInstanceId,
+                            RuntimeInstanceId = acceptedRuntimeInstanceId,
                             QueueItem = dispatchedQueueItem,
                             SharedRun = dispatchedRun,
                             DispatchResult = dispatchResult,

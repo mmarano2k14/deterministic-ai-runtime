@@ -43,6 +43,22 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery
     public sealed class AiRuntimeExecutionRecoveryReconciler : IAiRuntimeExecutionRecoveryReconciler
     {
         private const string RecoveryReconciliationOperation = "runtime-execution-recovery-reconcile";
+        private const string RecoveryForensicsIdMetadataKey =
+            "recovery.forensicsId";
+        private const string RecoveryModeMetadataKey =
+            "recovery.mode";
+        private const string RecoveryReasonMetadataKey =
+            "recovery.reason";
+        private const string RecoveryFailedRuntimeInstanceIdMetadataKey =
+            "recovery.failedRuntimeInstanceId";
+        private const string RecoveryFailedLocalRunIdMetadataKey =
+            "recovery.failedLocalRunId";
+        private const string RecoveryFailedExecutionIdMetadataKey =
+            "recovery.failedExecutionId";
+        private const string RecoveryModeResumeExistingExecution =
+            "resume-existing-execution";
+        private const string RecoveryModeRequeueLocalQueuedRun =
+            "requeue-local-queued-run";
         private const string RuntimeStatusNotIncludedReason = "runtime-status-not-included";
         private const string NoRecoverableRuntimeRunsReason = "no-recoverable-runtime-runs";
         private const string OrphanedRuntimeInstanceReason = "orphaned-runtime-instance";
@@ -515,6 +531,19 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery
             Console.WriteLine(
                 $"[EXECUTION RECOVERY TRANSITION RESULT] RuntimeInstanceId='{runtimeInstanceId}', LocalRunId='{unfinishedRun.RunId}', ExecutionId='{unfinishedRun.ExecutionId}', IndexStatus='{unfinishedRun.Status}', Accepted='{transition.Accepted}', Changed='{transition.Changed}', Action='{transition.Action}', Reason='{transition.Reason}', SharedRunId='{transition.SharedRunId}'.");
 
+            if (transition.Accepted && transition.Changed)
+            {
+                await this.RecordRecoveryCandidateReconciliationSucceededAsync(
+                        runtimeInstanceId,
+                        unfinishedRun,
+                        ownership,
+                        transition,
+                        tenantId,
+                        tenantGroupId,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+            }
+
             decisions.Add(new AiRuntimeExecutionRecoveryDecision
             {
                 RuntimeInstanceId = runtimeInstanceId,
@@ -530,6 +559,96 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery
             });
 
             return transition.Changed;
+        }
+
+        /// <summary>
+        /// Records one successful candidate transition with exact failed runtime and run
+        /// correlation so the durable ledger can retrieve the recovery evidence.
+        /// </summary>
+        private async Task RecordRecoveryCandidateReconciliationSucceededAsync(
+            string runtimeInstanceId,
+            AiRuntimeRunExecutionIndexEntry unfinishedRun,
+            AiSharedRunOwnershipResolutionResult ownership,
+            AiRuntimeExecutionRecoveryTransitionResult transition,
+            string? tenantId,
+            string? tenantGroupId,
+            CancellationToken cancellationToken)
+        {
+            var sharedRunId =
+                transition.SharedRunId ??
+                ownership.SharedRunId;
+
+            if (string.IsNullOrWhiteSpace(sharedRunId))
+            {
+                return;
+            }
+
+            var localQueued =
+                IsLocalQueuedRecoveryCandidate(unfinishedRun);
+
+            var forensicsId =
+                CreateForensicsId(
+                    unfinishedRun.ExecutionId,
+                    sharedRunId,
+                    unfinishedRun.RunId,
+                    localQueued);
+
+            try
+            {
+                await this.observer
+                    .RecordAsync(
+                        new AiControlPlaneEvent
+                        {
+                            EventType =
+                                AiControlPlaneEventType.OperationCompleted,
+                            Area = AiControlPlaneArea.Recovery,
+                            Operation = RecoveryReconciliationOperation,
+                            Outcome =
+                                AiControlPlaneOperationOutcome.Succeeded,
+                            Correlation =
+                                new AiRuntimeExecutionCorrelationContext
+                                {
+                                    CorrelationId = forensicsId,
+                                    RunId = sharedRunId,
+                                    ExecutionId = unfinishedRun.ExecutionId,
+                                    RuntimeInstanceId = runtimeInstanceId
+                                },
+                            Message =
+                                "Runtime execution recovery candidate transition completed successfully.",
+                            Properties =
+                                new Dictionary<string, object?>
+                                {
+                                    ["tenantId"] = tenantId,
+                                    ["tenant.id"] = tenantId,
+                                    ["tenantGroupId"] = tenantGroupId,
+                                    ["tenant.group.id"] = tenantGroupId,
+                                    ["sharedRunId"] = sharedRunId,
+                                    ["localRunId"] = unfinishedRun.RunId,
+                                    ["executionId"] = unfinishedRun.ExecutionId,
+                                    ["runtimeInstanceId"] = runtimeInstanceId,
+                                    [RecoveryForensicsIdMetadataKey] =
+                                        forensicsId,
+                                    [RecoveryModeMetadataKey] =
+                                        localQueued
+                                            ? RecoveryModeRequeueLocalQueuedRun
+                                            : RecoveryModeResumeExistingExecution,
+                                    [RecoveryReasonMetadataKey] =
+                                        transition.Reason,
+                                    [RecoveryFailedRuntimeInstanceIdMetadataKey] =
+                                        runtimeInstanceId,
+                                    [RecoveryFailedLocalRunIdMetadataKey] =
+                                        unfinishedRun.RunId,
+                                    [RecoveryFailedExecutionIdMetadataKey] =
+                                        unfinishedRun.ExecutionId
+                                }
+                        },
+                        cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            catch
+            {
+                // Control-plane observability must not break recovery reconciliation.
+            }
         }
 
         /// <summary>
@@ -776,10 +895,25 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery
             string sharedRunId,
             string localRunId)
         {
+            return CreateForensicsId(
+                executionId,
+                sharedRunId,
+                localRunId,
+                localQueued: false);
+        }
+
+        private static string CreateForensicsId(
+            string? executionId,
+            string sharedRunId,
+            string localRunId,
+            bool localQueued)
+        {
             return string.Join(
                 ":",
                 "runtime-recovery",
-                executionId,
+                localQueued
+                    ? "local-queued"
+                    : executionId,
                 sharedRunId,
                 localRunId);
         }

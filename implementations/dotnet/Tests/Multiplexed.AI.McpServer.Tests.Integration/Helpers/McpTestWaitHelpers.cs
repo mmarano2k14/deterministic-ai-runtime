@@ -659,7 +659,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Helpers
                     $"Execution='{status.ExecutionId ?? status.RunState?.ExecutionId}', " +
                     $"Success='{status.Success}', " +
                     $"Status='{status.RunState?.Status ?? "<null>"}', " +
-                    $"FailureReason='{status.FailureReason}', " +
+                    $"RunStateFailureReason='{status.RunState?.FailureReason}', " +
+                    $"ControlPlaneFailureReason='{status.FailureReason}', " +
                     $"Message='{status.Message}', " +
                     $"Diagnostics='{FormatDiagnostics(status.Diagnostics)}'"));
         }

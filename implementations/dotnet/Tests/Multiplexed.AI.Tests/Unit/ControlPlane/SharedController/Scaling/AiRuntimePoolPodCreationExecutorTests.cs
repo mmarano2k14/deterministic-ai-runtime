@@ -60,6 +60,39 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController.Scaling
         }
 
         /// <summary>
+        /// Verifies that hierarchical Pod creation uses the canonical runtime host manager
+        /// boundary instead of invoking the KubernetesPool strategy directly.
+        /// </summary>
+        [Fact]
+        public async Task ExecuteAsync_Should_Use_Runtime_Host_Manager_Boundary()
+        {
+            var strategy = new RecordingHostCreationStrategy();
+            var membership = new ReadyMembershipEnumerator(strategy);
+            var runtimeHostManager =
+                new RecordingRuntimeHostManager(strategy);
+            var executor =
+                CreateExecutor(
+                    strategy,
+                    membership,
+                    runtimeHostManager);
+
+            var result =
+                await executor.ExecuteAsync(
+                    CreateRequest("request-step-7e-host-manager"),
+                    CreateCandidate());
+
+            Assert.True(result.IsCreated);
+            Assert.Equal(1, runtimeHostManager.CallCount);
+            Assert.Equal(1, strategy.CallCount);
+            Assert.Same(
+                strategy.LastRequest,
+                runtimeHostManager.LastRequest);
+            Assert.Equal(
+                result.PrimaryRuntimeInstanceId,
+                runtimeHostManager.LastRequest!.RuntimeInstanceId);
+        }
+
+        /// <summary>
         /// Verifies that retrying the same request returns the prior exact result without
         /// creating another Pod.
         /// </summary>
@@ -219,11 +252,10 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController.Scaling
 
         private static AiRuntimePoolPodCreationExecutor CreateExecutor(
             IAiRuntimeHostCreationStrategy strategy,
-            IAiKubernetesRuntimePoolPodMembershipEnumerator membership)
+            IAiKubernetesRuntimePoolPodMembershipEnumerator membership,
+            IAiRuntimeHostManager? runtimeHostManager = null)
         {
-            return new AiRuntimePoolPodCreationExecutor(
-                new[] { strategy },
-                membership,
+            var poolOptions =
                 Options.Create(
                     new AiKubernetesRuntimePoolOptions
                     {
@@ -236,7 +268,9 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController.Scaling
                         InitialRuntimeInstanceCount = 3,
                         MinimumRuntimeInstanceCount = 3,
                         MaximumRuntimeInstanceCount = 3
-                    }),
+                    });
+
+            var hostOptions =
                 Options.Create(
                     new AiKubernetesRuntimePoolHostOptions
                     {
@@ -245,7 +279,20 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController.Scaling
                             TimeSpan.FromSeconds(1),
                         ReadinessPollInterval =
                             TimeSpan.FromMilliseconds(1)
-                    }));
+                    });
+
+            return runtimeHostManager is null
+                ? new AiRuntimePoolPodCreationExecutor(
+                    new[] { strategy },
+                    membership,
+                    poolOptions,
+                    hostOptions)
+                : new AiRuntimePoolPodCreationExecutor(
+                    new[] { strategy },
+                    membership,
+                    poolOptions,
+                    hostOptions,
+                    runtimeHostManager);
         }
 
         private static AiRuntimeCapacitySelectionCandidate
@@ -353,6 +400,34 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController.Scaling
                         request.TransportName,
                         "http://runtime-pool-step-7e",
                         metadata));
+            }
+        }
+
+        private sealed class RecordingRuntimeHostManager :
+            IAiRuntimeHostManager
+        {
+            private readonly IAiRuntimeHostCreationStrategy strategy;
+
+            public RecordingRuntimeHostManager(
+                IAiRuntimeHostCreationStrategy strategy)
+            {
+                this.strategy = strategy;
+            }
+
+            public int CallCount { get; private set; }
+
+            public AiRuntimeHostStartRequest? LastRequest { get; private set; }
+
+            public async Task<AiRuntimeHostStartResult> StartRuntimeAsync(
+                AiRuntimeHostStartRequest request,
+                CancellationToken cancellationToken = default)
+            {
+                this.CallCount++;
+                this.LastRequest = request;
+
+                return await this.strategy
+                    .StartAsync(request, cancellationToken)
+                    .ConfigureAwait(false);
             }
         }
 

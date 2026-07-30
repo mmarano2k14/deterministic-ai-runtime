@@ -136,6 +136,50 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeQueue
             Assert.Null(tenantBCrossTenantRun);
         }
 
+        /// <summary>
+        /// Verifies that concurrent recovery acceptance creates exactly one Redis-backed runtime owner.
+        /// </summary>
+        [Fact]
+        public async Task TryRegisterQueuedAsync_Should_Accept_Exactly_One_Concurrent_Runtime_Owner()
+        {
+            var runId =
+                $"recovery-run-{Guid.NewGuid():N}";
+
+            var attempts = Enumerable
+                .Range(1, 8)
+                .Select(index => tenantAStore!.TryRegisterQueuedAsync(
+                    new AiRuntimeRunExecutionIndexEntry
+                    {
+                        RunId = runId,
+                        ExecutionId = "execution-recovery-1",
+                        RuntimeInstanceId = $"runtime-candidate-{index}",
+                        Status = "queued",
+                        CreatedAtUtc = DateTimeOffset.UtcNow,
+                        ExecutionContextSnapshot = CreateSnapshot("tenant-a"),
+                        Metadata = new Dictionary<string, string>
+                        {
+                            ["recovery.owner.id"] =
+                                "runtime-recovery:execution-recovery-1:shared-run-1:failed-run-1"
+                        }
+                    }))
+                .ToArray();
+
+            var results = await Task.WhenAll(attempts)
+                .ConfigureAwait(false);
+
+            var entry = await tenantAStore!
+                .GetAsync(runId)
+                .ConfigureAwait(false);
+
+            Assert.Single(results.Where(accepted => accepted));
+            Assert.NotNull(entry);
+            Assert.NotNull(entry!.RuntimeInstanceId);
+            Assert.Contains(
+                entry.RuntimeInstanceId!,
+                Enumerable.Range(1, 8).Select(index => $"runtime-candidate-{index}"));
+            Assert.Equal("execution-recovery-1", entry.ExecutionId);
+        }
+
         [Fact]
         public async Task MarkStartedAndCompleted_ShouldPreserveTenantIsolation()
         {

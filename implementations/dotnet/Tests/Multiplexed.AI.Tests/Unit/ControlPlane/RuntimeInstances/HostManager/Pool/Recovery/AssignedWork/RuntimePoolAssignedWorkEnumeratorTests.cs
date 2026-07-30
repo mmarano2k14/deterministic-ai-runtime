@@ -3,6 +3,7 @@ using Multiplexed.Abstractions.Core.ExecutionContext;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Capacity;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Failure;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Recovery.AssignedWork;
+using Multiplexed.AI.Tests.Fixtures;
 
 namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager.Pool.Recovery.AssignedWork
 {
@@ -360,7 +361,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager.Po
         /// Provides a deterministic existing durable runtime-run index.
         /// </summary>
         private sealed class FakeRuntimeRunExecutionIndex :
-            IAiRuntimeRunExecutionIndex
+            RuntimeRunExecutionIndexTestFixture
         {
             private readonly IReadOnlyList<
                 AiRuntimeRunExecutionIndexEntry> entries;
@@ -398,7 +399,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager.Po
             public int MutationCallCount { get; private set; }
 
             /// <inheritdoc />
-            public Task RegisterQueuedAsync(
+            public override Task RegisterQueuedAsync(
                 AiRuntimeRunExecutionIndexEntry entry,
                 CancellationToken cancellationToken = default)
             {
@@ -407,7 +408,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager.Po
             }
 
             /// <inheritdoc />
-            public Task MarkStartedAsync(
+            public override Task MarkStartedAsync(
                 string runId,
                 string executionId,
                 CancellationToken cancellationToken = default)
@@ -417,7 +418,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager.Po
             }
 
             /// <inheritdoc />
-            public Task MarkCompletedAsync(
+            public override Task MarkCompletedAsync(
                 string runId,
                 string executionId,
                 CancellationToken cancellationToken = default)
@@ -427,7 +428,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager.Po
             }
 
             /// <inheritdoc />
-            public Task MarkFailedAsync(
+            public override Task MarkFailedAsync(
                 string runId,
                 string? executionId,
                 string failureReason,
@@ -438,7 +439,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager.Po
             }
 
             /// <inheritdoc />
-            public Task MarkCancelledAsync(
+            public override Task MarkCancelledAsync(
                 string runId,
                 string? executionId,
                 string? reason,
@@ -449,7 +450,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager.Po
             }
 
             /// <inheritdoc />
-            public Task<bool> MarkRequeuedForRecoveryAsync(
+            public override Task<bool> MarkRequeuedForRecoveryAsync(
                 string runId,
                 string executionId,
                 string reason,
@@ -460,7 +461,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager.Po
             }
 
             /// <inheritdoc />
-            public Task<AiRuntimeRunExecutionIndexEntry?> GetAsync(
+            public override Task<AiRuntimeRunExecutionIndexEntry?> GetAsync(
                 string runId,
                 CancellationToken cancellationToken = default)
             {
@@ -473,7 +474,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager.Po
             }
 
             /// <inheritdoc />
-            public Task<IReadOnlyList<
+            public override Task<IReadOnlyList<
                 AiRuntimeRunExecutionIndexEntry>>
                 ListUnfinishedByRuntimeInstanceAsync(
                     string runtimeInstanceId,
@@ -492,7 +493,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager.Po
             }
 
             /// <inheritdoc />
-            public Task<IReadOnlyList<
+            public override Task<IReadOnlyList<
                 AiRuntimeRunExecutionIndexEntry>>
                 ListUnfinishedAsync(
                     CancellationToken cancellationToken = default)
@@ -501,7 +502,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager.Po
             }
 
             /// <inheritdoc />
-            public Task<IReadOnlyList<
+            public override Task<IReadOnlyList<
                 AiRuntimeRunExecutionIndexEntry>>
                 ListRecoverableByRuntimeInstanceAsync(
                     string runtimeInstanceId,
@@ -530,7 +531,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager.Po
             }
 
             /// <inheritdoc />
-            public Task<IReadOnlyList<
+            public override Task<IReadOnlyList<
                 AiRuntimeRunExecutionIndexEntry>>
                 ListRecoverableAsync(
                     CancellationToken cancellationToken = default)
