@@ -151,6 +151,27 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
         }
 
         /// <summary>
+        /// Creates the optional typed placement directive for the first crash-inventory run.
+        /// </summary>
+        /// <param name="tenant">The tenant whose crash inventory is being prepared.</param>
+        /// <returns>
+        /// A placement directive for the first inventory run, or <see langword="null"/>
+        /// to preserve the historical admission and scale-out behavior.
+        /// </returns>
+        /// <remarks>
+        /// The default remains <see langword="null"/> so P5 and every historical scenario keep
+        /// their exact fresh-capacity path. A warm-capacity simulation may override this boundary
+        /// only after it has already proved unpinned admission and recorded a compatible existing
+        /// runtime for each tenant.
+        /// </remarks>
+        protected virtual AiRunPlacementDirective? CreateFirstInventoryRunPlacementDirective(
+            ProductionTenantScenarioDefinition tenant)
+        {
+            ArgumentNullException.ThrowIfNull(tenant);
+            return null;
+        }
+
+        /// <summary>
         /// Verifies that the selected runtime belongs to the expected tenant.
         /// </summary>
         /// <param name="registry">The authoritative runtime instance registry.</param>
@@ -179,6 +200,29 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
         }
 
         /// <summary>
+        /// Determines whether an impacted recovery may reuse a runtime that also hosts
+        /// the safe tenant's workload.
+        /// </summary>
+        /// <param name="runtimeInstanceId">The replacement runtime instance identifier.</param>
+        /// <returns>
+        /// <see langword="true"/> when the runtime is policy-compatible shared capacity;
+        /// otherwise <see langword="false"/>.
+        /// </returns>
+        /// <remarks>
+        /// The default remains strict so P5 and every historical scenario continue proving
+        /// that impacted recovery never lands on a safe tenant runtime. A production simulation
+        /// may override this boundary only for shared capacity whose eligibility has already
+        /// been proved through the typed admission path. Safe shared-run identities remain
+        /// forbidden independently of this capacity decision.
+        /// </remarks>
+        protected virtual bool IsSafeTenantRuntimeCapacityEligibleForImpactedRecovery(
+            string runtimeInstanceId)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(runtimeInstanceId);
+            return false;
+        }
+
+        /// <summary>
         /// Resolves the physical process-control authority used by historical process-host scenarios.
         /// </summary>
         /// <param name="services">The running MCP host service provider.</param>
@@ -200,6 +244,96 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             return processControlSelector.GetRequired(
                 this.profile.HostCreationMode);
         }
+
+        /// <summary>
+        /// Gets a value indicating whether this provider executes a production-traffic
+        /// prelude before the shared eight-phase crash-recovery scenario.
+        /// </summary>
+        /// <remarks>
+        /// The default remains disabled so every historical process-host, Runtime Pool,
+        /// and Kubernetes proof preserves its current behavior. Specialized production
+        /// simulations opt in explicitly and reuse the already-running host, tenant MCP
+        /// clients, admission engine, shared queue, registry, and provider composition.
+        /// </remarks>
+        protected virtual bool UsesProductionTrafficPrelude => false;
+
+        /// <summary>
+        /// Gets a value indicating whether the first crash-inventory run must wait for
+        /// a fulfilled scale-out request before observing dispatch.
+        /// </summary>
+        /// <remarks>
+        /// The default preserves the exact P5 and historical fresh-capacity behavior.
+        /// A production simulation that intentionally warms compatible capacity first may
+        /// override this value because direct reuse does not create a scale-out request.
+        /// </remarks>
+        protected virtual bool WaitsForFirstInventoryScaleOutFulfillment => true;
+
+        /// <summary>
+        /// Gets additional shared-run identifiers whose control-plane ledger correlation
+        /// belongs to provider-specific traffic executed before the crash-recovery phases.
+        /// </summary>
+        /// <remarks>
+        /// The default is empty, preserving the exact P5 and historical causal-chain query.
+        /// A warm-capacity simulation may expose only the scale-out-producing runs that it
+        /// already validated durably during its production traffic prelude.
+        /// </remarks>
+        protected virtual IReadOnlyCollection<string> AdditionalControlPlaneLedgerSharedRunIds =>
+            Array.Empty<string>();
+
+        /// <summary>
+        /// Executes provider-specific production traffic before the shared crash-recovery
+        /// phases begin.
+        /// </summary>
+        /// <param name="context">The existing running scenario authorities.</param>
+        /// <returns>A task that completes when the prelude proof has converged.</returns>
+        protected virtual Task ExecuteProductionTrafficPreludeAsync(
+            ProcessHostProductionTrafficPreludeContext context)
+        {
+            ArgumentNullException.ThrowIfNull(context);
+            return Task.CompletedTask;
+        }
+
+        /// <summary>
+        /// Describes one configured tenant participating in a provider-specific
+        /// production-traffic prelude.
+        /// </summary>
+        /// <param name="Tenant">The production tenant definition.</param>
+        /// <param name="Mcp">The already-configured tenant MCP client.</param>
+        /// <param name="PipelinePrefix">The scenario-isolated pipeline prefix.</param>
+        /// <param name="IsSafe">Whether the tenant is excluded from physical failure.</param>
+        protected sealed record ProcessHostProductionTrafficTenantContext(
+            ProductionTenantScenarioDefinition Tenant,
+            McpTestClient Mcp,
+            string PipelinePrefix,
+            bool IsSafe);
+
+        /// <summary>
+        /// Carries the existing global production-scenario composition into one thin
+        /// provider-specific traffic simulation.
+        /// </summary>
+        /// <param name="Output">The test output authority.</param>
+        /// <param name="Services">The running MCP host service provider.</param>
+        /// <param name="Registry">The authoritative runtime registry.</param>
+        /// <param name="Scenario">The shared production scenario definition.</param>
+        /// <param name="ControlPlaneId">The isolated logical control-plane identifier.</param>
+        /// <param name="Tenants">The configured tenant contexts.</param>
+        /// <param name="RequestedBy">The profile requester identity.</param>
+        /// <param name="Source">The profile request source.</param>
+        /// <param name="ScaleOutTimeout">The existing scenario scale-out timeout.</param>
+        /// <param name="DispatchTimeout">The existing scenario dispatch timeout.</param>
+        /// <param name="CompletionTimeout">The existing scenario completion timeout.</param>
+        protected sealed record ProcessHostProductionTrafficPreludeContext(
+            ITestOutputHelper Output,
+            IServiceProvider Services,
+            IAiRuntimeInstanceRegistry Registry,
+            ProductionRuntimeScenarioDefinition Scenario,
+            string ControlPlaneId,
+            IReadOnlyList<ProcessHostProductionTrafficTenantContext> Tenants,
+            string RequestedBy,
+            string Source,
+            TimeSpan ScaleOutTimeout,
+            TimeSpan DispatchTimeout,
+            TimeSpan CompletionTimeout);
 
         /// <summary>
         /// Executes the physical failure assigned to one impacted tenant.
@@ -1679,8 +1813,53 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
 
                 WriteTiming("Setup host services and tenant MCP clients");
 
+                DateTimeOffset? productionTrafficPreludeLedgerTimelineFromUtc =
+                    null;
+
+                if (UsesProductionTrafficPrelude)
+                {
+                    productionTrafficPreludeLedgerTimelineFromUtc =
+                        DateTimeOffset.UtcNow.AddSeconds(-5);
+
+                    await ExecuteProductionTrafficPreludeAsync(
+                            new ProcessHostProductionTrafficPreludeContext(
+                                output,
+                                host.Services,
+                                registry,
+                                scenario,
+                                controlPlaneId,
+                                tenantContexts
+                                    .Select(
+                                        context =>
+                                            new ProcessHostProductionTrafficTenantContext(
+                                                context.Tenant,
+                                                context.Mcp,
+                                                context.PipelinePrefix,
+                                                context.IsSafe))
+                                    .ToArray(),
+                                profile.RequestedBy,
+                                profile.Source,
+                                scenario.ScaleOutTimeout,
+                                scenario.DispatchTimeout,
+                                scenario.CompletionTimeout))
+                        .ConfigureAwait(false);
+
+                    WriteTiming(
+                        "Validate production traffic admission and existing capacity reuse");
+                }
+
+                /*
+                 * Keep the historical crash/recovery ledger window after the optional prelude
+                 * for tenant-scoped recovery queries. Expand only the global control-plane
+                 * causal-chain window to the beginning of the production simulation so initial
+                 * scale-out and runtime-host creation evidence remain part of the same proof.
+                 */
                 var ledgerTimelineFromUtc =
                     DateTimeOffset.UtcNow.AddSeconds(-5);
+
+                var controlPlaneCausalChainTimelineFromUtc =
+                    productionTrafficPreludeLedgerTimelineFromUtc ??
+                    ledgerTimelineFromUtc;
 
                 output.WriteLine($"# SCENARIO INTRO - {profile.ProviderName.ToUpperInvariant()} PROCESS-HOST MULTI-TENANT CRASH RECOVERY WITH SAFE TENANTS");
                 output.WriteLine("Executive proof: every impacted tenant loses one real external runtime process and starts recovery immediately after its own crash inventory becomes ready, while every safe tenant continues normal execution without recovery contamination.");
@@ -1791,7 +1970,11 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                                     crashCheckpointGate:
                                         crashCheckpointGate,
                                     remainingRunPlacementFactory:
-                                        CreateRemainingInventoryRunPlacementDirective)
+                                        CreateRemainingInventoryRunPlacementDirective,
+                                    waitForFirstRunScaleOut:
+                                        WaitsForFirstInventoryScaleOutFulfillment,
+                                    firstRunPlacementFactory:
+                                        CreateFirstInventoryRunPlacementDirective)
                                 .ConfigureAwait(false);
 
                         await AssertRuntimeBelongsToTenantAsync(
@@ -1949,7 +2132,11 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                                     crashCheckpointGate:
                                         crashCheckpointGate,
                                     remainingRunPlacementFactory:
-                                        CreateRemainingInventoryRunPlacementDirective)
+                                        CreateRemainingInventoryRunPlacementDirective,
+                                    waitForFirstRunScaleOut:
+                                        WaitsForFirstInventoryScaleOutFulfillment,
+                                    firstRunPlacementFactory:
+                                        CreateFirstInventoryRunPlacementDirective)
                                 .ConfigureAwait(false);
 
                         await AssertRuntimeBelongsToTenantAsync(
@@ -2043,7 +2230,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 Assert.DoesNotContain(
                     recoveries.SelectMany(recovery => recovery.RecoveredWorks),
                     work =>
-                        safeRuntimeIds.Contains(work.ReplacementRuntimeInstanceId) ||
+                        (safeRuntimeIds.Contains(work.ReplacementRuntimeInstanceId) &&
+                         !IsSafeTenantRuntimeCapacityEligibleForImpactedRecovery(
+                             work.ReplacementRuntimeInstanceId)) ||
                         safeSharedRunIds.Contains(work.Original.SharedRunId) ||
                         safeSharedRunIds.Contains(work.RedispatchedRun.SharedRunId));
 
@@ -2448,9 +2637,63 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                             recoveries,
                             allImpactedReplayExecutionIds,
                             impactedResults.Select(result => result.Context.PipelinePrefix).ToArray(),
-                            ledgerTimelineFromUtc,
+                            controlPlaneCausalChainTimelineFromUtc,
                             ledgerTimelineToUtc)
                         .ConfigureAwait(false);
+
+                output.WriteLine(
+                    $"[{profile.LogPrefix} CONTROL-PLANE CAUSAL-CHAIN LEDGER WINDOW] TenantScopedTimestampFromUtc='{ledgerTimelineFromUtc:O}', CausalChainTimestampFromUtc='{controlPlaneCausalChainTimelineFromUtc:O}', IncludesProductionPrelude='{productionTrafficPreludeLedgerTimelineFromUtc.HasValue.ToString().ToLowerInvariant()}'.");
+
+                var additionalLedgerSharedRunIds =
+                    AdditionalControlPlaneLedgerSharedRunIds
+                        .Where(value => !string.IsNullOrWhiteSpace(value))
+                        .Distinct(StringComparer.Ordinal)
+                        .ToArray();
+
+                if (additionalLedgerSharedRunIds.Length > 0)
+                {
+                    var additionalScaleOutLedgerEntries =
+                        new List<AiDecisionLedgerEntry>();
+
+                    foreach (var sharedRunId in additionalLedgerSharedRunIds)
+                    {
+                        var currentEntries =
+                            await impactedResults[0].Context.Mcp
+                                .QueryLedgerAsync(
+                                    new AiDecisionLedgerQuery
+                                    {
+                                        ExecutionId =
+                                            $"control-plane-run:{sharedRunId}",
+                                        TimestampFromUtc =
+                                            productionTrafficPreludeLedgerTimelineFromUtc ??
+                                            ledgerTimelineFromUtc,
+                                        TimestampToUtc = ledgerTimelineToUtc
+                                    })
+                                .ConfigureAwait(false);
+
+                        additionalScaleOutLedgerEntries.AddRange(
+                            currentEntries.Where(
+                                IsScaleOutLifecycleLedgerEntry));
+                    }
+
+                    causalChainLedgerEntries =
+                        causalChainLedgerEntries
+                            .Concat(additionalScaleOutLedgerEntries)
+                            .GroupBy(
+                                CreateLedgerEntryDeduplicationKey,
+                                StringComparer.Ordinal)
+                            .Select(group =>
+                                group
+                                    .OrderBy(entry => entry.TimestampUtc)
+                                    .ThenBy(entry => entry.Sequence)
+                                    .First())
+                            .OrderBy(entry => entry.TimestampUtc)
+                            .ThenBy(entry => entry.Sequence)
+                            .ToArray();
+
+                    output.WriteLine(
+                        $"[{profile.LogPrefix} PRODUCTION PRELUDE SCALE-OUT LEDGER MERGE] SharedRunCount='{additionalLedgerSharedRunIds.Length}', ScaleOutLedgerEntryCount='{additionalScaleOutLedgerEntries.Count}', CombinedCausalChainEntryCount='{causalChainLedgerEntries.Count}'.");
+                }
 
                 Assert.NotEmpty(causalChainLedgerEntries);
 
@@ -3421,6 +3664,43 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                     AssertReplayTrace = true
                 }
             };
+        }
+
+        private static bool IsScaleOutLifecycleLedgerEntry(
+            AiDecisionLedgerEntry entry)
+        {
+            ArgumentNullException.ThrowIfNull(entry);
+
+            return !string.IsNullOrWhiteSpace(entry.EventType) &&
+                (entry.EventType.Contains(
+                    "runtime-scale-out-request-publish",
+                    StringComparison.Ordinal) ||
+                entry.EventType.Contains(
+                    "runtime-scale-out-request-watch",
+                    StringComparison.Ordinal) ||
+                entry.EventType.Contains(
+                    "runtime-scale-out-provider-selection",
+                    StringComparison.Ordinal));
+        }
+
+        private static string CreateLedgerEntryDeduplicationKey(
+            AiDecisionLedgerEntry entry)
+        {
+            ArgumentNullException.ThrowIfNull(entry);
+
+            if (!string.IsNullOrWhiteSpace(entry.EntryId))
+            {
+                return entry.EntryId;
+            }
+
+            return string.Join(
+                "|",
+                entry.EventType ?? string.Empty,
+                entry.TimestampUtc.ToString("O"),
+                entry.Sequence.ToString(CultureInfo.InvariantCulture),
+                entry.CorrelationContext.ExecutionId ?? string.Empty,
+                entry.CorrelationContext.RunId ?? string.Empty,
+                entry.CorrelationContext.CorrelationId ?? string.Empty);
         }
 
         private static bool IsInfraLedgerEntry(

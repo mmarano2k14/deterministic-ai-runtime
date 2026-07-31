@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Globalization;
 using System.Text.Json;
@@ -7,8 +7,11 @@ using Multiplexed.Abstractions.AI.ControlPlane.Admission.Placement;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager.ProcessControl;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
+using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Scaling;
 using Multiplexed.Abstractions.Core.ExecutionContext;
+using Multiplexed.AI.McpServer.Tests.Integration.Helpers;
 using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Definitions;
+using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helpers;
 using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Models;
 using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Providers.Base.KubernetesPool;
 using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Providers.Base.Profiles;
@@ -44,6 +47,12 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
         private readonly IRuntimePoolCrashRecoveryScenarioRuntimeProfile profile;
         private readonly ConcurrentDictionary<string, RuntimePoolAllInOneFailureState> states =
             new(StringComparer.Ordinal);
+
+        /// <summary>
+        /// Gets the bounded Runtime Pool scenario profile used by this proof.
+        /// </summary>
+        protected IRuntimePoolCrashRecoveryScenarioRuntimeProfile RuntimePoolProfile =>
+            profile;
 
         /// <summary>
         /// Initializes a real gRPC Kubernetes Runtime Pool crash-recovery proof.
@@ -403,7 +412,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             return recovery;
         }
 
-        private string ResolvePoolId(
+        protected string ResolvePoolId(
             string controlPlaneId)
         {
             return RuntimePoolCrashRecoveryScenarioIdentity.CreatePoolId(
@@ -461,7 +470,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 .ToHashSet(StringComparer.Ordinal);
         }
 
-        private static async Task<HashSet<string>> WaitForActiveHostIdsAsync(
+        protected static async Task<HashSet<string>> WaitForActiveHostIdsAsync(
             IAiRuntimeInstanceRegistry registry,
             string poolId,
             int expectedHostCount,
@@ -594,7 +603,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 "At least one healthy Runtime Pool Pod lost selectable membership during another Pod's recovery.");
         }
 
-        private static async Task<AiRuntimeInstanceSnapshot>
+        protected static async Task<AiRuntimeInstanceSnapshot>
             GetRequiredRuntimeSnapshotAsync(
                 IAiRuntimeInstanceRegistry registry,
                 string runtimeInstanceId)
@@ -1265,6 +1274,837 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                     .ConfigureAwait(false);
             }
         }
+    }
+
+    /// <summary>
+    /// Executes a production-like mixed-admission Runtime Pool simulation before reusing
+    /// the existing global crash-recovery scenario.
+    /// </summary>
+    [Collection(GrpcKubernetesRuntimePoolCrashRecoveryCollection.Name)]
+    [Trait("Category", "GrpcKubernetesRuntimePoolExistingCapacityProduction")]
+    public sealed class GrpcKubernetesRuntimePoolExistingCapacityProductionScenarioTests :
+        GrpcKubernetesRuntimePoolCrashRecoveryScenarioTestsBase
+    {
+        private const int ProbeStepCount = 5;
+        private const int ProbeDelayMs = 50;
+        private readonly ConcurrentDictionary<string, byte> sharedRuntimeInstanceIds =
+            new(StringComparer.Ordinal);
+        private readonly ConcurrentDictionary<string, string> inventoryRuntimeInstanceIdsByTenantId =
+            new(StringComparer.Ordinal);
+        private readonly ConcurrentDictionary<string, byte> productionPreludeScaleOutSharedRunIds =
+            new(StringComparer.Ordinal);
+
+        /// <summary>
+        /// Initializes the production-like existing-capacity and crash-recovery proof.
+        /// </summary>
+        /// <param name="output">The test output helper.</param>
+        public GrpcKubernetesRuntimePoolExistingCapacityProductionScenarioTests(
+            ITestOutputHelper output)
+            : base(
+                output,
+                new GrpcKubernetesRuntimePoolCrashRecoveryScenarioRuntimeProfile())
+        {
+        }
+
+        /// <inheritdoc />
+        protected override TimeSpan? ParallelHarnessScaleOutTimeoutOverride =>
+            TimeSpan.FromMinutes(4);
+
+        /// <inheritdoc />
+        protected override TimeSpan? ParallelHarnessProgressTimeoutOverride =>
+            TimeSpan.FromMinutes(5);
+
+        /// <inheritdoc />
+        protected override bool UsesProductionTrafficPrelude => true;
+
+        /// <inheritdoc />
+        protected override bool WaitsForFirstInventoryScaleOutFulfillment => false;
+
+        /// <inheritdoc />
+        protected override IReadOnlyCollection<string> AdditionalControlPlaneLedgerSharedRunIds =>
+            productionPreludeScaleOutSharedRunIds.Keys
+                .OrderBy(value => value, StringComparer.Ordinal)
+                .ToArray();
+
+        /// <inheritdoc />
+        protected override AiRunPlacementDirective? CreateFirstInventoryRunPlacementDirective(
+            ProductionTenantScenarioDefinition tenant)
+        {
+            ArgumentNullException.ThrowIfNull(tenant);
+
+            if (!inventoryRuntimeInstanceIdsByTenantId.TryGetValue(
+                    tenant.TenantId,
+                    out var runtimeInstanceId) ||
+                string.IsNullOrWhiteSpace(runtimeInstanceId))
+            {
+                throw new InvalidOperationException(
+                    $"The production warm-capacity proof did not record a compatible first-inventory runtime. TenantId='{tenant.TenantId}', RuntimeMode='{tenant.RuntimeMode}'.");
+            }
+
+            return new AiRunPlacementDirective
+            {
+                Target = new AiRunPlacementTarget
+                {
+                    RuntimeInstanceId = runtimeInstanceId
+                },
+                Requirement = AiRunPlacementRequirement.Required,
+                Fallback = AiRunPlacementFallback.Reject
+            };
+        }
+
+        /// <summary>
+        /// Proves that Dedicated, Hybrid, and Shared tenants warm their policy-compatible
+        /// capacity and that a second traffic wave reuses those existing runtime identities
+        /// without creating another Pod before the global crash-recovery proof begins.
+        /// </summary>
+        /// <returns>A task that completes when the complete production simulation converges.</returns>
+        [Fact]
+        public async Task Grpc_KubernetesPool_Should_Reuse_Existing_Admission_Visible_Capacity_Before_Global_Crash_Recovery()
+        {
+            try
+            {
+                await ProcessHost_Should_Recover_Two_Tenants_After_Real_Runtime_Process_Kills_Without_Impacting_Safe_Tenant_With_Strict_Dag_Resume_Replay_Ledger_And_Trace()
+                    .ConfigureAwait(false);
+            }
+            finally
+            {
+                await CleanupAllTrackedPodsAsync()
+                    .ConfigureAwait(false);
+            }
+        }
+
+        /// <inheritdoc />
+        protected override ProductionRuntimeScenarioDefinition CreateRealRuntimeCrashRecoveryScenario(
+            bool includeSafeTenant = false)
+        {
+            var scenario =
+                base.CreateRealRuntimeCrashRecoveryScenario(
+                    includeSafeTenant: true);
+
+            /*
+             * Tenant A receives the runtime-process failure. Hybrid is safe here because
+             * the existing pool manager replaces only the exact child process and preserves
+             * the host configuration. Tenant B receives the whole-Pod failure and remains
+             * Dedicated, preserving the already-proven Pod replacement template.
+             */
+            var tenantA =
+                scenario.Tenants.Single(
+                    tenant =>
+                        StringComparer.Ordinal.Equals(
+                            tenant.TenantId,
+                            "tenant-real-crash-a")) with
+                {
+                    RuntimeMode = ProductionTenantRuntimeMode.Hybrid,
+                    ExpectDedicatedRuntimePrefix = false
+                };
+
+            var tenantB =
+                scenario.Tenants.Single(
+                    tenant =>
+                        StringComparer.Ordinal.Equals(
+                            tenant.TenantId,
+                            "tenant-real-crash-b")) with
+                {
+                    RuntimeMode = ProductionTenantRuntimeMode.Dedicated,
+                    ExpectDedicatedRuntimePrefix = false
+                };
+
+            var safeTenant =
+                scenario.Tenants.Single(
+                    tenant =>
+                        StringComparer.Ordinal.Equals(
+                            tenant.TenantId,
+                            "tenant-real-crash-safe")) with
+                {
+                    RuntimeMode = ProductionTenantRuntimeMode.Shared,
+                    ExpectDedicatedRuntimePrefix = false
+                };
+
+            return scenario with
+            {
+                Name =
+                    "grpc-kubernetes-runtime-pool-existing-capacity-production",
+                ControlPlaneIdPrefix =
+                    "grpc-kubernetes-runtime-pool-existing-capacity-production",
+                Tenants = new[]
+                {
+                    tenantA,
+                    tenantB,
+                    safeTenant
+                }
+            };
+        }
+
+        /// <inheritdoc />
+        protected override bool IsSafeTenantRuntimeCapacityEligibleForImpactedRecovery(
+            string runtimeInstanceId)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(runtimeInstanceId);
+
+            return sharedRuntimeInstanceIds.ContainsKey(
+                runtimeInstanceId);
+        }
+
+        /// <inheritdoc />
+        protected override async Task AssertRuntimeBelongsToTenantAsync(
+            IAiRuntimeInstanceRegistry registry,
+            string runtimeInstanceId,
+            ProductionTenantScenarioDefinition tenant)
+        {
+            ArgumentNullException.ThrowIfNull(registry);
+            ArgumentException.ThrowIfNullOrWhiteSpace(runtimeInstanceId);
+            ArgumentNullException.ThrowIfNull(tenant);
+
+            var snapshot =
+                await GetRequiredRuntimeSnapshotAsync(
+                        registry,
+                        runtimeInstanceId)
+                    .ConfigureAwait(false);
+
+            if (tenant.RuntimeMode ==
+                ProductionTenantRuntimeMode.Dedicated)
+            {
+                Assert.Equal(
+                    tenant.TenantId,
+                    snapshot.TenantId);
+
+                return;
+            }
+
+            var usesKnownSharedCapacity =
+                sharedRuntimeInstanceIds.ContainsKey(
+                    runtimeInstanceId);
+
+            if (tenant.RuntimeMode ==
+                ProductionTenantRuntimeMode.Shared)
+            {
+                Assert.True(
+                    usesKnownSharedCapacity,
+                    $"Shared tenant '{tenant.TenantId}' recovered on runtime '{runtimeInstanceId}', which was not part of the admission-proven shared warm capacity.");
+
+                return;
+            }
+
+            Assert.Equal(
+                ProductionTenantRuntimeMode.Hybrid,
+                tenant.RuntimeMode);
+
+            Assert.True(
+                StringComparer.Ordinal.Equals(
+                    tenant.TenantId,
+                    snapshot.TenantId) ||
+                usesKnownSharedCapacity,
+                $"Hybrid tenant '{tenant.TenantId}' recovered on runtime '{runtimeInstanceId}' owned by TenantId='{snapshot.TenantId ?? string.Empty}', which is neither tenant-owned nor part of the admission-proven shared warm capacity.");
+        }
+
+        /// <inheritdoc />
+        protected override async Task ExecuteProductionTrafficPreludeAsync(
+            ProcessHostProductionTrafficPreludeContext context)
+        {
+            ArgumentNullException.ThrowIfNull(context);
+
+            var orderedTenants =
+                context.Tenants
+                    .OrderBy(
+                        tenant =>
+                            GetRuntimeModeOrder(
+                                tenant.Tenant.RuntimeMode))
+                    .ToArray();
+
+            Assert.Equal(3, orderedTenants.Length);
+            Assert.Equal(
+                new[]
+                {
+                    ProductionTenantRuntimeMode.Dedicated,
+                    ProductionTenantRuntimeMode.Hybrid,
+                    ProductionTenantRuntimeMode.Shared
+                },
+                orderedTenants
+                    .Select(tenant => tenant.Tenant.RuntimeMode)
+                    .ToArray());
+
+            context.Output.WriteLine(string.Empty);
+            context.Output.WriteLine(
+                "# PRODUCTION TRAFFIC PRELUDE - MIXED ADMISSION AND EXISTING CAPACITY REUSE");
+            context.Output.WriteLine(
+                "[PASS TARGET] Warm Dedicated, Hybrid, and Shared capacity in policy order, validate the durable typed admission request, complete one traffic wave, then prove a second unpinned wave dispatches only to the already-existing RuntimeInstanceId and HostId sets without creating another Pod.");
+
+            var scaleOutRequestStore =
+                context.Services.GetRequiredService<
+                    IAiRuntimeScaleOutRequestStore>();
+
+            productionPreludeScaleOutSharedRunIds.Clear();
+
+            var firstWave =
+                new List<ProductionTrafficDispatchProof>(
+                    orderedTenants.Length);
+
+            foreach (var tenant in orderedTenants)
+            {
+                firstWave.Add(
+                    await SubmitProbeAsync(
+                            context,
+                            scaleOutRequestStore,
+                            tenant,
+                            waveNumber: 1,
+                            expectScaleOutRequest: true)
+                        .ConfigureAwait(false));
+            }
+
+            await AssertProbeWaveCompletedAsync(
+                    context,
+                    firstWave)
+                .ConfigureAwait(false);
+
+            Assert.Equal(
+                orderedTenants.Length,
+                productionPreludeScaleOutSharedRunIds.Count);
+
+            var poolId =
+                ResolvePoolId(
+                    context.ControlPlaneId);
+
+            var warmHostIds =
+                await WaitForActiveHostIdsAsync(
+                        context.Registry,
+                        poolId,
+                        RuntimePoolProfile.CrashRecoveryPlan.InitialPodCount,
+                        context.ScaleOutTimeout)
+                    .ConfigureAwait(false);
+
+            var expectedWarmRuntimeCount =
+                RuntimePoolProfile.CrashRecoveryPlan.InitialPodCount *
+                RuntimePoolProfile.CrashRecoveryPlan.InitialRuntimeCountPerPod;
+
+            var warmSnapshots =
+                await WaitForReadyPoolSnapshotsAsync(
+                        context.Registry,
+                        poolId,
+                        expectedWarmRuntimeCount,
+                        RuntimePoolProfile.CrashRecoveryPlan.InitialPodCount,
+                        context.ScaleOutTimeout)
+                    .ConfigureAwait(false);
+
+            var warmRuntimeInstanceIds =
+                warmSnapshots
+                    .Select(snapshot => snapshot.RuntimeInstanceId)
+                    .ToHashSet(StringComparer.Ordinal);
+
+            var firstWaveHostsByMode =
+                firstWave.ToDictionary(
+                    dispatch => dispatch.TenantContext.Tenant.RuntimeMode,
+                    dispatch => dispatch.Snapshot.HostId!,
+                    EqualityComparer<ProductionTenantRuntimeMode>.Default);
+
+            inventoryRuntimeInstanceIdsByTenantId.Clear();
+
+            foreach (var dispatch in firstWave)
+            {
+                Assert.True(
+                    inventoryRuntimeInstanceIdsByTenantId.TryAdd(
+                        dispatch.TenantContext.Tenant.TenantId,
+                        dispatch.Snapshot.RuntimeInstanceId),
+                    $"The production warm-capacity proof recorded more than one first-wave runtime for TenantId='{dispatch.TenantContext.Tenant.TenantId}'.");
+            }
+
+            Assert.Equal(
+                orderedTenants.Length,
+                inventoryRuntimeInstanceIdsByTenantId.Count);
+
+            var crashInventoryWarmRuntimeOverlapCount =
+                inventoryRuntimeInstanceIdsByTenantId.Count -
+                inventoryRuntimeInstanceIdsByTenantId.Values
+                    .Distinct(StringComparer.Ordinal)
+                    .Count();
+
+            Assert.Equal(
+                0,
+                crashInventoryWarmRuntimeOverlapCount);
+
+            Assert.Equal(
+                RuntimePoolProfile.CrashRecoveryPlan.InitialPodCount,
+                firstWaveHostsByMode.Values
+                    .Distinct(StringComparer.Ordinal)
+                    .Count());
+
+            foreach (var hostId in firstWaveHostsByMode.Values)
+            {
+                Assert.Equal(
+                    RuntimePoolProfile.CrashRecoveryPlan.InitialRuntimeCountPerPod,
+                    warmSnapshots.Count(
+                        snapshot =>
+                            StringComparer.Ordinal.Equals(
+                                snapshot.HostId,
+                                hostId)));
+            }
+
+            var sharedHostId =
+                firstWaveHostsByMode[ProductionTenantRuntimeMode.Shared];
+
+            foreach (var sharedSnapshot in warmSnapshots.Where(
+                         snapshot =>
+                             StringComparer.Ordinal.Equals(
+                                 snapshot.HostId,
+                                 sharedHostId)))
+            {
+                sharedRuntimeInstanceIds.TryAdd(
+                    sharedSnapshot.RuntimeInstanceId,
+                    0);
+            }
+
+            Assert.Equal(
+                RuntimePoolProfile.CrashRecoveryPlan.InitialRuntimeCountPerPod,
+                sharedRuntimeInstanceIds.Count);
+
+            var secondWave =
+                new List<ProductionTrafficDispatchProof>(
+                    orderedTenants.Length);
+
+            foreach (var tenant in orderedTenants)
+            {
+                var dispatch =
+                    await SubmitProbeAsync(
+                            context,
+                            scaleOutRequestStore,
+                            tenant,
+                            waveNumber: 2,
+                            expectScaleOutRequest: false)
+                        .ConfigureAwait(false);
+
+                Assert.Contains(
+                    dispatch.Run.AssignedRuntimeInstanceId!,
+                    warmRuntimeInstanceIds);
+
+                var expectedHostIds =
+                    tenant.Tenant.RuntimeMode switch
+                    {
+                        ProductionTenantRuntimeMode.Dedicated =>
+                            new[]
+                            {
+                                firstWaveHostsByMode[
+                                    ProductionTenantRuntimeMode.Dedicated]
+                            },
+                        ProductionTenantRuntimeMode.Hybrid =>
+                            new[]
+                            {
+                                firstWaveHostsByMode[
+                                    ProductionTenantRuntimeMode.Hybrid],
+                                firstWaveHostsByMode[
+                                    ProductionTenantRuntimeMode.Shared]
+                            },
+                        ProductionTenantRuntimeMode.Shared =>
+                            new[]
+                            {
+                                firstWaveHostsByMode[
+                                    ProductionTenantRuntimeMode.Shared]
+                            },
+                        _ =>
+                            throw new InvalidOperationException(
+                                $"Unsupported production tenant runtime mode '{tenant.Tenant.RuntimeMode}'.")
+                    };
+
+                Assert.Contains(
+                    dispatch.Snapshot.HostId!,
+                    expectedHostIds);
+
+                secondWave.Add(dispatch);
+            }
+
+            await AssertProbeWaveCompletedAsync(
+                    context,
+                    secondWave)
+                .ConfigureAwait(false);
+
+            var hostsAfterReuse =
+                await WaitForActiveHostIdsAsync(
+                        context.Registry,
+                        poolId,
+                        RuntimePoolProfile.CrashRecoveryPlan.InitialPodCount,
+                        context.DispatchTimeout)
+                    .ConfigureAwait(false);
+
+            Assert.True(
+                warmHostIds.SetEquals(hostsAfterReuse),
+                $"The existing-capacity wave changed the physical Pod set. Before='{string.Join(",", warmHostIds.OrderBy(value => value, StringComparer.Ordinal))}', After='{string.Join(",", hostsAfterReuse.OrderBy(value => value, StringComparer.Ordinal))}'.");
+
+            context.Output.WriteLine(string.Empty);
+            context.Output.WriteLine(
+                "[GRPC KUBERNETES RUNTIME POOL EXISTING CAPACITY PRODUCTION SUMMARY]");
+            context.Output.WriteLine("TrafficWaveCount='2'");
+            context.Output.WriteLine($"TenantCount='{orderedTenants.Length}'");
+            context.Output.WriteLine("DedicatedTenantCount='1'");
+            context.Output.WriteLine("HybridTenantCount='1'");
+            context.Output.WriteLine("SharedTenantCount='1'");
+            context.Output.WriteLine($"WarmPodCount='{warmHostIds.Count}'");
+            context.Output.WriteLine($"WarmRuntimeCount='{warmSnapshots.Count}'");
+            context.Output.WriteLine($"ExistingRuntimeDispatchCount='{secondWave.Count}'");
+            context.Output.WriteLine($"CrashInventoryWarmRuntimeCount='{inventoryRuntimeInstanceIdsByTenantId.Count}'");
+            context.Output.WriteLine($"CrashInventoryWarmRuntimeOverlapCount='{crashInventoryWarmRuntimeOverlapCount}'");
+            context.Output.WriteLine($"PreludeScaleOutSharedRunCount='{productionPreludeScaleOutSharedRunIds.Count}'");
+            context.Output.WriteLine("ScaleOutRequestCountDuringReuse='0'");
+            context.Output.WriteLine("NewRuntimeDispatchCount='0'");
+            context.Output.WriteLine("NewPodCountDuringReuse='0'");
+            context.Output.WriteLine("AdmissionViolationCount='0'");
+            context.Output.WriteLine(
+                "[GRPC KUBERNETES RUNTIME POOL EXISTING CAPACITY PRODUCTION SUMMARY END]");
+        }
+
+        private async Task<ProductionTrafficDispatchProof> SubmitProbeAsync(
+            ProcessHostProductionTrafficPreludeContext context,
+            IAiRuntimeScaleOutRequestStore scaleOutRequestStore,
+            ProcessHostProductionTrafficTenantContext tenantContext,
+            int waveNumber,
+            bool expectScaleOutRequest)
+        {
+            var probeTenant =
+                tenantContext.Tenant with
+                {
+                    Run = tenantContext.Tenant.Run with
+                    {
+                        RunCount = 1,
+                        StepCount = ProbeStepCount,
+                        DelayMs = ProbeDelayMs,
+                        FlakyStepInterval = 0,
+                        EnableRetention = true
+                    }
+                };
+
+            var pipelineName =
+                $"{tenantContext.PipelinePrefix}-production-wave-{waveNumber:D2}-{Guid.NewGuid():N}";
+
+            var sharedRunId =
+                await ProductionSharedRunTestHelpers
+                    .SubmitOneRunAsync(
+                        tenantContext.Mcp,
+                        probeTenant,
+                        context.ControlPlaneId,
+                        pipelineName,
+                        context.RequestedBy,
+                        context.Source)
+                    .ConfigureAwait(false);
+
+            var dispatchedRun =
+                await ProductionSharedRunTestHelpers
+                    .WaitForSingleDispatchedRunAsync(
+                        tenantContext.Mcp,
+                        pipelineName,
+                        sharedRunId,
+                        context.ScaleOutTimeout +
+                        context.DispatchTimeout)
+                    .ConfigureAwait(false);
+
+            Assert.False(
+                string.IsNullOrWhiteSpace(
+                    dispatchedRun.AssignedRuntimeInstanceId),
+                $"Production probe was accepted without a runtime binding. TenantId='{probeTenant.TenantId}', RuntimeMode='{probeTenant.RuntimeMode}', SharedRunId='{sharedRunId}'.");
+
+            var snapshot =
+                await GetRequiredRuntimeSnapshotAsync(
+                        context.Registry,
+                        dispatchedRun.AssignedRuntimeInstanceId!)
+                    .ConfigureAwait(false);
+
+            AiRuntimeScaleOutRequestRecord? scaleOutRequest = null;
+
+            if (expectScaleOutRequest)
+            {
+                scaleOutRequest =
+                    await WaitForScaleOutRequestAsync(
+                            scaleOutRequestStore,
+                            context.ControlPlaneId,
+                            probeTenant,
+                            pipelineName,
+                            sharedRunId,
+                            context.ScaleOutTimeout)
+                        .ConfigureAwait(false);
+
+                AssertTypedAdmissionRequest(
+                    scaleOutRequest,
+                    probeTenant);
+
+                Assert.True(
+                    productionPreludeScaleOutSharedRunIds.TryAdd(
+                        sharedRunId,
+                        0),
+                    $"The production prelude recorded the same scale-out shared run more than once. SharedRunId='{sharedRunId}', ScaleOutRequestId='{scaleOutRequest.RequestId}'.");
+
+                Assert.False(
+                    string.IsNullOrWhiteSpace(
+                        scaleOutRequest.FulfilledRuntimeInstanceId));
+
+                var fulfilledSnapshot =
+                    await GetRequiredRuntimeSnapshotAsync(
+                            context.Registry,
+                            scaleOutRequest.FulfilledRuntimeInstanceId!)
+                        .ConfigureAwait(false);
+
+                Assert.Equal(
+                    fulfilledSnapshot.HostId,
+                    snapshot.HostId);
+            }
+            else
+            {
+                await AssertNoScaleOutRequestAsync(
+                        scaleOutRequestStore,
+                        context.ControlPlaneId,
+                        probeTenant,
+                        pipelineName,
+                        sharedRunId,
+                        TimeSpan.FromSeconds(1))
+                    .ConfigureAwait(false);
+            }
+
+            context.Output.WriteLine(
+                $"[PRODUCTION TRAFFIC DISPATCH] Wave='{waveNumber}', TenantId='{probeTenant.TenantId}', RuntimeMode='{probeTenant.RuntimeMode}', SharedRunId='{sharedRunId}', RuntimeInstanceId='{snapshot.RuntimeInstanceId}', PoolId='{snapshot.PoolId}', HostId='{snapshot.HostId}', PodName='{snapshot.KubernetesPodName}', ScaleOutRequestId='{scaleOutRequest?.RequestId ?? string.Empty}'.");
+
+            return new ProductionTrafficDispatchProof(
+                tenantContext,
+                dispatchedRun,
+                snapshot);
+        }
+
+        private static async Task<AiRuntimeScaleOutRequestRecord>
+            WaitForScaleOutRequestAsync(
+                IAiRuntimeScaleOutRequestStore store,
+                string controlPlaneId,
+                ProductionTenantScenarioDefinition tenant,
+                string pipelineName,
+                string sharedRunId,
+                TimeSpan timeout)
+        {
+            var deadline =
+                DateTimeOffset.UtcNow.Add(timeout);
+
+            IReadOnlyCollection<AiRuntimeScaleOutRequestRecord> requests =
+                Array.Empty<AiRuntimeScaleOutRequestRecord>();
+
+            while (DateTimeOffset.UtcNow < deadline)
+            {
+                requests =
+                    await store
+                        .ListAsync(
+                            new AiRuntimeScaleOutRequestQuery
+                            {
+                                ControlPlaneId = controlPlaneId,
+                                TenantId = tenant.TenantId,
+                                PipelineKey = pipelineName,
+                                SharedRunId = sharedRunId,
+                                MaxResults = 10
+                            })
+                        .ConfigureAwait(false);
+
+                var fulfilled =
+                    requests
+                        .Where(
+                            request =>
+                                request.Status ==
+                                    AiRuntimeScaleOutRequestStatus.Fulfilled)
+                        .OrderByDescending(request => request.FulfilledAtUtc)
+                        .FirstOrDefault();
+
+                if (fulfilled is not null)
+                {
+                    return fulfilled;
+                }
+
+                await Task.Delay(TimeSpan.FromMilliseconds(100))
+                    .ConfigureAwait(false);
+            }
+
+            throw new TimeoutException(
+                $"The production warm-up run did not expose a fulfilled typed scale-out request. ControlPlaneId='{controlPlaneId}', TenantId='{tenant.TenantId}', RuntimeMode='{tenant.RuntimeMode}', PipelineName='{pipelineName}', SharedRunId='{sharedRunId}', ObservedRequestCount='{requests.Count}'.");
+        }
+
+        private static async Task AssertNoScaleOutRequestAsync(
+            IAiRuntimeScaleOutRequestStore store,
+            string controlPlaneId,
+            ProductionTenantScenarioDefinition tenant,
+            string pipelineName,
+            string sharedRunId,
+            TimeSpan observationWindow)
+        {
+            var deadline =
+                DateTimeOffset.UtcNow.Add(observationWindow);
+
+            while (DateTimeOffset.UtcNow < deadline)
+            {
+                var requests =
+                    await store
+                        .ListAsync(
+                            new AiRuntimeScaleOutRequestQuery
+                            {
+                                ControlPlaneId = controlPlaneId,
+                                TenantId = tenant.TenantId,
+                                PipelineKey = pipelineName,
+                                SharedRunId = sharedRunId,
+                                MaxResults = 10
+                            })
+                        .ConfigureAwait(false);
+
+                Assert.True(
+                    requests.Count == 0,
+                    $"Existing capacity reuse created an unexpected scale-out request. ControlPlaneId='{controlPlaneId}', TenantId='{tenant.TenantId}', RuntimeMode='{tenant.RuntimeMode}', PipelineName='{pipelineName}', SharedRunId='{sharedRunId}', Requests='{string.Join(",", requests.Select(request => $"{request.RequestId}:{request.Status}"))}'.");
+
+                await Task.Delay(TimeSpan.FromMilliseconds(100))
+                    .ConfigureAwait(false);
+            }
+        }
+
+        private static void AssertTypedAdmissionRequest(
+            AiRuntimeScaleOutRequestRecord request,
+            ProductionTenantScenarioDefinition tenant)
+        {
+            Assert.Equal(
+                tenant.TenantId,
+                request.TenantId);
+
+            Assert.Equal(
+                tenant.TenantGroupId,
+                request.TenantGroupId);
+
+            Assert.Equal(
+                tenant.TenantId,
+                request.ExecutionContextSnapshot.TenantId);
+
+            Assert.Equal(
+                tenant.TenantGroupId,
+                request.ExecutionContextSnapshot.TenantGroupId);
+
+            Assert.Equal(
+                ProductionTenantRuntimeModeMapper.ResolveIsolationMode(
+                    tenant.RuntimeMode),
+                request.IsolationMode);
+
+            Assert.Equal(
+                ProductionTenantRuntimeModeMapper.ResolvePreferDedicatedCapacity(
+                    tenant.RuntimeMode),
+                request.PreferDedicatedCapacity);
+
+            Assert.Equal(
+                ProductionTenantRuntimeModeMapper.ResolveAllowSharedFallback(
+                    tenant.RuntimeMode),
+                request.AllowSharedFallback);
+
+            Assert.True(
+                request.MaxRuntimeInstances.HasValue,
+                "The typed scale-out request did not preserve MaxRuntimeInstances.");
+
+            Assert.Equal(
+                tenant.MaxRuntimeInstances,
+                request.MaxRuntimeInstances.Value);
+
+            Assert.Equal(
+                tenant.RuntimeInstanceIdPrefix,
+                request.RuntimeInstanceIdPrefix);
+        }
+
+        private static async Task AssertProbeWaveCompletedAsync(
+            ProcessHostProductionTrafficPreludeContext context,
+            IReadOnlyCollection<ProductionTrafficDispatchProof> dispatches)
+        {
+            foreach (var dispatch in dispatches)
+            {
+                var statuses =
+                    await McpTestWaitHelpers
+                        .WaitForTerminalRuntimeRunStatusesAsync(
+                            dispatch.TenantContext.Mcp,
+                            new[]
+                            {
+                                dispatch.Run
+                            },
+                            context.CompletionTimeout)
+                        .ConfigureAwait(false);
+
+                var status =
+                    Assert.Single(statuses);
+
+                Assert.True(
+                    status.Success,
+                    status.FailureReason ??
+                    status.Message);
+
+                Assert.True(
+                    string.Equals(
+                        status.RunState?.Status,
+                        "completed",
+                        StringComparison.OrdinalIgnoreCase),
+                    $"Production probe did not complete successfully. SharedRunId='{dispatch.Run.SharedRunId}', RuntimeInstanceId='{dispatch.Run.AssignedRuntimeInstanceId}', LocalRunId='{dispatch.Run.LocalRunId}', Status='{status.RunState?.Status}', FailureReason='{status.RunState?.FailureReason ?? status.FailureReason}'.");
+            }
+        }
+
+        private static async Task<IReadOnlyList<AiRuntimeInstanceSnapshot>>
+            WaitForReadyPoolSnapshotsAsync(
+                IAiRuntimeInstanceRegistry registry,
+                string poolId,
+                int expectedRuntimeCount,
+                int expectedHostCount,
+                TimeSpan timeout)
+        {
+            var deadline =
+                DateTimeOffset.UtcNow.Add(timeout);
+
+            IReadOnlyList<AiRuntimeInstanceSnapshot> readySnapshots =
+                Array.Empty<AiRuntimeInstanceSnapshot>();
+
+            while (DateTimeOffset.UtcNow < deadline)
+            {
+                var snapshots =
+                    await registry
+                        .ListAsync(includeStopped: false)
+                        .ConfigureAwait(false);
+
+                readySnapshots = snapshots
+                    .Where(
+                        snapshot =>
+                            StringComparer.Ordinal.Equals(
+                                snapshot.PoolId,
+                                poolId) &&
+                            snapshot.Status ==
+                                AiRuntimeInstanceStatus.Ready &&
+                            !string.IsNullOrWhiteSpace(snapshot.HostId))
+                    .OrderBy(snapshot => snapshot.HostId, StringComparer.Ordinal)
+                    .ThenBy(snapshot => snapshot.RuntimeInstanceId, StringComparer.Ordinal)
+                    .ToArray();
+
+                var hostCount =
+                    readySnapshots
+                        .Select(snapshot => snapshot.HostId!)
+                        .Distinct(StringComparer.Ordinal)
+                        .Count();
+
+                if (readySnapshots.Count == expectedRuntimeCount &&
+                    hostCount == expectedHostCount)
+                {
+                    return readySnapshots;
+                }
+
+                await Task.Delay(TimeSpan.FromMilliseconds(250))
+                    .ConfigureAwait(false);
+            }
+
+            throw new TimeoutException(
+                $"The mixed-admission warm pool did not expose the exact ready topology. PoolId='{poolId}', ExpectedRuntimeCount='{expectedRuntimeCount}', ActualRuntimeCount='{readySnapshots.Count}', ExpectedHostCount='{expectedHostCount}', ActualHostCount='{readySnapshots.Select(snapshot => snapshot.HostId).Where(hostId => !string.IsNullOrWhiteSpace(hostId)).Distinct(StringComparer.Ordinal).Count()}'.");
+        }
+
+        private static int GetRuntimeModeOrder(
+            ProductionTenantRuntimeMode runtimeMode)
+        {
+            return runtimeMode switch
+            {
+                ProductionTenantRuntimeMode.Dedicated => 0,
+                ProductionTenantRuntimeMode.Hybrid => 1,
+                ProductionTenantRuntimeMode.Shared => 2,
+                _ => throw new ArgumentOutOfRangeException(
+                    nameof(runtimeMode),
+                    runtimeMode,
+                    "Unsupported production tenant runtime mode.")
+            };
+        }
+
+        private sealed record ProductionTrafficDispatchProof(
+            ProcessHostProductionTrafficTenantContext TenantContext,
+            Multiplexed.Abstractions.AI.ControlPlane.SharedController.Store.AiSharedRunRecord Run,
+            AiRuntimeInstanceSnapshot Snapshot);
     }
 
     /// <summary>

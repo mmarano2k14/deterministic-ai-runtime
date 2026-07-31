@@ -53,6 +53,18 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
         /// Optional factory that creates the placement directive for runs submitted after the first runtime assignment.
         /// Historical scenarios leave this unset and preserve the existing admission behavior.
         /// </param>
+        /// <param name="waitForFirstRunScaleOut">
+        /// Whether the first run must observe a fulfilled scale-out request before dispatch.
+        /// The default preserves the fresh-capacity contract used by P5 and every historical scenario.
+        /// Warm-capacity simulations disable only this wait because the first run may dispatch directly
+        /// to an already-existing compatible runtime without producing a scale-out request.
+        /// </param>
+        /// <param name="firstRunPlacementFactory">
+        /// Optional factory that creates a typed placement directive for the first inventory run.
+        /// Historical scenarios leave this unset. Warm-capacity simulations use it only after
+        /// independently proving unpinned admission and recording one compatible existing runtime
+        /// per tenant, preventing concurrent inventories from competing for the same shared runtime.
+        /// </param>
         /// <returns>The real assigned work inventory selected for process crash.</returns>
         public static async Task<RealRuntimeCrashAssignedWorkInventoryProof> SubmitAndBuildAssignedWorkInventoryAsync(
             ITestOutputHelper output,
@@ -77,7 +89,10 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
             ProductionRecoveryObservationMode observationMode =
                 ProductionRecoveryObservationMode.Polling,
             ProductionCrashCheckpointGate? crashCheckpointGate = null,
-            Func<string, AiRunPlacementDirective?>? remainingRunPlacementFactory = null)
+            Func<string, AiRunPlacementDirective?>? remainingRunPlacementFactory = null,
+            bool waitForFirstRunScaleOut = true,
+            Func<ProductionTenantScenarioDefinition, AiRunPlacementDirective?>?
+                firstRunPlacementFactory = null)
         {
             ArgumentNullException.ThrowIfNull(output);
             ArgumentNullException.ThrowIfNull(mcp);
@@ -114,20 +129,73 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
             var firstPipelineName =
                 $"{pipelineNamePrefix}-run-01-{Guid.NewGuid():N}";
 
-            var firstDispatchedRun =
-                await ProductionSharedRunTestHelpers
-                    .SubmitAndDispatchOneRunAsync(
-                        mcp,
-                        scaleOutRequestStore,
-                        tenant,
-                        controlPlaneId,
-                        firstPipelineName,
-                        requestedBy,
-                        source,
-                        scaleOutTimeout,
-                        dispatchTimeout,
-                        crashCheckpointGate?.Definition)
-                    .ConfigureAwait(false);
+            AiSharedRunRecord firstDispatchedRun;
+            var firstRunPlacement =
+                firstRunPlacementFactory?.Invoke(tenant);
+
+            if (waitForFirstRunScaleOut &&
+                firstRunPlacement is null)
+            {
+                /*
+                 * Preserve the exact historical and P5 code path. These scenarios begin without
+                 * compatible warm capacity and must still observe a fulfilled scale-out request.
+                 */
+                firstDispatchedRun =
+                    await ProductionSharedRunTestHelpers
+                        .SubmitAndDispatchOneRunAsync(
+                            mcp,
+                            scaleOutRequestStore,
+                            tenant,
+                            controlPlaneId,
+                            firstPipelineName,
+                            requestedBy,
+                            source,
+                            scaleOutTimeout,
+                            dispatchTimeout,
+                            crashCheckpointGate?.Definition)
+                        .ConfigureAwait(false);
+            }
+            else
+            {
+                var firstSharedRunId =
+                    await ProductionSharedRunTestHelpers
+                        .SubmitOneRunAsync(
+                            mcp,
+                            tenant,
+                            controlPlaneId,
+                            firstPipelineName,
+                            requestedBy,
+                            source,
+                            crashCheckpointGate?.Definition,
+                            firstRunPlacement)
+                        .ConfigureAwait(false);
+
+                output.WriteLine(
+                    $"[REAL RUNTIME INVENTORY DISPATCH MODE] TenantId='{tenant.TenantId}', SharedRunId='{firstSharedRunId}', WaitForScaleOutFulfillment='{waitForFirstRunScaleOut}', PlacementRuntimeInstanceId='{firstRunPlacement?.Target.RuntimeInstanceId ?? string.Empty}', PlacementRequirement='{firstRunPlacement?.Requirement}', PlacementFallback='{firstRunPlacement?.Fallback}', Reason='{(firstRunPlacement is null ? "Compatible warm capacity may dispatch without creating a scale-out request" : "Use the tenant-compatible runtime recorded by the completed unpinned warm-capacity proof")}'.");
+
+                if (waitForFirstRunScaleOut)
+                {
+                    await ProductionSharedRunTestHelpers
+                        .WaitForAnyTenantScaleOutRequestFulfilledAsync(
+                            scaleOutRequestStore,
+                            controlPlaneId,
+                            tenant,
+                            firstPipelineName,
+                            scaleOutTimeout)
+                        .ConfigureAwait(false);
+                }
+
+                firstDispatchedRun =
+                    await ProductionSharedRunTestHelpers
+                        .WaitForSingleDispatchedRunAsync(
+                            mcp,
+                            firstPipelineName,
+                            firstSharedRunId,
+                            waitForFirstRunScaleOut
+                                ? dispatchTimeout
+                                : scaleOutTimeout + dispatchTimeout)
+                        .ConfigureAwait(false);
+            }
 
             Assert.False(
                 string.IsNullOrWhiteSpace(
