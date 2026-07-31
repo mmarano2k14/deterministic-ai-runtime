@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
@@ -6,11 +6,13 @@ using Multiplexed.Abstractions.AI.ControlPlane.Observability;
 using Multiplexed.Abstractions.AI.ControlPlane.Observability.Area;
 using Multiplexed.Abstractions.AI.ControlPlane.Observability.Events;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Forensics;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Lifecycle;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Recovery.Transition;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Ownership;
 using Multiplexed.Abstractions.AI.Observability.Context;
 using Multiplexed.AI.Runtime.ControlPlane.Observability;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Lifecycle;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Recovery.AssignedWork;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Recovery.Execution
@@ -52,6 +54,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
         private readonly IAiRuntimeRecoveryForensicsRecorder
             forensicsRecorder;
         private readonly IAiControlPlaneObserver observer;
+        private readonly AiRuntimeLifecycleEventWriter lifecycleWriter;
 
         /// <summary>
         /// Preserves the existing public composition with no-op observability.
@@ -63,7 +66,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
                 ownershipResolver,
                 transitionService,
                 new NoopAiRuntimeRecoveryForensicsRecorder(),
-                new NoopAiControlPlaneObserver())
+                new NoopAiControlPlaneObserver(),
+                NoopAiRuntimeLifecycleJournal.Instance)
         {
         }
 
@@ -78,7 +82,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
                 ownershipResolver,
                 transitionService,
                 forensicsRecorder,
-                new NoopAiControlPlaneObserver())
+                new NoopAiControlPlaneObserver(),
+                NoopAiRuntimeLifecycleJournal.Instance)
         {
         }
 
@@ -95,6 +100,24 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
             IAiRuntimeExecutionRecoveryTransitionService transitionService,
             IAiRuntimeRecoveryForensicsRecorder forensicsRecorder,
             IAiControlPlaneObserver observer)
+            : this(
+                ownershipResolver,
+                transitionService,
+                forensicsRecorder,
+                observer,
+                NoopAiRuntimeLifecycleJournal.Instance)
+        {
+        }
+
+        /// <summary>
+        /// Initializes claimed recovery with durable lifecycle correlation.
+        /// </summary>
+        public AiRuntimePoolRecoveryCandidateTransitionExecutor(
+            IAiSharedRunOwnershipResolver ownershipResolver,
+            IAiRuntimeExecutionRecoveryTransitionService transitionService,
+            IAiRuntimeRecoveryForensicsRecorder forensicsRecorder,
+            IAiControlPlaneObserver observer,
+            IAiRuntimeLifecycleJournal lifecycleJournal)
         {
             this.ownershipResolver =
                 ownershipResolver
@@ -108,6 +131,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
             this.observer =
                 observer
                 ?? throw new ArgumentNullException(nameof(observer));
+            this.lifecycleWriter = new AiRuntimeLifecycleEventWriter(
+                lifecycleJournal
+                ?? throw new ArgumentNullException(nameof(lifecycleJournal)));
         }
 
         public async Task<IReadOnlyList<AiRuntimePoolRecoveryCandidateOutcome>>
@@ -188,6 +214,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
                             {
                                 Ownership = ownership,
                                 DryRun = false,
+                                RuntimeFailureIncidentId = failureId,
+                                CorrelationId = CreateForensicsId(candidate, ownership),
                                 Reason =
                                     candidate.Kind ==
                                         AiRuntimePoolAssignedWorkKind.InFlight
@@ -208,6 +236,14 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
                 if (transition.Accepted && transition.Changed)
                 {
                     await this.RecordRecoveryReconciliationSucceededAsync(
+                            failureId,
+                            candidate,
+                            ownership,
+                            transition,
+                            cancellationToken)
+                        .ConfigureAwait(false);
+
+                    await this.RecordWorkReleasedLifecycleAsync(
                             failureId,
                             candidate,
                             ownership,
@@ -385,6 +421,71 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
             {
                 // Control-plane observability must not break claimed recovery.
             }
+        }
+
+
+        /// <summary>
+        /// Records that failed-runtime ownership was durably released for redispatch.
+        /// </summary>
+        private async Task RecordWorkReleasedLifecycleAsync(
+            string failureId,
+            AiRuntimePoolAssignedWorkCandidate candidate,
+            AiSharedRunOwnershipResolutionResult ownership,
+            AiRuntimeExecutionRecoveryTransitionResult transition,
+            CancellationToken cancellationToken)
+        {
+            var context = await this.lifecycleWriter
+                .ResolveContextAsync(
+                    candidate.RuntimeInstanceId,
+                    candidate.HostId,
+                    candidate.PoolId,
+                    cancellationToken: cancellationToken)
+                .ConfigureAwait(false);
+
+            var forensicsId = CreateForensicsId(candidate, ownership);
+            var eventId = AiRuntimeLifecycleEventWriter.CreateEventId(
+                AiRuntimeLifecycleEventType.WorkReleased,
+                candidate.LocalRunId,
+                failureId);
+
+            await this.lifecycleWriter
+                .AppendOnceAsync(
+                    new AiRuntimeLifecycleEvent
+                    {
+                        EventId = eventId,
+                        EventType = AiRuntimeLifecycleEventType.WorkReleased,
+                        TimestampUtc = DateTimeOffset.UtcNow,
+                        ControlPlaneId = context.ControlPlaneId,
+                        HostCreationMode = context.HostCreationMode,
+                        ProviderName = context.ProviderName,
+                        PoolId = candidate.PoolId ?? context.PoolId,
+                        HostId = candidate.HostId ?? context.HostId,
+                        KubernetesPodUid = context.KubernetesPodUid,
+                        KubernetesNamespace = context.KubernetesNamespace,
+                        KubernetesPodName = context.KubernetesPodName,
+                        KubernetesNodeName = context.KubernetesNodeName,
+                        RuntimeInstanceId = candidate.RuntimeInstanceId,
+                        RuntimeId = context.RuntimeId,
+                        ProcessId = context.ProcessId,
+                        TenantId = candidate.TenantId,
+                        TenantGroupId = candidate.TenantGroupId,
+                        SharedRunId = transition.SharedRunId ?? ownership.SharedRunId ?? candidate.SharedRunId,
+                        LocalRunId = candidate.LocalRunId,
+                        ExecutionId = candidate.ExecutionId,
+                        RuntimeFailureIncidentId = failureId,
+                        ForensicsId = forensicsId,
+                        CorrelationId = forensicsId,
+                        PreviousStatus = "assigned",
+                        CurrentStatus = "released-for-recovery",
+                        Reason = transition.Reason,
+                        Metadata = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                        {
+                            ["recovery.candidateKind"] = candidate.Kind.ToString(),
+                            ["recovery.transitionAction"] = transition.Action
+                        }
+                    },
+                    cancellationToken)
+                .ConfigureAwait(false);
         }
 
         /// <summary>

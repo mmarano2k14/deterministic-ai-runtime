@@ -8,9 +8,12 @@ using Multiplexed.Abstractions.AI.ControlPlane.Observability;
 using Multiplexed.Abstractions.AI.ControlPlane.Observability.Area;
 using Multiplexed.Abstractions.AI.ControlPlane.Observability.Events;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager.Kubernetes;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Lifecycle;
 using Multiplexed.Abstractions.AI.Observability.Context;
 using Multiplexed.AI.Runtime.ControlPlane.Observability;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strategy;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Lifecycle;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager
 {
@@ -37,6 +40,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager
         private readonly IAiControlPlaneObserver observer;
 
         /// <summary>
+        /// The durable runtime infrastructure lifecycle journal.
+        /// </summary>
+        private readonly IAiRuntimeLifecycleJournal lifecycleJournal;
+
+        /// <summary>
         /// Initializes a new instance of the <see cref="AiRuntimeHostCreationManager"/> class.
         /// </summary>
         /// <param name="strategies">The registered runtime host creation strategies.</param>
@@ -49,7 +57,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager
             : this(
                 strategies,
                 logger,
-                new NoopAiControlPlaneObserver())
+                new NoopAiControlPlaneObserver(),
+                NoopAiRuntimeLifecycleJournal.Instance)
         {
         }
 
@@ -65,6 +74,28 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager
             IEnumerable<IAiRuntimeHostCreationStrategy> strategies,
             ILogger<AiRuntimeHostCreationManager> logger,
             IAiControlPlaneObserver observer)
+            : this(
+                strategies,
+                logger,
+                observer,
+                NoopAiRuntimeLifecycleJournal.Instance)
+        {
+        }
+
+        /// <summary>
+        /// Initializes a new instance of the <see cref="AiRuntimeHostCreationManager"/> class.
+        /// </summary>
+        /// <param name="strategies">The registered runtime host creation strategies.</param>
+        /// <param name="logger">The logger used to report host creation selection failures.</param>
+        /// <param name="observer">The control-plane observer.</param>
+        /// <param name="lifecycleJournal">The runtime infrastructure lifecycle journal.</param>
+        /// <exception cref="ArgumentNullException">Thrown when a required dependency is null.</exception>
+        /// <exception cref="InvalidOperationException">Thrown when multiple strategies are registered for the same host creation mode.</exception>
+        public AiRuntimeHostCreationManager(
+            IEnumerable<IAiRuntimeHostCreationStrategy> strategies,
+            ILogger<AiRuntimeHostCreationManager> logger,
+            IAiControlPlaneObserver observer,
+            IAiRuntimeLifecycleJournal lifecycleJournal)
         {
             ArgumentNullException.ThrowIfNull(strategies);
 
@@ -82,6 +113,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager
             this.strategies = strategyList.ToDictionary(strategy => strategy.Mode);
             this.logger = logger ?? throw new ArgumentNullException(nameof(logger));
             this.observer = observer ?? throw new ArgumentNullException(nameof(observer));
+            this.lifecycleJournal = lifecycleJournal ?? throw new ArgumentNullException(nameof(lifecycleJournal));
         }
 
         /// <inheritdoc />
@@ -93,6 +125,26 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager
             cancellationToken.ThrowIfCancellationRequested();
 
             var startedAtUtc = DateTimeOffset.UtcNow;
+            var lifecycleCorrelationId = ResolveLifecycleCorrelationId(request);
+            var strategyRequest = request with
+            {
+                Metadata = MergeLifecycleRequestMetadata(
+                    request.Metadata,
+                    lifecycleCorrelationId,
+                    request.HostCreationMode)
+            };
+            var requestedLifecycleEvent = await this.AppendHostLifecycleEventAsync(
+                    AiRuntimeLifecycleEventType.HostCreationRequested,
+                    request,
+                    result: null,
+                    lifecycleCorrelationId,
+                    causationId: null,
+                    previousStatus: null,
+                    currentStatus: "requested",
+                    reason: null,
+                    metadata: null,
+                    cancellationToken)
+                .ConfigureAwait(false);
 
             await this.RecordHostCreationEventAsync(
                     AiControlPlaneEventType.OperationStarted,
@@ -138,15 +190,44 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager
                         cancellationToken)
                     .ConfigureAwait(false);
 
+                await this.AppendHostLifecycleEventAsync(
+                        AiRuntimeLifecycleEventType.HostCreationFailed,
+                        request,
+                        rejectedResult,
+                        lifecycleCorrelationId,
+                        requestedLifecycleEvent.EventId,
+                        previousStatus: "requested",
+                        currentStatus: "failed",
+                        reason: rejectedResult.FailureReason,
+                        metadata: null,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
                 return rejectedResult;
             }
+
+            var startedLifecycleEvent = await this.AppendHostLifecycleEventAsync(
+                    AiRuntimeLifecycleEventType.HostCreationStarted,
+                    request,
+                    result: null,
+                    lifecycleCorrelationId,
+                    requestedLifecycleEvent.EventId,
+                    previousStatus: "requested",
+                    currentStatus: "started",
+                    reason: null,
+                    metadata: new Dictionary<string, string>
+                    {
+                        ["strategyName"] = strategy.GetType().Name
+                    },
+                    cancellationToken)
+                .ConfigureAwait(false);
 
             try
             {
                 var result =
                     await strategy
                         .StartAsync(
-                            request,
+                            strategyRequest,
                             cancellationToken)
                         .ConfigureAwait(false);
 
@@ -154,6 +235,25 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager
                         request,
                         result,
                         startedAtUtc,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+                await this.AppendHostLifecycleEventAsync(
+                        result.Success
+                            ? AiRuntimeLifecycleEventType.HostCreationSucceeded
+                            : AiRuntimeLifecycleEventType.HostCreationFailed,
+                        request,
+                        result,
+                        lifecycleCorrelationId,
+                        startedLifecycleEvent.EventId,
+                        previousStatus: "started",
+                        currentStatus: result.Success ? "succeeded" : "failed",
+                        reason: result.FailureReason,
+                        metadata: new Dictionary<string, string>
+                        {
+                            ["strategyName"] = strategy.GetType().Name,
+                            ["retryable"] = result.Retryable.ToString()
+                        },
                         cancellationToken)
                     .ConfigureAwait(false);
 
@@ -181,6 +281,23 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager
                             ["durationMs"] = durationMs,
                             ["exception.type"] = exception.GetType().FullName,
                             ["exception.message"] = exception.Message
+                        },
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+                await this.AppendHostLifecycleEventAsync(
+                        AiRuntimeLifecycleEventType.HostCreationFailed,
+                        request,
+                        result: null,
+                        lifecycleCorrelationId,
+                        startedLifecycleEvent.EventId,
+                        previousStatus: "started",
+                        currentStatus: "failed",
+                        reason: exception.Message,
+                        metadata: new Dictionary<string, string>
+                        {
+                            ["strategyName"] = strategy.GetType().Name,
+                            ["exceptionType"] = exception.GetType().FullName ?? exception.GetType().Name
                         },
                         cancellationToken)
                     .ConfigureAwait(false);
@@ -300,6 +417,227 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager
             {
                 // Control-plane observability must not break host creation.
             }
+        }
+
+        /// <summary>
+        /// Appends one durable host lifecycle event.
+        /// </summary>
+        private async Task<AiRuntimeLifecycleEvent> AppendHostLifecycleEventAsync(
+            string eventType,
+            AiRuntimeHostStartRequest request,
+            AiRuntimeHostStartResult? result,
+            string correlationId,
+            string? causationId,
+            string? previousStatus,
+            string? currentStatus,
+            string? reason,
+            IReadOnlyDictionary<string, string>? metadata,
+            CancellationToken cancellationToken)
+        {
+            var isSharedInfrastructure =
+                request.HostCreationMode == AiRuntimeHostCreationMode.KubernetesPool ||
+                !string.IsNullOrWhiteSpace(request.PoolId);
+            var isKubernetesHost =
+                request.HostCreationMode is
+                    AiRuntimeHostCreationMode.Kubernetes or
+                    AiRuntimeHostCreationMode.KubernetesPool;
+            var hostId = ResolveHostId(request, result);
+
+            var eventId = CreateHostLifecycleEventId(
+                eventType,
+                request.ControlPlaneId,
+                correlationId);
+            var existing = await this.lifecycleJournal
+                .GetByEventIdAsync(eventId, cancellationToken)
+                .ConfigureAwait(false);
+
+            if (existing is not null)
+            {
+                return existing;
+            }
+
+            var timestampUtc = DateTimeOffset.UtcNow;
+
+            if (!string.IsNullOrWhiteSpace(causationId))
+            {
+                var causationEvent = await this.lifecycleJournal
+                    .GetByEventIdAsync(causationId, cancellationToken)
+                    .ConfigureAwait(false);
+
+                if (causationEvent is not null &&
+                    timestampUtc <= causationEvent.TimestampUtc)
+                {
+                    timestampUtc = causationEvent.TimestampUtc.AddTicks(1);
+                }
+            }
+
+            var lifecycleEvent = new AiRuntimeLifecycleEvent
+            {
+                EventId = eventId,
+                EventType = eventType,
+                TimestampUtc = timestampUtc,
+                ControlPlaneId = request.ControlPlaneId,
+                HostCreationMode = request.HostCreationMode,
+                ProviderName = result?.ProviderName ?? request.ProviderName,
+                PoolId = request.PoolId,
+                HostId = hostId,
+                KubernetesPodUid = isKubernetesHost ? hostId : null,
+                KubernetesNamespace = isKubernetesHost
+                    ? ResolveMetadataValue(
+                        request,
+                        result,
+                        AiKubernetesRuntimeHostMetadataKeys.Namespace)
+                    : null,
+                KubernetesPodName = isKubernetesHost
+                    ? ResolveMetadataValue(
+                        request,
+                        result,
+                        AiKubernetesRuntimeHostMetadataKeys.PodName)
+                    : null,
+                KubernetesNodeName = isKubernetesHost
+                    ? ResolveMetadataValue(
+                        request,
+                        result,
+                        AiKubernetesRuntimeHostMetadataKeys.NodeName)
+                    : null,
+                RuntimeInstanceId = result?.RuntimeInstanceId ?? request.RuntimeInstanceId,
+                TenantId = isSharedInfrastructure
+                    ? null
+                    : request.TenantId ?? request.ExecutionContextSnapshot.TenantId,
+                TenantGroupId = isSharedInfrastructure
+                    ? null
+                    : request.TenantGroupId ?? request.ExecutionContextSnapshot.TenantGroupId,
+                CorrelationId = correlationId,
+                CausationId = causationId,
+                PreviousStatus = previousStatus,
+                CurrentStatus = currentStatus,
+                Reason = reason,
+                Metadata = MergeLifecycleMetadata(
+                    metadata,
+                    result?.TransportName ?? request.TransportName,
+                    result?.TransportEndpoint ?? request.TransportEndpoint)
+            };
+
+            await this.lifecycleJournal
+                .AppendAsync(lifecycleEvent, cancellationToken)
+                .ConfigureAwait(false);
+
+            return lifecycleEvent;
+        }
+
+        /// <summary>
+        /// Creates the stable event identifier for one host creation transition.
+        /// </summary>
+        private static string CreateHostLifecycleEventId(
+            string eventType,
+            string controlPlaneId,
+            string correlationId)
+        {
+            return $"{eventType}:{controlPlaneId}:{correlationId}";
+        }
+
+        /// <summary>
+        /// Resolves the causal correlation identifier for one host creation attempt.
+        /// </summary>
+        private static string ResolveLifecycleCorrelationId(
+            AiRuntimeHostStartRequest request)
+        {
+            if (!string.IsNullOrWhiteSpace(request.RequestId))
+            {
+                return request.RequestId;
+            }
+
+            return Guid.NewGuid().ToString("N");
+        }
+
+        /// <summary>
+        /// Propagates the host creation correlation to the runtime-only child without turning
+        /// metadata into an authority for identity, routing, membership, or recovery.
+        /// </summary>
+        private static IReadOnlyDictionary<string, string> MergeLifecycleRequestMetadata(
+            IReadOnlyDictionary<string, string> metadata,
+            string correlationId,
+            AiRuntimeHostCreationMode hostCreationMode)
+        {
+            var merged = new Dictionary<string, string>(metadata, StringComparer.OrdinalIgnoreCase)
+            {
+                [AiRuntimeHostMetadataKeys.LifecycleCorrelationId] = correlationId,
+                [AiRuntimeHostMetadataKeys.HostCreationMode] = hostCreationMode.ToString()
+            };
+
+            return merged;
+        }
+
+        /// <summary>
+        /// Resolves the exact host incarnation returned by the strategy.
+        /// </summary>
+        private static string? ResolveHostId(
+            AiRuntimeHostStartRequest request,
+            AiRuntimeHostStartResult? result)
+        {
+            if (!string.IsNullOrWhiteSpace(request.HostId))
+            {
+                return request.HostId;
+            }
+
+            if (result?.Metadata.TryGetValue(AiRuntimeHostMetadataKeys.HostId, out var hostId) == true &&
+                !string.IsNullOrWhiteSpace(hostId))
+            {
+                return hostId;
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// Resolves provider-enriched metadata without using it as lifecycle authority.
+        /// </summary>
+        private static string? ResolveMetadataValue(
+            AiRuntimeHostStartRequest request,
+            AiRuntimeHostStartResult? result,
+            string key)
+        {
+            if (result?.Metadata.TryGetValue(key, out var resultValue) == true &&
+                !string.IsNullOrWhiteSpace(resultValue))
+            {
+                return resultValue;
+            }
+
+            return request.Metadata.TryGetValue(key, out var requestValue) &&
+                   !string.IsNullOrWhiteSpace(requestValue)
+                ? requestValue
+                : null;
+        }
+
+        /// <summary>
+        /// Builds non-authoritative transport diagnostics for a lifecycle event.
+        /// </summary>
+        private static IReadOnlyDictionary<string, string> MergeLifecycleMetadata(
+            IReadOnlyDictionary<string, string>? metadata,
+            string? transportName,
+            string? transportEndpoint)
+        {
+            var merged = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+            if (metadata is not null)
+            {
+                foreach (var item in metadata)
+                {
+                    merged[item.Key] = item.Value;
+                }
+            }
+
+            if (!string.IsNullOrWhiteSpace(transportName))
+            {
+                merged["transportName"] = transportName;
+            }
+
+            if (!string.IsNullOrWhiteSpace(transportEndpoint))
+            {
+                merged["transportEndpoint"] = transportEndpoint;
+            }
+
+            return merged;
         }
 
         /// <summary>

@@ -1,9 +1,10 @@
-﻿using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging;
 using Multiplexed.Abstractions.AI.ControlPlane.Admission;
 using Multiplexed.Abstractions.AI.ControlPlane.Discovery;
 using Multiplexed.Abstractions.AI.ControlPlane.Signals;
 using Multiplexed.Abstractions.AI.ControlPlane.Admission.Reservations;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Forensics;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Lifecycle;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Dispatch;
@@ -14,6 +15,7 @@ using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Dispatch;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Queue;
 using Multiplexed.Abstractions.Core.ExecutionContext;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Lifecycle;
 using Multiplexed.Rbac.Core.ExecutionContext;
 using RbacExecutionContext = Multiplexed.Rbac.Core.ExecutionContext.ExecutionContext;
 
@@ -48,6 +50,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
         private const string ScaleOutIntentSharedQueueRedispatchReplacement = "shared-queue-redispatch-replacement";
         private const string SharedQueueRedispatchReplacementReason = "Shared queue redispatch requested replacement runtime capacity.";
         private const string RecoveryForensicsIdMetadataKey = "recovery.forensicsId";
+        private const string RecoveryFailureIncidentIdMetadataKey = "recovery.failureIncidentId";
+        private const string RecoveryLedgerEntryIdMetadataKey = "recovery.ledgerEntryId";
+        private const string RecoveryCorrelationIdMetadataKey = "recovery.correlationId";
+        private const string RecoveryCausationIdMetadataKey = "recovery.causationId";
         private const string RecoveryFailedExecutionIdMetadataKey = "recovery.failedExecutionId";
         private const string RecoveryFailedRuntimeInstanceIdMetadataKey = "recovery.failedRuntimeInstanceId";
         private const string RecoveryFailedLocalRunIdMetadataKey = "recovery.failedLocalRunId";
@@ -64,6 +70,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
         private readonly IExecutionContextAccessor _executionContextAccessor;
         private readonly IAiRuntimeRecoveryForensicsRecorder _forensicsRecorder;
         private readonly IAiRuntimeSignalPublisher? _runtimeSignalPublisher;
+        private readonly AiRuntimeLifecycleEventWriter _lifecycleWriter;
         private readonly ILogger<AiSharedQueueDispatcher> _logger;
 
         /// <summary>
@@ -113,7 +120,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
             IExecutionContextAccessor executionContextAccessor,
             ILogger<AiSharedQueueDispatcher> logger,
             IAiRuntimeRecoveryForensicsRecorder forensicsRecorder,
-            IAiRuntimeSignalPublisher? runtimeSignalPublisher = null)
+            IAiRuntimeSignalPublisher? runtimeSignalPublisher = null,
+            IAiRuntimeLifecycleJournal? lifecycleJournal = null)
         {
             _sharedQueue = sharedQueue ?? throw new ArgumentNullException(nameof(sharedQueue));
             _sharedRunStore = sharedRunStore ?? throw new ArgumentNullException(nameof(sharedRunStore));
@@ -127,6 +135,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
             _executionContextAccessor = executionContextAccessor ?? throw new ArgumentNullException(nameof(executionContextAccessor));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _forensicsRecorder = forensicsRecorder ?? throw new ArgumentNullException(nameof(forensicsRecorder));
+            _lifecycleWriter = new AiRuntimeLifecycleEventWriter(
+                lifecycleJournal ?? NoopAiRuntimeLifecycleJournal.Instance);
             _runtimeSignalPublisher = runtimeSignalPublisher;
         }
 
@@ -1023,6 +1033,14 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                             dispatchResult.ExecutionId,
                             queueItem.ClaimToken);
 
+                        await RecordWorkPlacementLifecycleAsync(
+                                controlPlaneId,
+                                queueItem,
+                                dispatchedRun!,
+                                operationMetadata,
+                                cancellationToken)
+                            .ConfigureAwait(false);
+
                         await PublishSharedRunDispatchedSignalBestEffortAsync(
                                 controlPlaneId,
                                 dispatchedRun!)
@@ -1202,6 +1220,107 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                     dispatchedRun.LocalRunId,
                     dispatchedRun.ExecutionId);
             }
+        }
+
+
+        /// <summary>
+        /// Records the durable initial or recovery placement only after shared-run ownership
+        /// and queue finalization have both converged.
+        /// </summary>
+        private async Task RecordWorkPlacementLifecycleAsync(
+            string controlPlaneId,
+            AiSharedQueueItem queueItem,
+            AiSharedRunRecord dispatchedRun,
+            IReadOnlyDictionary<string, string> metadata,
+            CancellationToken cancellationToken)
+        {
+            var runtimeInstanceId = dispatchedRun.AssignedRuntimeInstanceId!;
+            var context = await _lifecycleWriter
+                .ResolveContextAsync(
+                    runtimeInstanceId,
+                    hostId: null,
+                    poolId: null,
+                    fallbackControlPlaneId: controlPlaneId,
+                    cancellationToken: cancellationToken)
+                .ConfigureAwait(false);
+
+            var isRecovery = TryGetMetadataValue(
+                metadata,
+                RecoveryFailureIncidentIdMetadataKey,
+                out var runtimeFailureIncidentId);
+            var eventType = isRecovery
+                ? AiRuntimeLifecycleEventType.WorkReassigned
+                : AiRuntimeLifecycleEventType.WorkAssigned;
+            var subjectId = string.Join(
+                ":",
+                dispatchedRun.SharedRunId,
+                dispatchedRun.LocalRunId);
+            var forensicsId = ResolveMetadataValue(
+                metadata,
+                RecoveryForensicsIdMetadataKey);
+
+            await _lifecycleWriter
+                .AppendOnceAsync(
+                    new AiRuntimeLifecycleEvent
+                    {
+                        EventId = AiRuntimeLifecycleEventWriter.CreateEventId(
+                            eventType,
+                            subjectId,
+                            isRecovery ? runtimeFailureIncidentId : null),
+                        EventType = eventType,
+                        TimestampUtc = DateTimeOffset.UtcNow,
+                        ControlPlaneId = controlPlaneId,
+                        HostCreationMode = context.HostCreationMode,
+                        ProviderName = context.ProviderName,
+                        PoolId = context.PoolId,
+                        HostId = context.HostId,
+                        KubernetesPodUid = context.KubernetesPodUid,
+                        KubernetesNamespace = context.KubernetesNamespace,
+                        KubernetesPodName = context.KubernetesPodName,
+                        KubernetesNodeName = context.KubernetesNodeName,
+                        RuntimeInstanceId = runtimeInstanceId,
+                        RuntimeId = context.RuntimeId,
+                        ProcessId = context.ProcessId,
+                        TenantId = dispatchedRun.ExecutionContextSnapshot.TenantId,
+                        TenantGroupId = dispatchedRun.ExecutionContextSnapshot.TenantGroupId,
+                        SharedRunId = dispatchedRun.SharedRunId,
+                        LocalRunId = dispatchedRun.LocalRunId,
+                        ExecutionId = dispatchedRun.ExecutionId,
+                        RuntimeFailureIncidentId = isRecovery
+                            ? runtimeFailureIncidentId
+                            : null,
+                        LedgerEntryId = NullIfWhiteSpace(ResolveMetadataValue(
+                            metadata,
+                            RecoveryLedgerEntryIdMetadataKey)),
+                        ForensicsId = string.IsNullOrWhiteSpace(forensicsId)
+                            ? null
+                            : forensicsId,
+                        CorrelationId = FirstNonEmpty(
+                            ResolveMetadataValue(metadata, RecoveryCorrelationIdMetadataKey),
+                            dispatchedRun.CorrelationId),
+                        CausationId = NullIfWhiteSpace(ResolveMetadataValue(
+                            metadata,
+                            RecoveryCausationIdMetadataKey)),
+                        PreviousStatus = isRecovery
+                            ? "released-for-recovery"
+                            : null,
+                        CurrentStatus = "assigned",
+                        Reason = isRecovery
+                            ? "recovery-redispatch-confirmed"
+                            : "initial-dispatch-confirmed",
+                        Metadata = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                        {
+                            ["queue.claimToken"] = queueItem.ClaimToken ?? string.Empty,
+                            ["failed.runtimeInstanceId"] = ResolveMetadataValue(
+                                metadata,
+                                RecoveryFailedRuntimeInstanceIdMetadataKey),
+                            ["failed.localRunId"] = ResolveMetadataValue(
+                                metadata,
+                                RecoveryFailedLocalRunIdMetadataKey)
+                        }
+                    },
+                    cancellationToken)
+                .ConfigureAwait(false);
         }
 
         /// <summary>
@@ -1988,6 +2107,13 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
         /// </summary>
         /// <param name="values">The candidate values.</param>
         /// <returns>The first non-empty value, or null when none is available.</returns>
+        private static string? NullIfWhiteSpace(string? value)
+        {
+            return string.IsNullOrWhiteSpace(value)
+                ? null
+                : value;
+        }
+
         private static string? FirstNonEmpty(
             params string?[] values)
         {

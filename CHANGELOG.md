@@ -6,6 +6,408 @@ This project follows a deterministic runtime and observability model designed fo
 
 ---
 
+## 1.0.8.1 - 2026-07-30  Durable Runtime Lifecycle Journal
+
+## Delivered objective
+
+The project replaces the harness's temporary in-memory history with a durable MongoDB journal covering host, Pod, runtime, and run-placement lifecycle events.
+
+The final model clearly separates:
+
+- the **Runtime Registry**, which is the source of current state;
+- the **Runtime Lifecycle Journal**, which is the durable source of infrastructure history;
+- the **Decision Ledger**, which records decisions;
+- **Recovery Forensics**, which provide detailed recovery evidence for each work item.
+
+The journal is append-only, remains queryable after cleanup, and is correlated through first-class identities.
+
+---
+
+## Lifecycle Journal foundation
+
+### Delivered
+
+- introduced `IAiRuntimeLifecycleJournal`;
+- added the append-only `AiRuntimeLifecycleEvent` model;
+- added durable MongoDB, in-memory test, and no-op implementations;
+- added the dedicated MongoDB collection `ai_runtime_lifecycle_events`;
+- added typed queries by:
+  - `ControlPlaneId`;
+  - `PoolId`;
+  - `HostId`;
+  - `KubernetesPodUid`;
+  - `RuntimeInstanceId`;
+  - `RuntimeFailureIncidentId`;
+  - `SharedRunId`;
+  - `ExecutionId`;
+  - `CorrelationId`;
+- preserved correctness-critical values as first-class properties;
+- restricted `Metadata` to diagnostic or provider-specific information.
+
+### Result
+
+The durable journal foundation is available without replacing the Runtime Registry, Decision Ledger, or Recovery Forensics.
+
+---
+
+## Creation, registration, and readiness
+
+### Delivered
+
+Durable journaling of creation transitions:
+
+```text
+host.creation.requested
+host.creation.started
+host.creation.succeeded
+host.creation.failed
+runtime.registered
+runtime.ready
+```
+
+### Covered modes
+
+```text
+Process
+ProcessPool
+Kubernetes
+KubernetesPool
+```
+
+### Guarantees
+
+- `CorrelationId` links the host request to the runtimes created from it;
+- `PoolId`, `HostId`, `KubernetesPodUid`, and `RuntimeInstanceId` remain typed identities;
+- no false `runtime.ready` event is emitted after failed creation;
+- legacy Kubernetes behavior remains unchanged.
+
+---
+
+## Failure, deletion, replacement, and placement events
+
+### Delivered
+
+Durable journaling of the following transitions:
+
+```text
+runtime.draining
+runtime.suppressed
+runtime.unhealthy
+runtime.stopped
+host.deletion.requested
+host.deleted
+host.disappeared
+runtime.replacement.requested
+runtime.replacement.registered
+work.assigned
+work.reassigned
+work.released
+```
+
+### Infrastructure incident identity
+
+Introduced `RuntimeFailureIncidentId` as the common identity linking:
+
+- the disappeared host or Pod;
+- suppressed or unsafe runtimes;
+- ledger decisions;
+- forensic records;
+- replacement runtimes;
+- released and reassigned work items.
+
+### Guarantees
+
+- runtimes from the same failed Pod share one incident identity;
+- no false `host.deleted` event is emitted when deletion has not been confirmed;
+- durable correlation is preserved through `LedgerEntryId`, `ForensicsId`, `CorrelationId`, and `CausationId`;
+- safe tenants remain absent from recovery events.
+
+---
+
+## Targeted compilation correction
+
+### Correction
+
+Removed the invalid access to:
+
+```text
+AiSharedQueueItem.CorrelationId
+```
+
+Correlation is now resolved from recovery metadata first, then from the durable dispatched run.
+
+### Scope
+
+- one source file changed;
+- no modification to the DAG engine or recovery engine.
+
+---
+
+## Durable projection and topology summary
+
+### Delivered
+
+- added `ProductionRuntimeLifecycleTopologyProjector`;
+- reconstructed runtime snapshots from lifecycle journal events;
+- reconstructed placements by `(TenantId, SharedRunId)`;
+- separated current topology from durable history;
+- resolved initial and final hosts, Pods, and runtimes;
+- propagated:
+  - `RuntimeFailureIncidentId`;
+  - `LedgerEntryId`;
+  - `ForensicsId`;
+- introduced `TopologySource`;
+- made the Lifecycle Journal the primary source when available;
+- retained the Runtime Registry only as a compatibility fallback.
+
+### Added metrics
+
+```text
+ObservedPodCount
+DeletedPodCount
+HistoricalRuntimeCount
+RunPlacementCount
+MovedRunCount
+StableRunCount
+UnknownInitialHostCount
+```
+
+### Added tests
+
+- projection of a deleted initial Pod;
+- reconstruction of three historical runtimes;
+- reconstruction of replacement runtimes;
+- moved impacted run;
+- stable safe run;
+- exclusion of an unrelated control plane;
+- asynchronous journal reads;
+- parallel aggregation.
+
+---
+
+## Durable P5 scenario wiring
+
+### Delivered
+
+- explicitly enabled the MongoDB lifecycle journal in the durable scenario;
+- resolved `IAiRuntimeLifecycleJournal` from `host.Services`;
+- passed the journal to the final topology summary;
+- propagated `Impacted` and `Safe` tenant roles;
+- added a strict assertion for:
+
+```text
+TopologySource='RuntimeLifecycleJournal'
+```
+
+### Result
+
+The P5 scenario can no longer pass by silently falling back to the Runtime Registry.
+
+---
+
+## Initial placement and recovery redispatch reconstruction
+
+### Delivered
+
+- journaled `work.assigned` on the direct dispatch path;
+- treated `work.released` as the authoritative previous placement during recovery;
+- reconstructed moved local-queued work;
+- added strict assertions for final topology metrics.
+
+### Corrected problem
+
+The initial durable projection reconstructed only 20 of 30 placements and incorrectly classified several recovered local-queued runs as stable.
+
+---
+
+## Runtime alias preservation
+
+### Delivered
+
+- preserved runtime aliases visible only through placement events;
+- distinguished journaled physical runtimes from runtime identities used by runs;
+- preserved runtime and host identity after a normal `work.released` event;
+- continued excluding releases associated with a `RuntimeFailureIncidentId`;
+- improved diagnostics for final metric assertions.
+
+### Result
+
+Completed safe runs retain a usable initial runtime identity even when the corresponding physical snapshot is no longer present in the current projection.
+
+---
+
+## Known runtime identity fallback
+
+### Delivered
+
+Corrected host resolution:
+
+```text
+Known RuntimeInstanceId + missing physical snapshot
+    => InitialHostKind='RuntimeHost'
+
+Missing RuntimeInstanceId
+    => InitialHostKind='Unknown'
+```
+
+### Result
+
+`UnknownInitialHostCount` now represents a genuinely missing identity rather than a missing physical snapshot.
+
+---
+
+## Incident-fact-based counters
+
+### Delivered
+
+- removed the fragile calculation based only on `HistoricalOnlyKubernetesPodCount`;
+- calculated `DeletedPodCount` from typed incident events;
+- calculated `HistoricalRuntimeCount` from runtimes associated with the deleted Pod;
+- supported reuse of the same `RuntimeInstanceId` after replacement.
+
+### Expected result per scenario
+
+```text
+DeletedPodCount='1'
+HistoricalRuntimeCount='3'
+```
+
+---
+
+## Causal history expansion
+
+### Delivered
+
+The summary now loads:
+
+```text
+ControlPlaneId events
+→ observed RuntimeFailureIncidentId values
+→ complete event history for each incident
+→ merge and deduplicate by EventId
+```
+
+### Guarantee
+
+Infrastructure events recorded under a separate lifecycle context can be reintegrated without mixing independent scenarios.
+
+---
+
+## Incident discovery from moved placement
+
+### Delivered
+
+Final resolution chain:
+
+```text
+moved placement
+→ InitialRuntimeInstanceId
+→ journal query by RuntimeInstanceId
+→ RuntimeFailureIncidentId
+→ complete incident query
+→ deleted PodUid and associated runtimes
+```
+
+### Result
+
+- `DeletedPodCount` is reconstructed from the durable journal;
+- `HistoricalRuntimeCount` is reconstructed even when infrastructure events use a different technical `ControlPlaneId`;
+- no metric is forced or derived from the number of scenarios;
+- no changes were made to the recovery engine, DAG engine, or Kubernetes behavior.
+
+---
+
+# Final validation
+
+## Validated scenario
+
+```text
+GrpcKubernetesRuntimePoolPodFailureP5ScenarioTests
+Grpc_KubernetesPool_P5_Should_Fully_Recover_After_Five_Independent_Pod_Deletions
+```
+
+## Functional result
+
+```text
+ExpectedScenarioCount='5'
+CapturedScenarioCount='5'
+MissingScenarioCount='0'
+
+DeletedPodCount='5'
+HistoricalRuntimeCount='15'
+RunPlacementCount='30'
+MovedRunCount='15'
+StableRunCount='15'
+UnknownInitialHostCount='0'
+```
+
+## Observed guarantees
+
+```text
+5/5 scenarios passed
+5 Pods physically deleted
+15 historical runtimes reconstructed
+30 placements reconstructed
+15 impacted runs moved
+15 safe runs remained stable
+0 unknown initial hosts
+0 cross-tenant leaks
+0 cross-tenant ledger leaks
+0 safe-tenant recovery leaks
+0 duplicate recoveries
+5 cleanups with RemainingPodCount='0'
+TopologySource='RuntimeLifecycleJournal'
+```
+
+---
+
+# Final decisions
+
+- the Lifecycle Journal is the durable source of infrastructure history;
+- the Runtime Registry remains the source of current state;
+- proof metrics no longer depend on in-memory harness state;
+- correctness identities remain first-class;
+- legacy Kubernetes behavior remains unchanged;
+- the journal was not physically merged with the ledger or forensic stores;
+- correlation is performed through durable identities.
+
+---
+
+# Retained watchpoint
+
+An intermittent issue involving an occasionally missing kill in the final summary was reported but was not reproduced during final validation.
+
+Follow-up rule:
+
+- do not modify the validated path without new evidence;
+- retain the complete log from any future failure;
+- capture the final summary and the following events for the affected scenario:
+
+```text
+KILL
+runtime marked unsafe
+runtime.unhealthy
+runtime.suppressed
+work.released
+work.reassigned
+RuntimeFailureIncidentId
+```
+
+Any future correction must target the demonstrated race precisely without weakening the P5 assertions.
+
+---
+
+# Closure status
+
+```text
+COMPLETED
+```
+
+The Durable Runtime Lifecycle Journal now represents the durable history of hosts, Pods, runtimes, incidents, and run placements, with a complete P5 proof after cleanup.
+
+
+---
+
 ## 1.0.8.1 - 2026-07-30  — Kubernetes Runtime Pool P5 Pod-Failure Recovery
 
 This incremental release extends the previously validated hierarchical runtime-capacity architecture with a parallel Kubernetes Runtime Pool failure campaign.

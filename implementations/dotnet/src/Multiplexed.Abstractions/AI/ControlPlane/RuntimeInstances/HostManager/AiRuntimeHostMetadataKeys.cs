@@ -29,5 +29,14 @@
         /// Identifies the host name that contains the runtime instance.
         /// </summary>
         public const string HostName = "host.name";
+
+        /// <summary>
+        /// Correlates one host creation request with the runtime registrations produced by it.
+        /// </summary>
+        /// <remarks>
+        /// This value is diagnostic propagation only. Runtime identity, membership, routing, and
+        /// recovery remain governed by their typed fields.
+        /// </remarks>
+        public const string LifecycleCorrelationId = "host.lifecycle.correlation-id";
     }
 }

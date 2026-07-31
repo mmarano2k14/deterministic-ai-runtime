@@ -1,6 +1,8 @@
-﻿using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Health;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Lifecycle;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Lifecycle;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Health
 {
@@ -16,6 +18,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Health
     {
         private readonly IAiRuntimeInstanceRegistry registry;
         private readonly AiRuntimeInstanceHealthReconciliationOptions options;
+        private readonly AiRuntimeLifecycleEventWriter lifecycleWriter;
 
         /// <summary>
         /// Initializes a new instance of the <see cref="AiRuntimeInstanceHealthReconciler"/> class.
@@ -25,12 +28,25 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Health
         public AiRuntimeInstanceHealthReconciler(
             IAiRuntimeInstanceRegistry registry,
             IOptions<AiRuntimeInstanceHealthReconciliationOptions> options)
+            : this(
+                registry,
+                options,
+                NoopAiRuntimeLifecycleJournal.Instance)
+        {
+        }
+
+        public AiRuntimeInstanceHealthReconciler(
+            IAiRuntimeInstanceRegistry registry,
+            IOptions<AiRuntimeInstanceHealthReconciliationOptions> options,
+            IAiRuntimeLifecycleJournal lifecycleJournal)
         {
             ArgumentNullException.ThrowIfNull(registry);
             ArgumentNullException.ThrowIfNull(options);
+            ArgumentNullException.ThrowIfNull(lifecycleJournal);
 
             this.registry = registry;
             this.options = options.Value;
+            this.lifecycleWriter = new AiRuntimeLifecycleEventWriter(lifecycleJournal);
         }
 
         /// <inheritdoc />
@@ -139,6 +155,13 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Health
 
                 markedUnhealthyCount++;
 
+                await this.RecordUnhealthyLifecycleAsync(
+                        snapshot,
+                        updated,
+                        now,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
                 decisions.Add(CreateDecision(
                     snapshot,
                     updated.Status,
@@ -154,6 +177,55 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Health
                 IgnoredCount = ignoredCount,
                 Decisions = decisions
             };
+        }
+
+        private async Task RecordUnhealthyLifecycleAsync(
+            AiRuntimeInstanceSnapshot previous,
+            AiRuntimeInstanceSnapshot current,
+            DateTimeOffset timestampUtc,
+            CancellationToken cancellationToken)
+        {
+            var incidentId = string.Join(
+                ":",
+                "runtime-failure",
+                current.RuntimeInstanceId);
+            var context = await this.lifecycleWriter
+                .ResolveContextAsync(
+                    current.RuntimeInstanceId,
+                    current.HostId,
+                    current.PoolId,
+                    current.ControlPlaneId,
+                    cancellationToken)
+                .ConfigureAwait(false);
+
+            await this.lifecycleWriter.AppendOnceAsync(
+                new AiRuntimeLifecycleEvent
+                {
+                    EventId = AiRuntimeLifecycleEventWriter.CreateEventId(
+                        AiRuntimeLifecycleEventType.RuntimeUnhealthy,
+                        current.RuntimeInstanceId,
+                        incidentId),
+                    EventType = AiRuntimeLifecycleEventType.RuntimeUnhealthy,
+                    TimestampUtc = timestampUtc,
+                    ControlPlaneId = current.ControlPlaneId ?? context.ControlPlaneId,
+                    HostCreationMode = context.HostCreationMode,
+                    ProviderName = context.ProviderName,
+                    PoolId = current.PoolId ?? context.PoolId,
+                    HostId = current.HostId ?? context.HostId,
+                    KubernetesPodUid = context.KubernetesPodUid,
+                    KubernetesNamespace = current.KubernetesNamespace ?? context.KubernetesNamespace,
+                    KubernetesPodName = current.KubernetesPodName ?? context.KubernetesPodName,
+                    KubernetesNodeName = current.KubernetesNodeName ?? context.KubernetesNodeName,
+                    RuntimeInstanceId = current.RuntimeInstanceId,
+                    RuntimeId = current.RuntimeId ?? context.RuntimeId,
+                    ProcessId = current.ProcessId ?? context.ProcessId,
+                    RuntimeFailureIncidentId = incidentId,
+                    CorrelationId = incidentId,
+                    PreviousStatus = previous.Status.ToString(),
+                    CurrentStatus = current.Status.ToString(),
+                    Reason = "heartbeat-stale"
+                },
+                cancellationToken).ConfigureAwait(false);
         }
 
         /// <summary>

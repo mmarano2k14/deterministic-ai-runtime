@@ -5,10 +5,12 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Lifecycle;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Kubernetes;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Recovery.Claims;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strategy;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Lifecycle;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Kubernetes.Failure
 {
@@ -27,6 +29,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
 
         private readonly AiKubernetesRuntimePoolOptions poolOptions;
         private readonly AiKubernetesRuntimePoolHostOptions hostOptions;
+        private readonly AiRuntimeLifecycleEventWriter lifecycleWriter;
 
         /// <summary>
         /// Initializes a new replacement coordinator.
@@ -38,6 +41,23 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
                 membershipEnumerator,
             IOptions<AiKubernetesRuntimePoolOptions> poolOptions,
             IOptions<AiKubernetesRuntimePoolHostOptions> hostOptions)
+            : this(
+                hostCreationStrategies,
+                membershipEnumerator,
+                poolOptions,
+                hostOptions,
+                NoopAiRuntimeLifecycleJournal.Instance)
+        {
+        }
+
+        public AiKubernetesRuntimePoolPodReplacementCoordinator(
+            IEnumerable<IAiRuntimeHostCreationStrategy>
+                hostCreationStrategies,
+            IAiKubernetesRuntimePoolPodMembershipEnumerator
+                membershipEnumerator,
+            IOptions<AiKubernetesRuntimePoolOptions> poolOptions,
+            IOptions<AiKubernetesRuntimePoolHostOptions> hostOptions,
+            IAiRuntimeLifecycleJournal lifecycleJournal)
         {
             this.hostCreationStrategies =
                 hostCreationStrategies?.ToArray()
@@ -56,6 +76,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
             this.hostOptions =
                 hostOptions?.Value
                 ?? throw new ArgumentNullException(nameof(hostOptions));
+
+            this.lifecycleWriter = new AiRuntimeLifecycleEventWriter(
+                lifecycleJournal
+                ?? throw new ArgumentNullException(nameof(lifecycleJournal)));
         }
 
         /// <inheritdoc />
@@ -98,6 +122,15 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
                 inventory.RuntimeInventories
                     .Select(item => item.RuntimeInstanceId)
                     .ToHashSet(StringComparer.Ordinal);
+
+            await this.RecordReplacementRequestedAsync(
+                    claim,
+                    inventory.RuntimeInventories
+                        .Select(item => item.RuntimeInstanceId)
+                        .OrderBy(value => value, StringComparer.Ordinal),
+                    request.HostStartTemplate.ControlPlaneId,
+                    cancellationToken)
+                .ConfigureAwait(false);
 
             if (failedRuntimeInstanceIds.Contains(
                     primaryRuntimeInstanceId))
@@ -190,6 +223,14 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
 
             ValidateActiveClaim(claimed);
 
+            await this.RecordReplacementRegisteredAsync(
+                    claim,
+                    replacementPodUid,
+                    replacementMembership,
+                    request.HostStartTemplate.ControlPlaneId,
+                    cancellationToken)
+                .ConfigureAwait(false);
+
             return new AiKubernetesRuntimePoolPodReplacement
             {
                 FailureId = claim.FailureId,
@@ -204,6 +245,113 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
                 Membership = replacementMembership,
                 ReadyAtUtc = DateTimeOffset.UtcNow
             };
+        }
+
+
+        private async Task RecordReplacementRequestedAsync(
+            AiRuntimePoolRecoveryMembershipClaim claim,
+            IEnumerable<string> failedRuntimeInstanceIds,
+            string controlPlaneId,
+            CancellationToken cancellationToken)
+        {
+            foreach (var runtimeInstanceId in failedRuntimeInstanceIds)
+            {
+                var context = await this.lifecycleWriter
+                    .ResolveContextAsync(
+                        runtimeInstanceId,
+                        claim.HostId,
+                        claim.PoolId,
+                        controlPlaneId,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+                await this.lifecycleWriter.AppendOnceAsync(
+                    new AiRuntimeLifecycleEvent
+                    {
+                        EventId = AiRuntimeLifecycleEventWriter.CreateEventId(
+                            AiRuntimeLifecycleEventType.RuntimeReplacementRequested,
+                            runtimeInstanceId,
+                            claim.FailureId),
+                        EventType = AiRuntimeLifecycleEventType.RuntimeReplacementRequested,
+                        TimestampUtc = DateTimeOffset.UtcNow,
+                        ControlPlaneId = controlPlaneId,
+                        HostCreationMode = AiRuntimeHostCreationMode.KubernetesPool,
+                        ProviderName = context.ProviderName ?? this.poolOptions.ProviderName,
+                        PoolId = claim.PoolId,
+                        HostId = claim.HostId,
+                        KubernetesPodUid = claim.HostId,
+                        KubernetesNamespace = context.KubernetesNamespace,
+                        KubernetesPodName = context.KubernetesPodName,
+                        KubernetesNodeName = context.KubernetesNodeName,
+                        RuntimeInstanceId = runtimeInstanceId,
+                        RuntimeId = context.RuntimeId,
+                        ProcessId = context.ProcessId,
+                        RuntimeFailureIncidentId = claim.FailureId,
+                        CorrelationId = claim.FailureId,
+                        CausationId = AiRuntimeLifecycleEventWriter.CreateEventId(
+                            AiRuntimeLifecycleEventType.HostDisappeared,
+                            claim.HostId,
+                            claim.FailureId),
+                        PreviousStatus = "suppressed",
+                        CurrentStatus = "replacement-requested",
+                        Reason = "failed-pod-capacity-restoration"
+                    },
+                    cancellationToken).ConfigureAwait(false);
+            }
+        }
+
+        private async Task RecordReplacementRegisteredAsync(
+            AiRuntimePoolRecoveryMembershipClaim claim,
+            string replacementPodUid,
+            AiKubernetesRuntimePoolPodMembership membership,
+            string controlPlaneId,
+            CancellationToken cancellationToken)
+        {
+            foreach (var member in membership.Members
+                         .OrderBy(item => item.RuntimeInstanceId, StringComparer.Ordinal))
+            {
+                var context = await this.lifecycleWriter
+                    .ResolveContextAsync(
+                        member.RuntimeInstanceId,
+                        replacementPodUid,
+                        claim.PoolId,
+                        controlPlaneId,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+                await this.lifecycleWriter.AppendOnceAsync(
+                    new AiRuntimeLifecycleEvent
+                    {
+                        EventId = AiRuntimeLifecycleEventWriter.CreateEventId(
+                            AiRuntimeLifecycleEventType.RuntimeReplacementRegistered,
+                            member.RuntimeInstanceId,
+                            claim.FailureId),
+                        EventType = AiRuntimeLifecycleEventType.RuntimeReplacementRegistered,
+                        TimestampUtc = DateTimeOffset.UtcNow,
+                        ControlPlaneId = controlPlaneId,
+                        HostCreationMode = AiRuntimeHostCreationMode.KubernetesPool,
+                        ProviderName = context.ProviderName ?? this.poolOptions.ProviderName,
+                        PoolId = claim.PoolId,
+                        HostId = replacementPodUid,
+                        KubernetesPodUid = replacementPodUid,
+                        KubernetesNamespace = context.KubernetesNamespace,
+                        KubernetesPodName = context.KubernetesPodName,
+                        KubernetesNodeName = context.KubernetesNodeName,
+                        RuntimeInstanceId = member.RuntimeInstanceId,
+                        RuntimeId = context.RuntimeId,
+                        ProcessId = context.ProcessId,
+                        RuntimeFailureIncidentId = claim.FailureId,
+                        CorrelationId = claim.FailureId,
+                        CausationId = AiRuntimeLifecycleEventWriter.CreateEventId(
+                            AiRuntimeLifecycleEventType.HostDisappeared,
+                            claim.HostId,
+                            claim.FailureId),
+                        PreviousStatus = "replacement-requested",
+                        CurrentStatus = "registered",
+                        Reason = "replacement-pod-membership-ready"
+                    },
+                    cancellationToken).ConfigureAwait(false);
+            }
         }
 
         private IAiRuntimeHostCreationStrategy ResolveKubernetesPoolStrategy(

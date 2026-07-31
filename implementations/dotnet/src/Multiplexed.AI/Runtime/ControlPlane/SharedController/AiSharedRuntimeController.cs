@@ -5,6 +5,7 @@ using Multiplexed.Abstractions.AI.ControlPlane.Observability;
 using Multiplexed.Abstractions.AI.ControlPlane.Observability.Area;
 using Multiplexed.Abstractions.AI.ControlPlane.Observability.Events;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Lifecycle;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Controller;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Dispatch;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Scaling;
@@ -14,6 +15,7 @@ using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Claiming;
 using Multiplexed.Abstractions.AI.Execution.Instance.Worker;
 using Multiplexed.Abstractions.AI.Observability.Context;
 using Multiplexed.Abstractions.Core.ExecutionContext;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Lifecycle;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.SharedController
 {
@@ -54,6 +56,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController
         private readonly AiSharedRuntimeControllerOptions _options;
         private readonly IAiControlPlaneObserver _observer;
         private readonly IExecutionContextSnapshotProvider _executionContextSnapshotProvider;
+        private readonly AiRuntimeLifecycleEventWriter _lifecycleWriter;
 
         /// <summary>
         /// Initializes a new instance of the <see cref="AiSharedRuntimeController"/> class.
@@ -74,6 +77,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController
         /// The provider used to map the current RBAC execution context into a durable
         /// execution context snapshot for shared run records.
         /// </param>
+        /// <param name="lifecycleJournal">
+        /// The optional append-only lifecycle journal used to record durable direct-dispatch placement facts.
+        /// </param>
         /// <exception cref="ArgumentNullException">
         /// Thrown when one of the required dependencies is null.
         /// </exception>
@@ -87,7 +93,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController
             IAiTenantRuntimeSettingsProvider tenantRuntimeSettingsProvider,
             IOptions<AiSharedRuntimeControllerOptions> options,
             IAiControlPlaneObserver observer,
-            IExecutionContextSnapshotProvider executionContextSnapshotProvider)
+            IExecutionContextSnapshotProvider executionContextSnapshotProvider,
+            IAiRuntimeLifecycleJournal? lifecycleJournal = null)
         {
             _admissionController =
                 admissionController
@@ -128,6 +135,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController
             _executionContextSnapshotProvider =
                 executionContextSnapshotProvider
                 ?? throw new ArgumentNullException(nameof(executionContextSnapshotProvider));
+
+            _lifecycleWriter = new AiRuntimeLifecycleEventWriter(
+                lifecycleJournal ?? NoopAiRuntimeLifecycleJournal.Instance);
         }
 
         /// <inheritdoc />
@@ -574,6 +584,12 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController
 
             if (dispatchedRun is not null)
             {
+                await RecordDirectWorkPlacementLifecycleAsync(
+                        dispatchedRun,
+                        dispatchReason,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
                 return dispatchedRun;
             }
 
@@ -592,6 +608,81 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController
                     dispatchResult.Message,
                     cancellationToken)
                 .ConfigureAwait(false) ?? created;
+        }
+
+        /// <summary>
+        /// Records the initial work placement only after direct dispatch ownership has been
+        /// durably persisted in both the shared queue and shared run store.
+        /// </summary>
+        private async Task RecordDirectWorkPlacementLifecycleAsync(
+            AiSharedRunRecord dispatchedRun,
+            string reason,
+            CancellationToken cancellationToken)
+        {
+            ArgumentNullException.ThrowIfNull(dispatchedRun);
+            ArgumentException.ThrowIfNullOrWhiteSpace(dispatchedRun.AssignedRuntimeInstanceId);
+            ArgumentException.ThrowIfNullOrWhiteSpace(dispatchedRun.LocalRunId);
+
+            var context = await _lifecycleWriter
+                .ResolveContextAsync(
+                    dispatchedRun.AssignedRuntimeInstanceId,
+                    hostId: null,
+                    poolId: null,
+                    fallbackControlPlaneId: dispatchedRun.ControlPlaneId,
+                    cancellationToken: cancellationToken)
+                .ConfigureAwait(false);
+            var subjectId = string.Join(
+                ":",
+                dispatchedRun.SharedRunId,
+                dispatchedRun.LocalRunId);
+            var metadata = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["dispatch.path"] = "direct-admission"
+            };
+
+            if (!string.IsNullOrWhiteSpace(dispatchedRun.PipelineKey))
+            {
+                metadata["pipeline.key"] = dispatchedRun.PipelineKey;
+                metadata["pipeline.name"] = dispatchedRun.PipelineKey;
+            }
+
+            await _lifecycleWriter
+                .AppendOnceAsync(
+                    new AiRuntimeLifecycleEvent
+                    {
+                        EventId = AiRuntimeLifecycleEventWriter.CreateEventId(
+                            AiRuntimeLifecycleEventType.WorkAssigned,
+                            subjectId),
+                        EventType = AiRuntimeLifecycleEventType.WorkAssigned,
+                        TimestampUtc = DateTimeOffset.UtcNow,
+                        ControlPlaneId = dispatchedRun.ControlPlaneId,
+                        HostCreationMode = context.HostCreationMode,
+                        ProviderName = context.ProviderName,
+                        PoolId = context.PoolId,
+                        HostId = context.HostId,
+                        KubernetesPodUid = context.KubernetesPodUid,
+                        KubernetesNamespace = context.KubernetesNamespace,
+                        KubernetesPodName = context.KubernetesPodName,
+                        KubernetesNodeName = context.KubernetesNodeName,
+                        RuntimeInstanceId = dispatchedRun.AssignedRuntimeInstanceId,
+                        RuntimeId = context.RuntimeId,
+                        ProcessId = context.ProcessId,
+                        TenantId = dispatchedRun.ExecutionContextSnapshot.TenantId,
+                        TenantGroupId = dispatchedRun.ExecutionContextSnapshot.TenantGroupId,
+                        SharedRunId = dispatchedRun.SharedRunId,
+                        LocalRunId = dispatchedRun.LocalRunId,
+                        ExecutionId = dispatchedRun.ExecutionId,
+                        CorrelationId = string.IsNullOrWhiteSpace(dispatchedRun.CorrelationId)
+                            ? dispatchedRun.SharedRunId
+                            : dispatchedRun.CorrelationId,
+                        CurrentStatus = "assigned",
+                        Reason = string.IsNullOrWhiteSpace(reason)
+                            ? "initial-direct-dispatch-confirmed"
+                            : reason,
+                        Metadata = metadata
+                    },
+                    cancellationToken)
+                .ConfigureAwait(false);
         }
 
         /// <summary>

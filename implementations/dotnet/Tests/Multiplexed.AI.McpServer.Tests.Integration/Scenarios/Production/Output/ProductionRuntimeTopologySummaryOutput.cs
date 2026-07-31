@@ -1,4 +1,5 @@
-﻿using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Lifecycle;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
 using System.Globalization;
 using System.Text;
@@ -65,6 +66,21 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Output
         /// Gets the current durable execution identifier.
         /// </summary>
         public string? CurrentExecutionId { get; init; }
+
+        /// <summary>
+        /// Gets the infrastructure failure incident that caused the durable reassignment.
+        /// </summary>
+        public string? RuntimeFailureIncidentId { get; init; }
+
+        /// <summary>
+        /// Gets the related decision-ledger entry identifier.
+        /// </summary>
+        public string? LedgerEntryId { get; init; }
+
+        /// <summary>
+        /// Gets the related recovery-forensics identifier.
+        /// </summary>
+        public string? ForensicsId { get; init; }
     }
 
     /// <summary>
@@ -92,7 +108,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Output
             AiRuntimeHostCreationMode hostCreationMode,
             IReadOnlyCollection<ProductionRuntimeRunPlacement> runPlacements,
             CancellationToken cancellationToken = default,
-            IReadOnlyCollection<AiRuntimeInstanceSnapshot>? historicalRuntimeSnapshots = null)
+            IReadOnlyCollection<AiRuntimeInstanceSnapshot>? historicalRuntimeSnapshots = null,
+            IAiRuntimeLifecycleJournal? lifecycleJournal = null,
+            IReadOnlyDictionary<string, string>? tenantRoles = null)
         {
             ArgumentNullException.ThrowIfNull(output);
 
@@ -103,7 +121,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Output
                         hostCreationMode,
                         runPlacements,
                         cancellationToken,
-                        historicalRuntimeSnapshots)
+                        historicalRuntimeSnapshots,
+                        lifecycleJournal,
+                        tenantRoles)
                     .ConfigureAwait(false));
         }
 
@@ -125,11 +145,42 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Output
             AiRuntimeHostCreationMode hostCreationMode,
             IReadOnlyCollection<ProductionRuntimeRunPlacement> runPlacements,
             CancellationToken cancellationToken = default,
-            IReadOnlyCollection<AiRuntimeInstanceSnapshot>? historicalRuntimeSnapshots = null)
+            IReadOnlyCollection<AiRuntimeInstanceSnapshot>? historicalRuntimeSnapshots = null,
+            IAiRuntimeLifecycleJournal? lifecycleJournal = null,
+            IReadOnlyDictionary<string, string>? tenantRoles = null)
         {
             ArgumentNullException.ThrowIfNull(registry);
             ArgumentException.ThrowIfNullOrWhiteSpace(controlPlaneId);
             ArgumentNullException.ThrowIfNull(runPlacements);
+
+            if (lifecycleJournal is not null)
+            {
+                try
+                {
+                    var lifecycleGraph =
+                        await LoadLifecycleGraphAsync(
+                                lifecycleJournal,
+                                controlPlaneId,
+                                runPlacements,
+                                cancellationToken)
+                            .ConfigureAwait(false);
+
+                    if (lifecycleGraph.Events.Count > 0)
+                    {
+                        return BuildFromLifecycleEvents(
+                            controlPlaneId,
+                            hostCreationMode,
+                            lifecycleGraph.Events,
+                            tenantRoles,
+                            lifecycleGraph.TrustedFailureIncidentIds);
+                    }
+                }
+                catch
+                {
+                    // The durable journal is the primary source. The explicit source label below
+                    // makes any transitional registry/harness fallback visible in the proof output.
+                }
+            }
 
             try
             {
@@ -145,7 +196,10 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Output
                     hostCreationMode,
                     runtimeSnapshots,
                     runPlacements,
-                    historicalRuntimeSnapshots);
+                    historicalRuntimeSnapshots,
+                    topologySource: lifecycleJournal is null
+                        ? "RuntimeRegistry"
+                        : "RuntimeRegistryFallback");
             }
             catch (Exception exception)
             {
@@ -160,6 +214,237 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Output
                     exception.Message,
                     "'.");
             }
+        }
+
+        /// <summary>
+        /// Queries the durable lifecycle journal and writes one atomic summary block.
+        /// </summary>
+        public static async Task WriteFromLifecycleJournalAsync(
+            ITestOutputHelper output,
+            IAiRuntimeLifecycleJournal lifecycleJournal,
+            string controlPlaneId,
+            AiRuntimeHostCreationMode hostCreationMode,
+            IReadOnlyDictionary<string, string>? tenantRoles = null,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentNullException.ThrowIfNull(output);
+
+            output.WriteLine(
+                await CreateFromLifecycleJournalAsync(
+                        lifecycleJournal,
+                        controlPlaneId,
+                        hostCreationMode,
+                        tenantRoles,
+                        cancellationToken)
+                    .ConfigureAwait(false));
+        }
+
+        /// <summary>
+        /// Queries the durable lifecycle journal and creates one atomic summary block.
+        /// </summary>
+        public static async Task<string> CreateFromLifecycleJournalAsync(
+            IAiRuntimeLifecycleJournal lifecycleJournal,
+            string controlPlaneId,
+            AiRuntimeHostCreationMode hostCreationMode,
+            IReadOnlyDictionary<string, string>? tenantRoles = null,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentNullException.ThrowIfNull(lifecycleJournal);
+            ArgumentException.ThrowIfNullOrWhiteSpace(controlPlaneId);
+
+            try
+            {
+                var lifecycleGraph =
+                    await LoadLifecycleGraphAsync(
+                            lifecycleJournal,
+                            controlPlaneId,
+                            runPlacements: null,
+                            cancellationToken: cancellationToken)
+                        .ConfigureAwait(false);
+
+                return BuildFromLifecycleEvents(
+                    controlPlaneId,
+                    hostCreationMode,
+                    lifecycleGraph.Events,
+                    tenantRoles,
+                    lifecycleGraph.TrustedFailureIncidentIds);
+            }
+            catch (Exception exception)
+            {
+                return string.Concat(
+                    "[RUNTIME TOPOLOGY SUMMARY UNAVAILABLE] ControlPlaneId='",
+                    controlPlaneId,
+                    "', HostCreationMode='",
+                    hostCreationMode,
+                    "', TopologySource='RuntimeLifecycleJournal', ExceptionType='",
+                    exception.GetType().FullName,
+                    "', Message='",
+                    exception.Message,
+                    "'.");
+            }
+        }
+
+        /// <summary>
+        /// Creates a durable summary while using authoritative moved-run placements only to seed
+        /// failed runtime identities. The journal remains the source of topology and incident facts.
+        /// </summary>
+        internal static async Task<string> CreateFromLifecycleJournalWithPlacementSeedsAsync(
+            IAiRuntimeLifecycleJournal lifecycleJournal,
+            string controlPlaneId,
+            AiRuntimeHostCreationMode hostCreationMode,
+            IReadOnlyCollection<ProductionRuntimeRunPlacement> runPlacements,
+            IReadOnlyDictionary<string, string>? tenantRoles = null,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentNullException.ThrowIfNull(lifecycleJournal);
+            ArgumentException.ThrowIfNullOrWhiteSpace(controlPlaneId);
+            ArgumentNullException.ThrowIfNull(runPlacements);
+
+            var lifecycleGraph =
+                await LoadLifecycleGraphAsync(
+                        lifecycleJournal,
+                        controlPlaneId,
+                        runPlacements,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+            return BuildFromLifecycleEvents(
+                controlPlaneId,
+                hostCreationMode,
+                lifecycleGraph.Events,
+                tenantRoles,
+                lifecycleGraph.TrustedFailureIncidentIds);
+        }
+
+        private static async Task<ProductionRuntimeLifecycleGraph> LoadLifecycleGraphAsync(
+            IAiRuntimeLifecycleJournal lifecycleJournal,
+            string controlPlaneId,
+            IReadOnlyCollection<ProductionRuntimeRunPlacement>? runPlacements,
+            CancellationToken cancellationToken)
+        {
+            var controlPlaneEvents =
+                await lifecycleJournal
+                    .ListByControlPlaneIdAsync(controlPlaneId, cancellationToken)
+                    .ConfigureAwait(false);
+
+            var eventsById =
+                controlPlaneEvents
+                    .GroupBy(item => item.EventId, StringComparer.Ordinal)
+                    .ToDictionary(
+                        group => group.Key,
+                        group => group.First(),
+                        StringComparer.Ordinal);
+
+            var trustedIncidentIds =
+                controlPlaneEvents
+                    .Where(item => !string.IsNullOrWhiteSpace(item.RuntimeFailureIncidentId))
+                    .Select(item => item.RuntimeFailureIncidentId!)
+                    .ToHashSet(StringComparer.Ordinal);
+
+            // The P5 harness already owns the authoritative initial/current placement pair.
+            // Use moved initial runtime identities only as durable graph seeds. This closes the
+            // production gap where work events are present under the scenario control plane but
+            // the infrastructure incident events were written under the lifecycle context.
+            var movedInitialRuntimeIds =
+                (runPlacements ?? Array.Empty<ProductionRuntimeRunPlacement>())
+                    .Where(item =>
+                        !string.IsNullOrWhiteSpace(item.InitialRuntimeInstanceId) &&
+                        !string.Equals(
+                            item.InitialRuntimeInstanceId,
+                            item.CurrentRuntimeInstanceId,
+                            StringComparison.Ordinal))
+                    .Select(item => item.InitialRuntimeInstanceId!)
+                    .Distinct(StringComparer.Ordinal)
+                    .OrderBy(value => value, StringComparer.Ordinal)
+                    .ToArray();
+
+            foreach (var runtimeInstanceId in movedInitialRuntimeIds)
+            {
+                var runtimeEvents =
+                    await lifecycleJournal
+                        .ListByRuntimeInstanceIdAsync(
+                            runtimeInstanceId,
+                            cancellationToken)
+                        .ConfigureAwait(false);
+
+                foreach (var lifecycleEvent in runtimeEvents)
+                {
+                    eventsById.TryAdd(lifecycleEvent.EventId, lifecycleEvent);
+
+                    if (!string.IsNullOrWhiteSpace(lifecycleEvent.RuntimeFailureIncidentId))
+                    {
+                        trustedIncidentIds.Add(lifecycleEvent.RuntimeFailureIncidentId!);
+                    }
+                }
+            }
+
+            var queriedIncidentIds = new HashSet<string>(StringComparer.Ordinal);
+            var pendingIncidentIds = new Queue<string>(
+                trustedIncidentIds.OrderBy(value => value, StringComparer.Ordinal));
+
+            while (pendingIncidentIds.Count > 0)
+            {
+                var incidentId = pendingIncidentIds.Dequeue();
+
+                if (!queriedIncidentIds.Add(incidentId))
+                {
+                    continue;
+                }
+
+                var incidentEvents =
+                    await lifecycleJournal
+                        .ListByRuntimeFailureIncidentIdAsync(
+                            incidentId,
+                            cancellationToken)
+                        .ConfigureAwait(false);
+
+                foreach (var lifecycleEvent in incidentEvents)
+                {
+                    eventsById.TryAdd(lifecycleEvent.EventId, lifecycleEvent);
+
+                    if (!string.IsNullOrWhiteSpace(lifecycleEvent.RuntimeFailureIncidentId) &&
+                        trustedIncidentIds.Add(lifecycleEvent.RuntimeFailureIncidentId!))
+                    {
+                        pendingIncidentIds.Enqueue(lifecycleEvent.RuntimeFailureIncidentId!);
+                    }
+                }
+            }
+
+            return new ProductionRuntimeLifecycleGraph(
+                eventsById
+                    .Values
+                    .OrderBy(item => item.TimestampUtc)
+                    .ThenBy(item => item.EventId, StringComparer.Ordinal)
+                    .ToArray(),
+                trustedIncidentIds);
+        }
+
+        /// <summary>
+        /// Reconstructs one topology summary exclusively from durable lifecycle events.
+        /// </summary>
+        public static string BuildFromLifecycleEvents(
+            string controlPlaneId,
+            AiRuntimeHostCreationMode hostCreationMode,
+            IReadOnlyCollection<AiRuntimeLifecycleEvent> lifecycleEvents,
+            IReadOnlyDictionary<string, string>? tenantRoles = null,
+            IReadOnlySet<string>? trustedFailureIncidentIds = null)
+        {
+            var projection =
+                ProductionRuntimeLifecycleTopologyProjector.Project(
+                    controlPlaneId,
+                    lifecycleEvents,
+                    tenantRoles,
+                    trustedFailureIncidentIds);
+
+            return Build(
+                controlPlaneId,
+                hostCreationMode,
+                projection.CurrentRuntimeSnapshots,
+                projection.RunPlacements,
+                projection.HistoricalRuntimeSnapshots,
+                topologySource: "RuntimeLifecycleJournal",
+                deletedKubernetesPodCount: projection.DeletedKubernetesPodCount,
+                historicalRuntimeCount: projection.HistoricalRuntimeCount);
         }
 
         /// <summary>
@@ -178,11 +463,15 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Output
             AiRuntimeHostCreationMode hostCreationMode,
             IReadOnlyCollection<AiRuntimeInstanceSnapshot> runtimeSnapshots,
             IReadOnlyCollection<ProductionRuntimeRunPlacement> runPlacements,
-            IReadOnlyCollection<AiRuntimeInstanceSnapshot>? historicalRuntimeSnapshots = null)
+            IReadOnlyCollection<AiRuntimeInstanceSnapshot>? historicalRuntimeSnapshots = null,
+            string topologySource = "RuntimeRegistry",
+            int? deletedKubernetesPodCount = null,
+            int? historicalRuntimeCount = null)
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(controlPlaneId);
             ArgumentNullException.ThrowIfNull(runtimeSnapshots);
             ArgumentNullException.ThrowIfNull(runPlacements);
+            ArgumentException.ThrowIfNullOrWhiteSpace(topologySource);
 
             var placements =
                 runPlacements
@@ -255,6 +544,12 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Output
                 hostGroups.Count(group =>
                     string.Equals(group.Kind, "KubernetesPod", StringComparison.Ordinal) &&
                     group.RuntimeItems.All(item => !item.IsCurrentRegistrySnapshot));
+            var projectedHistoricalRuntimeCount =
+                runtimeHosts.Count(item => !item.IsCurrentRegistrySnapshot);
+            var effectiveDeletedKubernetesPodCount =
+                deletedKubernetesPodCount ?? historicalOnlyKubernetesPodCount;
+            var effectiveHistoricalRuntimeCount =
+                historicalRuntimeCount ?? projectedHistoricalRuntimeCount;
 
             var builder = new StringBuilder();
 
@@ -262,13 +557,19 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Output
             builder.AppendLine("# RUNTIME TOPOLOGY AND RUN PLACEMENT SUMMARY");
             builder.AppendLine($"ControlPlaneId='{controlPlaneId}'");
             builder.AppendLine($"HostCreationMode='{hostCreationMode}'");
-            builder.AppendLine("Scope='All matching runtime registry snapshots, including stopped and unhealthy runtimes, captured before scenario cleanup.'");
+            builder.AppendLine($"TopologySource='{topologySource}'");
+            builder.AppendLine(
+                string.Equals(topologySource, "RuntimeLifecycleJournal", StringComparison.Ordinal)
+                    ? "Scope='Durable lifecycle history, including deleted hosts, stopped runtimes, replacement capacity, and final work placement.'"
+                    : "Scope='All matching runtime registry snapshots, including stopped and unhealthy runtimes, captured before scenario cleanup.'");
             builder.AppendLine($"ObservedPhysicalHostCount='{hostGroups.Length.ToString(CultureInfo.InvariantCulture)}'");
             builder.AppendLine($"ActivePhysicalHostCount='{activeHostCount.ToString(CultureInfo.InvariantCulture)}'");
             builder.AppendLine($"ObservedKubernetesPodCount='{kubernetesPodCount.ToString(CultureInfo.InvariantCulture)}'");
             builder.AppendLine($"ActiveKubernetesPodCount='{activeKubernetesPodCount.ToString(CultureInfo.InvariantCulture)}'");
             builder.AppendLine($"HistoricalOnlyPhysicalHostCount='{historicalOnlyHostCount.ToString(CultureInfo.InvariantCulture)}'");
             builder.AppendLine($"HistoricalOnlyKubernetesPodCount='{historicalOnlyKubernetesPodCount.ToString(CultureInfo.InvariantCulture)}'");
+            builder.AppendLine($"DeletedPodCount='{effectiveDeletedKubernetesPodCount.ToString(CultureInfo.InvariantCulture)}'");
+            builder.AppendLine($"HistoricalRuntimeCount='{effectiveHistoricalRuntimeCount.ToString(CultureInfo.InvariantCulture)}'");
             builder.AppendLine($"ObservedRuntimeInstanceCount='{relevantSnapshots.Length.ToString(CultureInfo.InvariantCulture)}'");
             builder.AppendLine($"RunPlacementCount='{placements.Length.ToString(CultureInfo.InvariantCulture)}'");
             builder.AppendLine();
@@ -323,8 +624,12 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Output
                     host.RuntimeItems.All(item => !item.IsCurrentRegistrySnapshot)
                         ? "HistoricalOnly"
                         : host.RuntimeItems.All(item => item.IsCurrentRegistrySnapshot)
-                            ? "CurrentRegistry"
-                            : "Mixed";
+                            ? string.Equals(topologySource, "RuntimeLifecycleJournal", StringComparison.Ordinal)
+                                ? "DurableCurrent"
+                                : "CurrentRegistry"
+                            : string.Equals(topologySource, "RuntimeLifecycleJournal", StringComparison.Ordinal)
+                                ? "DurableMixed"
+                                : "Mixed";
 
                 var firstRegisteredAtUtc =
                     host.RuntimeItems.Min(item => item.Snapshot.RegisteredAtUtc);
@@ -411,8 +716,12 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Output
                             runtime.Status,
                             "', SnapshotSource='",
                             runtimeProjection.IsCurrentRegistrySnapshot
-                                ? "CurrentRegistry"
-                                : "HistoricalBeforeFailure",
+                                ? string.Equals(topologySource, "RuntimeLifecycleJournal", StringComparison.Ordinal)
+                                    ? "DurableCurrent"
+                                    : "CurrentRegistry"
+                                : string.Equals(topologySource, "RuntimeLifecycleJournal", StringComparison.Ordinal)
+                                    ? "DurableHistory"
+                                    : "HistoricalBeforeFailure",
                             "', TenantId='",
                             runtime.TenantId ?? string.Empty,
                             "', TenantGroupId='",
@@ -474,6 +783,12 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Output
                         initialHost.Kind,
                         "', InitialHost='",
                         initialHost.DisplayName,
+                        "', InitialHostId='",
+                        initialHost.HostId ?? string.Empty,
+                        "', InitialPodUid='",
+                        initialHost.KubernetesPodUid ?? string.Empty,
+                        "', InitialPodName='",
+                        initialHost.KubernetesPodName ?? string.Empty,
                         "', InitialRuntimeInstanceId='",
                         placement.InitialRuntimeInstanceId ?? string.Empty,
                         "', InitialLocalRunId='",
@@ -484,6 +799,12 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Output
                         currentHost.Kind,
                         "', CurrentHost='",
                         currentHost.DisplayName,
+                        "', CurrentHostId='",
+                        currentHost.HostId ?? string.Empty,
+                        "', CurrentPodUid='",
+                        currentHost.KubernetesPodUid ?? string.Empty,
+                        "', CurrentPodName='",
+                        currentHost.KubernetesPodName ?? string.Empty,
                         "', CurrentRuntimeInstanceId='",
                         placement.CurrentRuntimeInstanceId ?? string.Empty,
                         "', CurrentLocalRunId='",
@@ -492,6 +813,12 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Output
                         placement.CurrentExecutionId ?? string.Empty,
                         "', Moved='",
                         moved.ToString().ToLowerInvariant(),
+                        "', RuntimeFailureIncidentId='",
+                        placement.RuntimeFailureIncidentId ?? string.Empty,
+                        "', LedgerEntryId='",
+                        placement.LedgerEntryId ?? string.Empty,
+                        "', ForensicsId='",
+                        placement.ForensicsId ?? string.Empty,
                         "'."));
             }
 
@@ -523,7 +850,14 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Output
             builder.AppendLine("# PARALLEL RUNTIME TOPOLOGY AND RUN PLACEMENT SUMMARY");
             builder.AppendLine($"ExpectedScenarioCount='{expectedScenarioCount.ToString(CultureInfo.InvariantCulture)}'");
             builder.AppendLine($"CapturedScenarioCount='{orderedSummaries.Length.ToString(CultureInfo.InvariantCulture)}'");
-            builder.AppendLine($"MissingScenarioCount='{(expectedScenarioCount - orderedSummaries.Length).ToString(CultureInfo.InvariantCulture)}'");
+            builder.AppendLine($"MissingScenarioCount='{Math.Max(0, expectedScenarioCount - orderedSummaries.Length).ToString(CultureInfo.InvariantCulture)}'");
+            builder.AppendLine($"ObservedPodCount='{SumMetric(orderedSummaries, "ObservedKubernetesPodCount").ToString(CultureInfo.InvariantCulture)}'");
+            builder.AppendLine($"DeletedPodCount='{SumMetricWithFallback(orderedSummaries, "DeletedPodCount", "HistoricalOnlyKubernetesPodCount").ToString(CultureInfo.InvariantCulture)}'");
+            builder.AppendLine($"HistoricalRuntimeCount='{SumMetricWithFallback(orderedSummaries, "HistoricalRuntimeCount", "HistoricalOnlyRuntimeCount").ToString(CultureInfo.InvariantCulture)}'");
+            builder.AppendLine($"RunPlacementCount='{SumMetric(orderedSummaries, "RunPlacementCount").ToString(CultureInfo.InvariantCulture)}'");
+            builder.AppendLine($"MovedRunCount='{CountOccurrences(orderedSummaries, "Moved='true'").ToString(CultureInfo.InvariantCulture)}'");
+            builder.AppendLine($"StableRunCount='{CountOccurrences(orderedSummaries, "Moved='false'").ToString(CultureInfo.InvariantCulture)}'");
+            builder.AppendLine($"UnknownInitialHostCount='{CountOccurrences(orderedSummaries, "InitialHostKind='Unknown'").ToString(CultureInfo.InvariantCulture)}'");
             builder.AppendLine("Scope='One grouped final section written after all parallel scenarios have completed and before the final test result is returned.'");
 
             foreach (var summary in orderedSummaries)
@@ -539,6 +873,133 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Output
             }
 
             return builder.ToString();
+        }
+
+        private static int SumMetricWithFallback(
+            IReadOnlyCollection<string> summaries,
+            string primaryMetricName,
+            string fallbackMetricName)
+        {
+            var total = 0;
+
+            foreach (var summary in summaries)
+            {
+                if (TryReadMetric(summary, primaryMetricName, out var primaryValue))
+                {
+                    total += primaryValue;
+                    continue;
+                }
+
+                total += SumMetric(
+                    new[] { summary },
+                    fallbackMetricName);
+            }
+
+            return total;
+        }
+
+        private static bool TryReadMetric(
+            string summary,
+            string metricName,
+            out int value)
+        {
+            var prefix = string.Concat(metricName, "='");
+
+            foreach (var line in summary.Split(
+                         '\n',
+                         StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            {
+                if (!line.StartsWith(prefix, StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                var end = line.IndexOf('\'', prefix.Length);
+
+                if (end > prefix.Length &&
+                    int.TryParse(
+                        line.AsSpan(prefix.Length, end - prefix.Length),
+                        NumberStyles.Integer,
+                        CultureInfo.InvariantCulture,
+                        out value))
+                {
+                    return true;
+                }
+            }
+
+            value = 0;
+            return false;
+        }
+
+        private static int SumMetric(
+            IReadOnlyCollection<string> summaries,
+            string metricName)
+        {
+            var prefix = string.Concat(metricName, "='");
+            var total = 0;
+
+            foreach (var summary in summaries)
+            {
+                var searchIndex = 0;
+
+                while (searchIndex < summary.Length)
+                {
+                    var start = summary.IndexOf(prefix, searchIndex, StringComparison.Ordinal);
+
+                    if (start < 0)
+                    {
+                        break;
+                    }
+
+                    start += prefix.Length;
+                    var end = summary.IndexOf('\'', start);
+
+                    if (end < 0)
+                    {
+                        break;
+                    }
+
+                    if (int.TryParse(
+                            summary.AsSpan(start, end - start),
+                            NumberStyles.Integer,
+                            CultureInfo.InvariantCulture,
+                            out var value))
+                    {
+                        total += value;
+                    }
+
+                    searchIndex = end + 1;
+                }
+            }
+
+            return total;
+        }
+
+        private static int CountOccurrences(
+            IReadOnlyCollection<string> summaries,
+            string marker)
+        {
+            var count = 0;
+
+            foreach (var summary in summaries)
+            {
+                var searchIndex = 0;
+
+                while (searchIndex < summary.Length)
+                {
+                    var matchIndex = summary.IndexOf(marker, searchIndex, StringComparison.Ordinal);
+
+                    if (matchIndex < 0)
+                    {
+                        break;
+                    }
+
+                    count++;
+                    searchIndex = matchIndex + marker.Length;
+                }
+            }
+
+            return count;
         }
 
         private static string ExtractControlPlaneId(
@@ -717,19 +1178,42 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Output
             IReadOnlyDictionary<string, RuntimeHostProjection> runtimeById,
             string? runtimeInstanceId)
         {
-            if (!string.IsNullOrWhiteSpace(runtimeInstanceId) &&
-                runtimeById.TryGetValue(runtimeInstanceId, out var projection))
+            if (!string.IsNullOrWhiteSpace(runtimeInstanceId))
             {
+                if (runtimeById.TryGetValue(runtimeInstanceId, out var projection))
+                {
+                    return new RuntimeHostReference(
+                        projection.HostKey,
+                        projection.Kind,
+                        projection.DisplayName,
+                        projection.Snapshot.HostId,
+                        string.Equals(projection.Kind, "KubernetesPod", StringComparison.Ordinal)
+                            ? projection.Snapshot.HostId
+                            : null,
+                        projection.Snapshot.KubernetesPodName);
+                }
+
+                // A durable placement can retain an authoritative RuntimeInstanceId even when
+                // the physical-host snapshot is absent from the lifecycle projection. The runtime
+                // identity is still known and must not be reported as an unknown host. This is the
+                // same provider-neutral RuntimeHost fallback used by snapshots without HostId,
+                // process, or Kubernetes fields.
                 return new RuntimeHostReference(
-                    projection.HostKey,
-                    projection.Kind,
-                    projection.DisplayName);
+                    string.Concat("runtime:", runtimeInstanceId),
+                    "RuntimeHost",
+                    runtimeInstanceId,
+                    null,
+                    null,
+                    null);
             }
 
             return new RuntimeHostReference(
                 string.Empty,
                 "Unknown",
-                string.Empty);
+                string.Empty,
+                null,
+                null,
+                null);
         }
 
         private static bool IsRuntimeActive(
@@ -782,6 +1266,13 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Output
         private sealed record RuntimeHostReference(
             string HostKey,
             string Kind,
-            string DisplayName);
+            string DisplayName,
+            string? HostId,
+            string? KubernetesPodUid,
+            string? KubernetesPodName);
+        private sealed record ProductionRuntimeLifecycleGraph(
+            IReadOnlyList<AiRuntimeLifecycleEvent> Events,
+            IReadOnlySet<string> TrustedFailureIncidentIds);
+
     }
 }

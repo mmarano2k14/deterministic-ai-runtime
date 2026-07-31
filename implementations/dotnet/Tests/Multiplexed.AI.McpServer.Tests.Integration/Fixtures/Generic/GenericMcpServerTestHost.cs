@@ -9,6 +9,7 @@ using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Capacity;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Lifecycle;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers.Transport;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
@@ -21,6 +22,7 @@ using Multiplexed.AI.Runtime.ControlPlane.DI;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Kubernetes;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strategy.Kubernetes;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strategy.Process;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Lifecycle;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http.ScaleOut;
 using System.Globalization;
 
@@ -44,6 +46,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic
         private const string LocalControlPlaneMode = "ControlPlaneWithLocalRuntimeInstances";
         private const string HttpScaleOutHostManagerMode = "HostManager";
         private const string UseCapturingLedgerRecorderSettingKey = "Tests:UseCapturingLedgerRecorder";
+        private const string UseMongoRuntimeLifecycleJournalSettingKey = "Tests:UseMongoRuntimeLifecycleJournal";
 
         /// <summary>
         /// The configuration settings used to start the test host.
@@ -204,6 +207,14 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic
                 else
                 {
                     services.AddAiControlPlaneRuntimeObservability();
+                }
+
+                if (ShouldUseMongoRuntimeLifecycleJournal(settings))
+                {
+                    services.RemoveAll<IAiRuntimeLifecycleJournal>();
+                    services.AddMongoAiRuntimeLifecycleJournal();
+                    Console.WriteLine(
+                        "[TEST MCP HOST] Durable Mongo runtime lifecycle journal registered.");
                 }
 
                 RegisterHostManagerModeTestServices(services);
@@ -371,6 +382,16 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic
         {
             return !settings.TryGetValue(UseCapturingLedgerRecorderSettingKey, out var value) ||
                 bool.Parse(value ?? "true");
+        }
+
+        private static bool ShouldUseMongoRuntimeLifecycleJournal(
+            IReadOnlyDictionary<string, string?> settings)
+        {
+            return settings.TryGetValue(
+                    UseMongoRuntimeLifecycleJournalSettingKey,
+                    out var value) &&
+                bool.TryParse(value, out var enabled) &&
+                enabled;
         }
 
         /// <summary>

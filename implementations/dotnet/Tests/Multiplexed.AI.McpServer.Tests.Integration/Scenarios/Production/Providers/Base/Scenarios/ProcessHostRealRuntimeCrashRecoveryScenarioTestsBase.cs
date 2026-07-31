@@ -5,6 +5,7 @@ using Multiplexed.Abstractions.AI.ControlPlane.Admission.Placement;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Forensics;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager.ProcessControl;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Lifecycle;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Recovery;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue;
@@ -1144,6 +1145,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 .ToArray();
 
             await WriteOrDeferRuntimeTopologySummaryAsync(
+                    host.Services,
                     registry,
                     controlPlaneId,
                     runtimeRunPlacements,
@@ -1444,6 +1446,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 $"[{profile.LogPrefix} REAL RUNTIME CRASH PROOF] Recovered redispatch DAG execution completed all durable steps. RecoveredExecutionId='{recoveredExecutionId}', CompletedSteps='{StepCount}'.");
 
             await WriteOrDeferRuntimeTopologySummaryAsync(
+                    host.Services,
                     registry,
                     controlPlaneId,
                     new[]
@@ -1563,6 +1566,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             }
 
             settings["Tests:UseCapturingLedgerRecorder"] = "false";
+            settings["Tests:UseMongoRuntimeLifecycleJournal"] = "true";
             settings["AiRuntimeRecoveryForensics:StrictPersistence"] = "true";
 
             await OnCrashRecoveryScenarioStartingAsync(
@@ -2619,6 +2623,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                         .ToArray();
 
                 await WriteOrDeferRuntimeTopologySummaryAsync(
+                        host.Services,
                         registry,
                         controlPlaneId,
                         runtimeRunPlacements,
@@ -2854,14 +2859,28 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                     result.Exception.ToString());
             }
 
-            output.WriteLine(
-                ProductionRuntimeTopologySummaryOutput.BuildParallel(
-                    deferredParallelRuntimeTopologySummaries.Values.ToArray(),
-                    parallelism));
-
             var failures = results
                 .Where(result => result.Exception is not null)
                 .ToArray();
+            var parallelRuntimeTopologySummary =
+                ProductionRuntimeTopologySummaryOutput.BuildParallel(
+                    deferredParallelRuntimeTopologySummaries.Values.ToArray(),
+                    parallelism);
+
+            output.WriteLine(parallelRuntimeTopologySummary);
+
+            if (failures.Length == 0 &&
+                profile.HostCreationMode == AiRuntimeHostCreationMode.KubernetesPool &&
+                profile.ProviderLabel.Contains(
+                    "kubernetes-runtime-pool-pod-failure-p5",
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                AssertParallelRuntimeTopologySummary(
+                    parallelRuntimeTopologySummary,
+                    parallelism,
+                    expectedSubmittedRunCountPerScenario,
+                    summaryScenario);
+            }
 
             output.WriteLine(string.Empty);
 
@@ -2878,6 +2897,105 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                     $"{failures.Length} of {parallelism} parallel crash-recovery scenarios failed.",
                     failures.Select(result => result.Exception!));
             }
+        }
+
+        private void AssertParallelRuntimeTopologySummary(
+            string summary,
+            int parallelism,
+            int expectedSubmittedRunCountPerScenario,
+            ProductionRuntimeScenarioDefinition scenario)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(summary);
+            ArgumentNullException.ThrowIfNull(scenario);
+
+            var expectedMovedRunCount = parallelism * scenario.Tenants
+                .Where(tenant => !IsSafeCrashScenarioTenant(tenant))
+                .Sum(tenant => tenant.Run.RunCount);
+            var expectedStableRunCount = parallelism * scenario.Tenants
+                .Where(IsSafeCrashScenarioTenant)
+                .Sum(tenant => tenant.Run.RunCount);
+
+            RequireParallelRuntimeTopologyMetric(
+                summary,
+                "CapturedScenarioCount",
+                parallelism);
+            RequireParallelRuntimeTopologyMetric(
+                summary,
+                "MissingScenarioCount",
+                0);
+            RequireParallelRuntimeTopologyMetric(
+                summary,
+                "RunPlacementCount",
+                parallelism * expectedSubmittedRunCountPerScenario);
+            RequireParallelRuntimeTopologyMetric(
+                summary,
+                "MovedRunCount",
+                expectedMovedRunCount);
+            RequireParallelRuntimeTopologyMetric(
+                summary,
+                "StableRunCount",
+                expectedStableRunCount);
+            RequireParallelRuntimeTopologyMetric(
+                summary,
+                "UnknownInitialHostCount",
+                0);
+
+            var expectedDeletedPodCount = parallelism * scenario.Tenants.Count(tenant =>
+                !IsSafeCrashScenarioTenant(tenant));
+
+
+            RequireParallelRuntimeTopologyMetric(
+                summary,
+                "DeletedPodCount",
+                expectedDeletedPodCount);
+            RequireParallelRuntimeTopologyMetric(
+                summary,
+                "HistoricalRuntimeCount",
+                expectedDeletedPodCount * 3);
+        }
+
+        private static void RequireParallelRuntimeTopologyMetric(
+            string summary,
+            string metricName,
+            int expectedValue)
+        {
+            var expectedText = string.Concat(
+                metricName,
+                "='",
+                expectedValue.ToString(CultureInfo.InvariantCulture),
+                "'");
+
+            if (summary.Contains(expectedText, StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            var metricPrefix = string.Concat(metricName, "='");
+            var actualMetric = summary
+                .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .FirstOrDefault(line => line.StartsWith(metricPrefix, StringComparison.Ordinal))
+                ?? "<missing>";
+            var unknownPlacementDetails =
+                string.Equals(metricName, "UnknownInitialHostCount", StringComparison.Ordinal)
+                    ? string.Join(
+                        " | ",
+                        summary
+                            .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                            .Where(line => line.Contains("InitialHostKind='Unknown'", StringComparison.Ordinal))
+                            .Take(10))
+                    : string.Empty;
+
+            throw new InvalidOperationException(
+                string.Concat(
+                    "The durable parallel runtime topology summary did not contain the expected metric. Expected='",
+                    expectedText,
+                    "', Actual='",
+                    actualMetric,
+                    "'",
+                    string.IsNullOrWhiteSpace(unknownPlacementDetails)
+                        ? string.Empty
+                        : string.Concat(", UnknownPlacements='", unknownPlacementDetails, "'"),
+                    "."));
         }
 
         /// <summary>
@@ -3473,11 +3591,13 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
         }
 
         private async Task WriteOrDeferRuntimeTopologySummaryAsync(
+            IServiceProvider services,
             IAiRuntimeInstanceRegistry registry,
             string controlPlaneId,
             IReadOnlyCollection<ProductionRuntimeRunPlacement> runPlacements,
             bool deferForParallelBatch)
         {
+            ArgumentNullException.ThrowIfNull(services);
             ArgumentNullException.ThrowIfNull(registry);
             ArgumentException.ThrowIfNullOrWhiteSpace(controlPlaneId);
             ArgumentNullException.ThrowIfNull(runPlacements);
@@ -3489,6 +3609,21 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                     ? history.Values.ToArray()
                     : Array.Empty<AiRuntimeInstanceSnapshot>();
 
+            var lifecycleJournal =
+                services.GetService<IAiRuntimeLifecycleJournal>();
+
+            var tenantRoles =
+                runPlacements
+                    .GroupBy(
+                        placement => placement.TenantId,
+                        StringComparer.Ordinal)
+                    .ToDictionary(
+                        group => group.Key,
+                        group => group
+                            .Select(placement => placement.TenantRole)
+                            .First(role => !string.IsNullOrWhiteSpace(role)),
+                        StringComparer.Ordinal);
+
             var summary =
                 await ProductionRuntimeTopologySummaryOutput
                     .CreateAsync(
@@ -3497,8 +3632,24 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                         profile.HostCreationMode,
                         runPlacements,
                         historicalRuntimeSnapshots:
-                            historicalSnapshots)
+                            historicalSnapshots,
+                        lifecycleJournal:
+                            lifecycleJournal,
+                        tenantRoles:
+                            tenantRoles)
                     .ConfigureAwait(false);
+
+            if (lifecycleJournal is not null &&
+                !summary.Contains(
+                    "TopologySource='RuntimeLifecycleJournal'",
+                    StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    string.Concat(
+                        "The durable runtime lifecycle journal was enabled, but the topology summary did not use it. ControlPlaneId='",
+                        controlPlaneId,
+                        "'."));
+            }
 
             if (deferForParallelBatch)
             {

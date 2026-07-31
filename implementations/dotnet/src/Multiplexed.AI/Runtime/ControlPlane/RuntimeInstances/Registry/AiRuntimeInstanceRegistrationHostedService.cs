@@ -1,15 +1,18 @@
-﻿using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.ControlPlane.Discovery;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Capacity;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Environment;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager.Kubernetes;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Lifecycle;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
 using Multiplexed.Abstractions.AI.Execution.Instance.Worker;
 using Multiplexed.Abstractions.AI.Runtime.Execution.Instance.Worker;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Lifecycle;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
 {
@@ -41,6 +44,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
         private readonly IReadOnlyCollection<IAiRuntimeInstanceCapacityStore> capacityStores;
         private readonly AiRuntimeInstanceRegistrationOptions options;
         private readonly ILogger<AiRuntimeInstanceRegistrationHostedService> logger;
+        private readonly IAiRuntimeLifecycleJournal lifecycleJournal;
 
         private string? poolId;
         private string? hostId;
@@ -69,6 +73,30 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
             IEnumerable<IAiRuntimeInstanceCapacityStore> capacityStores,
             IOptions<AiRuntimeInstanceRegistrationOptions> options,
             ILogger<AiRuntimeInstanceRegistrationHostedService> logger)
+            : this(
+                registry,
+                environmentProvider,
+                controller,
+                controlPlaneIdResolver,
+                capacityStores,
+                options,
+                logger,
+                NoopAiRuntimeLifecycleJournal.Instance)
+        {
+        }
+
+        /// <summary>
+        /// Initializes a runtime registration service with durable lifecycle journaling.
+        /// </summary>
+        public AiRuntimeInstanceRegistrationHostedService(
+            IAiRuntimeInstanceRegistry registry,
+            IAiRuntimeEnvironmentProvider environmentProvider,
+            IAiRuntimePipelineBackgroundController controller,
+            IAiControlPlaneIdResolver controlPlaneIdResolver,
+            IEnumerable<IAiRuntimeInstanceCapacityStore> capacityStores,
+            IOptions<AiRuntimeInstanceRegistrationOptions> options,
+            ILogger<AiRuntimeInstanceRegistrationHostedService> logger,
+            IAiRuntimeLifecycleJournal lifecycleJournal)
         {
             this.registry = registry ?? throw new ArgumentNullException(nameof(registry));
             this.environmentProvider = environmentProvider ?? throw new ArgumentNullException(nameof(environmentProvider));
@@ -78,6 +106,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
                 ?? throw new ArgumentNullException(nameof(capacityStores));
             this.options = options?.Value ?? throw new ArgumentNullException(nameof(options));
             this.logger = logger ?? throw new ArgumentNullException(nameof(logger));
+            this.lifecycleJournal = lifecycleJournal ?? throw new ArgumentNullException(nameof(lifecycleJournal));
 
             SafeLogInformation(
                 "Runtime capacity stores resolved. Count={StoreCount}, Stores={Stores}, RegistryType={RegistryType}",
@@ -434,6 +463,17 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
                     .RegisterAsync(registration, cancellationToken)
                     .ConfigureAwait(false);
 
+            var registeredLifecycleEvent =
+                await this.AppendRuntimeLifecycleEventOnceAsync(
+                        AiRuntimeLifecycleEventType.RuntimeRegistered,
+                        snapshot,
+                        providerName,
+                        causationId: null,
+                        previousStatus: null,
+                        currentStatus: "registered",
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
             var readBackSnapshot =
                 await this.registry
                     .GetAsync(
@@ -482,6 +522,151 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
                     this.runtimeMetadata,
                     cancellationToken)
                 .ConfigureAwait(false);
+
+            await this.AppendRuntimeLifecycleEventOnceAsync(
+                    AiRuntimeLifecycleEventType.RuntimeReady,
+                    snapshot,
+                    providerName,
+                    registeredLifecycleEvent.EventId,
+                    previousStatus: "registered",
+                    currentStatus: AiRuntimeInstanceStatus.Ready.ToString(),
+                    cancellationToken)
+                .ConfigureAwait(false);
+        }
+
+        /// <summary>
+        /// Appends one stable runtime lifecycle event for the current registration incarnation.
+        /// </summary>
+        private async Task<AiRuntimeLifecycleEvent> AppendRuntimeLifecycleEventOnceAsync(
+            string eventType,
+            AiRuntimeInstanceSnapshot snapshot,
+            string providerName,
+            string? causationId,
+            string? previousStatus,
+            string? currentStatus,
+            CancellationToken cancellationToken)
+        {
+            var registeredAtUtc = snapshot.RegisteredAtUtc == default
+                ? DateTimeOffset.UtcNow
+                : snapshot.RegisteredAtUtc;
+            var eventId = $"{eventType}:{snapshot.ControlPlaneId}:{snapshot.RuntimeInstanceId}:{registeredAtUtc.UtcDateTime.Ticks}";
+            var existing = await this.lifecycleJournal
+                .GetByEventIdAsync(eventId, cancellationToken)
+                .ConfigureAwait(false);
+
+            if (existing is not null)
+            {
+                return existing;
+            }
+
+            var hostCreationMode = ResolveHostCreationMode(snapshot);
+            var isKubernetes = hostCreationMode is
+                AiRuntimeHostCreationMode.Kubernetes or
+                AiRuntimeHostCreationMode.KubernetesPool;
+            var isSharedInfrastructure = !string.IsNullOrWhiteSpace(snapshot.PoolId);
+            var correlationId = GetMetadataValue(
+                    snapshot.Metadata,
+                    AiRuntimeHostMetadataKeys.LifecycleCorrelationId)
+                ?? snapshot.HostId
+                ?? $"{snapshot.ControlPlaneId}:{snapshot.RuntimeInstanceId}:{registeredAtUtc.UtcDateTime.Ticks}";
+
+            var timestampUtc = eventType == AiRuntimeLifecycleEventType.RuntimeRegistered
+                ? registeredAtUtc
+                : DateTimeOffset.UtcNow;
+
+            if (eventType != AiRuntimeLifecycleEventType.RuntimeRegistered &&
+                timestampUtc <= registeredAtUtc)
+            {
+                timestampUtc = registeredAtUtc.AddTicks(1);
+            }
+
+            var lifecycleEvent = new AiRuntimeLifecycleEvent
+            {
+                EventId = eventId,
+                EventType = eventType,
+                TimestampUtc = timestampUtc,
+                ControlPlaneId = snapshot.ControlPlaneId ?? this.controlPlaneId ?? string.Empty,
+                HostCreationMode = hostCreationMode,
+                ProviderName = providerName,
+                PoolId = snapshot.PoolId,
+                HostId = snapshot.HostId,
+                KubernetesPodUid = isKubernetes ? snapshot.HostId : null,
+                KubernetesNamespace = snapshot.KubernetesNamespace,
+                KubernetesPodName = snapshot.KubernetesPodName,
+                KubernetesNodeName = snapshot.KubernetesNodeName,
+                RuntimeInstanceId = snapshot.RuntimeInstanceId,
+                RuntimeId = snapshot.RuntimeId,
+                ProcessId = snapshot.ProcessId,
+                TenantId = isSharedInfrastructure ? null : snapshot.TenantId,
+                TenantGroupId = isSharedInfrastructure ? null : snapshot.TenantGroupId,
+                CorrelationId = correlationId,
+                CausationId = causationId,
+                PreviousStatus = previousStatus,
+                CurrentStatus = currentStatus,
+                Metadata = CreateRuntimeLifecycleMetadata(snapshot)
+            };
+
+            await this.lifecycleJournal
+                .AppendAsync(lifecycleEvent, cancellationToken)
+                .ConfigureAwait(false);
+
+            return lifecycleEvent;
+        }
+
+        /// <summary>
+        /// Resolves the host creation mode from propagated host metadata and typed runtime identity.
+        /// </summary>
+        private static AiRuntimeHostCreationMode? ResolveHostCreationMode(
+            AiRuntimeInstanceSnapshot snapshot)
+        {
+            var configuredMode = GetMetadataValue(
+                snapshot.Metadata,
+                AiRuntimeHostMetadataKeys.HostCreationMode);
+
+            if (Enum.TryParse<AiRuntimeHostCreationMode>(
+                    configuredMode,
+                    ignoreCase: true,
+                    out var hostCreationMode))
+            {
+                return hostCreationMode;
+            }
+
+            var isKubernetes =
+                !string.IsNullOrWhiteSpace(snapshot.KubernetesNamespace) ||
+                !string.IsNullOrWhiteSpace(snapshot.KubernetesPodName) ||
+                !string.IsNullOrWhiteSpace(snapshot.KubernetesNodeName);
+
+            if (isKubernetes)
+            {
+                return string.IsNullOrWhiteSpace(snapshot.PoolId)
+                    ? AiRuntimeHostCreationMode.Kubernetes
+                    : AiRuntimeHostCreationMode.KubernetesPool;
+            }
+
+            return snapshot.ProcessId.HasValue
+                ? AiRuntimeHostCreationMode.Process
+                : null;
+        }
+
+        /// <summary>
+        /// Creates compact non-authoritative diagnostics for one runtime lifecycle event.
+        /// </summary>
+        private static IReadOnlyDictionary<string, string> CreateRuntimeLifecycleMetadata(
+            AiRuntimeInstanceSnapshot snapshot)
+        {
+            var metadata = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+            if (!string.IsNullOrWhiteSpace(snapshot.HostName))
+            {
+                metadata["hostName"] = snapshot.HostName;
+            }
+
+            if (!string.IsNullOrWhiteSpace(snapshot.RuntimeVersion))
+            {
+                metadata["runtimeVersion"] = snapshot.RuntimeVersion;
+            }
+
+            return metadata;
         }
 
         /// <summary>
@@ -625,6 +810,25 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
                 await this.registry
                     .UnregisterAsync(this.runtimeInstanceId, cancellationToken)
                     .ConfigureAwait(false);
+
+            if (snapshot is not null)
+            {
+                var providerName =
+                    GetMetadataValue(
+                        snapshot.Metadata,
+                        AiRuntimeInstanceProviderMetadataKeys.ProviderName)
+                    ?? "unknown";
+
+                await this.AppendRuntimeLifecycleEventOnceAsync(
+                        AiRuntimeLifecycleEventType.RuntimeStopped,
+                        snapshot,
+                        providerName,
+                        causationId: null,
+                        previousStatus: null,
+                        currentStatus: AiRuntimeInstanceStatus.Stopped.ToString(),
+                        cancellationToken: cancellationToken)
+                    .ConfigureAwait(false);
+            }
 
             await RemoveCapacityDescriptorAsync(
                     this.runtimeInstanceId,
