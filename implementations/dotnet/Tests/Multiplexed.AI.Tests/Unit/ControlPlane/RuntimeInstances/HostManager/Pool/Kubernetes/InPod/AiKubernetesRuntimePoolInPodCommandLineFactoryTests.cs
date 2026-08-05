@@ -72,7 +72,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager.Po
                     TransportName = "http",
                     WorkerCountPerInstance = 3,
                     MaxConcurrentRunsPerInstance = 3,
-                    LocalQueueCapacity = 100,
+                    LocalQueueCapacity = 0,
                     ExecutionContextSnapshot =
                         new ExecutionContextSnapshot
                         {
@@ -144,6 +144,9 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager.Po
                 arguments);
             Assert.Contains(
                 "--AiEngine:ControlPlane:ControlPlaneId=cp-01",
+                arguments);
+            Assert.Contains(
+                "--AiKubernetesRuntimePoolInPod:LocalQueueCapacity=0",
                 arguments);
             Assert.Equal(
                 arguments.Count,

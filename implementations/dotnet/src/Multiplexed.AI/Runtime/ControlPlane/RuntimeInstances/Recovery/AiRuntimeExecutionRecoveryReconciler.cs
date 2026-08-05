@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
@@ -62,6 +63,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery
         private const string RuntimeStatusNotIncludedReason = "runtime-status-not-included";
         private const string NoRecoverableRuntimeRunsReason = "no-recoverable-runtime-runs";
         private const string OrphanedRuntimeInstanceReason = "orphaned-runtime-instance";
+        private const string OrphanedRuntimeInstanceUnconfirmedReason =
+            "orphaned-runtime-instance-unconfirmed";
 
         private readonly IAiRuntimeInstanceRegistry runtimeInstanceRegistry;
         private readonly IAiRuntimeRunExecutionIndex runtimeRunExecutionIndex;
@@ -70,6 +73,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery
         private readonly IAiRuntimeRecoveryForensicsRecorder forensicsRecorder;
         private readonly IAiControlPlaneObserver observer;
         private readonly AiRuntimeExecutionRecoveryReconciliationOptions options;
+        private readonly ConcurrentDictionary<string, DateTimeOffset>
+            orphanedRuntimeInstanceFirstObservedAtUtc = new(StringComparer.Ordinal);
 
         /// <summary>
         /// Initializes a new instance of the <see cref="AiRuntimeExecutionRecoveryReconciler"/> class.
@@ -184,6 +189,13 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery
             this.forensicsRecorder = forensicsRecorder;
             this.observer = observer;
             this.options = options.Value;
+
+            if (this.options.OrphanedRuntimeInstanceConfirmationPeriod < TimeSpan.Zero)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(options),
+                    "Orphaned runtime instance confirmation period cannot be negative.");
+            }
         }
 
         /// <inheritdoc />
@@ -221,6 +233,13 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery
                         .Select(runtimeInstance => runtimeInstance.RuntimeInstanceId)
                         .Where(runtimeInstanceId => !string.IsNullOrWhiteSpace(runtimeInstanceId))
                         .ToHashSet(StringComparer.Ordinal);
+
+                foreach (var knownRuntimeInstanceId in knownRuntimeInstanceIds)
+                {
+                    this.orphanedRuntimeInstanceFirstObservedAtUtc.TryRemove(
+                        knownRuntimeInstanceId,
+                        out _);
+                }
 
                 var scannedRuntimeInstanceCount = 0;
                 var ignoredRuntimeInstanceCount = 0;
@@ -311,6 +330,24 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery
                     .ListRecoverableAsync(cancellationToken)
                     .ConfigureAwait(false);
 
+                var orphanedRecoverableRuntimeInstanceIds =
+                    orphanedRecoverableRuns
+                        .Select(run => run.RuntimeInstanceId)
+                        .Where(runtimeInstanceId => !string.IsNullOrWhiteSpace(runtimeInstanceId))
+                        .ToHashSet(StringComparer.Ordinal);
+
+                foreach (var observedRuntimeInstanceId in
+                    this.orphanedRuntimeInstanceFirstObservedAtUtc.Keys)
+                {
+                    if (knownRuntimeInstanceIds.Contains(observedRuntimeInstanceId) ||
+                        !orphanedRecoverableRuntimeInstanceIds.Contains(observedRuntimeInstanceId))
+                    {
+                        this.orphanedRuntimeInstanceFirstObservedAtUtc.TryRemove(
+                            observedRuntimeInstanceId,
+                            out _);
+                    }
+                }
+
                 Console.WriteLine(
                     $"[EXECUTION RECOVERY ORPHANED SCAN] RecoverableCount='{orphanedRecoverableRuns.Count}', KnownRuntimeInstanceIds='{string.Join(",", knownRuntimeInstanceIds)}', Runs='{FormatIndexEntries(orphanedRecoverableRuns)}'.");
 
@@ -334,10 +371,33 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery
                         continue;
                     }
 
+                    if (!this.IsOrphanedRuntimeInstanceConfirmed(
+                            orphanedRun.RuntimeInstanceId,
+                            out var firstObservedAtUtc,
+                            out var observedFor))
+                    {
+                        Console.WriteLine(
+                            $"[EXECUTION RECOVERY ORPHANED DEFER] LocalRunId='{orphanedRun.RunId}', ExecutionId='{orphanedRun.ExecutionId}', Status='{orphanedRun.Status}', RuntimeInstanceId='{orphanedRun.RuntimeInstanceId}', FirstObservedAtUtc='{firstObservedAtUtc:O}', ObservedFor='{observedFor}', RequiredConfirmationPeriod='{this.options.OrphanedRuntimeInstanceConfirmationPeriod}'.");
+
+                        decisions.Add(new AiRuntimeExecutionRecoveryDecision
+                        {
+                            RuntimeInstanceId = orphanedRun.RuntimeInstanceId,
+                            LocalRunId = orphanedRun.RunId,
+                            ExecutionId = orphanedRun.ExecutionId,
+                            TenantId = orphanedRun.ExecutionContextSnapshot?.TenantId,
+                            TenantGroupId = orphanedRun.ExecutionContextSnapshot?.TenantGroupId,
+                            Action = "defer-orphaned-runtime-instance",
+                            Reason = OrphanedRuntimeInstanceUnconfirmedReason,
+                            Changed = false
+                        });
+
+                        continue;
+                    }
+
                     discoveredUnfinishedRunCount++;
 
                     Console.WriteLine(
-                        $"[EXECUTION RECOVERY ORPHANED CANDIDATE] LocalRunId='{orphanedRun.RunId}', ExecutionId='{orphanedRun.ExecutionId}', Status='{orphanedRun.Status}', RuntimeInstanceId='{orphanedRun.RuntimeInstanceId}'.");
+                        $"[EXECUTION RECOVERY ORPHANED CANDIDATE] LocalRunId='{orphanedRun.RunId}', ExecutionId='{orphanedRun.ExecutionId}', Status='{orphanedRun.Status}', RuntimeInstanceId='{orphanedRun.RuntimeInstanceId}', FirstObservedAtUtc='{firstObservedAtUtc:O}', ObservedFor='{observedFor}', RequiredConfirmationPeriod='{this.options.OrphanedRuntimeInstanceConfirmationPeriod}'.");
 
                     var changed =
                         await this.ProcessRecoveryCandidateAsync(
@@ -419,6 +479,28 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery
 
                 throw;
             }
+        }
+
+        /// <summary>
+        /// Determines whether a runtime instance has remained continuously absent long enough
+        /// for orphan recovery to become authoritative.
+        /// </summary>
+        private bool IsOrphanedRuntimeInstanceConfirmed(
+            string runtimeInstanceId,
+            out DateTimeOffset firstObservedAtUtc,
+            out TimeSpan observedFor)
+        {
+            var now = DateTimeOffset.UtcNow;
+
+            firstObservedAtUtc =
+                this.orphanedRuntimeInstanceFirstObservedAtUtc.GetOrAdd(
+                    runtimeInstanceId,
+                    now);
+
+            observedFor = now - firstObservedAtUtc;
+
+            return observedFor >=
+                this.options.OrphanedRuntimeInstanceConfirmationPeriod;
         }
 
         /// <summary>

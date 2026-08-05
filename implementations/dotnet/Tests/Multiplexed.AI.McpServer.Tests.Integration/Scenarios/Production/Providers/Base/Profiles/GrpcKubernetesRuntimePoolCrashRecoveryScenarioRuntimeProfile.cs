@@ -12,12 +12,47 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
     public sealed class GrpcKubernetesRuntimePoolCrashRecoveryScenarioRuntimeProfile :
         IRuntimePoolCrashRecoveryScenarioRuntimeProfile
     {
-        private static readonly RuntimePoolCrashRecoveryScenarioPlan Plan =
+        private static readonly RuntimePoolCrashRecoveryScenarioPlan DefaultPlan =
             RuntimePoolCrashRecoveryScenarioPlan.CreateAllInOne(
                 initialPodCount: 3,
                 maximumPodCount: 3,
                 initialRuntimeCountPerPod: 3,
                 maximumRuntimeCountPerPod: 3);
+
+        private readonly RuntimePoolCrashRecoveryScenarioPlan plan;
+
+        /// <summary>
+        /// Initializes the canonical three-Pod, three-runtime crash-recovery profile.
+        /// </summary>
+        public GrpcKubernetesRuntimePoolCrashRecoveryScenarioRuntimeProfile()
+            : this(DefaultPlan)
+        {
+        }
+
+        /// <summary>
+        /// Initializes a bounded Runtime Pool profile for a parameterized
+        /// machine-limit scenario.
+        /// </summary>
+        /// <param name="maximumPodCount">The maximum physical Pod count.</param>
+        /// <param name="runtimeCountPerPod">The exact child-runtime count per Pod.</param>
+        public GrpcKubernetesRuntimePoolCrashRecoveryScenarioRuntimeProfile(
+            int maximumPodCount,
+            int runtimeCountPerPod)
+            : this(
+                RuntimePoolCrashRecoveryScenarioPlan.CreateAllInOne(
+                    initialPodCount: maximumPodCount,
+                    maximumPodCount: maximumPodCount,
+                    initialRuntimeCountPerPod: runtimeCountPerPod,
+                    maximumRuntimeCountPerPod: runtimeCountPerPod))
+        {
+        }
+
+        private GrpcKubernetesRuntimePoolCrashRecoveryScenarioRuntimeProfile(
+            RuntimePoolCrashRecoveryScenarioPlan plan)
+        {
+            ArgumentNullException.ThrowIfNull(plan);
+            this.plan = plan;
+        }
 
         /// <inheritdoc />
         public AiRuntimeCapacityTopologyMode CapacityTopologyMode =>
@@ -47,7 +82,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
         public string PoolIdPrefix => "mcp-grpc-kubernetes-pool";
 
         /// <inheritdoc />
-        public RuntimePoolCrashRecoveryScenarioPlan CrashRecoveryPlan => Plan;
+        public RuntimePoolCrashRecoveryScenarioPlan CrashRecoveryPlan => plan;
 
         /// <inheritdoc />
         public Dictionary<string, string?> BuildSettings(

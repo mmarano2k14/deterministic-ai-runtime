@@ -37,6 +37,23 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
         }
 
         /// <inheritdoc />
+        public async Task<IReadOnlyList<V1Pod>> ListPodsAsync(
+            string namespaceName,
+            string? labelSelector = null,
+            CancellationToken cancellationToken = default)
+        {
+            var podList =
+                await this.client.CoreV1
+                    .ListNamespacedPodAsync(
+                        namespaceParameter: namespaceName,
+                        labelSelector: labelSelector,
+                        cancellationToken: cancellationToken)
+                    .ConfigureAwait(false);
+
+            return podList.Items?.ToArray() ?? Array.Empty<V1Pod>();
+        }
+
+        /// <inheritdoc />
         public Task<V1Service> CreateServiceAsync(
             V1Service service,
             string namespaceName,

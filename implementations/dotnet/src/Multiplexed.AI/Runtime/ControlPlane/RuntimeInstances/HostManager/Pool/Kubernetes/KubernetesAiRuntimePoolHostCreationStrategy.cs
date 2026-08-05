@@ -717,8 +717,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
         }
 
         /// <summary>
-        /// Waits until every child heartbeat has preserved the projected endpoint and restored
-        /// dispatchable capacity before the scale-out request is fulfilled.
+        /// Waits until every child heartbeat has preserved the projected endpoint and confirmed
+        /// transport-ready membership before the scale-out request is fulfilled. A ready runtime
+        /// may already be busy, so transient dispatch availability is not a startup requirement.
         /// </summary>
         private async Task WaitUntilProjectedCapacityReadyAsync(
             AiKubernetesRuntimePoolPodSpec podSpec,
@@ -779,7 +780,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
                             hostId,
                             StringComparison.Ordinal) ||
                         descriptor.Status != AiRuntimeInstanceStatus.Ready ||
-                        !descriptor.CanAcceptRun ||
                         !TryGetTransportEndpoint(
                             descriptor.Metadata,
                             out var projectedTransportEndpoint) ||

@@ -21,6 +21,12 @@ namespace Multiplexed.Abstractions.AI.ControlPlane.SharedController.Scaling
         /// The Kubernetes Runtime Pool host strategy rejected the request or the created
         /// Pod did not converge to exact ready membership.
         /// </summary>
-        Rejected = 2
+        Rejected = 2,
+
+        /// <summary>
+        /// Active Pods plus in-flight Pod creation reservations already consume the
+        /// configured physical Pod limit. No additional Pod was created.
+        /// </summary>
+        CapacityAlreadySatisfied = 3
     }
 }

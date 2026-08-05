@@ -14,9 +14,14 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
     /// Provides Kubernetes SDK backed lifecycle operations for one Runtime Pool Pod.
     /// </summary>
     public sealed class KubernetesSdkAiKubernetesRuntimePoolHostClient :
-        IAiKubernetesRuntimePoolHostClient
+        IAiKubernetesRuntimePoolHostClient,
+        IAiKubernetesRuntimePoolPodInventory
     {
         private const string ReadyConditionType = "Ready";
+        private const string RuntimePoolLabelSelector =
+            "multiplexed.ai/runtime-pool=true";
+        private const string PoolIdAnnotation =
+            "multiplexed.ai/pool-id";
 
         private readonly IKubernetesClientFactory clientFactory;
         private readonly AiKubernetesRuntimePoolSdkResourceFactory resourceFactory;
@@ -44,6 +49,36 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
         }
 
         /// <inheritdoc />
+        public async Task<int> CountRuntimePoolPodsAsync(
+            string namespaceName,
+            string poolId,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(namespaceName);
+            ArgumentException.ThrowIfNullOrWhiteSpace(poolId);
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var pods =
+                await this.clientFactory
+                    .CreateClient()
+                    .ListPodsAsync(
+                        namespaceName.Trim(),
+                        RuntimePoolLabelSelector,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+            return pods.Count(
+                pod =>
+                    pod.Metadata?.Annotations is not null &&
+                    pod.Metadata.Annotations.TryGetValue(
+                        PoolIdAnnotation,
+                        out var observedPoolId) &&
+                    StringComparer.Ordinal.Equals(
+                        observedPoolId,
+                        poolId.Trim()));
+        }
+
+        /// <inheritdoc />
         public async Task<AiKubernetesRuntimeHostCreateResult>
             CreateRuntimePoolHostAsync(
                 AiKubernetesRuntimePoolPodSpec podSpec,
@@ -53,6 +88,42 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
 
             try
             {
+                if (podSpec.MaximumPodCount != int.MaxValue)
+                {
+                    var physicalPodCount =
+                        await this.CountRuntimePoolPodsAsync(
+                                podSpec.Namespace,
+                                podSpec.PoolId,
+                                cancellationToken)
+                            .ConfigureAwait(false);
+
+                    if (physicalPodCount >= podSpec.MaximumPodCount)
+                    {
+                        var metadata =
+                            new Dictionary<string, string>(
+                                this.resourceFactory.CreateMetadata(
+                                    podSpec,
+                                    pod: null,
+                                    service: null),
+                                StringComparer.OrdinalIgnoreCase)
+                            {
+                                ["runtime.pool.physicalPodCount"] =
+                                    physicalPodCount.ToString(),
+                                ["runtime.pool.maximumPodCount"] =
+                                    podSpec.MaximumPodCount.ToString(),
+                                ["runtime.pool.capacityAlreadySatisfied"] =
+                                    bool.TrueString
+                            };
+
+                        return AiKubernetesRuntimeHostCreateResult.Rejected(
+                            podSpec.Namespace,
+                            podSpec.PodName,
+                            "kubernetes-runtime-pool-physical-pod-capacity-already-satisfied",
+                            retryable: true,
+                            metadata: metadata);
+                    }
+                }
+
                 var client = this.clientFactory.CreateClient();
                 var desiredPod =
                     this.resourceFactory.CreatePod(podSpec);

@@ -3,6 +3,7 @@ using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Scaling;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Kubernetes;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Kubernetes.Client;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Kubernetes.Failure;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strategy;
 
@@ -32,6 +33,12 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
             hostCreationStrategies;
         private readonly IAiKubernetesRuntimePoolPodMembershipEnumerator
             membershipEnumerator;
+        private readonly IAiRuntimePoolMembershipReader?
+            runtimePoolMembershipReader;
+        private readonly IAiRuntimePoolPodCreationReservationStore?
+            podCreationReservationStore;
+        private readonly IAiKubernetesRuntimePoolPodInventory?
+            physicalPodInventory;
         private readonly IAiRuntimeHostManager? runtimeHostManager;
         private readonly AiKubernetesRuntimePoolOptions poolOptions;
         private readonly AiKubernetesRuntimePoolHostOptions hostOptions;
@@ -66,6 +73,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
                 membershipEnumerator,
                 poolOptions,
                 hostOptions,
+                runtimePoolMembershipReader: null,
+                podCreationReservationStore: null,
+                physicalPodInventory: null,
                 runtimeHostManager: null)
         {
         }
@@ -98,6 +108,47 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
                 membershipEnumerator,
                 poolOptions,
                 hostOptions,
+                runtimePoolMembershipReader: null,
+                podCreationReservationStore: null,
+                physicalPodInventory: null,
+                runtimeHostManager ??
+                    throw new ArgumentNullException(
+                        nameof(runtimeHostManager)))
+        {
+        }
+
+        /// <summary>
+        /// Initializes the production executor with authoritative runtime membership
+        /// and distributed physical Pod creation reservations.
+        /// </summary>
+        public AiRuntimePoolPodCreationExecutor(
+            IEnumerable<IAiRuntimeHostCreationStrategy>
+                hostCreationStrategies,
+            IAiKubernetesRuntimePoolPodMembershipEnumerator
+                membershipEnumerator,
+            IOptions<AiKubernetesRuntimePoolOptions> poolOptions,
+            IOptions<AiKubernetesRuntimePoolHostOptions> hostOptions,
+            IAiRuntimePoolMembershipReader
+                runtimePoolMembershipReader,
+            IAiRuntimePoolPodCreationReservationStore
+                podCreationReservationStore,
+            IAiKubernetesRuntimePoolPodInventory
+                physicalPodInventory,
+            IAiRuntimeHostManager runtimeHostManager)
+            : this(
+                MaterializeStrategies(hostCreationStrategies),
+                membershipEnumerator,
+                poolOptions,
+                hostOptions,
+                runtimePoolMembershipReader ??
+                    throw new ArgumentNullException(
+                        nameof(runtimePoolMembershipReader)),
+                podCreationReservationStore ??
+                    throw new ArgumentNullException(
+                        nameof(podCreationReservationStore)),
+                physicalPodInventory ??
+                    throw new ArgumentNullException(
+                        nameof(physicalPodInventory)),
                 runtimeHostManager ??
                     throw new ArgumentNullException(
                         nameof(runtimeHostManager)))
@@ -111,6 +162,12 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
                 membershipEnumerator,
             IOptions<AiKubernetesRuntimePoolOptions> poolOptions,
             IOptions<AiKubernetesRuntimePoolHostOptions> hostOptions,
+            IAiRuntimePoolMembershipReader?
+                runtimePoolMembershipReader,
+            IAiRuntimePoolPodCreationReservationStore?
+                podCreationReservationStore,
+            IAiKubernetesRuntimePoolPodInventory?
+                physicalPodInventory,
             IAiRuntimeHostManager? runtimeHostManager)
         {
             this.hostCreationStrategies = hostCreationStrategies;
@@ -127,6 +184,15 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
             this.hostOptions =
                 hostOptions?.Value ??
                 throw new ArgumentNullException(nameof(hostOptions));
+
+            this.runtimePoolMembershipReader =
+                runtimePoolMembershipReader;
+
+            this.podCreationReservationStore =
+                podCreationReservationStore;
+
+            this.physicalPodInventory =
+                physicalPodInventory;
 
             this.runtimeHostManager = runtimeHostManager;
         }
@@ -170,6 +236,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
                     candidate.PoolId!,
                     primaryRuntimeInstanceId);
 
+            var podCreationReservationAcquired = false;
+            var preservePodCreationReservationUntilExpiry = false;
+
             await this.executionGate
                 .WaitAsync(cancellationToken)
                 .ConfigureAwait(false);
@@ -186,6 +255,23 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
                             AiRuntimePoolPodCreationStatus.AlreadyApplied
                     };
                 }
+
+                var capacityAuthority =
+                    await this.TryAcquirePodCreationAuthorityAsync(
+                            request,
+                            candidate,
+                            hostRequestId,
+                            primaryRuntimeInstanceId,
+                            cancellationToken)
+                        .ConfigureAwait(false);
+
+                if (capacityAuthority.CapacityResult is not null)
+                {
+                    return capacityAuthority.CapacityResult;
+                }
+
+                podCreationReservationAcquired =
+                    capacityAuthority.ReservationAcquired;
 
                 var strategy = this.ResolveKubernetesPoolStrategy();
 
@@ -224,6 +310,16 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
                         startResult.Retryable);
                 }
 
+                /*
+                 * A physical Pod now exists. Keep the reservation until exact
+                 * membership convergence proves the Pod has become active. If
+                 * convergence fails, its TTL remains as conservative shadow
+                 * capacity so a late-starting Pod cannot be followed by an
+                 * immediate over-limit replacement.
+                 */
+                preservePodCreationReservationUntilExpiry =
+                    podCreationReservationAcquired;
+
                 if (!StringComparer.Ordinal.Equals(
                         startResult.RuntimeInstanceId,
                         primaryRuntimeInstanceId))
@@ -253,6 +349,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
                             primaryRuntimeInstanceId,
                             cancellationToken)
                         .ConfigureAwait(false);
+
+                preservePodCreationReservationUntilExpiry = false;
 
                 var result =
                     new AiRuntimePoolPodCreationResult
@@ -288,7 +386,297 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
             }
             finally
             {
-                this.executionGate.Release();
+                try
+                {
+                    if (podCreationReservationAcquired &&
+                        !preservePodCreationReservationUntilExpiry &&
+                        this.podCreationReservationStore is not null)
+                    {
+                        await this.podCreationReservationStore
+                            .ReleaseAsync(
+                                request.ControlPlaneId,
+                                candidate.PoolId!,
+                                hostRequestId,
+                                CancellationToken.None)
+                            .ConfigureAwait(false);
+                    }
+                }
+                finally
+                {
+                    this.executionGate.Release();
+                }
+            }
+        }
+
+        /// <summary>
+        /// Atomically protects the physical Pod boundary before Kubernetes mutation.
+        /// </summary>
+        private async Task<PodCreationCapacityAuthority>
+            TryAcquirePodCreationAuthorityAsync(
+                AiRuntimeScaleOutProviderRequest request,
+                AiRuntimeCapacitySelectionCandidate candidate,
+                string reservationId,
+                string plannedPrimaryRuntimeInstanceId,
+                CancellationToken cancellationToken)
+        {
+            if (this.poolOptions.MaximumPodCount == int.MaxValue ||
+                IsRecoveryReplacementRequest(request))
+            {
+                return PodCreationCapacityAuthority.ProceedWithoutReservation();
+            }
+
+            if (this.runtimePoolMembershipReader is null ||
+                this.podCreationReservationStore is null ||
+                this.physicalPodInventory is null)
+            {
+                throw new InvalidOperationException(
+                    "Bounded Kubernetes Runtime Pool Pod creation requires runtime membership, distributed Pod reservations, and the physical Kubernetes Pod inventory authority.");
+            }
+
+            var deadline =
+                DateTimeOffset.UtcNow.Add(
+                    this.hostOptions.StartupTimeout);
+
+            var reservationExpiresAtUtc =
+                deadline
+                    .Add(this.hostOptions.StartupTimeout)
+                    .Add(TimeSpan.FromMinutes(1));
+
+            while (DateTimeOffset.UtcNow < deadline)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                /*
+                 * IAiRuntimePoolMembershipReader is already scoped to the current
+                 * logical control plane by its backing registry. Reapplying
+                 * request.ControlPlaneId here can discard authoritative members
+                 * when the scale-out request and runtime registration use different
+                 * representations of the same control-plane scope.
+                 *
+                 * The physical Pod boundary is therefore computed from the exact
+                 * first-class PoolId + HostId membership returned by that authority.
+                 */
+                var authoritativeMembers =
+                    (await this.runtimePoolMembershipReader
+                            .ListByPoolIdAsync(
+                                candidate.PoolId!,
+                                cancellationToken)
+                            .ConfigureAwait(false))
+                        .Where(
+                            member =>
+                                member.Role ==
+                                    AiRuntimeInstanceRole.Runtime &&
+                                !string.IsNullOrWhiteSpace(
+                                    member.HostId))
+                        .OrderBy(
+                            member => member.HostId,
+                            StringComparer.Ordinal)
+                        .ThenBy(
+                            member => member.RuntimeInstanceId,
+                            StringComparer.Ordinal)
+                        .ToArray();
+
+                var registryPodCount =
+                    authoritativeMembers
+                        .Select(member => member.HostId!)
+                        .Distinct(StringComparer.Ordinal)
+                        .Count();
+
+                var physicalPodCount =
+                    await this.physicalPodInventory
+                        .CountRuntimePoolPodsAsync(
+                            this.poolOptions.Namespace,
+                            candidate.PoolId!,
+                            cancellationToken)
+                        .ConfigureAwait(false);
+
+                /*
+                 * A physical Pod can temporarily disappear from runtime registry
+                 * membership while its children register or heartbeat. The Pod
+                 * ceiling must therefore use Kubernetes inventory as the final
+                 * authority and retain the registry count only as a conservative
+                 * secondary signal.
+                 */
+                var activePodCount =
+                    Math.Max(
+                        physicalPodCount,
+                        registryPodCount);
+
+                if (activePodCount >=
+                    this.poolOptions.MaximumPodCount)
+                {
+                    if (authoritativeMembers.Length > 0)
+                    {
+                        return PodCreationCapacityAuthority.Satisfied(
+                            CreateCapacityAlreadySatisfied(
+                                request,
+                                candidate,
+                                reservationId,
+                                plannedPrimaryRuntimeInstanceId,
+                                authoritativeMembers,
+                                activePodCount,
+                                reservedPodCount: 0,
+                                this.poolOptions.MaximumPodCount));
+                    }
+
+                    await Task
+                        .Delay(
+                            this.hostOptions.ReadinessPollInterval,
+                            cancellationToken)
+                        .ConfigureAwait(false);
+
+                    continue;
+                }
+
+                var reservation =
+                    await this.podCreationReservationStore
+                        .TryAcquireAsync(
+                            request.ControlPlaneId,
+                            candidate.PoolId!,
+                            reservationId,
+                            activePodCount,
+                            this.poolOptions.MaximumPodCount,
+                            reservationExpiresAtUtc,
+                            cancellationToken)
+                        .ConfigureAwait(false);
+
+                if (reservation.Acquired)
+                {
+                    return PodCreationCapacityAuthority.Acquired();
+                }
+
+                if (authoritativeMembers.Length > 0)
+                {
+                    return PodCreationCapacityAuthority.Satisfied(
+                        CreateCapacityAlreadySatisfied(
+                            request,
+                            candidate,
+                            reservationId,
+                            plannedPrimaryRuntimeInstanceId,
+                            authoritativeMembers,
+                            reservation.ActivePodCount,
+                            reservation.ReservedPodCount,
+                            reservation.MaximumPodCount));
+                }
+
+                await Task
+                    .Delay(
+                        this.hostOptions.ReadinessPollInterval,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+            }
+
+            throw new TimeoutException(
+                "Runtime Pool Pod creation capacity remained fully reserved before the configured startup deadline.");
+        }
+
+        private static AiRuntimePoolPodCreationResult
+            CreateCapacityAlreadySatisfied(
+                AiRuntimeScaleOutProviderRequest request,
+                AiRuntimeCapacitySelectionCandidate candidate,
+                string hostRequestId,
+                string plannedPrimaryRuntimeInstanceId,
+                IReadOnlyList<AiRuntimeInstanceSnapshot> members,
+                int activePodCount,
+                int reservedPodCount,
+                int maximumPodCount)
+        {
+            var selectedRuntimeInstanceId =
+                members
+                    .Where(
+                        member =>
+                            (member.Status is
+                                AiRuntimeInstanceStatus.Ready or
+                                AiRuntimeInstanceStatus.Busy) &&
+                            member.CanAcceptRun)
+                    .Select(member => member.RuntimeInstanceId)
+                    .FirstOrDefault()
+                ?? members
+                    .Select(member => member.RuntimeInstanceId)
+                    .FirstOrDefault()
+                ?? plannedPrimaryRuntimeInstanceId;
+
+            return new AiRuntimePoolPodCreationResult
+            {
+                RequestId = request.RequestId,
+                PoolId = candidate.PoolId!,
+                HostRequestId = hostRequestId,
+                PrimaryRuntimeInstanceId =
+                    selectedRuntimeInstanceId,
+                Status =
+                    AiRuntimePoolPodCreationStatus
+                        .CapacityAlreadySatisfied,
+                RuntimeInstanceIds =
+                    members
+                        .Select(member => member.RuntimeInstanceId)
+                        .Distinct(StringComparer.Ordinal)
+                        .OrderBy(
+                            runtimeInstanceId =>
+                                runtimeInstanceId,
+                            StringComparer.Ordinal)
+                        .ToArray(),
+                ActivePodCount = activePodCount,
+                ReservedPodCreationCount = reservedPodCount,
+                MaximumPodCount = maximumPodCount,
+                Retryable = false
+            };
+        }
+
+        private static bool IsRecoveryReplacementRequest(
+            AiRuntimeScaleOutProviderRequest request)
+        {
+            return HasMetadataValue(
+                    request.Metadata,
+                    "scaleout.excludedRuntimeInstanceId") ||
+                HasMetadataValue(
+                    request.Metadata,
+                    "scaleout.replacementForRuntimeInstanceId") ||
+                HasMetadataValue(
+                    request.Metadata,
+                    "recovery.failedRuntimeInstanceId");
+        }
+
+        private static bool HasMetadataValue(
+            IReadOnlyDictionary<string, string>? metadata,
+            string key)
+        {
+            return metadata is not null &&
+                metadata.Any(
+                    item =>
+                        StringComparer.OrdinalIgnoreCase.Equals(
+                            item.Key,
+                            key) &&
+                        !string.IsNullOrWhiteSpace(item.Value));
+        }
+
+        private sealed record PodCreationCapacityAuthority
+        {
+            public bool ReservationAcquired { get; init; }
+
+            public AiRuntimePoolPodCreationResult?
+                CapacityResult { get; init; }
+
+            public static PodCreationCapacityAuthority Acquired()
+            {
+                return new PodCreationCapacityAuthority
+                {
+                    ReservationAcquired = true
+                };
+            }
+
+            public static PodCreationCapacityAuthority
+                ProceedWithoutReservation()
+            {
+                return new PodCreationCapacityAuthority();
+            }
+
+            public static PodCreationCapacityAuthority Satisfied(
+                AiRuntimePoolPodCreationResult result)
+            {
+                return new PodCreationCapacityAuthority
+                {
+                    CapacityResult = result
+                };
             }
         }
 
@@ -597,7 +985,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
                         request.MaxConcurrentRunsPerInstance,
                         1),
                 LocalQueueCapacity =
-                    ResolvePositiveOrDefault(
+                    ResolveNonNegativeOrDefault(
                         request.LocalQueueCapacity,
                         100),
                 MaxRuntimeInstances =
@@ -637,6 +1025,18 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
             int defaultValue)
         {
             return value is > 0
+                ? value.Value
+                : defaultValue;
+        }
+
+        /// <summary>
+        /// Resolves one optional non-negative request value.
+        /// </summary>
+        private static int ResolveNonNegativeOrDefault(
+            int? value,
+            int defaultValue)
+        {
+            return value is >= 0
                 ? value.Value
                 : defaultValue;
         }

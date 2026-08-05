@@ -423,6 +423,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Store
             }
 
             if (string.Equals(status, "dispatched", StringComparison.Ordinal) ||
+                string.Equals(status, "already-dispatched", StringComparison.Ordinal) ||
                 string.Equals(status, "terminal", StringComparison.Ordinal))
             {
                 return await GetAsync(

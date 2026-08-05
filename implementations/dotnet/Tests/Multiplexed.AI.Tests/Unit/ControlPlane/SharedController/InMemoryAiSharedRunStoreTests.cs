@@ -260,6 +260,40 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController
         }
 
         [Fact]
+        public async Task MarkDispatchedAsync_Should_Preserve_First_Durable_Ownership()
+        {
+            var store = new InMemoryAiSharedRunStore();
+
+            await store.CreateAsync(
+                CreateRecord(
+                    "shared-run-1",
+                    AiSharedRunStatus.AssignedToInstance));
+
+            await store.MarkDispatchedAsync(
+                "shared-run-1",
+                runtimeInstanceId: "runtime-first",
+                localRunId: "local-first",
+                executionId: "execution-first",
+                reason: "first dispatch");
+
+            var second = await store.MarkDispatchedAsync(
+                "shared-run-1",
+                runtimeInstanceId: "runtime-second",
+                localRunId: "local-second",
+                executionId: "execution-second",
+                reason: "delayed duplicate dispatch");
+
+            Assert.NotNull(second);
+            Assert.Equal(AiSharedRunStatus.Dispatched, second!.Status);
+            Assert.Equal(
+                "runtime-first",
+                second.AssignedRuntimeInstanceId);
+            Assert.Equal("local-first", second.LocalRunId);
+            Assert.Equal("execution-first", second.ExecutionId);
+            Assert.Equal("first dispatch", second.Reason);
+        }
+
+        [Fact]
         public async Task MarkDispatchedAsync_Should_Return_Null_When_Run_Is_Unknown()
         {
             var store = new InMemoryAiSharedRunStore();

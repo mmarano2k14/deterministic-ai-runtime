@@ -2,7 +2,9 @@ using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Scaling;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Kubernetes;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Kubernetes.Client;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Kubernetes.Failure;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strategy;
 using Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling;
@@ -153,6 +155,426 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController.Scaling
         }
 
         /// <summary>
+        /// Verifies that the canonical Pod creation path preserves an explicit
+        /// zero-capacity local runtime queue.
+        /// </summary>
+        [Fact]
+        public async Task ExecuteAsync_Should_Preserve_Explicit_Zero_LocalQueueCapacity()
+        {
+            var strategy = new RecordingHostCreationStrategy();
+            var executor =
+                CreateExecutor(
+                    strategy,
+                    new ReadyMembershipEnumerator(strategy));
+
+            var request =
+                CreateRequest(
+                    "request-step-7e-zero-local-queue");
+
+            request.LocalQueueCapacity = 0;
+
+            var result =
+                await executor.ExecuteAsync(
+                    request,
+                    CreateCandidate());
+
+            Assert.True(result.IsCreated);
+            Assert.NotNull(strategy.LastRequest);
+            Assert.Equal(
+                0,
+                strategy.LastRequest!.LocalQueueCapacity);
+        }
+
+        /// <summary>
+        /// Verifies that distinct concurrent reservation attempts are atomically
+        /// bounded by the configured physical Pod limit.
+        /// </summary>
+        [Fact]
+        public async Task ReservationStore_Should_Atomically_Bound_Concurrent_Distinct_Pod_Reservations()
+        {
+            const int maximumPodCount = 3;
+            const int contenderCount = 32;
+
+            var reservations =
+                new InMemoryAiRuntimePoolPodCreationReservationStore();
+
+            var startGate =
+                new TaskCompletionSource<bool>(
+                    TaskCreationOptions.RunContinuationsAsynchronously);
+
+            var contenders =
+                Enumerable
+                    .Range(0, contenderCount)
+                    .Select(
+                        ordinal =>
+                            Task.Run(
+                                async () =>
+                                {
+                                    await startGate.Task;
+
+                                    return await reservations.TryAcquireAsync(
+                                            "control-plane-step-7e",
+                                            "pool-step-7e",
+                                            string.Concat(
+                                                "pod-reservation-",
+                                                ordinal),
+                                            activePodCount: 0,
+                                            maximumPodCount:
+                                                maximumPodCount,
+                                            expiresAtUtc:
+                                                DateTimeOffset.UtcNow
+                                                    .AddMinutes(1))
+                                        .ConfigureAwait(false);
+                                }))
+                    .ToArray();
+
+            startGate.SetResult(true);
+
+            var results =
+                await Task.WhenAll(contenders);
+
+            Assert.Equal(
+                maximumPodCount,
+                results.Count(result => result.Acquired));
+
+            Assert.All(
+                results,
+                result =>
+                {
+                    Assert.InRange(
+                        result.ReservedPodCount,
+                        1,
+                        maximumPodCount);
+                    Assert.Equal(
+                        maximumPodCount,
+                        result.MaximumPodCount);
+                });
+        }
+
+        /// <summary>
+        /// Verifies that active Pods plus in-flight Pod reservations never exceed
+        /// the configured physical Pod limit.
+        /// </summary>
+        [Fact]
+        public async Task ExecuteAsync_Should_Not_Create_Fourth_Pod_When_Three_Pod_Slots_Are_Consumed()
+        {
+            var strategy = new RecordingHostCreationStrategy();
+            var registry = new InMemoryAiRuntimeInstanceRegistry();
+            var reservations =
+                new InMemoryAiRuntimePoolPodCreationReservationStore();
+
+            await RegisterPoolPodAsync(
+                    registry,
+                    "pod-uid-1",
+                    "runtime-existing-1")
+                .ConfigureAwait(false);
+
+            await RegisterPoolPodAsync(
+                    registry,
+                    "pod-uid-2",
+                    "runtime-existing-2")
+                .ConfigureAwait(false);
+
+            var held =
+                await reservations.TryAcquireAsync(
+                        "control-plane-step-7e",
+                        "pool-step-7e",
+                        "pod-3-in-flight",
+                        activePodCount: 2,
+                        maximumPodCount: 3,
+                        expiresAtUtc:
+                            DateTimeOffset.UtcNow.AddMinutes(1))
+                    .ConfigureAwait(false);
+
+            Assert.True(held.Acquired);
+
+            var executor =
+                CreateExecutor(
+                    strategy,
+                    new ReadyMembershipEnumerator(strategy),
+                    runtimePoolMembershipReader: registry,
+                    reservationStore: reservations,
+                    physicalPodInventory:
+                        new FixedPhysicalPodInventory(2),
+                    maximumPodCount: 3);
+
+            var result =
+                await executor.ExecuteAsync(
+                    CreateRequest("request-step-7e-pod-4"),
+                    CreateCandidate());
+
+            Assert.True(result.IsCapacityAlreadySatisfied);
+            Assert.Equal(2, result.ActivePodCount);
+            Assert.Equal(1, result.ReservedPodCreationCount);
+            Assert.Equal(3, result.MaximumPodCount);
+            Assert.Equal(0, strategy.CallCount);
+            Assert.Contains(
+                result.PrimaryRuntimeInstanceId,
+                new[]
+                {
+                    "runtime-existing-1",
+                    "runtime-existing-2"
+                });
+        }
+
+        /// <summary>
+        /// Verifies that the already control-plane-scoped pool membership authority
+        /// is not filtered a second time with the scale-out request identifier.
+        /// </summary>
+        [Fact]
+        public async Task ExecuteAsync_Should_Count_Authoritative_Pool_Membership_Without_Second_ControlPlane_Filter()
+        {
+            var strategy = new RecordingHostCreationStrategy();
+            var registry = new InMemoryAiRuntimeInstanceRegistry();
+            var reservations =
+                new InMemoryAiRuntimePoolPodCreationReservationStore();
+
+            await RegisterPoolPodAsync(
+                    registry,
+                    "pod-uid-1",
+                    "runtime-existing-1",
+                    controlPlaneId:
+                        "registry-scoped-control-plane")
+                .ConfigureAwait(false);
+
+            await RegisterPoolPodAsync(
+                    registry,
+                    "pod-uid-2",
+                    "runtime-existing-2",
+                    controlPlaneId:
+                        "registry-scoped-control-plane")
+                .ConfigureAwait(false);
+
+            await RegisterPoolPodAsync(
+                    registry,
+                    "pod-uid-3",
+                    "runtime-existing-3",
+                    controlPlaneId:
+                        "registry-scoped-control-plane")
+                .ConfigureAwait(false);
+
+            var executor =
+                CreateExecutor(
+                    strategy,
+                    new ReadyMembershipEnumerator(strategy),
+                    runtimePoolMembershipReader: registry,
+                    reservationStore: reservations,
+                    physicalPodInventory:
+                        new FixedPhysicalPodInventory(3),
+                    maximumPodCount: 3);
+
+            var result =
+                await executor.ExecuteAsync(
+                    CreateRequest(
+                        "request-step-7e-no-second-control-plane-filter"),
+                    CreateCandidate());
+
+            Assert.True(result.IsCapacityAlreadySatisfied);
+            Assert.Equal(3, result.ActivePodCount);
+            Assert.Equal(0, strategy.CallCount);
+        }
+
+        /// <summary>
+        /// Verifies that physical Kubernetes inventory prevents a fourth Pod even
+        /// when runtime registry membership temporarily exposes only two hosts.
+        /// </summary>
+        [Fact]
+        public async Task ExecuteAsync_Should_Use_Physical_Pod_Inventory_When_Registry_Undercounts()
+        {
+            var strategy = new RecordingHostCreationStrategy();
+            var registry = new InMemoryAiRuntimeInstanceRegistry();
+            var reservations =
+                new InMemoryAiRuntimePoolPodCreationReservationStore();
+
+            await RegisterPoolPodAsync(
+                    registry,
+                    "pod-uid-1",
+                    "runtime-existing-1")
+                .ConfigureAwait(false);
+
+            await RegisterPoolPodAsync(
+                    registry,
+                    "pod-uid-2",
+                    "runtime-existing-2")
+                .ConfigureAwait(false);
+
+            var executor =
+                CreateExecutor(
+                    strategy,
+                    new ReadyMembershipEnumerator(strategy),
+                    runtimePoolMembershipReader: registry,
+                    reservationStore: reservations,
+                    physicalPodInventory:
+                        new FixedPhysicalPodInventory(3),
+                    maximumPodCount: 3);
+
+            var result =
+                await executor.ExecuteAsync(
+                    CreateRequest(
+                        "request-step-7e-physical-inventory-cap"),
+                    CreateCandidate());
+
+            Assert.True(result.IsCapacityAlreadySatisfied);
+            Assert.Equal(3, result.ActivePodCount);
+            Assert.Equal(0, strategy.CallCount);
+        }
+
+        /// <summary>
+        /// Verifies that one free physical Pod slot permits exact Pod creation.
+        /// </summary>
+        [Fact]
+        public async Task ExecuteAsync_Should_Create_When_One_Pod_Slot_Is_Free()
+        {
+            var strategy = new RecordingHostCreationStrategy();
+            var registry = new InMemoryAiRuntimeInstanceRegistry();
+            var reservations =
+                new InMemoryAiRuntimePoolPodCreationReservationStore();
+
+            await RegisterPoolPodAsync(
+                    registry,
+                    "pod-uid-1",
+                    "runtime-existing-1")
+                .ConfigureAwait(false);
+
+            await RegisterPoolPodAsync(
+                    registry,
+                    "pod-uid-2",
+                    "runtime-existing-2")
+                .ConfigureAwait(false);
+
+            var executor =
+                CreateExecutor(
+                    strategy,
+                    new ReadyMembershipEnumerator(strategy),
+                    runtimePoolMembershipReader: registry,
+                    reservationStore: reservations,
+                    physicalPodInventory:
+                        new FixedPhysicalPodInventory(2),
+                    maximumPodCount: 3);
+
+            var result =
+                await executor.ExecuteAsync(
+                    CreateRequest("request-step-7e-pod-3"),
+                    CreateCandidate());
+
+            Assert.True(result.IsCreated);
+            Assert.Equal(1, strategy.CallCount);
+        }
+
+        /// <summary>
+        /// Verifies that a created Pod whose exact membership does not converge
+        /// retains conservative shadow capacity until reservation expiry.
+        /// </summary>
+        [Fact]
+        public async Task ExecuteAsync_Should_Retain_Reservation_When_Created_Pod_Does_Not_Converge()
+        {
+            var strategy = new RecordingHostCreationStrategy();
+            var registry = new InMemoryAiRuntimeInstanceRegistry();
+            var reservations =
+                new InMemoryAiRuntimePoolPodCreationReservationStore();
+
+            var executor =
+                CreateExecutor(
+                    strategy,
+                    new MissingMembershipEnumerator(),
+                    runtimePoolMembershipReader: registry,
+                    reservationStore: reservations,
+                    physicalPodInventory:
+                        new FixedPhysicalPodInventory(0),
+                    maximumPodCount: 1,
+                    startupTimeout:
+                        TimeSpan.FromMilliseconds(20));
+
+            var result =
+                await executor.ExecuteAsync(
+                    CreateRequest(
+                        "request-step-7e-membership-timeout"),
+                    CreateCandidate());
+
+            Assert.Equal(
+                AiRuntimePoolPodCreationStatus.Rejected,
+                result.Status);
+            Assert.Equal(1, strategy.CallCount);
+
+            var nextReservation =
+                await reservations.TryAcquireAsync(
+                        "control-plane-step-7e",
+                        "pool-step-7e",
+                        "replacement-before-shadow-expiry",
+                        activePodCount: 0,
+                        maximumPodCount: 1,
+                        expiresAtUtc:
+                            DateTimeOffset.UtcNow.AddMinutes(1))
+                    .ConfigureAwait(false);
+
+            Assert.False(nextReservation.Acquired);
+            Assert.Equal(1, nextReservation.ReservedPodCount);
+        }
+
+        /// <summary>
+        /// Verifies that an exact recovery replacement remains governed by the
+        /// existing recovery claim authority instead of normal scale-out Pod quota.
+        /// </summary>
+        [Fact]
+        public async Task ExecuteAsync_Should_Not_Suppress_Recovery_Replacement_At_Normal_Pod_Limit()
+        {
+            var strategy = new RecordingHostCreationStrategy();
+            var registry = new InMemoryAiRuntimeInstanceRegistry();
+            var reservations =
+                new InMemoryAiRuntimePoolPodCreationReservationStore();
+
+            await RegisterPoolPodAsync(
+                    registry,
+                    "pod-uid-1",
+                    "runtime-existing-1")
+                .ConfigureAwait(false);
+
+            await RegisterPoolPodAsync(
+                    registry,
+                    "pod-uid-2",
+                    "runtime-existing-2")
+                .ConfigureAwait(false);
+
+            await RegisterPoolPodAsync(
+                    registry,
+                    "pod-uid-3",
+                    "runtime-existing-3")
+                .ConfigureAwait(false);
+
+            var request =
+                CreateRequest(
+                    "request-step-7e-recovery-replacement");
+
+            request.Metadata =
+                new Dictionary<string, string>(
+                    StringComparer.OrdinalIgnoreCase)
+                {
+                    ["scaleout.excludedRuntimeInstanceId"] =
+                        "runtime-existing-3",
+                    ["scaleout.replacementForRuntimeInstanceId"] =
+                        "runtime-existing-3"
+                };
+
+            var executor =
+                CreateExecutor(
+                    strategy,
+                    new ReadyMembershipEnumerator(strategy),
+                    runtimePoolMembershipReader: registry,
+                    reservationStore: reservations,
+                    physicalPodInventory:
+                        new FixedPhysicalPodInventory(3),
+                    maximumPodCount: 3);
+
+            var result =
+                await executor.ExecuteAsync(
+                    request,
+                    CreateCandidate());
+
+            Assert.True(result.IsCreated);
+            Assert.Equal(1, strategy.CallCount);
+        }
+
+        /// <summary>
         /// Verifies that host or runtime identity cannot be smuggled into a new-Pod
         /// selection candidate.
         /// </summary>
@@ -253,7 +675,15 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController.Scaling
         private static AiRuntimePoolPodCreationExecutor CreateExecutor(
             IAiRuntimeHostCreationStrategy strategy,
             IAiKubernetesRuntimePoolPodMembershipEnumerator membership,
-            IAiRuntimeHostManager? runtimeHostManager = null)
+            IAiRuntimeHostManager? runtimeHostManager = null,
+            IAiRuntimePoolMembershipReader?
+                runtimePoolMembershipReader = null,
+            IAiRuntimePoolPodCreationReservationStore?
+                reservationStore = null,
+            IAiKubernetesRuntimePoolPodInventory?
+                physicalPodInventory = null,
+            int maximumPodCount = int.MaxValue,
+            TimeSpan? startupTimeout = null)
         {
             var poolOptions =
                 Options.Create(
@@ -265,6 +695,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController.Scaling
                             "runtime-step-7e",
                         ProviderName = "http",
                         TransportName = "http",
+                        MaximumPodCount = maximumPodCount,
                         InitialRuntimeInstanceCount = 3,
                         MinimumRuntimeInstanceCount = 3,
                         MaximumRuntimeInstanceCount = 3
@@ -276,10 +707,27 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController.Scaling
                     {
                         RuntimeImage = "runtime:test",
                         StartupTimeout =
+                            startupTimeout ??
                             TimeSpan.FromSeconds(1),
                         ReadinessPollInterval =
                             TimeSpan.FromMilliseconds(1)
                     });
+
+            if (runtimePoolMembershipReader is not null &&
+                reservationStore is not null &&
+                physicalPodInventory is not null)
+            {
+                return new AiRuntimePoolPodCreationExecutor(
+                    new[] { strategy },
+                    membership,
+                    poolOptions,
+                    hostOptions,
+                    runtimePoolMembershipReader,
+                    reservationStore,
+                    physicalPodInventory,
+                    runtimeHostManager ??
+                        new RecordingRuntimeHostManager(strategy));
+            }
 
             return runtimeHostManager is null
                 ? new AiRuntimePoolPodCreationExecutor(
@@ -293,6 +741,34 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController.Scaling
                     poolOptions,
                     hostOptions,
                     runtimeHostManager);
+        }
+
+        private static async Task RegisterPoolPodAsync(
+            IAiRuntimeInstanceRegistry registry,
+            string hostId,
+            string runtimeInstanceId,
+            string controlPlaneId = "control-plane-step-7e")
+        {
+            await registry.RegisterAsync(
+                    new AiRuntimeInstanceRegistration
+                    {
+                        RuntimeInstanceId = runtimeInstanceId,
+                        ControlPlaneId = controlPlaneId,
+                        ControlPlaneHostId =
+                            "control-plane-host-step-7e",
+                        PoolId = "pool-step-7e",
+                        HostId = hostId,
+                        RuntimeId = runtimeInstanceId,
+                        TenantId = "tenant-step-7e",
+                        TenantGroupId =
+                            "tenant-group-step-7e",
+                        Role = AiRuntimeInstanceRole.Runtime,
+                        WorkerCount = 1,
+                        MaxConcurrentRuns = 1,
+                        QueueCapacity = 0,
+                        RegisteredAtUtc = DateTimeOffset.UtcNow
+                    })
+                .ConfigureAwait(false);
         }
 
         private static AiRuntimeCapacitySelectionCandidate
@@ -340,6 +816,27 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController.Scaling
                 LocalQueueCapacity = 10,
                 RequestedTargetInstanceCount = 1
             };
+        }
+
+        private sealed class FixedPhysicalPodInventory :
+            IAiKubernetesRuntimePoolPodInventory
+        {
+            private readonly int physicalPodCount;
+
+            public FixedPhysicalPodInventory(
+                int physicalPodCount)
+            {
+                this.physicalPodCount = physicalPodCount;
+            }
+
+            public Task<int> CountRuntimePoolPodsAsync(
+                string namespaceName,
+                string poolId,
+                CancellationToken cancellationToken = default)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                return Task.FromResult(this.physicalPodCount);
+            }
         }
 
         private sealed class RecordingHostCreationStrategy :
@@ -428,6 +925,26 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController.Scaling
                 return await this.strategy
                     .StartAsync(request, cancellationToken)
                     .ConfigureAwait(false);
+            }
+        }
+
+        private sealed class MissingMembershipEnumerator :
+            IAiKubernetesRuntimePoolPodMembershipEnumerator
+        {
+            public Task<AiKubernetesRuntimePoolPodMembership>
+                EnumerateAsync(
+                    string poolId,
+                    string podUid,
+                    CancellationToken cancellationToken = default)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                throw new AiKubernetesRuntimePoolPodMembershipAuthorityException(
+                        poolId,
+                        podUid,
+                        AiKubernetesRuntimePoolPodMembershipAuthorityFailure
+                            .MembershipNotFound,
+                        "The test Pod membership is not registered.");
             }
         }
 

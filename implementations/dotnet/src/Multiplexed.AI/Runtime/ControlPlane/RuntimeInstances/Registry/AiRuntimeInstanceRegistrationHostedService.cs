@@ -51,6 +51,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
         private string? runtimeInstanceId;
         private string? controlPlaneId;
         private string? controlPlaneHostId;
+        private AiRuntimeInstanceRegistration? runtimeRegistration;
         private IReadOnlyDictionary<string, string> runtimeMetadata =
             new Dictionary<string, string>();
         private int stopRequested;
@@ -448,6 +449,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
                     Metadata = this.runtimeMetadata
                 };
 
+            this.runtimeRegistration = registration;
+
             SafeLogInformation(
                 "Runtime instance registration started. RuntimeInstanceId={RuntimeInstanceId}, ControlPlaneId={ControlPlaneId}, ControlPlaneHostId={ControlPlaneHostId}, TenantId={TenantId}, TenantGroupId={TenantGroupId}, RegistryType={RegistryType}, RegistryHash={RegistryHash}",
                 this.runtimeInstanceId,
@@ -754,14 +757,21 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
             if (snapshot is null)
             {
                 SafeLogWarning(
-                    "Runtime instance heartbeat ignored because instance is not registered. RuntimeInstanceId={RuntimeInstanceId}, ControlPlaneId={ControlPlaneId}, ControlPlaneHostId={ControlPlaneHostId}, RegistryType={RegistryType}, RegistryHash={RegistryHash}",
+                    "Runtime instance heartbeat found a missing registry lease. RuntimeInstanceId={RuntimeInstanceId}, ControlPlaneId={ControlPlaneId}, ControlPlaneHostId={ControlPlaneHostId}, RegistryType={RegistryType}, RegistryHash={RegistryHash}",
                     this.runtimeInstanceId,
                     this.controlPlaneId,
                     this.controlPlaneHostId,
                     this.registry.GetType().FullName,
                     this.registry.GetHashCode());
+
+                snapshot =
+                    await this.RestoreMissingRegistrationAsync(
+                            queueState,
+                            cancellationToken)
+                        .ConfigureAwait(false);
             }
-            else
+
+            if (snapshot is not null)
             {
                 SafeLogInformation(
                     "Runtime instance heartbeat succeeded. RuntimeInstanceId={RuntimeInstanceId}, ControlPlaneId={ControlPlaneId}, Status={Status}, HostId={HostId}, RuntimeId={RuntimeId}, ControlPlaneHostId={ControlPlaneHostId}, CanAcceptRun={CanAcceptRun}, AvailableRunSlots={AvailableRunSlots}, TenantId={TenantId}, TenantGroupId={TenantGroupId}, IsolationMode={IsolationMode}, AllowSharedFallback={AllowSharedFallback}, PreferDedicatedCapacity={PreferDedicatedCapacity}, RegistryType={RegistryType}, RegistryHash={RegistryHash}",
@@ -781,6 +791,85 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
                     this.registry.GetType().FullName,
                     this.registry.GetHashCode());
             }
+        }
+
+        /// <summary>
+        /// Restores a runtime registry lease that expired while the runtime process remained alive.
+        /// </summary>
+        /// <param name="queueState">The current local queue state.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <returns>The restored heartbeat snapshot, or <see langword="null" /> when restoration could not be completed.</returns>
+        private async Task<AiRuntimeInstanceSnapshot?> RestoreMissingRegistrationAsync(
+            AiRuntimePipelineQueueState queueState,
+            CancellationToken cancellationToken)
+        {
+            if (this.runtimeRegistration is null ||
+                string.IsNullOrWhiteSpace(this.runtimeInstanceId))
+            {
+                SafeLogWarning(
+                    "Runtime instance registry lease restoration skipped because the original registration is unavailable. RuntimeInstanceId={RuntimeInstanceId}, ControlPlaneId={ControlPlaneId}, ControlPlaneHostId={ControlPlaneHostId}",
+                    this.runtimeInstanceId,
+                    this.controlPlaneId,
+                    this.controlPlaneHostId);
+
+                return null;
+            }
+
+            SafeLogWarning(
+                "Runtime instance registry lease restoration started. RuntimeInstanceId={RuntimeInstanceId}, ControlPlaneId={ControlPlaneId}, ControlPlaneHostId={ControlPlaneHostId}",
+                this.runtimeInstanceId,
+                this.controlPlaneId,
+                this.controlPlaneHostId);
+
+            await this.registry
+                .RegisterAsync(
+                    this.runtimeRegistration,
+                    cancellationToken)
+                .ConfigureAwait(false);
+
+            var effectiveCapacity =
+                CreateEffectiveCapacity(
+                    AiRuntimeInstanceStatus.Ready,
+                    queueState);
+
+            var restoredSnapshot =
+                await this.registry
+                    .HeartbeatAsync(
+                        this.runtimeInstanceId,
+                        queueState.QueuedRunCount,
+                        queueState.RunningRunCount,
+                        queueState.ActiveRunCount,
+                        effectiveCapacity.AvailableRunSlots,
+                        effectiveCapacity.ActiveWorkerCount,
+                        effectiveCapacity.AvailableWorkerCount,
+                        effectiveCapacity.MaxLocalWorkersPerExecution,
+                        queueState.IsPaused,
+                        effectiveCapacity.CanAcceptRun,
+                        AiRuntimeInstanceStatus.Ready,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+            if (restoredSnapshot is null)
+            {
+                SafeLogWarning(
+                    "Runtime instance registry lease restoration failed after re-registration. RuntimeInstanceId={RuntimeInstanceId}, ControlPlaneId={ControlPlaneId}, ControlPlaneHostId={ControlPlaneHostId}",
+                    this.runtimeInstanceId,
+                    this.controlPlaneId,
+                    this.controlPlaneHostId);
+
+                return null;
+            }
+
+            SafeLogInformation(
+                "Runtime instance registry lease restored. RuntimeInstanceId={RuntimeInstanceId}, ControlPlaneId={ControlPlaneId}, ControlPlaneHostId={ControlPlaneHostId}, Status={Status}, RunningRunCount={RunningRunCount}, QueuedRunCount={QueuedRunCount}",
+                restoredSnapshot.RuntimeInstanceId,
+                restoredSnapshot.ControlPlaneId,
+                restoredSnapshot.ControlPlaneHostId,
+                restoredSnapshot.Status,
+                restoredSnapshot.RunningRunCount,
+                restoredSnapshot.QueuedRunCount);
+
+            return restoredSnapshot;
         }
 
         /// <summary>
@@ -1447,10 +1536,14 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
                     CanAcceptRun: false);
             }
 
+            var hasImmediateRunCapacity =
+                queueState.AvailableRunSlots.GetValueOrDefault() > 0;
+
             var canAcceptRun =
                 status == AiRuntimeInstanceStatus.Ready &&
                 !queueState.IsPaused &&
-                queueHasCapacity;
+                (hasImmediateRunCapacity ||
+                 queueHasCapacity);
 
             return new EffectiveRuntimeCapacity(
                 WorkerCount: workerCount,

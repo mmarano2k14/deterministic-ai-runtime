@@ -1,15 +1,20 @@
 ﻿using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.ControlPlane.Admission.Reservations;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Lifecycle;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Dispatch;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Store;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Dispatch;
+using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Pump;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Queue;
 using Multiplexed.Abstractions.AI.Execution.Instance.Worker;
 using Multiplexed.Abstractions.AI.Runtime.Execution.Instance.Worker;
 using Multiplexed.AI.Runtime.ControlPlane.Admission.Reservations;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Isolation;
 using Multiplexed.AI.Runtime.ControlPlane.SharedController;
 using Multiplexed.AI.Runtime.ControlPlane.SharedController.Store;
@@ -178,6 +183,226 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
             Assert.Equal("runtime-canonical-winner", sharedRun.AssignedRuntimeInstanceId);
             Assert.Equal("local-run-canonical", sharedRun.LocalRunId);
             Assert.Equal("execution-canonical", sharedRun.ExecutionId);
+        }
+
+        [Fact]
+        public async Task DispatchNextAsync_Should_Heal_Stale_Queue_Item_From_Durable_Ownership_Without_Runtime_Call()
+        {
+            var queue = new InMemoryAiSharedQueue();
+            var store = new InMemoryAiSharedRunStore();
+
+            await store.CreateAsync(
+                CreateSharedRun(
+                    "shared-run-1",
+                    AiSharedRunStatus.Dispatched,
+                    assignedRuntimeInstanceId: "runtime-existing",
+                    localRunId: "local-existing",
+                    executionId: "execution-existing"));
+
+            await queue.EnqueueAsync(
+                CreateQueueItem("shared-run-1"));
+
+            var runDispatcher = new FakeSharedRunDispatcher();
+
+            var dispatcher = new AiSharedQueueDispatcher(
+                queue,
+                store,
+                runDispatcher,
+                new FakeRunAdmissionController(),
+                new InMemoryAiRuntimeAdmissionReservationStore(),
+                await CreateReadyRuntimeRegistryAsync(),
+                new FakeRuntimeScaleOutRequestPublisher(),
+                new HardcodedAiTenantRuntimeSettingsProvider(),
+                new StaticAiControlPlaneIdResolver("control-plane-1"),
+                new FakeExecutionContextAccessor(),
+                NullLogger<AiSharedQueueDispatcher>.Instance);
+
+            var result = await dispatcher.DispatchNextAsync(
+                new AiSharedQueueDispatchRequest
+                {
+                    RuntimeInstanceId = "runtime-1",
+                    WorkerId = "worker-1"
+                });
+
+            Assert.True(result.Success);
+            Assert.Equal("runtime-existing", result.RuntimeInstanceId);
+            Assert.Equal(0, runDispatcher.CallCount);
+
+            var queueItem = await queue.GetAsync("shared-run-1");
+
+            Assert.NotNull(queueItem);
+            Assert.Equal(
+                AiSharedQueueItemStatus.Dispatched,
+                queueItem!.Status);
+
+            var stored = await store.GetAsync("shared-run-1");
+
+            Assert.NotNull(stored);
+            Assert.Equal(
+                "runtime-existing",
+                stored!.AssignedRuntimeInstanceId);
+            Assert.Equal("local-existing", stored.LocalRunId);
+            Assert.Equal("execution-existing", stored.ExecutionId);
+        }
+
+        [Fact]
+        public async Task DispatchNextAsync_Should_Release_Failed_Durable_Ownership_And_Redispatch_Recovery_Item()
+        {
+            var queue = new InMemoryAiSharedQueue();
+            var store = new InMemoryAiSharedRunStore();
+
+            await store.CreateAsync(
+                CreateSharedRun(
+                    "shared-run-1",
+                    AiSharedRunStatus.Dispatched,
+                    assignedRuntimeInstanceId: "runtime-failed-1",
+                    localRunId: "run-failed-1",
+                    executionId: "execution-existing-1"));
+
+            await queue.EnqueueAsync(
+                CreateQueueItem(
+                    "shared-run-1",
+                    metadata: new Dictionary<string, string>
+                    {
+                        ["recovery.mode"] = "resume-existing-execution",
+                        ["recovery.failedExecutionId"] = "execution-existing-1",
+                        ["recovery.failedRuntimeInstanceId"] = "runtime-failed-1",
+                        ["recovery.failedLocalRunId"] = "run-failed-1",
+                        ["recovery.reason"] = "forced-pod-deletion"
+                    }));
+
+            var now = DateTimeOffset.UtcNow;
+            var runDispatcher = new FakeSharedRunDispatcher(
+                new AiSharedRunDispatchResult
+                {
+                    Success = true,
+                    SharedRunId = "shared-run-1",
+                    RuntimeInstanceId = "runtime-1",
+                    LocalRunId = "run-replacement-1",
+                    ExecutionId = "execution-existing-1",
+                    Message = "Recovery redispatched.",
+                    StartedAtUtc = now,
+                    CompletedAtUtc = now
+                });
+
+            var dispatcher = new AiSharedQueueDispatcher(
+                queue,
+                store,
+                runDispatcher,
+                new FakeRunAdmissionController(),
+                new InMemoryAiRuntimeAdmissionReservationStore(),
+                await CreateReadyRuntimeRegistryAsync(),
+                new FakeRuntimeScaleOutRequestPublisher(),
+                new HardcodedAiTenantRuntimeSettingsProvider(),
+                new StaticAiControlPlaneIdResolver("control-plane-1"),
+                new FakeExecutionContextAccessor(),
+                NullLogger<AiSharedQueueDispatcher>.Instance);
+
+            var result = await dispatcher.DispatchNextAsync(
+                new AiSharedQueueDispatchRequest
+                {
+                    RuntimeInstanceId = "runtime-1",
+                    WorkerId = "worker-1"
+                });
+
+            Assert.True(result.Success);
+            Assert.Equal(1, runDispatcher.CallCount);
+            Assert.Equal("runtime-1", result.RuntimeInstanceId);
+            Assert.NotNull(runDispatcher.LastRequest);
+            Assert.Equal(
+                "resume-existing-execution",
+                runDispatcher.LastRequest!.Metadata["recovery.mode"]);
+            Assert.Equal(
+                "runtime-failed-1",
+                runDispatcher.LastRequest.Metadata["recovery.failedRuntimeInstanceId"]);
+            Assert.Equal(
+                "run-failed-1",
+                runDispatcher.LastRequest.Metadata["recovery.failedLocalRunId"]);
+
+            var queueItem = await queue.GetAsync("shared-run-1");
+
+            Assert.NotNull(queueItem);
+            Assert.Equal(
+                AiSharedQueueItemStatus.Dispatched,
+                queueItem!.Status);
+
+            var stored = await store.GetAsync("shared-run-1");
+
+            Assert.NotNull(stored);
+            Assert.Equal(AiSharedRunStatus.Dispatched, stored!.Status);
+            Assert.Equal("runtime-1", stored.AssignedRuntimeInstanceId);
+            Assert.Equal("run-replacement-1", stored.LocalRunId);
+            Assert.Equal("execution-existing-1", stored.ExecutionId);
+        }
+
+        [Fact]
+        public async Task DispatchNextAsync_Should_Not_Requeue_Committed_Dispatch_When_Lifecycle_Journal_Fails()
+        {
+            var queue = new InMemoryAiSharedQueue();
+            var store = new InMemoryAiSharedRunStore();
+
+            await store.CreateAsync(
+                CreateSharedRun(
+                    "shared-run-1",
+                    AiSharedRunStatus.QueuedGlobally));
+
+            await queue.EnqueueAsync(
+                CreateQueueItem("shared-run-1"));
+
+            var runDispatcher = new FakeSharedRunDispatcher();
+
+            var dispatcher = new AiSharedQueueDispatcher(
+                queue,
+                store,
+                runDispatcher,
+                new FakeRunAdmissionController(),
+                new InMemoryAiRuntimeAdmissionReservationStore(),
+                await CreateReadyRuntimeRegistryAsync(),
+                new FakeRuntimeScaleOutRequestPublisher(),
+                new HardcodedAiTenantRuntimeSettingsProvider(),
+                new StaticAiControlPlaneIdResolver("control-plane-1"),
+                new FakeExecutionContextAccessor(),
+                NullLogger<AiSharedQueueDispatcher>.Instance,
+                new NoopAiRuntimeRecoveryForensicsRecorder(),
+                runtimeSignalPublisher: null,
+                lifecycleJournal:
+                    new ThrowingRuntimeLifecycleJournal());
+
+            var result = await dispatcher.DispatchNextAsync(
+                new AiSharedQueueDispatchRequest
+                {
+                    RuntimeInstanceId = "runtime-1",
+                    WorkerId = "worker-1"
+                });
+
+            Assert.True(result.Success);
+            Assert.Equal(1, runDispatcher.CallCount);
+
+            var queueItem = await queue.GetAsync("shared-run-1");
+
+            Assert.NotNull(queueItem);
+            Assert.Equal(
+                AiSharedQueueItemStatus.Dispatched,
+                queueItem!.Status);
+
+            var stored = await store.GetAsync("shared-run-1");
+
+            Assert.NotNull(stored);
+            Assert.Equal(AiSharedRunStatus.Dispatched, stored!.Status);
+            Assert.Equal("runtime-1", stored.AssignedRuntimeInstanceId);
+            Assert.Equal("local-run-1", stored.LocalRunId);
+            Assert.Equal("execution-1", stored.ExecutionId);
+
+            var secondResult = await dispatcher.DispatchNextAsync(
+                new AiSharedQueueDispatchRequest
+                {
+                    RuntimeInstanceId = "runtime-1",
+                    WorkerId = "worker-1"
+                });
+
+            Assert.False(secondResult.Success);
+            Assert.True(secondResult.NoItemAvailable);
+            Assert.Equal(1, runDispatcher.CallCount);
         }
 
         [Fact]
@@ -624,6 +849,96 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
         }
 
         /// <summary>
+        /// Verifies that successful queue-less dispatch keeps its reservation
+        /// until a post-acceptance heartbeat refreshes capacity.
+        /// </summary>
+        [Fact]
+        public async Task DispatchNextAsync_Should_Hold_QueueLess_Reservation_Until_PostAcceptance_Heartbeat()
+        {
+            var queue = new InMemoryAiSharedQueue();
+            var store = new InMemoryAiSharedRunStore();
+
+            await store.CreateAsync(
+                CreateSharedRun(
+                    "shared-run-1",
+                    AiSharedRunStatus.QueuedGlobally,
+                    tenantId: "tenant-queue-less"));
+
+            await queue.EnqueueAsync(
+                CreateQueueItem(
+                    "shared-run-1",
+                    tenantId: "tenant-queue-less"));
+
+            var reservationStore =
+                new TrackingRuntimeAdmissionReservationStore();
+
+            var registry =
+                await CreateReadyRuntimeRegistryAsync(
+                    tenantId: "tenant-queue-less");
+
+            var dispatcher =
+                new AiSharedQueueDispatcher(
+                    queue,
+                    store,
+                    new FakeSharedRunDispatcher(),
+                    new FakeRunAdmissionController(),
+                    reservationStore,
+                    registry,
+                    new FakeRuntimeScaleOutRequestPublisher(),
+                    new StaticLocalQueueCapacitySettingsProvider(0),
+                    new StaticAiControlPlaneIdResolver("control-plane-1"),
+                    new FakeExecutionContextAccessor(),
+                    NullLogger<AiSharedQueueDispatcher>.Instance,
+                    new NoopAiRuntimeRecoveryForensicsRecorder(),
+                    queuePumpOptions:
+                        Options.Create(
+                            new AiSharedQueuePumpOptions
+                            {
+                                QueueLessDispatchReservationHandoffTimeout =
+                                    TimeSpan.FromSeconds(2)
+                            }));
+
+            var result =
+                await dispatcher.DispatchNextAsync(
+                    new AiSharedQueueDispatchRequest
+                    {
+                        RuntimeInstanceId = "runtime-1",
+                        WorkerId = "worker-1",
+                        CorrelationId = "correlation-1",
+                        RequestedBy = "tester",
+                        Source = "unit-test",
+                        Reason = "queue-less reservation handoff"
+                    });
+
+            Assert.True(result.Success);
+            Assert.Equal(1, reservationStore.ReserveCallCount);
+            Assert.Equal(0, reservationStore.ReleaseCallCount);
+
+            await registry.HeartbeatAsync(
+                    "runtime-1",
+                    queuedRunCount: 0,
+                    runningRunCount: 1,
+                    activeRunCount: 1,
+                    availableRunSlots: 0,
+                    activeWorkerCount: 1,
+                    availableWorkerCount: 0,
+                    maxLocalWorkersPerExecution: 1,
+                    isQueuePaused: false,
+                    canAcceptRun: false,
+                    status: AiRuntimeInstanceStatus.Ready)
+                .ConfigureAwait(false);
+
+            await WaitUntilAsync(
+                    () => reservationStore.ReleaseCallCount == 1,
+                    TimeSpan.FromSeconds(2))
+                .ConfigureAwait(false);
+
+            Assert.Equal(
+                "runtime-1",
+                reservationStore.LastReleasedRuntimeInstanceId);
+        }
+
+        /// <summary>
         /// Verifies that temporary admission capacity is released when dispatch fails with circuit-open.
         /// </summary>
         [Fact]
@@ -864,6 +1179,29 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
                 queueItem.Reason);
         }
 
+        private static async Task WaitUntilAsync(
+            Func<bool> condition,
+            TimeSpan timeout)
+        {
+            ArgumentNullException.ThrowIfNull(condition);
+
+            var deadlineUtc =
+                DateTimeOffset.UtcNow + timeout;
+
+            while (!condition())
+            {
+                if (DateTimeOffset.UtcNow >= deadlineUtc)
+                {
+                    throw new TimeoutException(
+                        "Timed out while waiting for the expected test condition.");
+                }
+
+                await Task.Delay(
+                        TimeSpan.FromMilliseconds(20))
+                    .ConfigureAwait(false);
+            }
+        }
+
         /// <summary>
         /// Creates a ready runtime instance registry entry used by tests that must reach
         /// the shared run dispatcher after the runtime routability guard.
@@ -923,7 +1261,10 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
             AiSharedRunStatus status,
             string? tenantId = null,
             string? pipelineKey = null,
-            IReadOnlyDictionary<string, string>? metadata = null)
+            IReadOnlyDictionary<string, string>? metadata = null,
+            string? assignedRuntimeInstanceId = null,
+            string? localRunId = null,
+            string? executionId = null)
         {
             var now = DateTimeOffset.UtcNow;
 
@@ -938,6 +1279,10 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
                 ExecutionContextSnapshot = AiExecutionContextSnapshotTestFactory.Create(tenantId: tenantId),
                 PipelineKey = pipelineKey,
                 CorrelationId = sharedRunId,
+                AssignedRuntimeInstanceId =
+                    assignedRuntimeInstanceId,
+                LocalRunId = localRunId,
+                ExecutionId = executionId,
                 SubmittedAtUtc = now,
                 UpdatedAtUtc = now,
                 Metadata = metadata ?? new Dictionary<string, string>()
@@ -947,7 +1292,8 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
         private static AiSharedQueueItem CreateQueueItem(
             string sharedRunId,
             string? tenantId = null,
-            string? pipelineKey = null)
+            string? pipelineKey = null,
+            IReadOnlyDictionary<string, string>? metadata = null)
         {
             var now = DateTimeOffset.UtcNow;
 
@@ -958,7 +1304,8 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
                 ExecutionContextSnapshot = AiExecutionContextSnapshotTestFactory.Create(tenantId: tenantId),
                 PipelineKey = pipelineKey,
                 EnqueuedAtUtc = now,
-                UpdatedAtUtc = now
+                UpdatedAtUtc = now,
+                Metadata = metadata ?? new Dictionary<string, string>()
             };
         }
 
@@ -999,25 +1346,22 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
         /// </summary>
         private sealed class TrackingRuntimeAdmissionReservationStore : IAiRuntimeAdmissionReservationStore
         {
-            /// <summary>
-            /// Gets the number of reserve calls.
-            /// </summary>
-            public int ReserveCallCount { get; private set; }
+            private int _reserveCallCount;
+            private int _releaseCallCount;
+            private string? _lastReservedRuntimeInstanceId;
+            private string? _lastReleasedRuntimeInstanceId;
 
-            /// <summary>
-            /// Gets the number of release calls.
-            /// </summary>
-            public int ReleaseCallCount { get; private set; }
+            public int ReserveCallCount =>
+                Volatile.Read(ref _reserveCallCount);
 
-            /// <summary>
-            /// Gets the last reserved runtime instance id.
-            /// </summary>
-            public string? LastReservedRuntimeInstanceId { get; private set; }
+            public int ReleaseCallCount =>
+                Volatile.Read(ref _releaseCallCount);
 
-            /// <summary>
-            /// Gets the last released runtime instance id.
-            /// </summary>
-            public string? LastReleasedRuntimeInstanceId { get; private set; }
+            public string? LastReservedRuntimeInstanceId =>
+                Volatile.Read(ref _lastReservedRuntimeInstanceId);
+
+            public string? LastReleasedRuntimeInstanceId =>
+                Volatile.Read(ref _lastReleasedRuntimeInstanceId);
 
             /// <inheritdoc />
             public Task ReserveAsync(
@@ -1029,9 +1373,10 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
 
                 cancellationToken.ThrowIfCancellationRequested();
 
-                this.ReserveCallCount++;
-                this.LastReservedRuntimeInstanceId =
-                    runtimeInstanceId;
+                Interlocked.Increment(ref _reserveCallCount);
+                Volatile.Write(
+                    ref _lastReservedRuntimeInstanceId,
+                    runtimeInstanceId);
 
                 return Task.CompletedTask;
             }
@@ -1046,9 +1391,10 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
 
                 cancellationToken.ThrowIfCancellationRequested();
 
-                this.ReleaseCallCount++;
-                this.LastReleasedRuntimeInstanceId =
-                    runtimeInstanceId;
+                Interlocked.Increment(ref _releaseCallCount);
+                Volatile.Write(
+                    ref _lastReleasedRuntimeInstanceId,
+                    runtimeInstanceId);
 
                 return Task.CompletedTask;
             }
@@ -1075,9 +1421,125 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
             }
         }
 
+        private sealed class StaticLocalQueueCapacitySettingsProvider :
+            IAiTenantRuntimeSettingsProvider
+        {
+            private readonly int? _localQueueCapacity;
+
+            public StaticLocalQueueCapacitySettingsProvider(
+                int? localQueueCapacity)
+            {
+                _localQueueCapacity = localQueueCapacity;
+            }
+
+            public AiTenantRuntimeSettings GetSettings(
+                string? tenantId,
+                string? tenantGroupId)
+            {
+                return new AiTenantRuntimeSettings
+                {
+                    TenantId =
+                        string.IsNullOrWhiteSpace(tenantId)
+                            ? "tenant-test"
+                            : tenantId,
+                    TenantGroupId = tenantGroupId,
+                    IsolationMode = AiRuntimeInstanceIsolationMode.Shared,
+                    AllowSharedFallback = true,
+                    MaxRuntimeInstances = 3,
+                    WorkerCountPerInstance = 1,
+                    MaxConcurrentRunsPerInstance = 1,
+                    LocalQueueCapacity = _localQueueCapacity,
+                    RuntimeInstanceIdPrefix = "runtime"
+                };
+            }
+        }
+
+        private sealed class ThrowingRuntimeLifecycleJournal :
+            IAiRuntimeLifecycleJournal
+        {
+            public Task AppendAsync(
+                AiRuntimeLifecycleEvent lifecycleEvent,
+                CancellationToken cancellationToken = default)
+            {
+                throw new InvalidOperationException(
+                    "Lifecycle journal unavailable.");
+            }
+
+            public Task<AiRuntimeLifecycleEvent?> GetByEventIdAsync(
+                string eventId,
+                CancellationToken cancellationToken = default)
+            {
+                throw new InvalidOperationException(
+                    "Lifecycle journal unavailable.");
+            }
+
+            public Task<IReadOnlyList<AiRuntimeLifecycleEvent>>
+                ListByControlPlaneIdAsync(
+                    string controlPlaneId,
+                    CancellationToken cancellationToken = default) =>
+                ThrowList();
+
+            public Task<IReadOnlyList<AiRuntimeLifecycleEvent>>
+                ListByPoolIdAsync(
+                    string poolId,
+                    CancellationToken cancellationToken = default) =>
+                ThrowList();
+
+            public Task<IReadOnlyList<AiRuntimeLifecycleEvent>>
+                ListByHostIdAsync(
+                    string hostId,
+                    CancellationToken cancellationToken = default) =>
+                ThrowList();
+
+            public Task<IReadOnlyList<AiRuntimeLifecycleEvent>>
+                ListByKubernetesPodUidAsync(
+                    string kubernetesPodUid,
+                    CancellationToken cancellationToken = default) =>
+                ThrowList();
+
+            public Task<IReadOnlyList<AiRuntimeLifecycleEvent>>
+                ListByRuntimeInstanceIdAsync(
+                    string runtimeInstanceId,
+                    CancellationToken cancellationToken = default) =>
+                ThrowList();
+
+            public Task<IReadOnlyList<AiRuntimeLifecycleEvent>>
+                ListByRuntimeFailureIncidentIdAsync(
+                    string runtimeFailureIncidentId,
+                    CancellationToken cancellationToken = default) =>
+                ThrowList();
+
+            public Task<IReadOnlyList<AiRuntimeLifecycleEvent>>
+                ListBySharedRunIdAsync(
+                    string tenantId,
+                    string sharedRunId,
+                    CancellationToken cancellationToken = default) =>
+                ThrowList();
+
+            public Task<IReadOnlyList<AiRuntimeLifecycleEvent>>
+                ListByExecutionIdAsync(
+                    string executionId,
+                    CancellationToken cancellationToken = default) =>
+                ThrowList();
+
+            public Task<IReadOnlyList<AiRuntimeLifecycleEvent>>
+                ListByCorrelationIdAsync(
+                    string correlationId,
+                    CancellationToken cancellationToken = default) =>
+                ThrowList();
+
+            private static Task<IReadOnlyList<AiRuntimeLifecycleEvent>>
+                ThrowList()
+            {
+                throw new InvalidOperationException(
+                    "Lifecycle journal unavailable.");
+            }
+        }
+
         private sealed class FakeSharedRunDispatcher : IAiSharedRunDispatcher
         {
             private readonly AiSharedRunDispatchResult _result;
+            private int _callCount;
 
             public FakeSharedRunDispatcher(
                 AiSharedRunDispatchResult? result = null)
@@ -1099,10 +1561,14 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
 
             public AiSharedRunDispatchRequest? LastRequest { get; private set; }
 
+            public int CallCount =>
+                Volatile.Read(ref _callCount);
+
             public Task<AiSharedRunDispatchResult> DispatchAsync(
                 AiSharedRunDispatchRequest request,
                 CancellationToken cancellationToken = default)
             {
+                Interlocked.Increment(ref _callCount);
                 LastRequest = request;
 
                 var now = DateTimeOffset.UtcNow;

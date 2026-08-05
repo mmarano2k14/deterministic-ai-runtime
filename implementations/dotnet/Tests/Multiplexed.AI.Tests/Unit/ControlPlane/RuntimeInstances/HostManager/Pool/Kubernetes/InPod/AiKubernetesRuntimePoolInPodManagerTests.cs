@@ -1,5 +1,7 @@
+using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
+using Multiplexed.Abstractions.Core.ExecutionContext;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Kubernetes.InPod;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Process;
 using Xunit;
@@ -46,6 +48,55 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager.Po
                 snapshot.Status);
 
             await manager.StopAsync();
+        }
+
+        /// <summary>
+        /// Verifies that zero local queue capacity remains a valid direct-execution policy.
+        /// </summary>
+        [Fact]
+        public void Validate_Should_Accept_Zero_LocalQueueCapacity()
+        {
+            var options =
+                CreateOptions();
+
+            options.LocalQueueCapacity = 0;
+
+            AiKubernetesRuntimePoolInPodOptionsValidator.Validate(
+                options,
+                requirePodUidFile: false);
+        }
+
+        /// <summary>
+        /// Verifies that the shared process-pool child validator also accepts
+        /// zero local queue capacity for direct execution.
+        /// </summary>
+        [Fact]
+        public void RuntimeInstanceOptionsValidator_Should_Accept_Zero_LocalQueueCapacity()
+        {
+            var options =
+                new AiRuntimeProcessPoolRuntimeInstanceOptions
+                {
+                    RuntimeHostAssemblyPath =
+                        "Multiplexed.AI.McpServer.Host.dll",
+                    ControlPlaneId = "cp-01",
+                    LocalQueueCapacity = 0,
+                    ExecutionContextSnapshot =
+                        new ExecutionContextSnapshot
+                        {
+                            ContextKey = "ctx-01",
+                            TenantGroupId = "tg-01",
+                            Project = "tests",
+                            UserId = "user-01",
+                            TenantId = "tenant-01",
+                            CurrentNamespace = "tests",
+                            Namespaces =
+                                new List<NamespaceEntry>(),
+                            TtlSeconds = 3600
+                        }
+                };
+
+            AiRuntimeProcessPoolRuntimeInstanceOptionsValidator.Validate(
+                options);
         }
 
         /// <summary>

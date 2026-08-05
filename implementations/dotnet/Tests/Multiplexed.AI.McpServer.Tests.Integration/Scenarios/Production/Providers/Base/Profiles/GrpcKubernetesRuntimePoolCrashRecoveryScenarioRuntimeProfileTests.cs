@@ -98,6 +98,99 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
         }
 
         /// <summary>
+        /// Verifies that admission is bounded by total child-runtime capacity,
+        /// rather than by the physical Pod count inherited from process-host settings.
+        /// </summary>
+        [Fact]
+        public void BuildSettings_Should_Set_Admission_Max_To_Total_RuntimePool_Capacity()
+        {
+            var profile =
+                new GrpcKubernetesRuntimePoolCrashRecoveryScenarioRuntimeProfile();
+
+            var scenario =
+                ProductionRuntimeScenarioFactory
+                    .CreateMultiTenantCapacityReplayLedgerScenario();
+
+            var settings =
+                profile.BuildSettings(
+                    scenario,
+                    "control-plane-runtime-capacity",
+                    "runtime-host.dll");
+
+            var maximumRuntimeCapacity =
+                checked(
+                    profile.CrashRecoveryPlan.MaximumPodCount *
+                    profile.CrashRecoveryPlan.MaximumRuntimeCountPerPod);
+
+            Assert.Equal(
+                maximumRuntimeCapacity.ToString(),
+                settings["AiRunAdmission:MaxInstanceCount"]);
+
+            Assert.Equal(
+                profile.CrashRecoveryPlan.MaximumRuntimeCountPerPod.ToString(),
+                settings["AiKubernetesRuntimePool:MaximumRuntimeInstanceCount"]);
+        }
+
+        /// <summary>
+        /// Verifies that a parameterized machine-limit profile propagates the
+        /// requested Pod and runtime dimensions into every capacity setting.
+        /// </summary>
+        [Fact]
+        public void ParameterizedProfile_Should_Propagate_Five_Runtimes_Per_Pod()
+        {
+            var profile =
+                new GrpcKubernetesRuntimePoolCrashRecoveryScenarioRuntimeProfile(
+                    maximumPodCount: 3,
+                    runtimeCountPerPod: 5);
+
+            Assert.Equal(
+                3,
+                profile.CrashRecoveryPlan.MaximumPodCount);
+
+            Assert.Equal(
+                5,
+                profile.CrashRecoveryPlan.InitialRuntimeCountPerPod);
+
+            Assert.Equal(
+                5,
+                profile.CrashRecoveryPlan.MaximumRuntimeCountPerPod);
+
+            var scenario =
+                ProductionRuntimeScenarioFactory
+                    .CreateMultiTenantCapacityReplayLedgerScenario();
+
+            var settings =
+                profile.BuildSettings(
+                    scenario,
+                    "control-plane-dynamic-runtime-capacity",
+                    "runtime-host.dll");
+
+            Assert.Equal(
+                "3",
+                settings[
+                    "AiKubernetesRuntimePool:MaximumPodCount"]);
+
+            Assert.Equal(
+                "5",
+                settings[
+                    "AiKubernetesRuntimePool:InitialRuntimeInstanceCount"]);
+
+            Assert.Equal(
+                "5",
+                settings[
+                    "AiKubernetesRuntimePool:MinimumRuntimeInstanceCount"]);
+
+            Assert.Equal(
+                "5",
+                settings[
+                    "AiKubernetesRuntimePool:MaximumRuntimeInstanceCount"]);
+
+            Assert.Equal(
+                "15",
+                settings["AiRunAdmission:MaxInstanceCount"]);
+        }
+
+        /// <summary>
         /// Verifies that the Runtime Pool Pod and its Process children use the same Mongo database
         /// as the parent MCP host for snapshots, replay metadata, ledger, and trace queries.
         /// </summary>

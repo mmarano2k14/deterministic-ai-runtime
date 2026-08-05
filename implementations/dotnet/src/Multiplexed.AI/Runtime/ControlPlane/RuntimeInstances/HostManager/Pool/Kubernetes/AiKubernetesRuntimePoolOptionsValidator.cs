@@ -47,6 +47,13 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
         private static void ValidateCountBoundaries(
             AiKubernetesRuntimePoolOptions options)
         {
+            if (options.MaximumPodCount <= 0)
+            {
+                throw new ArgumentException(
+                    "MaximumPodCount must be greater than zero.",
+                    nameof(options));
+            }
+
             if (options.MinimumRuntimeInstanceCount <= 0)
             {
                 throw new ArgumentException(

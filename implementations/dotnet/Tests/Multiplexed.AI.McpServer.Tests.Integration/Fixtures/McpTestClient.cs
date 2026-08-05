@@ -45,9 +45,31 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures
             ArgumentException.ThrowIfNullOrWhiteSpace(accessContextKey);
             ArgumentException.ThrowIfNullOrWhiteSpace(userId);
 
-            this.accessContextHeaderName = accessContextHeaderName;
-            this.accessContextKey = accessContextKey;
-            this.userId = userId;
+            var previousHeaderName =
+                Volatile.Read(
+                    ref this.accessContextHeaderName);
+
+            if (!string.IsNullOrWhiteSpace(
+                    previousHeaderName))
+            {
+                this.httpClient.DefaultRequestHeaders.Remove(
+                    previousHeaderName);
+            }
+
+            this.httpClient.DefaultRequestHeaders.Remove(
+                accessContextHeaderName);
+
+            Volatile.Write(
+                ref this.accessContextHeaderName,
+                accessContextHeaderName);
+
+            Volatile.Write(
+                ref this.accessContextKey,
+                accessContextKey);
+
+            Volatile.Write(
+                ref this.userId,
+                userId);
 
             Console.WriteLine(
                 $"[MCP TEST CLIENT] RBAC headers configured. Header='{accessContextHeaderName}', ContextKey='{accessContextKey}', UserId='{userId}'.");
@@ -495,35 +517,122 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures
 
             AddRbacHeaders(request);
 
-            var response = await httpClient.SendAsync(request, cancellationToken);
-            var content = await response.Content.ReadAsStringAsync(cancellationToken);
+            using var response =
+                await httpClient
+                    .SendAsync(
+                        request,
+                        HttpCompletionOption.ResponseContentRead,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+            var content =
+                await response.Content
+                    .ReadAsStringAsync(
+                        cancellationToken)
+                    .ConfigureAwait(false);
 
             response.EnsureSuccessStatusCode();
+
+            ApplyRotatedAccessContextHeader(
+                response);
 
             return content;
         }
 
+        /// <summary>
+        /// Applies the access-context key returned by successful server-side
+        /// rotation so subsequent requests do not keep reusing a stale key.
+        /// </summary>
+        private void ApplyRotatedAccessContextHeader(
+            HttpResponseMessage response)
+        {
+            ArgumentNullException.ThrowIfNull(response);
+
+            var headerName =
+                Volatile.Read(
+                    ref this.accessContextHeaderName);
+
+            if (string.IsNullOrWhiteSpace(
+                    headerName) ||
+                !response.Headers.TryGetValues(
+                    headerName,
+                    out var values))
+            {
+                return;
+            }
+
+            var rotatedContextKey =
+                values
+                    .LastOrDefault(
+                        value =>
+                            !string.IsNullOrWhiteSpace(
+                                value));
+
+            if (string.IsNullOrWhiteSpace(
+                    rotatedContextKey))
+            {
+                return;
+            }
+
+            var previousContextKey =
+                Volatile.Read(
+                    ref this.accessContextKey);
+
+            if (string.Equals(
+                    previousContextKey,
+                    rotatedContextKey,
+                    StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            Volatile.Write(
+                ref this.accessContextKey,
+                rotatedContextKey);
+
+            Console.WriteLine(
+                $"[MCP TEST CLIENT] Access context rotation applied. Header='{headerName}', PreviousContextKey='{previousContextKey}', RotatedContextKey='{rotatedContextKey}'.");
+        }
+
         private void AddRbacHeaders(
-    HttpRequestMessage request)
+            HttpRequestMessage request)
         {
             ArgumentNullException.ThrowIfNull(request);
 
-            Console.WriteLine(
-                $"[MCP TEST CLIENT] AddRbacHeaders called. Header='{accessContextHeaderName}', ContextKeySet='{!string.IsNullOrWhiteSpace(accessContextKey)}', UserId='{userId}'.");
+            var headerName =
+                Volatile.Read(
+                    ref this.accessContextHeaderName);
 
-            if (!string.IsNullOrWhiteSpace(accessContextHeaderName) &&
-                !string.IsNullOrWhiteSpace(accessContextKey))
+            var contextKey =
+                Volatile.Read(
+                    ref this.accessContextKey);
+
+            var configuredUserId =
+                Volatile.Read(
+                    ref this.userId);
+
+            Console.WriteLine(
+                $"[MCP TEST CLIENT] AddRbacHeaders called. Header='{headerName}', ContextKeySet='{!string.IsNullOrWhiteSpace(contextKey)}', UserId='{configuredUserId}'.");
+
+            if (!string.IsNullOrWhiteSpace(
+                    headerName) &&
+                !string.IsNullOrWhiteSpace(
+                    contextKey))
             {
+                request.Headers.Remove(
+                    headerName);
+
                 request.Headers.TryAddWithoutValidation(
-                    accessContextHeaderName,
-                    accessContextKey);
+                    headerName,
+                    contextKey);
             }
 
-            if (!string.IsNullOrWhiteSpace(userId))
+            if (!string.IsNullOrWhiteSpace(
+                    configuredUserId))
             {
                 request.Headers.TryAddWithoutValidation(
                     "X-Demo-UserId",
-                    userId);
+                    configuredUserId);
             }
 
             request.Headers.TryAddWithoutValidation(

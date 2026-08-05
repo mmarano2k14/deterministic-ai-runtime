@@ -29,6 +29,18 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
             CancellationToken cancellationToken = default);
 
         /// <summary>
+        /// Lists Kubernetes Pods in one namespace.
+        /// </summary>
+        /// <param name="namespaceName">The Kubernetes namespace.</param>
+        /// <param name="labelSelector">The optional Kubernetes label selector.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <returns>The matching Kubernetes Pods.</returns>
+        Task<IReadOnlyList<V1Pod>> ListPodsAsync(
+            string namespaceName,
+            string? labelSelector = null,
+            CancellationToken cancellationToken = default);
+
+        /// <summary>
         /// Creates a Kubernetes service.
         /// </summary>
         /// <param name="service">The service to create.</param>

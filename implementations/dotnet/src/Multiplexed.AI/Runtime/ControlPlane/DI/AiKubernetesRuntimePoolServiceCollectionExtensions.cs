@@ -4,6 +4,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
+using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Scaling;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Capacity;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Failure;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Kubernetes;
@@ -125,6 +126,16 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
                 });
 
             services.TryAddSingleton<
+                IAiKubernetesRuntimePoolPodInventory>(
+                serviceProvider =>
+                    serviceProvider
+                        .GetRequiredService<
+                            IAiKubernetesRuntimePoolHostClient>()
+                        as IAiKubernetesRuntimePoolPodInventory
+                    ?? throw new InvalidOperationException(
+                        "The configured Kubernetes Runtime Pool host client must expose the physical Pod inventory authority."));
+
+            services.TryAddSingleton<
                 InMemoryAiRuntimePoolFailureJournal>();
 
             services.TryAddSingleton<
@@ -225,6 +236,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
             services.TryAddSingleton<
                 IAiKubernetesRuntimePoolPodFailureRecoveryCoordinator,
                 AiKubernetesRuntimePoolPodFailureRecoveryCoordinator>();
+
+            services.TryAddSingleton<
+                IAiRuntimePoolPodCreationReservationStore,
+                InMemoryAiRuntimePoolPodCreationReservationStore>();
 
             services.TryAddSingleton<
                 IAiRuntimePoolPodCreationExecutor,

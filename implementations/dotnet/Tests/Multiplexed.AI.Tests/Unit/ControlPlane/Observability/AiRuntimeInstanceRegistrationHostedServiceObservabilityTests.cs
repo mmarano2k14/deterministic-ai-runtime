@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
@@ -118,6 +119,45 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.Observability
         }
 
         /// <summary>
+        /// Verifies that an expired registry lease is restored by the next heartbeat without restarting the runtime process.
+        /// </summary>
+        /// <returns>A task representing the asynchronous test operation.</returns>
+        [Fact]
+        public async Task ExecuteAsync_Should_Reregister_When_Heartbeat_Finds_Missing_Registry_Lease()
+        {
+            var ledger = new CapturingDecisionLedgerRecorder();
+            var registry = new CapturingRuntimeInstanceRegistry();
+            var service = CreateService(
+                ledger,
+                options =>
+                {
+                    options.HeartbeatInterval = TimeSpan.FromMilliseconds(25);
+                },
+                registry);
+
+            await service.StartAsync(CancellationToken.None).ConfigureAwait(false);
+
+            await WaitUntilAsync(
+                    () => registry.HeartbeatCount > 0,
+                    TimeSpan.FromSeconds(2))
+                .ConfigureAwait(false);
+
+            Assert.True(registry.Expire("runtime-1"));
+
+            await WaitUntilAsync(
+                    () => registry.RegisterCount >= 2 &&
+                        registry.GetSnapshot("runtime-1") is not null,
+                    TimeSpan.FromSeconds(2))
+                .ConfigureAwait(false);
+
+            Assert.NotNull(registry.GetSnapshot("runtime-1"));
+
+            await service.StopAsync(CancellationToken.None).ConfigureAwait(false);
+
+            Assert.True(registry.RegisterCount >= 2);
+        }
+
+        /// <summary>
         /// Creates the hosted service with observed decorators around fake registry and capacity stores.
         /// </summary>
         /// <param name="ledger">The ledger recorder.</param>
@@ -125,18 +165,21 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.Observability
         /// <returns>The hosted service.</returns>
         private static AiRuntimeInstanceRegistrationHostedService CreateService(
             IAiDecisionLedgerRecorder ledger,
-            Action<AiRuntimeInstanceRegistrationOptions>? configureOptions = null)
+            Action<AiRuntimeInstanceRegistrationOptions>? configureOptions = null,
+            CapturingRuntimeInstanceRegistry? registry = null)
         {
             var runtimeObservability = new FakeRuntimeObservability(ledger);
             var sink = new RuntimeObservabilityAiControlPlaneEventSink(runtimeObservability);
             var observer = new CompositeAiControlPlaneObserver(new IAiControlPlaneEventSink[] { sink });
-            var registry = new ObservedAiRuntimeInstanceRegistry(new CapturingRuntimeInstanceRegistry(), observer);
+            var observedRegistry = new ObservedAiRuntimeInstanceRegistry(
+                registry ?? new CapturingRuntimeInstanceRegistry(),
+                observer);
             var capacityStore = new ObservedAiRuntimeInstanceCapacityStore(new CapturingRuntimeInstanceCapacityStore(), observer);
             var options = CreateOptions();
             configureOptions?.Invoke(options);
 
             return new AiRuntimeInstanceRegistrationHostedService(
-                registry,
+                observedRegistry,
                 new FakeRuntimeEnvironmentProvider(),
                 new FakeRuntimePipelineBackgroundController(),
                 new StaticControlPlaneIdResolver("control-plane-1"),
@@ -233,13 +276,31 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.Observability
         /// </summary>
         private sealed class CapturingRuntimeInstanceRegistry : IAiRuntimeInstanceRegistry
         {
-            private readonly Dictionary<string, AiRuntimeInstanceSnapshot> snapshots = new(StringComparer.Ordinal);
+            private readonly ConcurrentDictionary<string, AiRuntimeInstanceSnapshot> snapshots = new(StringComparer.Ordinal);
+            private int registerCount;
+            private int heartbeatCount;
+
+            public int RegisterCount => Volatile.Read(ref this.registerCount);
+
+            public int HeartbeatCount => Volatile.Read(ref this.heartbeatCount);
+
+            public bool Expire(string runtimeInstanceId)
+            {
+                return this.snapshots.TryRemove(runtimeInstanceId, out _);
+            }
+
+            public AiRuntimeInstanceSnapshot? GetSnapshot(string runtimeInstanceId)
+            {
+                this.snapshots.TryGetValue(runtimeInstanceId, out var snapshot);
+                return snapshot;
+            }
 
             /// <inheritdoc />
             public Task<AiRuntimeInstanceSnapshot> RegisterAsync(
                 AiRuntimeInstanceRegistration registration,
                 CancellationToken cancellationToken = default)
             {
+                Interlocked.Increment(ref this.registerCount);
                 var snapshot = CreateSnapshot(registration.RuntimeInstanceId, registration.ControlPlaneId, AiRuntimeInstanceStatus.Ready, registration.Metadata);
                 this.snapshots[registration.RuntimeInstanceId] = snapshot;
                 return Task.FromResult(snapshot);
@@ -260,6 +321,8 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.Observability
                 AiRuntimeInstanceStatus status,
                 CancellationToken cancellationToken = default)
             {
+                Interlocked.Increment(ref this.heartbeatCount);
+
                 if (!this.snapshots.TryGetValue(runtimeInstanceId, out var snapshot))
                 {
                     return Task.FromResult<AiRuntimeInstanceSnapshot?>(null);
@@ -308,7 +371,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.Observability
                 string runtimeInstanceId,
                 CancellationToken cancellationToken = default)
             {
-                if (!this.snapshots.Remove(runtimeInstanceId, out var snapshot))
+                if (!this.snapshots.TryRemove(runtimeInstanceId, out var snapshot))
                 {
                     return Task.FromResult<AiRuntimeInstanceSnapshot?>(null);
                 }

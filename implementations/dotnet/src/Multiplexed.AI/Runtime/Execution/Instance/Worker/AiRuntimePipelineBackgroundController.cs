@@ -1205,16 +1205,32 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
             var queuedRunCount = _queuedRuns.Count;
             var runningRunCount = _runningRuns.Count;
             var activeRunCount = _activeRuns.Count;
+            var queueCapacity =
+                Math.Max(
+                    0,
+                    _options.QueueCapacity);
+
+            /*
+             * A zero-capacity local queue is a valid direct-execution policy.
+             * The internal channel still has one transit slot, but a run waiting
+             * in that transit slot already consumes immediate execution capacity.
+             */
+            var queuedRunsOccupyingImmediateCapacity =
+                queueCapacity == 0
+                    ? queuedRunCount
+                    : 0;
 
             var availableRunSlots =
                 Math.Max(
                     0,
-                    _options.MaxConcurrentRuns - runningRunCount);
+                    _options.MaxConcurrentRuns -
+                    runningRunCount -
+                    queuedRunsOccupyingImmediateCapacity);
 
             var availableQueueSlots =
                 Math.Max(
                     0,
-                    _options.QueueCapacity - queuedRunCount);
+                    queueCapacity - queuedRunCount);
 
             var workerCount =
                 _options.Distributed.Enabled
@@ -1235,7 +1251,8 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
 
             var canAcceptRun =
                 !_queuePaused &&
-                availableQueueSlots > 0;
+                (availableRunSlots > 0 ||
+                 availableQueueSlots > 0);
 
             return Task.FromResult(
                 new AiRuntimePipelineQueueState
@@ -1245,7 +1262,7 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
                     QueuedRunCount = queuedRunCount,
                     RunningRunCount = runningRunCount,
                     ActiveRunCount = activeRunCount,
-                    QueueCapacity = _options.QueueCapacity,
+                    QueueCapacity = queueCapacity,
                     MaxConcurrentRuns = _options.MaxConcurrentRuns,
                     AvailableRunSlots = availableRunSlots,
 

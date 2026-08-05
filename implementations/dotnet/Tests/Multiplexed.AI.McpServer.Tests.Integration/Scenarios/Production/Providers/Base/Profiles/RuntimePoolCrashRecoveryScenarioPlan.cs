@@ -79,7 +79,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
         /// <summary>
         /// Gets the maximum number of child runtimes permitted in every Pod.
         /// </summary>
-        public int MaximumRuntimeCountPerPod { get; }
+        public int MaximumRuntimeCountPerPod { get; set; }
 
         /// <summary>
         /// Gets the complete ordered physical-failure sequence.

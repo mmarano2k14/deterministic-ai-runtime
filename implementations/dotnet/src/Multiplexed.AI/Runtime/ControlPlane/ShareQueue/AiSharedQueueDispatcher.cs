@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.ControlPlane.Admission;
 using Multiplexed.Abstractions.AI.ControlPlane.Discovery;
 using Multiplexed.Abstractions.AI.ControlPlane.Signals;
@@ -12,6 +13,7 @@ using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Scaling;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Store;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Claiming;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Dispatch;
+using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Pump;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Queue;
 using Multiplexed.Abstractions.Core.ExecutionContext;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics;
@@ -57,6 +59,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
         private const string RecoveryFailedExecutionIdMetadataKey = "recovery.failedExecutionId";
         private const string RecoveryFailedRuntimeInstanceIdMetadataKey = "recovery.failedRuntimeInstanceId";
         private const string RecoveryFailedLocalRunIdMetadataKey = "recovery.failedLocalRunId";
+        private const string RecoveryModeMetadataKey = "recovery.mode";
+        private const string RecoveryModeResumeExistingExecution = "resume-existing-execution";
+        private const string RecoveryModeRequeueLocalQueuedRun = "requeue-local-queued-run";
+        private static readonly TimeSpan ReservationHandoffPollInterval =
+            TimeSpan.FromMilliseconds(100);
 
         private readonly IAiSharedQueue _sharedQueue;
         private readonly IAiSharedRunStore _sharedRunStore;
@@ -71,6 +78,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
         private readonly IAiRuntimeRecoveryForensicsRecorder _forensicsRecorder;
         private readonly IAiRuntimeSignalPublisher? _runtimeSignalPublisher;
         private readonly AiRuntimeLifecycleEventWriter _lifecycleWriter;
+        private readonly AiSharedQueuePumpOptions _queuePumpOptions;
         private readonly ILogger<AiSharedQueueDispatcher> _logger;
 
         /// <summary>
@@ -87,7 +95,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
             IAiTenantRuntimeSettingsProvider tenantRuntimeSettingsProvider,
             IAiControlPlaneIdResolver controlPlaneIdResolver,
             IExecutionContextAccessor executionContextAccessor,
-            ILogger<AiSharedQueueDispatcher> logger)
+            ILogger<AiSharedQueueDispatcher> logger,
+            IOptions<AiSharedQueuePumpOptions>? queuePumpOptions = null)
             : this(
                 sharedQueue,
                 sharedRunStore,
@@ -100,7 +109,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                 controlPlaneIdResolver,
                 executionContextAccessor,
                 logger,
-                new NoopAiRuntimeRecoveryForensicsRecorder())
+                new NoopAiRuntimeRecoveryForensicsRecorder(),
+                queuePumpOptions: queuePumpOptions)
         {
         }
 
@@ -121,7 +131,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
             ILogger<AiSharedQueueDispatcher> logger,
             IAiRuntimeRecoveryForensicsRecorder forensicsRecorder,
             IAiRuntimeSignalPublisher? runtimeSignalPublisher = null,
-            IAiRuntimeLifecycleJournal? lifecycleJournal = null)
+            IAiRuntimeLifecycleJournal? lifecycleJournal = null,
+            IOptions<AiSharedQueuePumpOptions>? queuePumpOptions = null)
         {
             _sharedQueue = sharedQueue ?? throw new ArgumentNullException(nameof(sharedQueue));
             _sharedRunStore = sharedRunStore ?? throw new ArgumentNullException(nameof(sharedRunStore));
@@ -138,6 +149,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
             _lifecycleWriter = new AiRuntimeLifecycleEventWriter(
                 lifecycleJournal ?? NoopAiRuntimeLifecycleJournal.Instance);
             _runtimeSignalPublisher = runtimeSignalPublisher;
+            _queuePumpOptions =
+                queuePumpOptions?.Value ??
+                new AiSharedQueuePumpOptions();
         }
 
         public async Task<AiSharedQueueDispatchResult> DispatchNextAsync(
@@ -150,6 +164,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
             var startedAtUtc = DateTimeOffset.UtcNow;
             string? reservedRuntimeInstanceId = null;
             string? reservedSharedRunId = null;
+            DateTimeOffset? runtimeAcceptedAtUtc = null;
+            bool deferQueueLessReservationRelease = false;
             AiSharedQueueItem? ownedQueueItem = null;
 
             static bool MatchesDispatchOwnership(
@@ -279,6 +295,33 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                         DurationMs = CalculateDurationMs(startedAtUtc, completedAtUtc)
                     };
                 }
+
+                sharedRun =
+                    await ReleaseFailedRecoveryOwnershipIfCurrentAsync(
+                            queueItem,
+                            sharedRun,
+                            cancellationToken)
+                        .ConfigureAwait(false);
+
+                var existingDurableDispatch =
+                    await TryFinalizeExistingDurableDispatchAsync(
+                            queueItem,
+                            sharedRun,
+                            startedAtUtc)
+                        .ConfigureAwait(false);
+
+                if (existingDurableDispatch is not null)
+                {
+                    return existingDurableDispatch;
+                }
+
+                var tenantRuntimeSettings =
+                    _tenantRuntimeSettingsProvider.GetSettings(
+                        sharedRun.ExecutionContextSnapshot.TenantId,
+                        sharedRun.ExecutionContextSnapshot.TenantGroupId);
+
+                var queueLessDispatchPolicy =
+                    tenantRuntimeSettings.LocalQueueCapacity == 0;
 
                 var baseOperationMetadata =
                     MergeMetadata(
@@ -762,6 +805,19 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                                 ? targetRuntimeInstanceId
                                 : dispatchResult.RuntimeInstanceId;
 
+                        runtimeAcceptedAtUtc =
+                            DateTimeOffset.UtcNow;
+
+                        deferQueueLessReservationRelease =
+                            queueLessDispatchPolicy &&
+                            string.Equals(
+                                acceptedRuntimeInstanceId,
+                                reservedRuntimeInstanceId,
+                                StringComparison.Ordinal) &&
+                            _queuePumpOptions
+                                .QueueLessDispatchReservationHandoffTimeout >
+                                TimeSpan.Zero;
+
                         /*
                          * Runtime acceptance has already happened. From this point forward,
                          * persistence must not reuse the caller cancellation token.
@@ -855,7 +911,32 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                                 dispatchedRun,
                                 acceptedRuntimeInstanceId,
                                 dispatchedLocalRunId,
-                                dispatchResult.ExecutionId))
+                                dispatchResult.ExecutionId) &&
+                            HasDurableDispatchOwnership(
+                                dispatchedRun))
+                        {
+                            _logger.LogWarning(
+                                "Shared-run dispatch ownership was already committed by another dispatcher. The existing owner remains authoritative and the current queue claim will be finalized without requeue. SharedRunId={SharedRunId}, ExistingRuntimeInstanceId={ExistingRuntimeInstanceId}, ExistingLocalRunId={ExistingLocalRunId}, ExistingExecutionId={ExistingExecutionId}, AttemptedRuntimeInstanceId={AttemptedRuntimeInstanceId}, AttemptedLocalRunId={AttemptedLocalRunId}, AttemptedExecutionId={AttemptedExecutionId}",
+                                sharedRun.SharedRunId,
+                                dispatchedRun!.AssignedRuntimeInstanceId,
+                                dispatchedRun.LocalRunId,
+                                dispatchedRun.ExecutionId,
+                                acceptedRuntimeInstanceId,
+                                dispatchedLocalRunId,
+                                dispatchResult.ExecutionId);
+
+                            acceptedRuntimeInstanceId =
+                                dispatchedRun.AssignedRuntimeInstanceId!;
+
+                            dispatchedLocalRunId =
+                                dispatchedRun.LocalRunId!;
+                        }
+
+                        if (!MatchesDispatchOwnership(
+                                dispatchedRun,
+                                acceptedRuntimeInstanceId,
+                                dispatchedLocalRunId,
+                                dispatchedRun?.ExecutionId))
                         {
                             _logger.LogWarning(
                                 "Shared-run dispatch ownership could not be confirmed after runtime acceptance. The claimed queue item will be requeued and must not become Dispatched. SharedRunId={SharedRunId}, ControlPlaneId={ControlPlaneId}, RuntimeInstanceId={RuntimeInstanceId}, LocalRunId={LocalRunId}, ExecutionId={ExecutionId}, LastException={LastException}",
@@ -1033,12 +1114,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                             dispatchResult.ExecutionId,
                             queueItem.ClaimToken);
 
-                        await RecordWorkPlacementLifecycleAsync(
+                        await RecordWorkPlacementLifecycleBestEffortAsync(
                                 controlPlaneId,
                                 queueItem,
                                 dispatchedRun!,
-                                operationMetadata,
-                                cancellationToken)
+                                operationMetadata)
                             .ConfigureAwait(false);
 
                         await PublishSharedRunDispatchedSignalBestEffortAsync(
@@ -1066,14 +1146,30 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                     }
                     finally
                     {
-                        await ReleaseReservationBestEffortAsync(
+                        if (deferQueueLessReservationRelease &&
+                            runtimeAcceptedAtUtc.HasValue &&
+                            !string.IsNullOrWhiteSpace(
+                                reservedRuntimeInstanceId))
+                        {
+                            ScheduleReservationReleaseAfterCapacityHandoff(
                                 reservedSharedRunId,
                                 reservedRuntimeInstanceId,
-                                CancellationToken.None)
-                            .ConfigureAwait(false);
+                                runtimeAcceptedAtUtc.Value);
 
-                        reservedSharedRunId = null;
-                        reservedRuntimeInstanceId = null;
+                            reservedSharedRunId = null;
+                            reservedRuntimeInstanceId = null;
+                        }
+                        else
+                        {
+                            await ReleaseReservationBestEffortAsync(
+                                    reservedSharedRunId,
+                                    reservedRuntimeInstanceId,
+                                    CancellationToken.None)
+                                .ConfigureAwait(false);
+
+                            reservedSharedRunId = null;
+                            reservedRuntimeInstanceId = null;
+                        }
                     }
                 }
                 finally
@@ -1116,12 +1212,18 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                     if (ownedQueueItem.Status ==
                         AiSharedQueueItemStatus.Dispatched)
                     {
-                        await RequeueDispatchedBestEffortAsync(
-                                ownedQueueItem,
-                                requeueReason,
-                                ownedQueueItem.Metadata,
-                                CancellationToken.None)
-                            .ConfigureAwait(false);
+                        /*
+                         * Runtime acceptance, durable shared-run ownership, and queue
+                         * finalization have already committed. No later observability,
+                         * lifecycle, signal, or response failure may make this work
+                         * claimable again.
+                         */
+                        _logger.LogError(
+                            "Post-commit shared queue dispatch failure was isolated without requeue. SharedRunId={SharedRunId}, ControlPlaneId={ControlPlaneId}, ClaimToken={ClaimToken}, Reason={Reason}",
+                            ownedQueueItem.SharedRunId,
+                            ownedQueueItem.ControlPlaneId,
+                            ownedQueueItem.ClaimToken,
+                            requeueReason);
                     }
                     else if (ownedQueueItem.Status ==
                              AiSharedQueueItemStatus.Claimed)
@@ -1166,6 +1268,264 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                     }
                 };
             }
+        }
+
+        /// <summary>
+        /// Releases the exact failed runtime ownership carried by a recovery queue item
+        /// before the stale durable-dispatch guard is evaluated.
+        /// </summary>
+        /// <param name="queueItem">The claimed recovery queue item.</param>
+        /// <param name="sharedRun">The current durable shared-run record.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <returns>The current durable shared-run record after the exact compare-and-set release.</returns>
+        private async Task<AiSharedRunRecord>
+            ReleaseFailedRecoveryOwnershipIfCurrentAsync(
+                AiSharedQueueItem queueItem,
+                AiSharedRunRecord sharedRun,
+                CancellationToken cancellationToken)
+        {
+            if (!TryResolveFailedRecoveryOwnership(
+                    queueItem.Metadata,
+                    out var failedRuntimeInstanceId,
+                    out var failedLocalRunId) ||
+                !string.Equals(
+                    sharedRun.AssignedRuntimeInstanceId,
+                    failedRuntimeInstanceId,
+                    StringComparison.Ordinal) ||
+                !string.Equals(
+                    sharedRun.LocalRunId,
+                    failedLocalRunId,
+                    StringComparison.Ordinal))
+            {
+                return sharedRun;
+            }
+
+            var released =
+                await _sharedRunStore
+                    .MarkRequeuedAfterScaleOutIfCurrentAsync(
+                        sharedRun.SharedRunId,
+                        failedRuntimeInstanceId,
+                        failedLocalRunId,
+                        "Recovery redispatch claimed; failed durable ownership released before replacement dispatch.",
+                        queueItem.Metadata,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+            if (released is null)
+            {
+                throw new InvalidOperationException(
+                    $"Recovery redispatch could not reload shared run '{sharedRun.SharedRunId}' after releasing failed durable ownership.");
+            }
+
+            _logger.LogInformation(
+                "Recovery redispatch released failed durable shared-run ownership before replacement dispatch. SharedRunId={SharedRunId}, FailedRuntimeInstanceId={FailedRuntimeInstanceId}, FailedLocalRunId={FailedLocalRunId}, CurrentStatus={CurrentStatus}, CurrentRuntimeInstanceId={CurrentRuntimeInstanceId}, CurrentLocalRunId={CurrentLocalRunId}",
+                sharedRun.SharedRunId,
+                failedRuntimeInstanceId,
+                failedLocalRunId,
+                released.Status,
+                released.AssignedRuntimeInstanceId,
+                released.LocalRunId);
+
+            return released;
+        }
+
+        /// <summary>
+        /// Resolves an exact failed runtime ownership only for supported recovery redispatch modes.
+        /// </summary>
+        /// <param name="metadata">The recovery queue metadata.</param>
+        /// <param name="failedRuntimeInstanceId">The failed runtime instance identifier.</param>
+        /// <param name="failedLocalRunId">The failed local run identifier.</param>
+        /// <returns><c>true</c> when a complete supported recovery ownership is present.</returns>
+        private static bool TryResolveFailedRecoveryOwnership(
+            IReadOnlyDictionary<string, string> metadata,
+            out string failedRuntimeInstanceId,
+            out string failedLocalRunId)
+        {
+            failedRuntimeInstanceId = string.Empty;
+            failedLocalRunId = string.Empty;
+
+            if (!TryGetMetadataValue(
+                    metadata,
+                    RecoveryModeMetadataKey,
+                    out var recoveryMode) ||
+                (!string.Equals(
+                     recoveryMode,
+                     RecoveryModeResumeExistingExecution,
+                     StringComparison.OrdinalIgnoreCase) &&
+                 !string.Equals(
+                     recoveryMode,
+                     RecoveryModeRequeueLocalQueuedRun,
+                     StringComparison.OrdinalIgnoreCase)))
+            {
+                return false;
+            }
+
+            return TryGetMetadataValue(
+                       metadata,
+                       RecoveryFailedRuntimeInstanceIdMetadataKey,
+                       out failedRuntimeInstanceId) &&
+                   TryGetMetadataValue(
+                       metadata,
+                       RecoveryFailedLocalRunIdMetadataKey,
+                       out failedLocalRunId);
+        }
+
+        /// <summary>
+        /// Finalizes a stale claimed queue item from existing durable shared-run
+        /// ownership without calling the runtime a second time.
+        /// </summary>
+        private async Task<AiSharedQueueDispatchResult?>
+            TryFinalizeExistingDurableDispatchAsync(
+                AiSharedQueueItem queueItem,
+                AiSharedRunRecord sharedRun,
+                DateTimeOffset startedAtUtc)
+        {
+            if (!HasDurableDispatchOwnership(sharedRun))
+            {
+                return null;
+            }
+
+            if (string.IsNullOrWhiteSpace(queueItem.ClaimToken))
+            {
+                throw new InvalidOperationException(
+                    $"A stale durable dispatch for shared run '{sharedRun.SharedRunId}' was claimed without a claim token.");
+            }
+
+            var finalizedQueueItem =
+                await _sharedQueue
+                    .MarkDispatchedAsync(
+                        queueItem.SharedRunId,
+                        queueItem.ClaimToken,
+                        "Existing durable shared-run ownership finalized without another runtime dispatch.",
+                        CancellationToken.None)
+                    .ConfigureAwait(false);
+
+            if (finalizedQueueItem is null)
+            {
+                var currentQueueItem =
+                    await _sharedQueue
+                        .GetAsync(
+                            queueItem.SharedRunId,
+                            CancellationToken.None)
+                        .ConfigureAwait(false);
+
+                if (currentQueueItem?.Status !=
+                    AiSharedQueueItemStatus.Dispatched)
+                {
+                    throw new InvalidOperationException(
+                        $"Existing durable dispatch ownership for shared run '{sharedRun.SharedRunId}' could not finalize its queue item.");
+                }
+
+                finalizedQueueItem = currentQueueItem;
+            }
+
+            _logger.LogWarning(
+                "Stale shared queue item healed from immutable durable dispatch ownership. SharedRunId={SharedRunId}, RuntimeInstanceId={RuntimeInstanceId}, LocalRunId={LocalRunId}, ExecutionId={ExecutionId}, ClaimToken={ClaimToken}",
+                sharedRun.SharedRunId,
+                sharedRun.AssignedRuntimeInstanceId,
+                sharedRun.LocalRunId,
+                sharedRun.ExecutionId,
+                queueItem.ClaimToken);
+
+            var completedAtUtc =
+                DateTimeOffset.UtcNow;
+
+            return new AiSharedQueueDispatchResult
+            {
+                Success = true,
+                SharedRunId = sharedRun.SharedRunId,
+                RuntimeInstanceId =
+                    sharedRun.AssignedRuntimeInstanceId,
+                QueueItem = finalizedQueueItem,
+                SharedRun = sharedRun,
+                Message =
+                    "Existing durable dispatch ownership was preserved and the stale queue item was finalized without another runtime call.",
+                StartedAtUtc = startedAtUtc,
+                CompletedAtUtc = completedAtUtc,
+                DurationMs =
+                    CalculateDurationMs(
+                        startedAtUtc,
+                        completedAtUtc),
+                Diagnostics = new[]
+                {
+                    "Runtime dispatch skipped because immutable durable ownership already existed.",
+                    $"RuntimeInstanceId='{sharedRun.AssignedRuntimeInstanceId}'",
+                    $"LocalRunId='{sharedRun.LocalRunId}'",
+                    $"ExecutionId='{sharedRun.ExecutionId}'"
+                }
+            };
+        }
+
+        /// <summary>
+        /// Records post-commit placement evidence without allowing an observability
+        /// failure to requeue already accepted work.
+        /// </summary>
+        private async Task RecordWorkPlacementLifecycleBestEffortAsync(
+            string controlPlaneId,
+            AiSharedQueueItem queueItem,
+            AiSharedRunRecord dispatchedRun,
+            IReadOnlyDictionary<string, string> metadata)
+        {
+            Exception? lastException = null;
+
+            for (var attempt = 1; attempt <= 3; attempt++)
+            {
+                try
+                {
+                    await RecordWorkPlacementLifecycleAsync(
+                            controlPlaneId,
+                            queueItem,
+                            dispatchedRun,
+                            metadata,
+                            CancellationToken.None)
+                        .ConfigureAwait(false);
+
+                    return;
+                }
+                catch (Exception exception)
+                {
+                    lastException = exception;
+
+                    _logger.LogWarning(
+                        exception,
+                        "Post-commit work-placement lifecycle append failed. Durable dispatch remains authoritative and will not be requeued. SharedRunId={SharedRunId}, RuntimeInstanceId={RuntimeInstanceId}, LocalRunId={LocalRunId}, Attempt={Attempt}",
+                        dispatchedRun.SharedRunId,
+                        dispatchedRun.AssignedRuntimeInstanceId,
+                        dispatchedRun.LocalRunId,
+                        attempt);
+
+                    if (attempt < 3)
+                    {
+                        await Task
+                            .Delay(
+                                TimeSpan.FromMilliseconds(
+                                    50 * attempt),
+                                CancellationToken.None)
+                            .ConfigureAwait(false);
+                    }
+                }
+            }
+
+            _logger.LogError(
+                lastException,
+                "Post-commit work-placement lifecycle evidence could not be appended after retries. The dispatch remains committed and is intentionally not requeued. SharedRunId={SharedRunId}, RuntimeInstanceId={RuntimeInstanceId}, LocalRunId={LocalRunId}, ExecutionId={ExecutionId}",
+                dispatchedRun.SharedRunId,
+                dispatchedRun.AssignedRuntimeInstanceId,
+                dispatchedRun.LocalRunId,
+                dispatchedRun.ExecutionId);
+        }
+
+        private static bool HasDurableDispatchOwnership(
+            AiSharedRunRecord? sharedRun)
+        {
+            return sharedRun is not null &&
+                sharedRun.Status is
+                    AiSharedRunStatus.Dispatched or
+                    AiSharedRunStatus.Completed &&
+                !string.IsNullOrWhiteSpace(
+                    sharedRun.AssignedRuntimeInstanceId) &&
+                !string.IsNullOrWhiteSpace(
+                    sharedRun.LocalRunId);
         }
 
         /// <summary>
@@ -2012,6 +2372,102 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                     reason);
 
                 return false;
+            }
+        }
+
+        /// <summary>
+        /// Transfers a successful queue-less reservation to a bounded handoff.
+        /// </summary>
+        private void ScheduleReservationReleaseAfterCapacityHandoff(
+            string? sharedRunId,
+            string runtimeInstanceId,
+            DateTimeOffset runtimeAcceptedAtUtc)
+        {
+            _ = ReleaseReservationAfterCapacityHandoffBestEffortAsync(
+                sharedRunId,
+                runtimeInstanceId,
+                runtimeAcceptedAtUtc);
+        }
+
+        /// <summary>
+        /// Releases a queue-less reservation after observing a heartbeat produced
+        /// after acceptance, or after the bounded handoff timeout expires.
+        /// </summary>
+        private async Task ReleaseReservationAfterCapacityHandoffBestEffortAsync(
+            string? sharedRunId,
+            string runtimeInstanceId,
+            DateTimeOffset runtimeAcceptedAtUtc)
+        {
+            var timeout =
+                _queuePumpOptions
+                    .QueueLessDispatchReservationHandoffTimeout;
+
+            var deadlineUtc =
+                DateTimeOffset.UtcNow + timeout;
+
+            var refreshedCapacityObserved =
+                false;
+
+            try
+            {
+                while (DateTimeOffset.UtcNow < deadlineUtc)
+                {
+                    var snapshot =
+                        await _runtimeInstanceRegistry
+                            .GetAsync(
+                                runtimeInstanceId,
+                                CancellationToken.None)
+                            .ConfigureAwait(false);
+
+                    if (snapshot is not null &&
+                        snapshot.LastHeartbeatAtUtc >=
+                            runtimeAcceptedAtUtc)
+                    {
+                        refreshedCapacityObserved = true;
+                        break;
+                    }
+
+                    var remaining =
+                        deadlineUtc - DateTimeOffset.UtcNow;
+
+                    if (remaining <= TimeSpan.Zero)
+                    {
+                        break;
+                    }
+
+                    await Task
+                        .Delay(
+                            remaining < ReservationHandoffPollInterval
+                                ? remaining
+                                : ReservationHandoffPollInterval,
+                            CancellationToken.None)
+                        .ConfigureAwait(false);
+                }
+            }
+            catch (Exception exception)
+            {
+                _logger.LogWarning(
+                    exception,
+                    "Queue-less admission reservation handoff observation failed. " +
+                    "SharedRunId={SharedRunId}, RuntimeInstanceId={RuntimeInstanceId}",
+                    sharedRunId,
+                    runtimeInstanceId);
+            }
+            finally
+            {
+                _logger.LogInformation(
+                    "Queue-less admission reservation handoff completed. " +
+                    "SharedRunId={SharedRunId}, RuntimeInstanceId={RuntimeInstanceId}, " +
+                    "RefreshedCapacityObserved={RefreshedCapacityObserved}",
+                    sharedRunId,
+                    runtimeInstanceId,
+                    refreshedCapacityObserved);
+
+                await ReleaseReservationBestEffortAsync(
+                        sharedRunId,
+                        runtimeInstanceId,
+                        CancellationToken.None)
+                    .ConfigureAwait(false);
             }
         }
 

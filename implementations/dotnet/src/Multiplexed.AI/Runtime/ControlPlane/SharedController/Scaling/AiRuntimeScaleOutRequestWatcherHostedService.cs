@@ -30,6 +30,12 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
     public sealed class AiRuntimeScaleOutRequestWatcherHostedService : BackgroundService
     {
         private const string RuntimeScaleOutRequestWatchOperation = "runtime-scale-out-request-watch";
+
+        private const string ScaleOutIntentMetadataKey =
+            "scaleout.intent";
+
+        private const string SharedQueueRedispatchReplacementIntent =
+            "shared-queue-redispatch-replacement";
         private readonly IAiRuntimeScaleOutRequestStore store;
         private readonly IAiRuntimeScaleOutProviderSelector providerSelector;
         private readonly IAiScaleOutFulfilledRunRequeueService fulfilledRunRequeueService;
@@ -421,13 +427,46 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
                 return;
             }
 
-            var requeueResult =
-                await this.fulfilledRunRequeueService
-                    .RequeueAsync(
-                        request,
-                        fulfilledRuntimeInstanceId,
-                        cancellationToken)
-                    .ConfigureAwait(false);
+            var skipFulfilledRunRequeue =
+                IsSharedQueueRedispatchReplacement(
+                    request);
+
+            AiScaleOutFulfilledRunRequeueResult requeueResult;
+
+            if (skipFulfilledRunRequeue)
+            {
+                /*
+                 * AiSharedQueueDispatcher already requeues its claimed queue item
+                 * immediately after publishing this replacement request.
+                 *
+                 * Requeueing the linked run again from the asynchronous scale-out
+                 * watcher creates a second queue authority. When the original item
+                 * is concurrently claimed, the delayed callback can materialize a
+                 * second dispatch path for the same SharedRunId.
+                 */
+                requeueResult =
+                    new AiScaleOutFulfilledRunRequeueResult
+                    {
+                        LinkedSharedRunFound =
+                            !string.IsNullOrWhiteSpace(
+                                request.SharedRunId),
+                        RequeueSucceeded = true,
+                        CandidateCount = 0,
+                        SharedRunId = request.SharedRunId,
+                        Reason =
+                            "Fulfilled-run requeue skipped because the shared queue dispatcher already retained the replacement item."
+                    };
+            }
+            else
+            {
+                requeueResult =
+                    await this.fulfilledRunRequeueService
+                        .RequeueAsync(
+                            request,
+                            fulfilledRuntimeInstanceId,
+                            cancellationToken)
+                        .ConfigureAwait(false);
+            }
 
             if (requeueResult.LinkedSharedRunFound &&
                 !requeueResult.RequeueSucceeded)
@@ -462,6 +501,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
                             ["storeMarkedFulfilled"] = false,
                             ["storeMarkedRejected"] = true,
                             ["linkedSharedRunFound"] = requeueResult.LinkedSharedRunFound,
+                            ["requeueSkipped"] = skipFulfilledRunRequeue,
                             ["requeueSucceeded"] = requeueResult.RequeueSucceeded,
                             ["requeueCandidateCount"] = requeueResult.CandidateCount,
                             ["requeueReason"] = requeueResult.Reason
@@ -497,12 +537,44 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
                         ["providerFailureReason"] = providerResult.FailureReason,
                         ["storeMarkedFulfilled"] = true,
                         ["linkedSharedRunFound"] = requeueResult.LinkedSharedRunFound,
+                        ["requeueSkipped"] = skipFulfilledRunRequeue,
                         ["requeueSucceeded"] = requeueResult.RequeueSucceeded,
                         ["requeueCandidateCount"] = requeueResult.CandidateCount,
                         ["requeueReason"] = requeueResult.Reason
                     },
                     cancellationToken)
                 .ConfigureAwait(false);
+        }
+
+        /// <summary>
+        /// Determines whether the request was emitted by the shared queue dispatcher
+        /// after it had already retained the claimed queue item.
+        /// </summary>
+        private static bool IsSharedQueueRedispatchReplacement(
+            AiRuntimeScaleOutRequestRecord request)
+        {
+            ArgumentNullException.ThrowIfNull(request);
+
+            if (request.Metadata is null ||
+                request.Metadata.Count == 0)
+            {
+                return false;
+            }
+
+            var intent =
+                request.Metadata
+                    .FirstOrDefault(
+                        item =>
+                            string.Equals(
+                                item.Key,
+                                ScaleOutIntentMetadataKey,
+                                StringComparison.OrdinalIgnoreCase))
+                    .Value;
+
+            return string.Equals(
+                intent,
+                SharedQueueRedispatchReplacementIntent,
+                StringComparison.OrdinalIgnoreCase);
         }
 
         /// <summary>

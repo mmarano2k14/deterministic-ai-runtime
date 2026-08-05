@@ -22,9 +22,12 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager.Po
                     options,
                     "request-0001");
 
+            options.MaximumPodCount = 7;
+
             var spec =
                 CreateBuilder(options).Build(plan);
 
+            Assert.Equal(7, spec.MaximumPodCount);
             Assert.Equal(5, spec.Ports.Count);
             Assert.Equal("pool-http", spec.Ports[0].Name);
             Assert.Equal(8080, spec.Ports[0].Port);

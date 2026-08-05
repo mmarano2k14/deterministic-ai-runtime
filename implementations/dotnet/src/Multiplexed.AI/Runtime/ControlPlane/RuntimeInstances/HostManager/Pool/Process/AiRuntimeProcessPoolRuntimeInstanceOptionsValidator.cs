@@ -45,10 +45,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
 
             if (options.WorkerCountPerInstance <= 0 ||
                 options.MaxConcurrentRunsPerInstance <= 0 ||
-                options.LocalQueueCapacity <= 0)
+                options.LocalQueueCapacity < 0)
             {
                 throw new ArgumentException(
-                    "Worker count, concurrent run count, and queue capacity must be greater than zero.",
+                    "Worker count and concurrent run count must be greater than zero; queue capacity must be zero or greater.",
                     nameof(options));
             }
 

@@ -184,7 +184,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Store
                     return Task.FromResult<AiSharedRunRecord?>(null);
                 }
 
-                if (IsTerminal(existing.Status))
+                if (IsTerminal(existing.Status) ||
+                    HasDurableDispatchOwnership(existing))
                 {
                     return Task.FromResult<AiSharedRunRecord?>(existing);
                 }
@@ -528,6 +529,18 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Store
         /// </summary>
         /// <param name="status">The shared run status.</param>
         /// <returns><c>true</c> when the status is terminal; otherwise, <c>false</c>.</returns>
+        private static bool HasDurableDispatchOwnership(
+            AiSharedRunRecord record)
+        {
+            ArgumentNullException.ThrowIfNull(record);
+
+            return record.Status == AiSharedRunStatus.Dispatched &&
+                !string.IsNullOrWhiteSpace(
+                    record.AssignedRuntimeInstanceId) &&
+                !string.IsNullOrWhiteSpace(
+                    record.LocalRunId);
+        }
+
         private static bool IsTerminal(
             AiSharedRunStatus status)
         {

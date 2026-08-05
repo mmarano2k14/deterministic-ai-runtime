@@ -89,12 +89,12 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
 
             if (options.WorkerCountPerInstance <= 0
                 || options.MaxConcurrentRunsPerInstance <= 0
-                || options.LocalQueueCapacity <= 0
+                || options.LocalQueueCapacity < 0
                 || options.ShutdownTimeoutSeconds <= 0
                 || options.SnapshotTtlSeconds <= 0)
             {
                 throw new ArgumentException(
-                    "Capacity, shutdown, and snapshot values must be greater than zero.",
+                    "Worker, concurrent-run, shutdown, and snapshot values must be greater than zero; local queue capacity must be zero or greater.",
                     nameof(options));
             }
         }

@@ -40,6 +40,19 @@
         public bool DryRun { get; set; } = true;
 
         /// <summary>
+        /// Gets or sets the minimum continuous absence period required before a recoverable run
+        /// whose runtime instance is missing from the registry is treated as orphaned.
+        /// </summary>
+        /// <remarks>
+        /// A single missing Redis registry read is not authoritative proof that a runtime process
+        /// or Kubernetes Pod has failed. The confirmation period prevents temporary registry lease
+        /// expiry, Redis latency, or heartbeat starvation under load from triggering false recovery.
+        /// Explicit unhealthy, stopped, or draining runtime states are still processed immediately.
+        /// </remarks>
+        public TimeSpan OrphanedRuntimeInstanceConfirmationPeriod { get; set; } =
+            TimeSpan.FromSeconds(30);
+
+        /// <summary>
         /// Gets or sets a value indicating whether runtime execution recovery should try to resume
         /// the existing durable DAG execution instead of creating a new recovered execution.
         /// </summary>

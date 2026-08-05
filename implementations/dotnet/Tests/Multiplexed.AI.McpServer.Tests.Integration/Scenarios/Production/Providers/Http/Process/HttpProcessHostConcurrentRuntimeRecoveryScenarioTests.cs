@@ -993,13 +993,15 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
         /// <param name="finalStatuses">The recovered terminal runtime statuses.</param>
         /// <param name="requestedBy">The requested-by value.</param>
         /// <param name="source">The source value.</param>
+        /// <param name="onBackpressureRetry">An optional observer invoked when an MCP proof operation is retried after HTTP 429 backpressure.</param>
         /// <returns>The recovered execution replay proof records.</returns>
         public static async Task<IReadOnlyCollection<RecoveredExecutionReplayProofRecord>> AssertRecoveredExecutionsReplayableThroughMcpAsync(
             McpTestClient mcp,
             string tenantId,
             IReadOnlyCollection<AiRuntimeQueueControlPlaneResult> finalStatuses,
             string requestedBy,
-            string source)
+            string source,
+            Action<string, int, TimeSpan>? onBackpressureRetry = null)
         {
             ArgumentNullException.ThrowIfNull(mcp);
             ArgumentException.ThrowIfNullOrWhiteSpace(tenantId);
@@ -1031,7 +1033,11 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                     };
 
                 var replayResult =
-                    await mcp.ReplayExecutionAsync(replayRequest)
+                    await McpBackpressureRetryHelper
+                        .ExecuteAsync(
+                            () => mcp.ReplayExecutionAsync(replayRequest),
+                            $"replay.execute:{tenantId}:{executionId}",
+                            onRetry: onBackpressureRetry)
                         .ConfigureAwait(false);
 
                 var replayFailureReason =
@@ -1061,25 +1067,41 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                     AiReplayOperation.GetReport;
 
                 var replayReport =
-                    await mcp.GetReplayReportAsync(replayRequest)
+                    await McpBackpressureRetryHelper
+                        .ExecuteAsync(
+                            () => mcp.GetReplayReportAsync(replayRequest),
+                            $"replay.report:{tenantId}:{executionId}",
+                            onRetry: onBackpressureRetry)
                         .ConfigureAwait(false);
 
                 replayRequest.Operation =
                     AiReplayOperation.GetLedger;
 
                 var replayLedger =
-                    await mcp.GetReplayLedgerAsync(replayRequest)
+                    await McpBackpressureRetryHelper
+                        .ExecuteAsync(
+                            () => mcp.GetReplayLedgerAsync(replayRequest),
+                            $"replay.ledger:{tenantId}:{executionId}",
+                            onRetry: onBackpressureRetry)
                         .ConfigureAwait(false);
 
                 replayRequest.Operation =
                     AiReplayOperation.GetTimeline;
 
                 var replayTrace =
-                    await mcp.GetReplayTraceAsync(replayRequest)
+                    await McpBackpressureRetryHelper
+                        .ExecuteAsync(
+                            () => mcp.GetReplayTraceAsync(replayRequest),
+                            $"replay.trace:{tenantId}:{executionId}",
+                            onRetry: onBackpressureRetry)
                         .ConfigureAwait(false);
 
                 var executionLedger =
-                    await mcp.GetLedgerByExecutionAsync(executionId!)
+                    await McpBackpressureRetryHelper
+                        .ExecuteAsync(
+                            () => mcp.GetLedgerByExecutionAsync(executionId!),
+                            $"observability.execution-ledger:{tenantId}:{executionId}",
+                            onRetry: onBackpressureRetry)
                         .ConfigureAwait(false);
 
                 Assert.NotEmpty(executionLedger);
@@ -1102,7 +1124,11 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                     $"Recovered execution has no step completion ledger evidence. TenantId='{tenantId}', ExecutionId='{executionId}'.");
 
                 var executionTrace =
-                    await mcp.GetTraceByExecutionAsync(executionId!)
+                    await McpBackpressureRetryHelper
+                        .ExecuteAsync(
+                            () => mcp.GetTraceByExecutionAsync(executionId!),
+                            $"observability.execution-trace:{tenantId}:{executionId}",
+                            onRetry: onBackpressureRetry)
                         .ConfigureAwait(false);
 
                 Assert.NotEmpty(executionTrace);

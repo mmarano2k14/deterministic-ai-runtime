@@ -27,6 +27,11 @@ namespace Multiplexed.AI.Tests.Fixtures
         public Exception? CreatePodException { get; set; }
 
         /// <summary>
+        /// Gets or sets the exception thrown when listing Pods.
+        /// </summary>
+        public Exception? ListPodsException { get; set; }
+
+        /// <summary>
         /// Gets or sets the exception thrown when creating a service.
         /// </summary>
         public Exception? CreateServiceException { get; set; }
@@ -87,6 +92,11 @@ namespace Multiplexed.AI.Tests.Fixtures
         public V1Pod? PodStatus { get; set; }
 
         /// <summary>
+        /// Gets the Pods returned by Pod list operations.
+        /// </summary>
+        public IList<V1Pod> Pods { get; } = new List<V1Pod>();
+
+        /// <summary>
         /// Gets the services returned by service list operations.
         /// </summary>
         public IList<V1Service> Services { get; } = new List<V1Service>();
@@ -95,6 +105,11 @@ namespace Multiplexed.AI.Tests.Fixtures
         /// Gets the number of pod create calls.
         /// </summary>
         public int CreatePodCallCount { get; private set; }
+
+        /// <summary>
+        /// Gets the number of Pod list calls.
+        /// </summary>
+        public int ListPodsCallCount { get; private set; }
 
         /// <summary>
         /// Gets the number of service create calls.
@@ -190,7 +205,41 @@ namespace Multiplexed.AI.Tests.Fixtures
                 throw this.CreatePodException;
             }
 
+            pod.Metadata ??= new V1ObjectMeta();
+            pod.Metadata.NamespaceProperty ??= namespaceName;
+
+            this.Pods.Add(pod);
+
             return Task.FromResult(pod);
+        }
+
+        /// <inheritdoc />
+        public Task<IReadOnlyList<V1Pod>> ListPodsAsync(
+            string namespaceName,
+            string? labelSelector = null,
+            CancellationToken cancellationToken = default)
+        {
+            this.ListPodsCallCount++;
+            cancellationToken.ThrowIfCancellationRequested();
+
+            if (this.ListPodsException is not null)
+            {
+                throw this.ListPodsException;
+            }
+
+            var pods = this.Pods
+                .Where(pod =>
+                    string.Equals(
+                        pod.Metadata?.NamespaceProperty,
+                        namespaceName,
+                        StringComparison.OrdinalIgnoreCase))
+                .Where(pod =>
+                    MatchesLabelSelector(
+                        pod.Metadata,
+                        labelSelector))
+                .ToArray();
+
+            return Task.FromResult<IReadOnlyList<V1Pod>>(pods);
         }
 
         /// <inheritdoc />
@@ -255,6 +304,23 @@ namespace Multiplexed.AI.Tests.Fixtures
                 throw this.DeletePodException;
             }
 
+            var matchingPods = this.Pods
+                .Where(pod =>
+                    string.Equals(
+                        pod.Metadata?.Name,
+                        podName,
+                        StringComparison.Ordinal) &&
+                    string.Equals(
+                        pod.Metadata?.NamespaceProperty,
+                        namespaceName,
+                        StringComparison.OrdinalIgnoreCase))
+                .ToArray();
+
+            foreach (var pod in matchingPods)
+            {
+                this.Pods.Remove(pod);
+            }
+
             return Task.CompletedTask;
         }
 
@@ -311,7 +377,7 @@ namespace Multiplexed.AI.Tests.Fixtures
                         service.Metadata?.NamespaceProperty,
                         namespaceName,
                         StringComparison.OrdinalIgnoreCase))
-                .Where(service => MatchesLabelSelector(service, labelSelector))
+                .Where(service => MatchesLabelSelector(service.Metadata, labelSelector))
                 .ToArray();
 
             return Task.FromResult<IReadOnlyList<V1Service>>(services);
@@ -331,7 +397,7 @@ namespace Multiplexed.AI.Tests.Fixtures
             }
 
             var services = this.Services
-                .Where(service => MatchesLabelSelector(service, labelSelector))
+                .Where(service => MatchesLabelSelector(service.Metadata, labelSelector))
                 .ToArray();
 
             return Task.FromResult<IReadOnlyList<V1Service>>(services);
@@ -645,10 +711,10 @@ namespace Multiplexed.AI.Tests.Fixtures
         }
 
         /// <summary>
-        /// Determines whether a service matches an exact-match Kubernetes label selector.
+        /// Determines whether Kubernetes metadata matches an exact-match label selector.
         /// </summary>
         private static bool MatchesLabelSelector(
-            V1Service service,
+            V1ObjectMeta? metadata,
             string? labelSelector)
         {
             if (string.IsNullOrWhiteSpace(labelSelector))
@@ -656,7 +722,7 @@ namespace Multiplexed.AI.Tests.Fixtures
                 return true;
             }
 
-            var labels = service.Metadata?.Labels;
+            var labels = metadata?.Labels;
 
             if (labels is null)
             {

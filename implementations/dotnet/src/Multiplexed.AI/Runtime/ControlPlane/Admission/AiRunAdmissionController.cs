@@ -268,6 +268,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission
                 var availableCandidates = await BuildAvailableAdmissionCandidatesAsync(
                         request,
                         runtimeCandidates,
+                        tenantRuntimeSettings,
                         cancellationToken)
                     .ConfigureAwait(false);
 
@@ -818,11 +819,13 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission
         /// </summary>
         /// <param name="request">The admission request.</param>
         /// <param name="runtimeCandidates">The eligible runtime instances.</param>
+        /// <param name="tenantRuntimeSettings">The typed tenant runtime policy for this admission.</param>
         /// <param name="cancellationToken">A token used to cancel the operation.</param>
         /// <returns>The ranked available admission candidates.</returns>
         private async Task<IReadOnlyList<AdmissionCandidate>> BuildAvailableAdmissionCandidatesAsync(
             AiRunAdmissionRequest request,
             IReadOnlyCollection<AiRuntimeInstanceSnapshot> runtimeCandidates,
+            AiTenantRuntimeSettings tenantRuntimeSettings,
             CancellationToken cancellationToken)
         {
             var candidates =
@@ -996,6 +999,28 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission
                     Math.Max(
                         0,
                         availableRunSlots - reservedRunCount);
+
+                /*
+                 * Queue-less admission is a tenant policy, not a property that may be
+                 * inferred from a possibly stale runtime heartbeat. When the requesting
+                 * tenant explicitly disables the local queue, only immediate execution
+                 * slots are admission-visible. A runtime with no effective slot must be
+                 * excluded so the normal bounded scale-out decision can run.
+                 */
+                if (tenantRuntimeSettings.LocalQueueCapacity == 0 &&
+                    effectiveAvailableRunSlots <= 0)
+                {
+                    LogAdmissionCandidateRejected(
+                        request,
+                        currentInstance,
+                        capacityDescriptor,
+                        reservedRunCount,
+                        availableRunSlots,
+                        effectiveAvailableRunSlots,
+                        "Tenant queue-less policy requires an immediate run slot, but no effective run slot is available.");
+
+                    continue;
+                }
 
                 _logger.LogInformation(
                     "Admission candidate accepted. RunId={RunId}, RuntimeInstanceId={RuntimeInstanceId}, Role={Role}, RegistryStatus={RegistryStatus}, CapacityStatus={CapacityStatus}, RegistryCanAcceptRun={RegistryCanAcceptRun}, CapacityCanAcceptRun={CapacityCanAcceptRun}, EffectiveCanAcceptRun={EffectiveCanAcceptRun}, RegistryIsQueuePaused={RegistryIsQueuePaused}, CapacityIsQueuePaused={CapacityIsQueuePaused}, AvailableRunSlots={AvailableRunSlots}, ReservedRunCount={ReservedRunCount}, EffectiveAvailableRunSlots={EffectiveAvailableRunSlots}, WorkerCount={WorkerCount}, ActiveWorkerCount={ActiveWorkerCount}, AvailableWorkerCount={AvailableWorkerCount}, QueuedRunCount={QueuedRunCount}, RunningRunCount={RunningRunCount}, QueueFirstAdmission={QueueFirstAdmission}",

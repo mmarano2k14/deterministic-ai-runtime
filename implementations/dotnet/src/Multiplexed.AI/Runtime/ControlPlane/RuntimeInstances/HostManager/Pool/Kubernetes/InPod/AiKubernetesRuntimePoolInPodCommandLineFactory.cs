@@ -119,7 +119,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
                         request.MaxConcurrentRunsPerInstance,
                         this.hostOptions.MaxConcurrentRunsPerInstance)),
                 Setting(string.Concat(section, ":LocalQueueCapacity"),
-                    PositiveOrDefault(
+                    NonNegativeOrDefault(
                         request.LocalQueueCapacity,
                         this.hostOptions.LocalQueueCapacity)),
                 Setting(string.Concat(section, ":IsolationMode"),
@@ -246,6 +246,18 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
                 key,
                 "=",
                 text);
+        }
+
+        /// <summary>
+        /// Uses the request value when non-negative, otherwise the configured default.
+        /// </summary>
+        private static int NonNegativeOrDefault(
+            int requestValue,
+            int defaultValue)
+        {
+            return requestValue >= 0
+                ? requestValue
+                : defaultValue;
         }
 
         /// <summary>

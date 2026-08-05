@@ -287,6 +287,12 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
             services.RemoveAll<IAiRuntimeScaleOutRequestStore>();
             services.TryAddSingleton<IAiRuntimeScaleOutRequestStore, RedisAiRuntimeScaleOutRequestStore>();
 
+            services.RemoveAll<
+                IAiRuntimePoolPodCreationReservationStore>();
+            services.TryAddSingleton<
+                IAiRuntimePoolPodCreationReservationStore,
+                RedisAiRuntimePoolPodCreationReservationStore>();
+
             return services;
         }
 
@@ -341,6 +347,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
         /// - <see cref="IAiSharedQueue"/>
         /// - <see cref="IAiRuntimeAdmissionReservationStore"/>
         /// - <see cref="IAiRuntimeScaleOutRequestStore"/>
+        /// - <see cref="IAiRuntimePoolPodCreationReservationStore"/>
         /// </remarks>
         public static IServiceCollection AddRedisAiControlPlaneStores(
             this IServiceCollection services,

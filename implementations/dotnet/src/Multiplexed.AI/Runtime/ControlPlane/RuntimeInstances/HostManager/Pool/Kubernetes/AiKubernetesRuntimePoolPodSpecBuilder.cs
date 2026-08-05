@@ -53,6 +53,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
             return new AiKubernetesRuntimePoolPodSpec
             {
                 PoolId = plan.PoolId,
+                MaximumPodCount = this.poolOptions.MaximumPodCount,
                 PodRequestId = plan.PodRequestId,
                 Namespace = plan.Namespace,
                 PodName = plan.PodName,

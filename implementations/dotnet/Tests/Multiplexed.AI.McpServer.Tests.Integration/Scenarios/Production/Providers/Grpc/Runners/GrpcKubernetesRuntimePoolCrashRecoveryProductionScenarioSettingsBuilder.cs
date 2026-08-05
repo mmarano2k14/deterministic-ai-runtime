@@ -130,8 +130,25 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             string poolId,
             RuntimePoolCrashRecoveryScenarioPlan plan)
         {
+            /*
+             * AiRunAdmission counts first-class RuntimeInstance identities, not
+             * physical Kubernetes Pods. The generic process-host profile leaves
+             * MaxInstanceCount at 3, which incorrectly caps a 3-Pod x 3-runtime
+             * KubernetesPool topology after the first Pod registers its three
+             * child runtimes.
+             */
+            var maximumRuntimeCapacity =
+                checked(
+                    plan.MaximumPodCount *
+                    plan.MaximumRuntimeCountPerPod);
+
+            settings["AiRunAdmission:MaxInstanceCount"] =
+                maximumRuntimeCapacity.ToString();
+
             settings["AiKubernetesRuntimePool:Enabled"] = "true";
             settings["AiKubernetesRuntimePool:PoolId"] = poolId;
+            settings["AiKubernetesRuntimePool:MaximumPodCount"] =
+                plan.MaximumPodCount.ToString();
             settings["AiKubernetesRuntimePool:Namespace"] =
                 KubernetesRuntimePoolScenarioConstants.Namespace;
             settings["AiKubernetesRuntimePool:PodNamePrefix"] =

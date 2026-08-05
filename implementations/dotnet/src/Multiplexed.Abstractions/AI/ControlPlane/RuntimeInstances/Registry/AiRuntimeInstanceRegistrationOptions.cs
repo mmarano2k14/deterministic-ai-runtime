@@ -88,7 +88,7 @@
         /// process, test, or Kubernetes pod stops unexpectedly without unregistering cleanly.
         /// The heartbeat loop must renew this TTL periodically.
         /// </remarks>
-        public TimeSpan RegistryTtl { get; set; } = TimeSpan.FromSeconds(30);
+        public TimeSpan RegistryTtl { get; set; } = TimeSpan.FromMinutes(2);
 
         /// <summary>
         /// Gets or sets the time-to-live applied to the runtime instance capacity descriptor.
@@ -98,7 +98,7 @@
         /// process, test, or Kubernetes pod stops unexpectedly without deleting its capacity state.
         /// The heartbeat or capacity publication loop must renew this TTL periodically.
         /// </remarks>
-        public TimeSpan CapacityTtl { get; set; } = TimeSpan.FromSeconds(30);
+        public TimeSpan CapacityTtl { get; set; } = TimeSpan.FromMinutes(2);
 
         /// <summary>
         /// Gets or sets the runtime environment provider name.

@@ -12,6 +12,19 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager.Po
     public sealed class RuntimeKubernetesPoolFoundationTests
     {
         /// <summary>
+        /// Rejects a non-positive physical Pod boundary.
+        /// </summary>
+        [Fact]
+        public void RuntimePoolOptions_Should_Reject_NonPositive_MaximumPodCount()
+        {
+            var options = CreateValidOptions();
+            options.MaximumPodCount = 0;
+
+            Assert.Throws<ArgumentException>(
+                () => AiKubernetesRuntimePoolOptionsValidator.Validate(options));
+        }
+
+        /// <summary>
         /// Verifies that the new mode is additive and does not renumber existing host modes.
         /// </summary>
         [Fact]
@@ -33,6 +46,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager.Po
             var options = new AiKubernetesRuntimePoolOptions();
 
             Assert.False(options.Enabled);
+            Assert.Equal(int.MaxValue, options.MaximumPodCount);
             Assert.Equal(3, options.InitialRuntimeInstanceCount);
             Assert.Equal(3, options.MinimumRuntimeInstanceCount);
             Assert.Equal(3, options.MaximumRuntimeInstanceCount);

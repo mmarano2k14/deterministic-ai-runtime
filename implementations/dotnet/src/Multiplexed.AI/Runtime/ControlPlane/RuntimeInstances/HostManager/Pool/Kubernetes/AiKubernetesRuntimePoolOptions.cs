@@ -45,6 +45,17 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
         public string TransportName { get; set; } = "http";
 
         /// <summary>
+        /// Gets or sets the maximum number of physical Kubernetes Pods allowed for
+        /// this logical Runtime Pool.
+        /// </summary>
+        /// <remarks>
+        /// This is a first-class physical capacity boundary. A value of
+        /// <c>int.MaxValue</c> preserves historical unbounded behavior
+        /// when no explicit Pod ceiling is configured.
+        /// </remarks>
+        public int MaximumPodCount { get; set; } = int.MaxValue;
+
+        /// <summary>
         /// Gets or sets the number of runtime instances created when the pool Pod starts.
         /// </summary>
         public int InitialRuntimeInstanceCount { get; set; } = 3;

@@ -19,6 +19,12 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
         public required string PoolId { get; init; }
 
         /// <summary>
+        /// Gets the maximum number of physical Kubernetes Pods allowed for this
+        /// logical Runtime Pool.
+        /// </summary>
+        public int MaximumPodCount { get; init; } = int.MaxValue;
+
+        /// <summary>
         /// Gets the immutable Pod creation request identity.
         /// </summary>
         public required string PodRequestId { get; init; }

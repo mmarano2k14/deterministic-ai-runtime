@@ -271,6 +271,59 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager.Po
         }
 
         /// <summary>
+        /// Verifies transport-ready runtimes remain valid startup evidence while all run slots
+        /// are occupied and therefore do not trigger deletion of a healthy Pool Pod.
+        /// </summary>
+        [Fact]
+        public async Task StartAsync_Should_Accept_Ready_Busy_RuntimeMembership_Without_Deleting_Pod()
+        {
+            var poolOptions = CreatePoolOptions();
+            var hostOptions = CreateHostOptions();
+            var client =
+                new FakeAiKubernetesRuntimePoolHostClient();
+            var capacityStore =
+                new RuntimePoolCapacityStore(
+                    client,
+                    canAcceptRunAfterProjectedHeartbeat: false);
+
+            var strategy =
+                CreateStrategy(
+                    poolOptions,
+                    hostOptions,
+                    client,
+                    capacityStore);
+
+            var result =
+                await strategy.StartAsync(
+                    CreateRequest());
+
+            Assert.True(result.Success);
+            Assert.Equal(1, client.CreateCallCount);
+            Assert.Equal(1, client.ReadinessCallCount);
+            Assert.Equal(0, client.DeleteCallCount);
+
+            var descriptors =
+                await capacityStore.ListAsync();
+
+            Assert.Equal(3, descriptors.Count);
+            Assert.All(
+                descriptors,
+                descriptor =>
+                {
+                    Assert.Equal(
+                        AiRuntimeInstanceStatus.Ready,
+                        descriptor.Status);
+                    Assert.False(descriptor.CanAcceptRun);
+                    Assert.Equal(
+                        result.TransportEndpoint,
+                        descriptor.Metadata["transport.endpoint"]);
+                    Assert.Equal(
+                        "control-plane",
+                        descriptor.Metadata["transport.endpoint.scope"]);
+                });
+        }
+
+        /// <summary>
         /// Creates the strategy under test.
         /// </summary>
         private static KubernetesAiRuntimePoolHostCreationStrategy
@@ -311,11 +364,15 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager.Po
                 descriptors = new(StringComparer.Ordinal);
             private readonly HashSet<string> pendingHeartbeats =
                 new(StringComparer.Ordinal);
+            private readonly bool canAcceptRunAfterProjectedHeartbeat;
 
             public RuntimePoolCapacityStore(
-                FakeAiKubernetesRuntimePoolHostClient client)
+                FakeAiKubernetesRuntimePoolHostClient client,
+                bool canAcceptRunAfterProjectedHeartbeat = true)
             {
                 this.client = client;
+                this.canAcceptRunAfterProjectedHeartbeat =
+                    canAcceptRunAfterProjectedHeartbeat;
             }
 
             public Task PublishAsync(
@@ -357,7 +414,9 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager.Po
                     if (this.pendingHeartbeats.Remove(runtimeInstanceId))
                     {
                         existing =
-                            CreatePreservingHeartbeatDescriptor(existing);
+                            CreatePreservingHeartbeatDescriptor(
+                                existing,
+                                this.canAcceptRunAfterProjectedHeartbeat);
                         this.descriptors[runtimeInstanceId] = existing;
                     }
 
@@ -421,7 +480,8 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager.Po
 
             private static AiRuntimeInstanceCapacityDescriptor
                 CreatePreservingHeartbeatDescriptor(
-                    AiRuntimeInstanceCapacityDescriptor descriptor)
+                    AiRuntimeInstanceCapacityDescriptor descriptor,
+                    bool canAcceptRun)
             {
                 var metadata =
                     new Dictionary<string, string>(
@@ -458,11 +518,17 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager.Po
                     ActiveRunCount = descriptor.ActiveRunCount,
                     MaxConcurrentRuns = descriptor.MaxConcurrentRuns,
                     MaxRunSlots = descriptor.MaxRunSlots,
-                    AvailableRunSlots = descriptor.MaxRunSlots,
+                    AvailableRunSlots =
+                        canAcceptRun
+                            ? descriptor.MaxRunSlots
+                            : 0,
                     ReservedRunSlots = descriptor.ReservedRunSlots,
-                    EffectiveAvailableRunSlots = descriptor.MaxRunSlots,
+                    EffectiveAvailableRunSlots =
+                        canAcceptRun
+                            ? descriptor.MaxRunSlots
+                            : 0,
                     IsQueuePaused = descriptor.IsQueuePaused,
-                    CanAcceptRun = true,
+                    CanAcceptRun = canAcceptRun,
                     LastHeartbeatAtUtc = DateTimeOffset.UtcNow,
                     Metadata = metadata,
                     ControlPlaneHostId = descriptor.ControlPlaneHostId,

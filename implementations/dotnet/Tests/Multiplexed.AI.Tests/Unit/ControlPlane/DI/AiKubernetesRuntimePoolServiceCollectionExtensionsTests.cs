@@ -6,9 +6,11 @@ using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
+using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Scaling;
 using Multiplexed.AI.Runtime.ControlPlane.DI;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Capacity;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Kubernetes;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Kubernetes.Client;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Kubernetes.Failure;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Recovery.AssignedWork;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Recovery.Claims;
@@ -89,6 +91,86 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.DI
 
             Assert.Equal(
                 typeof(AiRuntimePoolPodCreationExecutor),
+                descriptor.ImplementationType);
+            Assert.Equal(
+                ServiceLifetime.Singleton,
+                descriptor.Lifetime);
+        }
+
+        /// <summary>
+        /// Verifies that the selected Kubernetes Runtime Pool host client also owns
+        /// the physical Pod inventory authority.
+        /// </summary>
+        [Fact]
+        public void Add_Should_Register_Physical_RuntimePool_PodInventory()
+        {
+            var services = new ServiceCollection();
+
+            services.AddLogging();
+            services.AddAiKubernetesRuntimePoolHostProvider();
+
+            var descriptor =
+                Assert.Single(
+                    services.Where(
+                        item =>
+                            item.ServiceType ==
+                            typeof(
+                                IAiKubernetesRuntimePoolPodInventory)));
+
+            Assert.Equal(ServiceLifetime.Singleton, descriptor.Lifetime);
+        }
+
+        /// <summary>
+        /// Verifies that KubernetesPool owns a single-process reservation authority
+        /// that can be replaced by Redis in distributed control-plane composition.
+        /// </summary>
+        [Fact]
+        public void Add_Should_Register_RuntimePool_PodCreation_Reservation_Store()
+        {
+            var services = new ServiceCollection();
+
+            services.AddLogging();
+            services.AddAiKubernetesRuntimePoolHostProvider();
+
+            var descriptor =
+                Assert.Single(
+                    services.Where(
+                        item =>
+                            item.ServiceType ==
+                            typeof(
+                                IAiRuntimePoolPodCreationReservationStore)));
+
+            Assert.Equal(
+                typeof(InMemoryAiRuntimePoolPodCreationReservationStore),
+                descriptor.ImplementationType);
+            Assert.Equal(
+                ServiceLifetime.Singleton,
+                descriptor.Lifetime);
+        }
+
+        /// <summary>
+        /// Verifies that Redis composition replaces the local Pod creation reservation
+        /// authority with the distributed atomic implementation.
+        /// </summary>
+        [Fact]
+        public void AddRedis_Should_Replace_RuntimePool_PodCreation_Reservation_Store()
+        {
+            var services = new ServiceCollection();
+
+            services.AddLogging();
+            services.AddAiKubernetesRuntimePoolHostProvider();
+            services.AddRedisAiRuntimeScaleOutRequestStore();
+
+            var descriptor =
+                Assert.Single(
+                    services.Where(
+                        item =>
+                            item.ServiceType ==
+                            typeof(
+                                IAiRuntimePoolPodCreationReservationStore)));
+
+            Assert.Equal(
+                typeof(RedisAiRuntimePoolPodCreationReservationStore),
                 descriptor.ImplementationType);
             Assert.Equal(
                 ServiceLifetime.Singleton,

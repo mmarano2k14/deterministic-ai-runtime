@@ -297,6 +297,92 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Recovery
         }
 
         /// <summary>
+        /// Verifies that one missing registry observation is not sufficient to trigger orphan recovery.
+        /// </summary>
+        [Fact]
+        public async Task ReconcileAsync_Should_Defer_Orphan_Recovery_Until_Absence_Is_Confirmed()
+        {
+            var registry = new InMemoryAiRuntimeInstanceRegistry();
+            var index = new InMemoryAiRuntimeRunExecutionIndex();
+
+            await index.RegisterQueuedAsync(
+                CreateIndexEntry(
+                    "runtime-missing",
+                    "run-1",
+                    "execution-1"));
+            await index.MarkStartedAsync("run-1", "execution-1");
+
+            var reconciler = CreateReconciler(
+                registry,
+                index,
+                new AiRuntimeExecutionRecoveryReconciliationOptions
+                {
+                    Enabled = true,
+                    DryRun = true,
+                    OrphanedRuntimeInstanceConfirmationPeriod = TimeSpan.FromSeconds(30)
+                });
+
+            var result = await reconciler.ReconcileAsync();
+
+            Assert.Equal(0, result.DiscoveredUnfinishedRunCount);
+            Assert.Equal(0, result.RecoveredRunCount);
+
+            var decision = Assert.Single(result.Decisions);
+
+            Assert.Equal("runtime-missing", decision.RuntimeInstanceId);
+            Assert.Equal("run-1", decision.LocalRunId);
+            Assert.Equal("execution-1", decision.ExecutionId);
+            Assert.Equal("defer-orphaned-runtime-instance", decision.Action);
+            Assert.Equal("orphaned-runtime-instance-unconfirmed", decision.Reason);
+            Assert.False(decision.Changed);
+        }
+
+        /// <summary>
+        /// Verifies that orphan recovery remains immediately available when the confirmation period is explicitly disabled.
+        /// </summary>
+        [Fact]
+        public async Task ReconcileAsync_Should_Process_Orphan_Immediately_When_Confirmation_Period_Is_Zero()
+        {
+            var registry = new InMemoryAiRuntimeInstanceRegistry();
+            var index = new InMemoryAiRuntimeRunExecutionIndex();
+
+            await index.RegisterQueuedAsync(
+                CreateIndexEntry(
+                    "runtime-missing",
+                    "run-1",
+                    "execution-1"));
+            await index.MarkStartedAsync("run-1", "execution-1");
+
+            var reconciler = CreateReconciler(
+                registry,
+                index,
+                new AiRuntimeExecutionRecoveryReconciliationOptions
+                {
+                    Enabled = true,
+                    DryRun = true,
+                    OrphanedRuntimeInstanceConfirmationPeriod = TimeSpan.Zero
+                });
+
+            var result = await reconciler.ReconcileAsync();
+
+            Assert.Equal(1, result.DiscoveredUnfinishedRunCount);
+            Assert.Equal(0, result.RecoveredRunCount);
+            Assert.DoesNotContain(
+                result.Decisions,
+                decision => string.Equals(
+                    decision.Action,
+                    "defer-orphaned-runtime-instance",
+                    StringComparison.Ordinal));
+            Assert.Contains(
+                result.Decisions,
+                decision =>
+                    decision.RuntimeInstanceId == "runtime-missing" &&
+                    decision.LocalRunId == "run-1" &&
+                    decision.Action == "orphaned-runtime-instance-detected" &&
+                    decision.Reason == "orphaned-runtime-instance");
+        }
+
+        /// <summary>
         /// Creates a runtime execution recovery reconciler.
         /// </summary>
         /// <param name="registry">The runtime instance registry.</param>

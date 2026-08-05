@@ -528,6 +528,80 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.Admission
         }
 
         [Fact]
+        public async Task AdmitAsync_Should_Request_ScaleOut_When_Tenant_QueueLess_Policy_Has_No_Effective_Run_Slot()
+        {
+            var registry = new FakeRuntimeInstanceRegistry(
+                CreateInstance(
+                    "runtime-1",
+                    AiRuntimeInstanceStatus.Ready,
+                    canAcceptRun: true,
+                    queuedRunCount: 0,
+                    runningRunCount: 1,
+                    queueCapacity: 100,
+                    availableRunSlots: 0));
+
+            var controller = CreateController(
+                registry,
+                new AiRunAdmissionOptions
+                {
+                    MaxInstanceCount = 3,
+                    EnableScaleOutRequest = true
+                },
+                tenantRuntimeSettingsProvider:
+                    new StaticTenantRuntimeSettingsProvider(
+                        localQueueCapacity: 0));
+
+            var decision =
+                await controller.AdmitAsync(
+                    CreateRequest());
+
+            Assert.Equal(
+                AiRunAdmissionDecisionType.RequestScaleOut,
+                decision.DecisionType);
+            Assert.True(decision.ShouldRequestScaleOut);
+            Assert.Equal(1, decision.CurrentInstanceCount);
+            Assert.Equal(3, decision.MaxInstanceCount);
+            Assert.Equal(0, decision.AvailableInstanceCount);
+        }
+
+        [Fact]
+        public async Task AdmitAsync_Should_Preserve_QueueFirst_Assignment_When_Tenant_Allows_Local_Queue()
+        {
+            var registry = new FakeRuntimeInstanceRegistry(
+                CreateInstance(
+                    "runtime-1",
+                    AiRuntimeInstanceStatus.Ready,
+                    canAcceptRun: true,
+                    queuedRunCount: 0,
+                    runningRunCount: 1,
+                    queueCapacity: 100,
+                    availableRunSlots: 0));
+
+            var controller = CreateController(
+                registry,
+                new AiRunAdmissionOptions
+                {
+                    MaxInstanceCount = 3,
+                    EnableScaleOutRequest = true
+                },
+                tenantRuntimeSettingsProvider:
+                    new StaticTenantRuntimeSettingsProvider(
+                        localQueueCapacity: 100));
+
+            var decision =
+                await controller.AdmitAsync(
+                    CreateRequest());
+
+            Assert.Equal(
+                AiRunAdmissionDecisionType.AssignToInstance,
+                decision.DecisionType);
+            Assert.Equal(
+                "runtime-1",
+                decision.AssignedRuntimeInstanceId);
+            Assert.Equal(1, decision.AvailableInstanceCount);
+        }
+
+        [Fact]
         public async Task AdmitAsync_Should_Throw_When_Request_Is_Null()
         {
             var registry = new FakeRuntimeInstanceRegistry();
@@ -540,7 +614,8 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.Admission
         private static AiRunAdmissionController CreateController(
             IAiRuntimeInstanceRegistry registry,
             AiRunAdmissionOptions? options = null,
-            IAiRuntimeAdmissionReservationStore? reservationStore = null)
+            IAiRuntimeAdmissionReservationStore? reservationStore = null,
+            IAiTenantRuntimeSettingsProvider? tenantRuntimeSettingsProvider = null)
         {
             var capacityStore =
                 new InMemoryAiRuntimeInstanceCapacityStore();
@@ -563,7 +638,8 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.Admission
                 registry,
                 reservationStore ?? new InMemoryAiRuntimeAdmissionReservationStore(),
                 capacityStore,
-                new HardcodedAiTenantRuntimeSettingsProvider(),
+                tenantRuntimeSettingsProvider ??
+                    new HardcodedAiTenantRuntimeSettingsProvider(),
                 Options.Create(options ?? new AiRunAdmissionOptions()),
                 NullLogger<AiRunAdmissionController>.Instance);
         }
@@ -628,7 +704,9 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.Admission
             int runningRunCount,
             bool? isQueuePaused = null,
             string? tenantId = null,
-            string? tenantGroupId = null)
+            string? tenantGroupId = null,
+            int? queueCapacity = 8,
+            int? availableRunSlots = null)
         {
             var now =
                 DateTimeOffset.UtcNow;
@@ -651,9 +729,11 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.Admission
                 RunningRunCount = runningRunCount,
                 ActiveRunCount = queuedRunCount + runningRunCount,
 
-                QueueCapacity = 8,
+                QueueCapacity = queueCapacity,
                 MaxConcurrentRuns = 2,
-                AvailableRunSlots = canAcceptRun ? 1 : 0,
+                AvailableRunSlots =
+                    availableRunSlots ??
+                    (canAcceptRun ? 1 : 0),
 
                 IsQueuePaused = queuePaused,
                 CanAcceptRun = canAcceptRun,
@@ -683,6 +763,42 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.Admission
             }
 
             return metadata;
+        }
+
+        private sealed class StaticTenantRuntimeSettingsProvider :
+            IAiTenantRuntimeSettingsProvider
+        {
+            private readonly int? _localQueueCapacity;
+
+            public StaticTenantRuntimeSettingsProvider(
+                int? localQueueCapacity)
+            {
+                _localQueueCapacity =
+                    localQueueCapacity;
+            }
+
+            public AiTenantRuntimeSettings GetSettings(
+                string? tenantId,
+                string? tenantGroupId)
+            {
+                return new AiTenantRuntimeSettings
+                {
+                    TenantId =
+                        string.IsNullOrWhiteSpace(tenantId)
+                            ? "tenant-test"
+                            : tenantId,
+                    TenantGroupId = tenantGroupId,
+                    IsolationMode =
+                        AiRuntimeInstanceIsolationMode.Shared,
+                    PreferDedicatedCapacity = false,
+                    AllowSharedFallback = true,
+                    MaxRuntimeInstances = 3,
+                    WorkerCountPerInstance = 1,
+                    MaxConcurrentRunsPerInstance = 1,
+                    LocalQueueCapacity = _localQueueCapacity,
+                    RuntimeInstanceIdPrefix = "runtime"
+                };
+            }
         }
 
         private sealed class FakeRuntimeInstanceRegistry :

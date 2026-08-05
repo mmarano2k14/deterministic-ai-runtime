@@ -414,9 +414,22 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
                 return false;
             }
 
-            var releaseRecoveryDeduplication =
-                IsRecoveryReplacementRequest(existingRequest) &&
-                IsTerminalStatus(targetStatus);
+            /*
+             * Normal scale-out deduplication is a pending single-flight guard.
+             * Once capacity has been fulfilled and is readiness-visible, a later
+             * saturated admission cycle must be allowed to request the next unit
+             * of bounded capacity.
+             *
+             * Recovery replacement requests retain their existing behavior and
+             * release the single-flight key on every terminal transition.
+             * Normal rejected requests keep the short deduplication window so a
+             * persistent provider failure cannot create a tight retry loop.
+             */
+            var releaseDeduplication =
+                IsTerminalStatus(targetStatus) &&
+                (IsRecoveryReplacementRequest(existingRequest) ||
+                 targetStatus ==
+                    AiRuntimeScaleOutRequestStatus.Fulfilled);
 
             var values =
                 new List<RedisValue>
@@ -424,7 +437,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
                     targetStatus.ToString(),
                     timestampField,
                     FormatDate(DateTimeOffset.UtcNow),
-                    releaseRecoveryDeduplication ? "1" : "0"
+                    releaseDeduplication ? "1" : "0"
                 };
 
             foreach (var pair in additionalFields)

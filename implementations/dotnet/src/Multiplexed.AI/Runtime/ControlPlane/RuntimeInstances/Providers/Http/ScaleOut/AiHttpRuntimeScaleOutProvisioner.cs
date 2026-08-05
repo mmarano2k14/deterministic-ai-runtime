@@ -931,10 +931,16 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http.Sc
                     DefaultMaxConcurrentRunsPerInstance);
 
             var queueCapacity =
-                ResolvePositiveOrDefault(
-                    tenantSettings.LocalQueueCapacity,
-                    request.LocalQueueCapacity,
-                    DefaultQueueCapacity);
+                this.options.HostCreationMode ==
+                    AiRuntimeHostCreationMode.KubernetesPool
+                    ? ResolveNonNegativeOrDefault(
+                        tenantSettings.LocalQueueCapacity,
+                        request.LocalQueueCapacity,
+                        DefaultQueueCapacity)
+                    : ResolvePositiveOrDefault(
+                        tenantSettings.LocalQueueCapacity,
+                        request.LocalQueueCapacity,
+                        DefaultQueueCapacity);
 
             var maxRuntimeInstances =
                 ResolvePositiveOrNullableDefault(
@@ -1379,11 +1385,39 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http.Sc
         }
 
         /// <summary>
+        /// Resolves the first non-negative integer value from tenant settings,
+        /// request, or hard default.
+        /// </summary>
+        /// <param name="tenantValue">The tenant settings value.</param>
+        /// <param name="requestValue">The request value.</param>
+        /// <param name="hardDefault">The hard default value.</param>
+        /// <returns>The resolved value.</returns>
+        private static int ResolveNonNegativeOrDefault(
+            int? tenantValue,
+            int? requestValue,
+            int hardDefault)
+        {
+            if (tenantValue.HasValue &&
+                tenantValue.Value >= 0)
+            {
+                return tenantValue.Value;
+            }
+
+            if (requestValue.HasValue &&
+                requestValue.Value >= 0)
+            {
+                return requestValue.Value;
+            }
+
+            return hardDefault;
+        }
+
+        /// <summary>
         /// Resolves the first positive integer value from tenant settings, request, or hard default.
         /// </summary>
         /// <param name="tenantValue">The tenant settings value.</param>
         /// <param name="requestValue">The request value.</param>
-        /// <param name="hardDefault">The hard fallback value.</param>
+        /// <param name="hardDefault">The hard default value.</param>
         /// <returns>The resolved positive value.</returns>
         private static int ResolvePositiveOrDefault(
             int? tenantValue,

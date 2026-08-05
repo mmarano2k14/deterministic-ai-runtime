@@ -12,11 +12,13 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
     /// Provides an in-memory Kubernetes Runtime Pool lifecycle client for focused tests.
     /// </summary>
     public sealed class FakeAiKubernetesRuntimePoolHostClient :
-        IAiKubernetesRuntimePoolHostClient
+        IAiKubernetesRuntimePoolHostClient,
+        IAiKubernetesRuntimePoolPodInventory
     {
         private readonly ConcurrentDictionary<
             string,
             AiKubernetesRuntimePoolPodSpec> createdPods = new();
+        private readonly object creationSync = new();
 
         /// <summary>
         /// Gets or sets a value indicating whether creation should fail.
@@ -58,6 +60,39 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
         }
 
         /// <inheritdoc />
+        public Task<int> CountRuntimePoolPodsAsync(
+            string namespaceName,
+            string poolId,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(namespaceName);
+            ArgumentException.ThrowIfNullOrWhiteSpace(poolId);
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var count =
+                this.createdPods.Values.Count(
+                    pod =>
+                        StringComparer.OrdinalIgnoreCase.Equals(
+                            pod.Namespace,
+                            namespaceName.Trim()) &&
+                        StringComparer.Ordinal.Equals(
+                            pod.PoolId,
+                            poolId.Trim()));
+
+            return Task.FromResult(count);
+        }
+
+        /// <summary>
+        /// Seeds one pre-existing physical Pod for a focused capacity test.
+        /// </summary>
+        public void SeedRuntimePoolPod(
+            AiKubernetesRuntimePoolPodSpec podSpec)
+        {
+            ArgumentNullException.ThrowIfNull(podSpec);
+            this.createdPods[podSpec.PodName] = podSpec;
+        }
+
+        /// <inheritdoc />
         public Task<AiKubernetesRuntimeHostCreateResult>
             CreateRuntimePoolHostAsync(
                 AiKubernetesRuntimePoolPodSpec podSpec,
@@ -79,7 +114,31 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
                         retryable: true));
             }
 
-            this.createdPods[podSpec.PodName] = podSpec;
+            lock (this.creationSync)
+            {
+                var physicalPodCount =
+                    this.createdPods.Values.Count(
+                        existing =>
+                            StringComparer.OrdinalIgnoreCase.Equals(
+                                existing.Namespace,
+                                podSpec.Namespace) &&
+                            StringComparer.Ordinal.Equals(
+                                existing.PoolId,
+                                podSpec.PoolId));
+
+                if (podSpec.MaximumPodCount != int.MaxValue &&
+                    physicalPodCount >= podSpec.MaximumPodCount)
+                {
+                    return Task.FromResult(
+                        AiKubernetesRuntimeHostCreateResult.Rejected(
+                            podSpec.Namespace,
+                            podSpec.PodName,
+                            "kubernetes-runtime-pool-physical-pod-capacity-already-satisfied",
+                            retryable: true));
+                }
+
+                this.createdPods[podSpec.PodName] = podSpec;
+            }
 
             return Task.FromResult(
                 AiKubernetesRuntimeHostCreateResult.Created(

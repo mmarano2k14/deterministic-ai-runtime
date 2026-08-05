@@ -50,6 +50,21 @@ namespace Multiplexed.Abstractions.AI.ControlPlane.SharedController.Scaling
             Array.Empty<string>();
 
         /// <summary>
+        /// Gets the observed active physical Pod count at the capacity decision boundary.
+        /// </summary>
+        public int? ActivePodCount { get; init; }
+
+        /// <summary>
+        /// Gets the observed in-flight physical Pod creation reservation count.
+        /// </summary>
+        public int? ReservedPodCreationCount { get; init; }
+
+        /// <summary>
+        /// Gets the configured maximum physical Pod count.
+        /// </summary>
+        public int? MaximumPodCount { get; init; }
+
+        /// <summary>
         /// Gets the failure reason when Pod creation or membership convergence was
         /// rejected.
         /// </summary>
@@ -73,5 +88,13 @@ namespace Multiplexed.Abstractions.AI.ControlPlane.SharedController.Scaling
         /// </summary>
         public bool IsDeduplicated =>
             this.Status == AiRuntimePoolPodCreationStatus.AlreadyApplied;
+
+        /// <summary>
+        /// Gets a value indicating whether existing or already-reserved physical Pod
+        /// capacity satisfied the request without another Kubernetes mutation.
+        /// </summary>
+        public bool IsCapacityAlreadySatisfied =>
+            this.Status ==
+                AiRuntimePoolPodCreationStatus.CapacityAlreadySatisfied;
     }
 }
