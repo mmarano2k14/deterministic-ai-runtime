@@ -2,18 +2,18 @@ using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Definition
 using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Providers.Base.KubernetesPool;
 using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Providers.Base.Profiles;
 
-namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Providers.Grpc.Runners
+namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Providers.Http.Runners
 {
     /// <summary>
-    /// Builds MCP host settings for the real gRPC Kubernetes Runtime Pool crash-recovery scenario.
+    /// Builds MCP host settings for the real HTTP Kubernetes Runtime Pool crash-recovery scenario.
     /// </summary>
-    internal static class GrpcKubernetesRuntimePoolCrashRecoveryProductionScenarioSettingsBuilder
+    internal static class HttpKubernetesRuntimePoolCrashRecoveryProductionScenarioSettingsBuilder
     {
         private const string ScaleOutSectionName =
-            "AiGrpcRuntimeScaleOut";
+            "AiHttpRuntimeScaleOut";
 
         private const int FirstChildTransportPort =
-            19080;
+            18080;
 
         /// <summary>
         /// Builds the complete settings dictionary for the bounded Runtime Pool scenario.
@@ -35,7 +35,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             ArgumentNullException.ThrowIfNull(profile);
 
             var settings =
-                GrpcProcessHostProductionScenarioSettingsBuilder.Build(
+                HttpProcessHostProductionScenarioSettingsBuilder.Build(
                     scenario,
                     controlPlaneId,
                     runtimeHostAssemblyPath);

@@ -233,5 +233,48 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 settings[
                     "AiKubernetesRuntimePoolHost:MongoDatabaseName"]);
         }
+
+        /// <summary>
+        /// Verifies that the shared Runtime Pool settings composer preserves the
+        /// established gRPC transport contract exactly.
+        /// </summary>
+        [Fact]
+        public void BuildSettings_Should_Preserve_Grpc_RuntimePool_Transport_Settings()
+        {
+            var profile =
+                new GrpcKubernetesRuntimePoolCrashRecoveryScenarioRuntimeProfile(
+                    maximumPodCount: 3,
+                    runtimeCountPerPod: 5);
+
+            var scenario =
+                ProductionRuntimeScenarioFactory
+                    .CreateMultiTenantCapacityReplayLedgerScenario();
+
+            var settings =
+                profile.BuildSettings(
+                    scenario,
+                    "control-plane-grpc-runtime-pool",
+                    "runtime-host.dll");
+
+            Assert.Equal(
+                AiRuntimeCapacityTopologyMode.KubernetesPool.ToString(),
+                settings["AiGrpcRuntimeScaleOut:CapacityTopologyMode"]);
+            Assert.Equal(
+                AiRuntimeHostCreationMode.KubernetesPool.ToString(),
+                settings["AiGrpcRuntimeScaleOut:HostCreationMode"]);
+            Assert.Equal(
+                "grpc",
+                settings["AiKubernetesRuntimePool:ProviderName"]);
+            Assert.Equal(
+                "grpc",
+                settings["AiKubernetesRuntimePool:TransportName"]);
+            Assert.Equal(
+                "19080",
+                settings["AiKubernetesRuntimePool:FirstChildTransportPort"]);
+            Assert.Equal(
+                "15",
+                settings["AiRunAdmission:MaxInstanceCount"]);
+        }
+
     }
 }

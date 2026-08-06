@@ -9,6 +9,7 @@ using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers.Transp
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.SharedInstance;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Scaling;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Routing.Http;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http.ScaleOut;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http
@@ -1312,12 +1313,73 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http
                     $"Runtime instance HTTP endpoint '{endpointText}' is not a valid absolute URI.");
             }
 
+            var commandEndpointPath =
+                UsesRuntimePoolCommandEndpoint(descriptor)
+                    ? AiRuntimePoolHttpCommandEndpointRouteBuilderExtensions
+                        .DefaultCommandEndpointPath
+                    : DefaultCommandEndpointPath;
+
             var commandEndpoint =
                 new Uri(
-                    baseEndpoint.ToString().TrimEnd('/') + DefaultCommandEndpointPath);
+                    baseEndpoint.ToString().TrimEnd('/') +
+                    commandEndpointPath);
 
             return HttpCommandEndpointResolution.Succeeded(
                 commandEndpoint);
+        }
+
+        /// <summary>
+        /// Determines whether the descriptor represents one exact member behind a stable Runtime Pool endpoint.
+        /// </summary>
+        /// <param name="descriptor">The runtime instance capacity descriptor.</param>
+        /// <returns>
+        /// <see langword="true" /> when commands must be sent through the stable Runtime Pool router;
+        /// otherwise, <see langword="false" />.
+        /// </returns>
+        private static bool UsesRuntimePoolCommandEndpoint(
+            AiRuntimeInstanceCapacityDescriptor descriptor)
+        {
+            ArgumentNullException.ThrowIfNull(descriptor);
+
+            if (!string.IsNullOrWhiteSpace(descriptor.PoolId) ||
+                !string.IsNullOrWhiteSpace(
+                    GetMetadataValue(
+                        descriptor.Metadata,
+                        "runtime.pool.id")))
+            {
+                return true;
+            }
+
+            var hostCreationMode =
+                GetMetadataValue(
+                    descriptor.Metadata,
+                    "host.creation.mode");
+
+            if (string.Equals(
+                    hostCreationMode,
+                    "KubernetesPool",
+                    StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(
+                    hostCreationMode,
+                    "ProcessPool",
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            var hostType =
+                GetMetadataValue(
+                    descriptor.Metadata,
+                    "hostType");
+
+            return string.Equals(
+                       hostType,
+                       "runtime-instance-kubernetes-pool",
+                       StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(
+                       hostType,
+                       "runtime-instance-process-pool",
+                       StringComparison.OrdinalIgnoreCase);
         }
 
         /// <summary>

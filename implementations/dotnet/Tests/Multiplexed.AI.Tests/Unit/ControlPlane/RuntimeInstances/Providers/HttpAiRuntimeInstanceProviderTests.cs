@@ -104,6 +104,135 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Providers
         }
 
         /// <summary>
+        /// Verifies that a Runtime Pool member is dispatched through the stable Runtime Pool router
+        /// instead of the single-runtime HTTP command endpoint.
+        /// </summary>
+        [Fact]
+        public async Task DispatchAsync_WithRuntimePoolDescriptor_ShouldPostToStableRuntimePoolEndpoint()
+        {
+            var runtimeInstanceId =
+                "runtime-http-pool-1";
+
+            var handler =
+                new TestHttpMessageHandler
+                {
+                    Response = new HttpResponseMessage(HttpStatusCode.OK)
+                    {
+                        Content = JsonContent.Create(
+                            new AiRuntimeInstanceCommandResult
+                            {
+                                Success = true,
+                                Operation =
+                                    AiRuntimeInstanceCommandOperation
+                                        .DispatchRun,
+                                RuntimeInstanceId = runtimeInstanceId,
+                                DispatchResult = CreateDispatchResult(
+                                    runtimeInstanceId,
+                                    success: true),
+                                StartedAtUtc = DateTimeOffset.UtcNow,
+                                CompletedAtUtc = DateTimeOffset.UtcNow,
+                                DurationMs = 0
+                            })
+                    }
+                };
+
+            var provider =
+                CreateProvider(handler);
+
+            var descriptor =
+                CreateDescriptor(
+                    runtimeInstanceId,
+                    endpoint: "http://127.0.0.1:64158",
+                    poolId: "runtime-pool-1",
+                    additionalMetadata:
+                        new Dictionary<string, string>
+                        {
+                            ["runtime.pool.id"] =
+                                "runtime-pool-1",
+                            ["host.creation.mode"] =
+                                "KubernetesPool",
+                            ["hostType"] =
+                                "runtime-instance-kubernetes-pool"
+                        });
+
+            var result =
+                await provider.DispatchAsync(
+                    descriptor,
+                    CreateDispatchRequest(runtimeInstanceId),
+                    CancellationToken.None);
+
+            Assert.True(result.Success);
+            Assert.Equal(runtimeInstanceId, result.RuntimeInstanceId);
+            Assert.Equal(1, handler.SendCallCount);
+            Assert.NotNull(handler.LastRequest);
+            Assert.Equal(HttpMethod.Post, handler.LastRequest!.Method);
+            Assert.Equal(
+                "http://127.0.0.1:64158/runtime-pool/commands",
+                handler.LastRequest.RequestUri!.ToString());
+        }
+
+        /// <summary>
+        /// Verifies that Runtime Pool routing is selected from canonical PoolId membership even
+        /// when optional host metadata has not yet converged.
+        /// </summary>
+        [Fact]
+        public async Task GetRunStatusAsync_WithPoolIdOnly_ShouldPostToStableRuntimePoolEndpoint()
+        {
+            var runtimeInstanceId =
+                "runtime-http-pool-1";
+
+            var handler =
+                new TestHttpMessageHandler
+                {
+                    Response = new HttpResponseMessage(HttpStatusCode.OK)
+                    {
+                        Content = JsonContent.Create(
+                            new AiRuntimeInstanceCommandResult
+                            {
+                                Success = true,
+                                Operation =
+                                    AiRuntimeInstanceCommandOperation
+                                        .GetRunStatus,
+                                RuntimeInstanceId = runtimeInstanceId,
+                                QueueResult = CreateQueueResult(
+                                    runtimeInstanceId,
+                                    AiRuntimeQueueControlPlaneOperation
+                                        .GetRunStatus,
+                                    success: true),
+                                StartedAtUtc = DateTimeOffset.UtcNow,
+                                CompletedAtUtc = DateTimeOffset.UtcNow,
+                                DurationMs = 0
+                            })
+                    }
+                };
+
+            var provider =
+                CreateProvider(handler);
+
+            var descriptor =
+                CreateDescriptor(
+                    runtimeInstanceId,
+                    endpoint: "http://127.0.0.1:64158",
+                    poolId: "runtime-pool-1");
+
+            var result =
+                await provider.GetRunStatusAsync(
+                    descriptor,
+                    CreateQueueRequest(
+                        runtimeInstanceId,
+                        AiRuntimeQueueControlPlaneOperation
+                            .GetRunStatus),
+                    CancellationToken.None);
+
+            Assert.True(result.Success);
+            Assert.Equal(1, handler.SendCallCount);
+            Assert.NotNull(handler.LastRequest);
+            Assert.Equal(
+                "http://127.0.0.1:64158/runtime-pool/commands",
+                handler.LastRequest!.RequestUri!.ToString());
+        }
+
+        /// <summary>
         /// Verifies that get run status sends an HTTP command request.
         /// </summary>
         [Fact]
@@ -968,7 +1097,9 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Providers
             string runtimeInstanceId = "runtime-http-1",
             string providerName = "http",
             string endpoint = "http://runtime-http-1:8080",
-            bool includeEndpoint = true)
+            bool includeEndpoint = true,
+            string? poolId = null,
+            IReadOnlyDictionary<string, string>? additionalMetadata = null)
         {
             var metadata =
                 new Dictionary<string, string>
@@ -982,9 +1113,19 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Providers
                     endpoint;
             }
 
+            if (additionalMetadata is not null)
+            {
+                foreach (var item in additionalMetadata)
+                {
+                    metadata[item.Key] =
+                        item.Value;
+                }
+            }
+
             return new AiRuntimeInstanceCapacityDescriptor
             {
                 RuntimeInstanceId = runtimeInstanceId,
+                PoolId = poolId,
                 Metadata = metadata
             };
         }
