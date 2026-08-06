@@ -1,9 +1,9 @@
 using System;
-using System.Linq;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
 using Multiplexed.AI.Runtime.ControlPlane.DI;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Kubernetes.InPod;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Process;
 
 namespace Multiplexed.AI.McpServer.Host.Bootstrap
 {
@@ -13,12 +13,6 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
     /// </summary>
     public static class KubernetesRuntimePoolBootstrapRegistration
     {
-        private static readonly string[] SingleRuntimeHostedServiceNames =
-        {
-            "AiRuntimePipelineBackgroundControllerHostedService",
-            "AiRuntimeInstanceRegistrationHostedService"
-        };
-
         /// <summary>
         /// Configures the in-Pod Runtime Pool when explicitly enabled.
         /// </summary>
@@ -40,24 +34,21 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
                 return;
             }
 
+            var processPoolOptions =
+                configuration
+                    .GetSection("AiRuntimeProcessPool")
+                    .Get<AiRuntimeProcessPoolOptions>();
+
+            if (processPoolOptions?.Enabled == true)
+            {
+                throw new InvalidOperationException(
+                    "AiKubernetesRuntimePoolInPod and AiRuntimeProcessPool cannot both be enabled in the same RuntimeInstanceOnly host.");
+            }
+
             AiKubernetesRuntimePoolInPodOptionsValidator.Validate(options);
 
-            var descriptorsToRemove =
-                services
-                    .Where(
-                        descriptor =>
-                            descriptor.ServiceType
-                                == typeof(IHostedService)
-                            && descriptor.ImplementationType is not null
-                            && SingleRuntimeHostedServiceNames.Contains(
-                                descriptor.ImplementationType.Name,
-                                StringComparer.Ordinal))
-                    .ToArray();
-
-            foreach (var descriptor in descriptorsToRemove)
-            {
-                services.Remove(descriptor);
-            }
+            RuntimePoolBootstrapHostedServiceRegistration
+                .RemoveSingleRuntimeHostedServices(services);
 
             services.AddAiKubernetesRuntimePoolInPod(options);
         }

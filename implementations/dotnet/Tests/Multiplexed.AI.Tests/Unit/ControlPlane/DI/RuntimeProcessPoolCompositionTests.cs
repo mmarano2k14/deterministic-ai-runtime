@@ -5,6 +5,7 @@ using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Recovery.Transit
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Ownership;
 using Multiplexed.AI.Runtime.ControlPlane.DI;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Process;
+using Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling;
 using Multiplexed.AI.Tests.Fixtures;
 
 namespace Multiplexed.AI.Tests.Unit.ControlPlane.DI
@@ -80,7 +81,12 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.DI
             var hostedServices =
                 serviceProvider.GetServices<IHostedService>().ToArray();
 
+            var processCreationExecutor =
+                serviceProvider.GetRequiredService<
+                    IAiRuntimePoolProcessCreationExecutor>();
+
             Assert.Equal("pool-shared-01", manager.Identity.PoolId);
+            Assert.NotNull(processCreationExecutor);
             Assert.IsType<
                 RuntimeInstanceOnlyAiRuntimeProcessPoolChildFactory>(
                     childFactory);

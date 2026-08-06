@@ -16,6 +16,7 @@ using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Reco
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Routing;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Routing.Grpc;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Routing.Http;
+using Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.DI
 {
@@ -196,6 +197,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
                 AiRuntimePoolHttpCommandHandler>();
 
             services.TryAddSingleton<
+                IAiRuntimePoolProcessCreationExecutor,
+                AiRuntimePoolProcessCreationExecutor>();
+
+            services.TryAddSingleton<
                 IAiRuntimeProcessPoolPortAllocator,
                 AiRuntimeProcessPoolPortAllocator>();
 
@@ -281,6 +286,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
                 BasePort = options.BasePort,
                 MaxPort = options.MaxPort,
                 EndpointHost = options.EndpointHost,
+                PublishedTransportEndpoint =
+                    options.PublishedTransportEndpoint,
                 ControlPlaneId = options.ControlPlaneId,
                 EnableControlPlaneDiscovery =
                     options.EnableControlPlaneDiscovery,

@@ -8,7 +8,6 @@ using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager.Kube
 using Multiplexed.Abstractions.Core.ExecutionContext;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Kubernetes.InPod;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Process;
-using Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.DI
 {
@@ -87,46 +86,26 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
                 new Dictionary<string, string>(
                     StringComparer.OrdinalIgnoreCase);
 
-            AddWhenPresent(
-                childEnvironment,
-                "ConnectionStrings__Redis",
-                options.RedisConnectionString);
-            AddWhenPresent(
-                childEnvironment,
-                "ConnectionStrings__Mongo",
-                options.MongoConnectionString);
-            AddWhenPresent(
-                childEnvironment,
-                "Mongo__DatabaseName",
-                options.MongoDatabaseName);
-            AddWhenPresent(
-                childEnvironment,
-                "OpenAI__ApiKey",
-                options.OpenAiApiKey);
-
-            AddDurableProcessHostEnvironment(
-                childEnvironment,
-                options);
+            AiRuntimeProcessPoolChildEnvironmentComposer
+                .AddDurableRuntimeEnvironment(
+                    childEnvironment,
+                    options.RedisConnectionString,
+                    options.MongoConnectionString,
+                    options.MongoDatabaseName,
+                    options.OpenAiApiKey);
 
             AddKubernetesIdentityEnvironment(
                 childEnvironment,
                 options);
 
-            childEnvironment[
-                "AiRuntimeInstanceRegistration__Metadata__host.provider"] =
-                "kubernetes";
-            childEnvironment[
-                "AiRuntimeInstanceRegistration__Metadata__host.creation.mode"] =
-                "KubernetesPool";
-            childEnvironment[
-                "AiRuntimeInstanceRegistration__Metadata__hostType"] =
-                "runtime-instance-kubernetes-pool";
-            childEnvironment[
-                "AiRuntimeInstanceRegistration__Metadata__deployment"] =
-                "kubernetes-pool";
-            childEnvironment[
-                "AiRuntimeInstanceRegistration__Metadata__transport.endpoint.scope"] =
-                "pod-internal";
+            AiRuntimeProcessPoolChildEnvironmentComposer
+                .AddHostMetadata(
+                    childEnvironment,
+                    hostProvider: "kubernetes",
+                    hostCreationMode: "KubernetesPool",
+                    hostType: "runtime-instance-kubernetes-pool",
+                    deployment: "kubernetes-pool",
+                    transportEndpointScope: "pod-internal");
 
             var runtimeOptions =
                 new AiRuntimeProcessPoolRuntimeInstanceOptions
@@ -189,10 +168,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
                         serviceProvider.GetRequiredService<
                             IAiRuntimeProcessPoolChildFactory>()));
 
-            services.TryAddSingleton<
-                IAiRuntimePoolProcessCreationExecutor,
-                AiRuntimePoolProcessCreationExecutor>();
-
             return services;
         }
 
@@ -204,103 +179,29 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
             IDictionary<string, string> destination,
             AiKubernetesRuntimePoolInPodOptions options)
         {
-            AddWhenPresent(
-                destination,
-                string.Concat(
-                    "AiRuntimeInstanceRegistration__ProviderMetadata__",
-                    AiKubernetesRuntimeHostMetadataKeys.Namespace),
-                options.KubernetesNamespace);
+            AiRuntimeProcessPoolChildEnvironmentComposer
+                .AddWhenPresent(
+                    destination,
+                    string.Concat(
+                        "AiRuntimeInstanceRegistration__ProviderMetadata__",
+                        AiKubernetesRuntimeHostMetadataKeys.Namespace),
+                    options.KubernetesNamespace);
 
-            AddWhenPresent(
-                destination,
-                string.Concat(
-                    "AiRuntimeInstanceRegistration__ProviderMetadata__",
-                    AiKubernetesRuntimeHostMetadataKeys.PodName),
-                options.KubernetesPodName);
+            AiRuntimeProcessPoolChildEnvironmentComposer
+                .AddWhenPresent(
+                    destination,
+                    string.Concat(
+                        "AiRuntimeInstanceRegistration__ProviderMetadata__",
+                        AiKubernetesRuntimeHostMetadataKeys.PodName),
+                    options.KubernetesPodName);
 
-            AddWhenPresent(
-                destination,
-                string.Concat(
-                    "AiRuntimeInstanceRegistration__ProviderMetadata__",
-                    AiKubernetesRuntimeHostMetadataKeys.NodeName),
-                options.KubernetesNodeName);
-        }
-
-        /// <summary>
-        /// Projects the complete durable Process Host persistence and observability profile into
-        /// every RuntimeInstanceOnly child running inside the Kubernetes Runtime Pool Pod.
-        /// </summary>
-        private static void AddDurableProcessHostEnvironment(
-            IDictionary<string, string> destination,
-            AiKubernetesRuntimePoolInPodOptions options)
-        {
-            destination["AiEngine__Snapshots__Enabled"] = "true";
-            destination["AiEngine__Snapshots__Mongo__Enabled"] = "true";
-            AddWhenPresent(
-                destination,
-                "AiEngine__Snapshots__Mongo__ConnectionString",
-                options.MongoConnectionString);
-            AddWhenPresent(
-                destination,
-                "AiEngine__Snapshots__Mongo__DatabaseName",
-                options.MongoDatabaseName);
-
-            destination["AiPayloadStore__Enabled"] = "true";
-            destination["AiPayloadStore__Provider"] = "mongo-redis";
-            destination[
-                "AiPayloadStore__RequireReplaySafePayloads"] =
-                "true";
-
-            destination["AiEngine__PayloadStore__Enabled"] = "true";
-            destination["AiEngine__PayloadStore__Provider"] =
-                "mongo-redis";
-            destination[
-                "AiEngine__PayloadStore__RequireReplaySafePayloads"] =
-                "true";
-
-            destination["AiEngine__Payloads__Enabled"] = "true";
-            destination["AiEngine__Payloads__Provider"] =
-                "mongo-redis";
-            destination[
-                "AiEngine__Payloads__RequireReplaySafePayloads"] =
-                "true";
-
-            destination["AiDecisionLedger__Provider"] = "mongo";
-            destination["AiObservability__Ledger__Provider"] = "mongo";
-
-            destination[
-                "AiExecutionReplay__MetadataStore__Provider"] =
-                "mongo";
-            destination[
-                "AiExecutionReplay__MetadataStore__Mongo__CollectionName"] =
-                "ai_execution_replay_metadata";
-
-            destination[
-                "AiEngine__Observability__EnableTracing"] =
-                "true";
-            destination[
-                "AiEngine__Observability__EnableInMemoryRecording"] =
-                "true";
-            destination[
-                "AiEngine__Observability__Tracing__Mode"] =
-                "Mongo";
-            destination[
-                "AiEngine__Observability__Tracing__MongoCollectionName"] =
-                "ai_runtime_traces";
-        }
-
-        /// <summary>
-        /// Adds a non-empty child configuration value.
-        /// </summary>
-        private static void AddWhenPresent(
-            IDictionary<string, string> destination,
-            string key,
-            string value)
-        {
-            if (!string.IsNullOrWhiteSpace(value))
-            {
-                destination[key] = value;
-            }
+            AiRuntimeProcessPoolChildEnvironmentComposer
+                .AddWhenPresent(
+                    destination,
+                    string.Concat(
+                        "AiRuntimeInstanceRegistration__ProviderMetadata__",
+                        AiKubernetesRuntimeHostMetadataKeys.NodeName),
+                    options.KubernetesNodeName);
         }
     }
 }

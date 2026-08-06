@@ -68,16 +68,36 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
         private static void ConfigureRuntimeInstanceEndpoints(
             WebApplication app)
         {
-            var poolOptions =
+            var kubernetesPoolOptions =
                 app.Configuration
                     .GetSection("AiKubernetesRuntimePoolInPod")
                     .Get<AiKubernetesRuntimePoolInPodOptions>();
 
-            if (poolOptions?.Enabled == true)
+            if (kubernetesPoolOptions?.Enabled == true)
             {
                 ConfigureRuntimePoolEndpoints(
                     app,
-                    poolOptions);
+                    kubernetesPoolOptions.TransportName);
+                return;
+            }
+
+            var processPoolOptions =
+                app.Configuration
+                    .GetSection("AiRuntimeProcessPool")
+                    .Get<AiRuntimeProcessPoolOptions>();
+
+            if (processPoolOptions?.Enabled == true)
+            {
+                var processRuntimeOptions =
+                    app.Configuration
+                        .GetSection("AiRuntimeProcessPoolRuntimeInstance")
+                        .Get<AiRuntimeProcessPoolRuntimeInstanceOptions>()
+                    ?? throw new InvalidOperationException(
+                        "AiRuntimeProcessPoolRuntimeInstance configuration is required when AiRuntimeProcessPool is enabled.");
+
+                ConfigureRuntimePoolEndpoints(
+                    app,
+                    processRuntimeOptions.TransportName);
                 return;
             }
 
@@ -111,13 +131,15 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
         }
 
         /// <summary>
-        /// Maps the stable exact router and Kubernetes readiness endpoint.
+        /// Maps the stable exact router and Runtime Pool readiness endpoint.
         /// </summary>
         private static void ConfigureRuntimePoolEndpoints(
             WebApplication app,
-            AiKubernetesRuntimePoolInPodOptions options)
+            string transportName)
         {
-            switch (options.TransportName
+            ArgumentException.ThrowIfNullOrWhiteSpace(transportName);
+
+            switch (transportName
                 .Trim()
                 .ToLowerInvariant())
             {
@@ -131,7 +153,7 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
 
                 default:
                     throw new InvalidOperationException(
-                        $"Unsupported Runtime Pool transport '{options.TransportName}'.");
+                        $"Unsupported Runtime Pool transport '{transportName}'.");
             }
 
             app.MapGet(
