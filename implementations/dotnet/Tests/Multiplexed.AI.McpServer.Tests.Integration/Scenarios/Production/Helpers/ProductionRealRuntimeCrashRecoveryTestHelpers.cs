@@ -727,6 +727,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
         /// <param name="hybridFallbackPollInterval">The slow durable fallback interval used only in hybrid mode.</param>
         /// <param name="crashCheckpointGate">The optional durable crash checkpoint released immediately after process termination.</param>
         /// <param name="runtimeTenantOwnershipAssertion">The optional authoritative runtime tenant ownership assertion. When omitted, the historical runtime-id naming assertion is preserved.</param>
+        /// <param name="unsafeRuntimeRecoveryTrigger">The optional explicit recovery trigger invoked once after the failed runtime becomes unsafe and before recovery-state observation begins.</param>
         /// <returns>The failed-runtime recovery proof.</returns>
         public static async Task<RealRuntimeCrashFailedRuntimeRecoveryProof>
             KillRuntimeAndRecoverAssignedInventoryAsync(
@@ -751,7 +752,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
                 TimeSpan? hybridFallbackPollInterval = null,
                 ProductionCrashCheckpointGate? crashCheckpointGate = null,
                 Func<IAiRuntimeInstanceRegistry, string, ProductionTenantScenarioDefinition, Task>?
-                    runtimeTenantOwnershipAssertion = null)
+                    runtimeTenantOwnershipAssertion = null,
+                Func<Task>? unsafeRuntimeRecoveryTrigger = null)
         {
             ArgumentNullException.ThrowIfNull(output);
             ArgumentNullException.ThrowIfNull(processControl);
@@ -1048,8 +1050,30 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
                 output.WriteLine(
                     $"[REAL RUNTIME INVENTORY CRASH] Runtime instance marked unsafe. " +
                     $"TenantId='{inventory.Tenant.TenantId}', " +
-                    $"RuntimeInstanceId='{inventory.RuntimeInstanceId}'. " +
-                    "Waiting for automatic execution recovery reconciliation.");
+                    $"RuntimeInstanceId='{inventory.RuntimeInstanceId}'.");
+
+                if (unsafeRuntimeRecoveryTrigger is not null)
+                {
+                    output.WriteLine(
+                        $"[REAL RUNTIME INVENTORY EXPLICIT RECOVERY START] " +
+                        $"TenantId='{inventory.Tenant.TenantId}', " +
+                        $"RuntimeInstanceId='{inventory.RuntimeInstanceId}'.");
+
+                    await unsafeRuntimeRecoveryTrigger()
+                        .ConfigureAwait(false);
+
+                    output.WriteLine(
+                        $"[REAL RUNTIME INVENTORY EXPLICIT RECOVERY COMPLETE] " +
+                        $"TenantId='{inventory.Tenant.TenantId}', " +
+                        $"RuntimeInstanceId='{inventory.RuntimeInstanceId}'.");
+                }
+                else
+                {
+                    output.WriteLine(
+                        $"[REAL RUNTIME INVENTORY AUTOMATIC RECOVERY WAIT] " +
+                        $"TenantId='{inventory.Tenant.TenantId}', " +
+                        $"RuntimeInstanceId='{inventory.RuntimeInstanceId}'.");
+                }
 
                 foreach (var work in inventory.Works)
                 {

@@ -29,6 +29,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
         /// <param name="maximumConcurrentSubmissions">The maximum number of concurrent MCP submissions.</param>
         /// <param name="maximumAdmissionAttemptCount">The maximum number of admission attempts per run.</param>
         /// <param name="cycleNumber">The optional one-based warm production cycle number.</param>
+        /// <param name="startingIterationNumber">The one-based wave number used for the first submitted iteration. This allows one logical cycle to defer a configured wave without reusing correlation identities.</param>
         /// <returns>The exact admission results, SharedRun identifiers, and 429 retry count.</returns>
         public static async Task<RuntimePoolProductionCycleAdmissionProof>
             SubmitQueueFirstWavesAsync(
@@ -42,7 +43,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 int submissionIterationCount,
                 int maximumConcurrentSubmissions,
                 int maximumAdmissionAttemptCount,
-                int? cycleNumber = null)
+                int? cycleNumber = null,
+                int startingIterationNumber = 1)
         {
             ArgumentNullException.ThrowIfNull(mcp);
             ArgumentNullException.ThrowIfNull(tenant);
@@ -54,6 +56,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             ArgumentOutOfRangeException.ThrowIfNegativeOrZero(submissionIterationCount);
             ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maximumConcurrentSubmissions);
             ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maximumAdmissionAttemptCount);
+            ArgumentOutOfRangeException.ThrowIfNegativeOrZero(startingIterationNumber);
 
             if (cycleNumber.HasValue && cycleNumber.Value <= 0)
             {
@@ -122,7 +125,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
 
             var submissionTasks =
                 Enumerable
-                    .Range(1, submissionIterationCount)
+                    .Range(startingIterationNumber, submissionIterationCount)
                     .SelectMany(
                         iteration =>
                         {
@@ -202,6 +205,47 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 submissionResults,
                 submittedSharedRunIds,
                 Volatile.Read(ref tooManyRequestsRetryCount));
+        }
+
+        /// <summary>
+        /// Combines multiple non-overlapping admission segments into one exact logical-cycle proof.
+        /// </summary>
+        public static RuntimePoolProductionCycleAdmissionProof CombineAdmissionProofs(
+            params RuntimePoolProductionCycleAdmissionProof[] proofs)
+        {
+            ArgumentNullException.ThrowIfNull(proofs);
+
+            if (proofs.Length == 0)
+            {
+                throw new ArgumentException(
+                    "At least one admission proof is required.",
+                    nameof(proofs));
+            }
+
+            Assert.All(proofs, proof => ArgumentNullException.ThrowIfNull(proof));
+
+            var results =
+                proofs
+                    .SelectMany(proof => proof.Results)
+                    .ToArray();
+            var sharedRunIds =
+                proofs
+                    .SelectMany(proof => proof.SharedRunIds)
+                    .ToHashSet(StringComparer.Ordinal);
+            var tooManyRequestsRetryCount =
+                proofs.Aggregate(
+                    0,
+                    (current, proof) =>
+                        checked(
+                            current +
+                            proof.TooManyRequestsRetryCount));
+
+            Assert.Equal(results.Length, sharedRunIds.Count);
+
+            return new RuntimePoolProductionCycleAdmissionProof(
+                results,
+                sharedRunIds,
+                tooManyRequestsRetryCount);
         }
 
         /// <summary>

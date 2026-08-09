@@ -1,6 +1,5 @@
 ﻿using System.Collections.Concurrent;
 using System.Diagnostics;
-using System.Globalization;
 using System.Net;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
@@ -220,10 +219,10 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 var recovery =
                     await ExecuteAssignedInventoryFailureAsync(
                             context,
-                            new KubernetesRuntimePoolChildProcessControl(
+                            CreateRuntimePoolChildProcessControl(
                                 context.Registry,
                                 poolId,
-                                output))
+                                profile.LogPrefix))
                         .ConfigureAwait(false);
 
                 await AssertExactSiblingsRemainReadyAsync(
@@ -453,71 +452,6 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 Metadata = new Dictionary<string, string>()
             };
         }
-        private sealed class KubernetesRuntimePoolChildProcessControl :
-            IAiRuntimeHostProcessControl
-        {
-            private readonly IAiRuntimeInstanceRegistry registry;
-            private readonly string poolId;
-            private readonly ITestOutputHelper output;
-
-            public KubernetesRuntimePoolChildProcessControl(
-                IAiRuntimeInstanceRegistry registry,
-                string poolId,
-                ITestOutputHelper output)
-            {
-                this.registry = registry;
-                this.poolId = poolId;
-                this.output = output;
-            }
-
-            public async Task<bool> KillAsync(
-                string runtimeInstanceId,
-                CancellationToken cancellationToken = default)
-            {
-                var snapshot =
-                    await GetRequiredRuntimeSnapshotAsync(
-                            registry,
-                            runtimeInstanceId)
-                        .ConfigureAwait(false);
-
-                AssertRuntimePoolIdentity(
-                    snapshot,
-                    poolId);
-                Assert.True(snapshot.ProcessId.HasValue);
-
-                output.WriteLine(
-                    $"[GRPC KUBERNETES RUNTIME POOL PROCESS KILL] RuntimeInstanceId='{runtimeInstanceId}', PodUid='{snapshot.HostId}', PodName='{snapshot.KubernetesPodName}', ProcessId='{snapshot.ProcessId}'.");
-
-                var result =
-                    await RunKubectlAsync(
-                            cancellationToken,
-                            "exec",
-                            snapshot.KubernetesPodName!,
-                            "--namespace",
-                            snapshot.KubernetesNamespace!,
-                            "--container",
-                            "runtime-pool",
-                            "--",
-                            "sh",
-                            "-c",
-                            string.Concat(
-                                "kill -9 ",
-                                snapshot.ProcessId.Value.ToString(
-                                    CultureInfo.InvariantCulture)))
-                        .ConfigureAwait(false);
-
-                if (result.ExitCode != 0)
-                {
-                    throw new InvalidOperationException(
-                        string.Concat(
-                            "The in-Pod runtime process could not be killed. StandardError=",
-                            result.StandardError));
-                }
-
-                return true;
-            }
-        }
-
         private sealed class KubernetesRuntimePoolPodFailureProcessControl :
             IAiRuntimeHostProcessControl
         {

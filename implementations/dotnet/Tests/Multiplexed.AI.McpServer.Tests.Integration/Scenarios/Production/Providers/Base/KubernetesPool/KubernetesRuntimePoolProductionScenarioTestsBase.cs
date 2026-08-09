@@ -47,6 +47,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
     public abstract class KubernetesRuntimePoolProductionScenarioTestsBase :
         ProcessHostRealRuntimeCrashRecoveryScenarioTestsBase
     {
+        private const int FinalScenarioKillAfterCompletedStepCount = 25;
+
         protected readonly ITestOutputHelper output;
         protected readonly IRuntimePoolCrashRecoveryScenarioRuntimeProfile profile;
         private readonly Func<int, int, IRuntimePoolCrashRecoveryScenarioRuntimeProfile> boundedCapacityProfileFactory;
@@ -83,6 +85,28 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                     this.output,
                     this.profile.LogPrefix);
         }
+
+        /// <inheritdoc />
+        protected override async Task AssertRuntimeBelongsToTenantAsync(
+            IAiRuntimeInstanceRegistry registry,
+            string runtimeInstanceId,
+            ProductionTenantScenarioDefinition tenant)
+        {
+            ArgumentNullException.ThrowIfNull(registry);
+            ArgumentException.ThrowIfNullOrWhiteSpace(runtimeInstanceId);
+            ArgumentNullException.ThrowIfNull(tenant);
+
+            var snapshot =
+                await GetRequiredRuntimeSnapshotAsync(
+                        registry,
+                        runtimeInstanceId)
+                    .ConfigureAwait(false);
+
+            Assert.Equal(
+                tenant.TenantId,
+                snapshot.TenantId);
+        }
+
         /// <summary>
         /// Measures the bounded Kubernetes Runtime Pool capacity without injecting any failure.
         /// </summary>
@@ -141,7 +165,27 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 maximumPodCount,
                 runtimeCountPerPod,
                 submissionIterationCount,
-                executionCycleCount);
+                executionCycleCount,
+                injectChildRuntimeFailure: false);
+        }
+
+        /// <summary>
+        /// Executes the final hierarchical KubernetesPool proof: one exact in-Pod runtime process
+        /// is killed after durable DAG progress, its Pod and siblings survive, then one distinct
+        /// fully busy Pod is force-deleted. The converged warm pool is reused across every cycle.
+        /// </summary>
+        protected Task ExecuteFullFailureProductionScenarioAsync(
+            int maximumPodCount,
+            int runtimeCountPerPod,
+            int submissionIterationCount,
+            int executionCycleCount)
+        {
+            return ExecuteReusableBoundedCapacityPodFailureProductionScenarioCoreAsync(
+                maximumPodCount,
+                runtimeCountPerPod,
+                submissionIterationCount,
+                executionCycleCount,
+                injectChildRuntimeFailure: true);
         }
 
         private async Task ExecuteBoundedCapacityScenarioAsync(
@@ -588,6 +632,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                                     registry,
                                     sharedRunStore,
                                     runExecutionIndex,
+                                    submittedSharedRunIds,
                                     tenant,
                                     controlPlaneId,
                                     poolId,
@@ -1568,7 +1613,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             int maximumPodCount,
             int runtimeCountPerPod,
             int submissionIterationCount,
-            int executionCycleCount)
+            int executionCycleCount,
+            bool injectChildRuntimeFailure)
         {
             ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maximumPodCount);
             ArgumentOutOfRangeException.ThrowIfNegativeOrZero(runtimeCountPerPod);
@@ -1580,6 +1626,24 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                     nameof(executionCycleCount),
                     executionCycleCount,
                     "The warm-pool reuse proof requires at least two sequential execution cycles.");
+            }
+
+            if (injectChildRuntimeFailure)
+            {
+                ArgumentOutOfRangeException.ThrowIfLessThan(
+                    maximumPodCount,
+                    3);
+                ArgumentOutOfRangeException.ThrowIfLessThan(
+                    runtimeCountPerPod,
+                    2);
+
+                if (submissionIterationCount < 2)
+                {
+                    throw new ArgumentOutOfRangeException(
+                        nameof(submissionIterationCount),
+                        submissionIterationCount,
+                        "The final hierarchical KubernetesPool proof requires at least two full-capacity waves so the last configured wave can be deferred until after child-runtime recovery.");
+                }
             }
 
             const int stepCount = 50;
@@ -1646,10 +1710,12 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             var scenario =
                 baseScenario with
                 {
-                    Name =
-                        $"{boundedCapacityProfile.ProviderName}-kubernetes-runtime-pool-warm-reuse-pod-failure-production",
-                    ControlPlaneIdPrefix =
-                        $"{boundedCapacityProfile.ProviderName}-kubernetes-runtime-pool-warm-reuse-pod-failure",
+                    Name = injectChildRuntimeFailure
+                        ? $"{boundedCapacityProfile.ProviderName}-kubernetes-runtime-pool-full-failure-production"
+                        : $"{boundedCapacityProfile.ProviderName}-kubernetes-runtime-pool-warm-reuse-pod-failure-production",
+                    ControlPlaneIdPrefix = injectChildRuntimeFailure
+                        ? $"{boundedCapacityProfile.ProviderName}-kubernetes-runtime-pool-full-failure"
+                        : $"{boundedCapacityProfile.ProviderName}-kubernetes-runtime-pool-warm-reuse-pod-failure",
                     Tenants = new[] { tenant },
                     PersistenceProfile = ProductionRuntimePersistenceProfile.MongoRedis,
                     ObservabilityProfile = ProductionRuntimeObservabilityProfile.DurableMongo,
@@ -1706,13 +1772,18 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             output.WriteLine(
                 $"# {boundedCapacityProfile.LogPrefix} WARM REUSE PRODUCTION PROOF");
             output.WriteLine(
-                "Executive proof: one bounded Kubernetes Runtime Pool executes repeated production cycles, survives one forced busy-Pod deletion per cycle, reuses the surviving and replacement Pods in the next cycle, and cleans physical capacity only after the final cycle.");
+                injectChildRuntimeFailure
+                    ? "Executive proof: one bounded Kubernetes Runtime Pool executes repeated production cycles, kills one exact in-Pod runtime after durable progress while its Pod and siblings survive, then force-deletes one distinct busy Pod, reuses the converged capacity, and cleans only after the final cycle."
+                    : "Executive proof: one bounded Kubernetes Runtime Pool executes repeated production cycles, survives one forced busy-Pod deletion per cycle, reuses the surviving and replacement Pods in the next cycle, and cleans physical capacity only after the final cycle.");
             output.WriteLine(string.Empty);
             output.WriteLine("Scenario contract:");
             output.WriteLine("  - [ON] One control plane and one GenericMcpServerTestHost remain alive for every cycle.");
             output.WriteLine("  - [ON] Cycle N+1 starts from the exact final Pod UIDs and runtime identities produced by cycle N.");
             output.WriteLine("  - [ON] No intermediate cycle invokes Runtime Pool cleanup.");
-            output.WriteLine("  - [ON] Every cycle force-deletes one fully busy Pod and recovers exactly its assigned work.");
+            output.WriteLine(
+                injectChildRuntimeFailure
+                    ? $"  - [ON] Every cycle kills one exact child runtime after at least {FinalScenarioKillAfterCompletedStepCount} completed steps, preserves its Pod and siblings, then force-deletes one distinct fully busy Pod."
+                    : "  - [ON] Every cycle force-deletes one fully busy Pod and recovers exactly its assigned work.");
             output.WriteLine("  - [ON] Every run completes 50 steps and passes replay, ledger, trace, and exact recovery-forensics proof.");
             output.WriteLine("  - [ON] Deterministic Pod cleanup executes once, after the final cycle.");
             output.WriteLine(string.Empty);
@@ -1728,6 +1799,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             output.WriteLine($"  TotalLogicalStepCount='{totalLogicalStepCount}'");
             output.WriteLine($"  ControlPlaneId='{controlPlaneId}'");
             output.WriteLine($"  PoolId='{poolId}'");
+            output.WriteLine($"  InjectChildRuntimeFailure='{injectChildRuntimeFailure}'");
+            output.WriteLine($"  KillAfterCompletedStepCount='{(injectChildRuntimeFailure ? FinalScenarioKillAfterCompletedStepCount : 0)}'");
             output.WriteLine("  CleanupPolicy='after-final-cycle-only'");
 
             try
@@ -1907,6 +1980,13 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
 
                     try
                     {
+                        var deferPodFailureWave =
+                            injectChildRuntimeFailure;
+                        var initialSubmissionIterationCount =
+                            deferPodFailureWave
+                                ? submissionIterationCount - 1
+                                : submissionIterationCount;
+
                         var admissionProof =
                             await RuntimePoolProductionCycleExecutor
                                 .SubmitQueueFirstWavesAsync(
@@ -1917,10 +1997,11 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                                     boundedCapacityProfile.RequestedBy,
                                     boundedCapacityProfile.Source,
                                     runsPerIteration,
-                                    submissionIterationCount,
+                                    initialSubmissionIterationCount,
                                     maximumConcurrentMcpSubmissions,
                                     maximumAdmissionAttemptCount,
-                                    cycleNumber)
+                                    cycleNumber,
+                                    startingIterationNumber: 1)
                                 .ConfigureAwait(false);
 
                         var admissionTooManyRequestsRetryCount =
@@ -1928,11 +2009,16 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
 
                         var submittedSharedRunIds =
                             admissionProof.SharedRunIds;
+                        IReadOnlySet<string> podFailureCandidateSharedRunIds =
+                            submittedSharedRunIds;
 
                         output.WriteLine(
-                            $"[{boundedCapacityProfile.LogPrefix} WARM REUSE MCP ADMISSION] " +
+                            $"[{boundedCapacityProfile.LogPrefix} WARM REUSE MCP ADMISSION INITIAL] " +
                             $"Cycle='{cycleNumber}', " +
                             $"SubmittedRunCount='{submittedSharedRunIds.Count}', " +
+                            $"FullCapacityWaveCount='{initialSubmissionIterationCount}', " +
+                            $"ConfiguredFullCapacityWaveCount='{submissionIterationCount}', " +
+                            $"DeferredPodFailureWaveCount='{(deferPodFailureWave ? 1 : 0)}', " +
                             $"MaximumConcurrentSubmissions='{maximumConcurrentMcpSubmissions}', " +
                             $"TooManyRequestsRetryCount='{Volatile.Read(ref admissionTooManyRequestsRetryCount)}'.");
 
@@ -1959,28 +2045,246 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                                 $"Cycle {cycleNumber} pre-failure runtime reuse");
                         }
 
+                        BoundedCapacityChildRuntimeFailureTarget?
+                            childRuntimeFailureTarget = null;
+                        RealRuntimeCrashFailedRuntimeRecoveryProof?
+                            childRuntimeRecoveryProof = null;
+                        IReadOnlyList<AiRuntimeRecoveryForensicsReadModel>
+                            childRuntimeRecoveryForensics =
+                                Array.Empty<AiRuntimeRecoveryForensicsReadModel>();
+                        var podFailureStartMembership =
+                            preFailureMembership;
+                        var excludedPodUids =
+                            new HashSet<string>(StringComparer.Ordinal);
+
+                        if (injectChildRuntimeFailure)
+                        {
+                            childRuntimeFailureTarget =
+                                await WaitForBoundedCapacityBusyChildRuntimeFailureTargetAsync(
+                                        registry,
+                                        sharedRunStore,
+                                        runExecutionIndex,
+                                        submittedSharedRunIds,
+                                        controlPlaneId,
+                                        poolId,
+                                        tenant.TenantId,
+                                        runtimeCountPerPod,
+                                        maximumRuntimeCapacity,
+                                        TimeSpan.FromMinutes(10))
+                                    .ConfigureAwait(false);
+
+                            var childInventory =
+                                CreateBoundedCapacityChildRuntimeFailureInventory(
+                                    tenant,
+                                    submissionMcp,
+                                    childRuntimeFailureTarget);
+
+                            observation.MarkIntentionalFailedRuntimeInstance(
+                                childRuntimeFailureTarget.Runtime.RuntimeInstanceId);
+
+                            childRuntimeRecoveryProof =
+                                await ProductionRealRuntimeCrashRecoveryTestHelpers
+                                    .KillRuntimeAndRecoverAssignedInventoryAsync(
+                                        output,
+                                        CreateRuntimePoolChildProcessControl(
+                                            registry,
+                                            poolId,
+                                            boundedCapacityProfile.LogPrefix),
+                                        registry,
+                                        runExecutionIndex,
+                                        sharedRunStore,
+                                        sharedQueue,
+                                        dagStore,
+                                        childInventory,
+                                        minimumCompletedStepsBeforeKill:
+                                            FinalScenarioKillAfterCompletedStepCount,
+                                        progressTimeout: TimeSpan.FromMinutes(3),
+                                        unsafeTimeout: TimeSpan.FromMinutes(3),
+                                        requeueTimeout: TimeSpan.FromMinutes(2),
+                                        redispatchTimeout: TimeSpan.FromMinutes(3),
+                                        executionResolveTimeout:
+                                            TimeSpan.FromMinutes(2),
+                                        observationMode:
+                                            ProductionRecoveryObservationMode.Polling,
+                                        runtimeTenantOwnershipAssertion:
+                                            AssertRuntimeBelongsToTenantAsync)
+                                    .ConfigureAwait(false);
+
+                            childRuntimeRecoveryForensics =
+                                await ProductionRealRuntimeCrashRecoveryTestHelpers
+                                    .AssertRecoveredInventoryForensicsAsync(
+                                        output,
+                                        forensicsQueryService,
+                                        childRuntimeRecoveryProof,
+                                        TimeSpan.FromMinutes(3))
+                                    .ConfigureAwait(false);
+
+                            var childRecoveredWork =
+                                Assert.Single(childRuntimeRecoveryProof.RecoveredWorks);
+                            var childRecoveryRuntime =
+                                await GetRequiredRuntimeSnapshotAsync(
+                                        registry,
+                                        childRecoveredWork.ReplacementRuntimeInstanceId)
+                                    .ConfigureAwait(false);
+
+                            Assert.False(
+                                string.IsNullOrWhiteSpace(
+                                    childRecoveryRuntime.HostId));
+                            excludedPodUids.Add(
+                                childRuntimeFailureTarget.Runtime.HostId!);
+                            excludedPodUids.Add(
+                                childRecoveryRuntime.HostId!);
+
+                            var childReplacementMembership =
+                                await WaitForBoundedCapacityPoolMembershipAsync(
+                                        registry,
+                                        poolId,
+                                        maximumPodCount,
+                                        runtimeCountPerPod,
+                                        requireAvailableCapacity: false,
+                                        TimeSpan.FromMinutes(3))
+                                    .ConfigureAwait(false);
+
+                            await AssertExactBoundedCapacityChildRuntimeReplacementAsync(
+                                    registry,
+                                    poolId,
+                                    preFailureMembership,
+                                    childReplacementMembership,
+                                    childRuntimeFailureTarget,
+                                    childRuntimeRecoveryProof,
+                                    runtimeCountPerPod,
+                                    cycleNumber,
+                                    boundedCapacityProfile.LogPrefix)
+                                .ConfigureAwait(false);
+
+                            podFailureStartMembership =
+                                childReplacementMembership;
+
+                            if (deferPodFailureWave)
+                            {
+                                output.WriteLine(
+                                    $"[{boundedCapacityProfile.LogPrefix} HIERARCHICAL FAILURE GATE] " +
+                                    $"Cycle='{cycleNumber}', " +
+                                    "State='waiting-for-initial-child-failure-workload-drain', " +
+                                    $"InitialWaveCount='{initialSubmissionIterationCount}', " +
+                                    $"DeferredWaveNumber='{submissionIterationCount}'.");
+
+                                _ = await WaitForSubmittedRunsToCompleteAsync(
+                                        sharedRunStore,
+                                        runExecutionIndex,
+                                        dagStore,
+                                        submittedSharedRunIds,
+                                        controlPlaneId,
+                                        tenant.TenantId,
+                                        observation,
+                                        scenario.CompletionTimeout,
+                                        TimeSpan.FromMinutes(5))
+                                    .ConfigureAwait(false);
+
+                                podFailureStartMembership =
+                                    await WaitForBoundedCapacityPoolMembershipAsync(
+                                            registry,
+                                            poolId,
+                                            maximumPodCount,
+                                            runtimeCountPerPod,
+                                            requireAvailableCapacity: true,
+                                            TimeSpan.FromMinutes(3))
+                                        .ConfigureAwait(false);
+
+                                var podFailureAdmission =
+                                    await RuntimePoolProductionCycleExecutor
+                                        .SubmitQueueFirstWavesAsync(
+                                            submissionMcp,
+                                            tenant,
+                                            scenario.Name,
+                                            controlPlaneId,
+                                            boundedCapacityProfile.RequestedBy,
+                                            boundedCapacityProfile.Source,
+                                            runsPerIteration:
+                                                runsPerIteration,
+                                            submissionIterationCount: 1,
+                                            maximumConcurrentSubmissions:
+                                                maximumConcurrentMcpSubmissions,
+                                            maximumAdmissionAttemptCount:
+                                                maximumAdmissionAttemptCount,
+                                            cycleNumber: cycleNumber,
+                                            startingIterationNumber:
+                                                submissionIterationCount)
+                                        .ConfigureAwait(false);
+
+                                podFailureCandidateSharedRunIds =
+                                    podFailureAdmission.SharedRunIds;
+                                admissionProof =
+                                    RuntimePoolProductionCycleExecutor
+                                        .CombineAdmissionProofs(
+                                            admissionProof,
+                                            podFailureAdmission);
+                                submittedSharedRunIds =
+                                    admissionProof.SharedRunIds;
+                                admissionTooManyRequestsRetryCount =
+                                    admissionProof.TooManyRequestsRetryCount;
+
+                                output.WriteLine(
+                                    $"[{boundedCapacityProfile.LogPrefix} WARM POD FAILURE WAVE] " +
+                                    $"Cycle='{cycleNumber}', " +
+                                    $"WaveNumber='{submissionIterationCount}', " +
+                                    $"SubmittedRunCount='{podFailureAdmission.SharedRunIds.Count}', " +
+                                    $"ReusedRuntimeCapacity='{maximumRuntimeCapacity}', " +
+                                    $"EligibleDistinctPodCount='{maximumPodCount - excludedPodUids.Count}', " +
+                                    $"TooManyRequestsRetryCount='{podFailureAdmission.TooManyRequestsRetryCount}'.");
+                            }
+                        }
+
+                        Assert.Equal(
+                            submittedRunCountPerCycle,
+                            submittedSharedRunIds.Count);
+
+                        output.WriteLine(
+                            $"[{boundedCapacityProfile.LogPrefix} WARM REUSE MCP ADMISSION CONSOLIDATED] " +
+                            $"Cycle='{cycleNumber}', " +
+                            $"SubmittedRunCount='{submittedSharedRunIds.Count}', " +
+                            $"FullCapacityWaveCount='{submissionIterationCount}', " +
+                            $"RunsPerWave='{runsPerIteration}', " +
+                            $"PodFailureCandidateRunCount='{podFailureCandidateSharedRunIds.Count}', " +
+                            $"TooManyRequestsRetryCount='{Volatile.Read(ref admissionTooManyRequestsRetryCount)}'.");
+
+                        Assert.True(
+                            excludedPodUids.Count < maximumPodCount,
+                            "The final KubernetesPool proof excluded every Pod boundary before the distinct Pod failure could be selected.");
+
                         var podFailureProof =
                             await InjectBoundedCapacityPodFailureAsync(
                                     host.Services,
                                     registry,
                                     sharedRunStore,
                                     runExecutionIndex,
+                                    podFailureCandidateSharedRunIds,
                                     tenant,
                                     controlPlaneId,
                                     poolId,
                                     runtimeCountPerPod,
                                     maximumRuntimeCapacity,
                                     observation,
-                                    TimeSpan.FromMinutes(10))
+                                    TimeSpan.FromMinutes(10),
+                                    excludedPodUids:
+                                        excludedPodUids)
                                 .ConfigureAwait(false);
+
+                        Assert.Empty(
+                            (childRuntimeRecoveryProof?.RecoveredWorks
+                                 .Select(work => work.Original.SharedRunId) ??
+                             Array.Empty<string>())
+                                .Intersect(
+                                    podFailureProof.RecoveredSharedRunIds,
+                                    StringComparer.Ordinal));
 
                         Assert.Contains(
                             podFailureProof.FailedPodUid,
-                            preFailureMembership.PodUids);
+                            podFailureStartMembership.PodUids);
 
                         Assert.DoesNotContain(
                             podFailureProof.ReplacementPodUid,
-                            preFailureMembership.PodUids);
+                            podFailureStartMembership.PodUids);
 
                         var finalRuns =
                             await WaitForSubmittedRunsToCompleteAsync(
@@ -2074,6 +2378,17 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                                 .Distinct(StringComparer.Ordinal)
                                 .Count());
 
+                        var childRecoveryForensicsIds =
+                            childRuntimeRecoveryForensics
+                                .Select(record => record.ForensicsId)
+                                .Where(value => !string.IsNullOrWhiteSpace(value))
+                                .Cast<string>()
+                                .ToHashSet(StringComparer.Ordinal);
+                        var cycleRecoveryForensicsIds =
+                            childRecoveryForensicsIds
+                                .Concat(podFailureProof.RecoveryForensicsIds)
+                                .ToHashSet(StringComparer.Ordinal);
+
                         foreach (var forensicsId in
                                  podFailureProof.RecoveryForensicsIds
                                      .OrderBy(value => value, StringComparer.Ordinal))
@@ -2106,12 +2421,37 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                             observation.GetDuplicateDispatchBindings(
                                 submittedSharedRunIds);
 
+                        var childRecoveredSharedRunIds =
+                            childRuntimeRecoveryProof?.RecoveredWorks
+                                .Select(work => work.Original.SharedRunId)
+                                .ToHashSet(StringComparer.Ordinal) ??
+                            new HashSet<string>(StringComparer.Ordinal);
+                        var recoveredSharedRunIds =
+                            childRecoveredSharedRunIds
+                                .Concat(podFailureProof.RecoveredSharedRunIds)
+                                .ToHashSet(StringComparer.Ordinal);
+                        var childRecoveredExecutionIds =
+                            childRuntimeRecoveryProof is null
+                                ? new HashSet<string>(StringComparer.Ordinal)
+                                : childRuntimeRecoveryProof.RecoveredWorks
+                                    .Select(
+                                        work =>
+                                            work.RecoveredExecutionId ??
+                                            work.Original.ExecutionId)
+                                    .Where(value => !string.IsNullOrWhiteSpace(value))
+                                    .Cast<string>()
+                                    .ToHashSet(StringComparer.Ordinal);
+                        var recoveredExecutionIds =
+                            childRecoveredExecutionIds
+                                .Concat(podFailureProof.ImpactedExecutionIds)
+                                .ToHashSet(StringComparer.Ordinal);
+
                         var unexpectedDuplicateDispatchBindings =
                             duplicateDispatchBindings
                                 .Where(
                                     item =>
                                         item.Value.Count > 1 &&
-                                        (!podFailureProof.RecoveredSharedRunIds.Contains(item.Key) ||
+                                        (!recoveredSharedRunIds.Contains(item.Key) ||
                                          item.Value.Count > 2))
                                 .ToDictionary(
                                     item => item.Key,
@@ -2124,10 +2464,10 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
 
                         Assert.Equal(0, duplicateDispatchCount);
                         Assert.Equal(
-                            runtimeCountPerPod,
+                            recoveredSharedRunIds.Count,
                             duplicateDispatchBindings.Count(
                                 item =>
-                                    podFailureProof.RecoveredSharedRunIds.Contains(item.Key) &&
+                                    recoveredSharedRunIds.Contains(item.Key) &&
                                     item.Value.Count == 2));
 
                         var finalMembership =
@@ -2141,7 +2481,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                                 .ConfigureAwait(false);
 
                         var expectedFinalPodUids =
-                            preFailureMembership.PodUids
+                            podFailureStartMembership.PodUids
                                 .Where(
                                     podUid => !StringComparer.Ordinal.Equals(
                                         podUid,
@@ -2155,7 +2495,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                             $"Cycle {cycleNumber} exact replacement Pod topology");
 
                         var expectedFinalRuntimeInstanceIds =
-                            preFailureMembership.RuntimeInstanceIds
+                            podFailureStartMembership.RuntimeInstanceIds
                                 .Where(
                                     runtimeInstanceId =>
                                         !podFailureProof.FailedRuntimeInstanceIds.Contains(
@@ -2198,7 +2538,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                                 .ConfigureAwait(false);
 
                         foreach (var forensicsId in
-                                 podFailureProof.RecoveryForensicsIds
+                                 cycleRecoveryForensicsIds
                                      .OrderBy(value => value, StringComparer.Ordinal))
                         {
                             var exactResult =
@@ -2215,9 +2555,14 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                             var exactRecord =
                                 Assert.Single(exactResult.Items);
 
-                            Assert.Equal(
-                                podFailureProof.FailureId,
-                                exactRecord.RuntimeFailureIncidentId);
+                            Assert.Equal(forensicsId, exactRecord.ForensicsId);
+
+                            if (podFailureProof.RecoveryForensicsIds.Contains(forensicsId))
+                            {
+                                Assert.Equal(
+                                    podFailureProof.FailureId,
+                                    exactRecord.RuntimeFailureIncidentId);
+                            }
                         }
 
                         var scaleOutRequests =
@@ -2355,11 +2700,26 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                         var runtimeLifecycleLedgerEntries =
                             new List<AiDecisionLedgerEntry>();
 
+                        var childReplacementRuntimeInstanceIds =
+                            podFailureStartMembership.RuntimeInstanceIds
+                                .Except(
+                                    preFailureMembership.RuntimeInstanceIds,
+                                    StringComparer.Ordinal);
                         var assignedRuntimeInstanceIds =
                             finalRuns
                                 .Select(run => run.SharedRun.AssignedRuntimeInstanceId)
                                 .Where(value => !string.IsNullOrWhiteSpace(value))
                                 .Cast<string>()
+                                .Concat(
+                                    childRuntimeFailureTarget is null
+                                        ? Array.Empty<string>()
+                                        : new[]
+                                        {
+                                            childRuntimeFailureTarget.Runtime.RuntimeInstanceId
+                                        })
+                                .Concat(childReplacementRuntimeInstanceIds)
+                                .Concat(podFailureProof.FailedRuntimeInstanceIds)
+                                .Concat(podFailureProof.ReplacementRuntimeInstanceIds)
                                 .Distinct(StringComparer.Ordinal)
                                 .OrderBy(value => value, StringComparer.Ordinal)
                                 .ToArray();
@@ -2412,7 +2772,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                                     replayProofs
                                         .Select(proof => proof.ExecutionId)
                                         .ToHashSet(StringComparer.Ordinal),
-                                    podFailureProof.ImpactedExecutionIds,
+                                    recoveredExecutionIds,
                                     stepCount,
                                     $"Warm reuse cycle {cycleNumber} logical step completion ledger proof");
 
@@ -2420,7 +2780,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                             RuntimePoolProductionCycleExecutor
                                 .AssertDurableDispatchEvidence(
                                     submittedSharedRunIds,
-                                    podFailureProof.RecoveredSharedRunIds,
+                                    recoveredSharedRunIds,
                                     controlPlaneLedgerEntries,
                                     $"Warm reuse cycle {cycleNumber} durable dispatch ledger proof");
 
@@ -2484,6 +2844,10 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                             maxEventTypeRowsPerTenant: 20,
                             maxLedgerEntriesPerExecution: 15);
 
+                        Assert.Equal(
+                            recoveredSharedRunIds.Count,
+                            cycleRecoveryForensicsIds.Count);
+
                         cycleStopwatch.Stop();
 
                         var cycleProof =
@@ -2501,7 +2865,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                                 finalRuns
                                     .Select(run => run.ExecutionId)
                                     .ToHashSet(StringComparer.Ordinal),
-                                podFailureProof.RecoveryForensicsIds,
+                                cycleRecoveryForensicsIds,
                                 podFailureProof.FailureId,
                                 podFailureProof.FailedPodUid,
                                 podFailureProof.ReplacementPodUid,
@@ -2523,9 +2887,14 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                         output.WriteLine($"PreFailurePodCount='{preFailureMembership.PodUids.Count}'");
                         output.WriteLine($"FinalPodCount='{finalMembership.PodUids.Count}'");
                         output.WriteLine($"FinalRuntimeCount='{finalMembership.RuntimeInstanceIds.Count}'");
+                        output.WriteLine($"ChildRuntimeFailureInjected='{injectChildRuntimeFailure}'");
+                        output.WriteLine($"FailedChildRuntimeInstanceId='{childRuntimeFailureTarget?.Runtime.RuntimeInstanceId ?? string.Empty}'");
+                        output.WriteLine($"ChildRuntimeParentPodUid='{childRuntimeFailureTarget?.Runtime.HostId ?? string.Empty}'");
+                        output.WriteLine($"ChildRuntimeRecoveredSharedRunCount='{childRecoveredSharedRunIds.Count}'");
                         output.WriteLine($"FailedPodUid='{podFailureProof.FailedPodUid}'");
                         output.WriteLine($"ReplacementPodUid='{podFailureProof.ReplacementPodUid}'");
-                        output.WriteLine($"RecoveredSharedRunCount='{podFailureProof.RecoveredSharedRunIds.Count}'");
+                        output.WriteLine($"PodRecoveredSharedRunCount='{podFailureProof.RecoveredSharedRunIds.Count}'");
+                        output.WriteLine($"RecoveredSharedRunCount='{recoveredSharedRunIds.Count}'");
                         output.WriteLine($"ReplayProofCount='{replayProofs.Count}'");
                         output.WriteLine($"RawStepCompletedLedgerEntryCount='{stepCompletionLedgerProof.RawStepCompletedEntryCount}'");
                         output.WriteLine($"DistinctLogicalStepCompletedLedgerCount='{stepCompletionLedgerProof.DistinctLogicalStepCompletedCount}'");
@@ -2600,8 +2969,14 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                         .Distinct(StringComparer.Ordinal)
                         .Count());
 
+                var expectedRecoveredRunCountPerCycle =
+                    runtimeCountPerPod +
+                    (injectChildRuntimeFailure ? 1 : 0);
+
                 Assert.Equal(
-                    checked(runtimeCountPerPod * executionCycleCount),
+                    checked(
+                        expectedRecoveredRunCountPerCycle *
+                        executionCycleCount),
                     allRecoveryForensicsIds.Length);
 
                 Assert.Equal(
@@ -2640,8 +3015,11 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 output.WriteLine($"TotalSubmittedRunCount='{totalSubmittedRunCount}'");
                 output.WriteLine($"TotalCompletedRunCount='{allExecutionIds.Length}'");
                 output.WriteLine($"TotalLogicalStepCount='{totalLogicalStepCount}'");
+                output.WriteLine($"ChildRuntimeFailureInjected='{injectChildRuntimeFailure}'");
+                output.WriteLine($"KillAfterCompletedStepCount='{(injectChildRuntimeFailure ? FinalScenarioKillAfterCompletedStepCount : 0)}'");
+                output.WriteLine($"ForcedChildRuntimeKillCount='{(injectChildRuntimeFailure ? executionCycleCount : 0)}'");
                 output.WriteLine($"ForcedPodDeletionCount='{executionCycleCount}'");
-                output.WriteLine($"RecoveredSharedRunCount='{runtimeCountPerPod * executionCycleCount}'");
+                output.WriteLine($"RecoveredSharedRunCount='{expectedRecoveredRunCountPerCycle * executionCycleCount}'");
                 output.WriteLine($"RecoveryForensicsProofCount='{allRecoveryForensicsIds.Length}'");
                 output.WriteLine($"FinalPhysicalPodCountBeforeCleanup='{finalPhysicalPodCount}'");
                 output.WriteLine($"ScenarioTotalDuration='{totalStopwatch.Elapsed}'");
@@ -2679,24 +3057,426 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             }
         }
 
+        /// <summary>
+        /// Creates the transport-neutral physical controller used to kill one exact runtime process
+        /// inside a Kubernetes Runtime Pool Pod without deleting that Pod.
+        /// </summary>
+        protected IAiRuntimeHostProcessControl CreateRuntimePoolChildProcessControl(
+            IAiRuntimeInstanceRegistry registry,
+            string poolId,
+            string logPrefix)
+        {
+            return new KubernetesRuntimePoolChildProcessControl(
+                registry,
+                poolId,
+                output,
+                logPrefix);
+        }
+
+        private static async Task<BoundedCapacityChildRuntimeFailureTarget>
+            WaitForBoundedCapacityBusyChildRuntimeFailureTargetAsync(
+                IAiRuntimeInstanceRegistry registry,
+                IAiSharedRunStore sharedRunStore,
+                IAiRuntimeRunExecutionIndex runExecutionIndex,
+                IReadOnlySet<string> submittedSharedRunIds,
+                string controlPlaneId,
+                string poolId,
+                string tenantId,
+                int runtimeCountPerPod,
+                int maximumRuntimeCapacity,
+                TimeSpan timeout)
+        {
+            ArgumentNullException.ThrowIfNull(registry);
+            ArgumentNullException.ThrowIfNull(sharedRunStore);
+            ArgumentNullException.ThrowIfNull(runExecutionIndex);
+            ArgumentNullException.ThrowIfNull(submittedSharedRunIds);
+            ArgumentException.ThrowIfNullOrWhiteSpace(controlPlaneId);
+            ArgumentException.ThrowIfNullOrWhiteSpace(poolId);
+            ArgumentException.ThrowIfNullOrWhiteSpace(tenantId);
+
+            var deadline = DateTimeOffset.UtcNow.Add(timeout);
+            var lastRuntimeCount = 0;
+            var lastRunningCount = 0;
+
+            while (DateTimeOffset.UtcNow < deadline)
+            {
+                var runtimes =
+                    (await registry
+                            .ListAsync(includeStopped: false)
+                            .ConfigureAwait(false))
+                        .Where(
+                            runtime =>
+                                StringComparer.Ordinal.Equals(
+                                    runtime.PoolId,
+                                    poolId) &&
+                                StringComparer.Ordinal.Equals(
+                                    runtime.ControlPlaneId,
+                                    controlPlaneId) &&
+                                !string.IsNullOrWhiteSpace(runtime.HostId) &&
+                                !string.IsNullOrWhiteSpace(
+                                    runtime.KubernetesPodName) &&
+                                !string.IsNullOrWhiteSpace(
+                                    runtime.KubernetesNamespace))
+                        .ToArray();
+
+                lastRuntimeCount = runtimes.Length;
+
+                if (runtimes.Length == maximumRuntimeCapacity)
+                {
+                    var runtimesById =
+                        runtimes.ToDictionary(
+                            runtime => runtime.RuntimeInstanceId,
+                            StringComparer.Ordinal);
+                    var membersByHostId =
+                        runtimes
+                            .GroupBy(
+                                runtime => runtime.HostId!,
+                                StringComparer.Ordinal)
+                            .Where(group => group.Count() == runtimeCountPerPod)
+                            .ToDictionary(
+                                group => group.Key,
+                                group => group
+                                    .OrderBy(
+                                        runtime => runtime.RuntimeInstanceId,
+                                        StringComparer.Ordinal)
+                                    .ToArray(),
+                                StringComparer.Ordinal);
+                    var sharedRuns =
+                        await ReadExactSubmittedSharedRunsAsync(
+                                sharedRunStore,
+                                submittedSharedRunIds,
+                                controlPlaneId,
+                                tenantId)
+                            .ConfigureAwait(false);
+
+                    lastRunningCount = 0;
+
+                    foreach (var sharedRun in sharedRuns
+                                 .Where(
+                                     run =>
+                                         !string.IsNullOrWhiteSpace(
+                                             run.AssignedRuntimeInstanceId) &&
+                                         !string.IsNullOrWhiteSpace(
+                                             run.LocalRunId))
+                                 .OrderByDescending(run => run.UpdatedAtUtc))
+                    {
+                        if (!runtimesById.TryGetValue(
+                                sharedRun.AssignedRuntimeInstanceId!,
+                                out var runtime) ||
+                            !membersByHostId.TryGetValue(
+                                runtime.HostId!,
+                                out var hostMembers) ||
+                            runtime.ProcessId.GetValueOrDefault() <= 0)
+                        {
+                            continue;
+                        }
+
+                        var index =
+                            await runExecutionIndex
+                                .GetAsync(sharedRun.LocalRunId!)
+                                .ConfigureAwait(false);
+                        var executionId =
+                            index?.ExecutionId ?? sharedRun.ExecutionId;
+
+                        if (index is null ||
+                            string.IsNullOrWhiteSpace(executionId) ||
+                            !string.Equals(
+                                index.Status,
+                                "running",
+                                StringComparison.OrdinalIgnoreCase) ||
+                            !StringComparer.Ordinal.Equals(
+                                index.RuntimeInstanceId,
+                                runtime.RuntimeInstanceId))
+                        {
+                            continue;
+                        }
+
+                        lastRunningCount++;
+
+                        var siblingRuntimeInstanceIds =
+                            hostMembers
+                                .Where(
+                                    member => !StringComparer.Ordinal.Equals(
+                                        member.RuntimeInstanceId,
+                                        runtime.RuntimeInstanceId))
+                                .Select(member => member.RuntimeInstanceId)
+                                .ToHashSet(StringComparer.Ordinal);
+
+                        if (siblingRuntimeInstanceIds.Count !=
+                            runtimeCountPerPod - 1)
+                        {
+                            continue;
+                        }
+
+                        return new BoundedCapacityChildRuntimeFailureTarget(
+                            runtime,
+                            new BoundedCapacityRunObservation(
+                                sharedRun,
+                                RuntimeIndexExists: true,
+                                RuntimeIndexStatus: index.Status,
+                                RuntimeIndexRuntimeInstanceId:
+                                    index.RuntimeInstanceId,
+                                RuntimeIndexExecutionId: executionId,
+                                RuntimeIndexCompletedAtUtc:
+                                    index.CompletedAtUtc),
+                            siblingRuntimeInstanceIds);
+                    }
+                }
+
+                await Task.Delay(TimeSpan.FromMilliseconds(100))
+                    .ConfigureAwait(false);
+            }
+
+            throw new TimeoutException(
+                $"A busy child runtime was not observed before the final KubernetesPool failure injection. RuntimeCount='{lastRuntimeCount}', RunningRunCount='{lastRunningCount}', ExpectedRuntimeCount='{maximumRuntimeCapacity}', RuntimeCountPerPod='{runtimeCountPerPod}'.");
+        }
+
+        private static async Task<IReadOnlyList<AiSharedRunRecord>>
+            ReadExactSubmittedSharedRunsAsync(
+                IAiSharedRunStore sharedRunStore,
+                IReadOnlySet<string> submittedSharedRunIds,
+                string controlPlaneId,
+                string tenantId)
+        {
+            var recordsById =
+                (await sharedRunStore
+                        .ListAsync(
+                            includeCancelled: true,
+                            includeCompleted: true,
+                            includeFailed: true)
+                        .ConfigureAwait(false))
+                    .Where(
+                        run => submittedSharedRunIds.Contains(run.SharedRunId))
+                    .ToDictionary(
+                        run => run.SharedRunId,
+                        StringComparer.Ordinal);
+
+            foreach (var sharedRunId in submittedSharedRunIds)
+            {
+                if (recordsById.ContainsKey(sharedRunId))
+                {
+                    continue;
+                }
+
+                var exact =
+                    await sharedRunStore
+                        .GetAsync(sharedRunId)
+                        .ConfigureAwait(false);
+
+                if (exact is not null)
+                {
+                    recordsById[sharedRunId] = exact;
+                }
+            }
+
+            return recordsById.Values
+                .Where(
+                    run =>
+                        StringComparer.Ordinal.Equals(
+                            run.ControlPlaneId,
+                            controlPlaneId) &&
+                        StringComparer.Ordinal.Equals(
+                            run.ExecutionContextSnapshot.TenantId,
+                            tenantId))
+                .OrderBy(run => run.SharedRunId, StringComparer.Ordinal)
+                .ToArray();
+        }
+
+        private static RealRuntimeCrashAssignedWorkInventoryProof
+            CreateBoundedCapacityChildRuntimeFailureInventory(
+                ProductionTenantScenarioDefinition tenant,
+                McpTestClient mcp,
+                BoundedCapacityChildRuntimeFailureTarget target)
+        {
+            var executionId =
+                target.ActiveRun.ResolvedExecutionId
+                ?? throw new InvalidOperationException(
+                    "The selected KubernetesPool child runtime run has no durable ExecutionId.");
+            var localRunId =
+                target.ActiveRun.SharedRun.LocalRunId
+                ?? throw new InvalidOperationException(
+                    "The selected KubernetesPool child runtime run has no LocalRunId.");
+
+            return new RealRuntimeCrashAssignedWorkInventoryProof
+            {
+                Tenant = tenant,
+                Mcp = mcp,
+                RuntimeInstanceId = target.Runtime.RuntimeInstanceId,
+                Works = new[]
+                {
+                    new RealRuntimeCrashWorkProof
+                    {
+                        Kind = RealRuntimeCrashWorkKind.InFlightExecution,
+                        SharedRun = target.ActiveRun.SharedRun,
+                        SharedRunId = target.ActiveRun.SharedRun.SharedRunId,
+                        LocalRunId = localRunId,
+                        ExecutionId = executionId,
+                        PipelineName =
+                            target.ActiveRun.SharedRun.PipelineKey ??
+                            target.ActiveRun.SharedRun.RunRequest.PipelineName
+                    }
+                }
+            };
+        }
+
+        private async Task
+            AssertExactBoundedCapacityChildRuntimeReplacementAsync(
+                IAiRuntimeInstanceRegistry registry,
+                string poolId,
+                BoundedCapacityPoolMembershipSnapshot initialMembership,
+                BoundedCapacityPoolMembershipSnapshot replacementMembership,
+                BoundedCapacityChildRuntimeFailureTarget target,
+                RealRuntimeCrashFailedRuntimeRecoveryProof recoveryProof,
+                int runtimeCountPerPod,
+                int cycleNumber,
+                string logPrefix)
+        {
+            RuntimePoolProductionCycleExecutor.AssertSameIdentitySet(
+                initialMembership.PodUids,
+                replacementMembership.PodUids,
+                $"Cycle {cycleNumber} child runtime parent Pod survival");
+
+            Assert.DoesNotContain(
+                target.Runtime.RuntimeInstanceId,
+                replacementMembership.RuntimeInstanceIds);
+            Assert.True(
+                target.SiblingRuntimeInstanceIds.IsSubsetOf(
+                    replacementMembership.RuntimeInstanceIds),
+                $"{logPrefix} cycle {cycleNumber} changed one or more sibling runtime identities during one child replacement.");
+
+            var replacementRuntimeInstanceIds =
+                replacementMembership.RuntimeInstanceIds
+                    .Except(
+                        initialMembership.RuntimeInstanceIds,
+                        StringComparer.Ordinal)
+                    .ToHashSet(StringComparer.Ordinal);
+            var replacementRuntimeInstanceId =
+                Assert.Single(replacementRuntimeInstanceIds);
+            var replacementRuntime =
+                await GetRequiredRuntimeSnapshotAsync(
+                        registry,
+                        replacementRuntimeInstanceId)
+                    .ConfigureAwait(false);
+
+            AssertRuntimePoolIdentity(replacementRuntime, poolId);
+            Assert.Equal(target.Runtime.HostId, replacementRuntime.HostId);
+            Assert.Equal(
+                target.Runtime.KubernetesPodName,
+                replacementRuntime.KubernetesPodName);
+            Assert.Equal(
+                target.Runtime.KubernetesNamespace,
+                replacementRuntime.KubernetesNamespace);
+            var currentPodMembers =
+                (await registry
+                        .ListAsync(includeStopped: false)
+                        .ConfigureAwait(false))
+                    .Where(
+                        runtime =>
+                            StringComparer.Ordinal.Equals(
+                                runtime.PoolId,
+                                poolId) &&
+                            StringComparer.Ordinal.Equals(
+                                runtime.HostId,
+                                target.Runtime.HostId))
+                    .ToArray();
+
+            Assert.Equal(runtimeCountPerPod, currentPodMembers.Length);
+            Assert.Single(recoveryProof.RecoveredWorks);
+            Assert.Equal(
+                target.Runtime.RuntimeInstanceId,
+                recoveryProof.FailedInventory.RuntimeInstanceId);
+
+            output.WriteLine(
+                $"[{logPrefix} CHILD RUNTIME REPLACEMENT] Cycle='{cycleNumber}', PodUid='{target.Runtime.HostId}', PodName='{target.Runtime.KubernetesPodName}', FailedRuntimeInstanceId='{target.Runtime.RuntimeInstanceId}', ReplacementRuntimeInstanceId='{replacementRuntimeInstanceId}', PreservedSiblingCount='{target.SiblingRuntimeInstanceIds.Count}', ParentPodSurvived='true'.");
+        }
+
+        private sealed class KubernetesRuntimePoolChildProcessControl :
+            IAiRuntimeHostProcessControl
+        {
+            private readonly IAiRuntimeInstanceRegistry registry;
+            private readonly string poolId;
+            private readonly ITestOutputHelper output;
+            private readonly string logPrefix;
+
+            public KubernetesRuntimePoolChildProcessControl(
+                IAiRuntimeInstanceRegistry registry,
+                string poolId,
+                ITestOutputHelper output,
+                string logPrefix)
+            {
+                this.registry = registry;
+                this.poolId = poolId;
+                this.output = output;
+                this.logPrefix = logPrefix;
+            }
+
+            public async Task<bool> KillAsync(
+                string runtimeInstanceId,
+                CancellationToken cancellationToken = default)
+            {
+                var snapshot =
+                    await GetRequiredRuntimeSnapshotAsync(
+                            this.registry,
+                            runtimeInstanceId)
+                        .ConfigureAwait(false);
+
+                AssertRuntimePoolIdentity(snapshot, this.poolId);
+                Assert.True(snapshot.ProcessId.HasValue);
+
+                this.output.WriteLine(
+                    $"[{this.logPrefix} KUBERNETES RUNTIME POOL CHILD PROCESS KILL] RuntimeInstanceId='{runtimeInstanceId}', PodUid='{snapshot.HostId}', PodName='{snapshot.KubernetesPodName}', ProcessId='{snapshot.ProcessId}'.");
+
+                var result =
+                    await RunKubectlAsync(
+                            cancellationToken,
+                            "exec",
+                            snapshot.KubernetesPodName!,
+                            "--namespace",
+                            snapshot.KubernetesNamespace!,
+                            "--container",
+                            "runtime-pool",
+                            "--",
+                            "sh",
+                            "-c",
+                            string.Concat(
+                                "kill -9 ",
+                                snapshot.ProcessId.Value.ToString(
+                                    CultureInfo.InvariantCulture)))
+                        .ConfigureAwait(false);
+
+                if (result.ExitCode != 0)
+                {
+                    throw new InvalidOperationException(
+                        string.Concat(
+                            "The in-Pod runtime process could not be killed. StandardError=",
+                            result.StandardError));
+                }
+
+                return true;
+            }
+        }
+
         private async Task<BoundedCapacityPodFailureProof>
             InjectBoundedCapacityPodFailureAsync(
                 IServiceProvider services,
                 IAiRuntimeInstanceRegistry registry,
                 IAiSharedRunStore sharedRunStore,
                 IAiRuntimeRunExecutionIndex runExecutionIndex,
+                IReadOnlySet<string> submittedSharedRunIds,
                 ProductionTenantScenarioDefinition tenant,
                 string controlPlaneId,
                 string poolId,
                 int runtimeCountPerPod,
                 int maximumRuntimeCapacity,
                 BoundedCapacityMachineLimitObservation observation,
-                TimeSpan timeout)
+                TimeSpan timeout,
+                IReadOnlySet<string>? excludedPodUids = null)
         {
             ArgumentNullException.ThrowIfNull(services);
             ArgumentNullException.ThrowIfNull(registry);
             ArgumentNullException.ThrowIfNull(sharedRunStore);
             ArgumentNullException.ThrowIfNull(runExecutionIndex);
+            ArgumentNullException.ThrowIfNull(submittedSharedRunIds);
             ArgumentNullException.ThrowIfNull(tenant);
             ArgumentException.ThrowIfNullOrWhiteSpace(controlPlaneId);
             ArgumentException.ThrowIfNullOrWhiteSpace(poolId);
@@ -2712,9 +3492,11 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                         controlPlaneId,
                         poolId,
                         tenant.TenantId,
+                        submittedSharedRunIds,
                         runtimeCountPerPod,
                         maximumRuntimeCapacity,
-                        timeout)
+                        timeout,
+                        excludedPodUids)
                     .ConfigureAwait(false);
 
             var primaryRuntime =
@@ -3046,10 +3828,14 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 string controlPlaneId,
                 string poolId,
                 string tenantId,
+                IReadOnlySet<string> submittedSharedRunIds,
                 int runtimeCountPerPod,
                 int maximumRuntimeCapacity,
-                TimeSpan timeout)
+                TimeSpan timeout,
+                IReadOnlySet<string>? excludedPodUids = null)
         {
+            ArgumentNullException.ThrowIfNull(submittedSharedRunIds);
+
             var deadline = DateTimeOffset.UtcNow.Add(timeout);
             var lastRuntimeCount = 0;
             var lastBusyPodCount = 0;
@@ -3089,12 +3875,14 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                     var busyGroups =
                         runtimeGroups
                             .Where(
-                                group => group.All(
-                                    runtime =>
-                                        runtime.Status == AiRuntimeInstanceStatus.Ready &&
-                                        runtime.RunningRunCount == 1 &&
-                                        runtime.ActiveRunCount == 1 &&
-                                        !runtime.CanAcceptRun))
+                                group =>
+                                    excludedPodUids?.Contains(group.Key) != true &&
+                                    group.All(
+                                        runtime =>
+                                            runtime.Status == AiRuntimeInstanceStatus.Ready &&
+                                            runtime.RunningRunCount == 1 &&
+                                            runtime.ActiveRunCount == 1 &&
+                                            !runtime.CanAcceptRun))
                             .ToArray();
 
                     lastBusyPodCount = busyGroups.Length;
@@ -3102,21 +3890,12 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                     if (busyGroups.Length > 0)
                     {
                         var sharedRuns =
-                            (await sharedRunStore
-                                    .ListAsync(
-                                        includeCancelled: true,
-                                        includeCompleted: true,
-                                        includeFailed: true)
-                                    .ConfigureAwait(false))
-                                .Where(
-                                    run =>
-                                        StringComparer.Ordinal.Equals(
-                                            run.ControlPlaneId,
-                                            controlPlaneId) &&
-                                        StringComparer.Ordinal.Equals(
-                                            run.ExecutionContextSnapshot.TenantId,
-                                            tenantId))
-                                .ToArray();
+                            await ReadExactSubmittedSharedRunsAsync(
+                                    sharedRunStore,
+                                    submittedSharedRunIds,
+                                    controlPlaneId,
+                                    tenantId)
+                                .ConfigureAwait(false);
 
                         foreach (var busyGroup in busyGroups)
                         {
@@ -3374,6 +4153,11 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             int Phase5TooManyRequestsRetryCount,
             TimeSpan Duration);
 
+        private sealed record BoundedCapacityChildRuntimeFailureTarget(
+            AiRuntimeInstanceSnapshot Runtime,
+            BoundedCapacityRunObservation ActiveRun,
+            IReadOnlySet<string> SiblingRuntimeInstanceIds);
+
         private sealed record BoundedCapacityBusyPodFailureTarget(
             IReadOnlyList<AiRuntimeInstanceSnapshot> Members,
             IReadOnlyList<BoundedCapacityRunObservation> ActiveRuns,
@@ -3547,22 +4331,12 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 observation.ThrowIfViolated();
 
                 var lastRuns =
-                    (await sharedRunStore
-                            .ListAsync(
-                                includeCancelled: true,
-                                includeCompleted: true,
-                                includeFailed: true)
-                            .ConfigureAwait(false))
-                        .Where(
-                            run =>
-                                submittedSharedRunIds.Contains(run.SharedRunId) &&
-                                StringComparer.Ordinal.Equals(
-                                    run.ControlPlaneId,
-                                    controlPlaneId) &&
-                                StringComparer.Ordinal.Equals(
-                                    run.ExecutionContextSnapshot.TenantId,
-                                    tenantId))
-                        .ToArray();
+                    await ReadExactSubmittedSharedRunsAsync(
+                            sharedRunStore,
+                            submittedSharedRunIds,
+                            controlPlaneId,
+                            tenantId)
+                        .ConfigureAwait(false);
 
                 lastObservations =
                     await Task.WhenAll(
@@ -4043,6 +4817,19 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                     {
                         return violations.ToArray();
                     }
+                }
+            }
+
+            public void MarkIntentionalFailedRuntimeInstance(
+                string runtimeInstanceId)
+            {
+                ArgumentException.ThrowIfNullOrWhiteSpace(
+                    runtimeInstanceId);
+
+                lock (intentionalFailureSync)
+                {
+                    intentionallyFailedRuntimeInstanceIds.Add(
+                        runtimeInstanceId);
                 }
             }
 

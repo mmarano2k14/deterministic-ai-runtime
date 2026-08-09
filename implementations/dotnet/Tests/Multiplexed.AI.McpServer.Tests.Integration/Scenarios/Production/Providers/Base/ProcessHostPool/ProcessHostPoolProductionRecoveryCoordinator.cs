@@ -20,10 +20,15 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
         private readonly IAiRuntimePoolFailureObserver failureObserver;
         private readonly IAiRuntimePoolFailureReader failureReader;
         private readonly IAiRuntimePoolCapacitySafetyBatchWriter safetyBatchWriter;
+        private readonly IAiRuntimePoolCapacitySafetyWriter safetyWriter;
         private readonly IAiRuntimePoolCapacitySafetyReader safetyReader;
         private readonly IAiRuntimePoolSuppressedAssignedWorkEnumerator
             assignedWorkEnumerator;
         private readonly IAiRuntimePoolRecoveryMembershipClaimStore claimStore;
+        private readonly IAiRuntimePoolRecoveryClaimCoordinator
+            runtimeClaimCoordinator;
+        private readonly IAiRuntimePoolClaimedRecoveryExecutor
+            runtimeClaimedRecoveryExecutor;
         private readonly IAiRuntimePoolRecoveryCandidateTransitionExecutor
             transitionExecutor;
         private readonly ITestOutputHelper output;
@@ -46,14 +51,283 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 services.GetRequiredService<IAiRuntimePoolFailureReader>();
             this.safetyBatchWriter =
                 services.GetRequiredService<IAiRuntimePoolCapacitySafetyBatchWriter>();
+            this.safetyWriter =
+                services.GetRequiredService<IAiRuntimePoolCapacitySafetyWriter>();
             this.safetyReader =
                 services.GetRequiredService<IAiRuntimePoolCapacitySafetyReader>();
             this.assignedWorkEnumerator =
                 services.GetRequiredService<IAiRuntimePoolSuppressedAssignedWorkEnumerator>();
             this.claimStore =
                 services.GetRequiredService<IAiRuntimePoolRecoveryMembershipClaimStore>();
+            this.runtimeClaimCoordinator =
+                services.GetRequiredService<IAiRuntimePoolRecoveryClaimCoordinator>();
+            this.runtimeClaimedRecoveryExecutor =
+                services.GetRequiredService<IAiRuntimePoolClaimedRecoveryExecutor>();
             this.transitionExecutor =
                 services.GetRequiredService<IAiRuntimePoolRecoveryCandidateTransitionExecutor>();
+        }
+
+        /// <summary>
+        /// Reads the exact child failure from the shared durable failure journal, projects that
+        /// immutable authority into control-plane capacity safety, claims its assigned work once,
+        /// and executes the existing transition.
+        /// </summary>
+        public async Task RecoverChildRuntimeAsync(
+            ProcessHostPoolProductionCluster cluster,
+            ProcessHostPoolProductionHostProcess host,
+            string failedRuntimeInstanceId,
+            string expectedSharedRunId,
+            string expectedLocalRunId,
+            string expectedExecutionId,
+            int cycleNumber,
+            string claimedBy,
+            TimeSpan timeout)
+        {
+            ArgumentNullException.ThrowIfNull(cluster);
+            ArgumentNullException.ThrowIfNull(host);
+            ArgumentException.ThrowIfNullOrWhiteSpace(failedRuntimeInstanceId);
+            ArgumentException.ThrowIfNullOrWhiteSpace(expectedSharedRunId);
+            ArgumentException.ThrowIfNullOrWhiteSpace(expectedLocalRunId);
+            ArgumentException.ThrowIfNullOrWhiteSpace(expectedExecutionId);
+            ArgumentOutOfRangeException.ThrowIfNegativeOrZero(cycleNumber);
+            ArgumentException.ThrowIfNullOrWhiteSpace(claimedBy);
+
+            if (timeout <= TimeSpan.Zero)
+            {
+                throw new ArgumentOutOfRangeException(nameof(timeout));
+            }
+
+            host.AssertRunning();
+            Assert.Equal(cluster.PoolId, host.PoolId);
+
+            AiRuntimePoolFailureObservation parentFailure;
+
+            try
+            {
+                parentFailure =
+                    await this.WaitForSharedRuntimeFailureAsync(
+                            cluster.PoolId,
+                            host.HostId,
+                            failedRuntimeInstanceId,
+                            timeout)
+                        .ConfigureAwait(false);
+            }
+            catch (TimeoutException exception)
+            {
+                throw new TimeoutException(
+                    string.Concat(
+                        exception.Message,
+                        Environment.NewLine,
+                        "Parent ProcessHost diagnostics:",
+                        Environment.NewLine,
+                        host.BuildDiagnostics()),
+                    exception);
+            }
+
+            Assert.Equal(
+                AiRuntimePoolFailureScope.RuntimeInstance,
+                parentFailure.Scope);
+            Assert.Equal(
+                AiRuntimePoolFailureKind.UnexpectedProcessExit,
+                parentFailure.Kind);
+            Assert.Equal(cluster.PoolId, parentFailure.PoolId);
+            Assert.Equal(host.HostId, parentFailure.HostId);
+            Assert.Equal(
+                failedRuntimeInstanceId,
+                parentFailure.RuntimeInstanceId);
+            Assert.False(string.IsNullOrWhiteSpace(parentFailure.RouteId));
+
+            var storedFailure =
+                await this.failureReader
+                    .GetByFailureIdAsync(parentFailure.FailureId)
+                    .WaitAsync(timeout)
+                    .ConfigureAwait(false);
+
+            Assert.NotNull(storedFailure);
+            Assert.Equal(parentFailure, storedFailure);
+
+            /*
+             * Failure persistence is shared, but capacity suppression is deliberately local to
+             * each control-plane composition. Project the exact persisted failure into this
+             * control plane without recording or manufacturing a second failure observation.
+             */
+            var suppression =
+                await this.safetyWriter
+                    .SuppressAsync(
+                        new AiRuntimePoolCapacitySuppression
+                        {
+                            FailureId = parentFailure.FailureId,
+                            Scope =
+                                AiRuntimePoolCapacitySuppressionScope
+                                    .RuntimeInstanceRoute,
+                            PoolId = parentFailure.PoolId,
+                            HostId = parentFailure.HostId,
+                            RuntimeInstanceId = failedRuntimeInstanceId,
+                            RouteId = parentFailure.RouteId,
+                            SuppressedAtUtc = parentFailure.ObservedAtUtc
+                        })
+                    .WaitAsync(timeout)
+                    .ConfigureAwait(false);
+
+            Assert.Equal(parentFailure.FailureId, suppression.FailureId);
+            Assert.Equal(
+                AiRuntimePoolCapacitySuppressionScope.RuntimeInstanceRoute,
+                suppression.Scope);
+            Assert.Equal(parentFailure.RouteId, suppression.RouteId);
+
+            var claimedWork =
+                await this.runtimeClaimCoordinator
+                    .TryAcquireAsync(
+                        parentFailure.FailureId,
+                        claimedBy.Trim())
+                    .WaitAsync(timeout)
+                    .ConfigureAwait(false);
+
+            Assert.Equal(
+                AiRuntimePoolRecoveryClaimAcquisitionStatus.Acquired,
+                claimedWork.Status);
+            Assert.NotNull(claimedWork.Lease);
+
+            var inventory = claimedWork.Inventory;
+            var candidates =
+                inventory.Candidates
+                    .OrderBy(candidate => candidate.Kind)
+                    .ThenBy(candidate => candidate.CreatedAtUtc)
+                    .ThenBy(
+                        candidate => candidate.LocalRunId,
+                        StringComparer.Ordinal)
+                    .ToArray();
+
+            Assert.Equal(parentFailure.FailureId, inventory.FailureId);
+            Assert.Equal(cluster.PoolId, inventory.PoolId);
+            Assert.Equal(host.HostId, inventory.HostId);
+            Assert.Equal(failedRuntimeInstanceId, inventory.RuntimeInstanceId);
+            Assert.Equal(parentFailure.RouteId, inventory.RouteId);
+
+            var expectedCandidate =
+                Assert.Single(
+                    candidates.Where(
+                        candidate =>
+                            StringComparer.Ordinal.Equals(
+                                candidate.LocalRunId,
+                                expectedLocalRunId)));
+
+            Assert.Equal(
+                AiRuntimePoolAssignedWorkKind.InFlight,
+                expectedCandidate.Kind);
+            Assert.Equal(expectedSharedRunId, expectedCandidate.SharedRunId);
+            Assert.Equal(expectedExecutionId, expectedCandidate.ExecutionId);
+
+            await using var lease = claimedWork.Lease!;
+
+            var execution =
+                await this.runtimeClaimedRecoveryExecutor
+                    .ExecuteAsync(claimedWork)
+                    .WaitAsync(timeout)
+                    .ConfigureAwait(false);
+            var outcomes = execution.Outcomes;
+
+            Assert.Equal(parentFailure.FailureId, execution.FailureId);
+            Assert.Equal(failedRuntimeInstanceId, execution.RuntimeInstanceId);
+            Assert.Equal(candidates.Length, execution.CandidateCount);
+
+            var expectedOutcome =
+                Assert.Single(
+                    outcomes.Where(
+                        outcome =>
+                            StringComparer.Ordinal.Equals(
+                                outcome.Candidate.LocalRunId,
+                                expectedLocalRunId)));
+
+            Assert.True(
+                expectedOutcome.Transition.Accepted,
+                expectedOutcome.Transition.Reason);
+            Assert.True(
+                expectedOutcome.Transition.Changed,
+                expectedOutcome.Transition.Reason);
+            Assert.Equal(expectedSharedRunId, expectedOutcome.Transition.SharedRunId);
+            Assert.Equal(expectedExecutionId, expectedOutcome.Transition.ExecutionId);
+            Assert.Equal(1, execution.AcceptedCount);
+            Assert.Equal(1, execution.ChangedCount);
+            Assert.All(
+                outcomes.Where(
+                    outcome =>
+                        !StringComparer.Ordinal.Equals(
+                            outcome.Candidate.LocalRunId,
+                            expectedLocalRunId)),
+                outcome =>
+                {
+                    Assert.False(outcome.Transition.Accepted);
+                    Assert.False(outcome.Transition.Changed);
+                });
+
+            this.output.WriteLine(
+                $"[{this.logPrefix} CHILD RUNTIME RECOVERY] Cycle='{cycleNumber}', FailureId='{parentFailure.FailureId}', ParentProcessId='{host.ProcessId}', HostId='{host.HostId}', FailedRuntimeInstanceId='{failedRuntimeInstanceId}', FailedRouteId='{parentFailure.RouteId}', ClaimId='{claimedWork.Claim.ClaimId}', CandidateCount='{execution.CandidateCount}', AcceptedCount='{execution.AcceptedCount}', RejectedCount='{execution.RejectedCount}', RecoveredSharedRunId='{expectedSharedRunId}', RecoveredExecutionId='{expectedExecutionId}', Authority='shared-mongo-failure-journal'.");
+        }
+
+        private async Task<AiRuntimePoolFailureObservation>
+            WaitForSharedRuntimeFailureAsync(
+                string poolId,
+                string hostId,
+                string runtimeInstanceId,
+                TimeSpan timeout)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(poolId);
+            ArgumentException.ThrowIfNullOrWhiteSpace(hostId);
+            ArgumentException.ThrowIfNullOrWhiteSpace(runtimeInstanceId);
+
+            var deadline = DateTimeOffset.UtcNow.Add(timeout);
+            IReadOnlyList<AiRuntimePoolFailureObservation> lastObservations =
+                Array.Empty<AiRuntimePoolFailureObservation>();
+
+            while (DateTimeOffset.UtcNow < deadline)
+            {
+                lastObservations =
+                    await this.failureReader
+                        .ListByRuntimeInstanceIdAsync(runtimeInstanceId)
+                        .ConfigureAwait(false);
+
+                var exact =
+                    lastObservations
+                        .Where(
+                            failure =>
+                                failure.Scope ==
+                                    AiRuntimePoolFailureScope.RuntimeInstance &&
+                                StringComparer.Ordinal.Equals(
+                                    failure.PoolId,
+                                    poolId) &&
+                                StringComparer.Ordinal.Equals(
+                                    failure.HostId,
+                                    hostId) &&
+                                StringComparer.Ordinal.Equals(
+                                    failure.RuntimeInstanceId,
+                                    runtimeInstanceId))
+                        .OrderBy(failure => failure.ObservedAtUtc)
+                        .ThenBy(
+                            failure => failure.FailureId,
+                            StringComparer.Ordinal)
+                        .ToArray();
+
+                if (exact.Length > 1)
+                {
+                    throw new InvalidOperationException(
+                        $"Shared failure journal exposed multiple immutable failures for exact runtime '{runtimeInstanceId}'. FailureIds='{string.Join(",", exact.Select(failure => failure.FailureId))}'.");
+                }
+
+                if (exact.Length == 1)
+                {
+                    this.output.WriteLine(
+                        $"[{this.logPrefix} SHARED CHILD FAILURE AUTHORITY] FailureId='{exact[0].FailureId}', PoolId='{poolId}', HostId='{hostId}', RuntimeInstanceId='{runtimeInstanceId}', RouteId='{exact[0].RouteId}', Journal='shared-durable'.");
+
+                    return exact[0];
+                }
+
+                await Task.Delay(TimeSpan.FromMilliseconds(100))
+                    .ConfigureAwait(false);
+            }
+
+            throw new TimeoutException(
+                $"Shared Runtime Pool failure journal did not expose an exact child failure within '{timeout}'. PoolId='{poolId}', HostId='{hostId}', RuntimeInstanceId='{runtimeInstanceId}', ObservedFailureIds='{string.Join(",", lastObservations.Select(failure => failure.FailureId))}'.");
         }
 
         public async Task<ProcessHostPoolProductionRecoveryProof> RecoverAsync(
@@ -165,13 +439,37 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                         .Select(item => item.RuntimeInstanceId)),
                 "The persisted host-membership suppressions do not match the exact failed runtime membership.");
 
-            var persistedSuppressions =
+            var hostSuppressionHistory =
                 await this.safetyReader
                     .ListByHostIdAsync(target.Host.HostId)
                     .WaitAsync(timeout)
                     .ConfigureAwait(false);
 
-            Assert.Equal(cluster.RuntimeCountPerHost, persistedSuppressions.Count);
+            // Capacity safety is a durable history. A host can already contain a
+            // runtime-scoped suppression from an earlier child crash, so a host-level
+            // recovery must prove and enumerate only the suppressions created by the
+            // current failure authority rather than treating the whole host history
+            // as current failed membership.
+            var persistedSuppressions =
+                hostSuppressionHistory
+                    .Where(
+                        item =>
+                            string.Equals(
+                                item.FailureId,
+                                failureId,
+                                StringComparison.Ordinal) &&
+                            item.Scope ==
+                                AiRuntimePoolCapacitySuppressionScope.HostMembership)
+                    .OrderBy(
+                        item => item.RuntimeInstanceId,
+                        StringComparer.Ordinal)
+                    .ToArray();
+
+            Assert.Equal(cluster.RuntimeCountPerHost, persistedSuppressions.Length);
+            Assert.True(
+                failedRuntimeInstanceIds.SetEquals(
+                    persistedSuppressions.Select(item => item.RuntimeInstanceId)),
+                "The current failure's durable host-membership suppressions do not match the exact failed runtime membership.");
             Assert.All(
                 persistedSuppressions,
                 item =>
@@ -186,12 +484,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
 
             var runtimeInventories =
                 new List<AiRuntimePoolAssignedWorkInventory>(
-                    persistedSuppressions.Count);
+                    persistedSuppressions.Length);
 
-            foreach (var suppression in persistedSuppressions
-                         .OrderBy(
-                             item => item.RuntimeInstanceId,
-                             StringComparer.Ordinal))
+            foreach (var suppression in persistedSuppressions)
             {
                 runtimeInventories.Add(
                     await this.assignedWorkEnumerator

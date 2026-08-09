@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -136,13 +136,14 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
                         "The configured Kubernetes Runtime Pool host client must expose the physical Pod inventory authority."));
 
             services.TryAddSingleton<
+                IAiRuntimePoolFailureJournal,
                 InMemoryAiRuntimePoolFailureJournal>();
 
             services.TryAddSingleton<
                 IAiRuntimePoolFailureReader>(
                 serviceProvider =>
                     serviceProvider.GetRequiredService<
-                        InMemoryAiRuntimePoolFailureJournal>());
+                        IAiRuntimePoolFailureJournal>());
 
             services.TryAddSingleton<
                 IAiKubernetesRuntimePoolPodMembershipEnumerator,
@@ -169,7 +170,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
                 serviceProvider =>
                     new AiRuntimePoolFailureSafetyObserver(
                         serviceProvider.GetRequiredService<
-                            InMemoryAiRuntimePoolFailureJournal>(),
+                            IAiRuntimePoolFailureJournal>(),
                         serviceProvider.GetRequiredService<
                             IAiRuntimePoolCapacitySafetyWriter>()));
 
@@ -196,6 +197,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
                 AiRuntimePoolSuppressedAssignedWorkEnumerator>();
 
             services.TryAddSingleton<
+                IAiRuntimePoolAssignedWorkEnumerator,
+                AiRuntimePoolAssignedWorkEnumerator>();
+
+            services.TryAddSingleton<
                 IAiKubernetesRuntimePoolPodAssignedWorkEnumerator,
                 AiKubernetesRuntimePoolPodAssignedWorkEnumerator>();
 
@@ -218,6 +223,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
                 });
 
             services.TryAddSingleton<
+                IAiRuntimePoolRecoveryClaimCoordinator,
+                AiRuntimePoolRecoveryClaimCoordinator>();
+
+            services.TryAddSingleton<
                 IAiKubernetesRuntimePoolPodRecoveryClaimCoordinator,
                 AiKubernetesRuntimePoolPodRecoveryClaimCoordinator>();
 
@@ -228,6 +237,15 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
             services.TryAddSingleton<
                 IAiRuntimePoolRecoveryCandidateTransitionExecutor,
                 AiRuntimePoolRecoveryCandidateTransitionExecutor>();
+
+            services.TryAddSingleton<
+                IAiRuntimePoolClaimedRecoveryExecutor>(
+                serviceProvider =>
+                    new AiRuntimePoolClaimedRecoveryExecutor(
+                        serviceProvider.GetRequiredService<
+                            IAiRuntimePoolRecoveryClaimStore>(),
+                        serviceProvider.GetRequiredService<
+                            IAiRuntimePoolRecoveryCandidateTransitionExecutor>()));
 
             services.TryAddSingleton<
                 IAiKubernetesRuntimePoolPodClaimedRecoveryExecutor,

@@ -61,6 +61,19 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             settings["Tests:UseCapturingLedgerRecorder"] = "false";
             settings["Tests:UseMongoRuntimeLifecycleJournal"] = "true";
             settings["AiRuntimeRecoveryForensics:StrictPersistence"] = "true";
+            settings["AiRuntimePoolFailureJournal:Provider"] = "mongo";
+
+            if (!settings.TryGetValue("Mongo:DatabaseName", out var mongoDatabaseName) ||
+                string.IsNullOrWhiteSpace(mongoDatabaseName))
+            {
+                throw new InvalidOperationException(
+                    "ProcessHostPool production proof requires an explicit Mongo:DatabaseName for the shared failure authority.");
+            }
+
+            settings["AiRuntimePoolFailureJournal:Mongo:DatabaseName"] =
+                mongoDatabaseName;
+            settings["AiRuntimePoolFailureJournal:Mongo:CollectionName"] =
+                "ai_runtime_pool_failures";
 
             return settings;
         }
@@ -125,6 +138,12 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                     ["ConnectionStrings:Redis"] = Read("ConnectionStrings:Redis"),
                     ["ConnectionStrings:Mongo"] = Read("ConnectionStrings:Mongo"),
                     ["Mongo:DatabaseName"] = Read("Mongo:DatabaseName"),
+                    ["AiRuntimePoolFailureJournal:Provider"] = "mongo",
+                    ["AiRuntimePoolFailureJournal:Mongo:DatabaseName"] =
+                        Read("AiRuntimePoolFailureJournal:Mongo:DatabaseName") ??
+                        Read("Mongo:DatabaseName"),
+                    ["AiRuntimePoolFailureJournal:Mongo:CollectionName"] =
+                        "ai_runtime_pool_failures",
                     ["OpenAI:ApiKey"] = "process-host-pool-production-proof-not-used",
 
                     ["AiRuntimeProcessPool:Enabled"] = "true",

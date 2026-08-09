@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using Microsoft.Extensions.DependencyInjection;
@@ -87,13 +87,14 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
             services.AddLogging();
 
             services.TryAddSingleton<
+                IAiRuntimePoolFailureJournal,
                 InMemoryAiRuntimePoolFailureJournal>();
 
             services.TryAddSingleton<
                 IAiRuntimePoolFailureReader>(
                 serviceProvider =>
                     serviceProvider.GetRequiredService<
-                        InMemoryAiRuntimePoolFailureJournal>());
+                        IAiRuntimePoolFailureJournal>());
 
             services.TryAddSingleton<
                 IAiRuntimePoolCapacitySafetyRegistry,
@@ -116,7 +117,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
                 serviceProvider =>
                     new AiRuntimePoolFailureSafetyObserver(
                         serviceProvider.GetRequiredService<
-                            InMemoryAiRuntimePoolFailureJournal>(),
+                            IAiRuntimePoolFailureJournal>(),
                         serviceProvider.GetRequiredService<
                             IAiRuntimePoolCapacitySafetyWriter>()));
 

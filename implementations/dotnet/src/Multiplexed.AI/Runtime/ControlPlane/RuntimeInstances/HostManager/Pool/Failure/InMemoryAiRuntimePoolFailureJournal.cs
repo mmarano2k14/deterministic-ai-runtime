@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
@@ -10,8 +10,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
     /// Provides a deterministic thread-safe in-memory runtime-pool failure journal.
     /// </summary>
     public sealed class InMemoryAiRuntimePoolFailureJournal :
-        IAiRuntimePoolFailureObserver,
-        IAiRuntimePoolFailureReader
+        IAiRuntimePoolFailureJournal
     {
         private readonly object syncRoot = new();
         private readonly Dictionary<string, AiRuntimePoolFailureObservation>
@@ -23,11 +22,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
             AiRuntimePoolFailureObservation observation,
             CancellationToken cancellationToken = default)
         {
-            ValidateObservation(observation);
-            cancellationToken.ThrowIfCancellationRequested();
-
             var normalized =
-                Normalize(observation);
+                AiRuntimePoolFailureObservationNormalization
+                    .Normalize(observation);
+
+            cancellationToken.ThrowIfCancellationRequested();
 
             lock (this.syncRoot)
             {
@@ -133,68 +132,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
 
                 return Task.FromResult(observations);
             }
-        }
-
-        /// <summary>
-        /// Validates one authoritative failure observation.
-        /// </summary>
-        private static void ValidateObservation(
-            AiRuntimePoolFailureObservation observation)
-        {
-            ArgumentNullException.ThrowIfNull(observation);
-            ArgumentException.ThrowIfNullOrWhiteSpace(
-                observation.FailureId);
-            ArgumentException.ThrowIfNullOrWhiteSpace(
-                observation.PoolId);
-            ArgumentException.ThrowIfNullOrWhiteSpace(
-                observation.HostId);
-            if (observation.Scope ==
-                    AiRuntimePoolFailureScope.RuntimeInstance &&
-                (string.IsNullOrWhiteSpace(observation.RuntimeInstanceId) ||
-                 string.IsNullOrWhiteSpace(observation.RouteId)))
-            {
-                throw new ArgumentException(
-                    "Runtime-instance failure scope requires RuntimeInstanceId and RouteId.",
-                    nameof(observation));
-            }
-
-            if (observation.Scope == AiRuntimePoolFailureScope.Host &&
-                (!string.IsNullOrWhiteSpace(observation.RuntimeInstanceId) ||
-                 !string.IsNullOrWhiteSpace(observation.RouteId)))
-            {
-                throw new ArgumentException(
-                    "Host failure scope must not carry one child runtime or local route identity.",
-                    nameof(observation));
-            }
-
-            if (observation.ObservedAtUtc == default)
-            {
-                throw new ArgumentException(
-                    "ObservedAtUtc is required.",
-                    nameof(observation));
-            }
-        }
-
-        /// <summary>
-        /// Normalizes authoritative string identities before storage.
-        /// </summary>
-        private static AiRuntimePoolFailureObservation Normalize(
-            AiRuntimePoolFailureObservation observation)
-        {
-            return observation with
-            {
-                FailureId = observation.FailureId.Trim(),
-                PoolId = observation.PoolId.Trim(),
-                HostId = observation.HostId.Trim(),
-                RuntimeInstanceId =
-                    string.IsNullOrWhiteSpace(observation.RuntimeInstanceId)
-                        ? null
-                        : observation.RuntimeInstanceId.Trim(),
-                RouteId =
-                    string.IsNullOrWhiteSpace(observation.RouteId)
-                        ? null
-                        : observation.RouteId.Trim()
-            };
         }
     }
 }

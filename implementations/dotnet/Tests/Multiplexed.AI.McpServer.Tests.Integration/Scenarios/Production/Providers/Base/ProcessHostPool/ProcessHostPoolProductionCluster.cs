@@ -128,6 +128,32 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
         }
 
         /// <summary>
+        /// Refreshes one live parent Process Host after its internal pool replaces an exact child runtime.
+        /// </summary>
+        public async Task<ProcessHostPoolProductionHostProcess>
+            RefreshHostRuntimeMembershipAsync(
+                string hostId,
+                TimeSpan timeout)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(hostId);
+
+            var host = this.GetCurrentHost(hostId);
+            var previousRuntimeInstanceIds =
+                host.RuntimeInstanceIds.ToHashSet(StringComparer.Ordinal);
+
+            await host
+                .RefreshRuntimeMembershipAsync(
+                    this.profile.RequiresHttp2,
+                    timeout)
+                .ConfigureAwait(false);
+
+            this.output.WriteLine(
+                $"[{this.profile.LogPrefix} CHILD RUNTIME MEMBERSHIP REFRESHED] HostOrdinal='{host.Ordinal}', ParentProcessId='{host.ProcessId}', HostId='{host.HostId}', PreviousRuntimeCount='{previousRuntimeInstanceIds.Count}', CurrentRuntimeCount='{host.RuntimeInstanceIds.Count}', RemovedRuntimeInstanceIds='{string.Join(",", previousRuntimeInstanceIds.Except(host.RuntimeInstanceIds, StringComparer.Ordinal).OrderBy(value => value, StringComparer.Ordinal))}', AddedRuntimeInstanceIds='{string.Join(",", host.RuntimeInstanceIds.Except(previousRuntimeInstanceIds, StringComparer.Ordinal).OrderBy(value => value, StringComparer.Ordinal))}'.");
+
+            return host;
+        }
+
+        /// <summary>
         /// Force-kills one exact current parent Process Host and its complete child process tree.
         /// </summary>
         public async Task<ProcessHostPoolProductionHostProcess> CrashHostAsync(

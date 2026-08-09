@@ -207,6 +207,47 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
         }
 
         /// <summary>
+        /// Refreshes the exact child runtime membership exposed by the live parent readiness endpoint.
+        /// The parent HostId and operating-system process identity must remain unchanged.
+        /// </summary>
+        public async Task RefreshRuntimeMembershipAsync(
+            bool requiresHttp2,
+            TimeSpan timeout)
+        {
+            if (timeout <= TimeSpan.Zero)
+            {
+                throw new ArgumentOutOfRangeException(nameof(timeout));
+            }
+
+            var expectedHostId = this.HostId;
+            var expectedParentProcessId = this.ProcessId;
+
+            var previousRuntimeInstanceIds =
+                this.RuntimeInstanceIds.ToHashSet(StringComparer.Ordinal);
+
+            await this
+                .WaitForReadinessAsync(
+                    requiresHttp2,
+                    timeout,
+                    previousRuntimeInstanceIds)
+                .ConfigureAwait(false);
+
+            if (!StringComparer.Ordinal.Equals(
+                    expectedHostId,
+                    this.HostId))
+            {
+                throw new InvalidOperationException(
+                    $"Parent Process Host ordinal '{this.Ordinal}' changed HostId while refreshing one child runtime replacement. ExpectedHostId='{expectedHostId}', ActualHostId='{this.HostId}'.");
+            }
+
+            if (expectedParentProcessId != this.ProcessId)
+            {
+                throw new InvalidOperationException(
+                    $"Parent Process Host ordinal '{this.Ordinal}' changed ProcessId while refreshing one child runtime replacement. ExpectedProcessId='{expectedParentProcessId}', ActualProcessId='{this.ProcessId}'.");
+            }
+        }
+
+        /// <summary>
         /// Force-kills the complete parent Process Host tree without graceful pool shutdown.
         /// </summary>
         public async Task CrashAsync(TimeSpan timeout)
@@ -301,7 +342,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
 
         private async Task WaitForReadinessAsync(
             bool requiresHttp2,
-            TimeSpan timeout)
+            TimeSpan timeout,
+            IReadOnlySet<string>? previousRuntimeInstanceIds = null)
         {
             AppContext.SetSwitch(
                 "System.Net.Http.SocketsHttpHandler.Http2UnencryptedSupport",
@@ -369,10 +411,24 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                             readiness.RuntimeInstanceIds.All(
                                 value => !string.IsNullOrWhiteSpace(value)))
                         {
-                            this.HostId = readiness.HostId;
-                            this.RuntimeInstanceIds =
+                            var runtimeInstanceIds =
                                 readiness.RuntimeInstanceIds
                                     .ToHashSet(StringComparer.Ordinal);
+
+                            if (runtimeInstanceIds.Count !=
+                                this.ExpectedRuntimeCount ||
+                                (previousRuntimeInstanceIds is not null &&
+                                 previousRuntimeInstanceIds.SetEquals(
+                                     runtimeInstanceIds)))
+                            {
+                                await Task.Delay(
+                                        TimeSpan.FromMilliseconds(200))
+                                    .ConfigureAwait(false);
+                                continue;
+                            }
+
+                            this.HostId = readiness.HostId;
+                            this.RuntimeInstanceIds = runtimeInstanceIds;
                             return;
                         }
                     }
