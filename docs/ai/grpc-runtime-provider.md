@@ -226,7 +226,7 @@ The provider decides how to contact that runtime instance.
 
 ## Stable gRPC Runtime Pool Endpoint
 
-The opt-in process-host Runtime Pool reuses the existing generated gRPC contract:
+ProcessHostPool reuses the existing generated gRPC contract for exact child routing:
 
 ```text
 AiRuntimeInstanceCommandGrpc.ExecuteCommand

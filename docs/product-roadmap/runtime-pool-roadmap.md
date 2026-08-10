@@ -1,234 +1,197 @@
-# Runtime Pool Roadmap
+# Runtime Pool Delivery Status and Future Scale-Out Work
 
 ## Deterministic AI Runtime Platform
 
-**Current status:** Process-host Runtime Pool identity, lifecycle, exact HTTP/gRPC routing, targeted failure isolation, capacity suppression, deterministic recovery claims, and claimed recovery execution are implemented and validated. Kubernetes Runtime Pool Pods, hierarchical capacity selection, and Redis Cluster compatibility remain planned.
+**Current status:** Runtime Pool identity, ProcessHostPool, KubernetesPool, HTTP/gRPC transport preservation, hierarchical child and full-boundary failure recovery, shared durable failure authority, warm reuse, bounded capacity, replay, ledger, lifecycle, and forensics proofs are implemented and validated.
+
+This document keeps the historical filename for stable documentation links, but it now describes delivered capability and the remaining distributed-scale work rather than an implementation sequence.
 
 ---
 
 ## Product Objective
 
-The Runtime Pool evolves runtime hosting from one execution identity per host into reusable, warm, independently addressable capacity.
-
-The target production model is:
+Runtime Pools evolve hosting from one execution identity per physical boundary into reusable, warm, independently addressable capacity.
 
 ```text
 control plane
     -> select exact runtime capacity
-    -> route through stable pool endpoint
-    -> execute on independently registered runtime
-    -> isolate failure to runtime or host boundary
-    -> recover assigned work deterministically
+    -> route through provider/pool boundary
+    -> execute on independent runtime identity
+    -> isolate runtime or host failure
+    -> recover exact assigned work
+    -> reuse repaired capacity
 ```
 
 A tenant is not permanently mapped to one process or one Pod.
 
 ---
 
-## Completed Foundation
+## Delivered Runtime Pool Foundation
 
-### 1. Runtime Pool Identity Model — Completed
+### Identity and Membership
 
-Implemented first-class:
+Implemented:
 
 - `PoolId`;
-- `HostId`;
-- `RuntimeInstanceId`;
-- membership status;
-- draining state;
-- independent capacity descriptors.
+- immutable `HostId`;
+- independent `RuntimeInstanceId`;
+- immutable `RouteId` where route incarnation applies;
+- typed tenant identity;
+- explicit runtime and host failure scopes;
+- active and historical membership separation.
 
-The existing Kubernetes mode was preserved unchanged.
+### ProcessHostPool
 
-### 2. Process-Host Runtime Pool Manager — Completed
+Implemented and validated:
 
-Implemented:
+- multiple external parent ProcessHosts;
+- multiple real child runtime processes per parent;
+- stable HTTP and gRPC pool command paths;
+- exact child routing with no sibling fallback;
+- targeted child replacement;
+- full parent ProcessHost replacement;
+- bounded warm capacity and reuse.
 
-- several real `RuntimeInstanceOnly` child processes;
-- fixture-owned and System.Diagnostics.Process launchers;
-- readiness gating;
-- child membership;
-- minimum capacity;
-- graceful shutdown;
-- targeted replacement;
-- opt-in dependency injection;
-- real A1-to-A4 failure proof.
+### KubernetesPool
 
-### 3. Exact Pool Transport Router — Completed
+Implemented and validated:
 
-Implemented:
+- multiple real runtime processes inside one Kubernetes Pod;
+- Pod UID as a physical failure-boundary identity;
+- independent child runtime identities;
+- child replacement while the Pod survives;
+- distinct full Pod deletion and replacement;
+- exact failed-membership recovery;
+- bounded Pod and runtime capacity;
+- HTTP and gRPC transport preservation.
 
-- immutable `RouteId`;
-- exact route registry;
-- forwarding leases;
-- graceful route drain;
-- stable HTTP endpoint;
-- stable gRPC endpoint;
-- existing DTO and gRPC contract reuse;
-- exact response identity validation;
-- no sibling fallback;
-- real HTTP and gRPC end-to-end proofs.
+The historical one-runtime-per-Pod Kubernetes mode remains available separately.
 
-### 4. Exact Pool Failure Recovery — Completed
+### Durable Failure and Lifecycle Evidence
 
 Implemented:
 
-- exact failure journal;
-- exact runtime capacity suppression;
-- suppression-aware routing;
+- shared MongoDB Runtime Pool failure journal;
+- exact failure identity and scope;
+- runtime and host-membership suppression;
+- append-only MongoDB Runtime Lifecycle Journal;
+- recovery-forensics correlation;
+- exact current-incident proof without deleting historical evidence.
+
+### Recovery
+
+Implemented and validated:
+
 - exact assigned-work enumeration;
-- deterministic inventory fingerprint;
-- atomic recovery claim;
-- unique active `LeaseId`;
-- stale-lease rejection;
-- claimed recovery through existing ownership and transition services;
-- real process-host final proof.
+- deterministic recovery claims;
+- in-flight resume with the same `ExecutionId`;
+- durable `SharedRunId` redispatch for local-queued work;
+- exact one-run child recovery;
+- exact five-run full-boundary recovery in the validated 3 × 5 topology;
+- warm reuse without intermediate cleanup.
 
 ---
 
-## Validation Baseline
-
-The Runtime Pool work passed:
+## Production Validation Matrix
 
 ```text
-new Runtime Pool unit and integration gates
-real process-host A1 failure and A4 replacement
-stable HTTP routing proof
-stable gRPC routing proof
-exact claimed recovery proof
+gRPC + ProcessHostPool   PASS
+HTTP + ProcessHostPool   PASS
+gRPC + KubernetesPool    PASS
+HTTP + KubernetesPool    PASS
 ```
 
-Historical regression gates:
+Each final scenario validates 150 DAGs and 7500 logical steps across two warm cycles with two child crashes and two full-boundary crashes.
 
-```text
-Process HTTP P10
-Process gRPC P10
-Kubernetes HTTP P5
-Kubernetes gRPC P5
-```
-
-The historical modes remain valid and opt-in Runtime Pool behavior does not replace them.
+See [Runtime Pool Production Validation](../ai/runtime-pool-production-validation.md).
 
 ---
 
-## Next: Kubernetes Runtime Pool Pod
+## Remaining Distributed-Scale Work
 
-### 5. Kubernetes Runtime Pool Pod — Planned
+### Multi-Control-Plane Recovery Ownership
 
-Introduce a new host mode in which one Pod contains:
+Future hardening should make recovery-claim ownership and completion semantics durable across independently running control planes.
 
-- one Pool Manager;
-- one stable HTTP/gRPC service boundary;
-- several independently registered runtime instances;
-- one `HostId` derived from the Pod UID.
+The goal is to preserve the same exact claim boundary when leadership changes or several control planes race to recover the same failure.
 
-The existing one-runtime-per-Pod Kubernetes mode remains unchanged.
+### Redis Cluster Compatibility
 
-### 6. Pod Failure Proof — Planned
-
-Delete one real Runtime Pool Pod and prove:
-
-```text
-failed HostId = Pod UID
-    -> suppress every RuntimeInstanceId in that Pod
-    -> leave other Pods selectable
-    -> recover only work assigned to failed runtimes
-    -> recreate safe pool capacity
-```
-
-Host-wide failure must be atomic at the Pod UID boundary.
-
----
-
-## Hierarchical Capacity
-
-### 7. Hierarchical Capacity Selection — Planned
-
-Capacity selection should prefer:
-
-```text
-1. ready warm runtime
-2. available runtime slot in existing Pod
-3. new Runtime Pool Pod
-4. new cluster node
-```
-
-This hierarchy requires:
-
-- bounded scale-out;
-- admission control;
-- backpressure;
-- tenant quotas;
-- deduplication;
-- Pod and node capacity telemetry;
-- clear control-plane/data-plane separation.
-
-The transport router remains exact and does not perform this selection.
-
----
-
-## Redis Cluster Compatibility
-
-### 8. Redis Cluster Strategy — Planned
-
-Define:
+Define and validate:
 
 - key-slot boundaries;
 - hash-tag strategy;
 - atomic Lua boundaries;
 - tenant/cell partitioning;
 - failover behavior;
-- distributed claim durability;
-- pool route and membership durability;
-- multi-control-plane ownership.
+- distributed recovery-claim durability;
+- pool route and membership durability where required.
 
-Redis Cluster work follows the Kubernetes Runtime Pool lifecycle because the durable state model must reflect the final host/runtime hierarchy.
+### Multi-Node Kubernetes Scale
+
+Expand validation from local-cluster bounded Pod capacity into:
+
+- multiple worker nodes;
+- node pressure and rescheduling;
+- cluster autoscaler integration;
+- cell-based capacity placement;
+- fault-domain-aware selection.
+
+### Managed Hosting and Operations
+
+Productization still requires:
+
+- production deployment packaging;
+- operational SLOs;
+- dashboards and alerting;
+- multi-control-plane leadership;
+- tenant quotas and capacity governance;
+- managed Redis/Mongo operational profiles;
+- security and secret-management hardening.
 
 ---
 
-## Production Deployment Model
-
-The intended production topology is:
+## Production Deployment Direction
 
 ```text
 multiple Kubernetes nodes
     -> multiple Runtime Pool Pods
-        -> multiple warm runtime instances per Pod
-            -> multiple workers per runtime
+        -> multiple warm runtime processes per Pod
+            -> one or more workers per runtime
 ```
 
-Supporting services include:
+Supporting control-plane services include:
 
 - shared admission queue;
 - tenant-aware capacity selection;
-- control-plane leadership;
-- bounded provider scale-out;
-- node autoscaling;
-- durable recovery claims;
-- Redis Cluster or cell-based coordination;
-- MongoDB durable history;
-- ledger, tracing, metrics, and forensics.
+- bounded scale-out;
+- backpressure;
+- durable failure history;
+- exact recovery ownership;
+- replay, ledger, tracing, metrics, and forensics.
 
 ---
 
 ## Non-Goals
 
-The Runtime Pool roadmap does not:
+Runtime Pool architecture does not:
 
 - map one tenant permanently to one process;
 - make transport routing responsible for scheduling;
 - make providers own recovery;
-- remove the existing one-runtime-per-Pod mode;
+- remove the historical one-runtime-per-Pod Kubernetes mode;
 - treat metadata as correctness authority;
-- hide ambiguous fallback behavior behind retries.
+- hide ambiguous fallback behind retries.
 
 ---
 
 ## Related Documents
 
 - [Runtime Pool Architecture](../ai/runtime-pool-architecture.md)
+- [Runtime Pool Identity Model](../ai/runtime-pool-identity-model.md)
 - [Runtime Pool Failure Recovery](../ai/runtime-pool-failure-recovery.md)
+- [Runtime Pool Failure Authority](../ai/runtime-pool-failure-authority.md)
+- [Runtime Pool Production Validation](../ai/runtime-pool-production-validation.md)
+- [Durable Runtime Lifecycle Journal](../ai/runtime-lifecycle-journal.md)
 - [Runtime Provider and Transport Model](runtime-provider-and-transport-model.md)
 - [Testing and Reliability Strategy](testing-and-reliability-strategy.md)
-- [Current Foundation](current-foundation.md)
-- [What Already Exists Today](what-already-exists.md)

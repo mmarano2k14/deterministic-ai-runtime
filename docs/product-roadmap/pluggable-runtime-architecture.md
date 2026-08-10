@@ -984,7 +984,7 @@ This makes the architecture commercially adaptable.
 
 # Productization Roadmap
 
-## Step 1 — Document Extension Points
+## Milestone 1 — Document Extension Points
 
 Improve documentation for:
 
@@ -999,7 +999,7 @@ Improve documentation for:
 - observability provider model;
 - retention provider model.
 
-## Step 2 — Strengthen Public Examples
+## Milestone 2 — Strengthen Public Examples
 
 Add examples for:
 
@@ -1013,7 +1013,7 @@ Add examples for:
 - observability export direction;
 - retention policy direction.
 
-## Step 3 — Harden Provider Interfaces
+## Milestone 3 — Harden Provider Interfaces
 
 Improve:
 
@@ -1024,7 +1024,7 @@ Improve:
 - test coverage;
 - compatibility between local and remote providers.
 
-## Step 4 — Expose Through MCP and Dashboard
+## Milestone 4 — Expose Through MCP and Dashboard
 
 Make extension behavior visible through:
 
@@ -1036,7 +1036,7 @@ Make extension behavior visible through:
 - runtime instance views;
 - retention decisions.
 
-## Step 5 — Prepare Enterprise Extension Model
+## Milestone 5 — Prepare Enterprise Extension Model
 
 Prepare:
 

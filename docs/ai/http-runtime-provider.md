@@ -196,7 +196,7 @@ Tenant C safe runtime not killed -> zero recovered work, zero recovery forensics
 
 ## Stable HTTP Runtime Pool Endpoint
 
-The opt-in process-host Runtime Pool exposes one stable HTTP command endpoint:
+ProcessHostPool exposes one stable HTTP command endpoint for exact child routing:
 
 ```text
 POST /runtime-pool/commands
@@ -1017,7 +1017,7 @@ The HTTP provider process-host path is validated for scale-out, dispatch, tenant
 
 Current limitations:
 
-- final shared runtime pooling semantics are not decided yet;
+- broader global shared-capacity product policy remains outside the transport provider;
 - Shared mode currently validates shared-mode propagation and execution, not a forced global shared runtime pool;
 - Hybrid fallback to a shared process-host pool should be tested after shared pooling semantics are finalized;
 - provider endpoint health signals remain separate from runtime instance health reconciliation;
@@ -1034,7 +1034,7 @@ These limitations are intentional boundaries.
 Recommended next steps:
 
 ```text
-1. Finalize shared runtime pooling semantics.
+1. Continue productizing shared-capacity placement policy without moving scheduling into the HTTP transport.
 2. Add Hybrid shared fallback process-host validation after shared pooling is explicit.
 3. Continue hardening provider-specific readiness over Kubernetes Gateway implementations.
 4. Extend HTTP-specific Kubernetes Pod crash recovery matrices alongside the validated gRPC Kubernetes proof.

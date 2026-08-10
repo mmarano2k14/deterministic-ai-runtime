@@ -711,7 +711,7 @@ Memory must be governed.
 
 # Productization Roadmap
 
-## Step 1 — Define Memory Model
+## Milestone 1 — Define Memory Model
 
 Document:
 
@@ -723,7 +723,7 @@ Document:
 - memory retention;
 - memory replay evidence.
 
-## Step 2 — Define Policy Rules
+## Milestone 2 — Define Policy Rules
 
 Add policy examples for:
 
@@ -736,7 +736,7 @@ Add policy examples for:
 - redaction;
 - archive direction.
 
-## Step 3 — Add Ledger Events
+## Milestone 3 — Add Ledger Events
 
 Expose:
 
@@ -747,7 +747,7 @@ Expose:
 - summary/compaction events;
 - archive events.
 
-## Step 4 — Add Replay and Diagnostics
+## Milestone 4 — Add Replay and Diagnostics
 
 Improve:
 
@@ -756,7 +756,7 @@ Improve:
 - dashboard memory views direction;
 - stale memory warnings direction.
 
-## Step 5 — Add Tenant and Security Hardening
+## Milestone 5 — Add Tenant and Security Hardening
 
 Prepare:
 

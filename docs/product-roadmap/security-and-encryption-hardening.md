@@ -773,7 +773,7 @@ Security should be tested like runtime behavior.
 
 # Productization Roadmap
 
-## Step 1 — Document Security Model
+## Milestone 1 — Document Security Model
 
 Improve documentation for:
 
@@ -785,7 +785,7 @@ Improve documentation for:
 - ledger access control;
 - MCP access control direction.
 
-## Step 2 — Add Policy Examples
+## Milestone 2 — Add Policy Examples
 
 Add examples for:
 
@@ -797,7 +797,7 @@ Add examples for:
 - dashboard access policy direction;
 - MCP operation policy direction.
 
-## Step 3 — Harden Sensitive Data Handling
+## Milestone 3 — Harden Sensitive Data Handling
 
 Improve:
 
@@ -807,7 +807,7 @@ Improve:
 - sensitive field masking direction;
 - access-controlled payload retrieval direction.
 
-## Step 4 — Prepare Encryption Direction
+## Milestone 4 — Prepare Encryption Direction
 
 Prepare:
 
@@ -817,7 +817,7 @@ Prepare:
 - tenant-aware key boundary direction;
 - key rotation direction.
 
-## Step 5 — Add Security Testing
+## Milestone 5 — Add Security Testing
 
 Improve tests for:
 

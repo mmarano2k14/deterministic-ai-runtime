@@ -4,7 +4,7 @@ This document maps core enterprise AI execution questions to the current runtime
 
 The goal is to be clear and honest about what is implemented, what is available as a foundation, and what remains planned.
 
-The runtime should not be positioned as a finished commercial platform yet. It is better described as an advanced, test-driven execution infrastructure project that is increasingly proving production-style runtime guarantees across Redis, MCP, HTTP/gRPC process hosts, Kubernetes runtime hosts, exact Runtime Pool routing, targeted failure isolation, deterministic recovery claims, replay, ledger, trace, and multi-tenant isolation boundaries.
+The runtime should not be positioned as a finished commercial platform yet. It is better described as an advanced, test-driven execution infrastructure project with production-style correctness evidence across Redis, MCP, HTTP/gRPC transports, ProcessHostPool, KubernetesPool, exact runtime and host-boundary failure isolation, shared durable failure authority, deterministic recovery claims, replay, ledger, lifecycle, trace, forensics, and multi-tenant isolation boundaries.
 
 ---
 
@@ -23,8 +23,8 @@ The runtime should not be positioned as a finished commercial platform yet. It i
 | Enterprise Question | Runtime Answer | Implementation Mechanism | Evidence / Tests | Status |
 |---|---|---|---|---|
 | What happens if a worker crashes? | The runtime can recover stale `Running` steps and make them eligible again without consuming retry budget as a normal step failure. | Redis-backed DAG state, claim ownership, claimed timestamps, stale running-step recovery, recovery count. | Integration coverage around worker recovery, retry/recovery separation, distributed execution scenarios. | Implemented |
-| Can one stable host expose several independently selectable runtime instances? | Yes, through the opt-in process-host Runtime Pool. The host owns one `PoolId` and immutable `HostId`, while every child owns its own `RuntimeInstanceId` and `RouteId`. | Runtime Pool Manager, exact route registry, stable HTTP/gRPC endpoints, forwarding leases, real `RuntimeInstanceOnly` child processes. | Real three-child HTTP and gRPC proofs validate exact A2 routing, real A1 kill, A2/A3 preservation, and fresh A4 replacement. | Implemented / validated |
-| Can a failed child be isolated without removing healthy sibling capacity? | Yes. A runtime-instance failure journals and suppresses only the exact failed `RuntimeInstanceId`. Sibling routes remain independently usable. | `FailureId`, runtime-scoped failure observation, capacity-safety registry, suppression-aware forwarding, immutable `RouteId`. | Real process-host proof validates `unsafe = { A1 }`, preserved A2/A3 routes, and safe A4 replacement. | Implemented / validated |
+| Can one physical host boundary expose several independently selectable runtime instances? | Yes. ProcessHostPool and KubernetesPool both keep the parent boundary separate from child execution identity. Each child owns an independent `RuntimeInstanceId`; ProcessHostPool also uses immutable `RouteId` incarnations for exact forwarding. | Runtime Pool Manager, typed membership, exact route registry where applicable, HTTP/gRPC transport preservation, bounded capacity, real child processes. | Final HTTP/gRPC ProcessHostPool and KubernetesPool scenarios validate 3 boundaries × 5 runtimes, child replacement, full-boundary replacement, and warm reuse. | Implemented / validated |
+| Can a failed child be isolated without removing healthy sibling capacity? | Yes. A runtime-instance failure records one exact durable failure fact and suppresses only the failed `RuntimeInstanceId`; the ProcessHost or Pod remains alive and healthy sibling identities remain valid. | Durable `FailureId`, runtime-scoped failure observation, exact safety projection, typed membership, suppression-aware routing/capacity. | Final ProcessHostPool and KubernetesPool proofs kill one child after at least 25/50 steps, preserve four siblings, recover one run, and restore bounded membership. | Implemented / validated |
 | Can two recovery coordinators recover the same failed-runtime inventory? | No. The exact inventory is fingerprinted and protected by one atomic active recovery claim. | Deterministic `ClaimId`, unique `LeaseId`, active lease validation, stale-lease rejection, explicit release authority. | Concurrent tests validate one winner and nineteen denied coordinators; final process proof validates one acquired and one denied coordinator. | Implemented / validated |
 | What happens if a runtime process dies while work is assigned to it? | The runtime separates runtime health from execution recovery. Unsafe capacity is suppressed, assigned work is reconciled, in-flight executions can resume from the same durable `ExecutionId`, and local queued work can be redispatched through the durable `SharedRunId`. | `RuntimeInstanceHealthReconciler`, `ExecutionRecoveryReconciler`, shared run store, shared queue, runtime run execution index, DAG store, registry/capacity, replay/ledger/trace evidence, recovery forensics. | Real HTTP `RuntimeInstanceOnly` process-kill scenarios validate recovery after external OS process death, including in-flight DAG resume and local queued redispatch. | Implemented / validated |
 | How do you prevent duplicate executions? | Only one worker can own a step at a time. Stale or competing workers cannot complete or fail a step they do not own. | Redis Lua atomic claim scripts, claim tokens, ownership validation on complete/fail transitions. | Multi-worker and distributed claim tests validate single ownership and convergence. | Implemented |
@@ -45,7 +45,7 @@ The runtime should not be positioned as a finished commercial platform yet. It i
 | How do you ensure a scale-out-created run is actually executed? | A fulfilled scale-out request requeues the original shared run. The normal shared queue pump claims it, performs dispatch-time admission using newly visible capacity, dispatches to the created runtime instance, and the local runtime executes the DAG. | `IAiScaleOutFulfilledRunRequeueService`, `AiScaleOutFulfilledRunRequeueService`, `IAiSharedQueue`, `IAiSharedQueuePump`, dispatch-time admission, provider dispatch, local runtime queue, local background controller. | The final MCP test validates `ScaleOutRequestStatus=Fulfilled`, `SharedRunStatus=Dispatched`, assigned runtime instance, `LocalRunId`, `ExecutionId`, and `RuntimeRunStatus=completed`. | Implemented |
 | How do you prove one tenant's runtime crash does not contaminate another tenant? | Tenant context is durable execution input. Crash recovery queries, replay, ledger, trace, and forensics remain tenant-scoped. A safe tenant should continue normally and should not receive recovery records for another tenant's failure. | Durable `ExecutionContextSnapshot`, tenant-aware registry/capacity filtering, tenant-aware admission, tenant-scoped recovery forensics, ledger isolation checks, replay/trace queries scoped by tenant/run/execution identity. | Multi-tenant process-kill validation proves impacted tenants recover while the safe tenant completes normally with recovered work count `0`, recovery forensics count `0`, and no cross-tenant ledger leakage. | Implemented / validated |
 | How do you inspect the recovery path after a crash? | Recovery is treated as evidence, not only as a successful final status. Forensics records show which work was detected, why it was recoverable, how it was redispatched or resumed, and which replacement runtime received it. | Runtime recovery forensics records, control-plane ledger causal-chain entries, execution trace timeline, replay report, replay ledger, replay trace. | Process-host crash scenarios validate readable forensics, causal-chain counts, replay proof, ledger proof, trace proof, and safe tenant absence from recovery evidence. | Implemented / validated |
-| How do you prepare this for Kubernetes scaling? | The control loop is validated locally and through real process-host creation before Kubernetes pod creation exists. Kubernetes can later replace process/local host creation behind the same provider/host-manager boundary. | Provider-based scale-out model, Runtime Host Manager, Redis scale-out request store, runtime registry, capacity descriptors, shared queue pump, provider routing, future Kubernetes host creation strategy. | Local scale-out and process-host scale-out validate the lifecycle that Kubernetes will reuse; actual Kubernetes pod/deployment scaling remains planned. | Foundation available |
+| How do you prepare this for Kubernetes scaling? | Kubernetes host lifecycle and KubernetesPool are implemented behind the same provider/host-manager architecture while HTTP/gRPC remain transport providers. The validated pool reuses bounded Pod capacity and recovers both child-runtime and full-Pod failure. | Kubernetes Runtime Host Manager, Kubernetes SDK lifecycle, Gateway/Service transport exposure, KubernetesPool in-Pod process manager, registry/capacity publication, shared queue, durable failure/lifecycle evidence. | Historical one-runtime-per-Pod Kubernetes tests plus final HTTP/gRPC KubernetesPool scenarios validate real Pod resources, child replacement, full Pod deletion/replacement, warm reuse, and final cleanup. | Implemented / validated within current cluster scope |
 
 ---
 
@@ -91,7 +91,21 @@ The current runtime is strongest in these areas:
 
 ## Validated Runtime Pool Evidence
 
-The process-host Runtime Pool now proves a reusable warm-capacity model rather than a permanent one-runtime-per-process mapping.
+### Final Hierarchical Runtime Pool Matrix
+
+```text
+gRPC + ProcessHostPool   PASS
+HTTP + ProcessHostPool   PASS
+gRPC + KubernetesPool    PASS
+HTTP + KubernetesPool    PASS
+```
+
+Each final scenario validates 150 completed DAGs, 7,500 logical steps, two child-runtime crashes, two full-boundary crashes, 12 exact recoveries, 150 replay proofs, warm reuse across two cycles, and zero lost runs, failed runs, duplicate dispatch, or configured-capacity overflow. Across the four scenarios this totals 600 completed DAGs, 30,000 logical steps, 16 injected failures, and 48 recovered runs.
+
+See [`ai/runtime-pool-production-validation.md`](ai/runtime-pool-production-validation.md).
+
+
+The Runtime Pool now proves a reusable warm-capacity model across both ProcessHostPool and KubernetesPool rather than a permanent one-runtime-per-process or one-runtime-per-Pod mapping.
 
 Validated capabilities include:
 
@@ -114,11 +128,14 @@ The final regression gates passed:
 ```text
 Process HTTP P10
 Process gRPC P10
-Kubernetes HTTP P5
-Kubernetes gRPC P5
+Kubernetes HTTP historical-mode regression: P5
+Kubernetes gRPC historical-mode regression: P5
+
+gRPC + KubernetesPool hierarchical production proof: PASS
+HTTP + KubernetesPool hierarchical production proof: PASS
 ```
 
-The Kubernetes results validate that the existing one-runtime-per-Pod modes remain compatible. They do not claim that Kubernetes Runtime Pool Pods are already implemented.
+The P5 Kubernetes results remain compatibility evidence for the historical one-runtime-per-Pod mode. Separate KubernetesPool production scenarios now validate several independent runtime processes per Pod, exact child replacement, full Pod failure recovery, warm reuse, and bounded capacity over both HTTP and gRPC.
 
 ---
 
@@ -329,7 +346,7 @@ Implemented:
 
 Still required for distributed production pooling:
 
-- Kubernetes Runtime Pool Pod mode;
+- multi-control-plane durable recovery-claim ownership and completion semantics;
 - Pod UID to `HostId` mapping;
 - host-wide suppression after Pod loss;
 - durable distributed failure/safety/claim stores;

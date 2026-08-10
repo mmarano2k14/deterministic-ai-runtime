@@ -859,31 +859,35 @@ This foundation is important because a commercial product may need to support se
 
 ---
 
-## Process-Host Runtime Pool Foundation
+## Runtime Pool Foundation
 
-The process-host Runtime Pool is now part of the implemented foundation.
+ProcessHostPool and KubernetesPool are implemented foundations for reusable warm runtime capacity.
 
-It provides:
+Delivered capabilities include:
 
-- several real external runtime processes under one host;
-- exact child membership and readiness;
-- stable HTTP and gRPC service boundaries;
-- immutable route identities;
-- forwarding leases and drain;
-- targeted replacement;
-- first-class failure journal;
-- exact capacity suppression;
-- deterministic assigned-work claim;
-- claimed recovery transitions.
+- first-class `PoolId`, immutable host-incarnation `HostId`, independent `RuntimeInstanceId`, and immutable `RouteId` where route incarnation applies;
+- several real child runtime processes per ProcessHost or Kubernetes Pod;
+- stable HTTP and gRPC runtime command semantics;
+- exact routing with no sibling fallback;
+- bounded capacity and warm reuse;
+- child-runtime failure isolation and targeted replacement;
+- full ProcessHost or Pod failure recovery;
+- shared durable MongoDB failure facts;
+- append-only runtime lifecycle history;
+- exact assigned-work claims and same-`ExecutionId` in-flight resume;
+- replay, ledger, trace, lifecycle, and recovery-forensics proof.
 
-The implementation is opt-in and preserves existing hosting modes.
+The historical one-runtime-per-Pod Kubernetes mode remains available independently.
 
-The next infrastructure phase is Kubernetes Runtime Pool Pods, followed by hierarchical capacity selection and Redis Cluster compatibility.
+The final production matrix is green across HTTP/gRPC × ProcessHostPool/KubernetesPool. Remaining infrastructure hardening focuses on multi-control-plane recovery ownership, Redis Cluster compatibility, multi-node scale, and managed-hosting operations.
 
 See:
 
 - [`../ai/runtime-pool-architecture.md`](../ai/runtime-pool-architecture.md)
 - [`../ai/runtime-pool-failure-recovery.md`](../ai/runtime-pool-failure-recovery.md)
+- [`../ai/runtime-pool-failure-authority.md`](../ai/runtime-pool-failure-authority.md)
+- [`../ai/runtime-lifecycle-journal.md`](../ai/runtime-lifecycle-journal.md)
+- [`../ai/runtime-pool-production-validation.md`](../ai/runtime-pool-production-validation.md)
 - [`runtime-pool-roadmap.md`](runtime-pool-roadmap.md)
 
 ---

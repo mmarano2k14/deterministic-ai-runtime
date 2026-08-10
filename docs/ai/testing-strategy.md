@@ -1,6 +1,6 @@
 # Testing Strategy
 
-Status: Actively validated by a large unit and integration test suite, including MCP, Redis, local runtime pools, provider-based scale-out, HTTP/gRPC process-host provisioning, Kubernetes Runtime Host Manager Fake and SDK scenarios, real Pod/Service readiness, gRPC Kubernetes transport preservation, process and Pod crash recovery, multi-tenant crash isolation, safe-tenant non-impact validation, runtime recovery forensics, and replay / ledger / trace proof across host boundaries.
+Status: Actively validated by a large unit and integration suite covering MCP, Redis, local runtime pools, HTTP/gRPC ProcessHostPool, KubernetesPool, historical one-runtime-per-Pod Kubernetes hosting, real process and Pod failure, hierarchical child/full-boundary recovery, multi-tenant isolation, replay, ledger, lifecycle, trace, and forensics proof.
 
 This document describes the testing strategy used to validate the Deterministic AI Runtime.
 
@@ -2123,7 +2123,7 @@ existing Kubernetes HTTP P5: green
 existing Kubernetes gRPC P5: green
 ```
 
-The Kubernetes gate verifies compatibility with the existing one-runtime-per-Pod modes. It is not a Kubernetes Runtime Pool proof.
+The P5 Kubernetes gate remains compatibility evidence for the existing one-runtime-per-Pod modes. Dedicated KubernetesPool production scenarios separately prove several in-Pod runtimes, child replacement, Pod-wide failure recovery, warm reuse, and bounded capacity.
 
 ---
 
@@ -2291,7 +2291,7 @@ Recovery validation should include replay report, replay ledger, replay trace, e
 | Final real process-host recovery proof | Green |
 | Historical Process HTTP/gRPC regression | P10 green |
 | Existing Kubernetes HTTP/gRPC regression | P5 green |
-| Kubernetes Runtime Pool Pod proof | Not implemented |
+| KubernetesPool hierarchical child + Pod failure proof | Green over HTTP and gRPC |
 
 ---
 
@@ -2452,3 +2452,42 @@ The goal is to prove runtime guarantees.
 - [Config-Driven Runtime](config-driven-runtime.md)
 - [RAG Pipelines](rag-pipelines.md)
 
+
+---
+
+## Final Hierarchical Runtime Pool Production Matrix
+
+The final Runtime Pool production tests use the same workload and failure contract across both transports and both hosting boundaries.
+
+```text
+gRPC + ProcessHostPool   PASS
+HTTP + ProcessHostPool   PASS
+gRPC + KubernetesPool    PASS
+HTTP + KubernetesPool    PASS
+```
+
+Per scenario:
+
+```text
+3 parent boundaries × 5 runtimes = 15 active runtimes
+5 full-capacity waves per cycle
+75 DAGs per cycle
+2 warm cycles
+150 DAGs total
+50 logical steps per DAG
+7500 logical steps total
+2 child runtime crashes at >=25 steps
+2 full parent-boundary crashes
+12 exact recovered runs
+150 replay proofs
+0 lost runs
+0 failed runs
+0 duplicate dispatch
+0 configured-capacity violations
+```
+
+The child and parent failures are staged deterministically: four waves exercise the child failure and convergence; the configured final wave is then used to force one distinct fully busy parent boundary. No synthetic extra runs are added.
+
+Across all four final scenarios the suite executed 600 DAGs, 30,000 logical steps, 8 child failures, 8 full-boundary failures, and 48 recoveries with no correctness violation.
+
+See [Runtime Pool Production Validation](runtime-pool-production-validation.md).

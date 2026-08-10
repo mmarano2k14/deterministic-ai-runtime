@@ -815,7 +815,7 @@ Execution lifecycle should become one of the most visible strengths of the platf
 
 # Productization Roadmap
 
-## Step 1 — Document Lifecycle States
+## Milestone 1 — Document Lifecycle States
 
 Improve documentation for:
 
@@ -827,7 +827,7 @@ Improve documentation for:
 - finalization semantics;
 - waiting-for-input direction.
 
-## Step 2 — Expose Lifecycle Through MCP
+## Milestone 2 — Expose Lifecycle Through MCP
 
 Improve MCP tools for:
 
@@ -841,7 +841,7 @@ Improve MCP tools for:
 - inspect waiting state;
 - diagnostics.
 
-## Step 3 — Improve Replay Timeline
+## Milestone 3 — Improve Replay Timeline
 
 Improve replay output for:
 
@@ -853,7 +853,7 @@ Improve replay output for:
 - policy decisions;
 - retention lifecycle events.
 
-## Step 4 — Add Dashboard Lifecycle Views
+## Milestone 4 — Add Dashboard Lifecycle Views
 
 Add views for:
 
@@ -865,7 +865,7 @@ Add views for:
 - finalization reason;
 - allowed operations.
 
-## Step 5 — Harden Distributed Lifecycle Safety
+## Milestone 5 — Harden Distributed Lifecycle Safety
 
 Improve tests and safety around:
 

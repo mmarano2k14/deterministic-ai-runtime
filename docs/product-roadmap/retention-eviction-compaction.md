@@ -1066,7 +1066,7 @@ This is why lifecycle management belongs inside runtime governance.
 
 # Productization Roadmap
 
-## Step 1 — Document Lifecycle Policies
+## Milestone 1 — Document Lifecycle Policies
 
 Improve documentation for:
 
@@ -1078,7 +1078,7 @@ Improve documentation for:
 - purge policy direction;
 - policy-by-context examples.
 
-## Step 2 — Expose Lifecycle Decisions
+## Milestone 2 — Expose Lifecycle Decisions
 
 Expose through:
 
@@ -1090,7 +1090,7 @@ Expose through:
 - metrics;
 - traces.
 
-## Step 3 — Strengthen Snapshot and Replay Integration
+## Milestone 3 — Strengthen Snapshot and Replay Integration
 
 Improve:
 
@@ -1101,7 +1101,7 @@ Improve:
 - archive references;
 - retained-history summaries.
 
-## Step 4 — Harden Distributed Safety
+## Milestone 4 — Harden Distributed Safety
 
 Improve:
 
@@ -1113,7 +1113,7 @@ Improve:
 - no cleanup while execution is active;
 - tests for concurrent cleanup and execution.
 
-## Step 5 — Add Tenant and Compliance Profile Direction
+## Milestone 5 — Add Tenant and Compliance Profile Direction
 
 Prepare:
 

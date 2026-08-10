@@ -299,7 +299,7 @@ docs/
 | 8 | Deterministic Runtime Engine | [`deterministic-runtime-engine.md`](deterministic-runtime-engine.md) | Explains the core runtime execution model. |
 | 9 | Pluggable Runtime Architecture | [`pluggable-runtime-architecture.md`](pluggable-runtime-architecture.md) | Explains pluggable steps, policies, providers, storage, ledger, replay, observability, retention, hosting, and MCP extension points. |
 | 10 | Runtime Provider and Transport Model | [`runtime-provider-and-transport-model.md`](runtime-provider-and-transport-model.md) | Explains provider-based hosting, dynamic runtime providers, HTTP provider, runtime-instance-only mode, shared queue dispatch, and future transport options. |
-| 11 | Runtime Pool Roadmap | [`runtime-pool-roadmap.md`](runtime-pool-roadmap.md) | Documents completed process-host pooling and the remaining Kubernetes Pool, hierarchical capacity, and Redis Cluster work. |
+| 11 | Runtime Pool Roadmap | [`runtime-pool-roadmap.md`](runtime-pool-roadmap.md) | Documents delivered ProcessHostPool/KubernetesPool capability and the remaining multi-control-plane, Redis Cluster, multi-node, and managed-hosting scale work. |
 | 12 | Policy Engine and Governance | [`policy-engine-and-governance.md`](policy-engine-and-governance.md) | Explains the pluggable policy engine, policy-by-context model, RBAC scope, ARN-inspired resources, governance, and policy decision recording. |
 | 13 | Replay and Audit Layer | [`replay-audit-layer.md`](replay-audit-layer.md) | Explains replay, audit, diagnostics, validation, replay reports, and retained execution evidence. |
 | 14 | Decision Ledger | [`decision-ledger.md`](decision-ledger.md) | Explains the decision ledger foundation for structured runtime decision history. |
@@ -352,7 +352,7 @@ This table maps the roadmap topics to the public documentation files.
 | 24 | Pluggable Runtime Architecture | [`pluggable-runtime-architecture.md`](pluggable-runtime-architecture.md) | Pluggable steps, tools, policies, providers, storage, ledger, replay, observability, retention, hosting, and MCP tools. |
 | 25 | Pluggable Steps and Tools | [`pluggable-runtime-architecture.md`](pluggable-runtime-architecture.md) | Add new workflow capabilities and governed tool operations without rewriting the deterministic core. |
 | 26 | Runtime Provider and Transport Model | [`runtime-provider-and-transport-model.md`](runtime-provider-and-transport-model.md) | Local, HTTP, and gRPC providers, runtime-instance-only hosting, stable Runtime Pool routing, and future message-bus transports. |
-| 27 | Runtime Pool Architecture and Recovery | [`runtime-pool-roadmap.md`](runtime-pool-roadmap.md) | Completed process-host Runtime Pool identity, lifecycle, exact HTTP/gRPC routing, failure isolation, deterministic recovery claims, and remaining Kubernetes Pool direction. |
+| 27 | Runtime Pool Architecture and Recovery | [`runtime-pool-roadmap.md`](runtime-pool-roadmap.md) | Delivered ProcessHostPool and KubernetesPool identity, lifecycle, HTTP/gRPC transport, hierarchical recovery, durable failure authority, warm reuse, and bounded capacity. |
 | 28 | Pluggable Transport Between Instances | [`runtime-provider-and-transport-model.md`](runtime-provider-and-transport-model.md) | Transport abstraction for local, HTTP, implemented gRPC, stable Runtime Pool endpoints, and future message-bus, NATS, RabbitMQ, or cloud queue direction. |
 | 29 | Runtime-Instance-Only Mode | [`runtime-provider-and-transport-model.md`](runtime-provider-and-transport-model.md) | Runtime host mode for remote runtime instances, containers, pods, and managed execution units. |
 | 30 | Admission Control | [`managed-hosting-model.md`](managed-hosting-model.md) | Policy-aware run admission, queue admission, capacity evaluation, throttling, and dispatch decisions. |
@@ -566,7 +566,7 @@ This is a key foundation for Kubernetes-style execution and managed hosting.
 
 ## Runtime Pool Foundation
 
-The process-host Runtime Pool foundation is implemented and validated.
+The ProcessHostPool and KubernetesPool foundations are implemented and validated.
 
 It adds:
 
@@ -579,7 +579,7 @@ It adds:
 - existing transition-service reuse;
 - compatibility with historical Process and Kubernetes modes.
 
-The next product milestone is Kubernetes Runtime Pool Pods.
+The next Runtime Pool product milestones are distributed multi-control-plane recovery ownership, Redis Cluster validation, multi-node scale, and managed-hosting operations.
 
 See [`runtime-pool-roadmap.md`](runtime-pool-roadmap.md).
 

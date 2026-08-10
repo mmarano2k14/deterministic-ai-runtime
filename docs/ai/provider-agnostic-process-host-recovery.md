@@ -1,6 +1,6 @@
 # Provider-Agnostic Process-Host Recovery
 
-Status: Implemented / validated for historical HTTP and gRPC process-host recovery and for the opt-in process-host Runtime Pool recovery chain: exact child failure journaling, capacity suppression, A1-only assigned-work enumeration, deterministic claim arbitration, claimed transitions, targeted A4 replacement, and sibling isolation.
+Status: Implemented / validated for historical HTTP/gRPC process-host recovery and for ProcessHostPool hierarchical recovery: exact child failure authority, targeted child replacement, sibling isolation, distinct full-parent failure, exact membership recovery, warm reuse, replay, ledger, lifecycle, and forensics.
 
 This document describes the provider-agnostic recovery model used by the Deterministic AI Runtime when a real runtime process disappears.
 
@@ -610,7 +610,7 @@ This is a major architecture milestone because it shows the runtime provider mod
 
 ## Runtime Pool Scope and Remaining Work
 
-The process-host Runtime Pool proof establishes child-local failure isolation inside one live pool host.
+The ProcessHostPool proof establishes both child-local failure isolation inside a live parent and complete failure/replacement of a distinct parent ProcessHost.
 
 It does not yet prove:
 
@@ -670,7 +670,7 @@ HTTP and gRPC process-host runtime crash recovery are validated through the same
 | Replay / ledger / trace proof | Implemented / validated |
 | Runtime recovery forensics | Implemented / validated |
 | Provider-neutral readiness hardening | Planned |
-| Kubernetes provider recovery | Planned |
+| Kubernetes provider recovery | Implemented / validated in Kubernetes Pod and KubernetesPool scenarios |
 | Redis command queue provider recovery | Planned |
 
 ---

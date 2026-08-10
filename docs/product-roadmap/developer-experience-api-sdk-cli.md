@@ -725,7 +725,7 @@ This project should keep that trust.
 
 # Productization Roadmap
 
-## Step 1 — Quickstart
+## Milestone 1 — Quickstart
 
 Add or improve:
 
@@ -737,7 +737,7 @@ Add or improve:
 - inspect ledger;
 - run MCP server direction.
 
-## Step 2 — API Documentation
+## Milestone 2 — API Documentation
 
 Document:
 
@@ -750,7 +750,7 @@ Document:
 - runtime instance inspection;
 - diagnostics.
 
-## Step 3 — Examples
+## Milestone 3 — Examples
 
 Add examples for:
 
@@ -763,7 +763,7 @@ Add examples for:
 - MCP tools;
 - retention lifecycle.
 
-## Step 4 — CLI Direction
+## Milestone 4 — CLI Direction
 
 Prepare initial commands for:
 
@@ -776,7 +776,7 @@ Prepare initial commands for:
 - instance;
 - diagnostics.
 
-## Step 5 — SDK Direction
+## Milestone 5 — SDK Direction
 
 Prepare client models and helpers for:
 

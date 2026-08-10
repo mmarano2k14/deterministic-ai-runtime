@@ -966,7 +966,7 @@ A safe tenant running concurrently is the strongest isolation check.
 | Multi-tenant two-runtime crash recovery | Implemented / validated |
 | Safe tenant non-impact proof | Implemented / validated |
 | Cross-tenant ledger leak detection | Implemented / validated |
-| Kubernetes pod crash recovery | Planned |
+| Kubernetes pod crash recovery | Implemented / validated |
 | Production multi-control-plane recovery leadership | Planned |
 | Recovery dashboard UI | Planned |
 

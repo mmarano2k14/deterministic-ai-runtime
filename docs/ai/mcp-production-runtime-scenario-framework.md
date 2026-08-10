@@ -565,7 +565,7 @@ AllowSharedFallback = true
 
 The current process-host production scenarios validate Shared mode propagation and execution using the existing tenant-level runtime prefix behavior.
 
-The final shared runtime pooling model is intentionally not forced yet.
+The production scenario framework now includes explicit ProcessHostPool and KubernetesPool proofs; broader global shared-capacity product policy remains separate from transport and failure correctness.
 
 Possible future shared capacity models:
 
@@ -977,9 +977,9 @@ These validate:
 
 ### Shared runtime pooling
 
-The final shared runtime pooling model is not decided yet.
+The bounded Runtime Pool hosting model is implemented; broader global shared-capacity placement policy remains a separate product decision.
 
-The current Shared process-host scenario validates Shared mode propagation and execution, but it does not force a global shared runtime pool.
+Shared isolation-mode scenarios validate tenant visibility, while ProcessHostPool and KubernetesPool scenarios separately validate bounded reusable runtime capacity. Neither transport silently turns Shared mode into a global scheduler.
 
 Future work should decide between:
 

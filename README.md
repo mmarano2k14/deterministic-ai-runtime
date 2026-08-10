@@ -2,36 +2,48 @@
 
 A deterministic, multi-tenant .NET runtime for durable AI workflow execution across local workers, real child processes, reusable Runtime Pools, and Kubernetes-hosted runtime instances.
 
-Deterministic AI Runtime treats AI orchestration as a distributed-systems problem. It provides durable DAG execution, Redis-backed coordination, provider-based dispatch, crash recovery, deterministic replay, audit, observability, execution control, tenant isolation, configuration-driven runtime behavior, policy-driven execution, a pluggable step model, and deterministic convergence behind one shared control plane.
+Deterministic AI Runtime treats AI orchestration as a distributed-systems problem. It provides durable DAG execution, Redis-backed coordination, provider-based dispatch, bounded reusable capacity, crash recovery, deterministic replay, audit, observability, execution control, tenant isolation, configuration-driven runtime behavior, policy-driven execution, pluggable steps, and deterministic convergence behind one shared control plane.
 
-The runtime is content-agnostic. A step can execute an LLM call, RAG operation, MCP tool, database command, human approval, or polyglot service. The engine does not judge the answer; it guarantees the lifecycle of the execution that produced it.
+The runtime is content-agnostic. A unit of work can execute an LLM call, RAG operation, MCP tool, database command, human approval, HTTP/gRPC service, or polyglot component. The engine does not judge the answer; it guarantees the lifecycle of the execution that produced it.
 
-Most AI tooling starts at prompts, agents, and RAG. This runtime starts one layer down, at execution: who owns the work, what survives a crash, and whether the same run can be replayed and audited afterward. See [ecosystem positioning](docs/comparison-existing-tools.md) for how that compares to Temporal, Dapr, Dagster, Prefect, and LangGraph.
+Most AI tooling starts at prompts, agents, and RAG. This runtime starts one layer down, at execution:
 
-[![Version](https://img.shields.io/badge/Version-1.0.7.8-blue)](./CHANGELOG.md)
+> **Who owns the work, what survives a crash, what may execute again, and can the result be replayed and audited afterward?**
+
+See [ecosystem positioning](docs/comparison-existing-tools.md) for how this execution layer compares with Temporal, Dapr, Dagster, Prefect, and LangGraph.
+
+[![Version](https://img.shields.io/badge/Version-1.0.8.2-blue)](./CHANGELOG.md)
 [![Changelog](https://img.shields.io/badge/Changelog-view-lightgrey)](./CHANGELOG.md)
 ![AI Runtime](https://img.shields.io/badge/AI-Deterministic%20Execution-purple)
 ![Runtime](https://img.shields.io/badge/Runtime-distributed-brightgreen)
 ![Redis](https://img.shields.io/badge/Redis-required-red?logo=redis)
 ![MongoDB](https://img.shields.io/badge/MongoDB-required-green?logo=mongodb)
 ![Kubernetes](https://img.shields.io/badge/Kubernetes-supported-326CE5?logo=kubernetes&logoColor=white)
+![HTTP](https://img.shields.io/badge/Transport-HTTP-0A66C2)
+![gRPC](https://img.shields.io/badge/Transport-gRPC-244C5A)
 ![Status](https://img.shields.io/badge/Status-active%20development-orange)
+
+---
 
 ## Start Here
 
 - [Architecture overview](docs/ai/architecture-overview.md)
+- [Runtime Pool architecture](docs/ai/runtime-pool-architecture.md)
+- [Runtime Pool failure recovery](docs/ai/runtime-pool-failure-recovery.md)
+- [Runtime Pool failure authority](docs/ai/runtime-pool-failure-authority.md)
+- [Runtime Pool production validation](docs/ai/runtime-pool-production-validation.md)
+- [Runtime Lifecycle Journal](docs/ai/runtime-lifecycle-journal.md)
 - [Configuration-driven runtime](docs/ai/config-driven-runtime.md)
 - [Policy-driven execution](docs/ai/policy-driven-execution.md)
 - [Step plugins](docs/ai/step-plugins.md)
 - [Replay and audit](docs/ai/replay-and-audit.md)
-- [Ecosystem positioning and comparison](docs/comparison-existing-tools.md)
-- [Runtime Pool architecture](docs/ai/runtime-pool-architecture.md)
-- [Runtime Pool failure recovery](docs/ai/runtime-pool-failure-recovery.md)
 - [Concurrency hardening and adversarial validation](docs/ai/concurrency-hardening-and-adversarial-validation.md)
 - [Kubernetes Runtime Host Provider](docs/ai/kubernetes-runtime-host-provider.md)
 - [Multi-tenant control-plane isolation](docs/ai/multi-tenant-control-plane-isolation.md)
 - [Enterprise readiness](docs/enterprise-readiness.md)
 - [Complete documentation index](docs/index.md)
+
+---
 
 ## Quick Start
 
@@ -40,8 +52,8 @@ Most AI tooling starts at prompts, agents, and RAG. This runtime starts one laye
 - A .NET SDK compatible with the solution
 - Redis
 - MongoDB
-- Docker 
-- Kubernetes
+- Docker
+- Kubernetes for Kubernetes-backed scenarios
 
 ### Build
 
@@ -57,184 +69,297 @@ dotnet test implementations/dotnet/Tests/Multiplexed.AI.Tests/Multiplexed.AI.Tes
 
 ### Run the MCP Production Integration Tests
 
-The real process-host, transport, crash-recovery, multi-tenant, replay, ledger, trace, and targeted Kubernetes/Process scenarios live in the MCP Server integration test project.
+The real process-host, Runtime Pool, transport, crash-recovery, multi-tenant, replay, ledger, trace, and Kubernetes production scenarios live in the MCP Server integration test project.
 
 ```powershell
 dotnet test implementations/dotnet/Tests/Multiplexed.AI.McpServer.Tests.Integration/Multiplexed.AI.McpServer.Tests.Integration.csproj
 ```
 
-Use targeted test filters for the long-running Process, Runtime Pool, concurrency, and Kubernetes scenarios. Some gates require Redis, MongoDB, the built `RuntimeInstanceOnly` host, Docker, or a reachable Kubernetes environment.
+Long-running ProcessHostPool and KubernetesPool production proofs should normally be run with targeted test filters. They require the relevant built runtime hosts plus reachable Redis, MongoDB, and Kubernetes infrastructure.
 
 ---
 
-## What the Runtime Proves Today
+# What the Runtime Proves Today
 
 | Area | Current evidence |
 |---|---|
 | Deterministic execution | Dependency-aware DAG execution with durable state, atomic claims, retry, recovery, retention, replay, and deterministic convergence. |
-| Deterministic replay and audit | Persisted snapshots, fingerprints, ledger events, and trace timelines support audit-only replay, restore replay, and post-recovery validation without re-running external side effects. |
-| Configuration-driven runtime | Pipeline, provider, transport, retry, retention, concurrency, observability, and hosting behavior are resolved from explicit configuration rather than hard-coded execution paths. |
+| Deterministic replay and audit | Persisted snapshots, fingerprints, ledger events, lifecycle history, trace timelines, and recovery forensics support post-execution validation without re-running external side effects. |
+| Configuration-driven runtime | Pipeline, provider, transport, retry, retention, concurrency, observability, hosting, and queue behavior are resolved from explicit configuration. |
 | Policy-driven execution | Retry, retention, concurrency, admission, isolation, recovery, and governance decisions are evaluated through dedicated policy boundaries. |
-| Pluggable step execution | Step implementations remain external to the orchestration engine and can execute LLM, RAG, MCP, database, human, or polyglot service operations. |
-| Real process boundaries | HTTP and gRPC providers dispatch into real external `RuntimeInstanceOnly` child processes. |
-| Reusable Runtime Pools | One opt-in process host manages several independently registered runtime instances behind stable HTTP and gRPC endpoints. |
-| Exact routing | The control plane targets one `RuntimeInstanceId`; the pool router forwards only to that exact child or returns an explicit failure. |
-| Targeted failure isolation | Killing A1 suppresses and removes A1 only; A2 and A3 remain routable and A4 restores capacity with fresh identities. |
-| Exact recovery authority | `FailureId`, `PoolId`, `HostId`, `RuntimeInstanceId`, `RouteId`, inventory fingerprint, `ClaimId`, and `LeaseId` form an explicit recovery boundary. |
-| Durable recovery semantics | In-flight work resumes the same `ExecutionId`; local-queued work is redispatched from its durable `SharedRunId`. |
-| Duplicate-coordinator prevention | Concurrent recovery coordinators produce one active claim lease; stale or released lease generations cannot authorize mutation. |
-| Multi-tenant isolation | Registry, capacity, admission, scale-out, recovery, ledger, replay, trace, and forensics remain tenant-scoped. |
-| Kubernetes hosting | Existing HTTP and gRPC Kubernetes modes create `RuntimeInstanceOnly` Pods and Services through the Kubernetes .NET SDK with layered readiness and crash recovery. |
-| Adversarial concurrency | P10–P35 campaigns validate convergence under real process kills, datastore pressure, lifecycle collisions, and local-machine saturation. |
+| Pluggable execution | Domain operations remain external to the orchestration engine and can execute LLM, RAG, MCP, database, human, HTTP/gRPC, or polyglot workloads. |
+| Real process boundaries | HTTP and gRPC providers dispatch into real external runtime processes. |
+| Reusable ProcessHostPool | Multiple external parent ProcessHosts each own several independently registered child runtimes. |
+| Reusable KubernetesPool | Multiple Kubernetes Pods each host several independently registered in-Pod runtime processes. |
+| Exact routing | The control plane targets one `RuntimeInstanceId`; transport routing does not silently select a sibling. |
+| Child-failure isolation | One failed child runtime can be suppressed, recovered, and replaced while its parent boundary and healthy siblings survive. |
+| Full-boundary recovery | One fully busy ProcessHost or Kubernetes Pod can disappear and have its exact failed membership recovered. |
+| Durable failure authority | Runtime Pool failure facts are shared through a durable MongoDB failure journal with first-class failure identities. |
+| Durable lifecycle history | Host, Pod, runtime, incident, and run-placement history is append-only and queryable after cleanup. |
+| Durable recovery semantics | In-flight work resumes the same `ExecutionId`; durable queued work is redispatched from shared state. |
+| Claim-protected recovery | Exact recovery candidates are protected by deterministic claim ownership before mutation. |
+| Multi-tenant isolation | Registry, capacity, admission, scale-out, recovery, ledger, replay, trace, lifecycle, and forensics remain tenant-scoped. |
+| Bounded warm capacity | Production proofs reuse existing warm ProcessHostPool and KubernetesPool capacity before introducing replacement capacity. |
+| Adversarial concurrency | P10–P35 campaigns validate convergence under real process kills, datastore pressure, lifecycle collisions, and machine saturation. |
 
 ---
 
-## v1.0.7.8 — Exact Runtime Pool Failure Recovery
+# Production Runtime Pool Validation
 
-The process-host Runtime Pool is now implemented and validated.
-
-```text
-Process Pool Host
-    PoolId = pool-01
-    HostId = host-incarnation-01
-
-    stable HTTP endpoint
-    stable gRPC endpoint
-
-    RuntimeInstanceId A1 -> RouteId R1
-    RuntimeInstanceId A2 -> RouteId R2
-    RuntimeInstanceId A3 -> RouteId R3
-```
-
-The control plane selects exact capacity:
+The same hierarchical failure contract is validated across both transport providers and both Runtime Pool boundary models.
 
 ```text
-select RuntimeInstanceId A2
-    ↓
-stable pool endpoint
-    ↓
-exact RouteId lookup
-    ↓
-forwarding lease
-    ↓
-A2 child endpoint
+gRPC + ProcessHostPool   PASS
+HTTP + ProcessHostPool   PASS
+gRPC + KubernetesPool    PASS
+HTTP + KubernetesPool    PASS
 ```
 
-The transport router is not a scheduler. It does not silently fall back to A1, A3, or A4.
-
-When A1 exits unexpectedly:
+Each final production scenario uses:
 
 ```text
-record exact A1 failure
-    ↓
-suppress exact A1 capacity
-    ↓
-remove exact A1 route
-    ↓
-publish completion to the pool manager
-    ↓
-start replacement A4
-    ↓
-enumerate A1 work only
-    ↓
-acquire one deterministic recovery claim
-    ↓
-invoke the existing validated recovery transition boundary
-for A1's exact claimed inventory
-    ↓
-release the claim explicitly
+3 parent boundaries
+5 runtimes per boundary
+15 active runtime slots
+5 full-capacity submission waves per cycle
+75 DAG executions per cycle
+2 warm cycles
+150 DAG executions total
+50 logical steps per DAG
+7,500 logical steps total
 ```
 
-The safety boundary is precise:
+Each cycle performs:
 
 ```text
-unsafe capacity = { A1 }
-safe capacity   = { A2, A3, A4 }
+warm bounded capacity
+        ↓
+submit 4 full-capacity waves
+        ↓
+kill one exact child runtime after durable DAG progress
+        ↓
+recover exactly one affected run
+        ↓
+preserve parent boundary + healthy sibling identities
+        ↓
+replace exact child membership
+        ↓
+reuse converged warm capacity
+        ↓
+submit deferred full-capacity wave
+        ↓
+kill one distinct fully busy parent boundary
+        ↓
+recover exact failed boundary membership
+        ↓
+drain every DAG
+        ↓
+replay + ledger + trace + lifecycle + recovery forensics
 ```
 
-A2 and A3 preserve their original `RuntimeInstanceId` and `RouteId`. A4 receives fresh runtime and route identities.
+Across the four final two-cycle scenarios:
 
-The Runtime Pool proof establishes exact failure authority, sibling isolation, claim ownership, and invocation of the existing recovery boundary. The process-host recovery suite separately validates the durable transition semantics reused by that boundary: in-flight work resumes the same `ExecutionId`, while local-queued work is redispatched from its durable `SharedRunId`.
+```text
+600 submitted DAGs
+600 completed DAGs
+30,000 logical steps
 
-### Runtime Pool Identities
+8 child runtime crashes
+8 parent-boundary crashes
+48 recovered runs
+
+600 replay proofs
+
+0 lost runs
+0 failed runs
+0 duplicate dispatch
+0 configured-capacity violations
+```
+
+The eight parent-boundary failures consist of:
+
+```text
+4 ProcessHost crashes
+4 Kubernetes Pod crashes
+```
+
+These numbers are validation evidence for the tested configurations, not universal throughput claims.
+
+See [Runtime Pool production validation](docs/ai/runtime-pool-production-validation.md).
+
+---
+
+# Runtime Pool Failure Model
+
+A Runtime Pool is an identity model before it is a capacity model.
+
+The hierarchy is explicit:
+
+```text
+Logical Runtime Pool
+        │
+        ├── Parent boundary
+        │      ├── Runtime A1
+        │      ├── Runtime A2
+        │      ├── Runtime A3
+        │      ├── ...
+        │
+        ├── Parent boundary
+        │      ├── Runtime B1
+        │      ├── Runtime B2
+        │      ├── ...
+        │
+        └── ...
+```
+
+The parent boundary is:
+
+```text
+ProcessHostPool  → external parent ProcessHost
+KubernetesPool   → Kubernetes Pod
+```
+
+A parent boundary is **not** an execution identity.
+
+A child `RuntimeInstanceId` is independently selectable execution capacity.
+
+This distinction makes two different failures possible:
+
+```text
+child runtime failure
+    → one runtime becomes unsafe
+    → parent remains alive
+    → healthy siblings remain valid
+
+parent boundary failure
+    → every runtime in that boundary disappears
+    → complete failed membership becomes unsafe
+    → replacement boundary restores capacity
+```
+
+The recovery scope follows the failure scope exactly.
+
+---
+
+## Exact Child Runtime Recovery
+
+A child crash is injected only after durable execution progress.
+
+```text
+DAG running
+    ↓
+at least 25 / 50 logical steps completed
+    ↓
+exact child OS process killed
+    ↓
+failure recorded
+    ↓
+exact runtime marked unsafe
+    ↓
+exact affected inventory enumerated
+    ↓
+one recovery claim acquired
+    ↓
+same ExecutionId resumed
+    ↓
+replacement runtime restores membership
+```
+
+The parent ProcessHost or Pod survives and healthy sibling runtime identities remain preserved.
+
+---
+
+## Exact Full-Boundary Recovery
+
+After child recovery and warm convergence, a distinct parent boundary is selected only when it is fully busy.
+
+For the validated `3 × 5` topology:
+
+```text
+target boundary
+    RuntimeCount = 5
+    ActiveRunCount = 5
+```
+
+The complete boundary is then killed.
+
+```text
+failed parent boundary
+        ↓
+5 failed runtimes
+        ↓
+exact failure identity
+        ↓
+5 exact recovery candidates
+        ↓
+5 accepted claims / transitions
+        ↓
+replacement boundary
+        ↓
+5 recovered runs
+```
+
+Historical incident evidence is retained. Current recovery correctness is scoped to the current failure identity rather than inferred from historical counts.
+
+---
+
+# Durable Failure, Lifecycle, and Recovery Authority
+
+Correctness is deliberately split across independent stores and responsibilities.
+
+```text
+Runtime Registry
+    → current runtime state and current capacity
+
+Runtime Pool Failure Journal
+    → authoritative durable failure facts
+
+Runtime Lifecycle Journal
+    → append-only infrastructure and placement history
+
+Recovery Claim Store
+    → mutation exclusivity
+
+Decision Ledger
+    → durable decisions and execution evidence
+
+Recovery Forensics
+    → work-item-level recovery timeline
+```
+
+These stores are correlated through first-class identities instead of being physically merged.
+
+Important identities include:
 
 | Identity | Responsibility |
 |---|---|
+| `ControlPlaneId` | Logical control-plane scope. |
 | `PoolId` | Logical reusable capacity group. |
-| `HostId` | Immutable process-host incarnation; future Kubernetes Pod UID boundary. |
+| `HostId` | Parent boundary incarnation. |
+| `KubernetesPodUid` | Kubernetes failure-boundary identity. |
 | `RuntimeInstanceId` | Independently selectable execution capacity. |
-| `RouteId` | Immutable transport-route incarnation. |
-| `FailureId` | One exact failure observation. |
-| `ClaimId` | Deterministic recovery claim over exact authority and inventory. |
-| `LeaseId` | Unique active claim-acquisition generation. |
+| `RouteId` | Transport-route incarnation where applicable. |
+| `FailureId` | Exact Runtime Pool failure observation. |
+| `RuntimeFailureIncidentId` | Durable incident correlation across lifecycle evidence. |
+| `SharedRunId` | Durable shared work identity. |
+| `LocalRunId` | Runtime-local work identity. |
+| `ExecutionId` | Durable DAG execution identity. |
+| `ClaimId` | Deterministic recovery claim identity. |
+| `LeaseId` | Active claim-acquisition generation. |
+| `CorrelationId` | Cross-component correlation identity. |
+| `CausationId` | Causal relationship identity. |
 
-Correctness uses typed fields. Diagnostic metadata is never the routing or recovery authority.
+Correctness-critical values remain typed. Diagnostic metadata is not used as the routing, tenant, lifecycle, or recovery authority.
 
----
+See:
 
-## Validation Evidence
-
-### Runtime Pool and Regression Gates
-
-```text
-Runtime Pool process lifecycle             green
-Stable Runtime Pool HTTP routing           green
-Stable Runtime Pool gRPC routing           green
-Real A1 kill and targeted A4 replacement   green
-Exact failure journal and suppression      green
-Deterministic recovery claim               green
-Claimed recovery execution                 green
-
-Historical Process HTTP                    P10 green
-Historical Process gRPC                    P10 green
-Existing Kubernetes HTTP                   P5 green
-Existing Kubernetes gRPC                   P5 green
-```
-
-The Kubernetes gates prove compatibility with the existing one-runtime-per-Pod modes. They do not claim that Kubernetes Runtime Pool Pods are already implemented.
-
-### Adversarial P35 Evidence
-
-Both HTTP and gRPC process-host campaigns completed 35/35.
-
-Per transport:
-
-```text
-parallel scenarios             35
-tenants                        105
-real DAG executions            315
-real external process kills    70
-affected jobs recovered        210
-logical DAG step completions   15,750
-```
-
-The measured HTTP batch generated:
-
-```text
-Redis commands                 2,913,328
-MongoDB operations             1,278,120
-combined datastore operations  4,191,448
-measured datastore traffic     18.29 GiB
-```
-
-The machine slowed down before correctness broke.
-
-The campaign preserved:
-
-- exact pre-crash inventory;
-- durable crash checkpoints;
-- the same `ExecutionId` for in-flight resume;
-- durable redispatch for work that had not started;
-- no duplicate step completion;
-- no contested runtime ownership;
-- no safe-tenant recovery contamination;
-- consistent ledger, trace, replay, and recovery forensics.
-
-P35 represents the experimental edge of the local machine, not a universal production throughput guarantee.
+- [Runtime Pool failure authority](docs/ai/runtime-pool-failure-authority.md)
+- [Runtime Lifecycle Journal](docs/ai/runtime-lifecycle-journal.md)
+- [Runtime Pool failure recovery](docs/ai/runtime-pool-failure-recovery.md)
 
 ---
 
-## Architecture at a Glance
+# Architecture at a Glance
 
 ```text
 Client / API / MCP
@@ -256,17 +381,17 @@ Provider Selection
 Local / HTTP / gRPC Provider
         ↓
 Runtime Host Manager
+        │
         ├── Fixture
         ├── Process
         ├── Attach
         ├── Kubernetes
-        └── opt-in Process Runtime Pool
+        ├── ProcessHostPool
+        └── KubernetesPool
                 ↓
-        stable HTTP / gRPC pool endpoint
+        exact RuntimeInstanceId selection
                 ↓
-        exact RuntimeInstanceId route
-                ↓
-        RuntimeInstanceOnly child
+        independently registered runtime
                 ↓
 Local Runtime Queue
         ↓
@@ -278,182 +403,172 @@ Stateless Workers / Step Executors
         ↓
 MongoDB Payloads / Snapshots
         ↓
+Failure Journal / Lifecycle Journal
+        ↓
 Ledger / Metrics / Trace / Replay / Forensics
 ```
 
-### Responsibility Boundaries
+---
+
+## Responsibility Boundaries
 
 - The control plane owns admission, capacity selection, scale-out, dispatch, and recovery coordination.
 - Providers own command transport.
 - Runtime Host Manager strategies own host lifecycle.
-- The Runtime Pool Manager owns child lifecycle and replacement.
-- The route registry owns exact transport reachability.
-- The pool router owns exact forwarding, not scheduling.
-- Health reconciliation suppresses unsafe capacity.
-- Recovery enumeration identifies work assigned to the failed runtime.
-- The existing ownership resolver and recovery transition service own durable recovery semantics.
+- ProcessHostPool and KubernetesPool own bounded reusable runtime capacity.
+- Parent ProcessHosts and Kubernetes Pods are infrastructure failure boundaries.
+- `RuntimeInstanceId` remains the execution-capacity identity.
+- Route registries own exact transport reachability.
+- Pool routers forward to exact selected capacity; they are not hidden schedulers.
+- Health and safety state remove unsafe capacity from admission.
+- Failure journals own durable Runtime Pool failure facts.
+- Lifecycle journals own append-only infrastructure and placement history.
+- Recovery enumerators identify work assigned to failed capacity.
+- Recovery claim coordination owns mutation exclusivity.
+- Existing recovery transition boundaries own durable resume and redispatch semantics.
 - Configuration defines runtime structure and operating parameters.
-- Policies decide how execution, admission, retry, retention, concurrency, isolation, and recovery should behave.
-- Step plugins implement domain operations without owning durable orchestration semantics.
+- Policies decide retry, retention, concurrency, admission, isolation, selection, and recovery behavior.
+- Step plugins implement domain operations without owning orchestration correctness.
 - Replay reconstructs and validates persisted execution evidence independently from live external side effects.
 
 ---
 
-## Execution Model
+# Runtime Hosting Models
 
-The runtime is designed around four complementary extension and governance models.
+| Mode | Boundary model | Transport | Reusable capacity | Status |
+|---|---|---|---:|---|
+| Local | In-process runtime | Local | N/A | Implemented |
+| Process | One external runtime process | HTTP / gRPC | No | Implemented / validated |
+| Kubernetes | One `RuntimeInstanceOnly` per Pod/Service | HTTP / gRPC | No | Implemented / validated |
+| ProcessHostPool | External parent ProcessHost containing multiple runtimes | HTTP / gRPC | Yes | Implemented / validated |
+| KubernetesPool | Kubernetes Pod containing multiple runtimes | HTTP / gRPC | Yes | Implemented / validated |
 
-### Replay-Driven Evidence
+The existing Kubernetes mode remains available independently from KubernetesPool.
 
-Replay is not treated as a log dump or a best-effort reconstruction.
+KubernetesPool is additive; it does not redefine the legacy one-runtime-per-Pod behavior.
 
-The runtime persists the evidence required to validate an execution after completion or recovery:
+---
+
+# Kubernetes Runtime Pool
+
+KubernetesPool moves the reusable Runtime Pool model inside a real Kubernetes failure boundary.
 
 ```text
-terminal snapshot
-    + deterministic fingerprint
-    + dependency graph
-    + step state
-    + payload references
-    + decision ledger
-    + trace timeline
-    = replayable execution evidence
+Kubernetes Node
+    ↓
+Pod = failure boundary
+    ↓
+in-Pod Runtime Pool Manager
+    ├── RuntimeInstanceId A1
+    ├── RuntimeInstanceId A2
+    ├── RuntimeInstanceId A3
+    ├── RuntimeInstanceId A4
+    └── RuntimeInstanceId A5
 ```
 
-Supported foundations include:
+The Pod does not become the execution identity.
 
-- audit-only replay;
-- restore replay;
-- deterministic fingerprint validation;
-- replay metadata;
-- replay ledger loading;
-- replay trace loading;
-- post-crash recovery replay proof.
+The control plane still selects exact runtime capacity.
 
-External model or tool side effects do not need to be invoked again to inspect the durable execution history.
+KubernetesPool validates:
 
-### Configuration-Driven Runtime
+- multiple independent runtimes per Pod;
+- bounded Pod count;
+- bounded runtimes per Pod;
+- HTTP transport;
+- gRPC transport;
+- exact in-Pod child failure;
+- parent Pod survival during child failure;
+- sibling identity preservation;
+- exact child replacement;
+- distinct fully busy Pod failure;
+- exact failed-Pod work recovery;
+- warm Pod reuse between cycles;
+- deterministic final cleanup.
 
-Runtime behavior is resolved from explicit configuration rather than embedded into step implementations.
+Tenant ownership is validated from typed Registry state rather than runtime-name conventions.
 
-Configuration can describe:
-
-- pipelines and DAG structure;
-- providers and transports;
-- runtime hosting mode;
-- retry and recovery parameters;
-- retention, compaction, and eviction;
-- concurrency limits;
-- observability persistence;
-- tenant runtime settings;
-- queue and scale-out behavior.
-
-This keeps infrastructure decisions outside business-step code and allows the same execution engine to operate across local, Process, Runtime Pool, and Kubernetes boundaries.
-
-### Policy-Driven Execution
-
-Policies define how the runtime should behave when execution conditions change.
-
-Policy boundaries cover:
-
-- retry eligibility and timing;
-- retention and eviction;
-- distributed concurrency and throttling;
-- run admission;
-- tenant isolation and shared fallback;
-- provider and runtime selection;
-- recovery eligibility;
-- operational governance.
-
-The orchestration engine applies policy decisions while preserving deterministic state transitions and audit evidence.
-
-### Pluggable Step Model
-
-Step implementations are independent from the durable orchestration engine.
-
-A step can be implemented as:
-
-- an LLM or model invocation;
-- a RAG retrieval or composition stage;
-- an MCP tool call;
-- an HTTP or gRPC service;
-- a database operation;
-- a human approval;
-- .NET, Python, Java, Go, Rust, JavaScript, or another polyglot execution boundary.
-
-Plugins own domain behavior. The runtime owns identity, claims, retries, recovery, policy, persistence, replay, and observability.
+Transient historical Registry visibility is not counted as active capacity after an intentionally failed runtime has already been declared unsafe.
 
 ---
 
-## Core Capabilities
+# Warm Capacity Reuse
 
-| Capability | Status |
-|---|---:|
-| Deterministic DAG execution | Implemented |
-| Redis hot state and Lua atomic coordination | Implemented |
-| Distributed workers and step claims | Implemented |
-| Retry, stale-work recovery, and deterministic convergence | Implemented |
-| Execution pause, resume, cancel, and human input | Implemented |
-| Run-level queue control | Implemented |
-| Retention, compaction, eviction, and payload externalization | Implemented |
-| Snapshot and Replay API foundations | Implemented |
-| Audit-only and restore replay | Implemented |
-| Replay ledger and trace evidence | Implemented / validated |
-| Configuration-driven pipeline and runtime behavior | Implemented foundation |
-| Policy-driven retry, retention, concurrency, and admission | Implemented |
-| Pluggable external step model | Implemented foundation |
-| Execution-correlated decision ledger | Implemented |
-| Metrics, tracing, and realtime event foundations | Implemented |
-| RBAC execution-context propagation | Implemented / validated |
-| Shared, Dedicated, and Hybrid tenant isolation | Implemented / validated |
-| Redis registry, capacity, discovery, and admission reservations | Implemented / validated |
-| Shared Runtime Controller and shared queue pump | Implemented / validated |
-| Local runtime provider and scale-out | Implemented / validated |
-| HTTP runtime provider and process-host scale-out | Implemented / validated |
-| gRPC runtime provider and process-host scale-out | Implemented / validated |
-| Kubernetes Runtime Host Provider | Implemented / validated foundation |
-| Provider-agnostic HTTP/gRPC crash recovery | Implemented / validated |
-| Process-host Runtime Pool Manager | Implemented / validated |
-| Stable Runtime Pool HTTP and gRPC routing | Implemented / validated |
-| Exact Runtime Pool failure isolation | Implemented / validated |
-| Claim-protected deterministic Runtime Pool recovery | Implemented / validated |
-| Kubernetes Runtime Pool Pod | Planned |
-| Hierarchical runtime/Pod/node capacity selection | Planned |
-| Redis Cluster compatibility and distributed claim durability | Planned |
-| Public API / SDK polish | Planned |
+Runtime Pools are designed to reuse healthy capacity rather than recreate infrastructure for every run.
+
+The production proof makes that behavior explicit.
+
+```text
+cycle 1
+    ↓
+create bounded pool
+    ↓
+execute + recover failures
+    ↓
+leave healthy converged capacity alive
+
+cycle 2
+    ↓
+reuse same warm pool
+    ↓
+no intermediate cleanup
+    ↓
+execute + recover new failures
+    ↓
+final deterministic cleanup
+```
+
+The second cycle is explicitly validated as a warm start:
+
+```text
+ColdStart = false
+```
+
+For KubernetesPool, the proof also validates reuse of the existing three Pods and fifteen runtimes before new failure-driven replacement occurs.
 
 ---
 
-## Deterministic Recovery Semantics
+# Deterministic Recovery Semantics
 
-### In-Flight Work
+## In-Flight Work
 
 An in-flight candidate already has a durable `ExecutionId`.
 
 ```text
-RuntimeInstanceId = A1
-LocalRunId        = local-a1-flight
-ExecutionId       = execution-a1
+RuntimeInstanceId = failed-runtime
+LocalRunId        = local-flight
+ExecutionId       = execution-01
 ```
 
-Recovery preserves the same `ExecutionId`.
-
-### Local-Queued Work
-
-A local-queued candidate has a durable `SharedRunId` but no `ExecutionId`.
+Recovery preserves the same execution identity:
 
 ```text
-RuntimeInstanceId = A1
-LocalRunId        = local-a1-queued
-SharedRunId       = shared-run-01
-ExecutionId       = absent
+ExecutionIdBefore == ExecutionIdAfter
 ```
 
-The dead process-local queue is not treated as durable truth. Recovery redispatches from shared durable state.
+The execution resumes rather than becoming a logically new DAG.
 
-### Deterministic Claim
+---
 
-The exact ordered inventory is fingerprinted before mutation authority is granted.
+## Durable Queued Work
+
+Queued work that exists only in the dead process-local queue is not treated as durable truth.
+
+Durable redispatch starts from shared state and the `SharedRunId`.
+
+```text
+dead local queue
+    ≠ durable recovery authority
+
+SharedRunId
+    = durable redispatch identity
+```
+
+---
+
+## Deterministic Recovery Claim
+
+Exact candidate inventory is fingerprinted before mutation authority is granted.
 
 ```text
 FailureId
@@ -466,13 +581,46 @@ ClaimId
 LeaseId
 ```
 
-Concurrent coordinators may read the same inventory, but only one active lease can authorize transitions.
-
-A transition exception does not silently release the claim.
+Concurrent coordinators may observe the same failure, but recovery mutation is protected by claim ownership.
 
 ---
 
-## Multi-Tenant Control-Plane Isolation
+# Replay-Driven Evidence
+
+Replay is not treated as a log dump or best-effort reconstruction.
+
+The runtime persists enough evidence to validate execution after completion or recovery:
+
+```text
+terminal snapshot
+    + deterministic fingerprint
+    + dependency graph
+    + step state
+    + payload references
+    + decision ledger
+    + lifecycle history
+    + trace timeline
+    + recovery forensics
+    = replayable execution evidence
+```
+
+Validated foundations include:
+
+- audit-only replay;
+- restore replay;
+- deterministic fingerprint validation;
+- replay metadata;
+- replay ledger loading;
+- replay trace loading;
+- lifecycle reconstruction;
+- post-crash recovery replay proof;
+- exact logical-step identity proof.
+
+External model or tool side effects do not need to be invoked again to inspect the durable execution history.
+
+---
+
+# Multi-Tenant Control-Plane Isolation
 
 The durable tenant boundary is:
 
@@ -480,7 +628,7 @@ The durable tenant boundary is:
 ExecutionContextSnapshot.TenantId
 ```
 
-RBAC context is captured once and persisted before the request leaves its original API or MCP scope.
+RBAC context is captured and persisted before the request leaves its original API or MCP scope.
 
 ```text
 MCP / API
@@ -495,6 +643,8 @@ Shared Queue
     ↓
 Tenant-Aware Admission
     ↓
+selected RuntimeInstanceId
+    ↓
 Runtime Local Queue
     ↓
 DAG Execution
@@ -502,130 +652,184 @@ DAG Execution
 
 The runtime validates:
 
-- tenant-aware registry and capacity visibility;
+- tenant-aware Registry and capacity visibility;
 - Shared, Dedicated, and Hybrid isolation;
 - explicit shared fallback policy;
 - tenant-scoped scale-out settings;
-- tenant-scoped runtime prefixes;
 - safe-tenant non-impact during crash recovery;
-- no cross-tenant ledger or forensics leakage.
+- no cross-tenant ledger leakage;
+- no cross-tenant recovery-forensics leakage;
+- typed tenant ownership on runtime snapshots.
 
 `ContextKey` remains useful for RBAC lookup, correlation, and diagnostics. It is not the durable tenant-isolation boundary.
 
 ---
 
-## Kubernetes Runtime Hosting
+# Adversarial Concurrency Evidence
 
-Kubernetes is a Runtime Host Manager lifecycle strategy, not a replacement transport provider.
+The earlier Process-host concurrency campaigns remain an important independent stress proof.
+
+Both HTTP and gRPC P35 campaigns completed 35/35.
+
+Per transport:
 
 ```text
-HTTP or gRPC scale-out provider
-    ↓
-Runtime Host Manager
-    ↓
-KubernetesAiRuntimeHostCreationStrategy
-    ↓
-RuntimeInstanceOnly Pod + Service
-    ↓
-resource readiness
-    ↓
-runtime registration and capacity readiness
-    ↓
-transport endpoint readiness
-    ↓
-normal HTTP or gRPC dispatch
+parallel scenarios             35
+tenants                        105
+real DAG executions            315
+real external process kills    70
+affected jobs recovered        210
+logical DAG step completions   15,750
 ```
 
-Kubernetes currently supports:
+The measured HTTP P35 batch generated:
 
-- deterministic Pod and Service lifecycle through the Kubernetes .NET SDK;
-- fake and real SDK clients;
-- HTTP and gRPC transport preservation;
-- Service DNS;
-- NodePort;
-- per-runtime `kubectl port-forward`;
-- Gateway API routing through `HTTPRoute` or `GRPCRoute`;
-- layered readiness;
-- ownership-safe cleanup;
-- Pod crash recovery through the shared health and recovery boundaries.
+```text
+Redis commands                 2,913,328
+MongoDB operations             1,278,120
+combined datastore operations  4,191,448
+measured datastore traffic     18.29 GiB
+```
 
-The existing Kubernetes mode remains one runtime per Pod/Service.
+The machine slowed down before correctness broke.
 
-The planned Kubernetes Runtime Pool mode will place several independently registered runtimes inside one Pod and map `HostId` to the Pod UID.
+The campaign preserved:
+
+- exact pre-crash inventory;
+- durable crash checkpoints;
+- the same `ExecutionId` for in-flight resume;
+- durable redispatch for work that had not started;
+- no duplicate logical-step completion;
+- no contested runtime ownership;
+- no safe-tenant recovery contamination;
+- consistent ledger, trace, replay, and recovery forensics.
+
+P35 represents the experimental edge of the tested local machine, not a universal production throughput guarantee.
 
 ---
 
-## Why This Exists
+# Core Capabilities
 
-Prototype AI systems focus on prompts, agents, models, and RAG.
+| Capability | Status |
+|---|---:|
+| Deterministic DAG execution | Implemented |
+| Redis hot state and Lua atomic coordination | Implemented |
+| Distributed workers and step claims | Implemented |
+| Retry, stale-work recovery, and deterministic convergence | Implemented |
+| Execution pause, resume, cancel, and human input | Implemented |
+| Run-level queue control | Implemented |
+| Retention, compaction, eviction, and payload externalization | Implemented |
+| Snapshot and Replay API foundations | Implemented |
+| Audit-only and restore replay | Implemented |
+| Replay ledger and trace evidence | Implemented / validated |
+| Configuration-driven pipeline and runtime behavior | Implemented foundation |
+| Policy-driven retry, retention, concurrency, admission, and recovery | Implemented |
+| Pluggable external execution model | Implemented foundation |
+| Execution-correlated decision ledger | Implemented |
+| Runtime Lifecycle Journal | Implemented / validated |
+| Durable Runtime Pool Failure Journal | Implemented / validated |
+| Metrics, tracing, and realtime event foundations | Implemented |
+| RBAC execution-context propagation | Implemented / validated |
+| Shared, Dedicated, and Hybrid tenant isolation | Implemented / validated |
+| Redis registry, capacity, discovery, and admission reservations | Implemented / validated |
+| Shared Runtime Controller and shared queue pump | Implemented / validated |
+| Local runtime provider and scale-out | Implemented / validated |
+| HTTP runtime provider and process-host scale-out | Implemented / validated |
+| gRPC runtime provider and process-host scale-out | Implemented / validated |
+| Kubernetes Runtime Host Provider | Implemented / validated |
+| Provider-agnostic HTTP/gRPC crash recovery | Implemented / validated |
+| ProcessHostPool | Implemented / validated |
+| KubernetesPool | Implemented / validated |
+| Stable Runtime Pool HTTP and gRPC routing | Implemented / validated |
+| Exact child Runtime Pool failure isolation | Implemented / validated |
+| Exact parent-boundary failure recovery | Implemented / validated |
+| Warm Runtime Pool reuse | Implemented / validated |
+| Claim-protected deterministic Runtime Pool recovery | Implemented / validated |
+| Replay/ledger/trace/lifecycle/forensics production proof | Implemented / validated |
+| Redis Cluster compatibility and failover validation | Further hardening |
+| Multi-control-plane durable claim arbitration | Further hardening |
+| Public API / SDK polish | Planned |
 
-Production AI systems must also answer:
+---
+
+# Why This Exists
+
+Prototype AI systems often focus on prompts, agents, models, tools, and RAG.
+
+Production execution infrastructure must also answer:
 
 - Who owns the work?
-- What happens if a worker crashes?
-- What happens if the whole runtime process dies?
+- What happens if one worker crashes?
+- What happens if an entire ProcessHost or Kubernetes Pod disappears?
 - Can an in-flight execution resume without receiving a new identity?
-- Can queued work be recovered without trusting a dead local queue?
+- Can durable queued work be recovered without trusting a dead local queue?
 - Can two recovery coordinators mutate the same work?
-- Can one failed child be removed without losing healthy sibling capacity?
+- Can one failed child be removed without sacrificing healthy sibling capacity?
+- Can a whole failed boundary be replaced without losing or duplicating its work?
+- Can warm capacity be reused safely across repeated cycles?
 - Can unrelated tenants remain provably untouched?
+- Can infrastructure history be reconstructed after cleanup?
 - Can the execution be replayed and audited?
-- Can concurrency, retry, retention, and provider pressure be governed?
-- Can the same execution protocol survive local, process-host, Runtime Pool, and Kubernetes boundaries?
-- Can runtime behavior be changed through configuration instead of rewriting the engine?
-- Can retry, retention, concurrency, admission, and recovery remain policy-driven and auditable?
-- Can domain steps remain pluggable without weakening execution guarantees?
-- Can a completed or recovered run be replay-validated without invoking external side effects again?
+- Can concurrency, retry, retention, admission, and provider pressure be governed?
+- Can the same execution protocol survive local, process, Runtime Pool, and Kubernetes boundaries?
+- Can runtime behavior change through configuration instead of rewriting the engine?
+- Can domain operations remain pluggable without weakening execution guarantees?
 
-Deterministic AI Runtime exists to make those guarantees explicit and testable.
+Deterministic AI Runtime exists to make those guarantees explicit, durable, and testable.
 
-> The runtime does not need to understand the answer. It needs to guarantee what happens to the execution that produced it.
+> **The runtime does not need to understand the answer. It needs to guarantee what happens to the execution that produced it.**
 
 ---
 
-## Current Boundaries
+# Current Boundaries
 
-This repository is an advanced, test-driven execution infrastructure project under active development. It is not presented as a finished commercial platform.
+This repository is an advanced, test-driven execution-infrastructure project under active development. It is not presented as a finished commercial platform.
 
-Implemented now:
+Implemented and validated foundations now include:
 
-- deterministic execution and durable coordination;
+- deterministic DAG execution and durable coordination;
 - HTTP/gRPC process-host execution;
-- existing Kubernetes hosting modes;
-- opt-in process-host Runtime Pools;
-- exact pool routing;
-- targeted child replacement;
-- exact failure isolation;
-- deterministic claimed recovery;
-- deterministic replay, replay ledger, replay trace, and audit foundations;
+- one-runtime-per-Pod Kubernetes hosting;
+- ProcessHostPool reusable capacity;
+- KubernetesPool reusable in-Pod capacity;
+- exact runtime routing;
+- targeted child runtime replacement;
+- exact parent-boundary replacement;
+- durable shared Runtime Pool failure authority;
+- append-only Runtime Lifecycle Journal;
+- claim-protected deterministic recovery;
+- warm-capacity reuse;
+- deterministic replay, replay ledger, replay trace, lifecycle, and recovery-forensics evidence;
 - configuration-driven runtime behavior;
 - policy-driven retry, retention, concurrency, admission, and recovery boundaries;
-- pluggable external step execution;
-- tenant-aware control-plane isolation.
+- pluggable external execution;
+- tenant-aware control-plane isolation;
+- adversarial process-failure and bounded-capacity production proofs.
 
-Still planned:
+Areas for continued hardening include:
 
-- Kubernetes Runtime Pool Pods;
-- Pod-wide suppression by Kubernetes Pod UID;
-- durable distributed pool route, failure, safety, and claim stores;
-- multi-control-plane recovery-claim arbitration;
-- hierarchical warm-runtime / existing-Pod / new-Pod / new-node selection;
 - Redis Cluster key-slot and failover validation;
+- durable multi-control-plane recovery-claim arbitration;
+- larger distributed Kubernetes node-level scale testing;
 - production dashboarding and managed-hosting packaging;
-- public API and SDK polish.
+- public API and SDK polish;
+- broader platform-level performance characterization.
 
-See the [Runtime Pool roadmap](docs/product-roadmap/runtime-pool-roadmap.md) and the [project roadmap](docs/roadmap.md).
+See the [project roadmap](docs/roadmap.md).
 
 ---
 
-## Documentation
+# Documentation
 
-### Architecture and Runtime
+## Architecture and Runtime
 
 - [Architecture overview](docs/ai/architecture-overview.md)
 - [Ecosystem positioning and comparison](docs/comparison-existing-tools.md)
 - [Runtime Pool architecture](docs/ai/runtime-pool-architecture.md)
 - [Runtime Pool failure recovery](docs/ai/runtime-pool-failure-recovery.md)
+- [Runtime Pool failure authority](docs/ai/runtime-pool-failure-authority.md)
+- [Runtime Pool production validation](docs/ai/runtime-pool-production-validation.md)
+- [Runtime Lifecycle Journal](docs/ai/runtime-lifecycle-journal.md)
 - [Runtime control plane](docs/ai/runtime-control-plane.md)
 - [Runtime discovery, registry, and capacity](docs/ai/runtime-discovery-registry-capacity.md)
 - [Runtime instance provider model](docs/ai/runtime-instance-provider-model.md)
@@ -633,7 +837,7 @@ See the [Runtime Pool roadmap](docs/product-roadmap/runtime-pool-roadmap.md) and
 - [gRPC runtime provider](docs/ai/grpc-runtime-provider.md)
 - [Kubernetes Runtime Host Provider](docs/ai/kubernetes-runtime-host-provider.md)
 
-### Recovery, Concurrency, and Evidence
+## Recovery, Concurrency, and Evidence
 
 - [Concurrency hardening and adversarial validation](docs/ai/concurrency-hardening-and-adversarial-validation.md)
 - [Provider-agnostic process-host recovery](docs/ai/provider-agnostic-process-host-recovery.md)
@@ -643,12 +847,11 @@ See the [Runtime Pool roadmap](docs/product-roadmap/runtime-pool-roadmap.md) and
 - [Recovery replay, ledger, and trace proof](docs/ai/recovery-replay-ledger-trace-proof.md)
 - [Testing strategy](docs/ai/testing-strategy.md)
 
-### Product Direction
+## Product Direction
 
 - [Enterprise readiness](docs/enterprise-readiness.md)
 - [Project roadmap](docs/roadmap.md)
 - [Product roadmap index](docs/product-roadmap/index.md)
-- [Runtime Pool roadmap](docs/product-roadmap/runtime-pool-roadmap.md)
 - [Current product foundation](docs/product-roadmap/current-foundation.md)
 - [Managed hosting model](docs/product-roadmap/managed-hosting-model.md)
 
@@ -656,7 +859,7 @@ The complete documentation map is available at [docs/index.md](docs/index.md).
 
 ---
 
-## License
+# License
 
 This project is licensed under the **Business Source License 1.1 (BSL)**.
 

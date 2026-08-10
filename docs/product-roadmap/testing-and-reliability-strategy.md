@@ -703,13 +703,13 @@ Validated final gates:
 | Existing Kubernetes HTTP | P5 green |
 | Existing Kubernetes gRPC | P5 green |
 
-The Kubernetes gates are regression evidence for the existing hosting modes. Kubernetes Runtime Pool behavior remains planned.
+The P5 Kubernetes gates remain regression evidence for the historical one-runtime-per-Pod hosting modes. Dedicated HTTP/gRPC KubernetesPool production scenarios now validate hierarchical child and Pod failure recovery, warm reuse, and bounded capacity.
 
 ---
 
 ## Next Reliability Priorities
 
-1. Kubernetes Runtime Pool Pod lifecycle tests;
+1. Broader multi-node KubernetesPool lifecycle and fault-domain tests;
 2. real Pod deletion with host-wide suppression;
 3. distributed recovery claim durability;
 4. multi-control-plane claim arbitration;

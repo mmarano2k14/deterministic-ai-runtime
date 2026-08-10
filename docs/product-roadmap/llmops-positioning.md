@@ -781,7 +781,7 @@ It should compete on execution reliability.
 
 # Productization Roadmap
 
-## Step 1 — Clarify Positioning
+## Milestone 1 — Clarify Positioning
 
 Improve:
 
@@ -792,7 +792,7 @@ Improve:
 - examples;
 - “what already exists” documentation.
 
-## Step 2 — Expose Runtime Foundations
+## Milestone 2 — Expose Runtime Foundations
 
 Improve:
 
@@ -804,7 +804,7 @@ Improve:
 - retention activity visibility;
 - observability summaries.
 
-## Step 3 — Build Product Interfaces
+## Milestone 3 — Build Product Interfaces
 
 Add:
 
@@ -814,7 +814,7 @@ Add:
 - CLI direction;
 - documentation examples.
 
-## Step 4 — Demonstrate Distributed Execution
+## Milestone 4 — Demonstrate Distributed Execution
 
 Show:
 
@@ -827,7 +827,7 @@ Show:
 - replay/audit after execution;
 - observability across instances.
 
-## Step 5 — Strengthen Enterprise Readiness
+## Milestone 5 — Strengthen Enterprise Readiness
 
 Improve:
 

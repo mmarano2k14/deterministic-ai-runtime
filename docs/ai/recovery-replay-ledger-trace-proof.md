@@ -738,7 +738,7 @@ Do not treat local queue state as durable truth.
 | gRPC process-host replay / ledger / trace recovery proof | Implemented / validated |
 | Production dashboard view | Planned |
 | OpenTelemetry exporter mapping | Planned |
-| Kubernetes crash recovery proof | Planned |
+| Kubernetes crash recovery proof | Implemented / validated, including KubernetesPool hierarchical recovery |
 
 ---
 

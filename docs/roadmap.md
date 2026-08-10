@@ -333,7 +333,7 @@ The detailed technical reference is:
 
 ## Phase 1E — Runtime Pool Architecture and Exact Failure Recovery
 
-Status: **Completed for process-host Runtime Pools**
+Status: **Completed for ProcessHostPool and KubernetesPool correctness foundations**
 
 Delivered:
 
@@ -363,7 +363,7 @@ Kubernetes HTTP P5
 Kubernetes gRPC P5
 ```
 
-The Kubernetes regression validates compatibility with existing modes. Kubernetes Runtime Pool Pods remain a later phase.
+The Kubernetes P5 regression validates compatibility with the historical one-runtime-per-Pod mode. Separate HTTP/gRPC KubernetesPool production proofs validate multi-runtime Pods, hierarchical child/Pod recovery, warm reuse, and bounded capacity.
 
 See:
 
@@ -489,40 +489,44 @@ tenant-aware capacity selection
 replay / ledger / trace proof
 ```
 
-Future Kubernetes work should therefore reuse the same provider scale-out and recovery boundaries already validated locally.
+Broader Kubernetes deployment and operations work must preserve the same provider scale-out and recovery boundaries already validated through real Kubernetes and KubernetesPool scenarios.
 
 ---
 
 ## Phase 4B — Kubernetes Runtime Pool and Hierarchical Capacity
 
-Status: **Planned**
+Status: **Implemented / validated for bounded Runtime Pool correctness; broader multi-node scaling remains ongoing**
 
-This phase extends the completed process-host Runtime Pool foundation into Kubernetes without changing the existing one-runtime-per-Pod mode.
+Delivered capabilities:
 
-Planned deliverables:
+- explicit additive `KubernetesPool` host mode;
+- one in-Pod pool manager with several independent runtime processes;
+- Pod UID / host-incarnation failure-boundary identity;
+- independent `RuntimeInstanceId` children;
+- HTTP and gRPC transport preservation;
+- child runtime kill and replacement while the Pod survives;
+- exact sibling identity preservation;
+- full distinct Pod deletion and replacement;
+- exact five-member Pod recovery in the validated topology;
+- bounded 3-Pod × 5-runtime capacity;
+- warm-runtime and existing-Pod reuse before replacement capacity;
+- two complete warm cycles without intermediate cleanup;
+- replay, ledger, lifecycle, trace, and forensics proof;
+- final deterministic Pod cleanup.
 
-1. new `KubernetesPool` host creation mode;
-2. one Pool Manager per Pod;
-3. several independently registered runtimes per Pod;
-4. `HostId` mapped from Kubernetes Pod UID;
-5. stable pool endpoint per Pod;
-6. atomic suppression of every runtime belonging to a failed Pod UID;
-7. targeted recovery scoped to failed runtime identities;
-8. warm-runtime-first capacity selection;
-9. existing-Pod-before-new-Pod scale-out;
-10. node autoscaling only after Pod capacity is exhausted;
-11. durable distributed recovery claims;
-12. Redis Cluster key-slot and failover validation.
+Remaining infrastructure hardening:
 
-The order is intentional:
+- durable recovery-claim ownership and completion across multiple control planes;
+- Redis Cluster key-slot and failover validation;
+- multi-node and fault-domain stress;
+- cluster autoscaler integration;
+- production deployment packaging and managed operational profiles.
 
-```text
-process pool correctness
-    -> Kubernetes pool lifecycle
-    -> Pod failure proof
-    -> hierarchical capacity
-    -> Redis Cluster compatibility
-```
+See:
+
+- [`ai/runtime-pool-production-validation.md`](ai/runtime-pool-production-validation.md)
+- [`ai/runtime-pool-failure-authority.md`](ai/runtime-pool-failure-authority.md)
+- [`ai/runtime-lifecycle-journal.md`](ai/runtime-lifecycle-journal.md)
 
 ---
 
@@ -785,9 +789,9 @@ All roadmap work should respect these principles:
 | Claimed recovery transitions | Completed |
 | Real process-host final proof | Completed |
 | Existing Process/Kubernetes regression | Completed |
-| Kubernetes Runtime Pool Pod | Planned |
-| Pod-wide failure proof | Planned |
-| Hierarchical capacity selection | Planned |
+| Kubernetes Runtime Pool Pod | Completed / validated over HTTP and gRPC |
+| Pod-wide failure proof | Completed / validated |
+| Bounded runtime/host hierarchical capacity selection | Completed / validated; multi-node expansion ongoing |
 | Redis Cluster compatibility | Planned |
 
 ---
@@ -798,8 +802,8 @@ The current priorities are:
 
 ```text
 Enterprise demo polish
-Process-host recovery documentation
-Recovery / replay / ledger / trace documentation
+Runtime Pool production-proof documentation
+Recovery / replay / ledger / lifecycle / trace documentation
 Observability polish
 Replay and recovery controller/API design
 Road to MLOps platform direction

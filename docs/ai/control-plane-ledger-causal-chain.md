@@ -825,7 +825,7 @@ Do not rely on logs as the only audit proof.
 | Recovery forensics correlation | Implemented / validated |
 | Full UI/dashboard causal-chain view | Planned |
 | OpenTelemetry exporter | Planned |
-| Kubernetes causal-chain proof | Planned |
+| Kubernetes causal-chain proof | Implemented / validated through Kubernetes recovery and Runtime Pool lifecycle evidence |
 | Multi-control-plane leader-election proof | Planned |
 
 ---

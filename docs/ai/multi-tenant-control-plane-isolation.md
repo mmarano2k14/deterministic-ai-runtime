@@ -2,7 +2,7 @@
 
 ## Status
 
-Implemented foundation on branch `feature/multi-tenant-control-plane-isolation`; extended and validated through HTTP process-host runtime scenarios on `feature/control-plane-ledger-tracing`.
+Implemented and validated across tenant-aware shared control-plane execution, HTTP/gRPC process-host scenarios, crash recovery, replay, ledger, trace, and safe-tenant isolation proofs.
 
 This document describes the tenant-aware control-plane and runtime-isolation model added to the deterministic AI runtime. It covers how tenant context flows from MCP to shared runs, admission, registry/capacity filtering, scale-out, dispatch, local runtime execution, crash recovery, forensics, replay, ledger, trace, and finalization.
 

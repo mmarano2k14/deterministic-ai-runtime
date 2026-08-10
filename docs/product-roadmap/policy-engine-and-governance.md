@@ -862,7 +862,7 @@ This will make the policy foundation easier to understand and adopt.
 
 # Productization Roadmap
 
-## Step 1 — Document Policy Foundation
+## Milestone 1 — Document Policy Foundation
 
 Improve:
 
@@ -873,7 +873,7 @@ Improve:
 - ARN-inspired resource examples;
 - policy-by-context examples.
 
-## Step 2 — Expose Policy Decisions
+## Milestone 2 — Expose Policy Decisions
 
 Improve:
 
@@ -883,7 +883,7 @@ Improve:
 - dashboard policy views;
 - diagnostics for denied/throttled decisions.
 
-## Step 3 — Add Policy Examples
+## Milestone 3 — Add Policy Examples
 
 Add examples for:
 
@@ -896,7 +896,7 @@ Add examples for:
 - throttling policy;
 - banking-oriented policy profile direction.
 
-## Step 4 — Add Policy Testing / Simulation Direction
+## Milestone 4 — Add Policy Testing / Simulation Direction
 
 Prepare:
 
@@ -905,7 +905,7 @@ Prepare:
 - policy simulation direction;
 - explain policy result direction.
 
-## Step 5 — Harden Policy Security
+## Milestone 5 — Harden Policy Security
 
 Prepare:
 

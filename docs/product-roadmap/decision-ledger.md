@@ -967,7 +967,7 @@ The correct positioning is:
 
 The Decision Ledger already exists as a foundation. Productization should make it easier to use.
 
-## Step 1 — Event Taxonomy Hardening
+## Milestone 1 — Event Taxonomy Hardening
 
 Improve:
 
@@ -978,7 +978,7 @@ Improve:
 - event versioning direction;
 - standard correlation fields.
 
-## Step 2 — Ledger Query and Inspection
+## Milestone 2 — Ledger Query and Inspection
 
 Improve:
 
@@ -992,7 +992,7 @@ Improve:
 - query by policy decision;
 - query by time range.
 
-## Step 3 — Replay and Audit Integration
+## Milestone 3 — Replay and Audit Integration
 
 Improve:
 
@@ -1004,7 +1004,7 @@ Improve:
 - retention-aware replay;
 - ledger-to-trace correlation.
 
-## Step 4 — MCP and API Exposure
+## Milestone 4 — MCP and API Exposure
 
 Improve:
 
@@ -1016,7 +1016,7 @@ Improve:
 - event filtering;
 - export direction.
 
-## Step 5 — Dashboard Views
+## Milestone 5 — Dashboard Views
 
 Add:
 
@@ -1029,7 +1029,7 @@ Add:
 - runtime instance decision view;
 - correlation explorer.
 
-## Step 6 — Security and Retention Hardening
+## Milestone 6 — Security and Retention Hardening
 
 Improve:
 

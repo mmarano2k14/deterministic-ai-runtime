@@ -1,5 +1,5 @@
 # Architecture Overview
-Status: Implemented architecture foundation / validated with shared controller, MCP, Redis coordination, tenant-aware HTTP/gRPC Process and Kubernetes hosting, opt-in process-host Runtime Pools, exact stable HTTP/gRPC routing, targeted child replacement, exact failure journaling and capacity suppression, deterministic recovery claims, claimed recovery execution, adversarial concurrency, replay, ledger, trace, forensics, and multi-tenant isolation.
+Status: Implemented architecture foundation / validated with shared controller, MCP, Redis coordination, tenant-aware HTTP/gRPC Process and Kubernetes hosting, ProcessHostPool and KubernetesPool warm capacity, hierarchical child and full-boundary recovery, shared durable failure authority, lifecycle history, replay, ledger, trace, forensics, and multi-tenant isolation.
 Status: Implemented architecture foundation / validated with shared controller, MCP, Redis coordination, Redis-backed scale-out request persistence, local runtime pools, local runtime scale-out, fulfilled-run requeue, HTTP pooled and process-host runtime provisioning, gRPC process-host runtime provisioning, Kubernetes Runtime Host Manager provisioning through Fake and Kubernetes SDK clients, Kubernetes Pod/Service readiness, HTTP/gRPC transport preservation, tenant-aware runtime isolation, end-to-end scale-out execution, real process and Kubernetes Pod crash recovery, tenant-isolated recovery reconciliation, runtime recovery forensics, control-plane ledger causal chain evidence, and replay / ledger / trace validation after recovery.
 
 This document provides a high-level overview of the **Deterministic AI Runtime** architecture.
@@ -150,64 +150,42 @@ Redis/Mongo persist state safely.
 
 ## Runtime Pool Hosting Layer
 
-The current architecture includes an opt-in process-host Runtime Pool layer.
+The architecture includes explicit ProcessHostPool and KubernetesPool hosting. Both preserve independent runtime identity inside a larger physical failure boundary.
 
 ```text
 PoolId
-    HostId
-        stable HTTP/gRPC endpoint
-        route registry
-        failure/safety/claim services
-
-        RuntimeInstanceId A1 -> RouteId R1
-        RuntimeInstanceId A2 -> RouteId R2
-        RuntimeInstanceId A3 -> RouteId R3
+    HostId / ProcessHost or Pod incarnation
+        RuntimeInstanceId A1
+        RuntimeInstanceId A2
+        RuntimeInstanceId A3
 ```
 
-The Runtime Pool introduces four explicit boundaries:
+The key invariant is:
 
 ```text
-PoolId
-    = logical reusable capacity group
-
-HostId
-    = immutable process-host incarnation
-      and future Kubernetes Pod UID boundary
-
-RuntimeInstanceId
-    = independently selectable execution capacity
-
-RouteId
-    = immutable route incarnation
+physical failure boundary != execution identity
 ```
 
-The control plane selects an exact runtime instance. The stable endpoint forwards to that exact child.
+A child runtime can fail and be replaced while its parent and healthy siblings survive. A complete ProcessHost or Pod can also fail, in which case only the exact failed membership is suppressed and recovered.
+
+Failure facts are durable through the Runtime Pool Failure Journal; infrastructure history is append-only through the Runtime Lifecycle Journal. Recovery continues to preserve durable `ExecutionId` and `SharedRunId` ownership rather than replaying the entire pool.
+
+The same hierarchical contract is validated across:
 
 ```text
-select A2
-    -> route A2
-    -> invoke A2
-    -> or return explicit failure
+gRPC + ProcessHostPool   PASS
+HTTP + ProcessHostPool   PASS
+gRPC + KubernetesPool    PASS
+HTTP + KubernetesPool    PASS
 ```
-
-The router does not select a sibling and does not recover work.
-
-When A1 fails, the lifecycle order is:
-
-```text
-record A1 failure
-    -> suppress A1
-    -> remove A1 route
-    -> publish completion
-    -> start A4
-```
-
-A2 and A3 keep their runtime and route identities. A4 receives fresh identities.
 
 See:
 
 - [Runtime Pool Architecture](runtime-pool-architecture.md)
 - [Runtime Pool Failure Recovery](runtime-pool-failure-recovery.md)
+- [Runtime Pool Failure Authority](runtime-pool-failure-authority.md)
+- [Runtime Pool Production Validation](runtime-pool-production-validation.md)
+- [Durable Runtime Lifecycle Journal](runtime-lifecycle-journal.md)
 
 ---
 
@@ -1497,9 +1475,9 @@ Plugins remain responsible for domain-specific execution.
 | Independent `PoolId` / `HostId` / `RuntimeInstanceId` identity | Implemented / validated |
 | Stable HTTP and gRPC pool routing | Implemented / validated |
 | Immutable route incarnation and forwarding leases | Implemented / validated |
-| Exact runtime failure journal and capacity suppression | Implemented / validated |
-| Deterministic assigned-work claim and claimed recovery | Implemented / validated |
-| Kubernetes Runtime Pool Pod | Planned |
+| Shared durable Runtime Pool failure journal and exact capacity suppression | Implemented / validated |
+| Deterministic assigned-work claim and exact child/full-boundary recovery | Implemented / validated |
+| Kubernetes Runtime Pool Pod with multiple independent child runtimes | Implemented / validated over HTTP and gRPC |
 
 ---
 

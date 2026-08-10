@@ -1000,7 +1000,7 @@ This section is here so future-you can remember the runtime behavior more concre
 
 Imagine a job matching execution.
 
-### Step 1 — retrieval
+### Milestone 1 — retrieval
 The step reads:
 - candidate data from runtime state
 - job data from SQL
@@ -1020,7 +1020,7 @@ and then packages them into:
 RagRetrievalBatch
 ```
 
-### Step 2 — composition
+### Milestone 2 — composition
 The composer reads the batch.
 
 If the chosen mode is compact:
@@ -1033,7 +1033,7 @@ If the chosen mode is expert:
 - keeps more metadata
 - builds a richer typed context
 
-### Step 3 — prompt
+### Milestone 3 — prompt
 The prompt step receives either:
 - a compact context object
 - an expert context object

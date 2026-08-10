@@ -895,12 +895,7 @@ If one of these checkpoints fails, the runtime should fail loudly instead of exe
 
 Validated areas include RBAC context to durable snapshot propagation, tenant-aware shared queue dispatch, tenant-aware admission, Shared/Dedicated/Hybrid visibility rules, Redis scale-out request tenant field persistence, local scaler prefix-based counting, runtime local queue snapshot requirement, execution control finalization behavior, enterprise demo direct runtime snapshot propagation, and full test suite validation.
 
-Current branch validation reached:
-
-```text
-1036 tests passing
-enterprise runtime demo passing
-```
+Validation spans RBAC context propagation, tenant-aware registry and capacity filtering, shared/dedicated/hybrid isolation, scale-out context propagation, crash recovery, safe-tenant non-impact, replay, ledger, trace, and production runtime scenarios.
 
 ---
 

@@ -1,6 +1,6 @@
 # Kubernetes Runtime Host Provider
 
-Status: Implemented on the `feature/kubernetes-runtime-host-provider` branch for Kubernetes runtime host lifecycle, Kubernetes SDK Pod/Service creation, deterministic readiness, runtime registry/capacity publication, HTTP and gRPC transport preservation, direct and shared-Gateway endpoint exposure, host termination, and provider-agnostic runtime crash recovery integration. Fake-client scenarios validate lifecycle composition without a real cluster; Kubernetes SDK scenarios validate real cluster resources and transport boundaries.
+Status: Implemented and validated for both the historical one-runtime-per-Pod Kubernetes mode and the additive KubernetesPool mode with several independent runtime processes per Pod, HTTP/gRPC transport preservation, layered readiness, child replacement, full Pod failure recovery, bounded capacity, warm reuse, replay, ledger, lifecycle, and forensics evidence.
 
 This document is the canonical architecture reference for Kubernetes-hosted runtime instances in the Deterministic AI Runtime.
 
@@ -16,6 +16,8 @@ Related documents:
 - [Provider-Agnostic Process-Host Recovery](provider-agnostic-process-host-recovery.md)
 - [Multi-Tenant Runtime Crash Isolation](multi-tenant-runtime-crash-isolation.md)
 - [Testing Strategy](testing-strategy.md)
+- [Runtime Pool Architecture](runtime-pool-architecture.md)
+- [Runtime Pool Production Validation](runtime-pool-production-validation.md)
 
 ---
 
@@ -790,6 +792,56 @@ Operational prerequisites:
 - gRPC paths must preserve HTTP/2;
 - Gateway API CRDs and a compatible controller must exist before Gateway mode can become ready;
 - `kubectl` must be available when a port-forward endpoint manager is used.
+
+---
+
+## KubernetesPool Mode
+
+KubernetesPool is an additive host mode and does not change the historical Kubernetes semantics.
+
+```text
+Kubernetes
+    -> one RuntimeInstanceOnly runtime per Pod/Service
+
+KubernetesPool
+    -> one Pod failure boundary
+    -> several independent child runtime processes
+```
+
+Inside a KubernetesPool Pod, every child owns an independent `RuntimeInstanceId`. The Pod UID identifies the physical failure boundary, not the execution identity.
+
+The in-Pod pool manager is responsible for child process lifecycle and bounded membership. Kubernetes remains responsible for the outer Pod lifecycle. HTTP or gRPC remains responsible for runtime command transport.
+
+### Child failure
+
+A child can be killed after durable DAG progress while:
+
+- the Pod remains alive;
+- four configured siblings remain alive in the validated five-runtime topology;
+- the affected run resumes with the same `ExecutionId`;
+- replacement child membership restores the configured runtime count.
+
+### Pod failure
+
+A distinct fully busy Pod can be force-deleted after child recovery has converged.
+
+The control plane then:
+
+- identifies the exact five-runtime failed membership in the validated topology;
+- preserves the other two Pods;
+- creates replacement Pod capacity;
+- recovers exactly five affected runs;
+- returns to three Pods and fifteen active runtimes.
+
+### Warm reuse
+
+The final production scenarios run two complete cycles without intermediate cleanup. The second cycle starts with `ColdStart=false`, reusing the repaired Pod and runtime topology produced by the first cycle.
+
+### Capacity observation
+
+Historical snapshots for an intentionally failed child are not counted as active capacity during replacement convergence. Active capacity is measured from valid, selectable runtime membership rather than from raw historical registry visibility.
+
+See [Runtime Pool Production Validation](runtime-pool-production-validation.md).
 
 ---
 

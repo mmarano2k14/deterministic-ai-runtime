@@ -178,7 +178,7 @@ The project already contains the foundation for several major product capabiliti
 
 ## Runtime Pool Foundation
 
-The process-host Runtime Pool is now an implemented platform foundation.
+ProcessHostPool and KubernetesPool are implemented platform foundations.
 
 Completed capabilities include:
 
@@ -202,7 +202,7 @@ Kubernetes HTTP P5
 Kubernetes gRPC P5
 ```
 
-The existing Kubernetes modes remain one runtime per Pod. Kubernetes Runtime Pool Pods, Pod-wide failure suppression, hierarchical capacity selection, and Redis Cluster compatibility remain roadmap work.
+The historical Kubernetes mode remains one runtime per Pod. KubernetesPool, Pod-wide failure recovery, bounded hierarchical runtime/Pod capacity, and warm reuse are implemented and validated. Remaining roadmap work focuses on distributed multi-control-plane recovery ownership, Redis Cluster compatibility, multi-node scale, and managed-hosting operations.
 
 See [`runtime-pool-roadmap.md`](runtime-pool-roadmap.md).
 

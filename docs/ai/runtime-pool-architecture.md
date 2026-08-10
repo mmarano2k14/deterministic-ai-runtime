@@ -1,212 +1,203 @@
 # Runtime Pool Architecture
 
-**Status:** Process-host Runtime Pool implemented and validated for exact HTTP and gRPC routing, real child-process lifecycle, targeted replacement, failure isolation, and opt-in composition. Kubernetes Runtime Pool Pods remain roadmap work; the existing one-runtime-per-Pod Kubernetes modes are unchanged.
+**Status:** Implemented and end-to-end validated for ProcessHostPool and KubernetesPool over HTTP and gRPC. Historical Process and one-runtime-per-Pod Kubernetes hosting remain available as separate compatibility modes.
 
-The Runtime Pool architecture introduces a hosting layer in which one stable host endpoint can manage several independently registered runtime instances without collapsing their identities into the host process.
-
-The design is intentionally additive. Existing local, Process, Attach, and Kubernetes hosting modes remain valid and do not implicitly opt into Runtime Pool behavior.
+The Runtime Pool architecture provides reusable warm execution capacity without collapsing a runtime process into the ProcessHost or Kubernetes Pod that happens to contain it.
 
 ---
 
 ## Executive Summary
 
-A Runtime Pool separates four concepts that are often incorrectly treated as one:
+A Runtime Pool separates five concerns:
 
 | Concept | Responsibility |
 |---|---|
 | `PoolId` | Logical reusable capacity group. |
-| `HostId` | Immutable incarnation of the process host or, in the future, Kubernetes Pod. |
-| `RuntimeInstanceId` | Independently registered, selectable execution capacity. |
-| `RouteId` | Immutable transport-route incarnation for one runtime instance. |
+| `HostId` | Immutable incarnation of one physical failure boundary. |
+| `RuntimeInstanceId` | Independently registered and selectable execution capacity. |
+| `RouteId` | Immutable transport-route incarnation for one runtime. |
+| Failure scope | Exact runtime failure or complete host-boundary failure. |
 
-The control plane selects an exact `RuntimeInstanceId`. A stable pool endpoint receives the command and forwards it to the exact child route.
+The control plane selects an exact `RuntimeInstanceId`. Transport then reaches that exact runtime or fails explicitly.
 
 ```text
 Control Plane
-    selects RuntimeInstanceId = A2
+    selects RuntimeInstanceId
             ↓
-stable Runtime Pool endpoint
+provider / pool transport boundary
             ↓
-exact route registry lookup
+exact route / exact runtime command path
             ↓
-A2 child endpoint
+selected runtime only
 ```
 
-The router does not choose another runtime, retry against a sibling, or perform recovery. Capacity selection remains a control-plane responsibility. Recovery remains a lifecycle and execution-recovery responsibility.
+The transport layer is not a hidden scheduler. It does not silently choose a healthy sibling when the selected runtime fails.
 
 ---
 
-## Why a Runtime Pool Exists
+## Why Runtime Pools Exist
 
-A production deployment should not require one tenant, one run, or one logical runtime instance to map permanently to one operating-system process or one Kubernetes Pod.
+A production runtime should not permanently map a tenant, request, workflow, or execution to one operating-system process or one Kubernetes Pod.
 
-A reusable Runtime Pool provides:
+Reusable Runtime Pools provide:
 
 - warm capacity;
-- bounded process creation;
+- bounded process and Pod creation;
 - independently addressable runtime instances;
-- targeted replacement after child failure;
-- stable transport endpoints;
-- exact routing;
-- graceful draining;
-- future hierarchical selection across runtime, Pod, and node boundaries.
+- exact runtime-level failure isolation;
+- exact full-boundary failure recovery;
+- stable HTTP and gRPC provider behavior;
+- deterministic capacity reuse;
+- explicit backpressure;
+- recovery without losing durable execution identity;
+- a scalable path from local ProcessHosts to Kubernetes Pods.
 
-The current process-host implementation proves this model with real `RuntimeInstanceOnly` child processes.
+---
+
+## Supported Hosting Topologies
+
+### ProcessHostPool
+
+```text
+Logical Pool
+    |
+    +-- ProcessHost A / HostId A
+    |      +-- Runtime A1
+    |      +-- Runtime A2
+    |      +-- Runtime A3
+    |      +-- ...
+    |
+    +-- ProcessHost B / HostId B
+           +-- Runtime B1
+           +-- Runtime B2
+           +-- Runtime B3
+```
+
+Each parent ProcessHost is an external operating-system process. Each child runtime is a separate operating-system process with its own `RuntimeInstanceId`.
+
+A child crash does not imply a parent crash. A parent crash destroys the exact child membership of that parent only.
+
+### KubernetesPool
+
+```text
+Logical Pool
+    |
+    +-- Pod A / PodUid A / HostId A
+    |      +-- Runtime A1
+    |      +-- Runtime A2
+    |      +-- Runtime A3
+    |      +-- ...
+    |
+    +-- Pod B / PodUid B / HostId B
+           +-- Runtime B1
+           +-- Runtime B2
+           +-- Runtime B3
+```
+
+The Pod is a failure boundary, not an execution identity. Each in-Pod runtime remains independently registered, selectable, recoverable, and replaceable.
+
+The historical Kubernetes mode remains distinct:
+
+```text
+Kubernetes
+    -> one RuntimeInstanceOnly runtime per Pod/Service
+
+KubernetesPool
+    -> several independent runtime processes per Pod
+```
 
 ---
 
 ## Architectural Invariants
 
-The architecture is built around the following non-negotiable invariants.
-
 ### Identity is first-class
 
-Correctness must use typed fields, not metadata parsing.
+Correctness relies on typed identities:
 
 ```text
 PoolId
 HostId
 RuntimeInstanceId
 RouteId
+TenantId
+FailureId
+ExecutionId
+SharedRunId
+LocalRunId
 ```
 
-Diagnostic metadata may duplicate those values for logs and telemetry, but it is never the authority for routing, lifecycle, or recovery.
+Diagnostic metadata may duplicate these values but never becomes their authority.
 
 ### Host identity is not runtime identity
 
 ```text
 HostId != RuntimeInstanceId
+PodUid  != RuntimeInstanceId
 ```
 
-A host can contain several independently registered runtime instances. The host endpoint is transport infrastructure. The runtime instance is selectable execution capacity.
+A ProcessHost or Pod can contain several independently selectable runtimes.
 
 ### Routing is exact
 
 ```text
-requested A2
-    -> A2
+requested runtime A2
+    -> invoke A2
     -> or explicit failure
 ```
 
-There is no sibling fallback inside the transport router.
-
-### Lifecycle and routing are separate
-
-The pool manager owns child creation, readiness, draining, termination, and replacement.
-
-The route registry owns exact transport reachability.
-
-The transport router owns exact forwarding after route acquisition.
+No sibling fallback is permitted inside the transport router.
 
 ### Recovery is not routing
 
-A transport failure may reveal that a runtime is unsafe, but the router does not recover work or choose replacement capacity.
+Transport failure can reveal that selected capacity is unsafe. Recovery remains a lifecycle and execution-recovery responsibility.
 
----
-
-## Process-Host Topology
-
-The implemented process-host topology is:
+### Current state and durable history are separate
 
 ```text
-Process Pool Host
-    PoolId = pool-01
-    HostId = host-incarnation-01
+Runtime Registry
+    = current runtime state and capacity
 
-    stable HTTP endpoint
-    stable gRPC endpoint
-    route registry
-    failure journal
-    capacity safety registry
-    recovery claim store
+Runtime Pool Failure Journal
+    = durable correctness authority for failure facts
 
-    child A1
-        RuntimeInstanceId = runtime-1
-        RouteId = route-1
-        transport endpoint = child endpoint 1
+Runtime Lifecycle Journal
+    = append-only infrastructure and placement history
 
-    child A2
-        RuntimeInstanceId = runtime-2
-        RouteId = route-2
-        transport endpoint = child endpoint 2
+Decision Ledger
+    = runtime and control-plane decisions
 
-    child A3
-        RuntimeInstanceId = runtime-3
-        RouteId = route-3
-        transport endpoint = child endpoint 3
+Recovery Forensics
+    = per-work-item recovery evidence
 ```
 
-Each child is a real external `RuntimeInstanceOnly` process.
+These stores are correlated through first-class identities rather than physically merged.
 
 ---
 
-## Identity Model
+## Runtime Pool Manager Responsibilities
 
-### `PoolId`
+The pool manager owns physical child lifecycle:
 
-`PoolId` identifies the logical pool across the lifetime of one pool composition.
+- create child runtime processes;
+- assign independent runtime identities;
+- allocate transport endpoints;
+- wait for readiness;
+- publish membership;
+- maintain bounded capacity;
+- drain requested children;
+- observe unexpected exits;
+- replace failed children;
+- stop children during host shutdown.
 
-It groups children that belong to the same reusable capacity boundary.
+For KubernetesPool, the Pod-level manager owns the in-Pod child process set while Kubernetes remains the outer Pod lifecycle provider.
 
-### `HostId`
-
-`HostId` identifies one immutable host incarnation.
-
-For the current process-host implementation, it is created when the pool manager starts.
-
-For the future Kubernetes Runtime Pool implementation, it will map to the Kubernetes Pod UID at the provider boundary.
-
-A restarted process or replaced Pod must receive a new `HostId`.
-
-### `RuntimeInstanceId`
-
-`RuntimeInstanceId` identifies independently selectable execution capacity.
-
-It remains distinct from:
-
-- the pool;
-- the process-host identity;
-- the stable transport endpoint;
-- the provider name;
-- the tenant identity.
-
-### `RouteId`
-
-`RouteId` identifies one immutable route incarnation.
-
-If A1 fails and replacement A4 is created:
-
-```text
-A1 RuntimeInstanceId != A4 RuntimeInstanceId
-A1 RouteId           != A4 RouteId
-```
-
-A stale route mutation cannot affect a newer route incarnation.
-
----
-
-## Runtime Pool Manager
-
-The process-host Runtime Pool Manager is responsible for:
-
-- creating real child processes;
-- assigning independent runtime identities;
-- allocating child transport endpoints;
-- waiting for runtime readiness;
-- publishing membership;
-- maintaining minimum capacity;
-- draining requested children;
-- observing unexpected exits;
-- replacing only the failed child;
-- stopping all children during host shutdown.
-
-The manager does not route commands. It exposes lifecycle state to the routing and failure layers.
+The manager does not choose which runtime should execute a run.
 
 ---
 
 ## Readiness Boundary
 
-A child is not exposed as ready capacity until all required readiness conditions are satisfied.
+A child runtime is not usable capacity merely because its process exists.
 
 ```text
 process started
@@ -215,20 +206,26 @@ runtime registration observed
     ↓
 capacity publication observed
     ↓
-transport route registered
+transport path ready
     ↓
-child exposed as ready
+runtime exposed as selectable capacity
 ```
 
-For gRPC children, the typed process start plan projects HTTP/2 Kestrel settings to the exact allocated endpoint.
+For KubernetesPool there is an additional outer boundary:
 
-HTTP children remain on their existing HTTP configuration.
+```text
+Pod ready
+    !=
+runtime command path ready
+```
+
+The final pool capacity is derived from independently ready runtimes, not from Pod phase alone.
 
 ---
 
-## Exact Route Registry
+## Exact Route Authority
 
-The route registry maps:
+ProcessHostPool uses exact route incarnations to reach a selected child runtime.
 
 ```text
 PoolId
@@ -240,305 +237,274 @@ TransportName
     -> RouteStatus
 ```
 
-Supported resolution outcomes include:
+The route registry protects against stale mutation and supports exact draining and forwarding leases.
 
-- `Resolved`;
-- `NotFound`;
-- `PoolMismatch`;
-- `HostMismatch`;
-- `TransportMismatch`;
-- `Draining`;
-- `Suppressed`.
+For KubernetesPool, runtime transport still remains HTTP or gRPC. Kubernetes provides lifecycle and network/service boundaries; it does not replace provider identity.
 
-The registry provides:
+---
 
-- idempotent registration of identical authority;
-- conflict detection for incompatible rebinding;
-- immutable `RouteId` protection;
-- exact route removal;
-- exact route draining;
-- host-local route listing;
-- forwarding leases.
+## Stable HTTP and gRPC Behavior
+
+HTTP and gRPC use the same runtime correctness contract.
+
+### HTTP
+
+The ProcessHostPool stable endpoint forwards an existing runtime command envelope to the exact child runtime.
+
+### gRPC
+
+The ProcessHostPool stable endpoint reuses the existing generated runtime command service and validates exact response identity.
+
+### KubernetesPool
+
+KubernetesPool preserves the configured HTTP or gRPC provider semantics through the Pod/Gateway transport path. The Pod itself never becomes the command provider.
 
 ---
 
 ## Forwarding Leases and Draining
 
-A forwarding lease closes the race between route resolution and graceful shutdown.
+A forwarding lease closes the race between route resolution and shutdown.
 
 ```text
-resolve A2
+resolve runtime
     ↓
-acquire A2 forwarding lease
+acquire exact forwarding lease
     ↓
-invoke A2 transport
+recheck safety
+    ↓
+invoke exact child transport
     ↓
 release lease
 ```
 
-When A2 begins draining:
+When a runtime drains:
 
 - new forwarding leases are rejected;
-- active forwarding operations are allowed to finish;
-- the pool manager waits for route drain completion;
-- only A2 is stopped;
+- active forwarding operations finish;
+- the route drains deterministically;
+- the runtime can then stop;
 - sibling routes remain independent.
 
-The router also rechecks capacity suppression after lease acquisition. This closes the race in which a runtime becomes unsafe after lookup but before transport invocation.
+---
+
+## Child Runtime Failure
+
+A child runtime failure is scoped to one runtime identity.
+
+```text
+child exits unexpectedly
+    ↓
+record exact durable FailureId
+    ↓
+mark exact runtime unsafe
+    ↓
+remove / suppress exact route or capacity
+    ↓
+enumerate exact assigned work
+    ↓
+claim recovery authority
+    ↓
+resume or redispatch exact work
+    ↓
+replace child membership
+```
+
+The parent ProcessHost or Pod remains alive and healthy siblings retain their identities.
 
 ---
 
-## Stable HTTP Endpoint
+## Full Boundary Failure
 
-The stable HTTP endpoint is:
-
-```text
-POST /runtime-pool/commands
-```
-
-It reuses the existing:
-
-- `AiRuntimeInstanceCommandRequest`;
-- `AiRuntimeInstanceCommandResult`;
-- runtime command operations;
-- queue-control contracts.
-
-The endpoint resolves the local `PoolId` and `HostId` from the pool manager and accepts the target `RuntimeInstanceId` from the existing command request.
-
-It forwards to the exact child endpoint:
+A parent ProcessHost or Kubernetes Pod failure is a different scope.
 
 ```text
-POST /runtime-instance/commands
+HostId / PodUid disappears
+    ↓
+identify exact failed membership
+    ↓
+suppress all runtimes from that boundary
+    ↓
+leave sibling boundaries selectable
+    ↓
+replace failed host boundary
+    ↓
+recover only work owned by failed runtimes
 ```
 
-A response claiming another `RuntimeInstanceId` is rejected.
+The boundary identity never replaces the child execution identities in the run index or durable DAG state.
 
 ---
 
-## Stable gRPC Endpoint
+## Warm Reuse and Bounded Capacity
 
-The stable gRPC endpoint reuses the existing generated service:
+Runtime Pools reuse converged capacity before creating replacement boundaries.
+
+A validated 3 × 5 topology means:
 
 ```text
-AiRuntimeInstanceCommandGrpc.ExecuteCommand
+3 ProcessHosts or Pods
+× 5 runtimes per boundary
+= 15 active runtime slots
 ```
 
-It also reuses the existing JSON envelopes:
+Production validation submits full-capacity waves, injects failures while work is live, waits for exact recovery and convergence, then reuses the same warm pool for another cycle without intermediate cleanup.
 
-- `AiRuntimeInstanceGrpcCommandRequest`;
-- `AiRuntimeInstanceGrpcCommandResponse`.
-
-No second `.proto` contract is introduced.
-
-The gRPC router creates a client for the exact child endpoint, forwards the existing command envelope, validates the response identity, and disposes the child channel deterministically.
+The transport router remains exact. Capacity selection and scale-out stay in the control plane.
 
 ---
 
-## No Silent Fallback
+## Hierarchical Capacity Selection
 
-The stable endpoint is not a scheduler.
-
-```text
-A2 requested
-    -> A2 route resolved
-    -> A2 transport invoked
-```
-
-The following behavior is explicitly forbidden:
+The runtime can reason about capacity hierarchically:
 
 ```text
-A2 unavailable
-    -> silently send to A1, A3, or A4
+ready runtime slot
+    inside
+existing ProcessHost / Pod
+    inside
+bounded logical Pool
+    inside
+cluster / machine capacity
 ```
 
-Instead, the caller receives an explicit structured failure such as:
+This enables a production preference order such as:
 
 ```text
-runtime-pool-route-not-found
-runtime-pool-route-draining
-runtime-pool-capacity-suppressed
-runtime-pool-http-forwarding-failed
-runtime-pool-grpc-forwarding-failed
+reuse ready warm runtime capacity
+    ↓
+reuse available capacity in an existing host boundary
+    ↓
+create another bounded host boundary when allowed
+    ↓
+let the infrastructure layer add node capacity when required
 ```
 
-This preserves a clean boundary between selection, routing, and recovery.
+The local-machine production proofs validate the first three levels within configured bounds. Cluster node autoscaling remains an infrastructure concern outside the transport router.
 
 ---
 
-## Targeted Child Replacement
+## Durable Failure and Lifecycle Evidence
 
-When A1 exits unexpectedly:
+Runtime Pool correctness now distinguishes failure authority from infrastructure history.
+
+### Runtime Pool Failure Journal
+
+Durable MongoDB failure facts contain exact identities such as:
 
 ```text
-A1 exits
-    ↓
-record exact A1 failure
-    ↓
-suppress exact A1 capacity
-    ↓
-remove exact A1 route
-    ↓
-publish completion to pool manager
-    ↓
-start replacement A4
+FailureId
+Scope
+PoolId
+HostId
+RuntimeInstanceId
+RouteId
+ObservedAtUtc
 ```
 
-A2 and A3 keep:
+The same durable authority can be observed by an external parent ProcessHost and by the control plane.
 
-- the same `RuntimeInstanceId`;
-- the same `RouteId`;
-- the same `PoolId`;
-- the same `HostId`;
-- independent routability.
+### Runtime Lifecycle Journal
 
-A4 receives:
+The append-only lifecycle journal records creation, registration, readiness, failure, suppression, deletion, replacement, and run placement history.
 
-- a new `RuntimeInstanceId`;
-- a new `RouteId`;
-- the same logical `PoolId`;
-- the same current `HostId`.
+The same incident identity binds the failure fact and historical audit trail.
+
+See:
+
+- [Runtime Pool Failure Authority](runtime-pool-failure-authority.md)
+- [Durable Runtime Lifecycle Journal](runtime-lifecycle-journal.md)
 
 ---
 
 ## Dependency Injection and Compatibility
 
-The Runtime Pool is opt-in through:
-
-```text
-AddAiRuntimeProcessPool(...)
-```
-
-The composition registers the pool manager, route registry, HTTP and gRPC routing, failure journal, capacity safety, assigned-work enumeration, recovery claims, and claimed recovery executor.
-
-Existing modes remain unchanged:
+Runtime Pool composition is opt-in and does not reinterpret historical modes.
 
 ```text
 Fixture
 Process
 Kubernetes
 Attach
+ProcessHostPool / ProcessPool composition
+KubernetesPool
 ```
 
-The existing Kubernetes mode continues to mean one `RuntimeInstanceOnly` runtime per Pod/Service.
-
-The future Kubernetes Runtime Pool will be a new mode rather than a semantic rewrite of the existing mode.
+The exact configuration surface depends on the host composition, but the architectural invariant is stable: Runtime Pool behavior must be explicitly selected.
 
 ---
 
-## Current Validation Evidence
+## End-to-End Validation Matrix
 
-The Runtime Pool foundation has been validated through:
-
-- real external `RuntimeInstanceOnly` child processes;
-- three-child initial capacity;
-- real operating-system kill of A1;
-- targeted A4 replacement;
-- A2/A3 identity and route preservation;
-- exact HTTP stable-endpoint routing;
-- exact gRPC stable-endpoint routing;
-- route-drain concurrency tests;
-- stale route mutation protection;
-- response identity validation;
-- exact failure journaling;
-- exact capacity suppression;
-- exact assigned-work enumeration;
-- deterministic claim arbitration;
-- claimed recovery transition execution.
-
-Regression gates passed after the Runtime Pool work:
+The same hierarchical failure contract is validated across:
 
 ```text
-historical Process HTTP: P10
-historical Process gRPC: P10
-existing Kubernetes HTTP mode: P5
-existing Kubernetes gRPC mode: P5
+gRPC + ProcessHostPool   PASS
+HTTP + ProcessHostPool   PASS
+gRPC + KubernetesPool    PASS
+HTTP + KubernetesPool    PASS
 ```
 
-These regressions demonstrate that the opt-in Runtime Pool did not replace or break the historical hosting modes.
+Each final scenario uses:
+
+```text
+3 failure boundaries
+5 runtimes per boundary
+15 active runtimes
+5 full-capacity waves per cycle
+75 DAGs per cycle
+2 warm cycles
+150 DAGs total
+50 logical steps per DAG
+7500 logical steps total
+2 child runtime crashes
+2 full-boundary crashes
+12 recovered runs
+```
+
+Across all four final scenarios:
+
+```text
+600 submitted DAGs
+600 completed DAGs
+30000 logical steps
+8 child runtime crashes
+8 full-boundary crashes
+48 recovered runs
+600 replay proofs
+0 lost runs
+0 failed runs
+0 duplicate dispatch
+0 configured-capacity violations
+```
+
+See [Runtime Pool Production Validation](runtime-pool-production-validation.md) for the proof contract and evidence boundaries.
 
 ---
 
 ## Current Boundaries
 
-The current implementation is intentionally scoped.
+The implemented Runtime Pool foundation is intentionally explicit about what remains outside the current proof:
 
-- Process-host Runtime Pool composition is implemented.
-- Failure journal, capacity safety registry, and recovery claim store are local in-memory components.
-- Stable HTTP and gRPC routes are implemented.
-- Real process failure and replacement are implemented.
-- Exact recovery orchestration is implemented over existing recovery interfaces.
-- Kubernetes Runtime Pool Pods are not implemented.
-- Host-wide suppression is reserved for the future Pod UID boundary.
-- Distributed claim durability across multiple control planes remains roadmap work.
-- Redis Cluster key-slot strategy remains roadmap work.
-
----
-
-## Kubernetes Runtime Pool Direction
-
-The planned Kubernetes topology is:
-
-```text
-Kubernetes cluster
-    node
-        Pod / HostId = PodUid-01
-            RuntimeInstanceId A1
-            RuntimeInstanceId A2
-            RuntimeInstanceId A3
-
-        Pod / HostId = PodUid-02
-            RuntimeInstanceId B1
-            RuntimeInstanceId B2
-```
-
-A child runtime failure suppresses one `RuntimeInstanceId`.
-
-A Pod failure suppresses every `RuntimeInstanceId` whose `HostId` matches the failed Pod UID.
-
-The current one-runtime-per-Pod mode remains available for workloads that prefer that isolation boundary.
-
----
-
-## Hierarchical Capacity Direction
-
-Future capacity selection is expected to follow this hierarchy:
-
-```text
-1. ready warm runtime in an existing pool host
-2. available capacity in an existing Pod
-3. create a new Runtime Pool Pod
-4. allow cluster node autoscaling when necessary
-```
-
-Selection remains outside the transport router.
-
----
-
-## Redis Cluster Direction
-
-Redis Cluster compatibility requires explicit key-slot design.
-
-Future work must define:
-
-- which atomic state groups share a hash slot;
-- which Lua operations remain single-slot;
-- tenant or cell partitioning;
-- failover behavior;
-- recovery claim durability;
-- route and host state durability;
-- multi-control-plane ownership.
-
-This work follows Kubernetes Runtime Pool lifecycle validation.
+- durable failure facts are shared through MongoDB;
+- runtime lifecycle history is durable in MongoDB;
+- current registry/capacity remains a current-state concern;
+- recovery claim coordination is exact for the validated scenarios, but a fully distributed multi-control-plane durable claim/completion protocol remains future hardening;
+- Redis Cluster key-slot and failover validation remains future work;
+- cluster node autoscaling/HPA is infrastructure integration, not a completed runtime correctness proof;
+- production dashboard and managed-hosting control surfaces remain productization work.
 
 ---
 
 ## Related Documents
 
+- [Runtime Pool Identity Model](runtime-pool-identity-model.md)
 - [Runtime Pool Failure Recovery](runtime-pool-failure-recovery.md)
+- [Runtime Pool Failure Authority](runtime-pool-failure-authority.md)
+- [Runtime Pool Production Validation](runtime-pool-production-validation.md)
+- [Durable Runtime Lifecycle Journal](runtime-lifecycle-journal.md)
 - [Architecture Overview](architecture-overview.md)
 - [Runtime Instance Provider Model](runtime-instance-provider-model.md)
 - [Runtime Discovery, Registry, and Capacity](runtime-discovery-registry-capacity.md)
-- [Provider-Agnostic Process-Host Recovery](provider-agnostic-process-host-recovery.md)
-- [Runtime Process Crash Recovery](runtime-process-crash-recovery.md)
+- [Kubernetes Runtime Host Provider](kubernetes-runtime-host-provider.md)
 - [Testing Strategy](testing-strategy.md)
-- [Runtime Pool Product Roadmap](../product-roadmap/runtime-pool-roadmap.md)
+- [Runtime Pool Delivery Status](../product-roadmap/runtime-pool-roadmap.md)

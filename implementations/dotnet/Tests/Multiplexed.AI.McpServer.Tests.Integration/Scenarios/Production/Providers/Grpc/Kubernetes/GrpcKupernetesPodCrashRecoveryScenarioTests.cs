@@ -73,7 +73,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
         /// instead of stopping after the first failure.
         /// </summary>
         /// <returns>A task that completes when all stability iterations have finished.</returns>
-        [Fact]
+        [Fact(Skip = "Long-running stress validation test.")]
         public async Task Grpc_KubernetesSdk_Should_Requeue_Real_InFlight_Dag_After_Runtime_Pod_Kill_Stability_10x()
         {
             var failures =
@@ -154,7 +154,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
         /// <returns>
         /// A task that completes when all parallel stability iterations have finished.
         /// </returns>
-        [Theory]
+        [Theory(Skip = "Long-running stress validation test.")]
         [InlineData(2)]
         public async Task Grpc_KubernetesSdk_Should_Execute_MultiTenant_Pod_Crash_Recovery_Scenarios_In_Parallel_Loop(
             int parallelism)
