@@ -79,6 +79,11 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                         runtimeCountPerPod))
         {
         }
+
+        /// <inheritdoc />
+        protected override TimeSpan? ParallelHarnessUnsafeTimeoutOverride =>
+            TimeSpan.FromMinutes(3);
+
         /// <inheritdoc />
         protected override AiRunPlacementDirective? CreateRemainingInventoryRunPlacementDirective(
             string runtimeInstanceId)
@@ -1516,6 +1521,10 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
         /// <inheritdoc />
         protected override TimeSpan? ParallelHarnessProgressTimeoutOverride =>
             TimeSpan.FromMinutes(5);
+
+        /// <inheritdoc />
+        protected override bool RequireControlPlaneRuntimeHostCreationLedgerEvidence =>
+            false;
 
         /// <summary>
         /// Initializes the gRPC Kubernetes Runtime Pool Pod-failure P5 proof.

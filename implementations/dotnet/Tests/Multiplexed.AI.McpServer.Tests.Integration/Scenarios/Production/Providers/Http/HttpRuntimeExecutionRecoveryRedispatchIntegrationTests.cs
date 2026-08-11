@@ -188,6 +188,18 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             this.output.WriteLine(
                 $"[HTTP RECOVERY REDISPATCH] First HTTP dispatch observed and in-flight execution seeded. SharedRunId='{sharedRunId}', FailedRuntimeInstanceId='{failedRuntimeInstanceId}', LocalRunId='{failedLocalRunId}', ExecutionId='{failedExecutionId}'.");
 
+            var unfinishedBeforeRecovery =
+                await runExecutionIndex
+                    .ListUnfinishedByRuntimeInstanceAsync(failedRuntimeInstanceId)
+                    .ConfigureAwait(false);
+
+            Assert.Contains(
+                unfinishedBeforeRecovery,
+                entry =>
+                    entry.RunId == failedLocalRunId &&
+                    entry.ExecutionId == failedExecutionId &&
+                    string.Equals(entry.Status, "running", StringComparison.OrdinalIgnoreCase));
+
             var recoveryResult =
                 await MarkUnhealthyAndReconcileUntilRecoveredAsync(
                         registry,
@@ -312,8 +324,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                         Run = tenant.Run with
                         {
                             RunCount = 1,
-                            StepCount = 20,
-                            DelayMs = 250,
+                            StepCount = 50,
+                            DelayMs = 500,
                             FlakyStepInterval = 0,
                             EnableRetention = true
                         }
@@ -429,6 +441,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
         /// runtime process does not yet publish its local execution index into the control-plane
         /// test service provider. This helper simulates the durable in-flight execution
         /// observation and shared queue dispatched ownership required by runtime execution recovery.
+        /// The scenario deliberately uses a longer-running DAG so the still-alive legacy runtime
+        /// cannot naturally complete the same local run before the generic recovery reconciler
+        /// has observed and transitioned the seeded unfinished entry.
         /// </remarks>
         /// <param name="sharedRunStore">The shared run store.</param>
         /// <param name="sharedQueue">The shared queue.</param>

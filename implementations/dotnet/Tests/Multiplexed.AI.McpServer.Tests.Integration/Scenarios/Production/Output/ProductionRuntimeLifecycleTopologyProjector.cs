@@ -1,4 +1,4 @@
-using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Lifecycle;
+﻿using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Lifecycle;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
 
 namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Output
@@ -406,11 +406,46 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Output
                 return new HashSet<string>(StringComparer.Ordinal);
             }
 
+            var terminalFailurePodUids =
+                events
+                    .Where(item =>
+                        !string.IsNullOrWhiteSpace(item.RuntimeFailureIncidentId) &&
+                        demonstratedFailureIncidentIds.Contains(item.RuntimeFailureIncidentId!) &&
+                        (string.Equals(item.EventType, AiRuntimeLifecycleEventType.HostDeleted, StringComparison.Ordinal) ||
+                         string.Equals(item.EventType, AiRuntimeLifecycleEventType.HostDisappeared, StringComparison.Ordinal)) &&
+                        !string.IsNullOrWhiteSpace(item.KubernetesPodUid))
+                    .Select(item => item.KubernetesPodUid!)
+                    .ToHashSet(StringComparer.Ordinal);
+
+            if (terminalFailurePodUids.Count > 0)
+            {
+                return terminalFailurePodUids;
+            }
+
+            var runtimeFailurePodUids =
+                events
+                    .Where(item =>
+                        !string.IsNullOrWhiteSpace(item.RuntimeFailureIncidentId) &&
+                        demonstratedFailureIncidentIds.Contains(item.RuntimeFailureIncidentId!) &&
+                        IsRuntimeFailureStatusEvent(item) &&
+                        !string.IsNullOrWhiteSpace(item.KubernetesPodUid))
+                    .Select(item => item.KubernetesPodUid!)
+                    .ToHashSet(StringComparer.Ordinal);
+
+            if (runtimeFailurePodUids.Count > 0)
+            {
+                return runtimeFailurePodUids;
+            }
+
+            // Compatibility fallback for older lifecycle histories that predate explicit
+            // host/runtime terminal events. WorkReleased is deliberately last because a
+            // recovered run may later be released from replacement capacity while retaining
+            // the original failure incident identity.
             return events
                 .Where(item =>
                     !string.IsNullOrWhiteSpace(item.RuntimeFailureIncidentId) &&
                     demonstratedFailureIncidentIds.Contains(item.RuntimeFailureIncidentId!) &&
-                    IsFailureSideEvent(item) &&
+                    string.Equals(item.EventType, AiRuntimeLifecycleEventType.WorkReleased, StringComparison.Ordinal) &&
                     !string.IsNullOrWhiteSpace(item.KubernetesPodUid))
                 .Select(item => item.KubernetesPodUid!)
                 .ToHashSet(StringComparer.Ordinal);

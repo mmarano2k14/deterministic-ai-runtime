@@ -1,4 +1,4 @@
-using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager;
+﻿using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Lifecycle;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
 
@@ -322,6 +322,125 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Output
             Assert.DoesNotContain("transient-runtime", summary, StringComparison.Ordinal);
             Assert.DoesNotContain("transient-pod", summary, StringComparison.Ordinal);
             Assert.DoesNotContain("InitialHostKind='Unknown'", summary, StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public void BuildFromLifecycleEvents_Should_Not_Count_Replacement_Pod_As_Deleted_When_Recovered_Work_Is_Released()
+        {
+            var start = DateTimeOffset.Parse("2026-08-10T00:00:00Z");
+            var events = new List<AiRuntimeLifecycleEvent>();
+
+            AddRuntime(
+                events,
+                start,
+                "control-plane-replacement-release",
+                "failed-runtime",
+                "runtime-1",
+                "pool-a",
+                "failed-pod-uid",
+                "runtime-pool-pod",
+                0);
+
+            events.Add(CreateLifecycleEvent(
+                "work-assigned",
+                AiRuntimeLifecycleEventType.WorkAssigned,
+                start.AddSeconds(10),
+                "control-plane-replacement-release",
+                runtimeInstanceId: "failed-runtime",
+                runtimeId: "runtime-1",
+                poolId: "pool-a",
+                hostId: "failed-pod-uid",
+                kubernetesPodUid: "failed-pod-uid",
+                kubernetesPodName: "runtime-pool-pod",
+                tenantId: "tenant-a",
+                sharedRunId: "shared-1",
+                localRunId: "local-failed",
+                executionId: "execution-1"));
+
+            events.Add(CreateLifecycleEvent(
+                "host-disappeared",
+                AiRuntimeLifecycleEventType.HostDisappeared,
+                start.AddSeconds(20),
+                "control-plane-replacement-release",
+                poolId: "pool-a",
+                hostId: "failed-pod-uid",
+                kubernetesPodUid: "failed-pod-uid",
+                kubernetesPodName: "runtime-pool-pod",
+                runtimeFailureIncidentId: "failure-1"));
+
+            events.Add(CreateLifecycleEvent(
+                "runtime-suppressed",
+                AiRuntimeLifecycleEventType.RuntimeSuppressed,
+                start.AddSeconds(21),
+                "control-plane-replacement-release",
+                runtimeInstanceId: "failed-runtime",
+                runtimeId: "runtime-1",
+                poolId: "pool-a",
+                hostId: "failed-pod-uid",
+                kubernetesPodUid: "failed-pod-uid",
+                kubernetesPodName: "runtime-pool-pod",
+                runtimeFailureIncidentId: "failure-1"));
+
+            AddRuntime(
+                events,
+                start,
+                "control-plane-replacement-release",
+                "replacement-runtime",
+                "runtime-1",
+                "pool-a",
+                "replacement-pod-uid",
+                "runtime-pool-pod",
+                30,
+                replacement: true);
+
+            events.Add(CreateLifecycleEvent(
+                "work-reassigned",
+                AiRuntimeLifecycleEventType.WorkReassigned,
+                start.AddSeconds(31),
+                "control-plane-replacement-release",
+                runtimeInstanceId: "replacement-runtime",
+                runtimeId: "runtime-1",
+                poolId: "pool-a",
+                hostId: "replacement-pod-uid",
+                kubernetesPodUid: "replacement-pod-uid",
+                kubernetesPodName: "runtime-pool-pod",
+                tenantId: "tenant-a",
+                sharedRunId: "shared-1",
+                localRunId: "local-replacement",
+                executionId: "execution-1",
+                runtimeFailureIncidentId: "failure-1"));
+
+            events.Add(CreateLifecycleEvent(
+                "work-released-after-recovery",
+                AiRuntimeLifecycleEventType.WorkReleased,
+                start.AddSeconds(40),
+                "control-plane-replacement-release",
+                runtimeInstanceId: "replacement-runtime",
+                runtimeId: "runtime-1",
+                poolId: "pool-a",
+                hostId: "replacement-pod-uid",
+                kubernetesPodUid: "replacement-pod-uid",
+                kubernetesPodName: "runtime-pool-pod",
+                tenantId: "tenant-a",
+                sharedRunId: "shared-1",
+                localRunId: "local-replacement",
+                executionId: "execution-1",
+                runtimeFailureIncidentId: "failure-1"));
+
+            var summary =
+                ProductionRuntimeTopologySummaryOutput.BuildFromLifecycleEvents(
+                    "control-plane-replacement-release",
+                    AiRuntimeHostCreationMode.KubernetesPool,
+                    events,
+                    new Dictionary<string, string>(StringComparer.Ordinal)
+                    {
+                        ["tenant-a"] = "Impacted"
+                    });
+
+            Assert.Contains("DeletedPodCount='1'", summary, StringComparison.Ordinal);
+            Assert.Contains("HistoricalOnlyKubernetesPodCount='1'", summary, StringComparison.Ordinal);
+            Assert.Contains("InitialPodUid='failed-pod-uid'", summary, StringComparison.Ordinal);
+            Assert.Contains("CurrentPodUid='replacement-pod-uid'", summary, StringComparison.Ordinal);
         }
 
         [Fact]

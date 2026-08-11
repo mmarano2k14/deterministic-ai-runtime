@@ -18,12 +18,15 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Ledger
         /// <param name="expectedRecoveredWorkCount">The expected recovered work count.</param>
         /// <param name="actualRecoveredWorkCount">The actual recovered work count.</param>
         /// <param name="failedRuntimeUnsafeValidated">Whether failed runtime unsafe state was already validated directly from registry state.</param>
+        /// <param name="requireRuntimeHostCreated">Whether this ledger window must contain runtime-host creation evidence.</param>
+        /// <param name="requireProcessRuntimeHostStarted">Whether process-host-specific creation evidence is required.</param>
         /// <returns>The causal-chain proof result.</returns>
         public static ProductionControlPlaneLedgerCausalChainProofResult Validate(
             IReadOnlyCollection<AiDecisionLedgerEntry> ledgerEntries,
             int expectedRecoveredWorkCount,
             int actualRecoveredWorkCount,
             bool failedRuntimeUnsafeValidated,
+            bool requireRuntimeHostCreated = true,
             bool requireProcessRuntimeHostStarted = true)
         {
             ArgumentNullException.ThrowIfNull(ledgerEntries);
@@ -129,6 +132,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Ledger
                     executionRecoveryReconciledCount,
                     recoveredWorkRedispatchedCount)
                 {
+                    RuntimeHostCreationRequired = requireRuntimeHostCreated,
                     ProcessRuntimeHostRequired = requireProcessRuntimeHostStarted
                 };
 
@@ -136,7 +140,12 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Ledger
             Assert.True(result.ScaleOutRequestPersistedCount > 0, "Control-plane ledger proof missing distinct successful scale-out request persisted evidence.");
             Assert.True(result.ScaleOutWatcherObservedCount > 0, "Control-plane ledger proof missing distinct successful scale-out watcher evidence.");
             Assert.True(result.ProviderSelectedCount > 0, "Control-plane ledger proof missing distinct successful provider selection evidence.");
-            Assert.True(result.RuntimeHostCreatedCount > 0, "Control-plane ledger proof missing distinct successful runtime host creation evidence.");
+            if (result.RuntimeHostCreationRequired)
+            {
+                Assert.True(
+                    result.RuntimeHostCreatedCount > 0,
+                    "Control-plane ledger proof missing distinct successful runtime host creation evidence.");
+            }
             if (result.ProcessRuntimeHostRequired)
             {
                 Assert.True(

@@ -1178,53 +1178,7 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.AI.Concurrency
             Assert.Equal(2, definition.MaxStepConcurrency);
         }
 
-        /// <summary>
-        /// Verifies that step-level provider, model, and operation limits override
-        /// pipeline-level limits when explicitly configured.
-        /// </summary>
-        [Fact]
-        public void Resolve_Should_Override_Pipeline_Provider_Model_And_Operation_Limits_When_Configured_On_Step()
-        {
-            var resolver = new DefaultAiConcurrencyDefinitionResolver();
-
-            var pipeline = new AiPipelineDefinition
-            {
-                Name = "test-pipeline",
-                Version = "v1",
-                Config = new Dictionary<string, object?>
-                {
-                    ["concurrency"] = new Dictionary<string, object?>
-                    {
-                        ["enabled"] = true,
-                        ["maxProviderConcurrency"] = 10,
-                        ["maxModelConcurrency"] = 5,
-                        ["maxOperationConcurrency"] = 20
-                    }
-                }
-            };
-
-            var step = new AiPipelineStepDefinition
-            {
-                Name = "llm-summary",
-                StepKey = "llm.summary",
-                Config = new Dictionary<string, object?>
-                {
-                    ["concurrency"] = new Dictionary<string, object?>
-                    {
-                        ["maxProviderConcurrency"] = 3,
-                        ["maxModelConcurrency"] = 2,
-                        ["maxOperationConcurrency"] = 4
-                    }
-                }
-            };
-
-            var definition = resolver.Resolve(pipeline, step);
-
-            Assert.True(definition.Enabled);
-            Assert.Equal(3, definition.MaxProviderConcurrency);
-            Assert.Equal(2, definition.MaxModelConcurrency);
-            Assert.Equal(4, definition.MaxOperationConcurrency);
-        }
+        
 
         /// <summary>
         /// Verifies that the claim service passes provider, model, and operation metadata

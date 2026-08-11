@@ -135,6 +135,39 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
         protected virtual TimeSpan? ParallelHarnessProgressTimeoutOverride => null;
 
         /// <summary>
+        /// Gets an optional minimum unsafe-runtime detection timeout for the parallel integration harness.
+        /// </summary>
+        /// <remarks>
+        /// Returning <see langword="null"/> preserves the pressure-derived historical budget.
+        /// Provider-specific Runtime Pool scenarios may require a longer convergence window without
+        /// changing production health, heartbeat, or recovery settings.
+        /// </remarks>
+        protected virtual TimeSpan? ParallelHarnessUnsafeTimeoutOverride => null;
+
+        /// <summary>
+        /// Gets an optional minimum unsafe-runtime detection timeout for direct, non-parallel
+        /// crash-recovery scenarios.
+        /// </summary>
+        /// <remarks>
+        /// Returning <see langword="null"/> preserves the historical 60-second budget.
+        /// Provider-specific legacy scenarios may require a longer convergence window without
+        /// changing production health, heartbeat, or recovery behavior.
+        /// </remarks>
+        protected virtual TimeSpan? DirectScenarioUnsafeTimeoutOverride => null;
+
+        /// <summary>
+        /// Gets a value indicating whether the recovery-scoped control-plane ledger query
+        /// must also contain distinct runtime-host creation evidence.
+        /// </summary>
+        /// <remarks>
+        /// The default remains strict for historical Process/ProcessHost scenarios.
+        /// A scenario whose host topology is proved independently by the durable lifecycle
+        /// journal may opt out when its recovery-scoped ledger window intentionally does not
+        /// include the initial host-creation event.
+        /// </remarks>
+        protected virtual bool RequireControlPlaneRuntimeHostCreationLedgerEvidence => true;
+
+        /// <summary>
         /// Creates the optional typed placement directive for inventory runs submitted
         /// after the first runtime assignment.
         /// </summary>
@@ -787,6 +820,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                     progressTimeout:
                         TimeSpan.FromMinutes(3),
                     unsafeTimeout:
+                        DirectScenarioUnsafeTimeoutOverride ??
                         TimeSpan.FromSeconds(60),
                     requeueTimeout:
                         TimeSpan.FromSeconds(180),
@@ -819,6 +853,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                         progressTimeout:
                             TimeSpan.FromMinutes(3),
                         unsafeTimeout:
+                            DirectScenarioUnsafeTimeoutOverride ??
                             TimeSpan.FromSeconds(60),
                         requeueTimeout:
                             TimeSpan.FromSeconds(180),
@@ -1154,6 +1189,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                     expectedRecoveredWorkCount,
                     tenantARecovery.RecoveredWorks.Count + tenantBRecovery.RecoveredWorks.Count,
                     failedRuntimeUnsafeValidated,
+                    requireRuntimeHostCreated:
+                        RequireControlPlaneRuntimeHostCreationLedgerEvidence,
                     requireProcessRuntimeHostStarted:
                         this.profile.HostCreationMode ==
                         AiRuntimeHostCreationMode.Process);
@@ -2707,6 +2744,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                         expectedRecoveredWorkCount,
                         recoveries.Sum(recovery => recovery.RecoveredWorks.Count),
                         failedRuntimeUnsafeValidated,
+                        requireRuntimeHostCreated:
+                            RequireControlPlaneRuntimeHostCreationLedgerEvidence,
                         requireProcessRuntimeHostStarted:
                             this.profile.HostCreationMode ==
                             AiRuntimeHostCreationMode.Process);
@@ -3379,6 +3418,27 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 }
             }
 
+            var unsafeTimeout =
+                TimeSpan.FromSeconds(
+                    60 + (pressureStepCount * 30));
+
+            if (ParallelHarnessUnsafeTimeoutOverride.HasValue)
+            {
+                var configuredMinimum =
+                    ParallelHarnessUnsafeTimeoutOverride.Value;
+
+                if (configuredMinimum <= TimeSpan.Zero)
+                {
+                    throw new InvalidOperationException(
+                        "The parallel harness unsafe-runtime timeout override must be greater than zero.");
+                }
+
+                if (configuredMinimum > unsafeTimeout)
+                {
+                    unsafeTimeout = configuredMinimum;
+                }
+            }
+
             return new ParallelScenarioHarnessBudget(
                 Parallelism: parallelism,
                 PressureStepCount: pressureStepCount,
@@ -3403,8 +3463,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 ProgressTimeout:
                     progressTimeout,
                 UnsafeTimeout:
-                    TimeSpan.FromSeconds(
-                        60 + (pressureStepCount * 30)),
+                    unsafeTimeout,
                 RequeueTimeout:
                     TimeSpan.FromMinutes(
                         3 + (pressureStepCount * 2)),
