@@ -1,5 +1,6 @@
 ﻿using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using Multiplexed.Abstractions.AI.ControlPlane.Admission.Placement;
 using Multiplexed.Abstractions.AI.ControlPlane.Admission.Reservations;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
@@ -121,6 +122,58 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
             Assert.Equal("correlation-1", runDispatcher.LastRequest.CorrelationId);
             Assert.Equal("tester", runDispatcher.LastRequest.RequestedBy);
             Assert.Equal("unit-test", runDispatcher.LastRequest.Source);
+        }
+
+        [Fact]
+        public async Task DispatchNextAsync_Should_Forward_Durable_Required_Placement_To_QueueFirst_Readmission()
+        {
+            var queue = new InMemoryAiSharedQueue();
+            var store = new InMemoryAiSharedRunStore();
+
+            await store.CreateAsync(
+                CreateSharedRun(
+                    "shared-run-placement",
+                    AiSharedRunStatus.QueuedGlobally,
+                    placement: new AiRunPlacementDirective
+                    {
+                        Target = new AiRunPlacementTarget
+                        {
+                            RuntimeInstanceId = "runtime-target"
+                        },
+                        Requirement = AiRunPlacementRequirement.Required,
+                        Fallback = AiRunPlacementFallback.Reject
+                    }));
+
+            await queue.EnqueueAsync(
+                CreateQueueItem("shared-run-placement"));
+
+            var runDispatcher = new FakeSharedRunDispatcher();
+
+            var dispatcher = new AiSharedQueueDispatcher(
+                queue,
+                store,
+                runDispatcher,
+                new FakeRunAdmissionController(),
+                new InMemoryAiRuntimeAdmissionReservationStore(),
+                await CreateReadyRuntimeRegistryAsync("runtime-target"),
+                new FakeRuntimeScaleOutRequestPublisher(),
+                new HardcodedAiTenantRuntimeSettingsProvider(),
+                new StaticAiControlPlaneIdResolver("control-plane-1"),
+                new FakeExecutionContextAccessor(),
+                NullLogger<AiSharedQueueDispatcher>.Instance);
+
+            var result = await dispatcher.DispatchNextAsync(
+                new AiSharedQueueDispatchRequest
+                {
+                    RuntimeInstanceId = "runtime-target",
+                    WorkerId = "worker-target"
+                });
+
+            Assert.True(result.Success);
+            Assert.NotNull(runDispatcher.LastRequest);
+            Assert.Equal(
+                "runtime-target",
+                runDispatcher.LastRequest!.RuntimeInstanceId);
         }
 
         [Fact]
@@ -1264,7 +1317,8 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
             IReadOnlyDictionary<string, string>? metadata = null,
             string? assignedRuntimeInstanceId = null,
             string? localRunId = null,
-            string? executionId = null)
+            string? executionId = null,
+            AiRunPlacementDirective? placement = null)
         {
             var now = DateTimeOffset.UtcNow;
 
@@ -1281,6 +1335,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
                 CorrelationId = sharedRunId,
                 AssignedRuntimeInstanceId =
                     assignedRuntimeInstanceId,
+                Placement = placement,
                 LocalRunId = localRunId,
                 ExecutionId = executionId,
                 SubmittedAtUtc = now,

@@ -28,7 +28,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
         /// reuses the converged warm pool across cycles, and cleans only after the final cycle.
         /// </summary>
         [Theory]
-        [InlineData(3, 5, 5, 2)]
+        [InlineData(5, 5, 5, 2)]
         public Task Grpc_KubernetesPool_Should_Recover_Child_Runtime_Then_Distinct_Pod_And_Reuse_Warm_Capacity(
             int maximumPodCount,
             int runtimeCountPerPod,

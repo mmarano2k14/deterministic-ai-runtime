@@ -1,4 +1,4 @@
-using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Capacity;
+﻿using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Capacity;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager;
 using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Definitions;
 using Xunit;
@@ -92,6 +92,20 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             Assert.Equal(
                 parentDatabaseName,
                 settings["AiKubernetesRuntimePoolHost:MongoDatabaseName"]);
+            Assert.Equal(
+                "00:06:00",
+                settings["AiKubernetesRuntimePoolHost:StartupTimeout"]);
+
+            var redisConnectionString =
+                Assert.IsType<string>(
+                    settings["AiKubernetesRuntimePoolHost:RedisConnectionString"]);
+
+            Assert.Contains(
+                "syncTimeout=45000",
+                redisConnectionString);
+            Assert.Contains(
+                "asyncTimeout=45000",
+                redisConnectionString);
         }
     }
 }

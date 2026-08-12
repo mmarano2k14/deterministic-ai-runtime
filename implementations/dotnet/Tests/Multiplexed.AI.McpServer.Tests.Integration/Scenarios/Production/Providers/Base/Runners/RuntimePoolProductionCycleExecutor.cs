@@ -1,5 +1,6 @@
 ﻿using System.Globalization;
 using System.Net;
+using Multiplexed.Abstractions.AI.ControlPlane.Admission.Placement;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Controller;
 using Multiplexed.Abstractions.AI.Observability.Ledger;
@@ -30,6 +31,27 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
         /// <param name="maximumAdmissionAttemptCount">The maximum number of admission attempts per run.</param>
         /// <param name="cycleNumber">The optional one-based warm production cycle number.</param>
         /// <param name="startingIterationNumber">The one-based wave number used for the first submitted iteration. This allows one logical cycle to defer a configured wave without reusing correlation identities.</param>
+        /// <param name="crashCheckpoint">Optional test-only durable checkpoint embedded into every DAG submitted by this call. The default remains unchanged for all existing callers.</param>
+        /// <param name="admissionBackpressureTimeout">
+        /// Optional wall-clock budget for transient HTTP 429 admission backpressure. When omitted,
+        /// the historical fixed-attempt contract is preserved exactly. When supplied, HTTP 429
+        /// remains retryable until this deadline and each MCP call is bounded by the remaining budget.
+        /// </param>
+        /// <param name="placementFactory">
+        /// Optional test-only placement factory invoked once per logical wave/run identity.
+        /// When omitted, admission preserves the historical unpinned selection behavior.
+        /// </param>
+        /// <param name="crashCheckpointFactory">
+        /// Optional test-only checkpoint factory invoked once per logical wave/run identity.
+        /// When omitted, <paramref name="crashCheckpoint"/> preserves the historical all-runs behavior.
+        /// When supplied, the factory is authoritative and may return <see langword="null"/> for runs
+        /// that must remain ungated while selected failure-target runs are held at the checkpoint.
+        /// </param>
+        /// <param name="startingRunNumber">
+        /// The one-based run number used for the first run in each submitted wave. The default of one
+        /// preserves every historical caller. This allows one logical wave to be submitted in deterministic
+        /// phases without reusing correlation identities.
+        /// </param>
         /// <returns>The exact admission results, SharedRun identifiers, and 429 retry count.</returns>
         public static async Task<RuntimePoolProductionCycleAdmissionProof>
             SubmitQueueFirstWavesAsync(
@@ -44,7 +66,12 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 int maximumConcurrentSubmissions,
                 int maximumAdmissionAttemptCount,
                 int? cycleNumber = null,
-                int startingIterationNumber = 1)
+                int startingIterationNumber = 1,
+                McpTestCrashCheckpointDefinition? crashCheckpoint = null,
+                TimeSpan? admissionBackpressureTimeout = null,
+                Func<int, int, AiRunPlacementDirective?>? placementFactory = null,
+                Func<int, int, McpTestCrashCheckpointDefinition?>? crashCheckpointFactory = null,
+                int startingRunNumber = 1)
         {
             ArgumentNullException.ThrowIfNull(mcp);
             ArgumentNullException.ThrowIfNull(tenant);
@@ -57,6 +84,16 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maximumConcurrentSubmissions);
             ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maximumAdmissionAttemptCount);
             ArgumentOutOfRangeException.ThrowIfNegativeOrZero(startingIterationNumber);
+            ArgumentOutOfRangeException.ThrowIfNegativeOrZero(startingRunNumber);
+
+            if (admissionBackpressureTimeout.HasValue &&
+                admissionBackpressureTimeout.Value <= TimeSpan.Zero)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(admissionBackpressureTimeout),
+                    admissionBackpressureTimeout,
+                    "The admission backpressure timeout must be greater than zero.");
+            }
 
             if (cycleNumber.HasValue && cycleNumber.Value <= 0)
             {
@@ -71,6 +108,87 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             {
                 var retryDelay =
                     TimeSpan.FromMilliseconds(100);
+
+                if (admissionBackpressureTimeout.HasValue)
+                {
+                    var backpressureDeadline =
+                        DateTimeOffset.UtcNow.Add(
+                            admissionBackpressureTimeout.Value);
+
+                    var attempt = 0;
+
+                    while (DateTimeOffset.UtcNow < backpressureDeadline)
+                    {
+                        attempt++;
+
+                        var remaining =
+                            backpressureDeadline - DateTimeOffset.UtcNow;
+
+                        if (remaining <= TimeSpan.Zero)
+                        {
+                            break;
+                        }
+
+                        using var attemptCancellation =
+                            new CancellationTokenSource(remaining);
+
+                        try
+                        {
+                            var result =
+                                await mcp
+                                    .SubmitManyRunsAsync(
+                                        request,
+                                        1,
+                                        attemptCancellation.Token)
+                                    .ConfigureAwait(false);
+
+                            return Assert.Single(result);
+                        }
+                        catch (HttpRequestException exception)
+                            when (
+                                exception.StatusCode ==
+                                    HttpStatusCode.TooManyRequests)
+                        {
+                            Interlocked.Increment(
+                                ref tooManyRequestsRetryCount);
+
+                            var remainingAfterBackpressure =
+                                backpressureDeadline -
+                                DateTimeOffset.UtcNow;
+
+                            if (remainingAfterBackpressure <= TimeSpan.Zero)
+                            {
+                                break;
+                            }
+
+                            var boundedDelay =
+                                retryDelay < remainingAfterBackpressure
+                                    ? retryDelay
+                                    : remainingAfterBackpressure;
+
+                            await Task
+                                .Delay(boundedDelay)
+                                .ConfigureAwait(false);
+
+                            retryDelay =
+                                TimeSpan.FromMilliseconds(
+                                    Math.Min(
+                                        retryDelay.TotalMilliseconds * 2,
+                                        2_000));
+                        }
+                        catch (OperationCanceledException exception)
+                            when (attemptCancellation.IsCancellationRequested)
+                        {
+                            throw CreateAdmissionBackpressureTimeoutException(
+                                attempt,
+                                exception);
+                        }
+                    }
+
+                    throw CreateAdmissionBackpressureTimeoutException(
+                        attempt,
+                        innerException: null);
+                }
 
                 for (var attempt = 1;
                      attempt <= maximumAdmissionAttemptCount;
@@ -118,6 +236,27 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                     $"after '{maximumAdmissionAttemptCount}' attempts{cycleSuffix}.");
             }
 
+            TimeoutException CreateAdmissionBackpressureTimeoutException(
+                int observedAttemptCount,
+                Exception? innerException)
+            {
+                var cycleSuffix =
+                    cycleNumber.HasValue
+                        ? $" in warm reuse cycle '{cycleNumber.Value}'"
+                        : string.Empty;
+
+                var message =
+                    "MCP QueueFirst admission remained throttled until the configured " +
+                    $"backpressure deadline{cycleSuffix}. " +
+                    $"Timeout='{admissionBackpressureTimeout}', " +
+                    $"ObservedAttemptCount='{observedAttemptCount}', " +
+                    $"TooManyRequestsRetryCount='{Volatile.Read(ref tooManyRequestsRetryCount)}'.";
+
+                return innerException is null
+                    ? new TimeoutException(message)
+                    : new TimeoutException(message, innerException);
+            }
+
             using var submissionGate =
                 new SemaphoreSlim(
                     maximumConcurrentSubmissions,
@@ -136,10 +275,20 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                                     cycleNumber);
 
                             return Enumerable
-                                .Range(1, runsPerIteration)
+                                .Range(0, runsPerIteration)
                                 .Select(
-                                    async runNumber =>
+                                    async runOffset =>
                                     {
+                                        var runNumber =
+                                            checked(startingRunNumber + runOffset);
+
+                                        var runCrashCheckpoint =
+                                            crashCheckpointFactory is null
+                                                ? crashCheckpoint
+                                                : crashCheckpointFactory(
+                                                    iteration,
+                                                    runNumber);
+
                                         var request =
                                             CreateSubmitRequest(
                                                 tenant,
@@ -151,7 +300,11 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                                                     controlPlaneId,
                                                     iteration,
                                                     runNumber,
-                                                    cycleNumber));
+                                                    cycleNumber),
+                                                runCrashCheckpoint,
+                                                placementFactory?.Invoke(
+                                                    iteration,
+                                                    runNumber));
 
                                         await submissionGate
                                             .WaitAsync()
@@ -658,7 +811,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             string pipelineName,
             string requestedBy,
             string source,
-            string correlationId)
+            string correlationId,
+            McpTestCrashCheckpointDefinition? crashCheckpoint,
+            AiRunPlacementDirective? placement)
         {
             var input =
                 new Dictionary<string, object?>(
@@ -709,6 +864,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 RequestedBy = requestedBy,
                 Source = source,
                 CorrelationId = correlationId,
+                Placement = placement,
                 Metadata = metadata,
                 RunRequest =
                     McpTestPipelineFactory.CreateRunRequest(
@@ -717,7 +873,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                         input: input,
                         enableRetention: tenant.Run.EnableRetention,
                         flakyStepInterval:
-                            tenant.Run.FlakyStepInterval)
+                            tenant.Run.FlakyStepInterval,
+                        crashCheckpoint: crashCheckpoint)
             };
         }
     }

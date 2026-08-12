@@ -1,4 +1,5 @@
 ﻿using Multiplexed.Abstractions.AI.ControlPlane.Admission;
+using Multiplexed.Abstractions.AI.ControlPlane.Admission.Placement;
 using Multiplexed.Abstractions.AI.Execution.Instance.Worker;
 using Multiplexed.Abstractions.AI.Runtime.Execution.Instance.Worker;
 using Multiplexed.Abstractions.Core.ExecutionContext;
@@ -75,6 +76,13 @@ namespace Multiplexed.Abstractions.AI.ControlPlane.SharedController.Store
         /// Admission decision produced for this shared run.
         /// </summary>
         public AiRunAdmissionDecision? AdmissionDecision { get; init; }
+
+        /// <summary>
+        /// Typed placement intent supplied when the shared run was submitted.
+        /// Queue-first dispatch must preserve this directive until the initial durable dispatch.
+        /// Recovery redispatch may intentionally ignore the original placement when the target failed.
+        /// </summary>
+        public AiRunPlacementDirective? Placement { get; init; }
 
         /// <summary>
         /// Optional pipeline key or pipeline name used for policy and routing decisions.

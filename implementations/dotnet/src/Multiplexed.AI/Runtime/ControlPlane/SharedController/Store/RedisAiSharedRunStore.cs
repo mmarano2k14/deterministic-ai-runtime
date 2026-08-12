@@ -883,6 +883,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Store
             AddField(values, "executionId", record.ExecutionId);
             AddField(values, "assignedRuntimeInstanceId", record.AssignedRuntimeInstanceId);
             AddField(values, "admissionDecisionJson", Serialize(record.AdmissionDecision));
+            AddField(values, "placementJson", Serialize(record.Placement));
             AddField(values, "pipelineKey", record.PipelineKey);
             AddField(values, "correlationId", record.CorrelationId);
             AddField(values, "requestedBy", record.RequestedBy);
@@ -937,6 +938,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Store
                 AssignedRuntimeInstanceId = GetOptional(fields, "assignedRuntimeInstanceId"),
                 AdmissionDecision = DeserializeOptional<AiRunAdmissionDecision>(
                     GetOptional(fields, "admissionDecisionJson")),
+                Placement = DeserializeOptional<Multiplexed.Abstractions.AI.ControlPlane.Admission.Placement.AiRunPlacementDirective>(
+                    GetOptional(fields, "placementJson")),
                 PipelineKey = GetOptional(fields, "pipelineKey"),
                 CorrelationId = GetOptional(fields, "correlationId"),
                 RequestedBy = GetOptional(fields, "requestedBy"),
@@ -1040,6 +1043,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Store
                 ExecutionId = record.ExecutionId,
                 AssignedRuntimeInstanceId = record.AssignedRuntimeInstanceId,
                 AdmissionDecision = record.AdmissionDecision,
+                Placement = record.Placement,
                 PipelineKey = record.PipelineKey,
                 CorrelationId = record.CorrelationId,
                 RequestedBy = record.RequestedBy,

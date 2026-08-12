@@ -1178,6 +1178,22 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
                         cancellationToken)
                     .ConfigureAwait(false);
 
+            var transportEndpointSource =
+                "preserved-existing-capacity-descriptor";
+
+            if (existingDescriptor is null &&
+                IsKubernetesPoolRuntime(result))
+            {
+                existingDescriptor =
+                    await this.TryResolveSiblingTransportDescriptorAsync(
+                            runtimeInstanceId,
+                            cancellationToken)
+                        .ConfigureAwait(false);
+
+                transportEndpointSource =
+                    "preserved-sibling-capacity-descriptor";
+            }
+
             if (existingDescriptor is not null &&
                 TryGetTransportEndpoint(
                     existingDescriptor.Metadata,
@@ -1202,7 +1218,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
                     existingTransportEndpoint);
 
                 result["transport.endpoint.source"] =
-                    "preserved-existing-capacity-descriptor";
+                    transportEndpointSource;
                 result["transport.endpoint.scope"] =
                     "control-plane";
             }
@@ -1261,6 +1277,98 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
                     SafeLogWarning(
                         "Failed to inspect existing runtime capacity descriptor while preserving transport endpoint. RuntimeInstanceId={RuntimeInstanceId}, StoreType={StoreType}, Reason={Reason}",
                         runtimeInstanceId,
+                        capacityStore.GetType().FullName,
+                        exception.Message);
+                }
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// Resolves one already projected sibling descriptor from the same Kubernetes Runtime
+        /// Pool Pod. Dynamic in-Pod replacement processes have a fresh RuntimeInstanceId, so no
+        /// descriptor exists under their new identity yet. Any surviving sibling Gateway route
+        /// reaches the same stable Pod service; the command body still carries the exact target
+        /// RuntimeInstanceId and the in-Pod router performs the final child selection.
+        /// </summary>
+        private async Task<AiRuntimeInstanceCapacityDescriptor?>
+            TryResolveSiblingTransportDescriptorAsync(
+                string runtimeInstanceId,
+                CancellationToken cancellationToken)
+        {
+            if (string.IsNullOrWhiteSpace(this.poolId) ||
+                string.IsNullOrWhiteSpace(this.hostId))
+            {
+                return null;
+            }
+
+            foreach (var capacityStore in this.capacityStores)
+            {
+                try
+                {
+                    var descriptors =
+                        await capacityStore
+                            .ListAsync(cancellationToken)
+                            .ConfigureAwait(false);
+
+                    var siblingDescriptor =
+                        descriptors
+                            .Where(descriptor =>
+                                !string.Equals(
+                                    descriptor.RuntimeInstanceId,
+                                    runtimeInstanceId,
+                                    StringComparison.Ordinal) &&
+                                string.Equals(
+                                    descriptor.PoolId,
+                                    this.poolId,
+                                    StringComparison.Ordinal) &&
+                                string.Equals(
+                                    descriptor.HostId,
+                                    this.hostId,
+                                    StringComparison.Ordinal) &&
+                                TryGetTransportEndpoint(
+                                    descriptor.Metadata,
+                                    out var siblingTransportEndpoint) &&
+                                !IsUnsafeKubernetesLocalhostEndpoint(
+                                    descriptor.Metadata,
+                                    siblingTransportEndpoint) &&
+                                !string.IsNullOrWhiteSpace(
+                                    GetMetadataValue(
+                                        descriptor.Metadata,
+                                        "gateway.routing.header")) &&
+                                !string.IsNullOrWhiteSpace(
+                                    GetMetadataValue(
+                                        descriptor.Metadata,
+                                        "gateway.routing.value")))
+                            .OrderBy(
+                                descriptor => descriptor.RuntimeInstanceId,
+                                StringComparer.Ordinal)
+                            .FirstOrDefault();
+
+                    if (siblingDescriptor is not null)
+                    {
+                        SafeLogInformation(
+                            "Runtime instance preserved control-plane transport from Kubernetes Pool sibling. RuntimeInstanceId={RuntimeInstanceId}, SiblingRuntimeInstanceId={SiblingRuntimeInstanceId}, PoolId={PoolId}, HostId={HostId}",
+                            runtimeInstanceId,
+                            siblingDescriptor.RuntimeInstanceId,
+                            this.poolId,
+                            this.hostId);
+
+                        return siblingDescriptor;
+                    }
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (Exception exception)
+                {
+                    SafeLogWarning(
+                        "Failed to inspect sibling runtime capacity descriptors while preserving Kubernetes Pool transport. RuntimeInstanceId={RuntimeInstanceId}, PoolId={PoolId}, HostId={HostId}, StoreType={StoreType}, Reason={Reason}",
+                        runtimeInstanceId,
+                        this.poolId,
+                        this.hostId,
                         capacityStore.GetType().FullName,
                         exception.Message);
                 }

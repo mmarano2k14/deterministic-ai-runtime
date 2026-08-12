@@ -440,6 +440,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController
                     ? null
                     : admissionDecision.AssignedRuntimeInstanceId,
                 AdmissionDecision = admissionDecision,
+                Placement = request.Placement,
                 PipelineKey = request.PipelineKey ?? runRequest.PipelineName,
                 CorrelationId = string.IsNullOrWhiteSpace(request.CorrelationId)
                     ? sharedRunId

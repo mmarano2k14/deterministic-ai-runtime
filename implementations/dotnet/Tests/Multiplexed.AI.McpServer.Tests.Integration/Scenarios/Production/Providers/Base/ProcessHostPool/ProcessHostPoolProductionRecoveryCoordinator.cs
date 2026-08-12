@@ -7,6 +7,7 @@ using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Fail
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Recovery.AssignedWork;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Recovery.Claims;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Recovery.Execution;
+using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helpers;
 using Xunit.Abstractions;
 
 namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Providers.Base.ProcessHostPool
@@ -335,7 +336,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             ProcessHostPoolProductionFailureTarget target,
             int cycleNumber,
             string claimedBy,
-            TimeSpan timeout)
+            TimeSpan timeout,
+            ProductionCrashCheckpointGate? boundaryFailureCrashGate = null)
         {
             ArgumentNullException.ThrowIfNull(cluster);
             ArgumentNullException.ThrowIfNull(target);
@@ -367,9 +369,26 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             this.output.WriteLine(
                 $"[{this.logPrefix} PARENT HOST FAILURE TARGET] Cycle='{cycleNumber}', HostOrdinal='{target.Host.Ordinal}', ParentProcessId='{target.Host.ProcessId}', HostId='{target.Host.HostId}', RuntimeCount='{failedRuntimeInstanceIds.Count}', ActiveRunCount='{target.ActiveRuns.Count}', SurvivingHostCount='{target.SurvivingHostIds.Count}'.");
 
-            await cluster
-                .CrashHostAsync(target.Host.HostId, timeout)
-                .ConfigureAwait(false);
+            try
+            {
+                await cluster
+                    .CrashHostAsync(target.Host.HostId, timeout)
+                    .ConfigureAwait(false);
+            }
+            finally
+            {
+                if (boundaryFailureCrashGate is not null)
+                {
+                    // The deferred boundary wave is intentionally frozen only
+                    // until the exact parent boundary has terminated. Release
+                    // surviving siblings immediately after the kill; recovered
+                    // executions observe the durable released state as well.
+                    await boundaryFailureCrashGate
+                        .ReleaseAsync()
+                        .WaitAsync(timeout)
+                        .ConfigureAwait(false);
+                }
+            }
 
             var failureId = AiRuntimePoolFailureIdentityFactory.CreateFailureId();
             var observedAtUtc = DateTimeOffset.UtcNow;

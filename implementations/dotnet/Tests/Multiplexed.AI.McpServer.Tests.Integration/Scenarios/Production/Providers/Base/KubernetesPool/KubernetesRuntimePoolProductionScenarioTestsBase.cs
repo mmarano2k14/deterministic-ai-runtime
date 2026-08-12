@@ -38,6 +38,7 @@ using Xunit.Abstractions;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue;
 using Multiplexed.AI.Stores;
 using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Ledger;
+using StackExchange.Redis;
 
 namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Providers.Base.KubernetesPool
 {
@@ -48,6 +49,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
         ProcessHostRealRuntimeCrashRecoveryScenarioTestsBase
     {
         private const int FinalScenarioKillAfterCompletedStepCount = 25;
+        private const int BoundaryFailureCrashCheckpointStateTtlMinutes = 30;
+        private const int BoundaryFailureAdmissionBackpressureTimeoutMinutes = 5;
 
         protected readonly ITestOutputHelper output;
         protected readonly IRuntimePoolCrashRecoveryScenarioRuntimeProfile profile;
@@ -1867,21 +1870,26 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                     host.Services.GetRequiredService<
                         IAiRuntimeRecoveryForensicsQueryService>();
 
+                var redisConnection =
+                    host.Services.GetRequiredService<
+                        IConnectionMultiplexer>();
+
                 using var submissionHttpClient =
                     host.CreateClient();
 
                 submissionHttpClient.Timeout =
                     TimeSpan.FromMinutes(15);
 
-                var submissionMcp =
-                    await McpRbacTestClientHelper
+                Task<McpTestClient> CreateFreshSubmissionMcpAsync()
+                {
+                    return McpRbacTestClientHelper
                         .CreateConfiguredClientAsync(
                             host,
                             submissionHttpClient,
                             boundedCapacityProfile.RequestedBy,
                             tenantId: tenant.TenantId,
-                            tenantGroupId: tenant.TenantGroupId)
-                        .ConfigureAwait(false);
+                            tenantGroupId: tenant.TenantGroupId);
+                }
 
                 await WaitForBoundedCapacityScaleOutWatcherReadyAsync(
                         host.Services,
@@ -1987,6 +1995,14 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                                 ? submissionIterationCount - 1
                                 : submissionIterationCount;
 
+                        var submissionMcp =
+                            await CreateFreshSubmissionMcpAsync()
+                                .ConfigureAwait(false);
+
+                        output.WriteLine(
+                            $"[{boundedCapacityProfile.LogPrefix} MCP RBAC CONTEXT] " +
+                            $"Cycle='{cycleNumber}', Phase='initial-admission', State='fresh'.");
+
                         var admissionProof =
                             await RuntimePoolProductionCycleExecutor
                                 .SubmitQueueFirstWavesAsync(
@@ -2056,6 +2072,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                             preFailureMembership;
                         var excludedPodUids =
                             new HashSet<string>(StringComparer.Ordinal);
+                        ProductionCrashCheckpointGate?
+                            podFailureCrashGate = null;
 
                         if (injectChildRuntimeFailure)
                         {
@@ -2191,29 +2209,286 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                                             TimeSpan.FromMinutes(3))
                                         .ConfigureAwait(false);
 
-                                var podFailureAdmission =
-                                    await RuntimePoolProductionCycleExecutor
-                                        .SubmitQueueFirstWavesAsync(
-                                            submissionMcp,
-                                            tenant,
-                                            scenario.Name,
-                                            controlPlaneId,
-                                            boundedCapacityProfile.RequestedBy,
-                                            boundedCapacityProfile.Source,
-                                            runsPerIteration:
-                                                runsPerIteration,
-                                            submissionIterationCount: 1,
-                                            maximumConcurrentSubmissions:
-                                                maximumConcurrentMcpSubmissions,
-                                            maximumAdmissionAttemptCount:
-                                                maximumAdmissionAttemptCount,
-                                            cycleNumber: cycleNumber,
-                                            startingIterationNumber:
-                                                submissionIterationCount)
+                                output.WriteLine(
+                                    $"[{boundedCapacityProfile.LogPrefix} HIERARCHICAL FAILURE GATE] " +
+                                    $"Cycle='{cycleNumber}', " +
+                                    "State='initial-child-failure-workload-drained-capacity-reconverged', " +
+                                    $"AvailableRuntimeCount='{podFailureStartMembership.RuntimeInstanceIds.Count}'.");
+
+                                submissionMcp =
+                                    await CreateFreshSubmissionMcpAsync()
                                         .ConfigureAwait(false);
 
+                                output.WriteLine(
+                                    $"[{boundedCapacityProfile.LogPrefix} MCP RBAC CONTEXT] " +
+                                    $"Cycle='{cycleNumber}', Phase='boundary-filler-admission', State='fresh'.");
+
+                                var boundaryFailureFillerRunCount =
+                                    checked(
+                                        runsPerIteration -
+                                        runtimeCountPerPod);
+                                var boundaryFailureTargetRunStartNumber =
+                                    checked(boundaryFailureFillerRunCount + 1);
+
+                                if (boundaryFailureFillerRunCount > 0)
+                                {
+                                    var boundaryFailureFillerAdmission =
+                                        await RuntimePoolProductionCycleExecutor
+                                            .SubmitQueueFirstWavesAsync(
+                                                submissionMcp,
+                                                tenant,
+                                                scenario.Name,
+                                                controlPlaneId,
+                                                boundedCapacityProfile.RequestedBy,
+                                                boundedCapacityProfile.Source,
+                                                runsPerIteration:
+                                                    boundaryFailureFillerRunCount,
+                                                submissionIterationCount: 1,
+                                                maximumConcurrentSubmissions:
+                                                    Math.Min(
+                                                        maximumConcurrentMcpSubmissions,
+                                                        Math.Clamp(
+                                                            boundaryFailureFillerRunCount,
+                                                            4,
+                                                            16)),
+                                                maximumAdmissionAttemptCount:
+                                                    maximumAdmissionAttemptCount,
+                                                cycleNumber: cycleNumber,
+                                                startingIterationNumber:
+                                                    submissionIterationCount,
+                                                admissionBackpressureTimeout:
+                                                    TimeSpan.FromMinutes(
+                                                        BoundaryFailureAdmissionBackpressureTimeoutMinutes),
+                                                startingRunNumber: 1)
+                                            .ConfigureAwait(false);
+
+                                    admissionProof =
+                                        RuntimePoolProductionCycleExecutor
+                                            .CombineAdmissionProofs(
+                                                admissionProof,
+                                                boundaryFailureFillerAdmission);
+                                    submittedSharedRunIds =
+                                        admissionProof.SharedRunIds;
+                                    admissionTooManyRequestsRetryCount =
+                                        admissionProof.TooManyRequestsRetryCount;
+
+                                    output.WriteLine(
+                                        $"[{boundedCapacityProfile.LogPrefix} HIERARCHICAL FAILURE FILLER] " +
+                                        $"Cycle='{cycleNumber}', " +
+                                        $"WaveNumber='{submissionIterationCount}', " +
+                                        $"SubmittedRunCount='{boundaryFailureFillerAdmission.SharedRunIds.Count}', " +
+                                        "CrashCheckpoint='none', " +
+                                        "Placement='unconstrained', " +
+                                        $"TooManyRequestsRetryCount='{boundaryFailureFillerAdmission.TooManyRequestsRetryCount}'.");
+
+                                    _ = await WaitForSubmittedRunsToCompleteAsync(
+                                            sharedRunStore,
+                                            runExecutionIndex,
+                                            dagStore,
+                                            boundaryFailureFillerAdmission.SharedRunIds,
+                                            controlPlaneId,
+                                            tenant.TenantId,
+                                            observation,
+                                            scenario.CompletionTimeout,
+                                            TimeSpan.FromMinutes(5))
+                                        .ConfigureAwait(false);
+                                }
+
+                                podFailureStartMembership =
+                                    await WaitForBoundedCapacityPoolMembershipAsync(
+                                            registry,
+                                            poolId,
+                                            maximumPodCount,
+                                            runtimeCountPerPod,
+                                            requireAvailableCapacity: true,
+                                            TimeSpan.FromMinutes(3))
+                                        .ConfigureAwait(false);
+
+                                var boundaryFailureRuntimes =
+                                    (await registry
+                                            .ListAsync(includeStopped: false)
+                                            .ConfigureAwait(false))
+                                        .Where(
+                                            runtime =>
+                                                StringComparer.Ordinal.Equals(
+                                                    runtime.PoolId,
+                                                    poolId) &&
+                                                podFailureStartMembership
+                                                    .RuntimeInstanceIds
+                                                    .Contains(
+                                                        runtime.RuntimeInstanceId) &&
+                                                runtime.Status ==
+                                                    AiRuntimeInstanceStatus.Ready &&
+                                                runtime.CanAcceptRun &&
+                                                !string.IsNullOrWhiteSpace(
+                                                    runtime.HostId))
+                                        .ToArray();
+
+                                Assert.Equal(
+                                    runsPerIteration,
+                                    boundaryFailureRuntimes.Length);
+
+                                var boundaryFailureTargetPodMembers =
+                                    boundaryFailureRuntimes
+                                        .GroupBy(
+                                            runtime => runtime.HostId!,
+                                            StringComparer.Ordinal)
+                                        .Where(
+                                            pod =>
+                                                excludedPodUids.Contains(
+                                                    pod.Key) == false &&
+                                                pod.Count() == runtimeCountPerPod)
+                                        .OrderBy(
+                                            pod => pod.Key,
+                                            StringComparer.Ordinal)
+                                        .Select(
+                                            pod => pod
+                                                .OrderBy(
+                                                    runtime =>
+                                                        runtime.RuntimeInstanceId,
+                                                    StringComparer.Ordinal)
+                                                .ToArray())
+                                        .FirstOrDefault();
+
+                                if (boundaryFailureTargetPodMembers is null)
+                                {
+                                    throw new InvalidOperationException(
+                                        "No distinct fully available Pod remained for the deterministic boundary failure wave.");
+                                }
+
+                                var boundaryFailureTargetRuntimeInstanceIds =
+                                    boundaryFailureTargetPodMembers
+                                        .Select(
+                                            runtime =>
+                                                runtime.RuntimeInstanceId)
+                                        .ToArray();
+
+                                Assert.Equal(
+                                    runtimeCountPerPod,
+                                    boundaryFailureTargetRuntimeInstanceIds.Length);
+                                Assert.Equal(
+                                    runtimeCountPerPod,
+                                    boundaryFailureTargetRuntimeInstanceIds
+                                        .Distinct(StringComparer.Ordinal)
+                                        .Count());
+
+                                output.WriteLine(
+                                    $"[{boundedCapacityProfile.LogPrefix} HIERARCHICAL FAILURE TARGET] " +
+                                    $"Cycle='{cycleNumber}', " +
+                                    $"TargetPodUid='{boundaryFailureTargetPodMembers[0].HostId}', " +
+                                    $"TargetRuntimeCount='{runtimeCountPerPod}', " +
+                                    $"CompletedFillerRunCount='{boundaryFailureFillerRunCount}', " +
+                                    $"TargetRunStartNumber='{boundaryFailureTargetRunStartNumber}'.");
+
+                                submissionMcp =
+                                    await CreateFreshSubmissionMcpAsync()
+                                        .ConfigureAwait(false);
+
+                                output.WriteLine(
+                                    $"[{boundedCapacityProfile.LogPrefix} MCP RBAC CONTEXT] " +
+                                    $"Cycle='{cycleNumber}', Phase='boundary-target-admission', State='fresh'.");
+
+                                podFailureCrashGate =
+                                    await ProductionCrashCheckpointGate
+                                        .ArmAsync(
+                                            redisConnection,
+                                            output,
+                                            controlPlaneId,
+                                            tenant.TenantId,
+                                            $"{scenario.Name}-cycle-{cycleNumber:000}-boundary-wave-{submissionIterationCount:000}",
+                                            checkpointStepIndex:
+                                                FinalScenarioKillAfterCompletedStepCount + 1,
+                                            stateTtl:
+                                                TimeSpan.FromMinutes(
+                                                    BoundaryFailureCrashCheckpointStateTtlMinutes))
+                                        .ConfigureAwait(false);
+
+                                RuntimePoolProductionCycleAdmissionProof
+                                    podFailureAdmission;
+
+                                try
+                                {
+                                    podFailureAdmission =
+                                        await RuntimePoolProductionCycleExecutor
+                                            .SubmitQueueFirstWavesAsync(
+                                                submissionMcp,
+                                                tenant,
+                                                scenario.Name,
+                                                controlPlaneId,
+                                                boundedCapacityProfile.RequestedBy,
+                                                boundedCapacityProfile.Source,
+                                                runsPerIteration:
+                                                    runtimeCountPerPod,
+                                                submissionIterationCount: 1,
+                                                maximumConcurrentSubmissions: 1,
+                                                maximumAdmissionAttemptCount:
+                                                    maximumAdmissionAttemptCount,
+                                                cycleNumber: cycleNumber,
+                                                startingIterationNumber:
+                                                    submissionIterationCount,
+                                                crashCheckpoint:
+                                                    podFailureCrashGate.Definition,
+                                                admissionBackpressureTimeout:
+                                                    TimeSpan.FromMinutes(
+                                                        BoundaryFailureAdmissionBackpressureTimeoutMinutes),
+                                                placementFactory:
+                                                    (_, runNumber) =>
+                                                        new AiRunPlacementDirective
+                                                        {
+                                                            Target =
+                                                                new AiRunPlacementTarget
+                                                                {
+                                                                    RuntimeInstanceId =
+                                                                        boundaryFailureTargetRuntimeInstanceIds[
+                                                                            runNumber -
+                                                                            boundaryFailureTargetRunStartNumber]
+                                                                },
+                                                            Requirement =
+                                                                AiRunPlacementRequirement.Required,
+                                                            Fallback =
+                                                                AiRunPlacementFallback.Reject
+                                                        },
+                                                startingRunNumber:
+                                                    boundaryFailureTargetRunStartNumber)
+                                            .ConfigureAwait(false);
+
+                                    await podFailureCrashGate
+                                        .WaitUntilReachedAsync(
+                                            TimeSpan.FromMinutes(3))
+                                        .ConfigureAwait(false);
+                                }
+                                catch
+                                {
+                                    await podFailureCrashGate
+                                        .ReleaseAsync()
+                                        .ConfigureAwait(false);
+                                    podFailureCrashGate = null;
+                                    throw;
+                                }
+
+                                var podFailureTargetAdmissionResults =
+                                    podFailureAdmission
+                                        .Results
+                                        .ToArray();
+
+                                Assert.Equal(
+                                    runtimeCountPerPod,
+                                    podFailureTargetAdmissionResults.Length);
+                                Assert.All(
+                                    podFailureTargetAdmissionResults,
+                                    result => Assert.False(
+                                        string.IsNullOrWhiteSpace(
+                                            result.SharedRunId)));
+
                                 podFailureCandidateSharedRunIds =
-                                    podFailureAdmission.SharedRunIds;
+                                    podFailureTargetAdmissionResults
+                                        .Select(result => result.SharedRunId!)
+                                        .ToHashSet(StringComparer.Ordinal);
+
+                                Assert.Equal(
+                                    runtimeCountPerPod,
+                                    podFailureCandidateSharedRunIds.Count);
+
                                 admissionProof =
                                     RuntimePoolProductionCycleExecutor
                                         .CombineAdmissionProofs(
@@ -2228,7 +2503,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                                     $"[{boundedCapacityProfile.LogPrefix} WARM POD FAILURE WAVE] " +
                                     $"Cycle='{cycleNumber}', " +
                                     $"WaveNumber='{submissionIterationCount}', " +
-                                    $"SubmittedRunCount='{podFailureAdmission.SharedRunIds.Count}', " +
+                                    $"SubmittedRunCount='{boundaryFailureFillerRunCount + podFailureAdmission.SharedRunIds.Count}', " +
+                                    $"CompletedFillerRunCount='{boundaryFailureFillerRunCount}', " +
+                                    $"TargetCheckpointRunCount='{podFailureAdmission.SharedRunIds.Count}', " +
                                     $"ReusedRuntimeCapacity='{maximumRuntimeCapacity}', " +
                                     $"EligibleDistinctPodCount='{maximumPodCount - excludedPodUids.Count}', " +
                                     $"TooManyRequestsRetryCount='{podFailureAdmission.TooManyRequestsRetryCount}'.");
@@ -2252,23 +2529,41 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                             excludedPodUids.Count < maximumPodCount,
                             "The final KubernetesPool proof excluded every Pod boundary before the distinct Pod failure could be selected.");
 
-                        var podFailureProof =
-                            await InjectBoundedCapacityPodFailureAsync(
-                                    host.Services,
-                                    registry,
-                                    sharedRunStore,
-                                    runExecutionIndex,
-                                    podFailureCandidateSharedRunIds,
-                                    tenant,
-                                    controlPlaneId,
-                                    poolId,
-                                    runtimeCountPerPod,
-                                    maximumRuntimeCapacity,
-                                    observation,
-                                    TimeSpan.FromMinutes(10),
-                                    excludedPodUids:
-                                        excludedPodUids)
-                                .ConfigureAwait(false);
+                        BoundedCapacityPodFailureProof podFailureProof;
+
+                        try
+                        {
+                            podFailureProof =
+                                await InjectBoundedCapacityPodFailureAsync(
+                                        host.Services,
+                                        registry,
+                                        sharedRunStore,
+                                        runExecutionIndex,
+                                        podFailureCandidateSharedRunIds,
+                                        tenant,
+                                        controlPlaneId,
+                                        poolId,
+                                        runtimeCountPerPod,
+                                        maximumRuntimeCapacity,
+                                        observation,
+                                        TimeSpan.FromMinutes(10),
+                                        excludedPodUids:
+                                            excludedPodUids,
+                                        boundaryFailureCrashGate:
+                                            podFailureCrashGate)
+                                    .ConfigureAwait(false);
+                        }
+                        finally
+                        {
+                            if (podFailureCrashGate is not null)
+                            {
+                                // Idempotent safety release also covers target-selection
+                                // or recovery failures before the exact Pod termination.
+                                await podFailureCrashGate
+                                    .ReleaseAsync()
+                                    .ConfigureAwait(false);
+                            }
+                        }
 
                         Assert.Empty(
                             (childRuntimeRecoveryProof?.RecoveredWorks
@@ -3470,7 +3765,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 int maximumRuntimeCapacity,
                 BoundedCapacityMachineLimitObservation observation,
                 TimeSpan timeout,
-                IReadOnlySet<string>? excludedPodUids = null)
+                IReadOnlySet<string>? excludedPodUids = null,
+                ProductionCrashCheckpointGate? boundaryFailureCrashGate = null)
         {
             ArgumentNullException.ThrowIfNull(services);
             ArgumentNullException.ThrowIfNull(registry);
@@ -3581,19 +3877,37 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 primaryRuntime.HostId!,
                 failedRuntimeInstanceIds);
 
-            var deleteResult =
-                await RunKubectlAsync(
-                        CancellationToken.None,
-                        "delete",
-                        "pod",
-                        primaryRuntime.KubernetesPodName!,
-                        "--namespace",
-                        primaryRuntime.KubernetesNamespace!,
-                        "--grace-period=0",
-                        "--force",
-                        "--wait=true",
-                        "--timeout=90s")
-                    .ConfigureAwait(false);
+            KubectlResult deleteResult;
+
+            try
+            {
+                deleteResult =
+                    await RunKubectlAsync(
+                            CancellationToken.None,
+                            "delete",
+                            "pod",
+                            primaryRuntime.KubernetesPodName!,
+                            "--namespace",
+                            primaryRuntime.KubernetesNamespace!,
+                            "--grace-period=0",
+                            "--force",
+                            "--wait=true",
+                            "--timeout=90s")
+                        .ConfigureAwait(false);
+            }
+            finally
+            {
+                if (boundaryFailureCrashGate is not null)
+                {
+                    // Keep the deferred failure wave frozen only through the
+                    // exact Pod termination. Healthy Pods and replacement work
+                    // resume from the same durable released checkpoint state.
+                    await boundaryFailureCrashGate
+                        .ReleaseAsync()
+                        .WaitAsync(timeout)
+                        .ConfigureAwait(false);
+                }
+            }
 
             if (deleteResult.ExitCode != 0)
             {

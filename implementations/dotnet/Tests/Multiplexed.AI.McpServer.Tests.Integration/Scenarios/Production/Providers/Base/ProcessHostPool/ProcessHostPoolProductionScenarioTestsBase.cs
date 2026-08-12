@@ -1,6 +1,7 @@
 ﻿using System.Diagnostics;
 using System.Globalization;
 using Microsoft.Extensions.DependencyInjection;
+using Multiplexed.Abstractions.AI.ControlPlane.Admission.Placement;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Forensics;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager.ProcessControl;
@@ -23,6 +24,7 @@ using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Output;
 using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Providers.Base.Profiles;
 using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Providers.Base.Runners;
 using Multiplexed.AI.Stores;
+using StackExchange.Redis;
 using Xunit.Abstractions;
 
 namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Providers.Base.ProcessHostPool
@@ -37,6 +39,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
         private const int StepCount = 50;
         private const int KillAfterCompletedStepCount = 25;
         private const int MaximumAdmissionAttemptCount = 8;
+        private const int BoundaryFailureCrashCheckpointStateTtlMinutes = 30;
+        private const int BoundaryFailureAdmissionBackpressureTimeoutMinutes = 5;
         private const string RequestedBy =
             "mcp-process-host-pool-production-proof";
         private const string Source =
@@ -285,6 +289,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             var lifecycleJournal =
                 controlPlaneHost.Services.GetRequiredService<
                     IAiRuntimeLifecycleJournal>();
+            var redisConnection =
+                controlPlaneHost.Services.GetRequiredService<
+                    IConnectionMultiplexer>();
             var recoveryCoordinator =
                 new ProcessHostPoolProductionRecoveryCoordinator(
                     controlPlaneHost.Services,
@@ -470,6 +477,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                         Array.Empty<AiRuntimeRecoveryForensicsReadModel>();
                 ProcessHostPoolProductionFailureTarget? failureTarget = null;
                 ProcessHostPoolProductionRecoveryProof? recoveryProof = null;
+                ProductionCrashCheckpointGate? boundaryFailureCrashGate = null;
                 var excludedParentHostIds =
                     new HashSet<string>(StringComparer.Ordinal);
                 IReadOnlySet<string> parentFailureCandidateSharedRunIds =
@@ -630,42 +638,261 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                                 noProgressTimeout: workloadNoProgressTimeout)
                             .ConfigureAwait(false);
 
-                        _ = await WaitForExactTopologyAsync(
-                                registry,
-                                cluster,
-                                controlPlaneId,
-                                this.profile.ProviderName,
-                                requireAvailableCapacity: true,
-                                TimeSpan.FromMinutes(3))
-                            .ConfigureAwait(false);
+                        var boundaryFailureFillerRunCount =
+                            checked(
+                                totalRuntimeCount -
+                                runtimeCountPerHost);
+                        var boundaryFailureTargetRunStartNumber =
+                            checked(boundaryFailureFillerRunCount + 1);
 
-                        submissionStopwatch.Start();
-                        var boundaryFailureAdmission =
-                            await RuntimePoolProductionCycleExecutor
-                                .SubmitQueueFirstWavesAsync(
-                                    mcp,
-                                    tenant,
-                                    scenario.Name,
+                        if (boundaryFailureFillerRunCount > 0)
+                        {
+                            submissionStopwatch.Start();
+                            var boundaryFailureFillerAdmission =
+                                await RuntimePoolProductionCycleExecutor
+                                    .SubmitQueueFirstWavesAsync(
+                                        mcp,
+                                        tenant,
+                                        scenario.Name,
+                                        controlPlaneId,
+                                        RequestedBy,
+                                        Source,
+                                        runsPerIteration:
+                                            boundaryFailureFillerRunCount,
+                                        submissionIterationCount: 1,
+                                        maximumConcurrentSubmissions:
+                                            Math.Clamp(
+                                                boundaryFailureFillerRunCount,
+                                                4,
+                                                16),
+                                        maximumAdmissionAttemptCount:
+                                            MaximumAdmissionAttemptCount,
+                                        cycleNumber:
+                                            executionCycleCount > 1
+                                                ? cycleNumber
+                                                : null,
+                                        startingIterationNumber:
+                                            submissionIterationCount,
+                                        admissionBackpressureTimeout:
+                                            TimeSpan.FromMinutes(
+                                                BoundaryFailureAdmissionBackpressureTimeoutMinutes),
+                                        startingRunNumber: 1)
+                                    .ConfigureAwait(false);
+                            submissionStopwatch.Stop();
+
+                            admission =
+                                RuntimePoolProductionCycleExecutor
+                                    .CombineAdmissionProofs(
+                                        admission,
+                                        boundaryFailureFillerAdmission);
+
+                            this.output.WriteLine(
+                                $"[{this.profile.LogPrefix} HIERARCHICAL FAILURE FILLER] " +
+                                $"Cycle='{cycleNumber}', " +
+                                $"WaveNumber='{submissionIterationCount}', " +
+                                $"SubmittedRunCount='{boundaryFailureFillerAdmission.SharedRunIds.Count}', " +
+                                "CrashCheckpoint='none', " +
+                                "Placement='unconstrained', " +
+                                $"TooManyRequestsRetryCount='{boundaryFailureFillerAdmission.TooManyRequestsRetryCount}'.");
+
+                            _ = await RuntimePoolProductionWorkloadObserver
+                                .WaitForSubmittedRunsToCompleteAsync(
+                                    sharedRunStore,
+                                    runExecutionIndex,
+                                    dagStore,
+                                    boundaryFailureFillerAdmission.SharedRunIds,
                                     controlPlaneId,
-                                    RequestedBy,
-                                    Source,
-                                    runsPerIteration: totalRuntimeCount,
-                                    submissionIterationCount: 1,
-                                    maximumConcurrentSubmissions:
-                                        Math.Clamp(totalRuntimeCount, 4, 16),
-                                    maximumAdmissionAttemptCount:
-                                        MaximumAdmissionAttemptCount,
-                                    cycleNumber:
-                                        executionCycleCount > 1
-                                            ? cycleNumber
-                                            : null,
-                                    startingIterationNumber:
-                                        submissionIterationCount)
+                                    tenant.TenantId,
+                                    scenario.CompletionTimeout,
+                                    noProgressTimeout: workloadNoProgressTimeout)
                                 .ConfigureAwait(false);
-                        submissionStopwatch.Stop();
+                        }
+
+                        var boundaryFailureTopology =
+                            await WaitForExactTopologyAsync(
+                                    registry,
+                                    cluster,
+                                    controlPlaneId,
+                                    this.profile.ProviderName,
+                                    requireAvailableCapacity: true,
+                                    TimeSpan.FromMinutes(3))
+                                .ConfigureAwait(false);
+
+                        var boundaryFailureTarget =
+                            cluster
+                                .Hosts
+                                .OrderBy(host => host.Ordinal)
+                                .Where(
+                                    host =>
+                                        !excludedParentHostIds.Contains(
+                                            host.HostId))
+                                .Select(
+                                    host => new
+                                    {
+                                        Host = host,
+                                        Members =
+                                            boundaryFailureTopology
+                                                .Where(
+                                                    runtime =>
+                                                        StringComparer.Ordinal.Equals(
+                                                            runtime.HostId,
+                                                            host.HostId) &&
+                                                        runtime.Status ==
+                                                            AiRuntimeInstanceStatus.Ready &&
+                                                        runtime.CanAcceptRun)
+                                                .OrderBy(
+                                                    runtime =>
+                                                        runtime.RuntimeInstanceId,
+                                                    StringComparer.Ordinal)
+                                                .ToArray()
+                                    })
+                                .FirstOrDefault(
+                                    candidate =>
+                                        candidate.Members.Length ==
+                                        runtimeCountPerHost);
+
+                        if (boundaryFailureTarget is null)
+                        {
+                            throw new InvalidOperationException(
+                                "No distinct fully available parent Process Host remained for the deterministic boundary failure wave.");
+                        }
+
+                        var boundaryFailureTargetRuntimeInstanceIds =
+                            boundaryFailureTarget
+                                .Members
+                                .Select(
+                                    runtime =>
+                                        runtime.RuntimeInstanceId)
+                                .ToArray();
+
+                        Assert.Equal(
+                            runtimeCountPerHost,
+                            boundaryFailureTargetRuntimeInstanceIds.Length);
+                        Assert.Equal(
+                            runtimeCountPerHost,
+                            boundaryFailureTargetRuntimeInstanceIds
+                                .Distinct(StringComparer.Ordinal)
+                                .Count());
+
+                        this.output.WriteLine(
+                            $"[{this.profile.LogPrefix} HIERARCHICAL FAILURE TARGET] " +
+                            $"Cycle='{cycleNumber}', " +
+                            $"TargetHostId='{boundaryFailureTarget.Host.HostId}', " +
+                            $"TargetRuntimeCount='{runtimeCountPerHost}', " +
+                            $"CompletedFillerRunCount='{boundaryFailureFillerRunCount}', " +
+                            $"TargetRunStartNumber='{boundaryFailureTargetRunStartNumber}'.");
+
+                        boundaryFailureCrashGate =
+                            await ProductionCrashCheckpointGate
+                                .ArmAsync(
+                                    redisConnection,
+                                    this.output,
+                                    controlPlaneId,
+                                    tenant.TenantId,
+                                    $"{scenario.Name}-cycle-{cycleNumber:000}-boundary-wave-{submissionIterationCount:000}",
+                                    checkpointStepIndex:
+                                        KillAfterCompletedStepCount + 1,
+                                    stateTtl:
+                                        TimeSpan.FromMinutes(
+                                            BoundaryFailureCrashCheckpointStateTtlMinutes))
+                                .ConfigureAwait(false);
+
+                        RuntimePoolProductionCycleAdmissionProof
+                            boundaryFailureAdmission;
+
+                        try
+                        {
+                            submissionStopwatch.Start();
+                            boundaryFailureAdmission =
+                                await RuntimePoolProductionCycleExecutor
+                                    .SubmitQueueFirstWavesAsync(
+                                        mcp,
+                                        tenant,
+                                        scenario.Name,
+                                        controlPlaneId,
+                                        RequestedBy,
+                                        Source,
+                                        runsPerIteration:
+                                            runtimeCountPerHost,
+                                        submissionIterationCount: 1,
+                                        maximumConcurrentSubmissions: 1,
+                                        maximumAdmissionAttemptCount:
+                                            MaximumAdmissionAttemptCount,
+                                        cycleNumber:
+                                            executionCycleCount > 1
+                                                ? cycleNumber
+                                                : null,
+                                        startingIterationNumber:
+                                            submissionIterationCount,
+                                        crashCheckpoint:
+                                            boundaryFailureCrashGate.Definition,
+                                        admissionBackpressureTimeout:
+                                            TimeSpan.FromMinutes(
+                                                BoundaryFailureAdmissionBackpressureTimeoutMinutes),
+                                        placementFactory:
+                                            (_, runNumber) =>
+                                                new AiRunPlacementDirective
+                                                {
+                                                    Target =
+                                                        new AiRunPlacementTarget
+                                                        {
+                                                            RuntimeInstanceId =
+                                                                boundaryFailureTargetRuntimeInstanceIds[
+                                                                    runNumber -
+                                                                    boundaryFailureTargetRunStartNumber]
+                                                        },
+                                                    Requirement =
+                                                        AiRunPlacementRequirement.Required,
+                                                    Fallback =
+                                                        AiRunPlacementFallback.Reject
+                                                },
+                                        startingRunNumber:
+                                            boundaryFailureTargetRunStartNumber)
+                                    .ConfigureAwait(false);
+                            submissionStopwatch.Stop();
+
+                            await boundaryFailureCrashGate
+                                .WaitUntilReachedAsync(
+                                    TimeSpan.FromMinutes(3))
+                                .ConfigureAwait(false);
+                        }
+                        catch
+                        {
+                            if (submissionStopwatch.IsRunning)
+                            {
+                                submissionStopwatch.Stop();
+                            }
+
+                            await boundaryFailureCrashGate
+                                .ReleaseAsync()
+                                .ConfigureAwait(false);
+                            boundaryFailureCrashGate = null;
+                            throw;
+                        }
+
+                        var parentFailureTargetAdmissionResults =
+                            boundaryFailureAdmission
+                                .Results
+                                .ToArray();
+
+                        Assert.Equal(
+                            runtimeCountPerHost,
+                            parentFailureTargetAdmissionResults.Length);
+                        Assert.All(
+                            parentFailureTargetAdmissionResults,
+                            result => Assert.False(
+                                string.IsNullOrWhiteSpace(
+                                    result.SharedRunId)));
 
                         parentFailureCandidateSharedRunIds =
-                            boundaryFailureAdmission.SharedRunIds;
+                            parentFailureTargetAdmissionResults
+                                .Select(result => result.SharedRunId!)
+                                .ToHashSet(StringComparer.Ordinal);
+
+                        Assert.Equal(
+                            runtimeCountPerHost,
+                            parentFailureCandidateSharedRunIds.Count);
+
                         admission =
                             RuntimePoolProductionCycleExecutor
                                 .CombineAdmissionProofs(
@@ -673,7 +900,15 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                                     boundaryFailureAdmission);
 
                         this.output.WriteLine(
-                            $"[{this.profile.LogPrefix} WARM BOUNDARY FAILURE WAVE] Cycle='{cycleNumber}', WaveNumber='{submissionIterationCount}', SubmittedRunCount='{boundaryFailureAdmission.SharedRunIds.Count}', ReusedRuntimeCapacity='{totalRuntimeCount}', EligibleDistinctParentCount='{cluster.Hosts.Count - excludedParentHostIds.Count}', TooManyRequestsRetryCount='{boundaryFailureAdmission.TooManyRequestsRetryCount}'.");
+                            $"[{this.profile.LogPrefix} WARM BOUNDARY FAILURE WAVE] " +
+                            $"Cycle='{cycleNumber}', " +
+                            $"WaveNumber='{submissionIterationCount}', " +
+                            $"SubmittedRunCount='{boundaryFailureFillerRunCount + boundaryFailureAdmission.SharedRunIds.Count}', " +
+                            $"CompletedFillerRunCount='{boundaryFailureFillerRunCount}', " +
+                            $"TargetCheckpointRunCount='{boundaryFailureAdmission.SharedRunIds.Count}', " +
+                            $"ReusedRuntimeCapacity='{totalRuntimeCount}', " +
+                            $"EligibleDistinctParentCount='{cluster.Hosts.Count - excludedParentHostIds.Count}', " +
+                            $"TooManyRequestsRetryCount='{boundaryFailureAdmission.TooManyRequestsRetryCount}'.");
                     }
                 }
 
@@ -699,29 +934,45 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                         excludedParentHostIds.Count < cluster.Hosts.Count,
                         "The final ProcessHostPool proof excluded every parent boundary before the distinct parent failure could be selected.");
 
-                    failureTarget =
-                        await WaitForBusyParentHostFailureTargetAsync(
-                                registry,
-                                sharedRunStore,
-                                runExecutionIndex,
-                                cluster,
-                                parentFailureCandidateSharedRunIds,
-                                controlPlaneId,
-                                tenant.TenantId,
-                                TimeSpan.FromMinutes(5),
-                                excludedHostIds:
-                                    excludedParentHostIds)
-                            .ConfigureAwait(false);
+                    try
+                    {
+                        failureTarget =
+                            await WaitForBusyParentHostFailureTargetAsync(
+                                    registry,
+                                    sharedRunStore,
+                                    runExecutionIndex,
+                                    cluster,
+                                    parentFailureCandidateSharedRunIds,
+                                    controlPlaneId,
+                                    tenant.TenantId,
+                                    TimeSpan.FromMinutes(5),
+                                    excludedHostIds:
+                                        excludedParentHostIds)
+                                .ConfigureAwait(false);
 
-                    recoveryProof =
-                        await recoveryCoordinator
-                            .RecoverAsync(
-                                cluster,
-                                failureTarget,
-                                cycleNumber,
-                                $"mcp-{this.profile.ProviderName}-process-host-pool-cycle-{cycleNumber}",
-                                TimeSpan.FromMinutes(5))
-                            .ConfigureAwait(false);
+                        recoveryProof =
+                            await recoveryCoordinator
+                                .RecoverAsync(
+                                    cluster,
+                                    failureTarget,
+                                    cycleNumber,
+                                    $"mcp-{this.profile.ProviderName}-process-host-pool-cycle-{cycleNumber}",
+                                    TimeSpan.FromMinutes(5),
+                                    boundaryFailureCrashGate)
+                                .ConfigureAwait(false);
+                    }
+                    finally
+                    {
+                        if (boundaryFailureCrashGate is not null)
+                        {
+                            // Idempotent safety release also covers target-selection
+                            // or recovery failures before the coordinator reaches the
+                            // exact parent termination point.
+                            await boundaryFailureCrashGate
+                                .ReleaseAsync()
+                                .ConfigureAwait(false);
+                        }
+                    }
 
                     Assert.Empty(
                         (childRuntimeRecoveryProof?.RecoveredWorks

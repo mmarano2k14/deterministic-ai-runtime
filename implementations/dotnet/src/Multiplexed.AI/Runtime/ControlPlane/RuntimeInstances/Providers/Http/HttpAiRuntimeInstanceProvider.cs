@@ -66,6 +66,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http
         private const string GatewayRoutingHeaderNameMetadataKey = "gateway.routing.header";
 
         /// <summary>
+        /// The runtime descriptor metadata key that can override the Gateway routing header value.
+        /// </summary>
+        private const string GatewayRoutingValueMetadataKey = "gateway.routing.value";
+
+        /// <summary>
         /// The HTTP client used to send runtime instance commands.
         /// </summary>
         private readonly HttpClient httpClient;
@@ -721,6 +726,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http
                     ResolveGatewayRoutingHeaderName(
                         request);
 
+                var routingHeaderValue =
+                    ResolveGatewayRoutingHeaderValue(
+                        request);
+
                 using var message =
                     new HttpRequestMessage(
                         HttpMethod.Post,
@@ -732,18 +741,19 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http
 
                 if (!message.Headers.TryAddWithoutValidation(
                         routingHeaderName,
-                        request.RuntimeInstanceId))
+                        routingHeaderValue))
                 {
                     throw new InvalidOperationException(
                         $"The HTTP runtime routing header '{routingHeaderName}' could not be added for runtime instance '{request.RuntimeInstanceId}'.");
                 }
 
                 logger.LogInformation(
-                    "HTTP RUNTIME COMMAND ROUTING HEADER RuntimeInstanceId={RuntimeInstanceId} Operation={Operation} Endpoint={Endpoint} RoutingHeaderName={RoutingHeaderName}",
+                    "HTTP RUNTIME COMMAND ROUTING HEADER RuntimeInstanceId={RuntimeInstanceId} Operation={Operation} Endpoint={Endpoint} RoutingHeaderName={RoutingHeaderName} RoutingHeaderValue={RoutingHeaderValue}",
                     request.RuntimeInstanceId,
                     request.Operation,
                     endpoint,
-                    routingHeaderName);
+                    routingHeaderName,
+                    routingHeaderValue);
 
                 using var response =
                     await httpClient
@@ -992,6 +1002,32 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http
             return string.IsNullOrWhiteSpace(configuredHeaderName)
                 ? DefaultGatewayRoutingHeaderName
                 : configuredHeaderName.Trim();
+        }
+
+        /// <summary>
+        /// Resolves the Gateway routing value independently from the logical target runtime id.
+        /// Dynamic Kubernetes Pool replacement runtimes can intentionally reuse a surviving
+        /// sibling route to reach the same Pod service while the command body preserves the new
+        /// exact RuntimeInstanceId for in-Pod child routing.
+        /// </summary>
+        private static string ResolveGatewayRoutingHeaderValue(
+            AiRuntimeInstanceCommandRequest request)
+        {
+            ArgumentNullException.ThrowIfNull(request);
+            ArgumentException.ThrowIfNullOrWhiteSpace(
+                request.RuntimeInstanceId);
+
+            var configuredRoutingValue =
+                GetMetadataValue(
+                    request.Descriptor?.Metadata,
+                    GatewayRoutingValueMetadataKey) ??
+                GetMetadataValue(
+                    request.Metadata,
+                    GatewayRoutingValueMetadataKey);
+
+            return string.IsNullOrWhiteSpace(configuredRoutingValue)
+                ? request.RuntimeInstanceId
+                : configuredRoutingValue.Trim();
         }
 
         /// <summary>

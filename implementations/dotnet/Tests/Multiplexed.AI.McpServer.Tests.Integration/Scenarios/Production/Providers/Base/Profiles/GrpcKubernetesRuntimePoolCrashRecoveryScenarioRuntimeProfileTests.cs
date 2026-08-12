@@ -1,4 +1,4 @@
-using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Capacity;
+﻿using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Capacity;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager;
 using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Definitions;
 using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Providers.Grpc.Profiles;
@@ -274,6 +274,20 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             Assert.Equal(
                 "15",
                 settings["AiRunAdmission:MaxInstanceCount"]);
+            Assert.Equal(
+                "00:06:00",
+                settings["AiKubernetesRuntimePoolHost:StartupTimeout"]);
+
+            var redisConnectionString =
+                Assert.IsType<string>(
+                    settings["AiKubernetesRuntimePoolHost:RedisConnectionString"]);
+
+            Assert.Contains(
+                "syncTimeout=45000",
+                redisConnectionString);
+            Assert.Contains(
+                "asyncTimeout=45000",
+                redisConnectionString);
         }
 
     }

@@ -393,6 +393,17 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                                 cancellationToken)
                             .ConfigureAwait(false);
 
+                    var isRecoveryRedispatch =
+                        TryResolveFailedRecoveryOwnership(
+                            queueItem.Metadata,
+                            out _,
+                            out _);
+
+                    var dispatchPlacement =
+                        isRecoveryRedispatch
+                            ? null
+                            : sharedRun.Placement;
+
                     var admissionDecision = await _admissionController
                         .AdmitAsync(
                             new AiRunAdmissionRequest
@@ -402,6 +413,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                                 TenantId = sharedRun.ExecutionContextSnapshot.TenantId,
                                 PipelineKey = sharedRun.PipelineKey,
                                 PreferredRuntimeInstanceId = safePreferredRuntimeInstanceId,
+                                Placement = dispatchPlacement,
                                 CorrelationId = request.CorrelationId ?? sharedRun.CorrelationId,
                                 RequestedBy = request.RequestedBy,
                                 Source = request.Source,

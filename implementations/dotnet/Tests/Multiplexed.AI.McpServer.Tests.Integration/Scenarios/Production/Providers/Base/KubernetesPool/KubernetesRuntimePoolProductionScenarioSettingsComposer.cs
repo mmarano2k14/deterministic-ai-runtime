@@ -1,4 +1,4 @@
-using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Capacity;
+﻿using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Capacity;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager;
 using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Providers.Base;
 using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Providers.Base.Profiles;
@@ -11,6 +11,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
     /// </summary>
     internal static class KubernetesRuntimePoolProductionScenarioSettingsComposer
     {
+        private const int RuntimePoolRedisOperationTimeoutMilliseconds =
+            45_000;
+
         /// <summary>
         /// Replaces process-host topology settings with the bounded Kubernetes Runtime Pool contract.
         /// </summary>
@@ -49,7 +52,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 profile,
                 firstChildTransportPort);
 
-            ApplyRuntimePoolHostSettings(settings);
+            ApplyRuntimePoolHostSettings(
+                settings,
+                profile);
 
             WriteRuntimePoolTransportSettingsDebug(
                 settings,
@@ -184,8 +189,11 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
         }
 
         private static void ApplyRuntimePoolHostSettings(
-            Dictionary<string, string?> settings)
+            Dictionary<string, string?> settings,
+            IRuntimePoolCrashRecoveryScenarioRuntimeProfile profile)
         {
+            ArgumentNullException.ThrowIfNull(profile);
+
             if (!settings.TryGetValue(
                     "Mongo:DatabaseName",
                     out var mongoDatabaseName) ||
@@ -206,12 +214,37 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             settings["AiKubernetesRuntimePoolHost:ServiceType"] = "ClusterIP";
             settings["AiKubernetesRuntimePoolHost:UseGatewayTransportEndpoint"] =
                 "true";
+            /*
+             * In-Pod child startup is intentionally serial in these production proofs.
+             * The Pod-level startup budget therefore scales with the exact planned child count
+             * instead of imposing a fixed three-minute ceiling on larger Runtime Pools.
+             * One extra minute is reserved for Pod scheduling/container bootstrap.
+             */
+            var runtimePoolHostStartupTimeout =
+                TimeSpan.FromMinutes(
+                    Math.Max(
+                        3,
+                        profile.CrashRecoveryPlan.MaximumRuntimeCountPerPod + 1));
+
             settings["AiKubernetesRuntimePoolHost:StartupTimeout"] =
-                "00:03:00";
+                runtimePoolHostStartupTimeout.ToString("c");
             settings["AiKubernetesRuntimePoolHost:ReadinessPollInterval"] =
                 "00:00:01";
+
+            /*
+             * Minikube reaches the host Redis instance through host.minikube.internal.
+             * Under the large reference workloads Redis can remain correct while a single
+             * readiness GET exceeds StackExchange.Redis' ten-second default. Keep the
+             * production readiness contract unchanged and give only this integration-test
+             * connection a bounded operation budget below the child startup window.
+             */
             settings["AiKubernetesRuntimePoolHost:RedisConnectionString"] =
-                KubernetesRuntimePoolScenarioConstants.RedisConnectionString;
+                string.Concat(
+                    KubernetesRuntimePoolScenarioConstants.RedisConnectionString,
+                    ",syncTimeout=",
+                    RuntimePoolRedisOperationTimeoutMilliseconds,
+                    ",asyncTimeout=",
+                    RuntimePoolRedisOperationTimeoutMilliseconds);
             settings["AiKubernetesRuntimePoolHost:MongoConnectionString"] =
                 KubernetesRuntimePoolScenarioConstants.MongoConnectionString;
             settings["AiKubernetesRuntimePoolHost:MongoDatabaseName"] =
@@ -281,6 +314,10 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                     settings["AiKubernetesRuntimeHost:UsePortForwardTransportEndpoint"],
                     "', PublishNodePort='",
                     settings["AiKubernetesRuntimeHost:PublishNodePortTransportEndpoint"],
+                    "', PoolHostStartupTimeout='",
+                    settings["AiKubernetesRuntimePoolHost:StartupTimeout"],
+                    "', PoolRedisOperationTimeoutMs='",
+                    RuntimePoolRedisOperationTimeoutMilliseconds,
                     "'."));
         }
     }
