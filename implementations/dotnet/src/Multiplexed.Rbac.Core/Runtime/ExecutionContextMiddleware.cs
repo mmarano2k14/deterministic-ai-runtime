@@ -113,9 +113,26 @@ namespace Multiplexed.Rbac.Core.Runtime
             // ------------------------------------------------------------
             // 5. Acquire In-Flight (Lua atomic / store atomic)
             // ------------------------------------------------------------
-            var acquired = await _store.TryAcquireInFlightAsync(ctxKey, maxInFlight);
+            var acquireResult = await _store.AcquireInFlightAsync(ctxKey, maxInFlight);
 
-            if (!acquired)
+            if (acquireResult == InFlightAcquireResult.ContextNotFound)
+            {
+                _realtimeEvents.LogWarning(
+                    tokenUserId ?? string.Empty,
+                    "ExecutionContext not found or expired before in-flight acquisition.",
+                    "Http.ExecutionContextMiddleware",
+                    data: new
+                    {
+                        ContextKey = ctxKey,
+                        Path = http.Request.Path.ToString(),
+                        Method = http.Request.Method
+                    });
+
+                http.Response.StatusCode = StatusCodes.Status403Forbidden;
+                return;
+            }
+
+            if (acquireResult == InFlightAcquireResult.LimitExceeded)
             {
                 if (_opt.LogConcurrencyViolations)
                 {
@@ -274,12 +291,9 @@ namespace Multiplexed.Rbac.Core.Runtime
                 return 0;
             }
 
-            // client value cannot exceed the current runtime server limit
-            if (parsed > fallback)
-            {
-                return fallback;
-            }
-
+            // When this explicitly demo/test-only switch is enabled, the client value
+            // is a true override of the runtime default. Production hosts should keep
+            // AllowClientMaxInFlightOverride disabled.
             return parsed;
         }
 

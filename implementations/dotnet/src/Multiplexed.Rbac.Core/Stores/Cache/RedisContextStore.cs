@@ -12,12 +12,11 @@ namespace Multiplexed.Rbac.Core.Stores.Cache
         private readonly IDatabase _db;
         private readonly JsonSerializerOptions _jsonOptions;
         private readonly ContextRuntimeOptions _options;
+        private readonly TimeSpan _contextTtl;
+        private readonly TimeSpan _inFlightCounterTtl;
 
         private const string ContextPrefix = "ac:ctx:";
         private const string InFlightPrefix = "ac:inflight:";
-
-        private const int DefaultTtlSeconds = 900;  // 15 minutes
-        private const int InFlightExtraSeconds = 5; // safety margin
 
         // SHA cache kept in memory by the application process
         private string? _acquireScriptSha;
@@ -31,6 +30,23 @@ namespace Multiplexed.Rbac.Core.Stores.Cache
             _multiplexer = multiplexer;
             _db = multiplexer.GetDatabase();
             _options = options.Value;
+
+            if (_options.SessionIdleTimeout <= TimeSpan.Zero)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(options),
+                    "SessionIdleTimeout must be greater than zero.");
+            }
+
+            if (_options.InFlightCounterTtl <= TimeSpan.Zero)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(options),
+                    "InFlightCounterTtl must be greater than zero.");
+            }
+
+            _contextTtl = _options.SessionIdleTimeout;
+            _inFlightCounterTtl = _options.InFlightCounterTtl;
             _jsonOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web);
         }
 
@@ -44,17 +60,12 @@ namespace Multiplexed.Rbac.Core.Stores.Cache
             local ctxKey = KEYS[1]
             local inKey = KEYS[2]
 
-            local extra = tonumber(ARGV[1])
-            local defaultTtl = tonumber(ARGV[2])
-            local maxInFlight = tonumber(ARGV[3])
+            local inFlightTtlMs = tonumber(ARGV[1])
+            local maxInFlight = tonumber(ARGV[2])
+            local refreshTtl = tonumber(ARGV[3])
 
             if redis.call('EXISTS', ctxKey) == 0 then
               return 0
-            end
-
-            local ttl = redis.call('TTL', ctxKey)
-            if ttl < 0 then
-              ttl = defaultTtl
             end
 
             local n = redis.call('INCR', inKey)
@@ -64,7 +75,10 @@ namespace Multiplexed.Rbac.Core.Stores.Cache
                 return -1
             end
 
-            redis.call('EXPIRE', inKey, ttl + extra)
+            if refreshTtl == 1 or n == 1 then
+                redis.call('PEXPIRE', inKey, inFlightTtlMs)
+            end
+
             return n
         ";
 
@@ -96,7 +110,7 @@ namespace Multiplexed.Rbac.Core.Stores.Cache
             local newKey = KEYS[2]
             local inKey = KEYS[3]
 
-            local newTtlSeconds = tonumber(ARGV[1])
+            local newTtlMs = tonumber(ARGV[1])
             local overlapMs = tonumber(ARGV[2])
             local inFlightGraceMs = tonumber(ARGV[3])
 
@@ -105,7 +119,7 @@ namespace Multiplexed.Rbac.Core.Stores.Cache
               return nil
             end
 
-            redis.call('SET', newKey, value, 'EX', newTtlSeconds)
+            redis.call('SET', newKey, value, 'PX', newTtlMs)
 
             local inFlight = tonumber(redis.call('GET', inKey) or '0')
 
@@ -187,7 +201,7 @@ namespace Multiplexed.Rbac.Core.Stores.Cache
             await _db.StringSetAsync(
                 ContextKey(key),
                 json,
-                TimeSpan.FromSeconds(DefaultTtlSeconds));
+                _contextTtl);
 
             return key;
         }
@@ -206,7 +220,7 @@ namespace Multiplexed.Rbac.Core.Stores.Cache
             await _db.StringSetAsync(
                 ContextKey(key),
                 json,
-                TimeSpan.FromSeconds(DefaultTtlSeconds));
+                _contextTtl);
 
             return key;
         }
@@ -228,28 +242,53 @@ namespace Multiplexed.Rbac.Core.Stores.Cache
         // Acquire In-Flight (Lua atomic)
         // ------------------------------------------------------------
         public async Task<bool> TryAcquireInFlightAsync(string key, int maxInFlight)
+            => await AcquireInFlightAsync(key, maxInFlight).ConfigureAwait(false)
+               == InFlightAcquireResult.Acquired;
+
+        public async Task<InFlightAcquireResult> AcquireInFlightAsync(
+            string key,
+            int maxInFlight)
         {
             if (string.IsNullOrWhiteSpace(key))
-                return false;
+            {
+                return InFlightAcquireResult.ContextNotFound;
+            }
 
-            // unlimited demo mode
+            // Unlimited demo mode still validates that the supplied context exists,
+            // but intentionally does not maintain an in-flight counter.
             if (maxInFlight <= 0)
-                return true;
+            {
+                return await _db.KeyExistsAsync(ContextKey(key)).ConfigureAwait(false)
+                    ? InFlightAcquireResult.Acquired
+                    : InFlightAcquireResult.ContextNotFound;
+            }
+
+            var inFlightTtlMs = Math.Max(
+                1L,
+                (long)Math.Ceiling(_inFlightCounterTtl.TotalMilliseconds));
 
             var rr = await EvaluateScriptAsync(
                 AcquireScript,
                 new RedisKey[] { ContextKey(key), InFlightKey(key) },
                 new RedisValue[]
                 {
-                    (RedisValue)InFlightExtraSeconds,
-                    (RedisValue)DefaultTtlSeconds,
-                    (RedisValue)maxInFlight
+                    (RedisValue)inFlightTtlMs,
+                    (RedisValue)maxInFlight,
+                    (RedisValue)(_options.RefreshInFlightCounterTtlOnAcquire ? 1 : 0)
                 },
                 () => _acquireScriptSha,
-                sha => _acquireScriptSha = sha);
+                sha => _acquireScriptSha = sha).ConfigureAwait(false);
 
-            var n = (long)rr;
-            return n > 0;
+            var result = (long)rr;
+
+            return result switch
+            {
+                0 => InFlightAcquireResult.ContextNotFound,
+                -1 => InFlightAcquireResult.LimitExceeded,
+                _ when result > 0 => InFlightAcquireResult.Acquired,
+                _ => throw new InvalidOperationException(
+                    $"Unexpected Redis in-flight acquire result '{result}'.")
+            };
         }
 
         // ------------------------------------------------------------
@@ -281,13 +320,13 @@ namespace Multiplexed.Rbac.Core.Stores.Cache
                 0L,
                 (long)Math.Ceiling(overlapWindow.TotalMilliseconds));
 
-            // Small safety floor to avoid old key disappearing too early
-            // while requests already acquired on that key are still finishing.
-            var inFlightGraceMs = Math.Max(
-                0L,
-                InFlightExtraSeconds * 1000L);
+            // The caller-controlled overlap remains the authority for the old key.
+            // In-flight counter lifetime is independent and only protects leaked counters.
+            var inFlightGraceMs = 0L;
 
-            inFlightGraceMs = 0;
+            var contextTtlMs = Math.Max(
+                1L,
+                (long)Math.Ceiling(_contextTtl.TotalMilliseconds));
 
             var result = await EvaluateScriptAsync(
                 RotateScript,
@@ -299,9 +338,9 @@ namespace Multiplexed.Rbac.Core.Stores.Cache
                 },
                 new RedisValue[]
                 {
-            DefaultTtlSeconds,
-            overlapMs,
-            inFlightGraceMs
+                    contextTtlMs,
+                    overlapMs,
+                    inFlightGraceMs
                 },
                 () => _rotateScriptSha,
                 sha => _rotateScriptSha = sha);

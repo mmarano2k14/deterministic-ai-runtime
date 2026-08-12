@@ -64,7 +64,8 @@ namespace Multiplexed.Rbac.Core.Runtime
 
         /// <summary>
         /// Allows clients to override the MaxInFlightPerContextKey value
-        /// using a request header.
+        /// using a request header. When enabled, the supplied positive value
+        /// replaces the runtime default and may be higher than that default.
         /// 
         /// This feature is intended only for testing or demo environments
         /// and should remain disabled in production.
